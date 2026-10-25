@@ -208,7 +208,7 @@ fn collect_host_uses(statements: &[Stmt], uses: &mut HostUses) {
 }
 
 /// Number of top-level items in a parsed TypeScript module.
-pub fn parse_typescript(source: &str) -> Result<usize, String> {
+pub fn parse_typescript(source: &str) -> Result<usize, CompilerError> {
     let module = parse_module(source)?;
     Ok(module.body.len())
 }
@@ -219,7 +219,7 @@ pub fn parse_typescript(source: &str) -> Result<usize, String> {
 /// - a top-level `function main() { ... }`;
 /// - expression statements calling `log(number)` or `console.log(number)`;
 /// - implicit integer constants.
-pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
+pub fn compile_typescript(source: &str) -> Result<Vec<u8>, CompilerError> {
     let module = parse_module(source)?;
     let functions = collect_functions(&module)?;
     let main_index = functions
@@ -250,7 +250,8 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
                 return Err(format!(
                     "function {}() only supports simple parameter names",
                     function.ident.sym
-                ));
+                )
+                .into());
             }
         }
     }
@@ -549,7 +550,9 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
     Ok(wasm.finish())
 }
 
-fn collect_functions(module: &swc_ecma_ast::Module) -> Result<Vec<&swc_ecma_ast::FnDecl>, String> {
+fn collect_functions(
+    module: &swc_ecma_ast::Module,
+) -> Result<Vec<&swc_ecma_ast::FnDecl>, CompilerError> {
     let mut functions = Vec::new();
     for item in &module.body {
         let function = match item {
@@ -576,7 +579,7 @@ fn collect_functions(module: &swc_ecma_ast::Module) -> Result<Vec<&swc_ecma_ast:
     }
 }
 
-fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, String> {
+fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, CompilerError> {
     let cm: Lrc<SourceMap> = Default::default();
     let fm = cm.new_source_file(
         FileName::Custom("input.ts".into()).into(),
@@ -593,16 +596,12 @@ fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, String> {
 
     let mut parser = Parser::new_from(lexer);
     if let Some(error) = parser.take_errors().into_iter().next() {
-        return Err(format_parse_error(
-            &cm,
-            &fm,
-            &error.into_diagnostic(&handler),
-        ));
+        return Err(format_parse_error(&cm, &fm, &error.into_diagnostic(&handler)).into());
     }
 
     parser
         .parse_typescript_module()
-        .map_err(|error| format_parse_error(&cm, &fm, &error.into_diagnostic(&handler)))
+        .map_err(|error| format_parse_error(&cm, &fm, &error.into_diagnostic(&handler)).into())
 }
 
 fn format_parse_error<'a>(
@@ -633,7 +632,7 @@ fn compile_block(
     output: &mut Vec<Instruction>,
     labels: &mut Vec<LabelFrame>,
     ctx: &FnContext,
-) -> Result<(), String> {
+) -> Result<(), CompilerError> {
     let FnContext {
         variables,
         string_offsets,
@@ -896,7 +895,7 @@ fn compile_block(
                 labels.pop();
             }
             other => {
-                return Err(format!("unsupported statement in main(): {other:?}"));
+                return Err(format!("unsupported statement in main(): {other:?}").into());
             }
         }
     }
@@ -910,7 +909,7 @@ fn compile_switch_cases(
     discriminant: u32,
     matched: u32,
     ctx: &FnContext,
-) -> Result<(), String> {
+) -> Result<(), CompilerError> {
     if cases.is_empty() {
         return Ok(());
     }
@@ -944,7 +943,7 @@ fn compile_expr(
     expr: &Expr,
     output: &mut Vec<Instruction>,
     ctx: &FnContext,
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError> {
     let FnContext {
         variables,
         string_offsets,
@@ -967,7 +966,7 @@ fn compile_expr(
                 output.push(Instruction::LocalGet(*index));
                 Ok(true)
             } else {
-                Err(format!("unknown identifier: {}", ident.sym))
+                Err(format!("unknown identifier: {}", ident.sym).into())
             }
         }
         Expr::Bin(bin) => match bin.op {
@@ -1029,10 +1028,9 @@ fn compile_expr(
                 let function_index = entry.0;
                 let arity = entry.1;
                 if call.args.len() != arity {
-                    return Err(format!(
-                        "function {}() expects {} arguments",
-                        ident.sym, arity
-                    ));
+                    return Err(
+                        format!("function {}() expects {} arguments", ident.sym, arity).into(),
+                    );
                 }
                 for arg in &call.args {
                     compile_expr(&arg.expr, output, ctx)?;
