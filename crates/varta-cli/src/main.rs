@@ -126,7 +126,7 @@ fn main() {
                 std::process::exit(1);
             }
             println!("varta validate: ok ({target})");
-        }
+}
         Some(Commands::Inspect { path, json }) => {
             if let Err(error) = inspect_app(&path.unwrap_or_else(|| "dist/app".to_string()), json) {
                 eprintln!("varta inspect failed: {error}");

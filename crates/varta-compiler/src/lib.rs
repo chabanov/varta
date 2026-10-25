@@ -1,4 +1,4 @@
-use swc_common::{sync::Lrc, FileName, SourceMap};
+use swc_common::{errors::{DiagnosticBuilder, Handler}, source_map::SmallPos, sync::Lrc, FileName, SourceMap, Span};
 use swc_ecma_ast::{Expr, Lit, ModuleItem, Stmt};
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
 use wasm_encoder::{
@@ -523,6 +523,7 @@ fn collect_functions(module: &swc_ecma_ast::Module) -> Result<Vec<&swc_ecma_ast:
 fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, String> {
     let cm: Lrc<SourceMap> = Default::default();
     let fm = cm.new_source_file(FileName::Custom("input.ts".into()).into(), source.to_string());
+    let handler = Handler::with_emitter_writer(Box::new(std::io::sink()), Some(cm.clone()));
 
     let lexer = Lexer::new(
         Syntax::Typescript(Default::default()),
@@ -533,12 +534,31 @@ fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, String> {
 
     let mut parser = Parser::new_from(lexer);
     for error in parser.take_errors() {
-        return Err(format!("{error:?}"));
+        return Err(format_parse_error(&cm, &fm, &error.into_diagnostic(&handler)));
     }
 
     parser
         .parse_typescript_module()
-        .map_err(|error| format!("{error:?}"))
+        .map_err(|error| format_parse_error(&cm, &fm, &error.into_diagnostic(&handler)))
+}
+
+fn format_parse_error<'a>(cm: &Lrc<SourceMap>, fm: &Lrc<swc_common::SourceFile>, diagnostic: &DiagnosticBuilder<'a>) -> String {
+    let primary = diagnostic.span.primary_span();
+    let span = primary.unwrap_or_else(|| Span::new(fm.start_pos, fm.start_pos));
+    let location = cm.lookup_char_pos(span.lo());
+    let message = diagnostic
+        .message
+        .first()
+        .map(|message| message.0.clone())
+        .unwrap_or_else(|| "invalid TypeScript syntax".to_string());
+
+    format!(
+        "{}:{}:{}: {}",
+        location.file.name,
+        location.line,
+        location.col.to_usize() + 1,
+        message
+    )
 }
 
 fn find_main(module: &swc_ecma_ast::Module) -> Result<&swc_ecma_ast::FnDecl, String> {
