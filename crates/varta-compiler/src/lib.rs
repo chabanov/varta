@@ -10,6 +10,8 @@ mod parse;
 #[cfg(test)]
 mod result_tests;
 mod source;
+#[cfg(test)]
+mod string_operation_tests;
 
 pub use error::CompilerError;
 

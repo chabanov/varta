@@ -151,8 +151,22 @@ export function main(): void {
 ```
 
 Host results are copied into immutable, bounded storage that lives until the run
-ends. Every read still needs the corresponding capability. String concatenation,
-comparison and garbage collection are not implemented yet. See the
+ends. Every read still needs the corresponding capability. Strings support `+`,
+`==`, `!=`, `===`, `!==`, `<`, `<=`, `>` and `>=`:
+
+```ts
+export function main(): void {
+  const message = "Привіт" + " 🦀";
+  console.log(message == "Привіт 🦀"); // 1
+  console.log("apple" < "banana");   // 1
+}
+```
+
+Comparisons use content and UTF-16 code-unit order, without locale sorting or
+normalization. Both operands must be strings; numbers are not converted to text.
+One string is limited to 1 MiB of UTF-8 bytes. Allocations share the memory/fuel
+budgets and live until the run ends; garbage collection is not implemented yet.
+See the [operator contract](docs/architecture.md#string-operators) and
 [ownership contract](docs/architecture.md#string-values-and-ownership).
 Unsupported constructs, top-level effects and type mismatches fail
 explicitly. There is no general Node/npm compatibility or async execution yet.

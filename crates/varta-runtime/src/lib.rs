@@ -237,6 +237,8 @@ impl Drop for Deadline {
 #[cfg(test)]
 mod result_tests;
 #[cfg(test)]
+mod string_operation_tests;
+#[cfg(test)]
 mod string_tests;
 #[cfg(test)]
 mod tests;

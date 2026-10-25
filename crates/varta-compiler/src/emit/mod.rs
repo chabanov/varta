@@ -23,7 +23,7 @@ struct Emitter<'a> {
     local_slots: Vec<u32>,
     temporary: u32,
     string_temporary: u32,
-    snapshot: Option<u32>,
+    helpers: &'a BTreeMap<strings::Helper, u32>,
     result_len: u32,
     result_status: u32,
 }
@@ -31,8 +31,15 @@ struct Emitter<'a> {
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     let mut hosts = BTreeSet::new();
     let mut strings = BTreeMap::new();
+    let mut helpers = BTreeSet::new();
     for function in &program.functions {
-        collect(&function.body, &function.source, &mut hosts, &mut strings);
+        collect(
+            &function.body,
+            &function.source,
+            &mut hosts,
+            &mut strings,
+            &mut helpers,
+        );
     }
     let mut offsets = BTreeMap::new();
     let mut offset = 0usize;
@@ -82,10 +89,11 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             ))
         })
         .collect();
-    let needs_snapshot = hosts
-        .keys()
-        .any(|h| matches!(h, Host::EnvGet | Host::FsRead | Host::NetGet));
-    let snapshot_type = needs_snapshot.then(|| intern((vec![ValType::I32; 2], vec![ValType::I64])));
+    let helper_types: BTreeMap<_, _> = helpers
+        .iter()
+        .map(|helper| (*helper, intern(helper.signature())))
+        .collect();
+    let needs_arena = helpers.iter().any(|helper| helper.needs_arena());
     if types.len() as usize > varta_common::abi::MAX_WASM_SIGNATURES {
         return Err(CompilerError::Invalid(
             "Wasm signature complexity exceeds limits".into(),
@@ -106,8 +114,8 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     for index in function_types {
         functions.function(index);
     }
-    if let Some(index) = snapshot_type {
-        functions.function(index);
+    for index in helper_types.values() {
+        functions.function(*index);
     }
     module.section(&functions);
     let mut memory = wasm_encoder::MemorySection::new();
@@ -141,7 +149,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         &wasm_encoder::ConstExpr::i32_const(0),
     );
     let arena = globals.len();
-    if needs_snapshot {
+    if needs_arena {
         globals.global(
             wasm_encoder::GlobalType {
                 val_type: ValType::I32,
@@ -153,7 +161,16 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     module.section(&globals);
     let functions_begin = hosts.len() as u32;
-    let snapshot = needs_snapshot.then_some(functions_begin + program.functions.len() as u32);
+    let helpers: BTreeMap<_, _> = helpers
+        .into_iter()
+        .enumerate()
+        .map(|(index, helper)| {
+            (
+                helper,
+                functions_begin + program.functions.len() as u32 + index as u32,
+            )
+        })
+        .collect();
     let mut exports = wasm_encoder::ExportSection::new();
     exports.export("memory", wasm_encoder::ExportKind::Memory, 0);
     exports.export(
@@ -193,7 +210,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             local_slots,
             temporary,
             string_temporary: temporary + 1,
-            snapshot,
+            helpers: &helpers,
             result_len,
             result_status,
         };
@@ -215,8 +232,8 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         body.instruction(&I::End);
         code.function(&body);
     }
-    if needs_snapshot {
-        code.function(&strings::snapshot(arena));
+    for helper in helpers.keys() {
+        code.function(&helper.body(arena));
     }
     module.section(&code);
     let mut data = wasm_encoder::DataSection::new();
@@ -259,6 +276,7 @@ fn collect_expr<'a>(
     source: &'a crate::source::Source,
     hosts: &mut BTreeSet<Host>,
     strings: &mut BTreeMap<String, (swc_common::Span, &'a crate::source::Source)>,
+    helpers: &mut BTreeSet<strings::Helper>,
 ) {
     match &expr.kind {
         E::String(s) => {
@@ -266,21 +284,31 @@ fn collect_expr<'a>(
         }
         E::Host(host, args) => {
             hosts.insert(*host);
+            if matches!(host, Host::EnvGet | Host::FsRead | Host::NetGet) {
+                helpers.insert(strings::Helper::Snapshot);
+            }
             for arg in args {
-                collect_expr(arg, source, hosts, strings);
+                collect_expr(arg, source, hosts, strings, helpers);
             }
         }
         E::Call(_, args) => {
             for arg in args {
-                collect_expr(arg, source, hosts, strings);
+                collect_expr(arg, source, hosts, strings, helpers);
             }
         }
-        E::Binary(_, a, b) => {
-            collect_expr(a, source, hosts, strings);
-            collect_expr(b, source, hosts, strings);
+        E::Binary(op, a, b) => {
+            if a.ty == Type::String {
+                helpers.insert(if *op == BinaryOp::Add {
+                    strings::Helper::Concat
+                } else {
+                    strings::Helper::Compare
+                });
+            }
+            collect_expr(a, source, hosts, strings, helpers);
+            collect_expr(b, source, hosts, strings, helpers);
         }
         E::Negative(a) | E::Not(a) | E::Capture(a) | E::ResultField(_, a) => {
-            collect_expr(a, source, hosts, strings)
+            collect_expr(a, source, hosts, strings, helpers)
         }
         _ => {}
     }
@@ -290,37 +318,38 @@ fn collect<'a>(
     source: &'a crate::source::Source,
     hosts: &mut BTreeSet<Host>,
     strings: &mut BTreeMap<String, (swc_common::Span, &'a crate::source::Source)>,
+    helpers: &mut BTreeSet<strings::Helper>,
 ) {
     for statement in statements {
         match statement {
             S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
-                collect_expr(e, source, hosts, strings)
+                collect_expr(e, source, hosts, strings, helpers)
             }
-            S::Block(b) => collect(b, source, hosts, strings),
+            S::Block(b) => collect(b, source, hosts, strings, helpers),
             S::If(e, a, b) => {
-                collect_expr(e, source, hosts, strings);
-                collect(a, source, hosts, strings);
-                collect(b, source, hosts, strings);
+                collect_expr(e, source, hosts, strings, helpers);
+                collect(a, source, hosts, strings, helpers);
+                collect(b, source, hosts, strings, helpers);
             }
             S::While(e, b) => {
-                collect_expr(e, source, hosts, strings);
-                collect(b, source, hosts, strings);
+                collect_expr(e, source, hosts, strings, helpers);
+                collect(b, source, hosts, strings, helpers);
             }
             S::For(a, test, update, b) => {
-                collect(a, source, hosts, strings);
+                collect(a, source, hosts, strings, helpers);
                 if let Some(e) = test {
-                    collect_expr(e, source, hosts, strings);
+                    collect_expr(e, source, hosts, strings, helpers);
                 }
-                collect(update, source, hosts, strings);
-                collect(b, source, hosts, strings);
+                collect(update, source, hosts, strings, helpers);
+                collect(b, source, hosts, strings, helpers);
             }
             S::Switch { value, cases, .. } => {
-                collect_expr(value, source, hosts, strings);
+                collect_expr(value, source, hosts, strings, helpers);
                 for (e, b) in cases {
                     if let Some(e) = e {
-                        collect_expr(e, source, hosts, strings);
+                        collect_expr(e, source, hosts, strings, helpers);
                     }
-                    collect(b, source, hosts, strings);
+                    collect(b, source, hosts, strings, helpers);
                 }
             }
             _ => {}

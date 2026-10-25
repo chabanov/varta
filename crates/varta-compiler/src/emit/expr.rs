@@ -74,10 +74,30 @@ impl Emitter<'_> {
                 self.code.push(I::Call(self.hosts[host]));
                 if expr.ty == Type::String {
                     self.code.push(I::GlobalGet(self.result_len));
-                    let snapshot = self.snapshot.ok_or_else(|| {
-                        CompilerError::Internal("missing string snapshot helper".into())
-                    })?;
-                    self.code.push(I::Call(snapshot));
+                    self.string_helper(strings::Helper::Snapshot)?;
+                }
+            }
+            E::Binary(op, left, right) if left.ty == Type::String => {
+                self.expr(left)?;
+                self.expr(right)?;
+                if *op == BinaryOp::Add {
+                    self.string_helper(strings::Helper::Concat)?;
+                } else {
+                    self.string_helper(strings::Helper::Compare)?;
+                    self.code.push(I::I32Const(0));
+                    self.code.push(match op {
+                        BinaryOp::EqEq | BinaryOp::EqEqEq => I::I32Eq,
+                        BinaryOp::NotEq | BinaryOp::NotEqEq => I::I32Ne,
+                        BinaryOp::Lt => I::I32LtS,
+                        BinaryOp::LtEq => I::I32LeS,
+                        BinaryOp::Gt => I::I32GtS,
+                        BinaryOp::GtEq => I::I32GeS,
+                        _ => {
+                            return Err(CompilerError::Internal(
+                                "unlowered string operator".into(),
+                            ));
+                        }
+                    });
                 }
             }
             E::Binary(op, left, right)
@@ -118,6 +138,15 @@ impl Emitter<'_> {
                 });
             }
         }
+        Ok(())
+    }
+
+    fn string_helper(&mut self, helper: strings::Helper) -> Result<()> {
+        let index = self
+            .helpers
+            .get(&helper)
+            .ok_or_else(|| CompilerError::Internal("missing string helper".into()))?;
+        self.code.push(I::Call(*index));
         Ok(())
     }
 }

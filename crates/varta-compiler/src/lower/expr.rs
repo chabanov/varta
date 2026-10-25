@@ -65,7 +65,6 @@ impl Lower<'_> {
             ast::Expr::Bin(binary) => {
                 let left = self.expr(&binary.left)?;
                 let right = self.expr(&binary.right)?;
-                scalar(left.ty)?;
                 if left.ty != right.ty {
                     return Err(self.source.locate(
                         type_error(format!(
@@ -76,8 +75,8 @@ impl Lower<'_> {
                     ));
                 }
                 let result = match binary.op {
-                    ast::BinaryOp::Add
-                    | ast::BinaryOp::Sub
+                    ast::BinaryOp::Add if matches!(left.ty, Type::Number | Type::String) => left.ty,
+                    ast::BinaryOp::Sub
                     | ast::BinaryOp::Mul
                     | ast::BinaryOp::Div
                     | ast::BinaryOp::Mod
@@ -89,15 +88,23 @@ impl Lower<'_> {
                     | ast::BinaryOp::LtEq
                     | ast::BinaryOp::Gt
                     | ast::BinaryOp::GtEq
-                        if left.ty == Type::Number =>
+                        if matches!(left.ty, Type::Number | Type::String) =>
                     {
                         Type::Boolean
                     }
                     ast::BinaryOp::EqEq
                     | ast::BinaryOp::EqEqEq
                     | ast::BinaryOp::NotEq
-                    | ast::BinaryOp::NotEqEq => Type::Boolean,
-                    ast::BinaryOp::LogicalAnd | ast::BinaryOp::LogicalOr => left.ty,
+                    | ast::BinaryOp::NotEqEq
+                        if matches!(left.ty, Type::Number | Type::Boolean | Type::String) =>
+                    {
+                        Type::Boolean
+                    }
+                    ast::BinaryOp::LogicalAnd | ast::BinaryOp::LogicalOr
+                        if matches!(left.ty, Type::Number | Type::Boolean) =>
+                    {
+                        left.ty
+                    }
                     _ => return Err(unsupported("binary operator")),
                 };
                 (

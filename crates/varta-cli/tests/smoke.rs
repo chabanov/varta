@@ -706,6 +706,133 @@ impl Drop for RegressionProject {
 }
 
 #[test]
+fn string_operators_preserve_module_calls_operand_order_and_results_in_every_target() {
+    let project = RegressionProject::new(
+        r#"
+import {join,less} from "./strings.ts";
+function part(name:string):string{console.log(name);return varta.env.get(name);}
+export function main():void{
+ const saved=varta.result.capture(varta.env.get("VARTA_OP_NAME"));
+ const pair=part("VARTA_OP_LEFT")+part("VARTA_OP_RIGHT");
+ const combined=join(join(saved.value," "),pair);
+ const emptyLeft=part("VARTA_OP_EMPTY")+part("VARTA_OP_RIGHT");
+ const same=part("VARTA_OP_LEFT")==part("VARTA_OP_LEFT");
+ const denied=varta.result.capture(varta.env.get("VARTA_OP_SECRET"));
+ const fallback=denied.value+"fallback";const matched=fallback=="fallback";
+ console.log(varta.result.status());console.log(combined);console.log(saved.value);
+ console.log(saved.ok);console.log(saved.status);console.log(pair=="AB");
+ console.log(emptyLeft);console.log(same);console.log(less("🙂","\uE000"));
+ console.log(""+combined==combined+"");console.log(matched);console.log(denied.status);
+}
+"#,
+        serde_json::json!({"env":{"get":["VARTA_OP_NAME","VARTA_OP_LEFT","VARTA_OP_RIGHT","VARTA_OP_EMPTY"]}}),
+    );
+    fs::write(project.0.join("src/strings.ts"),"export function join(a:string,b:string):string{return a+b;} export function less(a:string,b:string):boolean{return a<b;}").unwrap();
+    let check = project.command(&["check"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut dev = varta();
+    dev.current_dir(&project.0).arg("dev");
+    let mut run = varta();
+    run.current_dir(&project.0).args(["run", "dist/app.wasm"]);
+    let mut native = Command::new(project.0.join("dist/app"));
+    native.current_dir(&project.0);
+    for mut process in [dev, run, native] {
+        let output = process
+            .env("VARTA_OP_NAME", "Привіт 🦀")
+            .env("VARTA_OP_LEFT", "A")
+            .env("VARTA_OP_RIGHT", "B")
+            .env("VARTA_OP_EMPTY", "")
+            .env("VARTA_OP_SECRET", "HIDDEN_OPERATOR_VALUE")
+            .output()
+            .unwrap();
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert_eq!(
+            text.matches("varta log: VARTA_OP_LEFT\n").count(),
+            3,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("varta log: VARTA_OP_RIGHT\n").count(),
+            2,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("varta log: VARTA_OP_EMPTY\n").count(),
+            1,
+            "{text}"
+        );
+        assert!(
+            text.contains("varta log: VARTA_OP_LEFT\nvarta log: VARTA_OP_RIGHT"),
+            "{text}"
+        );
+        assert!(!text.contains("HIDDEN_OPERATOR_VALUE"), "{text}");
+        let expected = [
+            "1",
+            "Привіт 🦀 AB",
+            "Привіт 🦀",
+            "1",
+            "0",
+            "1",
+            "B",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+        ]
+        .map(|value| format!("varta log: {value}"))
+        .join("\n");
+        assert!(text.contains(&expected), "{text}");
+    }
+}
+
+#[test]
+fn concatenated_resources_keep_filesystem_network_and_host_policy_boundaries() {
+    let project = RegressionProject::new(
+        r#"
+export function main():void{
+ const base=varta.env.get("VARTA_OP_ROOT");
+ const allowed=varta.result.capture(varta.fs.read(base+"/allowed.txt"));
+ const outside=varta.result.capture(varta.fs.read(base+"/../secret.txt"));
+ const net=varta.result.capture(varta.net.fetch("http://127.0.0.1:"+"1/private"));
+ console.log(allowed.ok);console.log(allowed.value);console.log(allowed.status);
+ console.log(outside.ok);console.log(outside.value);console.log(net.ok);console.log(net.status);
+}
+"#,
+        serde_json::json!({}),
+    );
+    let root = project.0.canonicalize().unwrap();
+    let data = root.join("data");
+    fs::create_dir(&data).unwrap();
+    fs::write(data.join("allowed.txt"), "VISIBLE_OPERATOR_FILE").unwrap();
+    fs::write(root.join("secret.txt"), "HIDDEN_OPERATOR_FILE").unwrap();
+    project.set_capabilities(serde_json::json!({"env":{"get":["VARTA_OP_ROOT"]},"fs":{"read":[format!("{}/**",data.display())]},"net":{"fetch":[]}}));
+    project.host_policy(serde_json::json!([{"id":"env.get","patterns":["VARTA_OP_ROOT"]}]));
+    for restricted in [false, true] {
+        let mut process = varta();
+        process
+            .current_dir(&project.0)
+            .arg("dev")
+            .env("VARTA_OP_ROOT", &data);
+        if restricted {
+            process.args(["--policy", "host-policy.json"]);
+        }
+        let output = process.output().unwrap();
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(!text.contains("HIDDEN_OPERATOR_FILE"), "{text}");
+        if restricted {
+            assert!(text.contains("varta log: 0\nvarta log: \nvarta log: 1\nvarta log: 0\nvarta log: \nvarta log: 0\nvarta log: 1"),"{text}");
+        } else {
+            assert!(text.contains("varta log: 1\nvarta log: VISIBLE_OPERATOR_FILE\nvarta log: 0\nvarta log: 0\nvarta log: \nvarta log: 0\nvarta log: 1"),"{text}");
+        }
+    }
+}
+
+#[test]
 fn captured_results_keep_values_statuses_and_types_across_modules_in_every_target() {
     let project = RegressionProject::new(
         r#"
@@ -1191,6 +1318,9 @@ fn all_project_commands_reject_the_same_type_and_subset_errors() {
         "throw new Error('must not disappear'); export function main():void {}",
         "export function main():void { console.log(1.5); }",
         "export function main():void { varta.result.capture(42); }",
+        "export function main():void { console.log(\"x\"+42); }",
+        "export function main():void { console.log(\"x\"<false); }",
+        "export function main():void { console.log(\"x\"*\"y\"); }",
         "export function main():void { const r=varta.result.capture(varta.time.now()); r.status=0; }",
         "export function main():void { const r:VartaResult<string>=varta.result.capture(varta.time.now()); }",
         "export function main( {",

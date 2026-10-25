@@ -103,8 +103,8 @@ Regression coverage includes Unicode/empty values, recursive and mixed-signature
 functions, scope/control-flow slots, cross-module returns, native and Wasm runs,
 multiple host arguments, dynamic environment/filesystem permission denials,
 host ceilings, fuel exhaustion, and exact arena-boundary behavior with additional
-test fuel. Snapshots live until execution ends; reclamation, concatenation,
-comparison and implicit string coercion are not implemented yet.
+test fuel. Snapshots live until execution ends; reclamation and implicit string
+coercion remain unsupported. String operators are covered by the follow-up below.
 
 ## Completed follow-up: programmatic host errors
 
@@ -123,14 +123,31 @@ parameter budgets, identical check/build/dev rejection, Wasm/native execution,
 host ceilings, denied network/process calls and authorized process exit. Resource
 traps remain execution failures; capture does not introduce general exceptions.
 
-## Next milestone: string operations and reclamation
+## Completed follow-up: string comparison and concatenation
+
+String `+` now creates immutable concatenated values, with empty-operand sharing,
+left-to-right single evaluation and bounded allocation. Equality compares content;
+ordering uses UTF-16 code units without normalization or locale collation.
+Both operands must be strings. Host snapshots and concatenations share the same
+checked arena; each string is bounded to 1 MiB of UTF-8 bytes. Comparisons require
+no allocation, and pure string helpers do not affect saved or live host status.
+Helper types/indices are resolved conditionally, including with the maximum user
+function count. Host imports, capabilities, ABI and packaging are unchanged.
+
+Regression coverage includes all eight comparisons across 484 pairs of empty,
+NUL, ASCII, combining and BMP/supplementary Unicode samples against UTF-16 order;
+nested/cross-module concatenation, retained host/captured values, operand evaluation
+order, native/Wasm execution, diagnostic ranges, constructed resource denials,
+per-value and exact arena limits, growth failures and comparison fuel exhaustion.
+
+## Next milestone: string memory reclamation
 
 Keep the secure subset small while improving usability:
 
-1. Define string comparison, concatenation and Unicode semantics, with bounded
-   allocation and behavior tests for empty and non-ASCII values.
-2. Define safe reclamation before adding arrays or objects. Preserve immutable
-   retained values and explicit memory/fuel budgets.
+1. Define how dead intermediate strings are reclaimed while preserving aliases,
+   function arguments/returns, captured values and immutable source data.
+2. Implement bounded reclamation and test long-running allocation patterns before
+   adding arrays or objects. Preserve explicit memory/fuel budgets.
 
 Exit criteria: identical check/build/dev acceptance; documented module and memory
 semantics; behavior tests for every construct; denial tests for each boundary;

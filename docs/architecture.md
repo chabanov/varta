@@ -59,6 +59,7 @@ Supported:
 - integer arithmetic, comparisons, boolean literals, `!`, `&&` and `||`;
 - if/else, while, for, switch, unlabelled break/continue, return;
 - UTF-8 string literals and retained host results, including dynamic host arguments;
+- string concatenation with `+` and content equality/ordering comparisons;
 - type-only interfaces/aliases and built-in declarations.
 
 Parameters require explicit primitive or `VartaResult<T>` annotations. Numeric/void function
@@ -69,9 +70,9 @@ String-returning functions require explicit `: string` result annotations;
 result-returning functions require `: VartaResult<T>`. String and captured-result
 types may be inferred from local initializers. Assignment, parameters and
 returns require exact types; const and use-before-initialization rules also apply
-to strings. Conditions, arithmetic and switch remain number/boolean operations.
-String concatenation, comparison, indexing, properties, interpolation, implicit
-coercion and string truthiness are not yet implemented and fail explicitly.
+to strings. Conditions, numeric arithmetic and switch remain number/boolean operations.
+String indexing, properties, interpolation, implicit coercion, compound assignment
+and string truthiness are not yet implemented and fail explicitly.
 
 Numbers have signed **i32** Wasm semantics: addition/subtraction/multiplication
 wrap, division truncates, and invalid division traps. This is intentionally not
@@ -101,19 +102,59 @@ the same slice through nested, recursive and cross-module calls. They never
 retain an alias into the reusable host buffer. Empty/failed results use an empty
 slice and allocate nothing; copying does not clear or replace the host status.
 
-The execution arena starts after the full maximum host-result buffer and grows
-memory only in whole Wasm pages, within the existing 8 MiB limit. Its private
-cursor cannot be changed by source code or host result writes. Snapshots remain
+Host snapshots and nonempty concatenation results share an execution arena after
+the full maximum host-result buffer. It grows memory only in whole Wasm pages,
+within the existing 8 MiB limit. Its private cursor cannot be changed by source
+code or host result writes. Allocated string values remain
 alive until the execution ends, even when their variables leave scope or the
 result is discarded. There is no garbage collection or per-value reclamation yet.
 Arena exhaustion or failed growth traps before a new slice is published; no
-previously saved bytes are overwritten. Snapshot copying consumes guest fuel, so
+previously saved bytes are overwritten. String copying consumes guest fuel, so
 the default fuel budget can stop allocation before the memory boundary. Each run
 creates a fresh instance and arena.
 
 Dynamic strings passed to host calls follow exactly the existing input bounds,
 UTF-8 checks and operation/resource authorization. A string value conveys no
 authority. No new host import, capability, manifest or artifact version is needed.
+
+### String operators
+
+`string + string` concatenates UTF-8 content into a new immutable slice. Both
+operands are evaluated exactly once, left to right, including nested user/host
+calls. If either operand is empty, the result shares the other immutable slice
+without allocating; the other expression is still evaluated. Nonempty operands
+are copied into one arena allocation, with length overflow, per-value size,
+arena and memory-growth checks before publishing the new slice. Existing aliases,
+captured results and source operands retain their original content. There is no
+implicit conversion: `"count=" + 1` is a type error. Use `s = s + suffix` for
+reassignment; `+=` remains outside the supported compound-assignment subset.
+
+`==`, `===`, `!=` and `!==` compare string content, not pointers. Both operands
+must be strings, so loose and strict equality have the same behavior within this
+subset. `<`, `<=`, `>` and `>=` use lexicographic **UTF-16 code-unit order**, with a
+shorter prefix sorting first. They are case-sensitive and perform no Unicode
+normalization or locale collation: `"é"` differs from `"e\u0301"`, and `"🙂"`
+sorts before `"\uE000"`. Strings remain stored as valid UTF-8; isolated surrogate
+values remain unsupported. Embedded NUL bytes are ordinary content, not terminators.
+
+Comparison allocates nothing and does not call the host or change result status.
+The helper compares valid UTF-8 bytes with EE/EF lead bytes ordered above F0–F4,
+preserving UTF-16 order around BMP/supplementary boundaries without materializing
+a UTF-16 copy. Matching handles can return immediately; other comparisons visit
+the common byte prefix and stop at the first difference. Loops consume guest fuel.
+Neither concatenation nor comparison resets `varta.result.status()`, and saved
+`VartaResult<T>` pairs remain unchanged.
+
+Each runtime string value is capped at **1 MiB of UTF-8 bytes**. Concatenations and
+host snapshots share the bounded 8 MiB memory budget and execution lifetime;
+discarded intermediate strings are not reclaimed yet. Copying and comparisons
+may exhaust the default fuel budget before reaching the byte/memory limits.
+Size/allocation/fuel failures stop execution rather than becoming a captured host
+failure. New helpers are emitted only when used: snapshot, concatenation and
+comparison, with signatures and function indices resolved from typed tables.
+Programs using only comparisons need no arena. Host ABI and artifact versions
+remain unchanged, and constructed paths/URLs still undergo the original resource
+authorization and input checks.
 
 ## Local modules
 
@@ -478,6 +519,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | --- | --- |
 | Guest linear memory | 8 MiB, enforced by Store limits including memory.grow |
 | Retained string storage | Within the 8 MiB memory budget, after the 1 MiB host-result reservation and static page |
+| One string value | 1 MiB of UTF-8 bytes |
 | Guest instructions | 1,000,000 fuel units |
 | Execution/HTTP deadline | 5 seconds |
 | Host calls | 1024 per execution |
@@ -489,7 +531,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Manifest/config | 256 KiB |
 | Wasm signatures | 256 distinct complete parameter/result signatures |
 | Function parameters | 32 physical Wasm values; each captured result uses two |
-| Defined functions | 256 user functions plus at most one compiler string helper |
+| Defined functions | 256 user functions plus at most three compiler string helpers |
 
 Preflight limits also bound signatures, function count/body size, memories,
 tables and globals before native compilation. Store budgets apply before Wasm

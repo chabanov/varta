@@ -43,8 +43,11 @@ fn unsupported_string_operations_and_type_errors_remain_explicit() {
         "export function main():void{const s=\"x\";s=\"y\";}",
         "function f(s:string):string{return 1;} export function main():void{}",
         "function f(s:string):string{return s;} export function main():void{f(1);}",
-        "export function main():void{console.log(\"a\"+\"b\");}",
-        "export function main():void{console.log(\"a\"==\"a\");}",
+        "export function main():void{console.log(\"a\"+1);}",
+        "export function main():void{console.log(\"a\"-\"b\");}",
+        "export function main():void{console.log(\"a\"*\"b\");}",
+        "export function main():void{console.log(\"a\"&&\"b\");}",
+        "export function main():void{console.log(\"a\"==1);}",
         "export function main():void{if(\"x\"){}}",
         "export function main():void{switch(\"x\"){default:break;}}",
         "function f(s:void):void{} export function main():void{}",
@@ -57,17 +60,17 @@ fn unsupported_string_operations_and_type_errors_remain_explicit() {
 }
 
 #[test]
-fn string_snapshot_helper_fits_the_full_user_function_budget() {
+fn string_helpers_fit_the_full_user_function_budget() {
     let mut source = String::new();
     for index in 1..varta_common::abi::MAX_USER_FUNCTIONS {
         source.push_str(&format!("function f{index}():void{{}}\n"));
     }
-    source.push_str("export function main():void{let s=varta.env.get(\"DENIED\");console.log(varta.result.status());console.log(s);}");
+    source.push_str("export function main():void{let s=varta.env.get(\"DENIED\");console.log(varta.result.status());console.log(s+\"X\"==\"X\");}");
     let bytes = varta_compiler::compile_typescript(&source).unwrap();
     let result = VartaRuntime::new().run_wasm_bytes(&bytes, &[]).unwrap();
     assert_eq!(
         &result.lines[result.lines.len() - 2..],
-        ["varta log: 1", "varta log: "]
+        ["varta log: 1", "varta log: 1"]
     );
 }
 
