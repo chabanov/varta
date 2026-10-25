@@ -35,6 +35,7 @@ struct HostImports {
     fs_read: Option<u32>,
     process_exit: Option<u32>,
     net_fetch: Option<u32>,
+    net_get: Option<u32>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -49,6 +50,7 @@ struct HostUses {
     fs_read: bool,
     process_exit: bool,
     net_fetch: bool,
+    net_get: bool,
 }
 
 fn collect_host_uses_expr(expr: &Expr, uses: &mut HostUses) {
@@ -102,6 +104,12 @@ fn collect_host_uses_expr(expr: &Expr, uses: &mut HostUses) {
                 }
             } else if is_net_fetch_call(call) {
                 uses.net_fetch = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_net_get_call(call) {
+                uses.net_get = true;
+                uses.log_string = true;
                 for arg in &call.args {
                     collect_host_uses_expr(&arg.expr, uses);
                 }
@@ -302,6 +310,10 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
         host_imports.net_fetch = Some(next_import);
         next_import += 1;
     }
+    if host_uses.net_get {
+        host_imports.net_get = Some(next_import);
+        next_import += 1;
+    }
 
     let mut function_type_indices = Vec::with_capacity(functions.len());
     let mut arity_type_indices = std::collections::BTreeMap::new();
@@ -403,6 +415,10 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
         imports.import("varta", "net_fetch", wasm_encoder::EntityType::Function(3));
         let _ = index;
     }
+    if let Some(index) = host_imports.net_get {
+        imports.import("varta", "net_get", wasm_encoder::EntityType::Function(3));
+        let _ = index;
+    }
     wasm.section(&imports);
 
     // User/global function indices all land after host imports.
@@ -465,6 +481,8 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
 
     let mut exports = ExportSection::new();
     exports.export("memory", ExportKind::Memory, 0);
+    exports.export("heap", ExportKind::Global, 0);
+    exports.export("env_result_len", ExportKind::Global, 1);
     exports.export(
         "_start",
         ExportKind::Func,
@@ -688,6 +706,26 @@ fn compile_block(
                                 }
                             }
                         }
+                        if let Expr::Call(inner) = &*call.args[0].expr {
+                            if is_net_get_call(inner) && inner.args.len() == 1 {
+                                if let Expr::Lit(Lit::Str(value)) = &*inner.args[0].expr {
+                                    let text = value
+                                        .value
+                                        .as_str()
+                                        .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
+                                    let pointer = *string_offsets.get(text).ok_or_else(|| {
+                                        "internal error: missing string offset".to_string()
+                                    })?;
+                                    output.push(Instruction::I32Const(pointer as i32));
+                                    output.push(Instruction::I32Const(text.len() as i32));
+                                    output.push(Instruction::Call(host.net_get.unwrap()));
+                                    output.push(Instruction::GlobalGet(1));
+                                    output.push(Instruction::Call(host.log_string.unwrap()));
+                                    continue;
+                                }
+                            }
+                        }
+
                         match &*call.args[0].expr {
                             Expr::Lit(Lit::Str(value)) => {
                                 let text = value.value.as_str().ok_or_else(|| {
@@ -714,6 +752,7 @@ fn compile_block(
                         }
                         continue;
                     }
+
                 }
                 let produces_value = compile_expr(
                     &expr_stmt.expr,
@@ -1296,6 +1335,28 @@ fn compile_expr(
                 )?;
                 output.push(Instruction::Call(host.process_exit.unwrap()));
                 Ok(false)
+            } else if is_net_get_call(call) {
+                if call.args.len() != 1 {
+                    return Err("varta.net.get() expects one string argument".into());
+                }
+                match &*call.args[0].expr {
+                    Expr::Lit(Lit::Str(value)) => {
+                        let text = value
+                            .value
+                            .as_str()
+                            .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
+                        let pointer = *string_offsets.get(text).ok_or_else(|| {
+                            "internal error: missing string offset".to_string()
+                        })?;
+                        output.push(Instruction::I32Const(pointer as i32));
+                        output.push(Instruction::I32Const(text.len() as i32));
+                        output.push(Instruction::Call(host.net_get.unwrap()));
+                        output.push(Instruction::GlobalGet(1));
+                        output.push(Instruction::Call(host.log_string.unwrap()));
+                        Ok(false)
+                    }
+                    _ => Err("varta.net.get() requires a string literal".into()),
+                }
             } else if is_net_fetch_call(call) {
                 if call.args.len() != 1 {
                     return Err("varta.net.fetch() expects one string argument".into());
@@ -1621,6 +1682,30 @@ fn is_fs_read_call(call: &swc_ecma_ast::CallExpr) -> bool {
     );
     property_ok && object_ok
 }
+
+fn is_net_get_call(call: &swc_ecma_ast::CallExpr) -> bool {
+    let swc_ecma_ast::Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = &**callee else {
+        return false;
+    };
+    let property_ok = matches!(
+        member.prop,
+        swc_ecma_ast::MemberProp::Ident(ref ident) if ident.sym == "get"
+    );
+    let object_ok = matches!(
+        &*member.obj,
+        Expr::Member(net_member)
+            if matches!(&*net_member.obj, Expr::Ident(ident) if ident.sym == "varta")
+                && matches!(
+                    net_member.prop,
+                    swc_ecma_ast::MemberProp::Ident(ref ident) if ident.sym == "net"
+                )
+    );
+    property_ok && object_ok
+}
+
 
 fn binding_name(pat: &swc_ecma_ast::Pat) -> Option<String> {
     match pat {

@@ -1,4 +1,4 @@
-pub type CapabilityId = &'static str;
+pub type CapabilityId = String;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityGrant {
@@ -124,7 +124,7 @@ impl VartaConfig {
         let mut grants = Vec::new();
         for (namespace, operations) in &self.capabilities {
             for (operation, spec) in operations {
-                let id = Box::leak(format!("{namespace}.{operation}").into_boxed_str());
+                let id = format!("{namespace}.{operation}");
                 let value = match spec {
                     CapabilitySpec::Patterns(patterns) => {
                         if namespace == "net" {
@@ -146,3 +146,84 @@ impl VartaConfig {
 /// Placeholder for an opaque host handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostHandle(u64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_config() -> VartaConfig {
+        VartaConfig {
+            entry: "src/main.ts".to_string(),
+            target: "native".to_string(),
+            policy: "strict".to_string(),
+            out: "dist/app".to_string(),
+            capabilities: std::collections::BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn accepts_valid_policy_profiles() {
+        for policy in ["strict", "compat"] {
+            let mut config = valid_config();
+            config.policy = policy.to_string();
+            config.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_policy() {
+        let mut config = valid_config();
+        config.policy = "permissive".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_overly_broad_pattern() {
+        let mut config = valid_config();
+        let mut operations = std::collections::BTreeMap::new();
+        operations.insert(
+            "read".to_string(),
+            CapabilitySpec::Patterns(vec!["*".to_string()]),
+        );
+        config.capabilities.insert("fs".to_string(), operations);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn normalizes_capability_manifest() {
+        let mut config = valid_config();
+        let mut operations = std::collections::BTreeMap::new();
+        operations.insert(
+            "fetch".to_string(),
+            CapabilitySpec::Patterns(vec!["http://127.0.0.1/**".to_string()]),
+        );
+        operations.insert("now".to_string(), CapabilitySpec::Enabled(true));
+        config
+            .capabilities
+            .insert("net".to_string(), operations.clone());
+
+        let mut fs_operations = std::collections::BTreeMap::new();
+        fs_operations.insert(
+            "read".to_string(),
+            CapabilitySpec::Patterns(vec!["/data/**".to_string()]),
+        );
+        config.capabilities.insert("fs".to_string(), fs_operations);
+
+        let grants = config.normalized_capabilities();
+        assert!(grants.iter().any(|grant| grant.id == "net.fetch"
+            && matches!(&grant.value, CapabilityValue::UrlGlobs(patterns) if patterns == &vec!["http://127.0.0.1/**".to_string()])));
+        assert!(
+            grants.iter().any(|grant| grant.id == "net.now"
+                && matches!(&grant.value, CapabilityValue::Boolean(true)))
+        );
+    }
+
+    #[test]
+    fn rejects_zero_port() {
+        let mut config = valid_config();
+        let mut operations = std::collections::BTreeMap::new();
+        operations.insert("listen".to_string(), CapabilitySpec::Ports(vec![0]));
+        config.capabilities.insert("http".to_string(), operations);
+        assert!(config.validate().is_err());
+    }
+}

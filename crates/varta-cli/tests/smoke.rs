@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn varta() -> Command {
@@ -8,11 +9,14 @@ fn varta() -> Command {
 }
 
 fn temp_project() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let thread = std::thread::current().id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("varta-smoke-{nanos}"))
+    std::env::temp_dir().join(format!("varta-smoke-{nanos}-{counter}-{thread:?}"))
 }
 
 fn combined(output: &std::process::Output) -> String {
@@ -283,6 +287,268 @@ fn manifest_validation_smoke_test() {
         "expected raw wasm artifact metadata, got: {}",
         combined(&inspect)
     );
+
+    let _ = fs::remove_dir_all(&project);
+}
+
+#[test]
+fn inspect_json_smoke_test() {
+    let project = temp_project();
+    fs::create_dir_all(project.join("src")).unwrap();
+
+    fs::write(
+        project.join("varta.config.json"),
+        r#"{
+  "entry": "src/main.ts",
+  "target": "native",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": {
+    "time": {
+      "now": true
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("src").join("main.ts"),
+        r#"export function main(): void {
+  console.log(varta.time.now());
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("varta.d.ts"),
+        r#"declare const varta: { time: { now(): number } };
+"#,
+    )
+    .unwrap();
+
+    let check = varta()
+        .current_dir(&project)
+        .arg("check")
+        .output()
+        .expect("failed to run varta check");
+    assert!(check.status.success(), "check failed: {}", combined(&check));
+
+    let build = varta()
+        .current_dir(&project)
+        .arg("build")
+        .output()
+        .expect("failed to run varta build");
+    assert!(build.status.success(), "build failed: {}", combined(&build));
+
+    let inspect = varta()
+        .current_dir(&project)
+        .arg("inspect")
+        .arg("dist/app.wasm")
+        .arg("--json")
+        .output()
+        .expect("failed to run varta inspect");
+    assert!(
+        inspect.status.success(),
+        "inspect failed: {}",
+        combined(&inspect)
+    );
+    let output = combined(&inspect);
+    assert!(output.contains("\"precompiled\":false"));
+    assert!(output.contains("\"capabilities\""));
+    assert!(output.contains("time.now"));
+
+    let _ = fs::remove_dir_all(&project);
+}
+
+#[test]
+fn invalid_capability_pattern_smoke_test() {
+    let project = temp_project();
+    fs::create_dir_all(project.join("src")).unwrap();
+
+    fs::write(
+        project.join("varta.config.json"),
+        r#"{
+  "entry": "src/main.ts",
+  "target": "native",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": {
+    "fs": {
+      "read": ["*"]
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("src").join("main.ts"),
+        "export function main(): void {\n  console.log(\"hello\");\n}\n",
+    )
+    .unwrap();
+
+    let build = varta()
+        .current_dir(&project)
+        .arg("build")
+        .output()
+        .expect("failed to run varta build");
+    assert!(!build.status.success(), "broad capability should fail validation");
+    assert!(
+        combined(&build).contains("unsafe pattern for fs.read: *"),
+        "expected capability pattern error, got: {}",
+        combined(&build)
+    );
+
+    let _ = fs::remove_dir_all(&project);
+}
+
+#[test]
+fn missing_capability_validation_smoke_test() {
+    let project = temp_project();
+    fs::create_dir_all(project.join("src")).unwrap();
+
+    fs::write(
+        project.join("varta.config.json"),
+        r#"{
+  "entry": "src/main.ts",
+  "target": "native",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": {}
+}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("src").join("main.ts"),
+        r#"export function main(): void {
+  console.log(varta.time.now());
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("varta.d.ts"),
+        r#"declare const varta: { time: { now(): number } };
+"#,
+    )
+    .unwrap();
+
+    let check = varta()
+        .current_dir(&project)
+        .arg("check")
+        .output()
+        .expect("failed to run varta check");
+    assert!(check.status.success(), "check failed: {}", combined(&check));
+
+    let build = varta()
+        .current_dir(&project)
+        .arg("build")
+        .output()
+        .expect("failed to run varta build");
+    assert!(build.status.success(), "build failed: {}", combined(&build));
+
+    let validate = varta()
+        .current_dir(&project)
+        .arg("validate")
+        .arg("dist/app.wasm")
+        .output()
+        .expect("failed to run varta validate");
+    assert!(
+        !validate.status.success(),
+        "missing capability should fail validation"
+    );
+    assert!(
+        combined(&validate).contains("requires capability namespace: time"),
+        "expected capability mismatch, got: {}",
+        combined(&validate)
+    );
+
+    let _ = fs::remove_dir_all(&project);
+}
+
+#[test]
+fn typed_host_declarations_smoke_test() {
+    let project = temp_project();
+    fs::create_dir_all(project.join("src")).unwrap();
+
+    fs::write(
+        project.join("varta.config.json"),
+        r#"{
+  "entry": "src/main.ts",
+  "target": "native",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": {
+    "time": {
+      "now": true
+    },
+    "env": {
+      "has": ["PATH"],
+      "print": ["PATH"],
+      "get": ["PATH"]
+    },
+    "fs": {
+      "read": ["/data/**"]
+    },
+    "process": {
+      "exit": true
+    },
+    "net": {
+      "fetch": ["https://api.example.com/**"]
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("src").join("main.ts"),
+        r#"declare const varta: {
+  time: { now(): number };
+  env: { has(name: string): boolean; print(name: string): void; get(name: string): string };
+  fs: { print(path: string): void; read(path: string): string };
+  process: { exit(code: number): void };
+  net: { fetch(url: string): number };
+};
+
+export function main(): void {
+  console.log(varta.time.now());
+  varta.env.print("PATH");
+  console.log(varta.env.has("PATH"));
+  console.log(varta.env.get("PATH"));
+  varta.fs.print("/data/hello.txt");
+  console.log(varta.fs.read("/data/hello.txt"));
+  varta.process.exit(0);
+  console.log(varta.net.fetch("https://api.example.com/health"));
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("varta.d.ts"),
+        r#"
+declare const varta: {
+  time: { now(): number };
+  env: { has(name: string): boolean; print(name: string): void; get(name: string): string };
+  fs: { print(path: string): void; read(path: string): string };
+  process: { exit(code: number): void };
+  net: { fetch(url: string): number };
+};
+"#,
+    )
+    .unwrap();
+
+    let check = varta()
+        .current_dir(&project)
+        .arg("check")
+        .output()
+        .expect("failed to run varta check");
+    assert!(check.status.success(), "check failed: {}", combined(&check));
 
     let _ = fs::remove_dir_all(&project);
 }

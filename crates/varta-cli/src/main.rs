@@ -11,7 +11,7 @@ const VARTA_HOST_DTS: &str = r#"declare const varta: {
   env: { has(name: string): boolean; print(name: string): void; get(name: string): string };
   fs: { print(path: string): void; read(path: string): string };
   process: { exit(code: number): void };
-  net: { fetch(url: string): number };
+  net: { fetch(url: string): number; get(url: string): string };
 };
 "#;
 
@@ -25,13 +25,13 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Initialize a new Varta project.
-    Init {
-        name: String,
-    },
+    Init { name: String },
     /// Check project types and capabilities.
     Check {
         #[arg(long, default_value = "varta.config.json")]
         config: String,
+        #[arg(long)]
+        json: bool,
     },
     /// Run a development Wasm build.
     Dev,
@@ -44,9 +44,7 @@ enum Commands {
         single: bool,
     },
     /// Run a Varta artifact.
-    Run {
-        path: String,
-    },
+    Run { path: String },
     /// Inspect binary metadata.
     Inspect {
         path: Option<String>,
@@ -55,6 +53,8 @@ enum Commands {
     },
     Validate {
         path: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -70,8 +70,12 @@ fn main() {
             }
             println!("initialized varta project: {name}");
         }
-        Some(Commands::Check { config }) => match check_project(&config) {
-            Ok(()) => println!("varta check: ok ({config})"),
+        Some(Commands::Check { config, json }) => match check_project(&config, json) {
+            Ok(()) => {
+                if !json {
+                    println!("varta check: ok ({config})");
+                }
+            }
             Err(error) => {
                 eprintln!("varta check failed: {error}");
                 std::process::exit(1);
@@ -122,13 +126,22 @@ fn main() {
         None => {
             run_self_app();
         }
-        Some(Commands::Validate { path }) => {
+        Some(Commands::Validate { path, json }) => {
             let target = path.unwrap_or_else(|| "dist/app".to_string());
-            if let Err(error) = validate_app(&target) {
-                eprintln!("varta validate failed: {error}");
+            if let Err(error) = validate_app(&target, json) {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({ "status": "failed", "error": error.to_string(), "artifact": target })
+                    );
+                } else {
+                    eprintln!("varta validate failed: {error}");
+                }
                 std::process::exit(1);
             }
-            println!("varta validate: ok ({target})");
+            if !json {
+                println!("varta validate: ok ({target})");
+            }
         }
         Some(Commands::Inspect { path, json }) => {
             if let Err(error) = inspect_app(&path.unwrap_or_else(|| "dist/app".to_string()), json) {
@@ -188,7 +201,7 @@ export function main(): void {
     Ok(())
 }
 
-fn check_project(config_path: &str) -> Result<(), VartaError> {
+fn check_project(config_path: &str, json: bool) -> Result<(), VartaError> {
     let source = fs::read_to_string(config_path).map_err(io_error)?;
     let base = Path::new(config_path)
         .parent()
@@ -197,46 +210,117 @@ fn check_project(config_path: &str) -> Result<(), VartaError> {
         .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
     config.validate()?;
 
-    println!("entry: {}", config.entry);
-    println!("policy: {}", config.policy);
-    println!("target: {}", config.target);
-    println!("capabilities: {}", config.normalized_capabilities().len());
+    let entry_path = base.join(&config.entry);
+    let capability_ids: Vec<String> = config
+        .normalized_capabilities()
+        .into_iter()
+        .map(|grant| grant.id)
+        .collect();
 
+    let mut deno_status = "skipped".to_string();
     if let Some(deno) = which_command("deno") {
         let mut check_command = std::process::Command::new(deno);
-        check_command.arg("check").arg(base.join(&config.entry));
+        check_command.arg("check").arg(&entry_path);
         let type_declarations = base.join("varta.d.ts");
         if type_declarations.exists() {
             check_command.arg(&type_declarations);
         }
-        let status = check_command.status().map_err(io_error)?;
-        if !status.success() {
+        let output = check_command.output().map_err(io_error)?;
+        if output.status.success() {
+            deno_status = "passed".to_string();
+        } else {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "entry": config.entry,
+                        "policy": config.policy,
+                        "target": config.target,
+                        "capabilities": capability_ids,
+                        "deno_type_check": "failed",
+                        "status": "failed",
+                    })
+                );
+            }
             return Err(VartaError::InvalidManifest(format!(
                 "typescript type check failed for {}",
                 config.entry
             )));
         }
-        println!("typescript: type checked with deno");
-    } else {
-        println!("typescript: skipping external type checker (deno not found)");
     }
 
-    let entry_path = base.join(&config.entry);
-    match fs::read_to_string(&entry_path) {
+    let parsed_items = match fs::read_to_string(&entry_path) {
         Ok(source) => match varta_compiler::parse_typescript(&source) {
-            Ok(items) => println!("typescript: parsed {items} top-level items"),
+            Ok(items) => Some(items),
             Err(error) => {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "entry": config.entry,
+                            "policy": config.policy,
+                            "target": config.target,
+                            "capabilities": capability_ids,
+                            "deno_type_check": deno_status,
+                            "status": "failed",
+                            "error": format!("typescript parse failed: {error}"),
+                        })
+                    );
+                }
                 return Err(VartaError::InvalidManifest(format!(
                     "typescript parse failed: {error}"
                 )));
             }
         },
         Err(error) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "entry": config.entry,
+                        "policy": config.policy,
+                        "target": config.target,
+                        "capabilities": capability_ids,
+                        "deno_type_check": deno_status,
+                        "status": "failed",
+                        "error": format!("failed to read entry {}: {error}", entry_path.display()),
+                    })
+                );
+            }
             return Err(VartaError::InvalidManifest(format!(
                 "failed to read entry {}: {error}",
                 entry_path.display()
             )));
         }
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "entry": config.entry,
+                "policy": config.policy,
+                "target": config.target,
+                "capabilities": capability_ids,
+                "deno_type_check": deno_status,
+                "parsed_top_level_items": parsed_items,
+                "status": "ok",
+            })
+        );
+    } else {
+        println!("entry: {}", config.entry);
+        println!("policy: {}", config.policy);
+        println!("target: {}", config.target);
+        println!("capabilities: {}", capability_ids.len());
+        if deno_status == "passed" {
+            println!("typescript: type checked with deno");
+        } else {
+            println!("typescript: skipping external type checker (deno not found)");
+        }
+        println!(
+            "typescript: parsed {} top-level items",
+            parsed_items.unwrap_or(0)
+        );
     }
 
     Ok(())
@@ -388,7 +472,7 @@ fn load_manifest_capabilities(artifact_path: &str) -> Vec<CapabilityGrant> {
         for capability in capabilities_list {
             if let Some(id) = capability.as_str() {
                 capabilities.push(CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::Boolean(true),
                 });
                 continue;
@@ -403,7 +487,7 @@ fn load_manifest_capabilities(artifact_path: &str) -> Vec<CapabilityGrant> {
                 .and_then(|value| value.as_array())
             {
                 CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::PathGlobs(
                         patterns
                             .iter()
@@ -413,7 +497,7 @@ fn load_manifest_capabilities(artifact_path: &str) -> Vec<CapabilityGrant> {
                 }
             } else if let Some(urls) = capability.get("urls").and_then(|value| value.as_array()) {
                 CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::UrlGlobs(
                         urls.iter()
                             .filter_map(|value| value.as_str().map(ToOwned::to_owned))
@@ -422,7 +506,7 @@ fn load_manifest_capabilities(artifact_path: &str) -> Vec<CapabilityGrant> {
                 }
             } else if let Some(ports) = capability.get("ports").and_then(|value| value.as_array()) {
                 CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::Ports(
                         ports
                             .iter()
@@ -432,7 +516,7 @@ fn load_manifest_capabilities(artifact_path: &str) -> Vec<CapabilityGrant> {
                 }
             } else {
                 CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::Boolean(
                         capability
                             .get("enabled")
@@ -554,7 +638,7 @@ fn parse_manifest_capabilities_bytes(bytes: &[u8]) -> Vec<CapabilityGrant> {
         for capability in capabilities_list {
             if let Some(id) = capability.as_str() {
                 capabilities.push(CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::Boolean(true),
                 });
                 continue;
@@ -569,7 +653,7 @@ fn parse_manifest_capabilities_bytes(bytes: &[u8]) -> Vec<CapabilityGrant> {
                 .and_then(|value| value.as_array())
             {
                 CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::PathGlobs(
                         patterns
                             .iter()
@@ -579,7 +663,7 @@ fn parse_manifest_capabilities_bytes(bytes: &[u8]) -> Vec<CapabilityGrant> {
                 }
             } else if let Some(urls) = capability.get("urls").and_then(|value| value.as_array()) {
                 CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::UrlGlobs(
                         urls.iter()
                             .filter_map(|value| value.as_str().map(ToOwned::to_owned))
@@ -588,7 +672,7 @@ fn parse_manifest_capabilities_bytes(bytes: &[u8]) -> Vec<CapabilityGrant> {
                 }
             } else if let Some(ports) = capability.get("ports").and_then(|value| value.as_array()) {
                 CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::Ports(
                         ports
                             .iter()
@@ -598,7 +682,7 @@ fn parse_manifest_capabilities_bytes(bytes: &[u8]) -> Vec<CapabilityGrant> {
                 }
             } else {
                 CapabilityGrant {
-                    id: Box::leak(id.to_string().into_boxed_str()),
+                    id: id.to_string(),
                     value: CapabilityValue::Boolean(
                         capability
                             .get("enabled")
@@ -621,7 +705,6 @@ fn inspect_app(path: &str, json: bool) -> Result<(), VartaError> {
         capabilities
     };
 
-    let capability_ids: Vec<&str> = capabilities.iter().map(|grant| grant.id).collect();
     let mut imports = Vec::new();
     let mut exports = Vec::new();
     let mut memories = 0u32;
@@ -662,6 +745,7 @@ fn inspect_app(path: &str, json: bool) -> Result<(), VartaError> {
         }
     }
 
+    let capability_ids: Vec<String> = capabilities.iter().map(|grant| grant.id.clone()).collect();
     if json {
         println!(
             "{}",
@@ -708,7 +792,8 @@ fn inspect_app(path: &str, json: bool) -> Result<(), VartaError> {
     Ok(())
 }
 
-fn validate_app(path: &str) -> Result<(), VartaError> {
+fn validate_app(path: &str, json: bool) -> Result<(), VartaError> {
+    let _ = json;
     let (bytes, precompiled, capabilities) = read_app_from_file(path)?;
     let capabilities = if capabilities.is_empty() {
         load_manifest_capabilities(path)
@@ -821,6 +906,15 @@ fn validate_app(path: &str) -> Result<(), VartaError> {
                 )));
             }
         }
+    }
+
+    if json {
+        let capability_ids: Vec<String> = capabilities.iter().map(|grant| grant.id.clone()).collect();
+        println!("{}", serde_json::json!({
+            "artifact": path,
+            "capabilities": capability_ids,
+            "status": "ok",
+        }));
     }
 
     Ok(())

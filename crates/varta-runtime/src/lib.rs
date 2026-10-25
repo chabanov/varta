@@ -400,6 +400,66 @@ impl VartaRuntime {
             },
         )?;
 
+        linker.func_wrap(
+            "varta",
+            "net_get",
+            |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| -> i32 {
+                if ptr < 0 || len < 0 {
+                    return 0;
+                }
+                let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
+                    return 0;
+                };
+                let mut buffer = vec![0u8; len as usize];
+                if memory.read(&mut caller, ptr as usize, &mut buffer).is_err() {
+                    return 0;
+                }
+                let Ok(url) = std::str::from_utf8(&buffer) else {
+                    return 0;
+                };
+                if !caller.data().allows_net_fetch(url) {
+                    println!("varta log: <capability denied: net.fetch>");
+                    return 0;
+                }
+                let Some(body) = fetch_http_body(url) else {
+                    println!("net_get: no body");
+                    return 0;
+                };
+
+                let Some(wasmtime::Extern::Global(heap)) = caller.get_export("heap") else {
+                    return 0;
+                };
+                let Some(wasmtime::Extern::Global(result_len)) =
+                    caller.get_export("env_result_len")
+                else {
+                    return 0;
+                };
+
+                let current_heap = heap.get(&mut caller).i32().unwrap_or(0);
+                let base = if current_heap == 0 {
+                    memory.data_size(&caller) as i32
+                } else {
+                    current_heap
+                };
+                println!("DBG_NET_GET current_heap={current_heap} base={base} bodylen={}", body.len());
+                let end = base + body.len() as i32;
+                let size = memory.data_size(&caller) as i32;
+                if end > size {
+                    let pages = ((end - size + 65535) / 65536) as u64;
+                    if memory.grow(&mut caller, pages).is_err() {
+                        return 0;
+                    }
+                }
+                if memory.write(&mut caller, base as usize, &body).is_err() {
+                    println!("net_get: memory write failed base={} len={}", base, body.len());
+                    return 0;
+                }
+                let _ = heap.set(&mut caller, wasmtime::Val::I32(base + body.len() as i32));
+                let _ = result_len.set(&mut caller, wasmtime::Val::I32(body.len() as i32));
+                base
+            },
+        )?;
+
         let instance = linker.instantiate(&mut store, &module)?;
         let start = instance.get_func(&mut store, "_start");
         if let Some(start) = start {
@@ -440,6 +500,63 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         pattern_index += 1;
     }
     pattern_index == pattern.len()
+}
+
+fn fetch_http_body(url: &str) -> Option<Vec<u8>> {
+    let rest = url.strip_prefix("http://")?;
+    let (host_part, raw_path) = match rest.split_once('/') {
+        Some((host, path)) => (host, format!("/{path}")),
+        None => (rest, "/".to_string()),
+    };
+    let (host, port) = match host_part.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => {
+            (host, port.to_string())
+        }
+        _ => (host_part, "80".to_string()),
+    };
+
+    let Ok(stream) = std::net::TcpStream::connect(format!("{host}:{port}")) else {
+        return None;
+    };
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+
+    use std::io::{BufRead, Read, Write};
+    let mut stream = stream;
+    if write!(
+        stream,
+        "GET {raw_path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )
+    .is_err()
+    {
+        return None;
+    }
+
+    let mut reader = std::io::BufReader::new(stream);
+    let mut status_line = String::new();
+    if reader.read_line(&mut status_line).is_err() {
+        return None;
+    }
+    if !status_line.contains(" 2") {
+        return None;
+    }
+
+    let mut headers = String::new();
+    loop {
+        headers.clear();
+        if reader.read_line(&mut headers).is_err() {
+            return None;
+        }
+        if headers == "\r\n" || headers == "\n" || headers.is_empty() {
+            break;
+        }
+    }
+
+    let mut body = Vec::new();
+    if reader.read_to_end(&mut body).is_err() {
+        return None;
+    }
+    Some(body)
 }
 
 fn fetch_http_status(url: &str) -> i32 {
@@ -507,5 +624,42 @@ mod tests {
         let engine = wasmtime::Engine::default();
         let result = wasmtime::Module::new(&engine, &bytes);
         assert!(result.is_ok(), "module validation failed: {result:?}");
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use varta_common::{CapabilityGrant, CapabilityValue};
+
+    #[test]
+    fn runs_minimal_module() {
+        let runtime = VartaRuntime::new();
+        let module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        runtime.run_wasm_bytes(&module, &[]).unwrap();
+    }
+
+    #[test]
+    fn fs_capability_allows_exact_and_glob() {
+        let context = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "fs.read".to_string(),
+                value: CapabilityValue::PathGlobs(vec!["/data/**".to_string()]),
+            }],
+        };
+        assert!(context.allows_fs_read("/data/hello.txt"));
+        assert!(!context.allows_fs_read("/secret.txt"));
+    }
+
+    #[test]
+    fn env_capability_requires_name() {
+        let context = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "env.has".to_string(),
+                value: CapabilityValue::PathGlobs(vec!["PATH".to_string()]),
+            }],
+        };
+        assert!(context.allows_env_access("env.has", "PATH"));
+        assert!(!context.allows_env_access("env.has", "SECRET"));
     }
 }
