@@ -41,6 +41,11 @@ enum Commands {
     /// Inspect binary metadata.
     Inspect {
         path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Validate {
+        path: Option<String>,
     },
 }
 
@@ -66,10 +71,10 @@ fn main() {
             }
         }
         Some(Commands::Dev) => {
-            let runtime = VartaRuntime::new();
             if std::path::Path::new("varta.config.json").exists() {
                 match load_and_compile("varta.config.json") {
                     Ok((bytes, capabilities)) => {
+                        let runtime = VartaRuntime::new();
                         if let Err(error) = runtime.run_wasm_bytes(&bytes, &capabilities) {
                             eprintln!("varta dev failed: {error:?}");
                             std::process::exit(1);
@@ -82,6 +87,7 @@ fn main() {
                     }
                 }
             } else {
+                let runtime = VartaRuntime::new();
                 let bytes = varta_compiler::minimal_module();
                 match runtime.run_wasm_bytes(&bytes, &[]) {
                     Ok(()) => println!("varta dev: completed"),
@@ -100,9 +106,9 @@ fn main() {
         }
         Some(Commands::Run { path }) => {
             match read_app_from_file(&path) {
-                Ok((bytes, capabilities)) => {
+                Ok((bytes, precompiled, capabilities)) => {
                     let runtime = VartaRuntime::new();
-                    match runtime.run_wasm_bytes(&bytes, &capabilities) {
+                    match runtime.run_app_bytes(&bytes, precompiled, &capabilities) {
                         Ok(()) => println!("varta run: completed {path}"),
                         Err(error) => eprintln!("varta run failed: {error}"),
                     }
@@ -113,8 +119,16 @@ fn main() {
         None => {
             run_self_app();
         }
-        Some(Commands::Inspect { path }) => {
-            if let Err(error) = inspect_app(&path.unwrap_or_else(|| "dist/app".to_string())) {
+        Some(Commands::Validate { path }) => {
+            let target = path.unwrap_or_else(|| "dist/app".to_string());
+            if let Err(error) = validate_app(&target) {
+                eprintln!("varta validate failed: {error}");
+                std::process::exit(1);
+            }
+            println!("varta validate: ok ({target})");
+        }
+        Some(Commands::Inspect { path, json }) => {
+            if let Err(error) = inspect_app(&path.unwrap_or_else(|| "dist/app".to_string()), json) {
                 eprintln!("varta inspect failed: {error}");
                 std::process::exit(1);
             }
@@ -302,15 +316,24 @@ fn build_project(config_path: &str, single: bool) -> Result<(), VartaError> {
             fs::set_permissions(&output, permissions).map_err(io_error)?;
         }
 
+        let runtime = VartaRuntime::new();
+        let (payload_magic, payload_bytes) = match runtime.precompile_module(&compiled) {
+            Ok(bytes) => (b"VARTA2\0", bytes),
+            Err(error) => {
+                eprintln!("wasm precompile failed, embedding portable Wasm: {error}");
+                (b"VARTA1\0", compiled.clone())
+            }
+        };
+
         let mut file = fs::OpenOptions::new()
             .append(true)
             .open(&output)
             .map_err(io_error)?;
         use std::io::Write;
-        file.write_all(b"VARTA1 ").map_err(io_error)?;
-        file.write_all(&(compiled.len() as u64).to_le_bytes())
+        file.write_all(payload_magic).map_err(io_error)?;
+        file.write_all(&(payload_bytes.len() as u64).to_le_bytes())
             .map_err(io_error)?;
-        file.write_all(&compiled).map_err(io_error)?;
+        file.write_all(&payload_bytes).map_err(io_error)?;
         let manifest_bytes = serde_json::to_vec(&manifest)
             .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
         file.write_all(&(manifest_bytes.len() as u64).to_le_bytes())
@@ -429,7 +452,6 @@ fn which_command(name: &str) -> Option<String> {
         .filter(|path| !path.is_empty())
 }
 
-const PAYLOAD_MAGIC: &[u8] = b"VARTA1\0";
 
 fn run_self_app() {
     let Ok(path) = std::env::current_exe() else {
@@ -438,9 +460,9 @@ fn run_self_app() {
     };
 
     match read_app_from_file(path.to_string_lossy().as_ref()) {
-        Ok((bytes, capabilities)) => {
+        Ok((bytes, precompiled, capabilities)) => {
             let runtime = VartaRuntime::new();
-            if let Err(error) = runtime.run_wasm_bytes(&bytes, &capabilities) {
+            if let Err(error) = runtime.run_app_bytes(&bytes, precompiled, &capabilities) {
                 eprintln!("varta run failed: {error}");
                 std::process::exit(1);
             }
@@ -452,18 +474,32 @@ fn run_self_app() {
     }
 }
 
-fn read_app_from_file(path: &str) -> Result<(Vec<u8>, Vec<CapabilityGrant>), VartaError> {
+fn read_app_from_file(path: &str) -> Result<(Vec<u8>, bool, Vec<CapabilityGrant>), VartaError> {
     let data = fs::read(path).map_err(io_error)?;
-    if let Some((wasm, manifest)) = extract_app_payload(&data) {
-        return Ok((wasm, parse_manifest_capabilities_bytes(&manifest)));
+    if let Some((wasm, precompiled, manifest)) = extract_app_payload(&data) {
+        return Ok((wasm, precompiled, parse_manifest_capabilities_bytes(&manifest)));
     }
-    eprintln!("DEBUG payload extraction returned None for {} (size={})", path, data.len());
-    Ok((data, load_manifest_capabilities(path)))
+    Ok((data, false, load_manifest_capabilities(path)))
 }
 
-fn extract_app_payload(data: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    let magic_start = data.windows(PAYLOAD_MAGIC.len()).rposition(|window| window == PAYLOAD_MAGIC)?;
-    let mut offset = magic_start + PAYLOAD_MAGIC.len();
+fn extract_app_payload(data: &[u8]) -> Option<(Vec<u8>, bool, Vec<u8>)> {
+    let raw_pos = find_last_magic(data, b"VARTA1\0");
+    let compiled_pos = find_last_magic(data, b"VARTA2\0");
+    let (magic_pos, precompiled) = match (raw_pos, compiled_pos) {
+        (Some(raw), Some(compiled)) => {
+            if compiled > raw {
+                (compiled, true)
+            } else {
+                (raw, false)
+            }
+        }
+        (Some(raw), None) => (raw, false),
+        (None, Some(compiled)) => (compiled, true),
+        (None, None) => return None,
+    };
+    let magic = if precompiled { b"VARTA2\0" } else { b"VARTA1\0" };
+
+    let mut offset = magic_pos + magic.len();
     if offset + 8 > data.len() {
         return None;
     }
@@ -480,9 +516,12 @@ fn extract_app_payload(data: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
         return None;
     }
     let manifest_bytes = data[offset..offset + manifest_len].to_vec();
-    Some((wasm_bytes, manifest_bytes))
+    Some((wasm_bytes, precompiled, manifest_bytes))
 }
 
+fn find_last_magic(data: &[u8], magic: &[u8]) -> Option<usize> {
+    (0..=data.len().saturating_sub(magic.len())).rev().find(|&i| data[i..].starts_with(magic))
+}
 
 fn parse_manifest_capabilities_bytes(bytes: &[u8]) -> Vec<CapabilityGrant> {
     let Ok(source) = std::str::from_utf8(bytes) else { return Vec::new(); };
@@ -534,80 +573,206 @@ fn parse_manifest_capabilities_bytes(bytes: &[u8]) -> Vec<CapabilityGrant> {
     capabilities
 }
 
-fn inspect_app(path: &str) -> Result<(), VartaError> {
-    let (bytes, capabilities) = read_app_from_file(path)?;
+fn inspect_app(path: &str, json: bool) -> Result<(), VartaError> {
+    let (bytes, precompiled, capabilities) = read_app_from_file(path)?;
     let capabilities = if capabilities.is_empty() {
         load_manifest_capabilities(path)
     } else {
         capabilities
     };
 
-    println!("artifact: {path}");
-    println!("size: {} bytes", bytes.len());
-    println!("capabilities:");
-
-    if capabilities.is_empty() {
-        println!("  none");
-    } else {
-        for capability in capabilities {
-            println!("  {}", capability.id);
-        }
-    }
-
+    let capability_ids: Vec<&str> = capabilities.iter().map(|grant| grant.id).collect();
     let mut imports = Vec::new();
     let mut exports = Vec::new();
     let mut memories = 0u32;
 
-    let parser = WasmParser::new(0);
-    for payload in parser.parse_all(&bytes) {
-        let payload = match payload {
-            Ok(payload) => payload,
-            Err(error) => return Err(VartaError::InvalidManifest(error.to_string())),
-        };
-        match payload {
-            Payload::ImportSection(reader) => {
+    if !precompiled {
+        let parser = WasmParser::new(0);
+        for payload in parser.parse_all(&bytes) {
+            let payload = match payload {
+                Ok(payload) => payload,
+                Err(error) => return Err(VartaError::InvalidManifest(error.to_string())),
+            };
+            match payload {
+                Payload::ImportSection(reader) => {
+                    for result in reader {
+                        let import = result.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
+                        imports.push(format!("{}.{} ({:?})", import.module, import.name, import.ty));
+                    }
+                }
+                Payload::ExportSection(reader) => {
+                    for result in reader {
+                        let export = result.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
+                        exports.push(format!("{}", export.name));
+                    }
+                }
+                Payload::MemorySection(reader) => {
+                    for result in reader {
+                        result.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
+                        memories += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::json!({
+            "artifact": path,
+            "size": bytes.len(),
+            "precompiled": precompiled,
+            "capabilities": capability_ids,
+            "imports": imports,
+            "exports": exports,
+            "memories": memories,
+        }));
+    } else {
+        println!("artifact: {path}");
+        println!("size: {} bytes", bytes.len());
+        println!("precompiled: {precompiled}");
+        println!("capabilities:");
+        if capability_ids.is_empty() {
+            println!("  none");
+        } else {
+            for capability in capability_ids {
+                println!("  {capability}");
+            }
+        }
+        if imports.is_empty() {
+            println!("imports: none");
+        } else {
+            println!("imports:");
+            for import in imports {
+                println!("  {import}");
+            }
+        }
+        if exports.is_empty() {
+            println!("exports: none");
+        } else {
+            println!("exports:");
+            for export in exports {
+                println!("  {export}");
+            }
+        }
+        println!("memories: {memories}");
+    }
+    Ok(())
+}
+
+fn validate_app(path: &str) -> Result<(), VartaError> {
+    let (bytes, precompiled, capabilities) = read_app_from_file(path)?;
+    let capabilities = if capabilities.is_empty() {
+        load_manifest_capabilities(path)
+    } else {
+        capabilities
+    };
+
+    for capability in &capabilities {
+        if capability.id.trim().is_empty() {
+            return Err(VartaError::InvalidManifest("capability id is empty".into()));
+        }
+
+        match capability.id.split('.').next().unwrap_or("") {
+            "log" | "time" | "env" | "fs" | "process" | "net" => {}
+            other => {
+                return Err(VartaError::InvalidManifest(format!(
+                    "unknown capability namespace: {other}"
+                )));
+            }
+        }
+
+        match &capability.value {
+            CapabilityValue::PathGlobs(patterns) => {
+                if patterns.is_empty() {
+                    return Err(VartaError::InvalidManifest(format!(
+                        "{} has no patterns",
+                        capability.id
+                    )));
+                }
+                for pattern in patterns {
+                    if pattern.trim().is_empty() {
+                        return Err(VartaError::InvalidManifest(format!(
+                            "{} contains an empty pattern",
+                            capability.id
+                        )));
+                    }
+                    if pattern == "*" || pattern == "**" {
+                        return Err(VartaError::InvalidManifest(format!(
+                            "{} has an overly broad pattern: {pattern}",
+                            capability.id
+                        )));
+                    }
+                }
+            }
+            CapabilityValue::UrlGlobs(patterns) => {
+                if patterns.is_empty() {
+                    return Err(VartaError::InvalidManifest(format!(
+                        "{} has no URL patterns",
+                        capability.id
+                    )));
+                }
+                for pattern in patterns {
+                    if pattern.trim().is_empty() || !pattern.contains("://") {
+                        return Err(VartaError::InvalidManifest(format!(
+                            "{} contains an invalid URL pattern: {pattern}",
+                            capability.id
+                        )));
+                    }
+                }
+            }
+            CapabilityValue::Ports(ports) => {
+                if ports.is_empty() || ports.iter().any(|port| *port == 0) {
+                    return Err(VartaError::InvalidManifest(format!(
+                        "{} has an invalid port list",
+                        capability.id
+                    )));
+                }
+            }
+            CapabilityValue::Boolean(_) => {}
+        }
+    }
+
+    if !precompiled {
+        let mut required = std::collections::BTreeSet::new();
+        let parser = WasmParser::new(0);
+        for payload in parser.parse_all(&bytes) {
+            let payload = payload.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
+            if let Payload::ImportSection(reader) = payload {
                 for result in reader {
                     let import = result.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-                    imports.push(format!(
-                        "{}.{} ({:?})",
-                        import.module, import.name, import.ty
-                    ));
+                    if import.module != "varta" {
+                        continue;
+                    }
+                    let namespace = match import.name {
+                        "log_i32" | "log_string" => continue,
+                        "time_now" => "time",
+                        "env_has" | "env_print" | "env_get" => "env",
+                        "fs_print" | "fs_read" => "fs",
+                        "process_exit" => "process",
+                        "net_fetch" => "net",
+                        other => {
+                            return Err(VartaError::InvalidManifest(format!(
+                                "unknown host import: {other}"
+                            )));
+                        }
+                    };
+                    required.insert(namespace.to_string());
                 }
             }
-            Payload::ExportSection(reader) => {
-                for result in reader {
-                    let export = result.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-                    exports.push(format!("{}", export.name));
-                }
+        }
+
+        for namespace in required {
+            if !capabilities
+                .iter()
+                .any(|capability| capability.id == namespace || capability.id.starts_with(&format!("{namespace}.")))
+            {
+                return Err(VartaError::InvalidManifest(format!(
+                    "imported host API requires capability namespace: {namespace}"
+                )));
             }
-            Payload::MemorySection(reader) => {
-                for result in reader {
-                    result.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-                    memories += 1;
-                }
-            }
-            _ => {}
         }
     }
 
-    if imports.is_empty() {
-        println!("imports: none");
-    } else {
-        println!("imports:");
-        for import in imports {
-            println!("  {import}");
-        }
-    }
-
-    if exports.is_empty() {
-        println!("exports: none");
-    } else {
-        println!("exports:");
-        for export in exports {
-            println!("  {export}");
-        }
-    }
-
-    println!("memories: {memories}");
     Ok(())
 }

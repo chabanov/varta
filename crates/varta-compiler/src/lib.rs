@@ -3,8 +3,8 @@ use swc_ecma_ast::{Expr, Lit, ModuleItem, Stmt};
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, DataSection, ExportKind, ExportSection, Function,
-    FunctionSection, ImportSection, Instruction, MemorySection, MemoryType, Module, TypeSection,
-    ValType,
+    FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemorySection, MemoryType, Module,
+    TypeSection, ValType,
 };
 
 /// The smallest valid Wasm module.
@@ -16,6 +16,165 @@ pub fn minimal_module() -> Vec<u8> {
 struct LabelFrame {
     breakable: bool,
     continuable: bool,
+}
+
+
+#[derive(Clone, Copy, Default)]
+struct HostImports {
+    log_i32: Option<u32>,
+    log_string: Option<u32>,
+    time_now: Option<u32>,
+    env_has: Option<u32>,
+    env_print: Option<u32>,
+    env_get: Option<u32>,
+    fs_print: Option<u32>,
+    fs_read: Option<u32>,
+    process_exit: Option<u32>,
+    net_fetch: Option<u32>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct HostUses {
+    log_i32: bool,
+    log_string: bool,
+    time_now: bool,
+    env_has: bool,
+    env_print: bool,
+    env_get: bool,
+    fs_print: bool,
+    fs_read: bool,
+    process_exit: bool,
+    net_fetch: bool,
+}
+
+fn collect_host_uses_expr(expr: &Expr, uses: &mut HostUses) {
+    match expr {
+        Expr::Call(call) => {
+            if is_supported_log_call(call) {
+                match &call.args.first().map(|arg| &*arg.expr) {
+                    Some(Expr::Lit(Lit::Str(_))) => uses.log_string = true,
+                    Some(Expr::Call(inner)) if is_env_get_call(inner) || is_fs_read_call(inner) => {
+                        uses.log_string = true;
+                    }
+                    _ => uses.log_i32 = true,
+                }
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_time_now_call(call) {
+                uses.time_now = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_env_has_call(call) {
+                uses.env_has = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_env_print_call(call) {
+                uses.env_print = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_env_get_call(call) {
+                uses.env_get = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_fs_print_call(call) {
+                uses.fs_print = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_fs_read_call(call) {
+                uses.fs_read = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_process_exit_call(call) {
+                uses.process_exit = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            } else if is_net_fetch_call(call) {
+                uses.net_fetch = true;
+                for arg in &call.args {
+                    collect_host_uses_expr(&arg.expr, uses);
+                }
+            }
+            for arg in &call.args {
+                collect_host_uses_expr(&arg.expr, uses);
+            }
+        }
+        Expr::Bin(binary) => {
+            collect_host_uses_expr(&binary.left, uses);
+            collect_host_uses_expr(&binary.right, uses);
+        }
+        Expr::Unary(unary) => collect_host_uses_expr(&unary.arg, uses),
+        Expr::Paren(paren) => collect_host_uses_expr(&paren.expr, uses),
+        Expr::Assign(assign) => {
+            collect_host_uses_expr(&assign.right, uses);
+        }
+        Expr::Ident(_) | Expr::Lit(_) => {}
+        _ => {}
+    }
+}
+
+fn collect_host_uses(statements: &[Stmt], uses: &mut HostUses) {
+    for statement in statements {
+        match statement {
+            Stmt::Decl(swc_ecma_ast::Decl::Var(var_decl)) => {
+                for declarator in &var_decl.decls {
+                    if let Some(init) = &declarator.init {
+                        collect_host_uses_expr(init, uses);
+                    }
+                }
+            }
+            Stmt::Expr(expr_stmt) => collect_host_uses_expr(&expr_stmt.expr, uses),
+            Stmt::Return(ret) => {
+                if let Some(expr) = &ret.arg {
+                    collect_host_uses_expr(expr, uses);
+                }
+            }
+            Stmt::Block(block) => collect_host_uses(&block.stmts, uses),
+            Stmt::If(if_stmt) => {
+                collect_host_uses_expr(&if_stmt.test, uses);
+                collect_host_uses(std::slice::from_ref(&*if_stmt.cons), uses);
+                if let Some(alternate) = &if_stmt.alt {
+                    collect_host_uses(std::slice::from_ref(&**alternate), uses);
+                }
+            }
+            Stmt::While(while_stmt) => {
+                collect_host_uses_expr(&while_stmt.test, uses);
+                collect_host_uses(std::slice::from_ref(&*while_stmt.body), uses);
+            }
+            Stmt::For(for_stmt) => {
+                if let Some(swc_ecma_ast::VarDeclOrExpr::VarDecl(var_decl)) = &for_stmt.init {
+                    for declarator in &var_decl.decls {
+                        if let Some(init) = &declarator.init {
+                            collect_host_uses_expr(init, uses);
+                        }
+                    }
+                } else if let Some(swc_ecma_ast::VarDeclOrExpr::Expr(expr)) = &for_stmt.init {
+                    collect_host_uses_expr(expr, uses);
+                }
+                if let Some(test) = &for_stmt.test {
+                    collect_host_uses_expr(test, uses);
+                }
+                if let Some(update) = &for_stmt.update {
+                    collect_host_uses_expr(update, uses);
+                }
+                collect_host_uses(std::slice::from_ref(&*for_stmt.body), uses);
+            }
+            Stmt::Switch(switch_stmt) => {
+                collect_host_uses_expr(&switch_stmt.discriminant, uses);
+                for case in &switch_stmt.cases {
+                    collect_host_uses(&case.cons, uses);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Number of top-level items in a parsed TypeScript module.
@@ -32,22 +191,59 @@ pub fn parse_typescript(source: &str) -> Result<usize, String> {
 /// - implicit integer constants.
 pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
     let module = parse_module(source)?;
-    let main = find_main(&module)?;
+    let functions = collect_functions(&module)?;
+    let main_index = functions
+        .iter()
+        .position(|function| function.ident.sym == "main")
+        .ok_or_else(|| "expected a top-level function named main()".to_string())?;
 
-    let body = main
-        .function
-        .body
-        .as_ref()
-        .ok_or_else(|| "main() must have a body".to_string())?;
-
-    let variable_names = collect_variables(&body.stmts);
-    let mut variables = std::collections::BTreeMap::new();
-    for (index, name) in variable_names.iter().enumerate() {
-        variables.insert(name.clone(), index as u32);
+    let mut bodies = Vec::with_capacity(functions.len());
+    for function in &functions {
+        bodies.push(
+            function
+                .function
+                .body
+                .as_ref()
+                .ok_or_else(|| format!("function {}() must have a body", function.ident.sym))?
+                .clone(),
+        );
     }
 
+    let function_parameters: Vec<Vec<String>> = functions
+        .iter()
+        .map(|function| function_parameter_names(function))
+        .collect();
+
+    for function in &functions {
+        for param in &function.function.params {
+            if binding_name(&param.pat).is_none() {
+                return Err(format!(
+                    "function {}() only supports simple parameter names",
+                    function.ident.sym
+                ));
+            }
+        }
+    }
+
+    let mut function_variables = Vec::with_capacity(functions.len());
     let mut string_literals = Vec::new();
-    collect_strings(&body.stmts, &mut string_literals);
+    let mut host_uses = HostUses::default();
+    for (index, body) in bodies.iter().enumerate() {
+        let mut names = function_parameters[index].clone();
+        for name in collect_variables(&body.stmts) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        let mut variables = std::collections::BTreeMap::new();
+        for (local_index, name) in names.into_iter().enumerate() {
+            variables.insert(name, local_index as u32);
+        }
+        function_variables.push(variables);
+        collect_strings(&body.stmts, &mut string_literals);
+        collect_host_uses(&body.stmts, &mut host_uses);
+    }
+
     let mut string_offsets = std::collections::BTreeMap::new();
     let mut offset = 0u32;
     for value in &string_literals {
@@ -60,19 +256,69 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
         return Err("static string data exceeds one Wasm page".into());
     }
 
-    let mut instructions = Vec::new();
-    let mut labels = Vec::new();
-    compile_block(
-        &body.stmts,
-        &mut instructions,
-        &variables,
-        &string_offsets,
-        &mut labels,
-    )?;
+    let mut host_imports = HostImports::default();
+    let mut next_import = 0;
+    if host_uses.log_i32 {
+        host_imports.log_i32 = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.log_string {
+        host_imports.log_string = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.time_now {
+        host_imports.time_now = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.env_has {
+        host_imports.env_has = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.env_print {
+        host_imports.env_print = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.env_get {
+        host_imports.env_get = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.fs_print {
+        host_imports.fs_print = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.fs_read {
+        host_imports.fs_read = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.process_exit {
+        host_imports.process_exit = Some(next_import);
+        next_import += 1;
+    }
+    if host_uses.net_fetch {
+        host_imports.net_fetch = Some(next_import);
+        next_import += 1;
+    }
 
-    let locals = vec![ValType::I32; variables.len() + 3];
-
-    let mut wasm = Module::new();
+    let mut function_type_indices = Vec::with_capacity(functions.len());
+    let mut arity_type_indices = std::collections::BTreeMap::new();
+    let mut next_type_index = 5u32;
+    for (function, parameters) in functions.iter().zip(function_parameters.iter()) {
+        let arity = parameters.len();
+        if function.ident.sym == "main" {
+            function_type_indices.push(4);
+        } else if arity == 0 {
+            function_type_indices.push(2);
+        } else if arity == 2 {
+            function_type_indices.push(3);
+        } else {
+            let type_index = *arity_type_indices.entry(arity).or_insert_with(|| {
+                let index = next_type_index;
+                next_type_index += 1;
+                index
+            });
+            function_type_indices.push(type_index);
+        }
+    }
 
     // Type 0: (i32) -> ()
     // Type 1: (i32, i32) -> ()
@@ -85,31 +331,80 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
     types.ty().function([], [ValType::I32]);
     types.ty().function([ValType::I32, ValType::I32], [ValType::I32]);
     types.ty().function([], []);
+    for arity in 1.. {
+        let Some(type_index) = arity_type_indices.get(&arity).copied() else {
+            if arity > function_parameters.iter().map(|params| params.len()).max().unwrap_or(0) {
+                break;
+            }
+            continue;
+        };
+        let _ = type_index;
+        types.ty().function(vec![ValType::I32; arity], [ValType::I32]);
+    }
+    let mut wasm = Module::new();
     wasm.section(&types);
 
-    // Imports:
-    // 0: varta.log_i32
-    // 1: varta.log_string
-    // 2: varta.time_now
-    // 3: varta.env_has
-    // 4: varta.env_print
     let mut imports = ImportSection::new();
-    imports.import("varta", "log_i32", wasm_encoder::EntityType::Function(0));
-    imports.import("varta", "log_string", wasm_encoder::EntityType::Function(1));
-    imports.import("varta", "time_now", wasm_encoder::EntityType::Function(2));
-    imports.import("varta", "env_has", wasm_encoder::EntityType::Function(3));
-    imports.import("varta", "env_print", wasm_encoder::EntityType::Function(1));
-    imports.import("varta", "fs_print", wasm_encoder::EntityType::Function(1));
-    imports.import("varta", "process_exit", wasm_encoder::EntityType::Function(0));
-    imports.import("varta", "net_fetch", wasm_encoder::EntityType::Function(3));
-    imports.import("varta", "env_get", wasm_encoder::EntityType::Function(3));
-    imports.import("varta", "fs_read", wasm_encoder::EntityType::Function(3));
+    if let Some(index) = host_imports.log_i32 {
+        imports.import("varta", "log_i32", wasm_encoder::EntityType::Function(0));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.log_string {
+        imports.import("varta", "log_string", wasm_encoder::EntityType::Function(1));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.time_now {
+        imports.import("varta", "time_now", wasm_encoder::EntityType::Function(2));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.env_has {
+        imports.import("varta", "env_has", wasm_encoder::EntityType::Function(3));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.env_print {
+        imports.import("varta", "env_print", wasm_encoder::EntityType::Function(1));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.env_get {
+        imports.import("varta", "env_get", wasm_encoder::EntityType::Function(3));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.fs_print {
+        imports.import("varta", "fs_print", wasm_encoder::EntityType::Function(1));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.fs_read {
+        imports.import("varta", "fs_read", wasm_encoder::EntityType::Function(3));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.process_exit {
+        imports.import("varta", "process_exit", wasm_encoder::EntityType::Function(0));
+        let _ = index;
+    }
+    if let Some(index) = host_imports.net_fetch {
+        imports.import("varta", "net_fetch", wasm_encoder::EntityType::Function(3));
+        let _ = index;
+    }
     wasm.section(&imports);
 
-    // Function 4 is `main`, exported as `_start`.
-    let mut functions = FunctionSection::new();
-    functions.function(4);
-    wasm.section(&functions);
+    // User/global function indices all land after host imports.
+    let function_names: std::collections::BTreeMap<String, (usize, usize)> = functions
+        .iter()
+        .enumerate()
+        .map(|(index, function)| {
+            (
+                function.ident.sym.to_string(),
+                (next_import as usize + index, function.function.params.len()),
+            )
+        })
+        .collect();
+
+    let functions_begin = next_import;
+    let mut functions_section = FunctionSection::new();
+    for type_index in &function_type_indices {
+        functions_section.function(*type_index);
+    }
+    wasm.section(&functions_section);
 
     // Memory 0.
     let mut memories = MemorySection::new();
@@ -122,11 +417,10 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
     });
     wasm.section(&memories);
 
-    // Module globals.
-    // 0: heap pointer; 1: env_result_len.
-    let mut globals = wasm_encoder::GlobalSection::new();
+    // Global heap/result locals.
+    let mut globals = GlobalSection::new();
     globals.global(
-        wasm_encoder::GlobalType {
+        GlobalType {
             val_type: ValType::I32,
             mutable: true,
             shared: false,
@@ -134,7 +428,15 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
         &ConstExpr::i32_const(offset as i32),
     );
     globals.global(
-        wasm_encoder::GlobalType {
+        GlobalType {
+            val_type: ValType::I32,
+            mutable: true,
+            shared: false,
+        },
+        &ConstExpr::i32_const(0),
+    );
+    globals.global(
+        GlobalType {
             val_type: ValType::I32,
             mutable: true,
             shared: false,
@@ -143,21 +445,41 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
     );
     wasm.section(&globals);
 
-    // Exports: memory, globals, and _start.
     let mut exports = ExportSection::new();
     exports.export("memory", ExportKind::Memory, 0);
-    exports.export("heap", ExportKind::Global, 0);
-    exports.export("env_result_len", ExportKind::Global, 1);
-    exports.export("_start", ExportKind::Func, 10);
+    exports.export("_start", ExportKind::Func, functions_begin + main_index as u32);
     wasm.section(&exports);
 
+    // Code.
     let mut code = CodeSection::new();
-    let mut function = Function::new_with_locals_types(locals);
-    for instruction in instructions {
-        function.instruction(&instruction);
+    for index in 0..functions.len() {
+        let variables = &function_variables[index];
+        let mut labels = Vec::new();
+        let mut instructions = Vec::new();
+        compile_block(
+            &bodies[index].stmts,
+            &mut instructions,
+            variables,
+            &string_offsets,
+            &mut labels,
+            &host_imports,
+            &function_names,
+        )?;
+        let ends_with_return = instructions
+            .last()
+            .map(|instruction| matches!(instruction, Instruction::Return))
+            .unwrap_or(false);
+        let locals = vec![ValType::I32; variables.len()];
+        let mut function = Function::new_with_locals_types(locals);
+        for instruction in &instructions {
+            function.instruction(instruction);
+        }
+        if functions[index].ident.sym != "main" && !ends_with_return {
+            function.instruction(&Instruction::I32Const(0));
+        }
+        function.instruction(&Instruction::End);
+        code.function(&function);
     }
-    function.instruction(&Instruction::End);
-    code.function(&function);
     wasm.section(&code);
 
     // Static strings.
@@ -169,6 +491,33 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
     wasm.section(&data);
 
     Ok(wasm.finish())
+}
+
+fn collect_functions(module: &swc_ecma_ast::Module) -> Result<Vec<&swc_ecma_ast::FnDecl>, String> {
+    let mut functions = Vec::new();
+    for item in &module.body {
+        let function = match item {
+            ModuleItem::Stmt(Stmt::Decl(swc_ecma_ast::Decl::Fn(function))) => Some(function),
+            ModuleItem::ModuleDecl(swc_ecma_ast::ModuleDecl::ExportDecl(export)) => {
+                if let swc_ecma_ast::Decl::Fn(function) = &export.decl {
+                    Some(function)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(function) = function {
+            functions.push(function);
+        }
+    }
+
+    if functions.is_empty() {
+        Err("expected at least a top-level function".into())
+    } else {
+        Ok(functions)
+    }
 }
 
 fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, String> {
@@ -227,6 +576,8 @@ fn compile_block(
     variables: &std::collections::BTreeMap<String, u32>,
     string_offsets: &std::collections::BTreeMap<String, u32>,
     labels: &mut Vec<LabelFrame>,
+    host: &HostImports,
+    functions: &std::collections::BTreeMap<String, (usize, usize)>,
 ) -> Result<(), String> {
     for statement in statements {
         match statement {
@@ -239,7 +590,7 @@ fn compile_block(
                         .get(&name)
                         .ok_or_else(|| format!("unknown variable: {name}"))?;
                     if let Some(init) = &declarator.init {
-                        compile_expr(init, output, variables, string_offsets)?;
+                        compile_expr(init, output, variables, string_offsets, host, functions)?;
                         output.push(Instruction::LocalSet(index));
                     } else {
                         output.push(Instruction::I32Const(0));
@@ -263,7 +614,7 @@ fn compile_block(
                     let index = *variables
                         .get(&name)
                         .ok_or_else(|| format!("unknown variable: {name}"))?;
-                    compile_expr(&assign.right, output, variables, string_offsets)?;
+                    compile_expr(&assign.right, output, variables, string_offsets, host, functions)?;
                     output.push(Instruction::LocalSet(index));
                     continue;
                 }
@@ -282,7 +633,7 @@ fn compile_block(
                                     })?;
                                     output.push(Instruction::I32Const(pointer as i32));
                                     output.push(Instruction::I32Const(text.len() as i32));
-                                    output.push(Instruction::Call(8));
+                                    output.push(Instruction::Call(host.env_get.unwrap()));
                                     output.push(Instruction::GlobalGet(1));
                                     output.push(Instruction::Call(1));
                                     continue;
@@ -301,7 +652,7 @@ fn compile_block(
                                     })?;
                                     output.push(Instruction::I32Const(pointer as i32));
                                     output.push(Instruction::I32Const(text.len() as i32));
-                                    output.push(Instruction::Call(9));
+                                    output.push(Instruction::Call(host.fs_read.unwrap()));
                                     output.push(Instruction::GlobalGet(1));
                                     output.push(Instruction::Call(1));
                                     continue;
@@ -319,30 +670,33 @@ fn compile_block(
                                 })?;
                                 output.push(Instruction::I32Const(pointer as i32));
                                 output.push(Instruction::I32Const(text.len() as i32));
-                                output.push(Instruction::Call(1));
+                                output.push(Instruction::Call(host.log_string.unwrap()));
                             }
                             _ => {
-                                compile_expr(&call.args[0].expr, output, variables, string_offsets)?;
-                                output.push(Instruction::Call(0));
+                                compile_expr(&call.args[0].expr, output, variables, string_offsets, host, functions)?;
+                                output.push(Instruction::Call(host.log_i32.unwrap()));
                             }
                         }
                         continue;
                     }
                 }
-                let produces_value = compile_expr(&expr_stmt.expr, output, variables, string_offsets)?;
+                let produces_value = compile_expr(&expr_stmt.expr, output, variables, string_offsets, host, functions)?;
                 if produces_value {
                     output.push(Instruction::Drop);
                 }
             }
             Stmt::Return(ret) => {
                 if let Some(expr) = &ret.arg {
-                    compile_expr(expr, output, variables, string_offsets)?;
-                    output.push(Instruction::Drop);
+                    compile_expr(expr, output, variables, string_offsets, host, functions)?;
+                    output.push(Instruction::Return);
+                } else {
+                    output.push(Instruction::I32Const(0));
+                    output.push(Instruction::Return);
                 }
             }
             Stmt::Empty(_) => {}
             Stmt::Block(block) => {
-                compile_block(&block.stmts, output, variables, string_offsets, labels)?;
+                compile_block(&block.stmts, output, variables, string_offsets, labels, host, functions)?;
             }
             Stmt::Break(_) => {
                 let position = labels
@@ -361,16 +715,16 @@ fn compile_block(
                 output.push(Instruction::Br(index as u32));
             }
             Stmt::If(if_stmt) => {
-                compile_expr(&if_stmt.test, output, variables, string_offsets)?;
+                compile_expr(&if_stmt.test, output, variables, string_offsets, host, functions)?;
                 output.push(Instruction::If(BlockType::Empty));
                 labels.push(LabelFrame {
                     breakable: false,
                     continuable: false,
                 });
-                compile_block(std::slice::from_ref(&*if_stmt.cons), output, variables, string_offsets, labels)?;
+                compile_block(std::slice::from_ref(&*if_stmt.cons), output, variables, string_offsets, labels, host, functions)?;
                 if let Some(alternate) = &if_stmt.alt {
                     output.push(Instruction::Else);
-                    compile_block(std::slice::from_ref(&**alternate), output, variables, string_offsets, labels)?;
+                    compile_block(std::slice::from_ref(&**alternate), output, variables, string_offsets, labels, host, functions)?;
                 }
                 labels.pop();
                 output.push(Instruction::End);
@@ -386,10 +740,10 @@ fn compile_block(
                 });
                 output.push(Instruction::Block(BlockType::Empty));
                 output.push(Instruction::Loop(BlockType::Empty));
-                compile_expr(&while_stmt.test, output, variables, string_offsets)?;
+                compile_expr(&while_stmt.test, output, variables, string_offsets, host, functions)?;
                 output.push(Instruction::I32Eqz);
                 output.push(Instruction::BrIf(1));
-                compile_block(std::slice::from_ref(&*while_stmt.body), output, variables, string_offsets, labels)?;
+                compile_block(std::slice::from_ref(&*while_stmt.body), output, variables, string_offsets, labels, host, functions)?;
                 output.push(Instruction::Br(0));
                 output.push(Instruction::End);
                 output.push(Instruction::End);
@@ -408,7 +762,7 @@ fn compile_block(
                                     .get(&name)
                                     .ok_or_else(|| format!("unknown variable: {name}"))?;
                                 if let Some(init_expr) = &declarator.init {
-                                    compile_expr(init_expr, output, variables, string_offsets)?;
+                                    compile_expr(init_expr, output, variables, string_offsets, host, functions)?;
                                     output.push(Instruction::LocalSet(index));
                                 } else {
                                     output.push(Instruction::I32Const(0));
@@ -417,7 +771,7 @@ fn compile_block(
                             }
                         }
                         swc_ecma_ast::VarDeclOrExpr::Expr(expr) => {
-                            let produces_value = compile_expr(expr, output, variables, string_offsets)?;
+                            let produces_value = compile_expr(expr, output, variables, string_offsets, host, functions)?;
                             if produces_value {
                                 output.push(Instruction::Drop);
                             }
@@ -436,7 +790,7 @@ fn compile_block(
                 output.push(Instruction::Block(BlockType::Empty));
                 output.push(Instruction::Loop(BlockType::Empty));
                 if let Some(test) = &for_stmt.test {
-                    compile_expr(test, output, variables, string_offsets)?;
+                    compile_expr(test, output, variables, string_offsets, host, functions)?;
                     output.push(Instruction::I32Eqz);
                     output.push(Instruction::BrIf(1));
                 }
@@ -445,7 +799,7 @@ fn compile_block(
                     continuable: true,
                 });
                 output.push(Instruction::Block(BlockType::Empty));
-                compile_block(std::slice::from_ref(&*for_stmt.body), output, variables, string_offsets, labels)?;
+                compile_block(std::slice::from_ref(&*for_stmt.body), output, variables, string_offsets, labels, host, functions)?;
                 output.push(Instruction::End);
                 labels.pop();
                 if let Some(update) = &for_stmt.update {
@@ -464,10 +818,10 @@ fn compile_block(
                         let index = *variables
                             .get(&name)
                             .ok_or_else(|| format!("unknown variable: {name}"))?;
-                        compile_expr(&assign.right, output, variables, string_offsets)?;
+                        compile_expr(&assign.right, output, variables, string_offsets, host, functions)?;
                         output.push(Instruction::LocalSet(index));
                     } else {
-                        let produces_value = compile_expr(update, output, variables, string_offsets)?;
+                        let produces_value = compile_expr(update, output, variables, string_offsets, host, functions)?;
                         if produces_value {
                             output.push(Instruction::Drop);
                         }
@@ -482,7 +836,7 @@ fn compile_block(
             Stmt::Switch(switch_stmt) => {
                 let discriminant = variables.len() as u32;
                 let matched = variables.len() as u32 + 1;
-                compile_expr(&switch_stmt.discriminant, output, variables, string_offsets)?;
+                compile_expr(&switch_stmt.discriminant, output, variables, string_offsets, host, functions)?;
                 output.push(Instruction::LocalSet(discriminant));
                 output.push(Instruction::I32Const(0));
                 output.push(Instruction::LocalSet(matched));
@@ -500,6 +854,8 @@ fn compile_block(
                     labels,
                     discriminant,
                     matched,
+                    host,
+                    functions,
                 )?;
                 output.push(Instruction::End);
                 labels.pop();
@@ -520,6 +876,8 @@ fn compile_switch_cases(
     labels: &mut Vec<LabelFrame>,
     discriminant: u32,
     matched: u32,
+    host: &HostImports,
+    functions: &std::collections::BTreeMap<String, (usize, usize)>,
 ) -> Result<(), String> {
     if cases.is_empty() {
         return Ok(());
@@ -532,21 +890,21 @@ fn compile_switch_cases(
         output.push(Instruction::LocalGet(matched));
         output.push(Instruction::I32Eqz);
         output.push(Instruction::If(BlockType::Empty));
-        compile_block(&case.cons, output, variables, string_offsets, labels)?;
+        compile_block(&case.cons, output, variables, string_offsets, labels, host, functions)?;
         output.push(Instruction::End);
         return Ok(());
     };
 
     output.push(Instruction::LocalGet(matched));
     output.push(Instruction::LocalGet(discriminant));
-    compile_expr(test, output, variables, string_offsets)?;
+    compile_expr(test, output, variables, string_offsets, host, functions)?;
     output.push(Instruction::I32Eq);
     output.push(Instruction::I32Or);
     output.push(Instruction::LocalTee(matched));
     output.push(Instruction::If(BlockType::Empty));
-    compile_block(&case.cons, output, variables, string_offsets, labels)?;
+    compile_block(&case.cons, output, variables, string_offsets, labels, host, functions)?;
     output.push(Instruction::End);
-    compile_switch_cases(rest, output, variables, string_offsets, labels, discriminant, matched)?;
+    compile_switch_cases(rest, output, variables, string_offsets, labels, discriminant, matched, host, functions)?;
     Ok(())
 }
 
@@ -556,6 +914,8 @@ fn compile_expr(
     output: &mut Vec<Instruction>,
     variables: &std::collections::BTreeMap<String, u32>,
     string_offsets: &std::collections::BTreeMap<String, u32>,
+    host: &HostImports,
+    functions: &std::collections::BTreeMap<String, (usize, usize)>,
 ) -> Result<bool, String> {
     match expr {
         Expr::Lit(Lit::Num(number)) => {
@@ -579,30 +939,30 @@ fn compile_expr(
         Expr::Bin(bin) => {
             match bin.op {
                 swc_ecma_ast::BinaryOp::LogicalAnd => {
-                    compile_expr(&bin.left, output, variables, string_offsets)?;
+                    compile_expr(&bin.left, output, variables, string_offsets, host, functions)?;
                     let temp = variables.len() as u32 + 2;
                     output.push(Instruction::LocalTee(temp));
                     output.push(Instruction::If(BlockType::Result(ValType::I32)));
-                    compile_expr(&bin.right, output, variables, string_offsets)?;
+                    compile_expr(&bin.right, output, variables, string_offsets, host, functions)?;
                     output.push(Instruction::Else);
                     output.push(Instruction::LocalGet(temp));
                     output.push(Instruction::End);
                     Ok(true)
                 }
                 swc_ecma_ast::BinaryOp::LogicalOr => {
-                    compile_expr(&bin.left, output, variables, string_offsets)?;
+                    compile_expr(&bin.left, output, variables, string_offsets, host, functions)?;
                     let temp = variables.len() as u32 + 2;
                     output.push(Instruction::LocalTee(temp));
                     output.push(Instruction::If(BlockType::Result(ValType::I32)));
                     output.push(Instruction::LocalGet(temp));
                     output.push(Instruction::Else);
-                    compile_expr(&bin.right, output, variables, string_offsets)?;
+                    compile_expr(&bin.right, output, variables, string_offsets, host, functions)?;
                     output.push(Instruction::End);
                     Ok(true)
                 }
                 _ => {
-                    compile_expr(&bin.left, output, variables, string_offsets)?;
-                    compile_expr(&bin.right, output, variables, string_offsets)?;
+                    compile_expr(&bin.left, output, variables, string_offsets, host, functions)?;
+                    compile_expr(&bin.right, output, variables, string_offsets, host, functions)?;
                     match bin.op {
                         swc_ecma_ast::BinaryOp::Add => output.push(Instruction::I32Add),
                         swc_ecma_ast::BinaryOp::Sub => output.push(Instruction::I32Sub),
@@ -625,16 +985,35 @@ fn compile_expr(
         }
         Expr::Unary(unary) if matches!(unary.op, swc_ecma_ast::UnaryOp::Minus) => {
             output.push(Instruction::I32Const(0));
-            compile_expr(&unary.arg, output, variables, string_offsets)?;
+            compile_expr(&unary.arg, output, variables, string_offsets, host, functions)?;
             output.push(Instruction::I32Sub);
             Ok(true)
         }
         Expr::Call(call) => {
+            if let swc_ecma_ast::Callee::Expr(callee) = &call.callee {
+                if let Expr::Ident(ident) = &**callee {
+                    if let Some(entry) = functions.get(ident.sym.as_str()) {
+                        let function_index = entry.0;
+                        let arity = entry.1;
+                        if call.args.len() != arity {
+                            return Err(format!(
+                                "function {}() expects {} arguments",
+                                ident.sym, arity
+                            ));
+                        }
+                        for arg in &call.args {
+                            compile_expr(&arg.expr, output, variables, string_offsets, host, functions)?;
+                        }
+                        output.push(Instruction::Call(function_index as u32));
+                        return Ok(true);
+                    }
+                }
+            }
             if is_time_now_call(call) {
                 if !call.args.is_empty() {
                     return Err("varta.time.now() does not accept arguments".into());
                 }
-                output.push(Instruction::Call(2));
+                output.push(Instruction::Call(host.time_now.unwrap()));
                 Ok(true)
             } else if is_env_has_call(call) {
                 if call.args.len() != 1 {
@@ -651,7 +1030,7 @@ fn compile_expr(
                         })?;
                         output.push(Instruction::I32Const(pointer as i32));
                         output.push(Instruction::I32Const(text.len() as i32));
-                        output.push(Instruction::Call(3));
+                        output.push(Instruction::Call(host.env_has.unwrap()));
                         Ok(true)
                     }
                     _ => Err("varta.env.has() requires a string literal".into()),
@@ -671,7 +1050,7 @@ fn compile_expr(
                         })?;
                         output.push(Instruction::I32Const(pointer as i32));
                         output.push(Instruction::I32Const(text.len() as i32));
-                        output.push(Instruction::Call(4));
+                        output.push(Instruction::Call(host.env_print.unwrap()));
                         Ok(false)
                     }
                     _ => Err("varta.env.print() requires a string literal".into()),
@@ -691,7 +1070,7 @@ fn compile_expr(
                         })?;
                         output.push(Instruction::I32Const(pointer as i32));
                         output.push(Instruction::I32Const(text.len() as i32));
-                        output.push(Instruction::Call(5));
+                        output.push(Instruction::Call(host.fs_print.unwrap()));
                         Ok(false)
                     }
                     _ => Err("varta.fs.print() requires a string literal".into()),
@@ -700,8 +1079,8 @@ fn compile_expr(
                 if call.args.len() != 1 {
                     return Err("varta.process.exit() expects one number argument".into());
                 }
-                compile_expr(&call.args[0].expr, output, variables, string_offsets)?;
-                output.push(Instruction::Call(6));
+                compile_expr(&call.args[0].expr, output, variables, string_offsets, host, functions)?;
+                output.push(Instruction::Call(host.process_exit.unwrap()));
                 Ok(false)
             } else if is_net_fetch_call(call) {
                 if call.args.len() != 1 {
@@ -718,7 +1097,7 @@ fn compile_expr(
                         })?;
                         output.push(Instruction::I32Const(pointer as i32));
                         output.push(Instruction::I32Const(text.len() as i32));
-                        output.push(Instruction::Call(8));
+                        output.push(Instruction::Call(host.net_fetch.unwrap()));
                         Ok(true)
                     }
                     _ => Err("varta.net.fetch() requires a string literal".into()),
@@ -727,7 +1106,7 @@ fn compile_expr(
                 Err("unsupported call expression".into())
             }
         }
-        Expr::Paren(paren) => compile_expr(&paren.expr, output, variables, string_offsets),
+        Expr::Paren(paren) => compile_expr(&paren.expr, output, variables, string_offsets, host, functions),
         _ => Err("unsupported expression".into()),
     }
 }
@@ -1096,3 +1475,12 @@ fn is_env_has_call(call: &swc_ecma_ast::CallExpr) -> bool {
     property_ok && object_ok
 }
 
+
+fn function_parameter_names(function: &swc_ecma_ast::FnDecl) -> Vec<String> {
+    function
+        .function
+        .params
+        .iter()
+        .map(|param| binding_name(&param.pat).unwrap_or_default())
+        .collect()
+}

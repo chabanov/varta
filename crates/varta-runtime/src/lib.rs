@@ -496,3 +496,25 @@ fn fetch_http_status(url: &str) -> i32 {
         .and_then(|value| value.parse::<i32>().ok())
         .unwrap_or(-1)
 }
+
+#[cfg(test)]
+mod debug_bytes2 {
+    #[test]
+    fn print_func_bytes() {
+        let source = r#"
+function helper(): void {
+  console.log(7);
+}
+
+export function main(): void {
+  helper();
+  console.log(42);
+}
+"#;
+        let bytes = varta_compiler::compile_typescript(source).unwrap();
+        for byte in &bytes { print!("{byte:02x} "); }
+        println!();
+        let result = wasmtime::Module::new(&wasmtime::Engine::default(), &bytes);
+        assert!(result.is_ok(), "{result:?}");
+    }
+}
