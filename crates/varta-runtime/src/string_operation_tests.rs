@@ -107,43 +107,37 @@ export function main():void{
 
 #[test]
 fn concatenation_enforces_the_per_value_limit_and_empty_concats_do_not_allocate() {
-    let engine = fuel_engine();
+    use crate::reclamation_tests::Guest;
+    let mut baseline = Guest::new(
+        "export function main():void{let s=\"X\";for(let i=0;i<20;i=i+1){s=s+s;}console.log(s);}",
+    );
+    baseline.call().unwrap();
     for (iterations, success) in [(20, true), (21, false)] {
         let source = format!(
-            "export function main():void{{let s=\"X\";for(let i=0;i<{iterations};i=i+1){{s=s+s;}}for(let i=0;i<100;i=i+1){{s=\"\"+s;s=s+\"\";}}}}"
+            "export function main():void{{let s=\"X\";for(let i=0;i<{iterations};i=i+1){{s=s+s;}}for(let i=0;i<100;i=i+1){{s=\"\"+s;s=s+\"\";}}console.log(s);}}"
         );
-        let bytes = varta_compiler::compile_typescript(&source).unwrap();
-        let module = Module::new(&engine, &bytes).unwrap();
-        let mut store = Store::new(&engine, ());
-        store.set_fuel((abi::MAX_MEMORY_BYTES * 2) as u64).unwrap();
-        let instance = Instance::new(&mut store, &module, &[]).unwrap();
-        let result = instance
-            .get_typed_func::<(), ()>(&mut store, "_start")
-            .unwrap()
-            .call(&mut store, ());
+        let mut guest = Guest::new(&source);
+        let result = guest.call();
         assert_eq!(result.is_ok(), success, "{result:?}");
         if let Err(error) = result {
             assert!(format!("{error:#}").contains("unreachable"), "{error:#}");
         }
-        let memory = instance.get_memory(&mut store, "memory").unwrap();
-        let used = 2 * abi::MAX_STRING_BYTES - 2;
-        assert_eq!(
-            memory.data_size(&store),
-            (abi::OWNED_STRING_BASE + used).div_ceil(abi::WASM_PAGE_BYTES) * abi::WASM_PAGE_BYTES
-        );
-        assert!(
-            memory.data(&store)[abi::OWNED_STRING_BASE..abi::OWNED_STRING_BASE + used]
-                .iter()
-                .all(|byte| *byte == b'X')
-        );
+        if success {
+            assert_eq!(guest.logs()[0].len(), abi::MAX_STRING_BYTES);
+            assert!(guest.logs()[0].bytes().all(|byte| byte == b'X'));
+            assert_eq!(guest.memory_size(), baseline.memory_size());
+        } else {
+            assert!(guest.logs().is_empty());
+        }
+        assert!(guest.memory_size() <= abi::MAX_MEMORY_BYTES);
     }
 }
 
 #[test]
-fn concatenation_fills_the_arena_without_overwriting_static_or_host_memory() {
+fn concatenation_reuses_dead_loop_values_without_overwriting_static_or_host_memory() {
     let engine = fuel_engine();
     let capacity = (abi::MAX_MEMORY_BYTES - abi::OWNED_STRING_BASE) / abi::WASM_PAGE_BYTES;
-    for (copies, success) in [(capacity, true), (capacity + 1, false)] {
+    for (copies, success) in [(capacity, true), (capacity * 2, true)] {
         let source = format!(
             "export function main():void{{const half={:?};for(let i=0;i<{copies};i=i+1){{const s=half+half;}}}}",
             "X".repeat(abi::WASM_PAGE_BYTES / 2)
@@ -162,7 +156,7 @@ fn concatenation_fills_the_arena_without_overwriting_static_or_host_memory() {
             assert!(format!("{error:#}").contains("unreachable"), "{error:#}");
         }
         let memory = instance.get_memory(&mut store, "memory").unwrap();
-        assert_eq!(memory.data_size(&store), abi::MAX_MEMORY_BYTES);
+        assert!(memory.data_size(&store) <= abi::OWNED_STRING_BASE + 2 * abi::WASM_PAGE_BYTES);
         let data = memory.data(&store);
         assert!(
             data[..abi::WASM_PAGE_BYTES / 2]
@@ -170,14 +164,9 @@ fn concatenation_fills_the_arena_without_overwriting_static_or_host_memory() {
                 .all(|byte| *byte == b'X')
         );
         assert!(
-            data[abi::RESULT_BASE..abi::OWNED_STRING_BASE]
+            data[abi::RESULT_BASE..abi::STRING_ROOT_BASE]
                 .iter()
                 .all(|byte| *byte == 0)
-        );
-        assert!(
-            data[abi::OWNED_STRING_BASE..]
-                .iter()
-                .all(|byte| *byte == b'X')
         );
     }
 }
@@ -190,7 +179,7 @@ fn string_allocation_failure_and_long_comparisons_remain_bounded() {
             .unwrap();
     let module = Module::new(&engine, &bytes).unwrap();
     let limits = wasmtime::StoreLimitsBuilder::new()
-        .memory_size(2 * abi::WASM_PAGE_BYTES)
+        .memory_size(abi::OWNED_STRING_BASE)
         .build();
     let mut store = Store::new(&engine, limits);
     store.limiter(|limits| limits);
@@ -207,7 +196,7 @@ fn string_allocation_failure_and_long_comparisons_remain_bounded() {
             .get_memory(&mut store, "memory")
             .unwrap()
             .data_size(&store),
-        abi::WASM_PAGE_BYTES
+        abi::OWNED_STRING_BASE
     );
 
     let source = format!(
@@ -231,6 +220,6 @@ fn string_allocation_failure_and_long_comparisons_remain_bounded() {
             .get_memory(&mut store, "memory")
             .unwrap()
             .data_size(&store),
-        abi::OWNED_STRING_BASE + abi::WASM_PAGE_BYTES
+        abi::OWNED_STRING_BASE + 2 * abi::WASM_PAGE_BYTES
     );
 }

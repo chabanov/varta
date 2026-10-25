@@ -67,7 +67,12 @@ pub(crate) fn lower(graph: &Graph) -> Result<ir::Program> {
             )?);
         }
     }
-    Ok(ir::Program { functions, main })
+    let tools = super::tools::collect(graph, &scopes, &functions, main)?;
+    Ok(ir::Program {
+        functions,
+        main,
+        tools,
+    })
 }
 
 fn link_bindings(

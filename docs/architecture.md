@@ -5,6 +5,11 @@ This document describes the implemented MVP. Future work is tracked separately i
 TypeScript subset to portable WebAssembly and executes it in a capability-checked
 Wasmtime host. It does not provide general JavaScript, Node or npm compatibility.
 
+Primitive Tool Contract v1 and offline discovery are implemented below. Broader
+Application Contracts, validated external invocation, live application state and
+MCP remain **planned** in the [development plan](development-plan.md#product-direction).
+`inspect` reports bytecode, capabilities and an optional public tool catalog.
+
 ## Boundaries
 
 ```text
@@ -95,23 +100,21 @@ types; signatures are interned by complete Wasm types, not just arity. Host
 imports still receive the ABI v1 borrowed i32 pointer/length pair.
 
 Literal strings refer to deduplicated static data. Every string-producing host
-call immediately snapshots its result into a separate compiler-owned arena
+call immediately snapshots its result into a separate compiler-owned heap
 before evaluating another expression. Variables and aliases copy the immutable
 slice handle; reassignment changes the handle, and parameters/returns can share
 the same slice through nested, recursive and cross-module calls. They never
 retain an alias into the reusable host buffer. Empty/failed results use an empty
 slice and allocate nothing; copying does not clear or replace the host status.
 
-Host snapshots and nonempty concatenation results share an execution arena after
-the full maximum host-result buffer. It grows memory only in whole Wasm pages,
-within the existing 8 MiB limit. Its private cursor cannot be changed by source
-code or host result writes. Allocated string values remain
-alive until the execution ends, even when their variables leave scope or the
-result is discarded. There is no garbage collection or per-value reclamation yet.
-Arena exhaustion or failed growth traps before a new slice is published; no
-previously saved bytes are overwritten. String copying consumes guest fuel, so
-the default fuel budget can stop allocation before the memory boundary. Each run
-creates a fresh instance and arena.
+Host snapshots and nonempty concatenation results share a bounded, nonmoving
+string heap. Before growing memory, the allocator collects unreachable strings
+and reuses their storage. It grows memory only in whole Wasm pages, within the
+existing 8 MiB limit. Its private metadata cannot be changed by source code or
+host result writes. Heap exhaustion or failed growth traps before a new slice is
+published; no live value is overwritten. Copying and collection consume guest
+fuel, so the fuel budget can stop allocation before the memory boundary. Each run
+creates a fresh instance and heap.
 
 Dynamic strings passed to host calls follow exactly the existing input bounds,
 UTF-8 checks and operation/resource authorization. A string value conveys no
@@ -123,8 +126,8 @@ authority. No new host import, capability, manifest or artifact version is neede
 operands are evaluated exactly once, left to right, including nested user/host
 calls. If either operand is empty, the result shares the other immutable slice
 without allocating; the other expression is still evaluated. Nonempty operands
-are copied into one arena allocation, with length overflow, per-value size,
-arena and memory-growth checks before publishing the new slice. Existing aliases,
+are copied into one heap allocation, with length overflow, per-value size,
+heap and memory-growth checks before publishing the new slice. Existing aliases,
 captured results and source operands retain their original content. There is no
 implicit conversion: `"count=" + 1` is a type error. Use `s = s + suffix` for
 reassignment; `+=` remains outside the supported compound-assignment subset.
@@ -146,15 +149,53 @@ Neither concatenation nor comparison resets `varta.result.status()`, and saved
 `VartaResult<T>` pairs remain unchanged.
 
 Each runtime string value is capped at **1 MiB of UTF-8 bytes**. Concatenations and
-host snapshots share the bounded 8 MiB memory budget and execution lifetime;
-discarded intermediate strings are not reclaimed yet. Copying and comparisons
+host snapshots share the bounded 8 MiB memory budget and reclamation rules.
+Copying, collection and comparisons
 may exhaust the default fuel budget before reaching the byte/memory limits.
 Size/allocation/fuel failures stop execution rather than becoming a captured host
-failure. New helpers are emitted only when used: snapshot, concatenation and
-comparison, with signatures and function indices resolved from typed tables.
-Programs using only comparisons need no arena. Host ABI and artifact versions
+failure. Helpers for snapshot, concatenation, comparison, allocation, collection
+and temporary roots use signatures and function indices resolved from typed tables.
+Programs using only literals/comparisons need no managed heap. Host ABI and artifact versions
 remain unchanged, and constructed paths/URLs still undergo the original resource
 authorization and input checks.
+
+### String memory reclamation
+
+The compiler maintains exact string roots in a bounded shadow stack. A function
+frame reserves one root slot for each string or `VartaResult<string>` binding,
+including parameters. Assignments replace that slot; aliases retain independent
+slots. Lexical scope exit clears its bindings, including exits through `break`
+and `continue`. Function return removes the frame after evaluating its return
+value. A binding is conservatively retained until overwrite, scope exit or return,
+even if its last source use was earlier; there is no last-use optimization yet.
+
+Expression roots protect evaluated operands and call arguments while later
+operands or nested calls allocate. Each expression restores its temporary-root
+mark and roots its resulting string payload; complete expression statements and
+assignments remove consumed temporaries. Callee parameters are rooted before any
+allocation. Return transfer has no intervening allocation between removing the
+callee frame and rooting the caller's result. Numeric/boolean values and result
+statuses are never mistaken for pointers. Static literals and empty strings do
+not require heap marking. `VartaResult<string>` roots only its immutable payload.
+
+Allocated blocks have a 16-byte header and 8-byte alignment. Allocation first
+searches the free list and splits sufficiently large blocks. If appending would
+grow committed memory, it runs one mark/sweep pass: mark blocks referenced by the
+active roots, free unmarked blocks, coalesce adjacent free blocks, and trim a
+free trailing run from the logical heap. Allocation retries before requesting
+additional pages. The collector neither moves live data nor changes host status;
+all scans, free-list traversal and zeroing use guest fuel. Live data, allocation
+metadata or fragmentation can still exhaust memory; no compaction is implemented.
+
+The root stack is 64 KiB (8192 packed slice slots) across active frames and
+temporaries. A function whose fixed string frame exceeds that bound is rejected
+with a source diagnostic. Dynamic frame/temporary overflow traps before writing
+past the root region. Programs requiring owned strings initially commit 18 Wasm
+pages for static data, host buffer and roots; literal/comparison-only programs
+retain the one-page minimum. Actual heap blocks grow memory on demand. Freed
+blocks are reused during the run, while committed Wasm pages retain their
+high-water size until the instance is dropped. The host ABI, raw pointer/length
+representation and portable artifact versions remain compatible with old code.
 
 ## Local modules
 
@@ -409,6 +450,101 @@ request target. The HTTP client bounds headers and body and applies an end-to-en
 remaining deadline including name resolution, connect and body reading. There is
 no handwritten request-line/header construction.
 
+## Tool Contract v1 and offline discovery
+
+The entry module may explicitly publish an exported named function:
+
+```ts
+export function previewTitle(nextTitle: string): string { return nextTitle + "!"; }
+export function main(): void {}
+varta.tool({ name: "document.previewTitle", description: "Preview a title" }, previewTitle);
+```
+
+`varta.tool` is a compile-time form, accepted only as a direct top-level call in
+the entry module. It emits no guest initialization or object allocation. Its two
+arguments must be a literal object with exactly `name` and `description` string
+fields and a named function binding explicitly exported by that module. A local
+function or an imported/re-exported function may be the handler; exporting a
+function alone never publishes it. Dependencies cannot publish tools implicitly.
+`main` cannot be a tool. Spreads, computed fields, dynamic metadata, extra fields,
+duplicate fields/names and inline callbacks fail with source diagnostics.
+
+The compiler derives ordered named parameters and the result from the checked
+function signature. Supported input types are `number` (signed i32), `boolean`
+and `string`; `void` is additionally supported as a result. Optional/default/rest
+parameters, objects, arrays, `VartaResult` and generic tool signatures are not
+supported. Parameter names use ASCII JS identifier characters, at most 64 bytes.
+Tool names start with an ASCII letter and contain ASCII letters/digits, `_`, `-`
+or `.`, at most 64 bytes. Descriptions are nonblank UTF-8, at most 2048 bytes,
+without NUL. There are at most 64 tools and 16 parameters per tool.
+
+One `varta.tools` custom section contains strict JSON `ToolCatalog` metadata,
+bounded to 256 KiB, with independent `contractVersion: 1` and
+`invocationAbiVersion: 1`. Unknown/duplicate JSON fields, unsupported versions,
+noncanonical ordering and invalid limits/types fail closed. The catalog is sorted
+by tool name; parameters retain signature order. Applications with no tools omit
+the section. Host ABI v1, manifest schema v1 and container format v1 are unchanged.
+
+`inspect` adds `toolCatalog` (null for no-tool artifacts). It projects canonical
+types into closed JSON input schemas with every named field required, and output
+schemas wrapping the result as `{ "value": ... }`; void maps to null. i32 bounds
+are explicit. String schemas describe a character ceiling, while a separate UTF-8
+byte ceiling remains authoritative. Schemas are generated, not separately stored
+or accepted as a second source of type authority. Version 1 exposes no declared
+domain errors (`domainErrors: []`); typed application errors belong to C2.
+
+Each tool exports `varta.tool.<name>` with the checked physical Wasm signature.
+Artifact validation requires the listed exports and matching signatures, rejects
+unlisted reserved exports and recomputes each handler's transitive privileged
+host operations from its direct call graph, including recursive calls. The exact
+sorted set must match `requiredEffects`. Unprivileged logging is excluded.
+Handlers must be guest-defined functions; string-transfer helpers cannot call
+any host imports. Indirect/ref calls are outside tool ABI v1. Tool modules require exactly one
+valid `varta.abi` section and cannot have a Wasm start function. Code validation
+does not instantiate the module, call `_start`/handlers or run a native launcher.
+All artifact commands validate contracts; `validate` additionally reviews grants.
+
+Catalog limits currently equal the shared runtime ceilings: 64 KiB serialized
+input, 1 MiB serialized output, 1 MiB per UTF-8 string, 8 MiB guest memory,
+1,000,000 fuel, 1024 host calls and a five-second deadline. They are fixed in
+contract v1, not configurable grants. The JSON invocation boundary enforcing
+input/output envelopes is not implemented yet. Metadata is public and untrusted:
+it is neither an authenticity proof nor an authorization decision. Type/ABI checks
+cannot prove semantic equivalence between same-signature implementations. Runtime
+capability enforcement remains necessary for every actual operation.
+
+### Tool invocation ABI v1 ownership
+
+The low-level ABI is specified and tested for a **fresh instance per invocation**;
+there is no public external invocation API yet. The trusted host must validate
+inputs, enforce budgets, instantiate without calling `_start`, and then use:
+
+| Value/operation | Physical representation |
+| --- | --- |
+| number | i32, signed integer bounds |
+| boolean | i32, host must accept/produce only 0 or 1 |
+| string | i64 immutable handle: high 32 bits UTF-8 byte length, low 32 bits pointer |
+| void result | no Wasm result; JSON projection is null |
+| `varta.tool_abi.copy_string` | `(i32 ptr, i32 len) -> i64`, copies into the owned string heap |
+| `varta.tool_abi.retain_string` | `(i64 handle) -> i64`, retains a copied input in the root stack |
+
+Modules with any string tool parameters/results export both helpers and bounded
+32-bit ABI memory. For each string argument, the host writes validated UTF-8 into
+the reusable host buffer, copies it, and immediately retains the returned handle
+**before another allocation**. This prevents the next input or a host call from
+overwriting it and prevents collection during later argument transfer. These
+helpers are trusted-host primitives, not tools for untrusted callers. The host
+must never accept raw pointers/handles from external JSON.
+
+The host calls the selected tool once, validates the result type/boolean/range,
+bounds-checks and UTF-8-validates any string, and copies it into host-owned memory
+before another guest allocation or dropping the instance. Result handles are not
+retained after return; reading them immediately is required. Every invocation,
+including traps, ends by dropping the instance; helpers do not support persistent
+instances or releasing host roots between repeated calls. Input roots, allocator
+metadata and helper work consume the existing memory/root/fuel budgets. C2 must
+implement these obligations in a shared dispatcher before accepting external calls.
+
 ## ABI v1 and errors
 
 Imports live under `varta`. `HostOperation` in `varta-common` owns their names,
@@ -424,8 +560,9 @@ signatures, result globals and advertised ABI versions fail before instantiation
   unbounded host bump allocation and no guest-controlled host heap pointer.
 - Compiled string values snapshot those borrowed bytes into immutable execution
   storage. The layout is static data `[0, 65536)`, reusable host results
-  `[65536, 1114112)`, then retained strings `[1114112, 8388608)`. The retained arena
-  is bounded and reclaimed as a whole when execution ends.
+  `[65536, 1114112)`, exact string roots `[1114112, 1179648)`, then the managed
+  string heap `[1179648, 8388608)`, including block headers. Unreachable blocks are
+  reused during execution; the entire instance is released when execution ends.
 - Every host operation first clears result length/status. Failed string calls
   return pointer 0 and length 0. No previous result length can be reused.
 - `varta.result.status()` reads the structured status without clearing it.
@@ -518,7 +655,8 @@ a denied exit returns a failed `VartaResult<void>`.
 | Resource | Default limit |
 | --- | --- |
 | Guest linear memory | 8 MiB, enforced by Store limits including memory.grow |
-| Retained string storage | Within the 8 MiB memory budget, after the 1 MiB host-result reservation and static page |
+| Managed string storage | Within the 8 MiB memory budget, after static page, 1 MiB host buffer and 64 KiB root stack; includes block metadata |
+| String roots | 8192 slice slots across active frames and temporaries |
 | One string value | 1 MiB of UTF-8 bytes |
 | Guest instructions | 1,000,000 fuel units |
 | Execution/HTTP deadline | 5 seconds |
@@ -531,7 +669,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Manifest/config | 256 KiB |
 | Wasm signatures | 256 distinct complete parameter/result signatures |
 | Function parameters | 32 physical Wasm values; each captured result uses two |
-| Defined functions | 256 user functions plus at most three compiler string helpers |
+| Defined functions | 256 user functions plus at most six compiler string helpers |
 
 Preflight limits also bound signatures, function count/body size, memories,
 tables and globals before native compilation. Store budgets apply before Wasm

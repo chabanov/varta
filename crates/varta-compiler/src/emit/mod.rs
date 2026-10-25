@@ -1,4 +1,5 @@
 mod expr;
+mod roots;
 mod strings;
 use crate::{
     CompilerError,
@@ -13,6 +14,7 @@ type Result<T> = std::result::Result<T, CompilerError>;
 struct Label {
     breakable: bool,
     continuable: bool,
+    scope_depth: usize,
 }
 struct Emitter<'a> {
     code: Vec<I<'static>>,
@@ -26,6 +28,14 @@ struct Emitter<'a> {
     helpers: &'a BTreeMap<strings::Helper, u32>,
     result_len: u32,
     result_status: u32,
+    memory: Option<strings::Globals>,
+    root_slots: Vec<Option<u32>>,
+    frame_base: u32,
+    frame_end: u32,
+    root_mark_base: u32,
+    expr_depth: u32,
+    max_expr_depth: u32,
+    scopes: Vec<Vec<u32>>,
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
@@ -40,6 +50,18 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             &mut strings,
             &mut helpers,
         );
+    }
+    let tool_strings = program.tools.iter().any(|(_, tool)| tool.uses_strings());
+    if tool_strings {
+        helpers.insert(strings::Helper::Snapshot);
+    }
+    let needs_arena = helpers.iter().any(|helper| helper.needs_arena());
+    if needs_arena {
+        helpers.extend([
+            strings::Helper::Allocate,
+            strings::Helper::Collect,
+            strings::Helper::RootPush,
+        ]);
     }
     let mut offsets = BTreeMap::new();
     let mut offset = 0usize;
@@ -93,7 +115,6 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         .iter()
         .map(|helper| (*helper, intern(helper.signature())))
         .collect();
-    let needs_arena = helpers.iter().any(|helper| helper.needs_arena());
     if types.len() as usize > varta_common::abi::MAX_WASM_SIGNATURES {
         return Err(CompilerError::Invalid(
             "Wasm signature complexity exceeds limits".into(),
@@ -120,7 +141,11 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     module.section(&functions);
     let mut memory = wasm_encoder::MemorySection::new();
     memory.memory(wasm_encoder::MemoryType {
-        minimum: 1,
+        minimum: if needs_arena {
+            (varta_common::abi::OWNED_STRING_BASE / varta_common::abi::WASM_PAGE_BYTES) as u64
+        } else {
+            1
+        },
         maximum: Some(
             (varta_common::abi::MAX_MEMORY_BYTES / varta_common::abi::RESULT_BASE) as u64,
         ),
@@ -148,16 +173,26 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         },
         &wasm_encoder::ConstExpr::i32_const(0),
     );
-    let arena = globals.len();
+    let memory_globals = strings::Globals {
+        heap: globals.len(),
+        free: globals.len() + 1,
+        roots: globals.len() + 2,
+    };
     if needs_arena {
-        globals.global(
-            wasm_encoder::GlobalType {
-                val_type: ValType::I32,
-                mutable: true,
-                shared: false,
-            },
-            &wasm_encoder::ConstExpr::i32_const(varta_common::abi::OWNED_STRING_BASE as i32),
-        );
+        for initial in [
+            varta_common::abi::OWNED_STRING_BASE,
+            0,
+            varta_common::abi::STRING_ROOT_BASE,
+        ] {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(initial as i32),
+            );
+        }
     }
     module.section(&globals);
     let functions_begin = hosts.len() as u32;
@@ -188,6 +223,21 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         wasm_encoder::ExportKind::Func,
         functions_begin + program.main as u32,
     );
+    for (index, tool) in &program.tools {
+        exports.export(
+            &tool.export,
+            wasm_encoder::ExportKind::Func,
+            functions_begin + *index as u32,
+        );
+    }
+    if tool_strings {
+        for (name, helper) in [
+            (varta_common::TOOL_COPY_STRING, strings::Helper::Snapshot),
+            (varta_common::TOOL_RETAIN_STRING, strings::Helper::RootPush),
+        ] {
+            exports.export(name, wasm_encoder::ExportKind::Func, helpers[&helper]);
+        }
+    }
     module.section(&exports);
     let mut code = wasm_encoder::CodeSection::new();
     for function in &program.functions {
@@ -213,15 +263,33 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             helpers: &helpers,
             result_len,
             result_status,
+            memory: needs_arena.then_some(memory_globals),
+            root_slots: roots::slots(&function.locals),
+            frame_base: temporary + 2,
+            frame_end: temporary + 3,
+            root_mark_base: temporary + 4,
+            expr_depth: 0,
+            max_expr_depth: 0,
+            scopes: Vec::new(),
         };
+        emitter.begin_frame(function)?;
         emitter
             .statements(&function.body)
             .map_err(|e| function.source.locate(e, function.span))?;
+        emitter.end_frame();
         let locals = function.locals[function.params.len()..]
             .iter()
             .copied()
             .flat_map(wasm_types)
-            .chain([ValType::I32, ValType::I64]);
+            .chain([ValType::I32, ValType::I64])
+            .chain(std::iter::repeat_n(
+                ValType::I32,
+                if needs_arena {
+                    2 + emitter.max_expr_depth as usize
+                } else {
+                    0
+                },
+            ));
         let mut body = wasm_encoder::Function::new_with_locals_types(locals);
         for instruction in &emitter.code {
             body.instruction(instruction);
@@ -233,7 +301,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         code.function(&body);
     }
     for helper in helpers.keys() {
-        code.function(&helper.body(arena));
+        code.function(&helper.body(memory_globals, &helpers));
     }
     module.section(&code);
     let mut data = wasm_encoder::DataSection::new();
@@ -246,9 +314,21 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     module.section(&data);
     module.section(&wasm_encoder::CustomSection {
-        name: "varta.abi".into(),
+        name: varta_common::abi::SECTION.into(),
         data: varta_common::abi::VERSION.to_le_bytes().to_vec().into(),
     });
+    if !program.tools.is_empty() {
+        let catalog = varta_common::ToolCatalog::new(
+            program.tools.iter().map(|(_, tool)| tool.clone()).collect(),
+        );
+        module.section(&wasm_encoder::CustomSection {
+            name: varta_common::TOOL_SECTION.into(),
+            data: catalog
+                .to_bytes()
+                .map_err(|e| CompilerError::Invalid(e.to_string()))?
+                .into(),
+        });
+    }
     Ok(module.finish())
 }
 
@@ -325,7 +405,7 @@ fn collect<'a>(
             S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
                 collect_expr(e, source, hosts, strings, helpers)
             }
-            S::Block(b) => collect(b, source, hosts, strings, helpers),
+            S::Block(b) | S::Scope(_, b) => collect(b, source, hosts, strings, helpers),
             S::If(e, a, b) => {
                 collect_expr(e, source, hosts, strings, helpers);
                 collect(a, source, hosts, strings, helpers);
@@ -364,6 +444,7 @@ impl Emitter<'_> {
         self.labels.push(Label {
             breakable,
             continuable,
+            scope_depth: self.scopes.len(),
         });
         index
     }
@@ -396,20 +477,30 @@ impl Emitter<'_> {
                         self.code
                             .push(I::LocalSet(self.local_slots[*slot as usize] + offset));
                     }
+                    self.store_root(*slot);
+                    self.end_temporaries();
                 }
                 S::Expr(value) => {
                     self.expr(value)?;
                     for _ in 0..value.ty.width() {
                         self.code.push(I::Drop);
                     }
+                    self.end_temporaries();
                 }
                 S::Return(value) => {
                     if let Some(value) = value {
                         self.expr(value)?;
                     }
+                    self.end_frame();
                     self.code.push(I::Return);
                 }
                 S::Block(body) => self.statements(body)?,
+                S::Scope(slots, body) => {
+                    self.scopes.push(slots.clone());
+                    self.statements(body)?;
+                    self.clear_scopes(self.scopes.len() - 1);
+                    self.scopes.pop();
+                }
                 S::If(test, yes, no) => {
                     self.expr(test)?;
                     self.push_label(I::If(BlockType::Empty), false, false);
@@ -503,8 +594,8 @@ impl Emitter<'_> {
                     }
                     self.end();
                 }
-                S::Break => self.code.push(I::Br(self.target(false)?)),
-                S::Continue => self.code.push(I::Br(self.target(true)?)),
+                S::Break => self.branch(false)?,
+                S::Continue => self.branch(true)?,
             }
         }
         Ok(())

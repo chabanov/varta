@@ -1,5 +1,65 @@
 # Varta development plan
 
+## Product direction
+
+Varta targets contract-driven, typed TS/JS applications whose supported source
+compiles to portable Wasm and ships with a controlled execution environment.
+Developers should be able to build desktop applications, data services and robot
+software, then explicitly expose selected application operations to external AI
+agents through MCP. The application owns its state and business rules; UI, API
+and AI callers enter the same command/query layer.
+
+This is the target direction, not a claim that these platform features already
+exist. The current implementation is the compiler/runtime foundation described
+in [architecture.md](architecture.md): a checked TypeScript subset, local modules,
+strings and reclamation, captured host results, capability policies, native
+packaging, primitive Tool Contract v1 and offline discovery. Broader Application
+Contracts, validated external invocation, a long-lived application service, MCP,
+package signatures, GUI/database/hardware adapters and full JS/npm compatibility
+are not implemented yet.
+
+### Architecture commitments
+
+- Define the supported TS/JS language profile explicitly. Grow it through concrete
+  application requirements; unsupported dynamic behavior continues to fail clearly.
+- Keep source compilation separate from interface publication. An ordinary source
+  export does not automatically expose an AI tool. Developers explicitly choose
+  which operations form the public tool surface.
+- Distinguish **Application Contract** (commands, queries, data, errors, state,
+  revisions and lifecycle) from **Tool Contract** (the AI-exposed subset, names,
+  descriptions, schemas, required effects and limits). Both share one definition
+  of the operation rather than duplicating business logic per transport.
+- Preserve runtime boundary checks. External/AI arguments and results require
+  bounded validation even when their TS definitions were checked at build time.
+  Schemas describe data; host policy separately authorizes concrete effects.
+- Treat artifacts, callers and AI-generated arguments as separate trust inputs.
+  Effective authority must satisfy package requests, host ceilings and caller
+  permissions. Discovery and tool annotations never grant execution rights.
+- Ship public contract metadata together with executable code. Validate its link
+  to real handlers. Signing must bind code, contracts and requested permissions;
+  a recomputable checksum alone does not establish a trusted publisher.
+- Keep the portability promise precise: portable Wasm plus compatible host
+  interfaces, with native launchers built per supported OS/CPU. Do not promise
+  one native executable for every platform or hard real-time behavior.
+- Avoid including source implementations in release tool catalogs. Names, schemas
+  and descriptions are intentionally public. Wasm remains analyzable/editable;
+  compilation does not guarantee secrecy of business logic, and signature checks
+  require a trusted verifier. Credentials belong to trusted host-side providers.
+
+### Reference application profiles
+
+| Profile | Example contract operations | Required behavior |
+| --- | --- | --- |
+| Desktop editor | Inspect a document, rename or patch it, update selection | Connect to the existing application instance; preserve revisions, history/undo and UI consistency |
+| Data service | Find records, change an allowed business status | Enforce identity/data scopes, transactions, bounded queries and stable errors |
+| Robot software | Read telemetry, start a mission, request a stop | Validate state/command limits; define duplicate, timeout and disconnect behavior; keep the local safety controller independent of AI transport |
+
+The selected first demonstration is a **headless document application**: a title,
+revision and small command/query interface, controlled by two test clients and
+then an external MCP client. It exercises shared state and conflicting changes
+without requiring a GUI toolkit, database service or physical hardware. This is
+the agreed first application profile, not a commitment to a GUI framework.
+
 ## Completed milestone: architectural hardening
 
 The first milestone is a checked, bounded single-file TypeScript subset with
@@ -102,9 +162,9 @@ The raw host ABI, capability model and artifact versions remain unchanged.
 Regression coverage includes Unicode/empty values, recursive and mixed-signature
 functions, scope/control-flow slots, cross-module returns, native and Wasm runs,
 multiple host arguments, dynamic environment/filesystem permission denials,
-host ceilings, fuel exhaustion, and exact arena-boundary behavior with additional
-test fuel. Snapshots live until execution ends; reclamation and implicit string
-coercion remain unsupported. String operators are covered by the follow-up below.
+host ceilings, fuel exhaustion, and bounded heap behavior with additional
+test fuel. String operators and reclamation are covered by the follow-ups below;
+implicit string coercion remains unsupported.
 
 ## Completed follow-up: programmatic host errors
 
@@ -138,27 +198,191 @@ Regression coverage includes all eight comparisons across 484 pairs of empty,
 NUL, ASCII, combining and BMP/supplementary Unicode samples against UTF-16 order;
 nested/cross-module concatenation, retained host/captured values, operand evaluation
 order, native/Wasm execution, diagnostic ranges, constructed resource denials,
-per-value and exact arena limits, growth failures and comparison fuel exhaustion.
+per-value limits, bounded heap behavior, growth failures and comparison fuel exhaustion.
 
-## Next milestone: string memory reclamation
+## Completed follow-up: string memory reclamation
 
-Keep the secure subset small while improving usability:
+Owned strings now use a bounded, nonmoving mark/sweep heap with block reuse,
+splitting and adjacent-free coalescing. Collection runs before memory growth;
+dead trailing blocks can lower the logical heap end. Committed Wasm
+pages stay available for reuse until the instance is dropped. Static data and the
+host result buffer remain separate. Host signatures, capabilities and artifacts
+stay compatible.
 
-1. Define how dead intermediate strings are reclaimed while preserving aliases,
-   function arguments/returns, captured values and immutable source data.
-2. Implement bounded reclamation and test long-running allocation patterns before
-   adding arrays or objects. Preserve explicit memory/fuel budgets.
+Compiler-managed roots preserve bindings, aliases, string result payloads,
+expression operands and call arguments. Scope exit, overwrite, `break`, `continue`
+and return remove roots at the appropriate boundary. A fixed 64 KiB root stack
+bounds frames and temporaries; root overflow, all-live heap exhaustion and failed
+growth remain controlled execution failures. Collection and bookkeeping consume
+guest fuel. Bindings are conservatively retained to scope exit; compaction and
+last-use optimization are not implemented.
 
-Exit criteria: identical check/build/dev acceptance; documented module and memory
-semantics; behavior tests for every construct; denial tests for each boundary;
-all quality gates passing.
+Regressions cover copying more bytes than fit in the heap with bounded committed
+memory, nested expression/function transfers, recursive captured results,
+middle-block aliases, free-block splitting/coalescing, loop/switch exits, static
+and host buffer isolation, per-value limits, live-set exhaustion, root capacity,
+fuel, and real CLI/Wasm/native behavior with unchanged permission denials.
+
+## Delivery sequence
+
+The contract platform becomes the main development track. Bounded collections
+remain planned, but no longer precede discovery and invocation merely to expand
+the language. The initial boundary can use primitive guest parameters/results
+with a host-side JSON envelope; that does not require general guest objects.
+The names below are work packages, not CLI commands. C1 now specifies the
+versioned tool metadata and low-level invocation ABI; later application and MCP
+contracts remain to be designed.
+
+### C1 — Tool Contract v1 and offline discovery (completed)
+
+Entry-module `varta.tool({ name, description }, handler)` declarations now
+publish explicitly exported functions. Checked primitive signatures supply named
+parameters and results; metadata does not duplicate handwritten schemas.
+Ordinary exports and dependency modules cannot silently publish tools.
+
+- Shared strict types, limits and generated JSON schemas live in `varta-common`.
+- Compiler lowering resolves the actual handler (including imported/re-exported
+  bindings), derives transitive system requirements and emits a sorted catalog
+  plus typed Wasm exports.
+- Runtime validation binds metadata to actual Wasm export signatures and recomputes
+  transitive effects. Malformed, duplicate, oversized, incompatible and inconsistent
+  catalogs fail before execution. Indirect calls and Wasm start functions are
+  outside tool invocation ABI v1.
+- Project inspection returns public schemas, effects, limits and existing package
+  permissions. It compiles/validates portable code without instantiating or running
+  it. The CLI only presents that metadata.
+- Contract v1, invocation ABI v1, host ABI v1, manifest schema v1 and native
+  container format v1 are distinct. Existing no-tool applications keep working;
+  tool metadata is inside the Wasm payload, so packaging requires no new footer.
+- String copy/retain exports establish fresh-instance invocation ownership and are
+  tested across input-buffer reuse and collection. An external JSON dispatcher is
+  still C2 work. `domainErrors: []` explicitly leaves typed domain errors to C2.
+
+Exit verified: compile a primitive string tool, inspect the same catalog in Wasm
+and native packages after deleting sources, reject invalid catalogs/signatures/
+effects, preserve permission denials and demonstrate that inspection does not run
+privileged application code. No LLM connection or MCP server is implemented.
+
+The complete implemented syntax, limits and ownership rules are in the
+[tool contract](architecture.md#tool-contract-v1-and-offline-discovery).
+
+### C2 — Validated invocation and a live application core (next)
+
+Deliver a typed invocation path and a headless application whose state survives
+agent/client connections and is shared by all entry points.
+
+- Add a host API to invoke an explicitly published operation by ID with bounded
+  input/output validation. Unknown fields, wrong types, invalid ranges and string
+  limits fail before application effects; i32 number semantics remain explicit.
+- Define stable contract/domain errors separately from host status codes, protocol
+  errors and execution traps. Do not force revision conflicts into host I/O errors.
+- Define application identity, startup/shutdown, state ownership, request identity,
+  ordering, revision checks, cancellation and retry/idempotency semantics.
+- Validate a proposed initial model: a long-lived trusted application service owns
+  state and serializes mutations; fresh bounded Wasm invocations implement commands.
+  The application's lifetime is independent of any agent or MCP connection.
+  Decide this model explicitly before adding persistent guest memory or concurrency.
+- Make string input/output transfer safe across invocation boundaries and collection.
+  Host-owned state must never retain borrowed guest pointers after a call ends.
+- Keep one command/query path for UI/API/MCP callers. Apply authorization and state
+  preconditions at that path, then commit a mutation atomically. A stale revision
+  yields a typed conflict; transport failure must not trigger an automatic write retry.
+- Enforce per-call budgets and bounded application-level queues/accounting so that
+  reconnecting or making repeated calls cannot reset all resource controls.
+
+Exit: two test clients inspect and rename the same document through the same
+service; state persists across connections, stale writes fail, unauthorized calls
+have no effect, and malformed/trapping calls do not partially commit changes.
+GUI rendering and general guest arrays/objects are outside this first demonstration.
+
+### C3 — Artifact provenance and trusted loading
+
+Deliver package verification before third-party distribution or treating tool
+metadata as publisher-authenticated.
+
+- Define trust roots, signed bytes, contract/code/permission binding and signature
+  verification before invocation. Cover versions and payload lengths as well as
+  code; changing the catalog or manifest must invalidate authenticity.
+- Define publisher identity, key rotation/revocation, update and rollback rules.
+  Keep signing credentials outside shipped artifacts and guest memory.
+- Separate package authenticity from caller authorization and native OS signing.
+  A valid signature cannot expand host grants, and an unsigned developer build
+  must not silently acquire trusted-package status.
+- Use explicitly trusted local development builds for earlier prototypes. Preserve
+  safe portable Wasm validation and do not restore arbitrary native deserialization.
+
+Exit: code, contract and permission tampering is rejected by a trusted loader;
+trusted/unknown/revoked publishers are distinguishable, and host ceilings still
+restrict a correctly signed application. AOT remains a later, separate design.
+
+### C4 — Local MCP bridge to the running application
+
+Deliver external-agent discovery and control of the C2 application through MCP.
+
+- Pin the supported MCP revision(s) and transcript compatibility tests. Implement
+  deterministic, bounded `tools/list` and validated `tools/call` from the existing
+  catalog/dispatcher, with protocol metadata and errors appropriate to that revision.
+- Start with stdio. Separate protocol output from application logs and enforce
+  request size, queue, response size, timeout and cancellation limits.
+- For an already-running desktop application, the stdio bridge connects through
+  an authenticated local channel to a specific existing instance. Launching another
+  bridge must not silently create a second document or divergent application state.
+- Bind callers to the intended application/contract identity, expose the permitted
+  catalog, and authorize every concrete invocation. Tool descriptions/annotations
+  remain untrusted data and do not override host or caller policy.
+- Test disconnect/reconnect, multiple agents, duplicate requests and changing
+  document revisions. State belongs to the application, not the MCP session.
+
+Exit: an external MCP client lists tools from a compiled app, reads a document,
+renames it through the common command path and observes a conflict when another
+client has changed it. No source code, embedded model or AI-provider SDK is needed
+inside the Wasm module. No remote listener is enabled by this local milestone.
+
+### C5 — Deployment profiles and remote access
+
+- Desktop: select UI/rendering and event-loop adapters; route edits through the
+  same commands and history/undo model used by tools. Choose a GUI framework only
+  after the headless contract/control path works.
+- Server: add database adapters with scoped credentials, transaction boundaries,
+  concurrency limits and tenant/record authorization; keep secrets host-owned.
+- Remote MCP: add authenticated Streamable HTTP with HTTPS, explicit listener
+  configuration, authorization and network deployment tests before remote exposure.
+- Robot: build a simulator first, then hardware adapters. Keep hard real-time and
+  safety/interlock enforcement in the local controller; define command expiry,
+  deduplication, progress and disconnect/stop behavior before physical deployment.
+- Establish a supported OS/CPU/runtime matrix and packaging tests. Evaluate small
+  devices against actual runtime/memory constraints rather than assuming support.
+
+Exit criteria are profile-specific; desktop, server and robot support must not be
+claimed merely because the shared Wasm and MCP layers run on a development host.
+
+### Supporting language and runtime work
+
+- Expand the language profile through the reference application: bounded records,
+  arrays, JSON interoperability and enums only when their semantics/ownership are
+  specified and the contract boundary needs them. Full JS/npm compatibility is
+  a separate compatibility effort.
+- String-containing collections require tracing their referenced values; the flat
+  string collector must not be assumed sufficient for an object graph.
+- Async/events require cancellation, task/handle lifetime, retained roots, scheduling
+  and queue budgets before exposing promises or long-running guest operations.
+- Continue model/differential tests, fuzzing and performance measurements of the
+  compiler, collector, boundary schemas and artifact parser throughout these phases.
+
+Every implementation milestone retains identical shared check/build/dev acceptance,
+versioned documentation, positive and denial tests, bounded malformed-input handling,
+Wasmtime validation/behavior coverage and the existing quality gates. Planned
+features are described as planned until their exit criteria actually pass.
+
+Protocol references for planning: [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
+and [MCP transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports).
+Choose and test exact compatibility targets when implementing C4; the catalog
+and application core remain independent of transport/protocol revisions.
 
 ## Later milestones
 
-- HTTPS: select certificate/trust-store policy, keep redirects policy-aware,
-  test TLS failures and budget behavior without an external service.
-- Async: specify cancellation, scheduling and handle lifetimes before exposing
-  promises, timers or asynchronous host operations.
+- HTTPS deployment and asynchronous execution follow the C5 and supporting-work
+  contracts above; neither is implied by the current synchronous HTTP client.
 - Authenticated AOT: define who trusts the signer, which bytes are authenticated,
   and how engine version, target and CPU requirements are pinned. Never restore
   arbitrary native deserialization behind a filename or format marker.

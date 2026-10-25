@@ -9,6 +9,27 @@ Status: MVP / active development. The [architecture contract](docs/architecture.
 describes the implemented language, trust boundaries, ABI and limits. The
 [development plan](docs/development-plan.md) tracks audit fixes and next milestones.
 
+## Platform direction
+
+Varta targets typed, contract-driven TS/JS applications for desktop, server and
+robot environments. The intended architecture compiles supported source into
+portable Wasm and exposes explicitly selected application operations to external
+AI agents through MCP. UI, API and agent callers share the application's command
+and query layer, business rules and state; connecting another agent does not
+create another application state.
+
+Primitive Tool Contract v1 and offline discovery are implemented. A broader
+Application Contract, validated external invocation, a long-lived application
+service, MCP bridges, package signatures and desktop/database/hardware adapters
+remain planned. The [delivery sequence](docs/development-plan.md#delivery-sequence)
+continues with invocation/shared state, artifact provenance and a local MCP bridge.
+Language expansion follows those application needs.
+
+Portable Wasm requires a compatible host; native launchers target a supported
+OS/CPU. Source-free compilation does not guarantee that business logic cannot be
+analyzed or modified. Authenticity requires verification by a trusted loader,
+while concrete actions always remain subject to host and caller permissions.
+
 ## Quickstart
 
 ```sh
@@ -32,6 +53,43 @@ export function main(): void {
   console.log(varta.result.status());
 }
 ```
+
+## Public tool contracts
+
+Publish selected exported functions with a compile-time entry-module declaration:
+
+```ts
+export function previewTitle(nextTitle: string): string {
+  return nextTitle + "!";
+}
+export function main(): void {}
+
+varta.tool({
+  name: "document.previewTitle",
+  description: "Preview a proposed document title"
+}, previewTitle);
+```
+
+Build normally, then read the catalog without running the application:
+
+```sh
+varta build --single
+varta inspect dist/app.wasm --json
+varta inspect dist/app --json
+```
+
+`toolCatalog` includes generated input/output schemas, required system operations
+and limits. Metadata lives inside Wasm and survives native packaging and removal
+of source files. Ordinary exports do not become tools. Imported functions may be
+published through an explicit entry-module export. Parameters support `number`
+(signed i32), `boolean` and `string`; results also support `void`. Output schemas
+wrap the result as `{ "value": ... }`.
+
+Catalog versions, sizes, handler signatures and transitive system requirements are
+validated on check/build/dev/run/inspect/validate. Publishing a tool grants no
+permissions. A JSON invocation API, shared document state and MCP are the next
+stages; this example only declares a stateless tool. See the
+[tool contract](docs/architecture.md#tool-contract-v1-and-offline-discovery).
 
 ## Diagnostics
 
@@ -150,8 +208,9 @@ export function main(): void {
 }
 ```
 
-Host results are copied into immutable, bounded storage that lives until the run
-ends. Every read still needs the corresponding capability. Strings support `+`,
+Host results are copied into immutable, bounded storage. Unreachable strings are
+collected and their storage is reused during execution; aliases and saved results
+remain valid. Every read still needs the corresponding capability. Strings support `+`,
 `==`, `!=`, `===`, `!==`, `<`, `<=`, `>` and `>=`:
 
 ```ts
@@ -165,7 +224,9 @@ export function main(): void {
 Comparisons use content and UTF-16 code-unit order, without locale sorting or
 normalization. Both operands must be strings; numbers are not converted to text.
 One string is limited to 1 MiB of UTF-8 bytes. Allocations share the memory/fuel
-budgets and live until the run ends; garbage collection is not implemented yet.
+budgets. Unused expression values, overwritten bindings and out-of-scope locals
+can be reclaimed. Live values stay in place; committed memory pages remain until
+the run ends. See the [reclamation contract](docs/architecture.md#string-memory-reclamation).
 See the [operator contract](docs/architecture.md#string-operators) and
 [ownership contract](docs/architecture.md#string-values-and-ownership).
 Unsupported constructs, top-level effects and type mismatches fail

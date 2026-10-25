@@ -6,12 +6,14 @@ mod diagnostic;
 mod host;
 mod manifest;
 mod module;
+mod tool;
 pub use capability::*;
 pub use config::*;
 pub use diagnostic::*;
 pub use host::HostOperation;
 pub use manifest::*;
 pub use module::ModuleInfo;
+pub use tool::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VartaError {

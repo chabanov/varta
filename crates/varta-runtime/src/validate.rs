@@ -2,7 +2,10 @@ use crate::RuntimeError;
 use varta_common::abi;
 use wasmtime::{Engine, Module};
 
-pub(crate) fn module(engine: &Engine, bytes: &[u8]) -> Result<Module, RuntimeError> {
+pub(crate) fn module(
+    engine: &Engine,
+    bytes: &[u8],
+) -> Result<(Module, Option<varta_common::ToolCatalog>), RuntimeError> {
     preflight(bytes)?;
     if bytes.len() > abi::MAX_WASM_BYTES || !bytes.starts_with(b"\0asm\x01\0\0\0") {
         return Err(wasmtime::Error::msg("expected a bounded portable Wasm module").into());
@@ -44,7 +47,8 @@ pub(crate) fn module(engine: &Engine, bytes: &[u8]) -> Result<Module, RuntimeErr
         }
     }
     check_exports(&module)?;
-    Ok(module)
+    let tools = crate::contracts::validate(&module, bytes)?;
+    Ok((module, tools))
 }
 
 fn error(message: &str) -> RuntimeError {
@@ -112,7 +116,7 @@ fn preflight(bytes: &[u8]) -> Result<(), RuntimeError> {
                 }
             }
             Payload::CustomSection(section)
-                if section.name() == "varta.abi"
+                if section.name() == abi::SECTION
                     && section.data() != abi::VERSION.to_le_bytes() =>
             {
                 return Err(error("unsupported Wasm ABI version"));

@@ -13,6 +13,9 @@ pub(crate) enum Type {
 }
 
 impl Type {
+    pub(crate) fn has_string(self) -> bool {
+        matches!(self, Self::String | Self::ResultString)
+    }
     pub(crate) fn captured(self) -> Option<Self> {
         Some(match self {
             Self::Number => Self::ResultNumber,
@@ -52,6 +55,7 @@ pub(crate) enum ResultField {
 pub(crate) struct Program {
     pub functions: Vec<Function>,
     pub main: usize,
+    pub tools: Vec<(usize, varta_common::ToolContract)>,
 }
 pub(crate) struct Function {
     pub source: crate::source::Source,
@@ -88,6 +92,7 @@ pub(crate) enum Statement {
     Expr(Expr),
     Return(Option<Expr>),
     Block(Vec<Statement>),
+    Scope(Vec<u32>, Vec<Statement>),
     If(Expr, Vec<Statement>, Vec<Statement>),
     While(Expr, Vec<Statement>),
     For(Vec<Statement>, Option<Expr>, Vec<Statement>, Vec<Statement>),

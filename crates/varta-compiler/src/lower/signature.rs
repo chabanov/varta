@@ -40,6 +40,17 @@ pub(super) fn check(declaration: &ast::FnDecl, index: usize, source: &Source) ->
         });
     Ok(Signature {
         index,
+        names: function
+            .params
+            .iter()
+            .map(|param| {
+                // parameter() above has already rejected every other pattern.
+                match &param.pat {
+                    ast::Pat::Ident(binding) => binding.id.sym.to_string(),
+                    _ => unreachable!(),
+                }
+            })
+            .collect(),
         params,
         result,
     })

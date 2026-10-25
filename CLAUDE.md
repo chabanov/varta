@@ -4,14 +4,28 @@ Guide for AI agents and contributors working in this repository. Follow it exact
 
 ## 1. What Varta is
 
-Varta is a compiler and secure runtime for small TS/JS applications:
+Varta targets contract-driven cross-platform TS/JS applications with explicit
+AI tool interfaces. The current implementation is a compiler and secure runtime
+for a deliberately small source subset:
 
 - TS source is parsed (SWC) and lowered through resolved typed IR to validated WebAssembly (`varta-compiler`);
 - the Wasm module runs in Wasmtime with capability-checked host functions (`varta-runtime`);
 - privileged operations (fs, net, env, time, process) exist **only** as host imports and are denied by default;
 - the production artifact is a single native launcher with portable Wasm, a strict capability manifest and a fixed versioned EOF footer (`varta build --single`).
 
-Varta is deliberately **not** a general-purpose JavaScript runtime. Every accepted language feature must stay small, statically analyzable, and map cleanly to Wasm.
+Primitive Tool Contract v1 and offline discovery are implemented: entry-module
+`varta.tool` declarations generate bounded metadata and checked handler exports.
+`inspect` reads schemas without instantiating guest code. Keep metadata and
+physical signatures consistent, recompute transitive effects from Wasm, and
+preserve the copy/retain string ownership contract described in `docs/architecture.md`.
+
+The platform roadmap is in `docs/development-plan.md`: broader Application
+Contracts, validated external invocation and shared application state, artifact
+trust, then MCP bridges and deployment profiles remain planned. Ordinary source exports must not automatically become
+AI tools; external callers enter the same authorized command/query path as UI/API
+callers, and application state must outlive agent connections.
+
+Varta currently does not provide general JavaScript compatibility. Every accepted language feature must stay small, statically analyzable, and map cleanly to Wasm; prioritize concrete contract/application needs over language feature count.
 
 ## 2. Repository layout
 
@@ -76,7 +90,8 @@ cargo test -- --test-threads=1          # when tests share state
 - Every language feature is a deliberate, documented subset decision. Unsupported constructs fail with a clear `unsupported …` error naming the construct — never silently miscompile.
 - Static data (string literals) goes into the data section with a deduplicated offset table; the 64 KiB single-page limit is enforced with a proper error.
 - String values use immutable packed i64 slices; complete value types determine user signatures and locals. Host ptr/len results must be snapshotted into the bounded execution arena immediately, before any later expression can reuse the host buffer. Never expose a borrowed result buffer as a retained variable/argument/return value. Reclamation or new string operations require an explicit ownership/budget contract.
-- String `+` and content comparisons evaluate both operands once in source order. Preserve UTF-16 code-unit ordering over valid UTF-8, including supplementary/BMP boundaries; never compare slice handles as content. Concatenations share the checked arena and 1 MiB per-value limit, and string helpers must not change host status or bypass capability checks on constructed inputs.
+- String `+` and content comparisons evaluate both operands once in source order. Preserve UTF-16 code-unit ordering over valid UTF-8, including supplementary/BMP boundaries; never compare slice handles as content. Concatenations share the checked heap and 1 MiB per-value limit, and string helpers must not change host status or bypass capability checks on constructed inputs.
+- The nonmoving string collector relies on exact shadow roots. Protect operands/arguments across nested allocation, update binding roots only after evaluating the RHS, clear lexical roots on every normal/branch exit, and transfer return roots without an intervening allocation. Keep root-stack and heap metadata outside static/host buffers, include their cost in memory/fuel limits, and never reclaim a live alias or move its bytes.
 - `VartaResult<T>` is an immutable payload/status pair. Capture only a direct privileged host call, once, and read status before any later host operation. Preserve both physical slots through locals, parameters and returns; compute every local index after type expansion, including switch temporaries. Result field reads must evaluate the base once. Do not turn execution-budget traps or authorized guest exit into recoverable host statuses.
 - Wasm type/import/local indices are computed, never written as literals. Host imports are declared conditionally on use; any emitted `Call` must go through the resolved typed operation index.
 - Locals: every index the generated code touches (temporaries for `&&`/`||`, switch discriminants, etc.) must be declared. Off-by-one local declarations produce modules that pass our compile step but trap in Wasmtime — always validate.

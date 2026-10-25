@@ -42,7 +42,7 @@ enum Commands {
     },
     /// Execute portable Wasm or a Varta container (native AOT is rejected).
     Run { path: PathBuf },
-    /// Inspect validated bytecode, ABI and full capability scopes.
+    /// Inspect validated bytecode, ABI, public tool contracts and full capability scopes without running the app.
     Inspect {
         path: Option<PathBuf>,
         #[arg(long)]

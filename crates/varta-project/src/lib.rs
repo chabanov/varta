@@ -125,7 +125,7 @@ pub fn inspect_with_policy(
     policy: Option<&HostPolicy>,
 ) -> Result<serde_json::Value> {
     let grants = artifact.manifest.grants()?;
-    let module = VartaRuntime::new().validate_module(&artifact.wasm)?;
+    let (module, tools) = VartaRuntime::new().validate_module_and_tools(&artifact.wasm)?;
     let imports: Vec<_> = module
         .imports()
         .map(|i| format!("{}.{}", i.module(), i.name()))
@@ -141,6 +141,7 @@ pub fn inspect_with_policy(
         "policy": artifact.manifest.policy,
         "capabilities": grants.iter().map(|g| &g.id).collect::<Vec<_>>(),
         "grants": artifact.manifest.capabilities, "imports": imports, "exports": exports, "memories": memories,
+        "toolCatalog": tools.map(|catalog| catalog.discovery()),
         "authorization": authorization(&artifact.manifest, policy)? }),
     )
 }

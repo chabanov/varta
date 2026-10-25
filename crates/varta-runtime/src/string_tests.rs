@@ -75,7 +75,7 @@ fn string_helpers_fit_the_full_user_function_budget() {
 }
 
 #[test]
-fn string_arena_grows_to_its_boundary_and_traps_without_overwriting_saved_values() {
+fn string_snapshots_reuse_dead_loop_values_and_keep_the_host_buffer_separate() {
     use varta_common::abi;
     use wasmtime::{Caller, Engine, Extern, Linker, Module, Store, Val};
     let mut config = wasmtime::Config::new();
@@ -83,7 +83,7 @@ fn string_arena_grows_to_its_boundary_and_traps_without_overwriting_saved_values
     let engine = Engine::new(&config).unwrap();
     let mut linker = Linker::new(&engine);
     // A deterministic in-memory host supplies one page per call. Extra fuel
-    // lets this test reach the memory boundary; production fuel bounds copies first.
+    // lets the test copy more bytes than fit in the heap; dead values must be reused.
     linker
         .func_wrap(
             "varta",
@@ -113,7 +113,7 @@ fn string_arena_grows_to_its_boundary_and_traps_without_overwriting_saved_values
         )
         .unwrap();
     let capacity = (abi::MAX_MEMORY_BYTES - abi::OWNED_STRING_BASE) / abi::WASM_PAGE_BYTES;
-    for (copies, success) in [(capacity, true), (capacity + 1, false)] {
+    for (copies, success) in [(capacity, true), (capacity * 2, true)] {
         let source = format!(
             "export function main():void{{for(let i=0;i<{copies};i=i+1){{let s=varta.env.get(\"name\");}}}}"
         );
@@ -131,8 +131,8 @@ fn string_arena_grows_to_its_boundary_and_traps_without_overwriting_saved_values
             assert!(format!("{error:#}").contains("unreachable"), "{error:#}");
         }
         let memory = instance.get_memory(&mut store, "memory").unwrap();
-        assert_eq!(memory.data_size(&store), abi::MAX_MEMORY_BYTES);
-        let owned = &memory.data(&store)[abi::OWNED_STRING_BASE..];
+        assert!(memory.data_size(&store) <= abi::OWNED_STRING_BASE + 2 * abi::WASM_PAGE_BYTES);
+        let owned = &memory.data(&store)[abi::RESULT_BASE..abi::RESULT_BASE + abi::WASM_PAGE_BYTES];
         assert!(owned.iter().all(|byte| *byte == b'X'));
     }
 }

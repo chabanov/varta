@@ -41,12 +41,19 @@ impl Lower<'_> {
                     .map_err(|e| self.source.locate(e, var.span()))?;
             }
         }
-        let result = statements
+        let mut result = statements
             .iter()
             .map(|s| self.statement(s))
             .collect::<Result<Vec<_>>>()?;
         if scope {
-            self.scopes.pop();
+            let slots = self
+                .scopes
+                .pop()
+                .ok_or_else(|| invalid("missing lexical scope"))?
+                .values()
+                .map(|binding| binding.slot)
+                .collect();
+            result = vec![S::Scope(slots, result)];
         }
         self.depth -= 1;
         Ok(result)
@@ -157,8 +164,14 @@ impl Lower<'_> {
                 self.loops += 1;
                 let body = self.single(&statement.body)?;
                 self.loops -= 1;
-                self.scopes.pop();
-                S::For(init, test, update, body)
+                let slots = self
+                    .scopes
+                    .pop()
+                    .ok_or_else(|| invalid("missing loop scope"))?
+                    .values()
+                    .map(|binding| binding.slot)
+                    .collect();
+                S::Scope(slots, vec![S::For(init, test, update, body)])
             }
             ast::Stmt::Switch(statement) => {
                 let value = self.expr(&statement.discriminant)?;

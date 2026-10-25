@@ -25,6 +25,7 @@ fn unsupported(kind: &str) -> CompilerError {
 #[derive(Clone)]
 struct Signature {
     index: usize,
+    names: Vec<String>,
     params: Vec<Type>,
     result: Type,
 }
@@ -116,7 +117,7 @@ fn contains_value_return(body: &[ast::Stmt]) -> bool {
 fn returns(body: &[S]) -> bool {
     body.iter().any(|s| match s {
         S::Return(_) => true,
-        S::Block(b) => returns(b),
+        S::Block(b) | S::Scope(_, b) => returns(b),
         S::If(_, a, b) => returns(a) && returns(b),
         _ => false,
     })
@@ -128,6 +129,7 @@ mod link;
 mod results;
 mod signature;
 mod stmt;
+mod tools;
 
 impl Lower<'_> {
     fn declare(

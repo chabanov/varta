@@ -1,14 +1,13 @@
 use super::*;
 
-pub(super) fn function(arena: u32) -> Function {
+pub(super) fn function(allocate: u32) -> Function {
     const LEFT: u32 = 0;
     const RIGHT: u32 = 1;
     const LEFT_LEN: u32 = 2;
     const RIGHT_LEN: u32 = 3;
     const TOTAL: u32 = 4;
     const DEST: u32 = 5;
-    const END: u32 = 6;
-    let mut function = Function::new([(END - LEFT_LEN + 1, ValType::I32)]);
+    let mut function = Function::new([(DEST - LEFT_LEN + 1, ValType::I32)]);
     length(&mut function, LEFT, LEFT_LEN);
     length(&mut function, RIGHT, RIGHT_LEN);
     // Both operands have already been evaluated. Immutable empty concatenation
@@ -39,7 +38,10 @@ pub(super) fn function(arena: u32) -> Function {
             I::End,
         ],
     );
-    reserve(&mut function, arena, TOTAL, DEST, END);
+    instructions(
+        &mut function,
+        [I::LocalGet(TOTAL), I::Call(allocate), I::LocalSet(DEST)],
+    );
     instructions(
         &mut function,
         [
@@ -63,7 +65,7 @@ pub(super) fn function(arena: u32) -> Function {
             },
         ],
     );
-    commit(&mut function, arena, TOTAL, DEST, END);
+    pack(&mut function, TOTAL, DEST);
     function.instruction(&I::End);
     function
 }

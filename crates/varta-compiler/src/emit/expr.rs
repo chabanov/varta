@@ -2,6 +2,30 @@ use super::*;
 
 impl Emitter<'_> {
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<()> {
+        let Some(memory) = self.memory else {
+            return self.expr_inner(expr);
+        };
+        let marker = self.root_mark_base + self.expr_depth;
+        self.expr_depth += 1;
+        self.max_expr_depth = self.max_expr_depth.max(self.expr_depth);
+        self.code
+            .extend([I::GlobalGet(memory.roots), I::LocalSet(marker)]);
+        self.expr_inner(expr)?;
+        self.code
+            .extend([I::LocalGet(marker), I::GlobalSet(memory.roots)]);
+        if expr.ty.has_string() {
+            if expr.ty == Type::ResultString {
+                self.code.push(I::LocalSet(self.temporary));
+            }
+            self.string_helper(strings::Helper::RootPush)?;
+            if expr.ty == Type::ResultString {
+                self.code.push(I::LocalGet(self.temporary));
+            }
+        }
+        self.expr_depth -= 1;
+        Ok(())
+    }
+    fn expr_inner(&mut self, expr: &Expr) -> Result<()> {
         match &expr.kind {
             E::Integer(n) => self.code.push(I::I32Const(*n)),
             E::Local(slot) => {

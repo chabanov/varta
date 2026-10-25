@@ -706,6 +706,222 @@ impl Drop for RegressionProject {
 }
 
 #[test]
+fn tool_catalogs_are_inspected_without_sources_or_execution_in_wasm_and_native_packages() {
+    let project = RegressionProject::new(
+        r#"
+function read(name:string):string{return varta.env.get(name);}
+export function title(name:string):string{return read(name);}
+export function ordinary():number{return 42;}
+export function main():void{varta.env.print("VARTA_DISCOVERY_SECRET");varta.process.exit(17);}
+varta.tool({name:"document.title",description:"Read a named title"},title);
+"#,
+        serde_json::json!({"env":{"get":["VARTA_DISCOVERY_SECRET"],"print":["VARTA_DISCOVERY_SECRET"]},"process":{"exit":true}}),
+    );
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            project.0.join("dist/app"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+    }
+    let mut catalogs = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        let output = varta()
+            .current_dir(&project.0)
+            .args(["inspect", artifact, "--json"])
+            .env("VARTA_DISCOVERY_SECRET", "NEVER_EXECUTE_GUEST_CODE")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert!(!combined(&output).contains("NEVER_EXECUTE_GUEST_CODE"));
+        let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let catalog = &metadata["toolCatalog"];
+        assert_eq!(catalog["contractVersion"], 1);
+        assert_eq!(catalog["invocationAbiVersion"], 1);
+        let tools = catalog["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "document.title");
+        assert_eq!(tools[0]["requiredEffects"], serde_json::json!(["env.get"]));
+        assert_eq!(
+            tools[0]["inputSchema"]["properties"]["name"]["type"],
+            "string"
+        );
+        assert_eq!(
+            tools[0]["outputSchema"]["properties"]["value"]["type"],
+            "string"
+        );
+        assert_eq!(tools[0]["inputSchema"]["additionalProperties"], false);
+        catalogs.push(catalog.clone());
+        assert!(project.command(&["validate", artifact]).status.success());
+    }
+    assert_eq!(catalogs[0], catalogs[1]);
+}
+
+#[test]
+fn tool_handlers_can_be_explicitly_reexported_from_local_modules() {
+    let project = RegressionProject::new(
+        r#"
+import {preview as title} from "./document.ts";
+export {title as previewTitle};
+export function main():void{console.log(title("Document"));}
+varta.tool({name:"document.previewTitle",description:"Preview a title"},title);
+"#,
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/document.ts"),
+        "export function preview(nextTitle:string):string{return nextTitle+\"!\";}",
+    )
+    .unwrap();
+    let output = project.command(&["dev"]);
+    assert!(output.status.success(), "{}", combined(&output));
+    assert!(combined(&output).contains("varta log: Document!"));
+    assert!(project.command(&["build"]).status.success());
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let metadata: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(
+        metadata["toolCatalog"]["tools"][0]["parameters"][0]["name"],
+        "nextTitle"
+    );
+    fs::write(project.0.join("src/document.ts"), "export function preview(nextTitle:string):string{return nextTitle;}varta.tool({name:'unwanted',description:'Dependency publication'},preview);").unwrap();
+    let check = project.command(&["check"]);
+    assert_eq!(check.status.code(), Some(1));
+    assert!(combined(&check).contains("entry module"));
+}
+
+#[test]
+fn invalid_tool_contracts_fail_consistently_before_build_or_execution() {
+    let project = RegressionProject::new(
+        r#"
+export function preview(title:string):string{return title;}
+export function main():void{console.log("MUST_NOT_RUN");}
+varta.tool({name:"document.preview",description:"Preview"},preview);
+varta.tool({name:"document.preview",description:"Duplicate"},preview);
+"#,
+        serde_json::json!({}),
+    );
+    for command in ["check", "build", "dev"] {
+        let args = if command == "check" {
+            vec![command, "--json"]
+        } else {
+            vec![command]
+        };
+        let output = project.command(&args);
+        assert_eq!(output.status.code(), Some(1), "{}", combined(&output));
+        assert!(combined(&output).contains("duplicate tool name"));
+        if command == "check" {
+            let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert!(metadata.to_string().contains("duplicate tool name"));
+        }
+        assert!(!combined(&output).contains("varta log: MUST_NOT_RUN"));
+    }
+    assert!(!project.0.join("dist").exists());
+}
+
+#[test]
+fn publishing_a_tool_cannot_grant_system_access() {
+    let project = RegressionProject::new(
+        r#"
+export function read(name:string):string{return varta.env.get(name);}
+export function main():void{const r=varta.result.capture(varta.env.get("VARTA_TOOL_SECRET"));console.log(r.status);console.log(read("VARTA_TOOL_SECRET"));}
+varta.tool({name:"read",description:"Read a value"},read);
+"#,
+        serde_json::json!({}),
+    );
+    assert!(project.command(&["build", "--single"]).status.success());
+    for command in [
+        vec!["dev"],
+        vec!["run", "dist/app.wasm"],
+        vec!["run", "dist/app"],
+    ] {
+        let output = varta()
+            .current_dir(&project.0)
+            .args(command)
+            .env("VARTA_TOOL_SECRET", "MUST_STAY_SECRET")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert!(combined(&output).contains("varta log: 1"));
+        assert!(!combined(&output).contains("MUST_STAY_SECRET"));
+    }
+    let native = Command::new(project.0.join("dist/app"))
+        .env("VARTA_TOOL_SECRET", "MUST_STAY_SECRET")
+        .output()
+        .unwrap();
+    assert!(native.status.success(), "{}", combined(&native));
+    assert!(!combined(&native).contains("MUST_STAY_SECRET"));
+    assert_eq!(
+        project
+            .command(&["validate", "dist/app.wasm"])
+            .status
+            .code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn reclaimed_strings_preserve_module_arguments_results_and_permissions_in_every_target() {
+    let project = RegressionProject::new(
+        r#"
+import {churn,first,roundtrip} from "./memory.ts";
+export function main():void{
+ const saved=varta.result.capture(varta.env.get("VARTA_GC_KEEP"));const alias=saved;
+ const denied=varta.result.capture(varta.env.get("VARTA_GC_SECRET"));
+ const argument=first("left"+"!",churn());const compound=("left"+"!")+churn();
+ const returned=roundtrip(saved);
+ console.log(argument);console.log(compound);console.log(returned.value);console.log(alias.value);
+ console.log(returned.ok);console.log(returned.status);console.log(denied.status);console.log(varta.result.status());
+}
+"#,
+        serde_json::json!({"env":{"get":["VARTA_GC_KEEP"]}}),
+    );
+    let library = format!(
+        r#"
+export function churn():string{{const piece={:?};
+ for(let i=0,guard="guard"+"!";i<100;i=i+1){{
+  if(guard!="guard!"){{return "BROKEN_GUARD";}}
+  {{const temporary=piece+"x";if(i%3==0){{continue;}}
+   switch(i%3){{case 1:{{const nested=piece+"y";break;}}default:{{const other=piece+"z";break;}}}}
+  }}
+ }}return "right"+"!";
+}}
+export function first(a:string,b:string):string{{return a;}}
+export function roundtrip(r:VartaResult<string>):VartaResult<string>{{const temporary=churn();return r;}}
+"#,
+        "X".repeat(256)
+    );
+    fs::write(project.0.join("src/memory.ts"), library).unwrap();
+    let checked = project.command(&["check"]);
+    assert!(checked.status.success(), "{}", combined(&checked));
+    let built = project.command(&["build", "--single"]);
+    assert!(built.status.success(), "{}", combined(&built));
+    let mut dev = varta();
+    dev.current_dir(&project.0).arg("dev");
+    let mut run = varta();
+    run.current_dir(&project.0).args(["run", "dist/app.wasm"]);
+    let mut native = Command::new(project.0.join("dist/app"));
+    native.current_dir(&project.0);
+    for mut process in [dev, run, native] {
+        let output = process
+            .env("VARTA_GC_KEEP", "Збережено 🦀")
+            .env("VARTA_GC_SECRET", "GC_HIDDEN_VALUE")
+            .output()
+            .unwrap();
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(!text.contains("GC_HIDDEN_VALUE"), "{text}");
+        assert!(text.contains("varta log: left!\nvarta log: left!right!\nvarta log: Збережено 🦀\nvarta log: Збережено 🦀\nvarta log: 1\nvarta log: 0\nvarta log: 1\nvarta log: 1"),"{text}");
+    }
+}
+
+#[test]
 fn string_operators_preserve_module_calls_operand_order_and_results_in_every_target() {
     let project = RegressionProject::new(
         r#"

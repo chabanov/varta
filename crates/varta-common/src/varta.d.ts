@@ -6,6 +6,13 @@ interface VartaResult<T extends number | boolean | string | void> {
 }
 
 declare const varta: {
+  /** Compile-time publication; only a top-level entry-module declaration is accepted.
+   * The handler must be an exported named function with primitive parameters/results.
+   * Metadata must contain only literal name/description fields. This is not a runtime API.
+   */
+  tool<F extends (...args: never[]) => number | boolean | string | void>(
+    metadata: { name: string; description: string }, handler: F
+  ): void;
   result: {
     status(): number;
     /** The argument must be a direct privileged varta host call. */

@@ -5,6 +5,9 @@ pub(super) fn collect<'a>(
 ) -> Result<Vec<&'a ast::FnDecl>> {
     let mut declarations = Vec::new();
     for item in &module.body {
+        if super::tools::is_declaration(item) {
+            continue;
+        }
         let declaration = match item {
             ast::ModuleItem::Stmt(ast::Stmt::Decl(decl)) => decl,
             ast::ModuleItem::ModuleDecl(ast::ModuleDecl::ExportDecl(export)) => &export.decl,

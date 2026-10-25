@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 //! Capability-checked Wasmtime execution. Only portable Wasm enters this API.
+#[cfg(test)]
+mod contract_tests;
+mod contracts;
 mod host;
 mod http;
 mod policy;
@@ -14,6 +17,8 @@ use wasmtime::{Config, Engine, Module, Store, StoreLimits, StoreLimitsBuilder};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
+    #[error(transparent)]
+    ToolContract(#[from] varta_common::ToolContractError),
     #[error(transparent)]
     Policy(#[from] varta_common::VartaError),
     #[error("{0:#}")]
@@ -117,6 +122,15 @@ impl VartaRuntime {
 
     /// Compile and validate portable bytecode; native machine code is never accepted.
     pub fn validate_module(&self, bytes: &[u8]) -> Result<Module, RuntimeError> {
+        self.validate_module_and_tools(bytes)
+            .map(|(module, _)| module)
+    }
+
+    /// Validate code and public contracts without instantiating or running guest code.
+    pub fn validate_module_and_tools(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(Module, Option<varta_common::ToolCatalog>), RuntimeError> {
         validate::module(&self.engine, bytes)
     }
 
@@ -234,6 +248,8 @@ impl Drop for Deadline {
     }
 }
 
+#[cfg(test)]
+mod reclamation_tests;
 #[cfg(test)]
 mod result_tests;
 #[cfg(test)]
