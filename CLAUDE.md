@@ -19,9 +19,9 @@ Varta is deliberately **not** a general-purpose JavaScript runtime. Every accept
 Cargo.toml               # workspace only; crate metadata lives in crates/*/
 crates/
   varta-common/          # config schema, capability model, shared error type
-  varta-compiler/        # TS (SWC) -> Wasm emission; no runtime dependency
+  varta-compiler/        # explicit TS module graph (SWC) -> Wasm; no runtime dependency
   varta-runtime/         # Wasmtime host: budgets, capability enforcement, host APIs
-  varta-project/         # shared check/dev/build pipeline, artifacts and inspection
+  varta-project/         # confined source loader, check/dev/build, artifacts and inspection
   varta-cli/             # the `varta` binary; thin orchestration, no domain logic
   varta-common/src/varta.d.ts # one owner for embedded host declarations
 docs/
@@ -72,8 +72,10 @@ cargo test -- --test-threads=1          # when tests share state
 ## 5. Compiler rules (`varta-compiler`)
 
 - The compiler emits Wasm directly with `wasm-encoder` and is the only crate allowed to do so.
+- Source graph I/O belongs to a host-supplied loader, never the compiler. Keep deterministic dependency ordering, graph budgets and per-file scopes. Project dependencies must stay within the config directory and use pinned no-follow descriptors; do not replace these with ambient check-then-read paths.
 - Every language feature is a deliberate, documented subset decision. Unsupported constructs fail with a clear `unsupported …` error naming the construct — never silently miscompile.
 - Static data (string literals) goes into the data section with a deduplicated offset table; the 64 KiB single-page limit is enforced with a proper error.
+- String values use immutable packed i64 slices; complete value types determine user signatures and locals. Host ptr/len results must be snapshotted into the bounded execution arena immediately, before any later expression can reuse the host buffer. Never expose a borrowed result buffer as a retained variable/argument/return value. Reclamation or new string operations require an explicit ownership/budget contract.
 - Wasm type/import/local indices are computed, never written as literals. Host imports are declared conditionally on use; any emitted `Call` must go through the resolved typed operation index.
 - Locals: every index the generated code touches (temporaries for `&&`/`||`, switch discriminants, etc.) must be declared. Off-by-one local declarations produce modules that pass our compile step but trap in Wasmtime — always validate.
 - Emitted modules must be verified: a compiler change requires a test that instantiates the module with `wasmtime::Module::new` (see `varta-runtime` tests), not just one that checks byte emission.

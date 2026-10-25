@@ -9,6 +9,8 @@ pub enum CompilerError {
     Invalid(String),
     #[error("{0}")]
     Type(String),
+    #[error("{0}")]
+    Module(String),
     #[error("{diagnostic}")]
     Located {
         diagnostic: Box<varta_common::Diagnostic>,
@@ -30,6 +32,7 @@ impl CompilerError {
         match self {
             Self::Parse(_) => DiagnosticCode::SyntaxError,
             Self::Type(_) => DiagnosticCode::TypeError,
+            Self::Module(_) => DiagnosticCode::ModuleError,
             Self::Unsupported { .. } => DiagnosticCode::UnsupportedSyntax,
             Self::Invalid(_) => DiagnosticCode::InvalidProgram,
             Self::Internal(_) => DiagnosticCode::InternalError,

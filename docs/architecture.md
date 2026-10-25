@@ -16,11 +16,11 @@ CLI -> varta-project -> varta-compiler -> validated portable Wasm
 
 - `varta-common`: strict configuration and manifest schemas, operation identities,
   host signatures, ABI constants and editor declarations.
-- `varta-compiler`: syntax parsing, lexical name resolution, subset/type checking,
+- `varta-compiler`: bounded module graph, syntax parsing, lexical name resolution, subset/type checking,
   typed intermediate representation, Wasm emission and full bytecode validation.
 - `varta-runtime`: bounded module validation, Wasmtime execution, resource limits,
   pinned filesystem capabilities, HTTP transport and host result handling.
-- `varta-project`: one checked pipeline for check/dev/build; versioned artifacts,
+- `varta-project`: confined source loading and one checked pipeline for check/dev/build; versioned artifacts,
   manifest serialization, policy review and inspection.
 - `varta-cli`: argument parsing, presentation and process exit codes.
 
@@ -40,7 +40,7 @@ prerequisite and its presence cannot change whether a project is accepted.
 The pipeline is:
 
 ```text
-bounded source -> SWC AST -> resolved, typed IR -> Wasm -> validation
+bounded source graph -> per-file SWC AST -> linked, typed IR -> Wasm -> validation
 ```
 
 The semantic stage assigns a distinct local slot to each lexical binding and
@@ -52,19 +52,24 @@ locals; default selection and fallthrough follow source order.
 
 Supported:
 
-- one source file with a zero-argument `main(): void`;
-- synchronous named functions, `number`/`boolean` parameters and scalar results;
-- scalar local `let`/`const` bindings with initializers and block scoping;
+- local source modules with a zero-argument `main(): void` in the entry file;
+- synchronous named functions with `number`/`boolean`/`string` parameters and results;
+- primitive local `let`/`const` bindings with initializers and block scoping;
 - integer arithmetic, comparisons, boolean literals, `!`, `&&` and `||`;
 - if/else, while, for, switch, unlabelled break/continue, return;
-- literal strings and UTF-8 host string results as direct log arguments or
-  discarded expressions; type-only interfaces/aliases and built-in declarations.
+- UTF-8 string literals and retained host results, including dynamic host arguments;
+- type-only interfaces/aliases and built-in declarations.
 
-Parameters require explicit number/boolean annotations. Numeric/void function
+Parameters require explicit number/boolean/string annotations. Numeric/void function
 results may be inferred from the supported return forms; explicit result
 annotations are recommended. Value-returning functions must return on every
 supported control-flow path. Case-local declarations require an explicit block.
-Strings are not yet general local variables or user-function parameters/results.
+String-returning functions require explicit `: string` result annotations. String
+bindings may infer their type from their initializer. Assignment, parameters and
+returns require exact types; const and use-before-initialization rules also apply
+to strings. Conditions, arithmetic and switch remain number/boolean operations.
+String concatenation, comparison, indexing, properties, interpolation, implicit
+coercion and string truthiness are not yet implemented and fail explicitly.
 
 Numbers have signed **i32** Wasm semantics: addition/subtraction/multiplication
 wrap, division truncates, and invalid division traps. This is intentionally not
@@ -72,11 +77,97 @@ JavaScript's floating-point `number` semantics. Booleans log as 0/1. `time.now`
 returns Unix seconds representable in i32 and reports invalid input outside that
 range rather than wrapping.
 
-Modules/imports, top-level effects, async/generators, classes, closures, var,
-objects/arrays, dynamic string arguments, casts, any and unsupported syntax fail
+Unsupported import/export forms, top-level effects, async/generators, classes, closures, var,
+objects/arrays, casts, any and unsupported syntax fail
 explicitly. They are never silently discarded. Source is capped at 1 MiB with
 lexical complexity limits before recursive parsing. Static strings occupy at most
 one 64 KiB page. Parse errors retain source line/column positions.
+
+### String values and ownership
+
+A string is an immutable UTF-8 slice represented internally as one i64: the high
+32 bits hold byte length, and the low 32 bits hold its memory pointer. User
+function signatures and local slots preserve i32 number/boolean and i64 string
+types; signatures are interned by complete Wasm types, not just arity. Host
+imports still receive the ABI v1 borrowed i32 pointer/length pair.
+
+Literal strings refer to deduplicated static data. Every string-producing host
+call immediately snapshots its result into a separate compiler-owned arena
+before evaluating another expression. Variables and aliases copy the immutable
+slice handle; reassignment changes the handle, and parameters/returns can share
+the same slice through nested, recursive and cross-module calls. They never
+retain an alias into the reusable host buffer. Empty/failed results use an empty
+slice and allocate nothing; copying does not clear or replace the host status.
+
+The execution arena starts after the full maximum host-result buffer and grows
+memory only in whole Wasm pages, within the existing 8 MiB limit. Its private
+cursor cannot be changed by source code or host result writes. Snapshots remain
+alive until the execution ends, even when their variables leave scope or the
+result is discarded. There is no garbage collection or per-value reclamation yet.
+Arena exhaustion or failed growth traps before a new slice is published; no
+previously saved bytes are overwritten. Snapshot copying consumes guest fuel, so
+the default fuel budget can stop allocation before the memory boundary. Each run
+creates a fresh instance and arena.
+
+Dynamic strings passed to host calls follow exactly the existing input bounds,
+UTF-8 checks and operation/resource authorization. A string value conveys no
+authority. No new host import, capability, manifest or artifact version is needed.
+
+## Local modules
+
+The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),
+direct function exports (`export function f(...)`) and local export lists
+(`export { f as g }`). Local export lists may forward an imported function.
+Each module has a separate function scope; private helpers with the same name in
+different files do not collide. Imports must name exported functions, and their
+parameter/result types are checked at each call. Duplicate or reserved bindings,
+duplicate exports and unresolved exports fail before emission. Type aliases and
+interfaces retain their existing erased behavior; they are not importable values.
+
+The entry module must declare its own `main(): void` with no parameters. An
+imported binding or an export alias cannot supply the entry point. A dependency
+may declare an ordinary function named `main`, with its own signature. Recursion
+within a file is supported; calls to the entry function remain rejected.
+
+The dependency graph is a DAG: cycles, including self-imports, fail with an import
+site diagnostic. There are no top-level execution or initialization semantics.
+Dependencies are visited in sorted path order, once per resolved identity, and
+linked before their dependents. Function slots are then allocated in module order
+and declaration order, independent of import declaration order. Modules are
+linked at compile time: running a built artifact never loads source files.
+All linked host calls use the application's manifest and optional host ceiling;
+an imported module cannot introduce permissions of its own. Source imports read
+build inputs and do not grant guest filesystem access.
+
+The project loader requires explicit relative `.ts` paths starting with `./` or
+`../`. It normalizes dot segments lexically and rejects paths outside the
+canonical directory containing the configuration file. Absolute/bare paths,
+URLs, backslashes, controls, query strings and fragments are rejected; there is
+no extension probing, directory/index lookup, npm resolution or network loading.
+Parent segments are allowed when the normalized path stays inside the root.
+The root directory is pinned once; every dependency is opened relative to that
+descriptor with no-follow at every component. Both external and internal
+symlinks are rejected. Inputs must be bounded regular UTF-8 files. The explicitly
+configured entry retains support for legacy layouts outside the config directory;
+this does not expand the boundary for discovered dependencies.
+
+Limits: 64 unique modules including the entry, 256 import declarations, 32 modules
+on the active dependency path, 1 MiB per source, 4 MiB aggregate source and 256
+user functions across the graph. Existing per-file lexical/semantic complexity
+limits still apply. Default, namespace, side-effect, type-only and attributed
+imports, export-from/export-star/default exports and dynamic imports fail
+explicitly. Unused imports still resolve and validate their dependency.
+
+Embeddings use `compile_modules(ModuleSource, &dyn ModuleLoader)`. The loader
+separates stable identity resolution from bounded text loading and owns its
+source-access policy; the compiler performs no filesystem or network I/O.
+Single-source `compile_typescript[_with_path]` remains available and requires an
+explicit loader when source imports dependencies. Parse-only helpers do not link.
+The result returns Wasm plus dependency metadata. `CheckedProject.modules` and
+successful `check --json` expose `modules` as dependency-first `{path, imports}`
+records, with sorted, deduplicated import paths. This metadata is for build-time
+inspection and is not persisted into Wasm or manifests. ABI and artifact format
+are unchanged.
 
 ## Source diagnostics
 
@@ -87,14 +178,17 @@ reading that path; the original in-memory helpers retain `input.ts` as their
 compatibility name. Naming a source does not change emitted Wasm bytes.
 
 Parsing, lexical resolution, subset checking and type checking share one source
-context. Nested failures keep the innermost available span rather than being
+context per file. Nested failures keep the innermost available span rather than being
 relabeled as the containing call or function. Function and expression spans also
 survive typed IR lowering, so static-data emission errors identify the source
 literal that exceeds the budget. This is compile-time source metadata; Wasm
 runtime source maps and stack-trace symbolication are not implemented yet.
 
 Diagnostics have stable category codes: `syntax_error`, `type_error`,
-`unsupported_syntax`, `invalid_program` and `internal_error`. Type mismatches
+`module_error`, `unsupported_syntax`, `invalid_program` and `internal_error`. Missing
+modules, cycles and path-policy failures point to the import site; dependency
+syntax, type and static-data failures retain the dependency's filename and range.
+Type mismatches
 include expected/actual scalar types where available. The shared diagnostic
 record contains the filename, message, a half-open source range, and an optional
 bounded source excerpt. Lines and columns are **one-based Unicode scalar**
@@ -284,7 +378,11 @@ signatures, result globals and advertised ABI versions fail before instantiation
 - Static strings occupy `[0, 65536)`.
 - Host string results use a host-owned reusable buffer starting at 65536.
 - Result pointers/bytes remain valid until the next host operation; there is no
-  unbounded bump allocation and no guest-controlled heap pointer.
+  unbounded host bump allocation and no guest-controlled host heap pointer.
+- Compiled string values snapshot those borrowed bytes into immutable execution
+  storage. The layout is static data `[0, 65536)`, reusable host results
+  `[65536, 1114112)`, then retained strings `[1114112, 8388608)`. The retained arena
+  is bounded and reclaimed as a whole when execution ends.
 - Every host operation first clears result length/status. Failed string calls
   return pointer 0 and length 0. No previous result length can be reused.
 - `varta.result.status()` reads the structured status without clearing it.
@@ -311,6 +409,7 @@ machine-readable on stdout, with diagnostics on stderr.
 | Resource | Default limit |
 | --- | --- |
 | Guest linear memory | 8 MiB, enforced by Store limits including memory.grow |
+| Retained string storage | Within the 8 MiB memory budget, after the 1 MiB host-result reservation and static page |
 | Guest instructions | 1,000,000 fuel units |
 | Execution/HTTP deadline | 5 seconds |
 | Host calls | 1024 per execution |
@@ -320,6 +419,8 @@ machine-readable on stdout, with diagnostics on stderr.
 | HTTP response headers | 64 KiB |
 | Wasm file | 4 MiB |
 | Manifest/config | 256 KiB |
+| Wasm signatures | 256 distinct complete parameter/result signatures |
+| Defined functions | 256 user functions plus at most one compiler string helper |
 
 Preflight limits also bound signatures, function count/body size, memories,
 tables and globals before native compilation. Store budgets apply before Wasm

@@ -220,14 +220,17 @@ fn guest_pointers_and_utf8_fail_closed_without_panicking() {
             let mut reader = body.get_operators_reader().unwrap();
             while !reader.eof() {
                 let (operator, offset) = reader.read_with_offset().unwrap();
-                if matches!(operator, wasmparser::Operator::I32Const { value: 0 }) {
+                if matches!(operator, wasmparser::Operator::I64Const { value } if value == 1_i64 << i32::BITS)
+                {
                     pointer_offset = Some(offset + 1);
                     break;
                 }
             }
         }
     }
-    invalid_pointer[pointer_offset.unwrap()] = 0x7f; // signed LEB -1
+    // Same-width packed slice: ptr = u32::MAX, len = 1. Host rejects negative ptr.
+    let offset = pointer_offset.unwrap();
+    invalid_pointer[offset..offset + 5].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0x1f]);
     let mut invalid_utf8 = original.clone();
     let data = invalid_utf8.iter().rposition(|byte| *byte == b'X').unwrap();
     invalid_utf8[data] = 0xff;
@@ -257,4 +260,39 @@ fn named_source_spans_preserve_validated_wasm_behavior() {
             .lines,
         ["varta log: 42"]
     );
+}
+
+#[test]
+fn linked_modules_forward_aliases_and_library_main_execute_with_correct_indices() {
+    use std::{
+        collections::BTreeMap,
+        path::{Path, PathBuf},
+    };
+    use varta_compiler::{CompilerError, ModuleLoader, ModuleSource};
+    struct MemoryModules(BTreeMap<PathBuf, String>);
+    impl ModuleLoader for MemoryModules {
+        fn resolve(&self, _: &Path, specifier: &str) -> Result<PathBuf, CompilerError> {
+            Ok(specifier.trim_start_matches("./").into())
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            self.0
+                .get(path)
+                .cloned()
+                .ok_or_else(|| CompilerError::Module("missing virtual module".into()))
+        }
+    }
+    let loader = MemoryModules(BTreeMap::from([
+        (PathBuf::from("leaf.ts"), "export function main(n:number):number{return n+1;} export function sum(n:number):number{if(n==0){return 0;}return n+sum(n-1);}".into()),
+        (PathBuf::from("bridge.ts"), "import {main as inc,sum} from './leaf.ts'; export {inc as advance,sum};".into()),
+    ]));
+    let compilation = varta_compiler::compile_modules(ModuleSource {
+        path: "main.ts".into(),
+        text: "import {advance,sum} from './bridge.ts'; function tri(a:number,b:number,c:number):number{return a+b+c;} export function main():void{console.log(advance(sum(8))+tri(1,2,2));}".into(),
+    }, &loader).unwrap();
+    assert_eq!(compilation.modules.len(), 3);
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compilation.wasm).unwrap();
+    let output = VartaRuntime::new()
+        .run_wasm_bytes(&compilation.wasm, &[])
+        .unwrap();
+    assert_eq!(output.lines, ["varta log: 42"]);
 }

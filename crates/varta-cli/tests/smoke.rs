@@ -706,6 +706,170 @@ impl Drop for RegressionProject {
 }
 
 #[test]
+fn strings_survive_host_buffer_reuse_nested_calls_and_module_returns_in_all_targets() {
+    let project = RegressionProject::new(
+        r#"
+import {read, choose} from "./strings.ts";
+export function main():void{
+ const name:string="VARTA_STRING_ALPHA";
+ let first=read(name); const saved=first;
+ const second=read("VARTA_STRING_BETA"); first="reassigned";
+ const selected=choose(read(name),read("VARTA_STRING_BETA"),true);
+ console.log(first);console.log(saved);console.log(second);console.log(selected);
+ const key=read("VARTA_STRING_KEY");console.log(read(key));
+}
+"#,
+        serde_json::json!({"env":{"get":["VARTA_STRING_ALPHA","VARTA_STRING_BETA","VARTA_STRING_KEY"]}}),
+    );
+    fs::write(
+        project.0.join("src/strings.ts"),
+        r#"
+export function read(name:string):string{return varta.env.get(name);}
+export function choose(a:string,b:string,first:boolean):string{if(first){return a;}return b;}
+"#,
+    )
+    .unwrap();
+    let checked = project.command(&["check"]);
+    assert!(checked.status.success(), "{}", combined(&checked));
+    let built = project.command(&["build", "--single"]);
+    assert!(built.status.success(), "{}", combined(&built));
+    let mut native = Command::new(project.0.join("dist/app"));
+    native.current_dir(&project.0);
+    let mut dev = varta();
+    dev.current_dir(&project.0).arg("dev");
+    let mut run = varta();
+    run.current_dir(&project.0).args(["run", "dist/app.wasm"]);
+    for mut command in [dev, run, native] {
+        let output = command
+            .env("VARTA_STRING_ALPHA", "Привіт 🦀")
+            .env("VARTA_STRING_BETA", "SECOND_VALUE")
+            .env("VARTA_STRING_KEY", "VARTA_STRING_BETA")
+            .output()
+            .unwrap();
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(text.contains("varta log: reassigned\nvarta log: Привіт 🦀\nvarta log: SECOND_VALUE\nvarta log: Привіт 🦀\nvarta log: SECOND_VALUE"), "{text}");
+    }
+}
+
+#[test]
+fn dynamic_string_arguments_and_retained_results_preserve_permission_denials() {
+    let project = RegressionProject::new(
+        r#"
+function read(name:string):string{return varta.env.get(name);}
+export function main():void{
+ const key="VARTA_STRING_ALLOWED"; const saved=read(key);
+ const denied=read("VARTA_STRING_SECRET");const status=varta.result.status();
+ console.log(saved);console.log(denied);console.log(status);
+ console.log(varta.env.has(key));console.log(varta.result.status());
+}
+"#,
+        serde_json::json!({"env":{"get":["VARTA_STRING_ALLOWED"]}}),
+    );
+    for grants in [
+        serde_json::json!([{"id":"env.get","patterns":["VARTA_STRING_ALLOWED"]}]),
+        serde_json::json!([]),
+    ] {
+        let allowed = !grants.as_array().unwrap().is_empty();
+        project.host_policy(grants);
+        let output = varta()
+            .current_dir(&project.0)
+            .args(["dev", "--policy", "host-policy.json"])
+            .env("VARTA_STRING_ALLOWED", "SAVED_VALUE")
+            .env("VARTA_STRING_SECRET", "HIDDEN_VALUE")
+            .output()
+            .unwrap();
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert_eq!(text.contains("varta log: SAVED_VALUE"), allowed, "{text}");
+        assert!(!text.contains("HIDDEN_VALUE"), "{text}");
+        assert!(text.contains("varta log: \nvarta log: 1"), "{text}");
+        assert!(
+            text.contains("<capability denied: env> (VARTA_STRING_SECRET)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("<capability denied: env> (VARTA_STRING_ALLOWED)"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn dynamic_filesystem_paths_obey_scopes_and_descriptor_boundaries() {
+    let project = RegressionProject::new(
+        r#"
+export function main():void{
+ const path=varta.env.get("VARTA_STRING_PATH");
+ const value=varta.fs.read(path);const status=varta.result.status();
+ console.log(value);console.log(status);
+}
+"#,
+        serde_json::json!({}),
+    );
+    let root = project.0.canonicalize().unwrap();
+    fs::create_dir(root.join("data")).unwrap();
+    fs::write(root.join("data/allowed.txt"), "VISIBLE_CONTENT").unwrap();
+    fs::write(root.join("secret.txt"), "HIDDEN_CONTENT").unwrap();
+    project.set_capabilities(serde_json::json!({"env":{"get":["VARTA_STRING_PATH"]},"fs":{"read":[format!("{}/data/**",root.display())]}}));
+    let mut cases = vec![
+        (root.join("data/allowed.txt"), true),
+        (root.join("secret.txt"), false),
+        (root.join("data/../secret.txt"), false),
+    ];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("secret.txt"), root.join("data/link.txt")).unwrap();
+        cases.push((root.join("data/link.txt"), false));
+    }
+    for (path, allowed) in cases {
+        let output = varta()
+            .current_dir(&project.0)
+            .arg("dev")
+            .env("VARTA_STRING_PATH", path)
+            .output()
+            .unwrap();
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert_eq!(
+            text.contains("varta log: VISIBLE_CONTENT"),
+            allowed,
+            "{text}"
+        );
+        assert!(!text.contains("HIDDEN_CONTENT"), "{text}");
+        if allowed {
+            assert!(text.contains("varta log: 0"), "{text}");
+        } else {
+            assert!(!text.contains("varta log: 0"), "{text}");
+        }
+    }
+}
+
+#[test]
+fn retained_string_copies_obey_execution_fuel_before_further_execution() {
+    use varta_common::abi;
+    let project = RegressionProject::new("export function main():void{}", serde_json::json!({}));
+    let path = project.0.canonicalize().unwrap().join("chunk.txt");
+    fs::write(&path, vec![b'X'; abi::WASM_PAGE_BYTES]).unwrap();
+    project.set_capabilities(serde_json::json!({"fs":{"read":[path]}}));
+    let capacity = (abi::MAX_MEMORY_BYTES - abi::OWNED_STRING_BASE) / abi::WASM_PAGE_BYTES;
+    for (copies, success) in [(1, true), (capacity + 1, false)] {
+        let source = format!(
+            "export function main():void{{const path={};for(let i=0;i<{copies};i=i+1){{let s=varta.fs.read(path);}}console.log(\"AFTER_COPIES\");}}",
+            serde_json::to_string(&path).unwrap()
+        );
+        fs::write(project.0.join("src/main.ts"), source).unwrap();
+        let output = project.command(&["dev"]);
+        let text = combined(&output);
+        assert_eq!(output.status.success(), success, "{text}");
+        assert_eq!(text.contains("varta log: AFTER_COPIES"), success, "{text}");
+        if !success {
+            assert!(text.contains("fuel"), "{text}");
+        }
+    }
+}
+
+#[test]
 fn filesystem_scopes_deny_siblings_traversal_and_other_operations() {
     let project = RegressionProject::new("export function main():void {}", serde_json::json!({}));
     let root = project.0.join("data");
@@ -993,6 +1157,60 @@ impl RegressionProject {
         config["capabilities"] = grants;
         fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
     }
+}
+
+#[test]
+fn imported_functions_obey_package_permissions_and_the_host_ceiling() {
+    let project = RegressionProject::new(
+        "import {show} from './library.ts'; export function main():void{show();}",
+        serde_json::json!({"env":{"get":["VARTA_MODULE_SECRET"]}}),
+    );
+    fs::write(project.0.join("src/library.ts"), "export function show():void{console.log(varta.env.get(\"VARTA_MODULE_SECRET\"));console.log(varta.result.status());}").unwrap();
+    project.host_policy(serde_json::json!([]));
+    assert!(project.command(&["build"]).status.success());
+    for command in ["dev", "run"] {
+        for restricted in [false, true] {
+            let mut process = varta();
+            process
+                .current_dir(&project.0)
+                .arg(command)
+                .env("VARTA_MODULE_SECRET", "MODULE_SECRET_VALUE");
+            if command == "run" {
+                process.arg("dist/app.wasm");
+            }
+            if restricted {
+                process.args(["--policy", "host-policy.json"]);
+            }
+            let output = process.output().unwrap();
+            let text = combined(&output);
+            assert!(output.status.success(), "{text}");
+            if restricted {
+                assert!(!text.contains("MODULE_SECRET_VALUE"), "{text}");
+                assert!(
+                    text.contains("<capability denied: env> (VARTA_MODULE_SECRET)"),
+                    "{text}"
+                );
+                assert!(text.contains("varta log: 1"), "{text}");
+            } else {
+                assert!(
+                    text.contains("varta log: MODULE_SECRET_VALUE\nvarta log: 0"),
+                    "{text}"
+                );
+            }
+        }
+    }
+    project.set_capabilities(serde_json::json!({}));
+    project.host_policy(serde_json::json!([{"id":"env.get","patterns":["VARTA_MODULE_SECRET"]}]));
+    let output = varta()
+        .current_dir(&project.0)
+        .args(["dev", "--policy", "host-policy.json"])
+        .env("VARTA_MODULE_SECRET", "MODULE_SECRET_VALUE")
+        .output()
+        .unwrap();
+    let text = combined(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(!text.contains("MODULE_SECRET_VALUE"), "{text}");
+    assert!(text.contains("varta log: 1"), "{text}");
 }
 
 #[test]

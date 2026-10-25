@@ -35,7 +35,7 @@ export function main(): void {
 
 ## Diagnostics
 
-`check`, `build` and `dev` report the actual entry file and the failing source
+`check`, `build` and `dev` report the actual source file and the failing source
 range, including errors inside nested expressions:
 
 ```text
@@ -48,6 +48,29 @@ range, including errors inside nested expressions:
 line/column range, UTF-8 byte offsets and a bounded excerpt. Unicode, CRLF and BOM
 positions are supported. See the [diagnostic contract](docs/architecture.md#source-diagnostics)
 for coordinate conventions and public compiler APIs.
+
+## Local modules
+
+Split functions across files using explicit relative `.ts` paths:
+
+```ts
+// src/math.ts
+export function twice(n: number): number { return n * 2; }
+
+// src/main.ts
+import { twice as double } from "./math.ts";
+export function main(): void { console.log(double(21)); }
+```
+
+Named function imports/exports and local export aliases are supported. Private
+functions keep their own file scope. The entry file declares `main(): void`;
+dependencies are linked into the Wasm and native artifacts at build time.
+`varta check --json` includes the resolved dependency graph in `modules`.
+
+Dependencies must stay within the configuration directory; symlinks and cycles
+are rejected. Default/namespace imports, export-from, dynamic imports, npm and
+URL imports are not supported. See the [module contract](docs/architecture.md#local-modules)
+for path rules and graph limits.
 
 ## Project and permissions
 
@@ -112,10 +135,26 @@ run with the launching user's OS authority.
 
 ## Language and execution
 
-The subset includes typed scalar functions, lexical let/const bindings, integer
-arithmetic, boolean operations, conditions, loops and switch. Numbers use signed
-i32 Wasm semantics. Strings are currently literal host inputs or immediate log
-results. Unsupported constructs, top-level effects and type mismatches fail
+The subset includes local named-function modules, typed primitive functions,
+lexical let/const bindings, integer arithmetic, boolean operations, conditions,
+loops and switch. Numbers use signed i32 Wasm semantics. Strings work as variables,
+parameters, explicit function results and dynamic host inputs:
+
+```ts
+function read(name: string): string { return varta.env.get(name); }
+export function main(): void {
+  const name = read("APP_NAME");
+  const other = read("OTHER_NAME");
+  console.log(name); // Still holds the first result.
+  console.log(other);
+}
+```
+
+Host results are copied into immutable, bounded storage that lives until the run
+ends. Every read still needs the corresponding capability. String concatenation,
+comparison and garbage collection are not implemented yet. See the
+[ownership contract](docs/architecture.md#string-values-and-ownership).
+Unsupported constructs, top-level effects and type mismatches fail
 explicitly. There is no general Node/npm compatibility or async execution yet.
 
 Runtime defaults include 8 MiB guest memory, instruction fuel, a 5-second

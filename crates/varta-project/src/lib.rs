@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Shared checked project pipeline, portable artifacts and reviewable policy metadata.
 mod artifact;
+mod modules;
 mod policy;
 pub use artifact::Artifact;
 pub use policy::{HostPolicy, authorization, run_with_policy};
@@ -42,6 +43,7 @@ pub struct CheckedProject {
     pub config: VartaConfig,
     pub artifact: Artifact,
     pub output: PathBuf,
+    pub modules: Vec<varta_common::ModuleInfo>,
 }
 
 impl CheckedProject {
@@ -51,12 +53,14 @@ impl CheckedProject {
         let config: VartaConfig = serde_json::from_slice(&source)
             .map_err(|e| varta_common::VartaError::InvalidManifest(e.to_string()))?;
         config.validate()?;
-        let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+        let base = config_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         let entry_path = base.join(&config.entry).canonicalize()?;
-        let entry = artifact::read_bounded(&entry_path, 1024 * 1024)?;
-        let entry =
-            std::str::from_utf8(&entry).map_err(|e| ProjectError::Artifact(e.to_string()))?;
-        let wasm = varta_compiler::compile_typescript_with_path(entry, &entry_path)?;
+        let loader = modules::SourceLoader::new(base)?;
+        let compilation = varta_compiler::compile_modules(loader.entry(&entry_path)?, &loader)?;
+        let wasm = compilation.wasm;
         VartaRuntime::new().validate_module(&wasm)?;
         let mut manifest = Manifest::new(&config.normalized_capabilities());
         manifest.entry = Some(config.entry.clone());
@@ -66,6 +70,7 @@ impl CheckedProject {
             config,
             artifact: Artifact { wasm, manifest },
             output,
+            modules: compilation.modules,
         })
     }
 

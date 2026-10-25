@@ -68,7 +68,7 @@ impl Lower<'_> {
                     .as_deref()
                     .ok_or_else(|| unsupported("uninitialized variable"))?,
             )?;
-            scalar(value.ty).map_err(|e| self.source.locate(e, value.span))?;
+            value_type(value.ty).map_err(|e| self.source.locate(e, value.span))?;
             if old.ty.is_some_and(|ty| ty != value.ty) {
                 return Err(self.source.locate(
                     type_error(format!(

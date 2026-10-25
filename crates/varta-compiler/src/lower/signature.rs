@@ -36,9 +36,6 @@ pub(super) fn check(declaration: &ast::FnDecl, index: usize, source: &Source) ->
                 Type::Void
             }
         });
-    if result == Type::String {
-        return Err(source.locate(unsupported("string function result"), result_span));
-    }
     Ok(Signature {
         index,
         params,
@@ -62,7 +59,7 @@ fn parameter(param: &ast::Param, source: &Source) -> Result<Type> {
         .map_or(binding.span(), |a| a.type_ann.span());
     let ty = annotation(binding.type_ann.as_deref())
         .map_err(|e| source.locate(e, span))?
-        .ok_or_else(|| invalid("parameters require number or boolean annotations"))?;
-    scalar(ty).map_err(|e| source.locate(e, span))?;
+        .ok_or_else(|| invalid("parameters require number, boolean or string annotations"))?;
+    value_type(ty).map_err(|e| source.locate(e, span))?;
     Ok(ty)
 }

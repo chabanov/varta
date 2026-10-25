@@ -1,6 +1,6 @@
 # Varta development plan
 
-## Current milestone: architectural hardening
+## Completed milestone: architectural hardening
 
 The first milestone is a checked, bounded single-file TypeScript subset with
 capability-controlled execution and one-file native packaging. The implemented
@@ -73,15 +73,47 @@ large-line excerpts, static-data overflow, config-relative entry paths and
 consistent diagnostics across check/build/dev. Valid named-source modules are
 instantiated and executed through Wasmtime as well.
 
-## Next milestone: modules and general values
+## Completed follow-up: local modules
+
+Named function imports/exports and aliases now link through an explicit,
+deterministic dependency graph. Functions retain file-local scopes and source
+diagnostics, imported calls retain their types, and dependencies are embedded
+into portable/native builds. `check --json` exposes the graph for inspection.
+Compiler embeddings supply a loader; project source loading stays within the
+configuration directory through pinned no-follow descriptors. Cycles and
+unsupported initialization/import forms fail explicitly. Module count, imports,
+depth, total/per-file bytes and global function count are bounded.
+
+Regression coverage includes shared dependencies, alias forwarding, recursive
+library functions, private name isolation, imported type errors and static-data
+diagnostics, deterministic bytecode, graph budgets, missing/private exports,
+path escapes, symlinks, and execution after deleting sources. Imported host calls
+obey both application grants and host ceilings. ABI and packaging are unchanged.
+
+## Completed follow-up: retained string values
+
+Strings now work in inferred/annotated local bindings, assignments, parameters,
+explicitly annotated returns and dynamic host arguments across module boundaries.
+Literal slices are static; host results are copied immediately into an immutable,
+bounded execution arena. Saved values survive host-buffer reuse, nested calls and
+reassignment. Full Wasm value types determine signature interning and local slots.
+The raw host ABI, capability model and artifact versions remain unchanged.
+
+Regression coverage includes Unicode/empty values, recursive and mixed-signature
+functions, scope/control-flow slots, cross-module returns, native and Wasm runs,
+multiple host arguments, dynamic environment/filesystem permission denials,
+host ceilings, fuel exhaustion, and exact arena-boundary behavior with additional
+test fuel. Snapshots live until execution ends; reclamation, concatenation,
+comparison and implicit string coercion are not implemented yet.
+
+## Next milestone: programmatic host errors
 
 Keep the secure subset small while improving usability:
 
-1. Add module resolution with a deterministic, explicit dependency graph. Reject
-   undeclared or cyclic initialization semantics until a contract is specified.
-2. Define and implement general string values and ownership before adding arrays
-   or objects. Retained host results must not alias the reusable ABI buffer.
-3. Add structured, programmatic host error handling beyond status inspection.
+1. Add structured, programmatic host error handling beyond status inspection;
+   define how values and failures stay paired across subsequent host calls.
+2. Extend string operations and define reclamation before adding arrays or objects.
+   Preserve immutable retained values and explicit memory/fuel budgets.
 
 Exit criteria: identical check/build/dev acceptance; documented module and memory
 semantics; behavior tests for every construct; denial tests for each boundary;

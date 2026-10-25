@@ -6,8 +6,8 @@ impl Emitter<'_> {
             E::Integer(n) => self.code.push(I::I32Const(*n)),
             E::Local(slot) => self.code.push(I::LocalGet(*slot)),
             E::String(s) => {
-                self.code.push(I::I32Const(self.strings[s] as i32));
-                self.code.push(I::I32Const(s.len() as i32));
+                let packed = ((s.len() as u64) << strings::LENGTH_SHIFT) | self.strings[s] as u64;
+                self.code.push(I::I64Const(packed as i64));
             }
             E::Status => self.code.push(I::GlobalGet(self.result_status)),
             E::Negative(e) => {
@@ -29,10 +29,23 @@ impl Emitter<'_> {
             E::Host(host, args) => {
                 for arg in args {
                     self.expr(arg)?;
+                    if arg.ty == Type::String {
+                        // The internal packed value becomes the existing host ptr/len ABI.
+                        self.code.push(I::LocalTee(self.string_temporary));
+                        self.code.push(I::I32WrapI64);
+                        self.code.push(I::LocalGet(self.string_temporary));
+                        self.code.push(I::I64Const(strings::LENGTH_SHIFT as i64));
+                        self.code.push(I::I64ShrU);
+                        self.code.push(I::I32WrapI64);
+                    }
                 }
                 self.code.push(I::Call(self.hosts[host]));
                 if expr.ty == Type::String {
                     self.code.push(I::GlobalGet(self.result_len));
+                    let snapshot = self.snapshot.ok_or_else(|| {
+                        CompilerError::Internal("missing string snapshot helper".into())
+                    })?;
+                    self.code.push(I::Call(snapshot));
                 }
             }
             E::Binary(op, left, right)

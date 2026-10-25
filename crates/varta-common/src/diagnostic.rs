@@ -5,6 +5,7 @@
 pub enum DiagnosticCode {
     SyntaxError,
     TypeError,
+    ModuleError,
     UnsupportedSyntax,
     InvalidProgram,
     InternalError,

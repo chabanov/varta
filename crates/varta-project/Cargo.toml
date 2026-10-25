@@ -11,3 +11,5 @@ varta-runtime = { path = "../varta-runtime" }
 serde_json.workspace = true
 thiserror.workspace = true
 wasmtime.workspace = true
+cap-std.workspace = true
+cap-fs-ext.workspace = true

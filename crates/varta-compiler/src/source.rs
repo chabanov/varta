@@ -3,6 +3,7 @@ use std::path::Path;
 use swc_common::{BytePos, FileName, SourceFile, SourceMap, Span, source_map::SmallPos, sync::Lrc};
 use varta_common::{Diagnostic, DiagnosticCode, SourcePosition, SourceRange, SourceSnippet};
 
+#[derive(Clone)]
 pub(crate) struct Source {
     map: Lrc<SourceMap>,
     bom_bytes: usize,

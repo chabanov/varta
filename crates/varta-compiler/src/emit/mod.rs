@@ -1,4 +1,5 @@
 mod expr;
+mod strings;
 use crate::{
     CompilerError,
     ir::{self, Expr, Expression as E, Host, Statement as S, Type},
@@ -20,19 +21,21 @@ struct Emitter<'a> {
     strings: &'a BTreeMap<String, u32>,
     functions_begin: u32,
     temporary: u32,
+    string_temporary: u32,
+    snapshot: Option<u32>,
     result_len: u32,
     result_status: u32,
 }
 
-pub(crate) fn emit(program: &ir::Program, source: &crate::source::Source) -> Result<Vec<u8>> {
+pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     let mut hosts = BTreeSet::new();
     let mut strings = BTreeMap::new();
     for function in &program.functions {
-        collect(&function.body, &mut hosts, &mut strings);
+        collect(&function.body, &function.source, &mut hosts, &mut strings);
     }
     let mut offsets = BTreeMap::new();
     let mut offset = 0usize;
-    for (string, span) in strings {
+    for (string, (span, source)) in strings {
         offsets.insert(string.clone(), offset as u32);
         offset = offset.checked_add(string.len()).ok_or_else(|| {
             source.locate(CompilerError::Invalid("static data overflow".into()), span)
@@ -51,21 +54,46 @@ pub(crate) fn emit(program: &ir::Program, source: &crate::source::Source) -> Res
         .collect();
     let mut types = wasm_encoder::TypeSection::new();
     let mut signatures = BTreeMap::new();
-    let mut intern = |key: (usize, usize)| {
-        *signatures.entry(key).or_insert_with(|| {
+    let mut intern = |key: (Vec<ValType>, Vec<ValType>)| {
+        *signatures.entry(key.clone()).or_insert_with(|| {
             let index = types.len();
-            types
-                .ty()
-                .function(vec![ValType::I32; key.0], vec![ValType::I32; key.1]);
+            types.ty().function(key.0, key.1);
             index
         })
     };
-    let host_types: BTreeMap<_, _> = hosts.keys().map(|h| (*h, intern(h.signature()))).collect();
+    let host_types: BTreeMap<_, _> = hosts
+        .keys()
+        .map(|h| {
+            let (params, results) = h.signature();
+            (
+                *h,
+                intern((vec![ValType::I32; params], vec![ValType::I32; results])),
+            )
+        })
+        .collect();
     let function_types: Vec<_> = program
         .functions
         .iter()
-        .map(|f| intern((f.params.len(), usize::from(f.result != Type::Void))))
+        .map(|f| {
+            intern((
+                f.params.iter().copied().map(wasm_type).collect(),
+                if f.result == Type::Void {
+                    vec![]
+                } else {
+                    vec![wasm_type(f.result)]
+                },
+            ))
+        })
         .collect();
+    let needs_snapshot = hosts
+        .keys()
+        .any(|h| matches!(h, Host::EnvGet | Host::FsRead | Host::NetGet));
+    let snapshot_type = needs_snapshot.then(|| intern((vec![ValType::I32; 2], vec![ValType::I64])));
+    if types.len() as usize > varta_common::abi::MAX_WASM_SIGNATURES {
+        return Err(CompilerError::Invalid(
+            "Wasm signature complexity exceeds limits".into(),
+        ));
+    }
     let mut module = wasm_encoder::Module::new();
     module.section(&types);
     let mut imports = wasm_encoder::ImportSection::new();
@@ -79,6 +107,9 @@ pub(crate) fn emit(program: &ir::Program, source: &crate::source::Source) -> Res
     module.section(&imports);
     let mut functions = wasm_encoder::FunctionSection::new();
     for index in function_types {
+        functions.function(index);
+    }
+    if let Some(index) = snapshot_type {
         functions.function(index);
     }
     module.section(&functions);
@@ -112,8 +143,20 @@ pub(crate) fn emit(program: &ir::Program, source: &crate::source::Source) -> Res
         },
         &wasm_encoder::ConstExpr::i32_const(0),
     );
+    let arena = globals.len();
+    if needs_snapshot {
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &wasm_encoder::ConstExpr::i32_const(varta_common::abi::OWNED_STRING_BASE as i32),
+        );
+    }
     module.section(&globals);
     let functions_begin = hosts.len() as u32;
+    let snapshot = needs_snapshot.then_some(functions_begin + program.functions.len() as u32);
     let mut exports = wasm_encoder::ExportSection::new();
     exports.export("memory", wasm_encoder::ExportKind::Memory, 0);
     exports.export(
@@ -140,13 +183,21 @@ pub(crate) fn emit(program: &ir::Program, source: &crate::source::Source) -> Res
             hosts: &hosts,
             strings: &offsets,
             functions_begin,
-            temporary: function.locals,
+            temporary: function.locals.len() as u32,
+            string_temporary: function.locals.len() as u32 + 1,
+            snapshot,
             result_len,
             result_status,
         };
-        emitter.statements(&function.body)?;
-        let declared = function.locals - function.params.len() as u32 + 1;
-        let mut body = wasm_encoder::Function::new([(declared, ValType::I32)]);
+        emitter
+            .statements(&function.body)
+            .map_err(|e| function.source.locate(e, function.span))?;
+        let locals = function.locals[function.params.len()..]
+            .iter()
+            .copied()
+            .map(wasm_type)
+            .chain([ValType::I32, ValType::I64]);
+        let mut body = wasm_encoder::Function::new_with_locals_types(locals);
         for instruction in &emitter.code {
             body.instruction(instruction);
         }
@@ -155,6 +206,9 @@ pub(crate) fn emit(program: &ir::Program, source: &crate::source::Source) -> Res
         }
         body.instruction(&I::End);
         code.function(&body);
+    }
+    if needs_snapshot {
+        code.function(&strings::snapshot(arena));
     }
     module.section(&code);
     let mut data = wasm_encoder::DataSection::new();
@@ -173,67 +227,78 @@ pub(crate) fn emit(program: &ir::Program, source: &crate::source::Source) -> Res
     Ok(module.finish())
 }
 
-fn collect_expr(
+fn wasm_type(ty: Type) -> ValType {
+    match ty {
+        Type::String => ValType::I64,
+        _ => ValType::I32,
+    }
+}
+
+fn collect_expr<'a>(
     expr: &Expr,
+    source: &'a crate::source::Source,
     hosts: &mut BTreeSet<Host>,
-    strings: &mut BTreeMap<String, swc_common::Span>,
+    strings: &mut BTreeMap<String, (swc_common::Span, &'a crate::source::Source)>,
 ) {
     match &expr.kind {
         E::String(s) => {
-            strings.entry(s.clone()).or_insert(expr.span);
+            strings.entry(s.clone()).or_insert((expr.span, source));
         }
         E::Host(host, args) => {
             hosts.insert(*host);
             for arg in args {
-                collect_expr(arg, hosts, strings);
+                collect_expr(arg, source, hosts, strings);
             }
         }
         E::Call(_, args) => {
             for arg in args {
-                collect_expr(arg, hosts, strings);
+                collect_expr(arg, source, hosts, strings);
             }
         }
         E::Binary(_, a, b) => {
-            collect_expr(a, hosts, strings);
-            collect_expr(b, hosts, strings);
+            collect_expr(a, source, hosts, strings);
+            collect_expr(b, source, hosts, strings);
         }
-        E::Negative(a) | E::Not(a) => collect_expr(a, hosts, strings),
+        E::Negative(a) | E::Not(a) => collect_expr(a, source, hosts, strings),
         _ => {}
     }
 }
-fn collect(
+fn collect<'a>(
     statements: &[S],
+    source: &'a crate::source::Source,
     hosts: &mut BTreeSet<Host>,
-    strings: &mut BTreeMap<String, swc_common::Span>,
+    strings: &mut BTreeMap<String, (swc_common::Span, &'a crate::source::Source)>,
 ) {
     for statement in statements {
         match statement {
-            S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => collect_expr(e, hosts, strings),
-            S::Block(b) => collect(b, hosts, strings),
+            S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
+                collect_expr(e, source, hosts, strings)
+            }
+            S::Block(b) => collect(b, source, hosts, strings),
             S::If(e, a, b) => {
-                collect_expr(e, hosts, strings);
-                collect(a, hosts, strings);
-                collect(b, hosts, strings);
+                collect_expr(e, source, hosts, strings);
+                collect(a, source, hosts, strings);
+                collect(b, source, hosts, strings);
             }
             S::While(e, b) => {
-                collect_expr(e, hosts, strings);
-                collect(b, hosts, strings);
+                collect_expr(e, source, hosts, strings);
+                collect(b, source, hosts, strings);
             }
             S::For(a, test, update, b) => {
-                collect(a, hosts, strings);
+                collect(a, source, hosts, strings);
                 if let Some(e) = test {
-                    collect_expr(e, hosts, strings);
+                    collect_expr(e, source, hosts, strings);
                 }
-                collect(update, hosts, strings);
-                collect(b, hosts, strings);
+                collect(update, source, hosts, strings);
+                collect(b, source, hosts, strings);
             }
             S::Switch { value, cases, .. } => {
-                collect_expr(value, hosts, strings);
+                collect_expr(value, source, hosts, strings);
                 for (e, b) in cases {
                     if let Some(e) = e {
-                        collect_expr(e, hosts, strings);
+                        collect_expr(e, source, hosts, strings);
                     }
-                    collect(b, hosts, strings);
+                    collect(b, source, hosts, strings);
                 }
             }
             _ => {}
@@ -280,11 +345,7 @@ impl Emitter<'_> {
                 }
                 S::Expr(value) => {
                     self.expr(value)?;
-                    for _ in 0..match value.ty {
-                        Type::Void => 0,
-                        Type::String => 2,
-                        _ => 1,
-                    } {
+                    if value.ty != Type::Void {
                         self.code.push(I::Drop);
                     }
                 }

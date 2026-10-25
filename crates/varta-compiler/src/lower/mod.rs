@@ -40,122 +40,15 @@ struct Lower<'a> {
     functions: &'a BTreeMap<String, Signature>,
     scopes: Vec<BTreeMap<String, Binding>>,
     next: u32,
+    local_types: BTreeMap<u32, Type>,
     result: Type,
+    entry: usize,
     loops: usize,
     switches: usize,
     depth: usize,
 }
 
-pub(crate) fn lower(module: &ast::Module, source: &Source) -> Result<ir::Program> {
-    let mut declarations = Vec::new();
-    for item in &module.body {
-        let declaration = match item {
-            ast::ModuleItem::Stmt(ast::Stmt::Decl(decl)) => decl,
-            ast::ModuleItem::ModuleDecl(ast::ModuleDecl::ExportDecl(export)) => &export.decl,
-            ast::ModuleItem::Stmt(ast::Stmt::Empty(_)) => continue,
-            _ => {
-                return Err(source.locate(
-                    unsupported("top-level statement or module import"),
-                    item.span(),
-                ));
-            }
-        };
-        match declaration {
-            ast::Decl::Fn(function) if !function.declare => declarations.push(function),
-            ast::Decl::TsInterface(_) | ast::Decl::TsTypeAlias(_) => {}
-            ast::Decl::Var(var) if var.declare => {
-                for declaration in &var.decls {
-                    let ast::Pat::Ident(binding) = &declaration.name else {
-                        return Err(
-                            source.locate(unsupported("ambient declaration"), declaration.span())
-                        );
-                    };
-                    if !matches!(binding.id.sym.as_ref(), "varta" | "console" | "log")
-                        || declaration.init.is_some()
-                    {
-                        return Err(
-                            source.locate(unsupported("ambient declaration"), declaration.span())
-                        );
-                    }
-                }
-            }
-            _ => {
-                return Err(source.locate(unsupported("top-level declaration"), declaration.span()));
-            }
-        }
-    }
-    if declarations.len() > 256 {
-        return Err(invalid("too many functions"));
-    }
-    let mut signatures = BTreeMap::new();
-    let mut main = None;
-    for (index, declaration) in declarations.iter().enumerate() {
-        let name = declaration.ident.sym.to_string();
-        let signature = signature::check(declaration, index, source)
-            .map_err(|e| source.locate(e, declaration.ident.span))?;
-        if name == "main" {
-            if !signature.params.is_empty() || signature.result != Type::Void {
-                return Err(source.locate(
-                    invalid("main must have signature () -> void"),
-                    declaration.ident.span,
-                ));
-            }
-            main = Some(index);
-        }
-        if matches!(name.as_str(), "varta" | "console" | "log")
-            || signatures.insert(name.clone(), signature).is_some()
-        {
-            return Err(source.locate(
-                invalid(format!("duplicate or reserved function name: {name}")),
-                declaration.ident.span,
-            ));
-        }
-    }
-    let main = main.ok_or_else(|| invalid("expected a top-level function named main()"))?;
-    let mut functions = Vec::new();
-    for declaration in declarations {
-        let signature = &signatures[declaration.ident.sym.as_ref()];
-        let mut lower = Lower {
-            source,
-            functions: &signatures,
-            scopes: vec![BTreeMap::new()],
-            next: 0,
-            result: signature.result,
-            loops: 0,
-            switches: 0,
-            depth: 0,
-        };
-        for (param, ty) in declaration.function.params.iter().zip(&signature.params) {
-            let ast::Pat::Ident(binding) = &param.pat else {
-                return Err(unsupported("parameter pattern"));
-            };
-            lower
-                .declare(binding.id.sym.as_ref(), Some(*ty), true, true)
-                .map_err(|e| source.locate(e, binding.span()))?;
-        }
-        // Bodies were required while collecting signatures.
-        let body = declaration
-            .function
-            .body
-            .as_ref()
-            .ok_or_else(|| invalid("missing function body"))?;
-        let statements = lower.block(&body.stmts, false)?;
-        if signature.result != Type::Void && !returns(&statements) {
-            return Err(source.locate(
-                invalid("value-returning function must return on every path"),
-                declaration.ident.span,
-            ));
-        }
-        functions.push(ir::Function {
-            span: declaration.span(),
-            params: signature.params.clone(),
-            result: signature.result,
-            locals: lower.next,
-            body: statements,
-        });
-    }
-    Ok(ir::Program { functions, main })
-}
+pub(crate) use link::lower;
 
 fn annotation(ann: Option<&ast::TsTypeAnn>) -> Result<Option<Type>> {
     let Some(ann) = ann else {
@@ -176,7 +69,14 @@ fn scalar(ty: Type) -> Result<()> {
     if matches!(ty, Type::Number | Type::Boolean) {
         Ok(())
     } else {
-        Err(unsupported("non-scalar local or parameter"))
+        Err(unsupported("operand requiring number or boolean"))
+    }
+}
+fn value_type(ty: Type) -> Result<()> {
+    if ty == Type::Void {
+        Err(unsupported("void value"))
+    } else {
+        Ok(())
     }
 }
 fn contains_value_return(body: &[ast::Stmt]) -> bool {
@@ -202,7 +102,9 @@ fn returns(body: &[S]) -> bool {
     })
 }
 
+mod declarations;
 mod expr;
+mod link;
 mod signature;
 mod stmt;
 
@@ -219,6 +121,9 @@ impl Lower<'_> {
         }
         let slot = self.next;
         self.next += 1;
+        if let Some(ty) = ty {
+            self.local_types.insert(slot, ty);
+        }
         if self
             .scopes
             .last_mut()
@@ -255,6 +160,7 @@ impl Lower<'_> {
             .ok_or_else(|| invalid("missing binding"))?;
         binding.ty = Some(ty);
         binding.initialized = true;
+        self.local_types.insert(binding.slot, ty);
         Ok(())
     }
 }

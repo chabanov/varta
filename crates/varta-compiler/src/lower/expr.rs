@@ -123,7 +123,7 @@ impl Lower<'_> {
         };
         let name = callee_name(callee).ok_or_else(|| unsupported("callee"))?;
         if let Some(signature) = self.functions.get(&name).cloned() {
-            if name == "main" {
+            if signature.index == self.entry {
                 return Err(unsupported("calling main"));
             }
             if call.args.len() != signature.params.len() {
@@ -205,9 +205,6 @@ impl Lower<'_> {
                     )),
                     value.span,
                 ));
-            }
-            if value.ty == Type::String && !matches!(value.kind, E::String(_)) {
-                return Err(unsupported("dynamic host string argument"));
             }
             args.push(value);
         }

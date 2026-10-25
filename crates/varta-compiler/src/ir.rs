@@ -13,10 +13,11 @@ pub(crate) struct Program {
     pub main: usize,
 }
 pub(crate) struct Function {
+    pub source: crate::source::Source,
     pub span: swc_common::Span,
     pub params: Vec<Type>,
     pub result: Type,
-    pub locals: u32,
+    pub locals: Vec<Type>,
     pub body: Vec<Statement>,
 }
 

@@ -84,7 +84,7 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
             if json {
                 println!(
                     "{}",
-                    serde_json::json!({"status":"ok", "type_check":"internal", "diagnostics":[], "entry":project.config.entry,
+                    serde_json::json!({"status":"ok", "type_check":"internal", "diagnostics":[], "entry":project.config.entry, "modules":project.modules,
                 "policy":project.config.policy, "target":project.config.target, "capabilities":project.artifact.manifest.capabilities})
                 );
             } else {

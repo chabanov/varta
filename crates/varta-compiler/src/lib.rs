@@ -4,6 +4,8 @@ mod emit;
 mod error;
 mod ir;
 mod lower;
+mod modules;
+pub use modules::{Compilation, ModuleLoader, ModuleSource};
 mod parse;
 mod source;
 
@@ -37,22 +39,40 @@ pub fn compile_typescript_with_path(
     text: &str,
     path: &std::path::Path,
 ) -> Result<Vec<u8>, CompilerError> {
-    use swc_common::Spanned;
     bounded_source(text).map_err(|e| source::limit_error(path, e))?;
-    let source = source::Source::new(path, text);
-    let module = parse::parse_module(&source)?;
-    let program = lower::lower(&module, &source).map_err(|e| source.locate(e, module.span()))?;
-    let bytes = emit::emit(&program, &source)
-        .map_err(|e| source.locate(e, program.functions[program.main].span))?;
+    Ok(compile_modules(
+        ModuleSource {
+            path: path.to_owned(),
+            text: text.to_owned(),
+        },
+        &modules::NoImports,
+    )?
+    .wasm)
+}
+
+/// Compile one bounded module graph. The loader is explicit host authority; the
+/// compiler itself never opens files or makes network requests.
+pub fn compile_modules(
+    entry: ModuleSource,
+    loader: &dyn ModuleLoader,
+) -> Result<Compilation, CompilerError> {
+    use swc_common::Spanned;
+    let graph = modules::Graph::load(entry, loader)?;
+    let root = &graph.units[&graph.entry];
+    let program = lower::lower(&graph)?;
+    let bytes = emit::emit(&program).map_err(|e| root.source.locate(e, root.ast.span()))?;
     wasmparser::Validator::new()
         .validate_all(&bytes)
         .map_err(|e| {
-            source.locate(
+            root.source.locate(
                 CompilerError::Internal(format!("generated invalid Wasm: {e}")),
-                module.span(),
+                root.ast.span(),
             )
         })?;
-    Ok(bytes)
+    Ok(Compilation {
+        wasm: bytes,
+        modules: graph.metadata(),
+    })
 }
 
 fn bounded_source(source: &str) -> Result<(), CompilerError> {
@@ -87,7 +107,7 @@ mod tests {
         );
     }
     #[test]
-    fn static_strings_remain_bounded_and_unsupported_results_are_explicit() {
+    fn static_strings_remain_bounded_and_void_values_are_rejected() {
         let source = format!(
             "export function main():void {{ console.log({:?}); }}",
             "A".repeat(65_537)
@@ -103,9 +123,39 @@ mod tests {
                 .is_err()
         );
         assert!(
-            compile_typescript("export function main():void { let s=varta.env.get(\"NAME\"); }")
-                .is_err()
+            compile_typescript(
+                "function nothing():void{} export function main():void { let s=nothing(); }"
+            )
+            .is_err()
         );
+    }
+
+    #[test]
+    fn complete_string_signatures_obey_the_shared_complexity_budget() {
+        let mut source = String::new();
+        for index in 1..varta_common::abi::MAX_USER_FUNCTIONS {
+            let params = (0..u8::BITS)
+                .map(|bit| {
+                    format!(
+                        "p{bit}:{}",
+                        if index & (1 << bit) == 0 {
+                            "number"
+                        } else {
+                            "string"
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            source.push_str(&format!("function f{index}({params}):void{{}}\n"));
+        }
+        source.push_str("export function main():void{varta.env.get(\"NAME\");}");
+        let error = compile_typescript(&source).unwrap_err();
+        assert!(
+            error.to_string().contains("signature complexity"),
+            "{error}"
+        );
+        assert_eq!(error.diagnostic().unwrap().file, "input.ts");
     }
 }
 

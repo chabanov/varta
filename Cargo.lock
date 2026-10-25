@@ -1848,6 +1848,7 @@ dependencies = [
  "clap",
  "serde_json",
  "tracing-subscriber",
+ "varta-common",
  "varta-project",
  "varta-runtime",
 ]
@@ -1879,6 +1880,8 @@ dependencies = [
 name = "varta-project"
 version = "0.1.0"
 dependencies = [
+ "cap-fs-ext",
+ "cap-std",
  "serde_json",
  "thiserror",
  "varta-common",

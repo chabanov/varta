@@ -14,3 +14,6 @@ varta-project = { path = "../varta-project" }
 clap = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+varta-common = { path = "../varta-common" }

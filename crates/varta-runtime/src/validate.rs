@@ -61,7 +61,10 @@ fn preflight(bytes: &[u8]) -> Result<(), RuntimeError> {
             Payload::TypeSection(reader) => {
                 for (count, ty) in reader.into_iter_err_on_gc_types().enumerate() {
                     let ty = ty.map_err(|e| error(&e.to_string()))?;
-                    if count >= 256 || ty.params().len() > 32 || ty.results().len() > 2 {
+                    if count >= abi::MAX_WASM_SIGNATURES
+                        || ty.params().len() > 32
+                        || ty.results().len() > 2
+                    {
                         return Err(error("Wasm signature complexity exceeds limits"));
                     }
                 }
@@ -69,7 +72,10 @@ fn preflight(bytes: &[u8]) -> Result<(), RuntimeError> {
             Payload::ImportSection(reader) if reader.count() > 64 => {
                 return Err(error("too many imports"));
             }
-            Payload::FunctionSection(reader) if reader.count() > 256 => {
+            Payload::FunctionSection(reader)
+                if reader.count() as usize
+                    > abi::MAX_USER_FUNCTIONS + abi::MAX_INTERNAL_FUNCTIONS =>
+            {
                 return Err(error("too many functions"));
             }
             Payload::MemorySection(reader) => {
