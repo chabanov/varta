@@ -465,7 +465,7 @@ fn missing_capability_validation_smoke_test() {
         "missing capability should fail validation"
     );
     assert!(
-        combined(&validate).contains("requires capability namespace: time"),
+        combined(&validate).contains("requires capability namespace: time.now"),
         "expected capability mismatch, got: {}",
         combined(&validate)
     );

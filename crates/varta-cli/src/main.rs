@@ -872,30 +872,35 @@ fn validate_app(path: &str, json: bool) -> Result<(), VartaError> {
                     if import.module != "varta" {
                         continue;
                     }
-                    let namespace = match import.name {
+                    let capability_id = match import.name {
                         "log_i32" | "log_string" => continue,
-                        "time_now" => "time",
-                        "env_has" | "env_print" | "env_get" => "env",
-                        "fs_print" | "fs_read" => "fs",
-                        "process_exit" => "process",
-                        "net_fetch" | "net_get" => "net",
+                        "time_now" => "time.now".to_string(),
+                        "env_has" => "env.has".to_string(),
+                        "env_print" => "env.print".to_string(),
+                        "env_get" => "env.get".to_string(),
+                        "fs_print" => "fs.print".to_string(),
+                        "fs_read" => "fs.read".to_string(),
+                        "process_exit" => "process.exit".to_string(),
+                        "net_fetch" => "net.fetch".to_string(),
+                        "net_get" => "net.get".to_string(),
                         other => {
                             return Err(VartaError::InvalidManifest(format!(
                                 "unknown host import: {other}"
                             )));
                         }
                     };
-                    required.insert(namespace.to_string());
+                    required.insert(capability_id);
                 }
             }
         }
 
-        for namespace in required {
-            if !capabilities.iter().any(|capability| {
-                capability.id == namespace || capability.id.starts_with(&format!("{namespace}."))
-            }) {
+        for capability_id in required {
+            if !capabilities
+                .iter()
+                .any(|capability| capability.id == capability_id)
+            {
                 return Err(VartaError::InvalidManifest(format!(
-                    "imported host API requires capability namespace: {namespace}"
+                    "imported host API requires capability namespace: {capability_id}"
                 )));
             }
         }
