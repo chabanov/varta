@@ -7,6 +7,8 @@ mod lower;
 mod modules;
 pub use modules::{Compilation, ModuleLoader, ModuleSource};
 mod parse;
+#[cfg(test)]
+mod result_tests;
 mod source;
 
 pub use error::CompilerError;

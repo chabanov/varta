@@ -706,6 +706,176 @@ impl Drop for RegressionProject {
 }
 
 #[test]
+fn captured_results_keep_values_statuses_and_types_across_modules_in_every_target() {
+    let project = RegressionProject::new(
+        r#"
+import {read,first,printedOk} from "./results.ts";
+export function main():void{
+ const failed=read("VARTA_CAPTURE_SECRET");
+ let good:VartaResult<string>=read("VARTA_CAPTURE_ALLOWED");const alias=good;
+ const empty=read("VARTA_CAPTURE_EMPTY");
+ const missing=varta.result.capture(varta.env.has("VARTA_CAPTURE_ABSENT"));
+ const picked=first(good,read("VARTA_CAPTURE_SECRET"));
+ const printed=varta.result.capture(varta.env.print("VARTA_CAPTURE_ALLOWED"));
+ good=read("VARTA_CAPTURE_OTHER");
+ const nested=varta.result.capture(varta.env.get(varta.env.get("VARTA_CAPTURE_KEY")));
+ const ignored=read("VARTA_CAPTURE_SECRET");
+ if(alias.ok){console.log(alias.value);}else{console.log("WRONG_BRANCH");}
+ console.log(alias.status);console.log(good.value);console.log(picked.value);console.log(picked.status);
+ console.log(failed.ok);console.log(failed.status);console.log(failed.value);
+ console.log(empty.ok);console.log(empty.status);console.log(empty.value);
+ console.log(missing.ok);console.log(missing.value);console.log(missing.status);
+ console.log(printedOk(printed));console.log(printed.status);printed.value;
+ console.log(nested.value);console.log(nested.status);
+}
+"#,
+        serde_json::json!({"env":{"get":["VARTA_CAPTURE_ALLOWED","VARTA_CAPTURE_OTHER","VARTA_CAPTURE_EMPTY","VARTA_CAPTURE_KEY"],"has":["VARTA_CAPTURE_ABSENT"],"print":["VARTA_CAPTURE_ALLOWED"]}}),
+    );
+    fs::write(project.0.join("src/results.ts"),r#"
+export function read(name:string):VartaResult<string>{return varta.result.capture(varta.env.get(name));}
+export function first(a:VartaResult<string>,b:VartaResult<string>):VartaResult<string>{return a;}
+export function printedOk(r:VartaResult<void>):boolean{return r.ok;}
+"#).unwrap();
+    let checked = project.command(&["check"]);
+    assert!(checked.status.success(), "{}", combined(&checked));
+    let built = project.command(&["build", "--single"]);
+    assert!(built.status.success(), "{}", combined(&built));
+    let mut dev = varta();
+    dev.current_dir(&project.0).arg("dev");
+    let mut run = varta();
+    run.current_dir(&project.0).args(["run", "dist/app.wasm"]);
+    let mut native = Command::new(project.0.join("dist/app"));
+    native.current_dir(&project.0);
+    for mut command in [dev, run, native] {
+        let output = command
+            .env("VARTA_CAPTURE_ALLOWED", "Збережено 🦀")
+            .env("VARTA_CAPTURE_OTHER", "OTHER_VALUE")
+            .env("VARTA_CAPTURE_EMPTY", "")
+            .env("VARTA_CAPTURE_KEY", "VARTA_CAPTURE_ALLOWED")
+            .env("VARTA_CAPTURE_SECRET", "HIDDEN_CAPTURE_VALUE")
+            .env_remove("VARTA_CAPTURE_ABSENT")
+            .output()
+            .unwrap();
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(!text.contains("HIDDEN_CAPTURE_VALUE"), "{text}");
+        let expected = [
+            "Збережено 🦀",
+            "0",
+            "OTHER_VALUE",
+            "Збережено 🦀",
+            "0",
+            "0",
+            "1",
+            "",
+            "1",
+            "0",
+            "",
+            "1",
+            "0",
+            "0",
+            "1",
+            "0",
+            "Збережено 🦀",
+            "0",
+        ]
+        .map(|value| format!("varta log: {value}"))
+        .join("\n");
+        assert!(text.contains(&expected), "{text}");
+    }
+}
+
+#[test]
+fn captured_filesystem_failures_preserve_all_status_codes_and_empty_success() {
+    use varta_common::abi;
+    let project = RegressionProject::new("export function main():void{}", serde_json::json!({}));
+    let root = project.0.canonicalize().unwrap();
+    let data = root.join("data");
+    fs::create_dir(&data).unwrap();
+    fs::write(data.join("empty.txt"), []).unwrap();
+    fs::write(data.join("invalid.txt"), [0xff]).unwrap();
+    fs::write(
+        data.join("large.txt"),
+        vec![b'X'; abi::MAX_RESULT_BYTES + 1],
+    )
+    .unwrap();
+    fs::write(root.join("secret.txt"), "UNREAD_CAPTURE_SECRET").unwrap();
+    project.set_capabilities(serde_json::json!({"fs":{"read":[format!("{}/*",data.display())]}}));
+    let source = format!(
+        r#"
+function read(path:string):VartaResult<string>{{return varta.result.capture(varta.fs.read(path));}}
+export function main():void{{
+ const empty=read({});const denied=read({});const invalid=read({});const missing=read({});const large=read({});
+ console.log(empty.ok);console.log(empty.status);console.log(empty.value);
+ console.log(denied.ok);console.log(denied.status);console.log(denied.value);
+ console.log(invalid.status);console.log(missing.status);console.log(large.status);
+ if(!denied.ok){{switch(denied.status){{case 1:console.log(101);break;default:console.log(999);}}}}
+}}
+"#,
+        serde_json::to_string(&data.join("empty.txt")).unwrap(),
+        serde_json::to_string(&root.join("secret.txt")).unwrap(),
+        serde_json::to_string(&data.join("invalid.txt")).unwrap(),
+        serde_json::to_string(&data.join("missing.txt")).unwrap(),
+        serde_json::to_string(&data.join("large.txt")).unwrap()
+    );
+    fs::write(project.0.join("src/main.ts"), source).unwrap();
+    let output = project.command(&["dev"]);
+    let text = combined(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(!text.contains("UNREAD_CAPTURE_SECRET"), "{text}");
+    assert!(text.contains("varta log: 1\nvarta log: 0\nvarta log: \nvarta log: 0\nvarta log: 1\nvarta log: \nvarta log: 2\nvarta log: 3\nvarta log: 4\nvarta log: 101"),"{text}");
+}
+
+#[test]
+fn captured_calls_obey_host_ceilings_and_keep_network_and_process_denials_programmatic() {
+    let project = RegressionProject::new(
+        r#"
+export function main():void{
+ const env=varta.result.capture(varta.env.get("VARTA_CAPTURE_SECRET"));
+ const time=varta.result.capture(varta.time.now());
+ const fetched=varta.result.capture(varta.net.fetch("http://127.0.0.1:1/secret"));
+ const body=varta.result.capture(varta.net.get("http://127.0.0.1:1/secret"));
+ const exited=varta.result.capture(varta.process.exit(9));
+ console.log(env.status);console.log(time.status);console.log(fetched.status);console.log(body.status);console.log(exited.status);
+ console.log(env.value);console.log(time.value);console.log(fetched.value);console.log(body.value);
+ console.log(exited.ok);exited.value;
+}
+"#,
+        serde_json::json!({"env":{"get":["VARTA_CAPTURE_SECRET"]},"time":{"now":true},"net":{"fetch":["http://127.0.0.1:1/**"],"get":["http://127.0.0.1:1/**"]},"process":{"exit":true}}),
+    );
+    project.host_policy(serde_json::json!([]));
+    let built = project.command(&["build"]);
+    assert!(built.status.success(), "{}", combined(&built));
+    for args in [
+        vec!["dev", "--policy", "host-policy.json"],
+        vec!["run", "dist/app.wasm", "--policy", "host-policy.json"],
+    ] {
+        let output = varta()
+            .current_dir(&project.0)
+            .args(args)
+            .env("VARTA_CAPTURE_SECRET", "HOST_DENIED_VALUE")
+            .output()
+            .unwrap();
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(!text.contains("HOST_DENIED_VALUE"), "{text}");
+        assert!(text.contains("varta log: 1\nvarta log: 1\nvarta log: 1\nvarta log: 1\nvarta log: 1\nvarta log: \nvarta log: 0\nvarta log: -1\nvarta log: \nvarta log: 0"),"{text}");
+    }
+}
+
+#[test]
+fn captured_process_exit_still_ends_execution_with_the_requested_code() {
+    let project = RegressionProject::new(
+        "export function main():void{const result=varta.result.capture(varta.process.exit(7));console.log(\"AFTER_EXIT\");}",
+        serde_json::json!({"process":{"exit":true}}),
+    );
+    let output = project.command(&["dev"]);
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(7), "{text}");
+    assert!(!text.contains("AFTER_EXIT"), "{text}");
+}
+
+#[test]
 fn strings_survive_host_buffer_reuse_nested_calls_and_module_returns_in_all_targets() {
     let project = RegressionProject::new(
         r#"
@@ -1020,6 +1190,9 @@ fn all_project_commands_reject_the_same_type_and_subset_errors() {
         "export function main():void { let x:string=7; console.log(x); }",
         "throw new Error('must not disappear'); export function main():void {}",
         "export function main():void { console.log(1.5); }",
+        "export function main():void { varta.result.capture(42); }",
+        "export function main():void { const r=varta.result.capture(varta.time.now()); r.status=0; }",
+        "export function main():void { const r:VartaResult<string>=varta.result.capture(varta.time.now()); }",
         "export function main( {",
     ] {
         fs::write(project.0.join("src/main.ts"), source).unwrap();
@@ -1033,6 +1206,7 @@ fn all_project_commands_reject_the_same_type_and_subset_errors() {
             );
         }
     }
+    assert!(!project.0.join("dist").exists());
 }
 
 #[test]

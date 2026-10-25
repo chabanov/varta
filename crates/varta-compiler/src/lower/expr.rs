@@ -106,6 +106,7 @@ impl Lower<'_> {
                 )
             }
             ast::Expr::Call(call) => return self.call(call),
+            ast::Expr::Member(member) => return self.result_field(member),
             _ => return Err(unsupported("expression")),
         };
         Ok(Expr {
@@ -122,6 +123,9 @@ impl Lower<'_> {
             return Err(unsupported("callee"));
         };
         let name = callee_name(callee).ok_or_else(|| unsupported("callee"))?;
+        if name == "varta.result.capture" {
+            return self.capture(call);
+        }
         if let Some(signature) = self.functions.get(&name).cloned() {
             if signature.index == self.entry {
                 return Err(unsupported("calling main"));
@@ -171,7 +175,11 @@ impl Lower<'_> {
                 let host = match arg.ty {
                     Type::String => Host::LogString,
                     Type::Number | Type::Boolean => Host::LogInt,
-                    _ => return Err(self.source.locate(type_error("cannot log void"), arg.span)),
+                    _ => {
+                        return Err(self
+                            .source
+                            .locate(type_error(format!("cannot log {}", arg.ty)), arg.span));
+                    }
                 };
                 return Ok(Expr {
                     span: call.span,

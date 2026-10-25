@@ -54,18 +54,20 @@ Supported:
 
 - local source modules with a zero-argument `main(): void` in the entry file;
 - synchronous named functions with `number`/`boolean`/`string` parameters and results;
+- immutable `VartaResult<T>` values with typed `ok`, `status` and `value` fields;
 - primitive local `let`/`const` bindings with initializers and block scoping;
 - integer arithmetic, comparisons, boolean literals, `!`, `&&` and `||`;
 - if/else, while, for, switch, unlabelled break/continue, return;
 - UTF-8 string literals and retained host results, including dynamic host arguments;
 - type-only interfaces/aliases and built-in declarations.
 
-Parameters require explicit number/boolean/string annotations. Numeric/void function
+Parameters require explicit primitive or `VartaResult<T>` annotations. Numeric/void function
 results may be inferred from the supported return forms; explicit result
 annotations are recommended. Value-returning functions must return on every
 supported control-flow path. Case-local declarations require an explicit block.
-String-returning functions require explicit `: string` result annotations. String
-bindings may infer their type from their initializer. Assignment, parameters and
+String-returning functions require explicit `: string` result annotations;
+result-returning functions require `: VartaResult<T>`. String and captured-result
+types may be inferred from local initializers. Assignment, parameters and
 returns require exact types; const and use-before-initialization rules also apply
 to strings. Conditions, arithmetic and switch remain number/boolean operations.
 String concatenation, comparison, indexing, properties, interpolation, implicit
@@ -404,6 +406,72 @@ library. The CLI alone translates the result into a process exit code. Runtime,
 compilation and artifact errors return nonzero CLI status; JSON errors stay
 machine-readable on stdout, with diagnostics on stderr.
 
+## Programmatic host results
+
+`varta.result.capture` is a compiler intrinsic that executes one direct privileged
+host call and immediately pairs its value with that call's status:
+
+```ts
+function read(path: string): VartaResult<string> {
+  return varta.result.capture(varta.fs.read(path));
+}
+
+export function main(): void {
+  const result = read("/data/config.txt");
+  if (result.ok) {
+    console.log(result.value);
+  } else {
+    console.log(result.status);
+  }
+}
+```
+
+The immutable fields are `ok: boolean` (status equals zero), `status: number`
+(the ABI codes 0–4 above) and `value: T`. `T` is exactly `string`, `number`,
+`boolean` or `void`. Locals can infer their result type; function parameters and
+returns use the built-in global `VartaResult<T>` annotation. Copies, aliases,
+whole-value reassignment, nested/recursive calls and cross-module parameters and
+returns preserve both components. Later host calls, logging and reads of the
+legacy `varta.result.status()` cannot change a previously captured result.
+
+The argument is evaluated once. It must lower directly to one privileged host
+operation, optionally in parentheses; its own arguments may contain expressions
+and calls. For nested host arguments, the result describes the outer call.
+Capturing a variable, arbitrary expression, user-function call, status inspection
+or logging call is rejected: these would not reliably identify one fresh host
+status. Put capture inside a user wrapper and return its `VartaResult<T>` instead.
+All existing time, environment, filesystem, network and process operations are
+supported. Logging is excluded because it does not reset status on success.
+
+A successful empty string, false or zero has `ok == true`; a failed call keeps its
+original fallback value with `ok == false`. Fallbacks are empty string, false and
+zero, except `net.fetch`, whose failure value remains -1. A void result has no
+consumable `.value`; it can expose `.ok` and `.status`, and discarding `.value` has
+no effect. Check `.ok` before using a value as a successful result. HTTP response
+codes, including 4xx/5xx, are successful `net.fetch` return values when the request
+itself completes; transport failures are host errors. Existing human diagnostics
+still accompany host failures.
+
+Result values are represented as two Wasm values: payload then i32 status. String
+payloads retain the existing immutable i64 slice representation and snapshot
+ownership. Number/boolean payloads use i32; void uses an unused zero i32 payload.
+Each logical result local/parameter maps to two physical slots, and a result
+return uses two Wasm results. Field selection evaluates its base once and keeps
+the selected component; `.ok` compares the saved status with zero. Records require
+no heap allocation or extra host call. The existing 32 physical Wasm-parameter
+limit remains, so a result consumes two of those slots. Raw host imports, global
+exports, ABI v1, capabilities and artifact formats remain unchanged.
+
+The built-in type cannot be redeclared or fabricated through object literals.
+Nested result types, arbitrary generics, destructuring, computed fields, field
+writes and implicit conversion/comparison of a whole result are unsupported.
+The shared editor declarations expose readonly fields and the same capture API.
+This provides explicit branching on recoverable host failures, without introducing
+general objects or exceptions. Fuel/deadline/call/output exhaustion, Wasm traps
+and retained-string allocation failure still stop execution. An authorized
+`process.exit` still exits with its requested code and produces no result;
+a denied exit returns a failed `VartaResult<void>`.
+
 ## Resource limits
 
 | Resource | Default limit |
@@ -420,6 +488,7 @@ machine-readable on stdout, with diagnostics on stderr.
 | Wasm file | 4 MiB |
 | Manifest/config | 256 KiB |
 | Wasm signatures | 256 distinct complete parameter/result signatures |
+| Function parameters | 32 physical Wasm values; each captured result uses two |
 | Defined functions | 256 user functions plus at most one compiler string helper |
 
 Preflight limits also bound signatures, function count/body size, memories,

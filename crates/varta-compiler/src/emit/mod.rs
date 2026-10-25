@@ -20,6 +20,7 @@ struct Emitter<'a> {
     hosts: &'a BTreeMap<Host, u32>,
     strings: &'a BTreeMap<String, u32>,
     functions_begin: u32,
+    local_slots: Vec<u32>,
     temporary: u32,
     string_temporary: u32,
     snapshot: Option<u32>,
@@ -76,12 +77,8 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         .iter()
         .map(|f| {
             intern((
-                f.params.iter().copied().map(wasm_type).collect(),
-                if f.result == Type::Void {
-                    vec![]
-                } else {
-                    vec![wasm_type(f.result)]
-                },
+                f.params.iter().copied().flat_map(wasm_types).collect(),
+                wasm_types(f.result),
             ))
         })
         .collect();
@@ -177,14 +174,25 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     module.section(&exports);
     let mut code = wasm_encoder::CodeSection::new();
     for function in &program.functions {
+        let mut temporary = 0;
+        let local_slots = function
+            .locals
+            .iter()
+            .map(|ty| {
+                let slot = temporary;
+                temporary += ty.width();
+                slot
+            })
+            .collect();
         let mut emitter = Emitter {
             code: Vec::new(),
             labels: Vec::new(),
             hosts: &hosts,
             strings: &offsets,
             functions_begin,
-            temporary: function.locals.len() as u32,
-            string_temporary: function.locals.len() as u32 + 1,
+            local_slots,
+            temporary,
+            string_temporary: temporary + 1,
             snapshot,
             result_len,
             result_status,
@@ -195,7 +203,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         let locals = function.locals[function.params.len()..]
             .iter()
             .copied()
-            .map(wasm_type)
+            .flat_map(wasm_types)
             .chain([ValType::I32, ValType::I64]);
         let mut body = wasm_encoder::Function::new_with_locals_types(locals);
         for instruction in &emitter.code {
@@ -227,10 +235,22 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     Ok(module.finish())
 }
 
-fn wasm_type(ty: Type) -> ValType {
-    match ty {
-        Type::String => ValType::I64,
-        _ => ValType::I32,
+fn wasm_types(ty: Type) -> Vec<ValType> {
+    if let Some(value) = ty.result_value() {
+        vec![
+            if value == Type::String {
+                ValType::I64
+            } else {
+                ValType::I32
+            },
+            ValType::I32,
+        ]
+    } else {
+        match ty {
+            Type::String => vec![ValType::I64],
+            Type::Void => vec![],
+            _ => vec![ValType::I32],
+        }
     }
 }
 
@@ -259,7 +279,9 @@ fn collect_expr<'a>(
             collect_expr(a, source, hosts, strings);
             collect_expr(b, source, hosts, strings);
         }
-        E::Negative(a) | E::Not(a) => collect_expr(a, source, hosts, strings),
+        E::Negative(a) | E::Not(a) | E::Capture(a) | E::ResultField(_, a) => {
+            collect_expr(a, source, hosts, strings)
+        }
         _ => {}
     }
 }
@@ -341,11 +363,14 @@ impl Emitter<'_> {
             match statement {
                 S::Set(slot, value) => {
                     self.expr(value)?;
-                    self.code.push(I::LocalSet(*slot));
+                    for offset in (0..value.ty.width()).rev() {
+                        self.code
+                            .push(I::LocalSet(self.local_slots[*slot as usize] + offset));
+                    }
                 }
                 S::Expr(value) => {
                     self.expr(value)?;
-                    if value.ty != Type::Void {
+                    for _ in 0..value.ty.width() {
                         self.code.push(I::Drop);
                     }
                 }
@@ -401,38 +426,46 @@ impl Emitter<'_> {
                     cases,
                 } => {
                     self.expr(value)?;
-                    self.code.push(I::LocalSet(*discriminant));
+                    self.code
+                        .push(I::LocalSet(self.local_slots[*discriminant as usize]));
                     self.code.push(I::I32Const(-1));
-                    self.code.push(I::LocalSet(*selected));
+                    self.code
+                        .push(I::LocalSet(self.local_slots[*selected as usize]));
                     let mut default = cases.len();
                     for (index, (test, _)) in cases.iter().enumerate() {
                         let Some(test) = test else {
                             default = index;
                             continue;
                         };
-                        self.code.push(I::LocalGet(*selected));
+                        self.code
+                            .push(I::LocalGet(self.local_slots[*selected as usize]));
                         self.code.push(I::I32Const(-1));
                         self.code.push(I::I32Eq);
                         self.code.push(I::If(BlockType::Empty));
-                        self.code.push(I::LocalGet(*discriminant));
+                        self.code
+                            .push(I::LocalGet(self.local_slots[*discriminant as usize]));
                         self.expr(test)?;
                         self.code.push(I::I32Eq);
                         self.code.push(I::If(BlockType::Empty));
                         self.code.push(I::I32Const(index as i32));
-                        self.code.push(I::LocalSet(*selected));
+                        self.code
+                            .push(I::LocalSet(self.local_slots[*selected as usize]));
                         self.code.push(I::End);
                         self.code.push(I::End);
                     }
-                    self.code.push(I::LocalGet(*selected));
+                    self.code
+                        .push(I::LocalGet(self.local_slots[*selected as usize]));
                     self.code.push(I::I32Const(-1));
                     self.code.push(I::I32Eq);
                     self.code.push(I::If(BlockType::Empty));
                     self.code.push(I::I32Const(default as i32));
-                    self.code.push(I::LocalSet(*selected));
+                    self.code
+                        .push(I::LocalSet(self.local_slots[*selected as usize]));
                     self.code.push(I::End);
                     self.push_label(I::Block(BlockType::Empty), true, false);
                     for (index, (_, body)) in cases.iter().enumerate() {
-                        self.code.push(I::LocalGet(*selected));
+                        self.code
+                            .push(I::LocalGet(self.local_slots[*selected as usize]));
                         self.code.push(I::I32Const(index as i32));
                         self.code.push(I::I32LeS);
                         self.push_label(I::If(BlockType::Empty), false, false);

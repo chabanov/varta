@@ -62,7 +62,7 @@ fn preflight(bytes: &[u8]) -> Result<(), RuntimeError> {
                 for (count, ty) in reader.into_iter_err_on_gc_types().enumerate() {
                     let ty = ty.map_err(|e| error(&e.to_string()))?;
                     if count >= abi::MAX_WASM_SIGNATURES
-                        || ty.params().len() > 32
+                        || ty.params().len() > abi::MAX_WASM_PARAMETERS
                         || ty.results().len() > 2
                     {
                         return Err(error("Wasm signature complexity exceeds limits"));

@@ -20,8 +20,10 @@ pub(super) fn check(declaration: &ast::FnDecl, index: usize, source: &Source) ->
         .iter()
         .map(|param| parameter(param, source).map_err(|e| source.locate(e, param.span())))
         .collect::<Result<_>>()?;
-    if params.len() > 32 {
-        return Err(invalid("too many parameters"));
+    if params.iter().copied().map(Type::width).sum::<u32>() as usize
+        > varta_common::abi::MAX_WASM_PARAMETERS
+    {
+        return Err(invalid("function parameters exceed 32 Wasm value slots"));
     }
     let result_span = function
         .return_type
@@ -59,7 +61,7 @@ fn parameter(param: &ast::Param, source: &Source) -> Result<Type> {
         .map_or(binding.span(), |a| a.type_ann.span());
     let ty = annotation(binding.type_ann.as_deref())
         .map_err(|e| source.locate(e, span))?
-        .ok_or_else(|| invalid("parameters require number, boolean or string annotations"))?;
+        .ok_or_else(|| invalid("parameters require primitive or VartaResult annotations"))?;
     value_type(ty).map_err(|e| source.locate(e, span))?;
     Ok(ty)
 }

@@ -21,6 +21,18 @@ pub(super) fn collect<'a>(
         };
         match declaration {
             ast::Decl::Fn(function) if !function.declare => declarations.push(function),
+            ast::Decl::TsInterface(interface) if interface.id.sym == "VartaResult" => {
+                return Err(source.locate(
+                    unsupported("redeclaring the built-in VartaResult type"),
+                    interface.id.span,
+                ));
+            }
+            ast::Decl::TsTypeAlias(alias) if alias.id.sym == "VartaResult" => {
+                return Err(source.locate(
+                    unsupported("redeclaring the built-in VartaResult type"),
+                    alias.id.span,
+                ));
+            }
             ast::Decl::TsInterface(_) | ast::Decl::TsTypeAlias(_) => {}
             ast::Decl::Var(var) if var.declare => {
                 for declaration in &var.decls {

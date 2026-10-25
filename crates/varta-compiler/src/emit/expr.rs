@@ -4,12 +4,44 @@ impl Emitter<'_> {
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<()> {
         match &expr.kind {
             E::Integer(n) => self.code.push(I::I32Const(*n)),
-            E::Local(slot) => self.code.push(I::LocalGet(*slot)),
+            E::Local(slot) => {
+                for offset in 0..expr.ty.width() {
+                    self.code
+                        .push(I::LocalGet(self.local_slots[*slot as usize] + offset));
+                }
+            }
             E::String(s) => {
                 let packed = ((s.len() as u64) << strings::LENGTH_SHIFT) | self.strings[s] as u64;
                 self.code.push(I::I64Const(packed as i64));
             }
             E::Status => self.code.push(I::GlobalGet(self.result_status)),
+            E::Capture(value) => {
+                self.expr(value)?;
+                if value.ty == Type::Void {
+                    // Keep one payload slot for every result, including void.
+                    self.code.push(I::I32Const(0));
+                }
+                self.code.push(I::GlobalGet(self.result_status));
+            }
+            E::ResultField(field, value) => {
+                self.expr(value)?;
+                match field {
+                    ir::ResultField::Value => {
+                        self.code.push(I::Drop); // status
+                        if expr.ty == Type::Void {
+                            self.code.push(I::Drop);
+                        }
+                    }
+                    ir::ResultField::Status | ir::ResultField::Ok => {
+                        self.code.push(I::LocalSet(self.temporary));
+                        self.code.push(I::Drop); // payload
+                        self.code.push(I::LocalGet(self.temporary));
+                        if matches!(field, ir::ResultField::Ok) {
+                            self.code.push(I::I32Eqz);
+                        }
+                    }
+                }
+            }
             E::Negative(e) => {
                 self.code.push(I::I32Const(0));
                 self.expr(e)?;

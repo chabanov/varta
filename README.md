@@ -162,6 +162,28 @@ execution/HTTP deadline, and bounded host calls, I/O results and output. Host
 failures clear result lengths and expose status through `varta.result.status()`:
 0 success, 1 denied, 2 invalid input, 3 I/O failure, 4 result too large.
 
+## Programmatic host errors
+
+Capture a direct system call to keep its value and status together:
+
+```ts
+export function main(): void {
+  const result = varta.result.capture(varta.env.get("APP_NAME"));
+  if (result.ok) {
+    console.log(result.value);
+  } else {
+    console.log(result.status);
+  }
+}
+```
+
+The readonly `ok`, `status` and `value` fields survive later system calls. Results
+can be passed or returned as `VartaResult<string>`, `VartaResult<number>`,
+`VartaResult<boolean>` or `VartaResult<void>`. Capture the system call inside a
+user wrapper before returning it. Existing permission checks still apply, and
+resource exhaustion still ends execution. The old API and status inspection stay
+available. See the [result contract](docs/architecture.md#programmatic-host-results).
+
 ## Commands
 
 - `init <name>`: create a project without overwriting an existing directory

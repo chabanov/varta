@@ -11,6 +11,7 @@ pub const WASM_PAGE_BYTES: usize = 65_536;
 pub const MAX_USER_FUNCTIONS: usize = 256;
 pub const MAX_INTERNAL_FUNCTIONS: usize = 1;
 pub const MAX_WASM_SIGNATURES: usize = 256;
+pub const MAX_WASM_PARAMETERS: usize = 32;
 pub const MAX_MEMORY_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_HOST_CALLS: u32 = 1024;

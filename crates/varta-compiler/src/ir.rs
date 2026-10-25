@@ -6,6 +6,47 @@ pub(crate) enum Type {
     Boolean,
     String,
     Void,
+    ResultNumber,
+    ResultBoolean,
+    ResultString,
+    ResultVoid,
+}
+
+impl Type {
+    pub(crate) fn captured(self) -> Option<Self> {
+        Some(match self {
+            Self::Number => Self::ResultNumber,
+            Self::Boolean => Self::ResultBoolean,
+            Self::String => Self::ResultString,
+            Self::Void => Self::ResultVoid,
+            _ => return None,
+        })
+    }
+    pub(crate) fn result_value(self) -> Option<Self> {
+        Some(match self {
+            Self::ResultNumber => Self::Number,
+            Self::ResultBoolean => Self::Boolean,
+            Self::ResultString => Self::String,
+            Self::ResultVoid => Self::Void,
+            _ => return None,
+        })
+    }
+    pub(crate) fn width(self) -> u32 {
+        if self == Self::Void {
+            0
+        } else if self.result_value().is_some() {
+            2
+        } else {
+            1
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ResultField {
+    Ok,
+    Status,
+    Value,
 }
 
 pub(crate) struct Program {
@@ -36,6 +77,8 @@ pub(crate) enum Expression {
     Call(usize, Vec<Expr>),
     Host(Host, Vec<Expr>),
     Status,
+    Capture(Box<Expr>),
+    ResultField(ResultField, Box<Expr>),
 }
 
 pub(crate) use varta_common::HostOperation as Host;
@@ -65,6 +108,10 @@ impl std::fmt::Display for Type {
             Self::Boolean => "boolean",
             Self::String => "string",
             Self::Void => "void",
+            Self::ResultNumber => "VartaResult<number>",
+            Self::ResultBoolean => "VartaResult<boolean>",
+            Self::ResultString => "VartaResult<string>",
+            Self::ResultVoid => "VartaResult<void>",
         })
     }
 }

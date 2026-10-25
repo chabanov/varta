@@ -54,16 +54,36 @@ fn annotation(ann: Option<&ast::TsTypeAnn>) -> Result<Option<Type>> {
     let Some(ann) = ann else {
         return Ok(None);
     };
-    let ast::TsType::TsKeywordType(keyword) = &*ann.type_ann else {
+    if let ast::TsType::TsTypeRef(reference) = &*ann.type_ann {
+        if !matches!(&reference.type_name, ast::TsEntityName::Ident(id) if id.sym == "VartaResult")
+        {
+            return Err(unsupported("type annotation"));
+        }
+        let params = reference
+            .type_params
+            .as_ref()
+            .ok_or_else(|| unsupported("VartaResult without a value type"))?;
+        if params.params.len() != 1 {
+            return Err(unsupported("VartaResult type argument count"));
+        }
+        return keyword_type(&params.params[0])?
+            .captured()
+            .map(Some)
+            .ok_or_else(|| unsupported("nested VartaResult type"));
+    }
+    Ok(Some(keyword_type(&ann.type_ann)?))
+}
+fn keyword_type(ty: &ast::TsType) -> Result<Type> {
+    let ast::TsType::TsKeywordType(keyword) = ty else {
         return Err(unsupported("type annotation"));
     };
-    Ok(Some(match keyword.kind {
+    Ok(match keyword.kind {
         ast::TsKeywordTypeKind::TsNumberKeyword => Type::Number,
         ast::TsKeywordTypeKind::TsBooleanKeyword => Type::Boolean,
         ast::TsKeywordTypeKind::TsStringKeyword => Type::String,
         ast::TsKeywordTypeKind::TsVoidKeyword => Type::Void,
         _ => return Err(unsupported("type annotation")),
-    }))
+    })
 }
 fn scalar(ty: Type) -> Result<()> {
     if matches!(ty, Type::Number | Type::Boolean) {
@@ -105,6 +125,7 @@ fn returns(body: &[S]) -> bool {
 mod declarations;
 mod expr;
 mod link;
+mod results;
 mod signature;
 mod stmt;
 

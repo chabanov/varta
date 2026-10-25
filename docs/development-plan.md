@@ -106,14 +106,31 @@ host ceilings, fuel exhaustion, and exact arena-boundary behavior with additiona
 test fuel. Snapshots live until execution ends; reclamation, concatenation,
 comparison and implicit string coercion are not implemented yet.
 
-## Next milestone: programmatic host errors
+## Completed follow-up: programmatic host errors
+
+`varta.result.capture` now executes a direct privileged host call once and retains
+an immutable typed `VartaResult<T>` containing `.ok`, `.status` and `.value`.
+Values and failures stay paired across later host calls, aliases, reassignment,
+recursive calls and module boundaries. String payloads keep their safe snapshot
+ownership; the result itself uses a bounded two-value Wasm representation with no
+record allocation. Function annotations, parameter limits, physical local slots
+and multi-value returns are checked consistently. Shared editor declarations
+document the API. Existing host imports, policies and artifacts remain compatible.
+
+Regression coverage includes empty/false success, all five status codes, retained
+Unicode payloads, nested call evaluation, readonly fields and type errors,
+parameter budgets, identical check/build/dev rejection, Wasm/native execution,
+host ceilings, denied network/process calls and authorized process exit. Resource
+traps remain execution failures; capture does not introduce general exceptions.
+
+## Next milestone: string operations and reclamation
 
 Keep the secure subset small while improving usability:
 
-1. Add structured, programmatic host error handling beyond status inspection;
-   define how values and failures stay paired across subsequent host calls.
-2. Extend string operations and define reclamation before adding arrays or objects.
-   Preserve immutable retained values and explicit memory/fuel budgets.
+1. Define string comparison, concatenation and Unicode semantics, with bounded
+   allocation and behavior tests for empty and non-ASCII values.
+2. Define safe reclamation before adding arrays or objects. Preserve immutable
+   retained values and explicit memory/fuel budgets.
 
 Exit criteria: identical check/build/dev acceptance; documented module and memory
 semantics; behavior tests for every construct; denial tests for each boundary;
