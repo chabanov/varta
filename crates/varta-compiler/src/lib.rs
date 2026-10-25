@@ -1576,3 +1576,59 @@ fn function_parameter_names(function: &swc_ecma_ast::FnDecl) -> Vec<String> {
         .map(|param| binding_name(&param.pat).unwrap_or_default())
         .collect()
 }
+
+/// Typed error returned by compiler public APIs.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CompilerError {
+    #[error("{0}")]
+    Parse(String),
+    #[error("unsupported {kind}: {detail}")]
+    Unsupported { kind: String, detail: String },
+    #[error("{0}")]
+    Invalid(String),
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+impl From<String> for CompilerError {
+    fn from(value: String) -> Self {
+        Self::Invalid(value)
+    }
+}
+
+impl From<&str> for CompilerError {
+    fn from(value: &str) -> Self {
+        Self::Invalid(value.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CompilerError;
+
+    #[test]
+    fn compiler_error_display() {
+        assert_eq!(CompilerError::Parse("x".to_string()).to_string(), "x");
+        assert_eq!(
+            CompilerError::Unsupported {
+                kind: "statement".to_string(),
+                detail: "foo".to_string()
+            }
+            .to_string(),
+            "unsupported statement: foo"
+        );
+        assert_eq!(CompilerError::Invalid("bad".to_string()).to_string(), "bad");
+        assert_eq!(
+            CompilerError::Internal("boom".to_string()).to_string(),
+            "internal error: boom"
+        );
+    }
+
+    #[test]
+    fn compiler_error_from_string() {
+        assert_eq!(
+            CompilerError::from("nope"),
+            CompilerError::Invalid("nope".to_string())
+        );
+    }
+}
