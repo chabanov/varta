@@ -1,0 +1,14 @@
+[package]
+name = "varta-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+varta-common = { path = "../varta-common" }
+thiserror.workspace = true
+tracing.workspace = true
+wasmtime.workspace = true
+
+[dev-dependencies]
+varta-compiler = { path = "../varta-compiler" }

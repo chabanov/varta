@@ -1,0 +1,19 @@
+[package]
+name = "varta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "varta"
+path = "src/main.rs"
+
+[dependencies]
+varta-common = { path = "../varta-common" }
+varta-compiler = { path = "../varta-compiler" }
+varta-runtime = { path = "../varta-runtime" }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wasmparser = { workspace = true }
+serde_json = { workspace = true }

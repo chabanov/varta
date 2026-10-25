@@ -1,0 +1,13 @@
+[package]
+name = "varta-compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+varta-common = { path = "../varta-common" }
+thiserror.workspace = true
+wasm-encoder.workspace = true
+swc_common = "26.0.0"
+swc_ecma_parser = "46.1.2"
+swc_ecma_ast = "29.0.0"
