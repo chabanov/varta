@@ -878,7 +878,7 @@ fn validate_app(path: &str, json: bool) -> Result<(), VartaError> {
                         "env_has" | "env_print" | "env_get" => "env",
                         "fs_print" | "fs_read" => "fs",
                         "process_exit" => "process",
-                        "net_fetch" => "net",
+                        "net_fetch" | "net_get" => "net",
                         other => {
                             return Err(VartaError::InvalidManifest(format!(
                                 "unknown host import: {other}"
@@ -902,12 +902,16 @@ fn validate_app(path: &str, json: bool) -> Result<(), VartaError> {
     }
 
     if json {
-        let capability_ids: Vec<String> = capabilities.iter().map(|grant| grant.id.clone()).collect();
-        println!("{}", serde_json::json!({
-            "artifact": path,
-            "capabilities": capability_ids,
-            "status": "ok",
-        }));
+        let capability_ids: Vec<String> =
+            capabilities.iter().map(|grant| grant.id.clone()).collect();
+        println!(
+            "{}",
+            serde_json::json!({
+                "artifact": path,
+                "capabilities": capability_ids,
+                "status": "ok",
+            })
+        );
     }
 
     Ok(())

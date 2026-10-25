@@ -422,7 +422,7 @@ impl VartaRuntime {
                     return 0;
                 }
                 let Some(body) = fetch_http_body(url) else {
-                    println!("net_get: no body");
+                    println!("varta log: <no response body>");
                     return 0;
                 };
 
@@ -441,7 +441,6 @@ impl VartaRuntime {
                 } else {
                     current_heap
                 };
-                println!("DBG_NET_GET current_heap={current_heap} base={base} bodylen={}", body.len());
                 let end = base + body.len() as i32;
                 let size = memory.data_size(&caller) as i32;
                 if end > size {
@@ -451,7 +450,7 @@ impl VartaRuntime {
                     }
                 }
                 if memory.write(&mut caller, base as usize, &body).is_err() {
-                    println!("net_get: memory write failed base={} len={}", base, body.len());
+                    println!("varta log: <failed to write response>");
                     return 0;
                 }
                 let _ = heap.set(&mut caller, wasmtime::Val::I32(base + body.len() as i32));
@@ -620,6 +619,47 @@ mod tests {
     #[test]
     fn validates_string_module() {
         let source = "export function main(): void { console.log(\"hello\"); }";
+        let bytes = varta_compiler::compile_typescript(source).unwrap();
+        let engine = wasmtime::Engine::default();
+        let result = wasmtime::Module::new(&engine, &bytes);
+        assert!(result.is_ok(), "module validation failed: {result:?}");
+    }
+
+    #[test]
+    fn validates_control_flow_module() {
+        // `&&`, `||` and `switch` use compiler temporaries beyond named
+        // variables; the function must declare those local slots.
+        let source = r#"
+export function main(): void {
+  let a = 1;
+  let b = 2;
+  console.log(a && b);
+  console.log(a || b);
+  switch (a) {
+    case 1:
+      console.log("one");
+      break;
+    default:
+      console.log("other");
+  }
+}
+"#;
+        let bytes = varta_compiler::compile_typescript(source).unwrap();
+        let engine = wasmtime::Engine::default();
+        let result = wasmtime::Module::new(&engine, &bytes);
+        assert!(result.is_ok(), "module validation failed: {result:?}");
+    }
+
+    #[test]
+    fn validates_host_result_logging_module() {
+        // `console.log(varta.env.get(...))` and `console.log(varta.fs.read(...))`
+        // must call the resolved log_string import, not a literal import index.
+        let source = r#"
+export function main(): void {
+  console.log(varta.env.get("HOME"));
+  console.log(varta.fs.read("/data/hello.txt"));
+}
+"#;
         let bytes = varta_compiler::compile_typescript(source).unwrap();
         let engine = wasmtime::Engine::default();
         let result = wasmtime::Module::new(&engine, &bytes);

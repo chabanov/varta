@@ -394,7 +394,10 @@ fn invalid_capability_pattern_smoke_test() {
         .arg("build")
         .output()
         .expect("failed to run varta build");
-    assert!(!build.status.success(), "broad capability should fail validation");
+    assert!(
+        !build.status.success(),
+        "broad capability should fail validation"
+    );
     assert!(
         combined(&build).contains("unsafe pattern for fs.read: *"),
         "expected capability pattern error, got: {}",
@@ -466,6 +469,75 @@ fn missing_capability_validation_smoke_test() {
         "expected capability mismatch, got: {}",
         combined(&validate)
     );
+
+    let _ = fs::remove_dir_all(&project);
+}
+
+#[test]
+fn net_get_validation_smoke_test() {
+    let project = temp_project();
+    fs::create_dir_all(project.join("src")).unwrap();
+
+    fs::write(
+        project.join("varta.config.json"),
+        r#"{
+  "entry": "src/main.ts",
+  "target": "native",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": {
+    "net": {
+      "fetch": ["http://127.0.0.1/**"],
+      "get": ["http://127.0.0.1/**"]
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("src").join("main.ts"),
+        r#"export function main(): void {
+  varta.net.get("http://127.0.0.1:9/unreachable");
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("varta.d.ts"),
+        r#"declare const varta: { net: { get(url: string): string } };
+"#,
+    )
+    .unwrap();
+
+    let build = varta()
+        .current_dir(&project)
+        .arg("build")
+        .output()
+        .expect("failed to run varta build");
+    assert!(build.status.success(), "build failed: {}", combined(&build));
+
+    // The net_get host import must be recognized and covered by the
+    // net capability grants.
+    let validate = varta()
+        .current_dir(&project)
+        .arg("validate")
+        .arg("dist/app.wasm")
+        .output()
+        .expect("failed to run varta validate");
+    assert!(
+        validate.status.success(),
+        "validate failed: {}",
+        combined(&validate)
+    );
+
+    let dev = varta()
+        .current_dir(&project)
+        .arg("dev")
+        .output()
+        .expect("failed to run varta dev");
+    assert!(dev.status.success(), "dev failed: {}", combined(&dev));
 
     let _ = fs::remove_dir_all(&project);
 }
