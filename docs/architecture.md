@@ -359,7 +359,7 @@ Capability enforcement happens at two levels.
 
 - validate capability object structure;
 - validate API/capability compatibility;
-- validate statically known paths, hosts, ports, and globs;
+- validate statically known paths, hosts, ports, globs, and supported URL schemes;
 - reject clearly invalid or overly broad patterns where policy requires.
 
 ### Runtime
@@ -368,6 +368,18 @@ Capability enforcement happens at two levels.
 - enforce filesystem path resolution and symlink boundaries;
 - enforce host/path allowlists;
 - fail with a typed error before performing the operation.
+
+### Network transport note (MVP)
+
+- The development and runtime host HTTP client supports `http://` only.
+- Capability patterns may still be recorded as `https://...` for review and
+  auditing, but the runtime does not perform TLS transport yet.
+- `varta.net.fetch` and `varta.net.get` reject unsupported URL schemes with an
+  explicit capability/transport error before any network I/O.
+- CI and security review should currently approve net capability patterns only
+  for `http://`.
+- TLS (`https://`) is scheduled for Phase 2 (core runtime) and may also be
+  gated behind a compat/policy profile.
 
 ### Example denial
 
@@ -655,6 +667,7 @@ Trade-offs:
 ### Phase 2: Core runtime
 
 - fs/net/http APIs;
+- HTTP and limited HTTPS/TLS transport scope decision;
 - async event loop;
 - memory management;
 - error handling;
@@ -692,6 +705,7 @@ Trade-offs:
 5. Which npm compatibility guarantees are realistic?
 6. How to balance binary size with debuggability?
 7. How should plugin/extensibility work while remaining secure?
+8. Which TLS backend and trust assumptions should Varta use for HTTPS?
 
 ---
 
