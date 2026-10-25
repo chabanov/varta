@@ -379,38 +379,7 @@ impl VartaRuntime {
                 if value.len() > MAX_HOST_RESULT_BYTES {
                     return 0;
                 }
-                let Some(wasmtime::Extern::Global(heap)) = caller.get_export("heap") else {
-                    return 0;
-                };
-                let Some(wasmtime::Extern::Global(env_len)) = caller.get_export("env_result_len")
-                else {
-                    return 0;
-                };
-                let current_heap = heap.get(&mut caller).i32().unwrap_or(8192);
-                let base = if current_heap == 0 {
-                    8192
-                } else {
-                    current_heap
-                };
-                if base < 0 || base as usize > MAX_RUNTIME_MEMORY_BYTES {
-                    return 0;
-                }
-                let desired = base as usize + value.len();
-                if desired > MAX_RUNTIME_MEMORY_BYTES {
-                    return 0;
-                }
-                if desired > memory.data_size(&caller) {
-                    let pages = (desired - memory.data_size(&caller)).div_ceil(65536) as u64;
-                    if memory.grow(&mut caller, pages).is_err() {
-                        return 0;
-                    }
-                }
-                if memory.write(&mut caller, base as usize, &value).is_err() {
-                    return 0;
-                }
-                let _ = heap.set(&mut caller, wasmtime::Val::I32(base + value.len() as i32));
-                let _ = env_len.set(&mut caller, wasmtime::Val::I32(value.len() as i32));
-                base
+                write_host_result(&mut caller, &value)
             },
         )?;
         linker.func_wrap(
@@ -473,43 +442,7 @@ impl VartaRuntime {
                     println!("varta log: <result too large>");
                     return 0;
                 }
-                let Some(wasmtime::Extern::Global(heap)) = caller.get_export("heap") else {
-                    return 0;
-                };
-                let Some(wasmtime::Extern::Global(result_len)) =
-                    caller.get_export("env_result_len")
-                else {
-                    return 0;
-                };
-                let current_heap = heap.get(&mut caller).i32().unwrap_or(0);
-                let base = if current_heap == 0 {
-                    memory.data_size(&caller) as i32
-                } else {
-                    current_heap
-                };
-                if base < 0 || base as usize > MAX_RUNTIME_MEMORY_BYTES {
-                    return 0;
-                }
-                let desired = base as usize + contents.len();
-                if desired > MAX_RUNTIME_MEMORY_BYTES {
-                    println!("varta log: <result too large>");
-                    return 0;
-                }
-                if desired > memory.data_size(&caller) {
-                    let pages = (desired - memory.data_size(&caller)).div_ceil(65536) as u64;
-                    if memory.grow(&mut caller, pages).is_err() {
-                        return 0;
-                    }
-                }
-                if memory.write(&mut caller, base as usize, &contents).is_err() {
-                    return 0;
-                }
-                let _ = heap.set(
-                    &mut caller,
-                    wasmtime::Val::I32(base + contents.len() as i32),
-                );
-                let _ = result_len.set(&mut caller, wasmtime::Val::I32(contents.len() as i32));
-                base
+                write_host_result(&mut caller, &contents)
             },
         )?;
         linker.func_wrap(
@@ -563,47 +496,11 @@ impl VartaRuntime {
                     return 0;
                 };
 
-                let Some(wasmtime::Extern::Global(heap)) = caller.get_export("heap") else {
-                    return 0;
-                };
-                let Some(wasmtime::Extern::Global(result_len)) =
-                    caller.get_export("env_result_len")
-                else {
-                    return 0;
-                };
-
-                let current_heap = heap.get(&mut caller).i32().unwrap_or(0);
-                let base = if current_heap == 0 {
-                    memory.data_size(&caller) as i32
-                } else {
-                    current_heap
-                };
                 if body.len() > MAX_HOST_RESULT_BYTES {
                     println!("varta log: <result too large>");
                     return 0;
                 }
-                if base < 0 || base as usize > MAX_RUNTIME_MEMORY_BYTES {
-                    return 0;
-                }
-                let desired = base as usize + body.len();
-                if desired > MAX_RUNTIME_MEMORY_BYTES {
-                    println!("varta log: <result too large>");
-                    return 0;
-                }
-                if desired > memory.data_size(&caller) {
-                    let size = memory.data_size(&caller);
-                    let pages = desired.saturating_sub(size).div_ceil(65536) as u64;
-                    if memory.grow(&mut caller, pages).is_err() {
-                        return 0;
-                    }
-                }
-                if memory.write(&mut caller, base as usize, &body).is_err() {
-                    println!("varta log: <failed to write response>");
-                    return 0;
-                }
-                let _ = heap.set(&mut caller, wasmtime::Val::I32(base + body.len() as i32));
-                let _ = result_len.set(&mut caller, wasmtime::Val::I32(body.len() as i32));
-                base
+                write_host_result(&mut caller, &body)
             },
         )?;
 
@@ -614,6 +511,55 @@ impl VartaRuntime {
         }
         Ok(())
     }
+}
+
+/// Write a host result into guest linear memory and update shared heap/length
+/// globals. Returns the base pointer or `0` when the result cannot be stored.
+fn write_host_result(caller: &mut wasmtime::Caller<'_, RuntimeContext>, bytes: &[u8]) -> i32 {
+    if bytes.len() > MAX_HOST_RESULT_BYTES {
+        return 0;
+    }
+
+    let memory = match caller.get_export("memory") {
+        Some(wasmtime::Extern::Memory(memory)) => memory,
+        _ => return 0,
+    };
+    let heap = match caller.get_export("heap") {
+        Some(wasmtime::Extern::Global(heap)) => heap,
+        _ => return 0,
+    };
+    let result_len = match caller.get_export("env_result_len") {
+        Some(wasmtime::Extern::Global(result_len)) => result_len,
+        _ => return 0,
+    };
+
+    let current_heap = heap.get(&mut *caller).i32().unwrap_or(0);
+    let base = if current_heap == 0 {
+        memory.data_size(&*caller) as i32
+    } else {
+        current_heap
+    };
+    if base < 0 || base as usize > MAX_RUNTIME_MEMORY_BYTES {
+        return 0;
+    }
+    let desired = base as usize + bytes.len();
+    if desired > MAX_RUNTIME_MEMORY_BYTES {
+        return 0;
+    }
+    if desired > memory.data_size(&*caller) {
+        let pages = desired
+            .saturating_sub(memory.data_size(&*caller))
+            .div_ceil(65536) as u64;
+        if memory.grow(&mut *caller, pages).is_err() {
+            return 0;
+        }
+    }
+    if memory.write(&mut *caller, base as usize, bytes).is_err() {
+        return 0;
+    }
+    let _ = heap.set(&mut *caller, wasmtime::Val::I32(base + bytes.len() as i32));
+    let _ = result_len.set(&mut *caller, wasmtime::Val::I32(bytes.len() as i32));
+    base
 }
 
 fn glob_match(pattern: &str, text: &str) -> bool {
