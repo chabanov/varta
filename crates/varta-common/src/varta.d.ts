@@ -1,4 +1,5 @@
 declare const varta: {
+  result: { status(): number };
   time: { now(): number };
   env: { has(name: string): boolean; print(name: string): void; get(name: string): string };
   fs: { print(path: string): void; read(path: string): string };

@@ -1,724 +1,358 @@
-# Varta — Architecture
+# Varta architecture and implemented contract
 
-## 1. Vision
+This document describes the implemented MVP. Future work is tracked separately in
+[development-plan.md](development-plan.md). Varta compiles a deliberately small
+TypeScript subset to portable WebAssembly and executes it in a capability-checked
+Wasmtime host. It does not provide general JavaScript, Node or npm compatibility.
 
-Varta is a typed and secure engine for TS/JS applications.
-
-The primary promise:
-
-- developers write TS/JS;
-- source is compiled into WebAssembly;
-- privileged operations are exposed only through capability-based host APIs;
-- final release artifacts can be **single native binaries** containing application code and the required runtime shim.
-
-Varta is not only a JavaScript runtime. It is a **compile-time + runtime system** for small, secure, deployable applications.
-
----
-
-## 2. Design goals
-
-1. **Type safety by default**
-   - TS-first workflow.
-   - Strict type checking in CI and local builds.
-   - Host APIs must ship with generated types.
-
-2. **Security by default**
-   - Deny-by-default capabilities.
-   - No ambient filesystem/network/process access.
-   - Explicit import/capability declarations.
-
-3. **Portable deployment**
-   - Development can target Wasm.
-   - Production targets a single native binary per platform.
-
-4. **Small attack surface**
-   - Avoid `eval`, dynamic code injection, and unsafe host bridges.
-   - Reduce runtime dependencies.
-
-5. **Deterministic builds**
-   - Reproducible compilation where practical.
-   - Lockfile and dependency resolution must be part of architecture.
-
----
-
-## 3. High-level model
+## Boundaries
 
 ```text
-TS/JS source
-    ↓
-parser + type checker
-    ↓
-intermediate representation
-    ↓
-Wasm compiler
-    ↓
-Wasm module
-    ↓
-AOT linker / native compiler
-    ↓
-single native binary
+CLI -> varta-project -> varta-compiler -> validated portable Wasm
+                    -> varta-runtime -> checked host adapters
+                    -> artifact reader/writer
+          all layers -> varta-common (schema, ABI, host operation registry)
 ```
 
-At runtime:
+- `varta-common`: strict configuration and manifest schemas, operation identities,
+  host signatures, ABI constants and editor declarations.
+- `varta-compiler`: syntax parsing, lexical name resolution, subset/type checking,
+  typed intermediate representation, Wasm emission and full bytecode validation.
+- `varta-runtime`: bounded module validation, Wasmtime execution, resource limits,
+  pinned filesystem capabilities, HTTP transport and host result handling.
+- `varta-project`: one checked pipeline for check/dev/build; versioned artifacts,
+  manifest serialization, policy review and inspection.
+- `varta-cli`: argument parsing, presentation and process exit codes.
+
+Workspace code forbids `unsafe`. New dependencies are exact-pinned: `cap-std` and
+`cap-fs-ext` supply descriptor-relative, no-follow filesystem operations;
+`url` supplies one structured URL interpretation; `ureq` supplies bounded HTTP
+framing and timeouts. Implementing these protocols with ambient path checks and
+handwritten HTTP caused the audit's permission bypasses.
+
+## Compilation contract
+
+Every project command loads and validates `varta.config.json`, resolves the entry
+and output relative to that configuration file, checks the supported language and
+its types, emits Wasm, and validates both bytecode and host ABI. Deno is not a
+prerequisite and its presence cannot change whether a project is accepted.
+
+The pipeline is:
 
 ```text
-native binary
-  ├── application code
-  ├── Varta runtime shim
-  ├── embedded asset manifest
-  └── host capability configuration
+bounded source -> SWC AST -> resolved, typed IR -> Wasm -> validation
 ```
 
-The runtime executes application logic and calls host functions only through explicitly granted interfaces.
+The semantic stage assigns a distinct local slot to each lexical binding and
+checks parameters, assignments, calls, returns, const writes and uses before
+initialization. Function signature interning assigns and emits each signature in
+one operation, independent of source declaration order. Branch labels account for
+every enclosing Wasm block, loop and if. Each nested switch has distinct temporary
+locals; default selection and fallthrough follow source order.
 
----
+Supported:
 
-## 4. Source and project model
+- one source file with a zero-argument `main(): void`;
+- synchronous named functions, `number`/`boolean` parameters and scalar results;
+- scalar local `let`/`const` bindings with initializers and block scoping;
+- integer arithmetic, comparisons, boolean literals, `!`, `&&` and `||`;
+- if/else, while, for, switch, unlabelled break/continue, return;
+- literal strings and UTF-8 host string results as direct log arguments or
+  discarded expressions; type-only interfaces/aliases and built-in declarations.
 
-Recommended project layout:
+Parameters require explicit number/boolean annotations. Numeric/void function
+results may be inferred from the supported return forms; explicit result
+annotations are recommended. Value-returning functions must return on every
+supported control-flow path. Case-local declarations require an explicit block.
+Strings are not yet general local variables or user-function parameters/results.
 
-```text
-varta.config.ts
-src/
-  main.ts
-  lib/
-tests/
-varta.lock
-```
+Numbers have signed **i32** Wasm semantics: addition/subtraction/multiplication
+wrap, division truncates, and invalid division traps. This is intentionally not
+JavaScript's floating-point `number` semantics. Booleans log as 0/1. `time.now`
+returns Unix seconds representable in i32 and reports invalid input outside that
+range rather than wrapping.
 
-Core concepts:
+Modules/imports, top-level effects, async/generators, classes, closures, var,
+objects/arrays, dynamic string arguments, casts, any and unsupported syntax fail
+explicitly. They are never silently discarded. Source is capped at 1 MiB with
+lexical complexity limits before recursive parsing. Static strings occupy at most
+one 64 KiB page. Parse errors retain source line/column positions.
 
-- `varta.config.ts`: project configuration, targets, capabilities, dependencies.
-- `src/main.ts`: entry point.
-- strict TS configuration is the default.
-- `any`, implicit unsafe casts, and untyped host boundaries should produce warnings or errors.
-- ambient global APIs should be intentionally limited.
+## Source diagnostics
 
----
+The project service resolves the configured entry to its canonical file path and
+passes that identity into the compiler. Public `compile_typescript_with_path`
+and `parse_typescript_with_path` accept source text and a diagnostic path without
+reading that path; the original in-memory helpers retain `input.ts` as their
+compatibility name. Naming a source does not change emitted Wasm bytes.
 
-## 5. Compilation pipeline
+Parsing, lexical resolution, subset checking and type checking share one source
+context. Nested failures keep the innermost available span rather than being
+relabeled as the containing call or function. Function and expression spans also
+survive typed IR lowering, so static-data emission errors identify the source
+literal that exceeds the budget. This is compile-time source metadata; Wasm
+runtime source maps and stack-trace symbolication are not implemented yet.
 
-### Stage 1: Parsing
+Diagnostics have stable category codes: `syntax_error`, `type_error`,
+`unsupported_syntax`, `invalid_program` and `internal_error`. Type mismatches
+include expected/actual scalar types where available. The shared diagnostic
+record contains the filename, message, a half-open source range, and an optional
+bounded source excerpt. Lines and columns are **one-based Unicode scalar**
+positions, not UTF-16 editor offsets; `byte_offset` is zero-based UTF-8 in the
+original supplied text. A leading BOM is excluded from character columns but
+included in byte offsets. CRLF, non-ASCII identifiers and end-of-file positions
+preserve these conventions. Excerpts are windowed to 160 source characters around
+the error, expand tabs for display and replace control characters; full ranges
+remain available even when the displayed excerpt is truncated. Source-wide size
+limits report the file start without copying an oversized source into the parser.
 
-- Parse TS/JS into AST.
-- Preserve source maps and diagnostic spans.
-- Support TS syntax and typed JS.
+`check --json` preserves `status` and the human-readable `error` string and adds a
+`diagnostics` array. Successful checks return an empty array; non-source failures,
+such as an unreadable configuration file, also return an empty array rather than
+inventing an entry-file location. The compiler currently stops at the first
+failure. One diagnostic object for `let x: string = 7` is:
 
-### Stage 2: Type checking
-
-- Type check against project TS config and Varta host API types.
-- Validate capability usage.
-- Reject unsupported dynamic constructs where policy requires.
-
-### Stage 3: Lowering
-
-- Lower typed TS/JS into an internal IR.
-- Normalize modules, imports, exports, classes, closures, and control flow.
-- Prepare async lowering.
-
-### Stage 4: Wasm emission
-
-- Emit a Wasm module targeting a stable Varta ABI.
-- Functions, strings, arrays, records, and host handles are represented using linear memory conventions.
-- Keep source-to-binary debugging metadata.
-
-### Stage 5: Capability binding
-
-- Attach requested capabilities as module imports/exports metadata.
-- Validate that source-declared capabilities match configuration.
-
-### Stage 6: AOT native compilation
-
-- Compile Wasm into native object code for target platform.
-- Link with Varta runtime shim and host adapter libraries.
-- Emit one executable.
-
-### Stage 7: Packaging
-
-- Embed assets and manifests.
-- Add version, source map, and dependency provenance metadata.
-
----
-
-## 6. Runtime architecture
-
-### 6.1 Execution engine
-
-Development target:
-
-- Wasm VM for fast iteration and sandbox validation.
-
-Production target:
-
-- AOT-compiled native binary.
-
-Both targets must expose the same Varta ABI so behavior remains consistent.
-
-### 6.2 Memory model
-
-- Each application instance owns linear memory.
-- Strings are represented as offset + length.
-- Buffers are represented as offset + length.
-- Ownership must be explicit in ABI docs.
-- Allocators should favor arenas/regions for request-scoped values.
-- Avoid hidden GC dependency unless consciously chosen.
-
-### 6.2.1 ABI v0 memory ownership
-
-For ABI v0, strings and buffers use linear-memory pointers plus lengths.
-
-Rules:
-
-- host functions must document ownership for every pointer-sized argument;
-- values passed from app to host may be borrowed only during the call unless explicitly retained;
-- host-allocated values returned to app must have a documented free rule;
-- app-allocated values shared with host must not be mutated while host is processing them;
-- path and URL inputs are immutable from host perspective;
-- BLOB/buffers must use explicit length, never sentinel termination;
-- ABI data structures must be versioned and size-checked.
-
-Recommended primitive shape:
-
-```ts
-type VartaString = {
-  ptr: number;
-  len: number;
-};
-```
-
-GC strategy defaults to **explicit linear-memory management**. Any future GC must be introduced deliberately and declared in the runtime contract.
-
-### 6.3 Event loop
-
-The event loop is host-owned.
-
-Responsibilities:
-
-- timers;
-- async I/O completion;
-- promise continuation scheduling;
-- cancellation tokens;
-- graceful shutdown.
-
-Async TS/JS code is lowered into continuations or host-mediated async handles.
-
-### 6.3.1 Async execution contract
-
-Async behavior must be identical across Wasm development mode and native production mode.
-
-Rules:
-
-- microtasks are flushed before host I/O completion events;
-- `Promise` resolution order is deterministic for a given runtime;
-- async host calls return host handles, not raw OS resources;
-- cancellation must propagate through async operation chains;
-- host handles have explicit lifetimes;
-- timeout behavior is defined per host API;
-- async operations are cancel-safe by default where practical.
-
-Development and production runtimes must share one documented async semantics specification.
-
-### 6.4 Error model
-
-- ABI-level errors use result codes or typed error objects.
-- TS-level exceptions are represented through defined runtime structures.
-- Host call failures must be explicit in types, where practical.
-
----
-
-## 7. Host API and capabilities
-
-### 7.1 API namespaces
-
-Examples:
-
-- `varta.fs`
-- `varta.net`
-- `varta.http`
-- `varta.env`
-- `varta.time`
-- `varta.crypto`
-- `varta.process`
-- `varta.log`
-
-### 7.2 Capability model (canonical developer model)
-
-Canonical declaration style is a scoped permission manifest:
-
-```ts
-export const capabilities = {
-  fs: {
-    read: ["/data/**"],
+```json
+{
+  "code": "type_error",
+  "message": "type mismatch for x: expected string, found number",
+  "file": "/work/app/src/main.ts",
+  "range": {
+    "start": { "line": 2, "column": 19, "byte_offset": 49 },
+    "end": { "line": 2, "column": 20, "byte_offset": 50 }
   },
-  net: {
-    fetch: ["https://api.example.com/**"],
-  },
-  http: {
-    listen: [8080],
-  },
-} as const;
+  "snippet": {
+    "text": "  let x: string = 7;",
+    "highlight_start": 18,
+    "highlight_width": 1
+  }
+}
 ```
 
-At the application boundary, code uses a scoped runtime instead of repeating permission tokens:
+Human-facing failures use `file:line:column: message` followed by the excerpt and
+a caret. JSON stdout remains valid JSON; human diagnostics go to stderr. All
+project commands use the same source validation path and return nonzero on these
+failures before producing artifacts.
 
-```ts
-const app = createApp(capabilities);
+## Capabilities and trust
 
-const message = await app.fs.readFileText("/data/message.txt");
+All host access is denied unless the **exact operation** is granted. A grant for
+`env.has` cannot authorize `env.get`; `fs.read` cannot authorize `fs.print`.
+Logging has no system-access capability but is output-budgeted.
+
+Configuration shorthand:
+
+```json
+{
+  "entry": "src/main.ts",
+  "target": "native",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": {
+    "time": { "now": true },
+    "env": { "get": ["APP_NAME"] },
+    "fs": { "read": ["/data/**"] },
+    "net": { "fetch": ["http://example.com/public/**"] }
+  }
+}
 ```
 
-The explicit token-passing form shown in earlier low-level ABI discussions is reserved for:
+Only `strict` is implemented. `compat` is rejected until it has an actual
+behavioral contract. Unknown operations, unknown fields, duplicate manifest
+grants, wrong value types and unsafe patterns are errors. Empty lists and false
+are valid explicit denials; omitted grants also deny. Policy complexity is capped
+at 128 grants and 256 patterns, with at most 64 patterns per grant and 512 bytes
+per pattern. A wildcard comparison also fails closed when the product of
+pattern/input byte lengths exceeds 65,536, bounding work outside Wasm fuel.
 
-- internal implementation;
-- advanced tooling;
-- generated host bindings.
-
-It should not be the primary developer-facing API.
-
-Capability types must be branded/opaque so normal application code cannot forge or cast them into valid permissions.
-
-### 7.3 Canonical capability declaration rules
-
-Rules:
-
-- permissions are grouped by namespace (`fs`, `net`, `http`, `env`, etc.);
-- each operation maps to an array of allowlist patterns;
-- empty arrays mean deny;
-- omitted namespaces/operations mean deny;
-- overly broad patterns can be rejected by CI policy;
-- all capabilities remain explicit and serializable into the manifest.
-
-The compiler and runtime must both validate capabilities.
-### 7.4 Host function ABI
-
-Host APIs are Wasm imports.
-
-Representations:
-
-- scalar arguments: `i32`, `i64`, `f32`, `f64`;
-- strings/buffers: linear memory pointers + lengths;
-- capabilities: opaque handles.
-
-Rules:
-
-- host owns capability validation;
-- app cannot cast arbitrary integers into capabilities;
-- allocation ownership must be documented per function.
-
----
-
-## 7.5 Developer-facing capability scoping
-
-Rather than passing an access token into every API call, Varta creates a **scoped runtime**:
-
-```ts
-const app = createApp(capabilities);
-
-const message = await app.fs.readFileText("/data/message.txt");
-```
-
-Design properties:
-
-- permissions are declared once;
-- application code remains readable;
-- the scoped object only exposes operations backed by the manifest;
-- security remains explicit at the boundary.
-
-This is an ergonomics layer over the strict permission model, not a weakening of it.
-
-## 7.6 Capability manifest
-
-Capabilities are serialized into both development metadata and the production binary:
+Canonical manifest:
 
 ```json
 {
   "schemaVersion": 1,
+  "abiVersion": 1,
+  "policy": "strict",
   "capabilities": [
-    { "id": "fs.read", "patterns": ["/data/**"] },
-    { "id": "net.fetch", "patterns": ["https://api.example.com/**"] },
-    { "id": "http.listen", "ports": [8080] }
+    { "id": "env.get", "patterns": ["APP_NAME"] },
+    { "id": "time.now", "enabled": true }
   ]
 }
 ```
 
-The source-level grouped object is a developer-friendly shorthand. The canonical serialized manifest uses the normalized array form above.
+`entry` and `target` metadata are optional. Legacy unversioned JSON manifests use
+schema/ABI version 1 defaults but must pass the same strict grant validation.
+Legacy string grants and implicit `enabled: true` are no longer accepted.
 
-The manifest is used for:
+The embedding application can supply trusted grants directly, or use
+`run_wasm_bytes_with_policy(bytes, requested, ceiling)` to constrain package
+requests with a separate trusted host ceiling. The two policies are independently
+validated and checked for every concrete operation/resource. Wildcard patterns
+are never flattened into an approximate intersection. A ceiling can only restrict
+requested permissions, never introduce an operation or resource the package did
+not request.
 
-- security review;
-- `varta inspect`;
-- CI policy checks;
-- audit/provenance reporting;
-- runtime enforcement initialization.
+The CLI preserves declared-manifest behavior when `--policy` is absent. Supply
+`--policy host-policy.json` to constrain `run`, `dev`, `inspect`, `validate` or the
+packaged application's own invocation. The host file uses the same strict
+manifest schema. An explicit `{"capabilities":[]}` denies all privileged access;
+a missing, unreadable or malformed policy is an error, never a fallback to the
+package's permissions. Policy paths are resolved relative to the invocation's
+working directory. Host policy is local execution input and is never embedded or
+written into the artifact; `init`, `check` and `build` reject this flag.
 
-## 7.7 Validation layers
-
-Capability enforcement happens at two levels.
-
-### Compile-time
-
-- validate capability object structure;
-- validate API/capability compatibility;
-- validate statically known paths, hosts, ports, globs, and supported URL schemes;
-- reject clearly invalid or overly broad patterns where policy requires.
-
-### Runtime
-
-- normalize and validate actual paths, URLs, and ports;
-- enforce filesystem path resolution and symlink boundaries;
-- enforce host/path allowlists;
-- fail with a typed error before performing the operation.
-
-### Network transport note (MVP)
-
-- The development and runtime host HTTP client supports `http://` only.
-- Capability patterns may still be recorded as `https://...` for review and
-  auditing, but the runtime does not perform TLS transport yet.
-- `varta.net.fetch` and `varta.net.get` reject unsupported URL schemes with an
-  explicit capability/transport error before any network I/O.
-- CI and security review should currently approve net capability patterns only
-  for `http://`.
-- TLS (`https://`) is scheduled for Phase 2 (core runtime) and may also be
-  gated behind a compat/policy profile.
-
-### Example denial
-
-```ts
-await app.fs.readFileText("/etc/passwd");
+```json
+{
+  "schemaVersion": 1,
+  "abiVersion": 1,
+  "capabilities": [
+    { "id": "env.get", "patterns": ["APP_NAME"] },
+    { "id": "time.now", "enabled": false }
+  ]
+}
 ```
 
-Expected result:
+```sh
+varta run dist/app.wasm --policy host-policy.json
+varta dev --policy host-policy.json
+varta inspect dist/app.wasm --policy host-policy.json --json
+./dist/app --policy host-policy.json
+```
+
+Inspection and JSON validation include an `authorization` object with the mode,
+`combination: "allOf"`, complete requested and host-ceiling scopes, and one review
+decision per requested operation. `denied` means an omitted/false/empty filter;
+`granted` applies to enabled boolean operations; `runtime_check` means that the
+scoped filters must both accept the actual resource. It does not promise that
+arbitrary wildcard scopes overlap or that every call will succeed. A null
+`hostCeiling` means no ceiling was supplied; an empty array is an explicit denial.
+Validation still checks artifact/ABI/schema/declarations, not application behavior:
+a valid deny-all policy can validate successfully while its operations are denied
+at execution. `inspect` without a host policy continues to describe the declared
+permissions and labels its authorization mode `declared`.
+
+A native launcher itself has the authority of the OS user launching that
+executable. Rebuild existing launchers to make their own CLI accept `--policy`;
+the portable artifact format and ABI are unchanged.
+
+### Filesystem
+
+Patterns must be absolute and cannot contain traversal. `*` matches within a
+single path component, `**` can span separators, and `?` matches one non-separator
+character. Root/component boundaries remain intact: `/data/**` cannot match
+`/data-secret/file`.
+
+At execution setup, explicitly granted directory roots are opened and pinned as
+capability descriptors. With a host ceiling, these descriptors come from the
+host's scopes. Requested paths must also pass the package's lexical scopes before
+any file is opened; a package-supplied root alias cannot acquire authority outside
+the pinned host root. Each guest path is matched relative to the corresponding
+root and opened through those descriptors, with **no-follow at every component**.
+Symlinks below the granted root are rejected, including links to other files
+inside that root. Directory and file opens do not reuse a checked ambient path.
+This closes the canonicalize/open race. Root authority is acquired once at setup;
+a declared root alias is resolved at that time.
+
+Only regular files are read. Reads are nonblocking at open, capped before the
+result is allocated unboundedly, and checked for UTF-8 where the ABI returns text.
+OS filesystem operations remain synchronous; a stalled remote filesystem is not
+made cancellable by the guest's fuel budget.
+
+### Network
+
+HTTP only is implemented. HTTPS grants and unsupported schemes are rejected.
+URLs are parsed before authorization; scheme, normalized hostname and effective
+port must match exactly. Wildcards are permitted only after the authority; `*`
+can match path/query characters and `?` retains its URL query-separator meaning.
+Control characters, whitespace, credentials and fragments are rejected. Encoded
+paths are conservatively rejected to avoid server-specific decoding aliases.
+
+The same parsed URL is passed to the transport. Automatic redirects and ambient
+proxies are disabled, so a permitted response cannot silently grant another
+request target. The HTTP client bounds headers and body and applies an end-to-end
+remaining deadline including name resolution, connect and body reading. There is
+no handwritten request-line/header construction.
+
+## ABI v1 and errors
+
+Imports live under `varta`. `HostOperation` in `varta-common` owns their names,
+capability identifiers and scalar Wasm signatures. Pointer-taking imports require
+an exported non-shared 32-bit `memory`. String-returning imports also require
+exported mutable i32 globals `env_result_len` and `result_status`. Invalid import
+signatures, result globals and advertised ABI versions fail before instantiation.
+
+- Input strings are borrowed for the call and checked for bounds, length and UTF-8.
+- Static strings occupy `[0, 65536)`.
+- Host string results use a host-owned reusable buffer starting at 65536.
+- Result pointers/bytes remain valid until the next host operation; there is no
+  unbounded bump allocation and no guest-controlled heap pointer.
+- Every host operation first clears result length/status. Failed string calls
+  return pointer 0 and length 0. No previous result length can be reused.
+- `varta.result.status()` reads the structured status without clearing it.
+
+Status codes:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 1 | Capability denied |
+| 2 | Invalid input or UTF-8 |
+| 3 | I/O failure |
+| 4 | Result too large |
+
+`net.fetch` returns the HTTP status or -1 on failure. String failures return an
+empty result plus the status above. Human-readable diagnostics remain available.
+Guest exit is a controlled runtime outcome, never `std::process::exit` inside the
+library. The CLI alone translates the result into a process exit code. Runtime,
+compilation and artifact errors return nonzero CLI status; JSON errors stay
+machine-readable on stdout, with diagnostics on stderr.
+
+## Resource limits
+
+| Resource | Default limit |
+| --- | --- |
+| Guest linear memory | 8 MiB, enforced by Store limits including memory.grow |
+| Guest instructions | 1,000,000 fuel units |
+| Execution/HTTP deadline | 5 seconds |
+| Host calls | 1024 per execution |
+| Captured output | 1 MiB |
+| Host input string | 64 KiB; narrower path/URL/name limits also apply |
+| One host result | 1 MiB |
+| HTTP response headers | 64 KiB |
+| Wasm file | 4 MiB |
+| Manifest/config | 256 KiB |
+
+Preflight limits also bound signatures, function count/body size, memories,
+tables and globals before native compilation. Store budgets apply before Wasm
+start functions execute. Fuel/epoch interruption bound guest execution; HTTP uses
+the remaining deadline. Output is captured with a budget and returned to the
+caller. Errors and guest exit do not terminate an embedding process.
+
+## Artifact format and validation
+
+Standalone Wasm has a strict sidecar `*.manifest.json`. A missing sidecar means
+zero capabilities; an unreadable or malformed sidecar is an error. Embedded
+manifests are authoritative even when empty and never fall back to a sidecar.
+
+`build --single` emits:
 
 ```text
-VartaCapabilityError: fs.read denied for "/etc/passwd"
-required: fs.read:/data/**
+native launcher | portable Wasm | manifest JSON | fixed 32-byte footer
 ```
 
-## 7.8 Least privilege in code
-
-- No ambient global APIs expose system access.
-- Dependencies receive only the scoped runtime object needed for their task.
-- Capabilities are opaque handles, not forgeable integers or strings.
-- Broad permissions must be explicitly justified in config and reviewable in the manifest.
-
-## 7.9 Capability expiration and revocation
-
-Future design may support:
-
-- build-time capability pinning;
-- runtime revocation for temporary grants;
-- environment-specific manifests;
-- signed capability manifests for deployed binaries.
-
-For MVP, capabilities are build-time declared and runtime enforced without mutation.
-
----
-
-## 8. Type safety architecture
-
-### 8.1 Typed host APIs
-
-Every host API ships with generated `.d.ts` and possibly runtime schemas.
-
-Example:
-
-```ts
-export function readFile(
-  path: string,
-  capability: FsReadCapability
-): Promise<Uint8Array>;
-```
-
-### 8.2 Boundary validation
-
-Compile-time checks are not enough for external data.
-
-Runtime validation is required for:
-
-- host responses crossing the ABI boundary if serialized;
-- configuration files;
-- CLI arguments;
-- network payload parsing;
-- deserialized storage.
-
-### 8.3 Safety restrictions
-
-Default restrictions may include:
-
-- no `eval`;
-- no dynamic imports beyond declared modules;
-- no arbitrary FFI;
-- no unsafe host handle casting;
-- no direct memory manipulation outside typed wrappers.
-
----
-
-## 8.4 AOT strategy for single native binaries
-
-Production AOT output is not a blind conversion from Wasm to native code. It is a **packaged runtime artifact**.
-
-The production binary contains:
-
-- AOT-compiled application Wasm;
-- the Varta Wasm execution runtime;
-- host adapter layer;
-- capability manifest;
-- embedded asset manifest and provenance.
-
-Implications:
-
-- binary size includes required runtime shim;
-- platform-specific artifacts are expected;
-- reproducibility depends on toolchain pinning;
-- debug metadata may be stripped independently.
-
-For MVP, Wasm-first AOT is preferred because it preserves the development/production behavioral contract.
-
----
-
-## 8.5 Security policy profiles
-
-Varta should support explicit policy profiles:
-
-### `strict` (default)
-
-- deny ambient APIs;
-- strict host boundaries;
-- no direct FFI;
-- no runtime code generation;
-- minimal default runtime surface.
-
-### `compat`
-
-- permits a broader Node-like compatibility layer where needed;
-- allows declared dynamic module loading;
-- enables more CommonJS/ESM interop shims.
-
-This separates **secure defaults** from **ecosystem compatibility** rather than weakening the default model.
-
----
-
-## 9. Module and dependency system
-
-### 9.1 Varta-native packages
-
-Preferred package format:
-
-- typed TS source or compiled Wasm;
-- manifest with capabilities;
-- lockfile-compatible dependency graph.
-
-### 9.2 npm compatibility boundary
-
-npm support should be treated as a **best-effort compatibility layer**, not full Node.js compatibility.
-
-Supported scope initially:
-
-- pure JS/TS packages;
-- statically analyzable ESM/CJS modules;
-- packages using a defined subset of Node-like host APIs.
-
-Unsupported or isolated scope:
-
-- native `.node` addons unless rebuilt for Varta/Wasm;
-- arbitrary dynamic code generation;
-- undocumented global mutations;
-- packages requiring full Node runtime internals.
-
-Strategies:
-
-1. Transpile pure JS/TS npm packages into Varta Wasm modules.
-2. Provide a documented Node-like host API subset.
-3. Isolate or reject packages that require native addons unless explicitly rebuilt.
-
-Compatibility limitations must be documented per package/runtime version.
-
-### 9.3 Tree-shaking
-
-Single binary output requires aggressive dead-code elimination:
-
-- unused modules removed;
-- only used host APIs retained;
-- capability graph influences reachable code.
-
----
-
-## 10. Security architecture
-
-### 10.1 Wasm sandbox
-
-- application cannot access host memory outside its linear memory;
-- imports are explicitly defined;
-- no ambient system calls.
-
-### 10.2 Capability grants
-
-Capabilities are assigned at build time and optionally restricted at runtime by manifest.
-
-Examples:
-
-- file path globs;
-- allowed network hosts;
-- environment variable allowlists;
-- time/randomness access levels.
-
-### 10.3 Supply chain
-
-- dependency lockfile;
-- package hashes;
-- reproducible builds;
-- provenance metadata embedded into binary.
-
-### 10.4 Dynamic execution
-
-Avoid runtime code generation unless explicitly sandboxed and audited.
-
----
-
-## 11. Observability
-
-Single binary should support:
-
-- structured logs;
-- metrics export;
-- trace spans;
-- crash diagnostics;
-- source maps embedded optionally.
-
-Debug builds may include:
-
-- Wasm stack traces;
-- type metadata;
-- capability audit reports.
-
-Release builds may strip non-essential metadata.
-
----
-
-## 12. Tooling
-
-CLI surface:
-
-```text
-varta init
-varta dev
-varta check
-varta test
-varta build
-varta inspect
-varta run
-```
-
-Responsibilities:
-
-- `init`: scaffold project and config;
-- `check`: parse and type check;
-- `dev`: compile to Wasm and run in dev runtime;
-- `test`: run tests in sandbox;
-- `build`: produce production artifact;
-- `inspect`: show capabilities, dependency graph, binary metadata;
-- `run`: execute produced binary.
-
----
-
-## 13. Single binary format
-
-Production binary contains:
-
-- AOT-compiled application code;
-- runtime shim;
-- host adapter;
-- embedded asset manifest;
-- dependency provenance;
-- optional debug metadata;
-- capability manifest.
-
-Benefits:
-
-- no runtime installation;
-- easier deployment;
-- deterministic runtime environment;
-- reduced tampering surface.
-
-Trade-offs:
-
-- larger binaries;
-- platform-specific artifacts;
-- less dynamic plugin loading by default.
-
----
-
-## 14. Roadmap
-
-### Phase 0: Specification
-
-- define ABI;
-- define capability model;
-- define config format;
-- define module manifest.
-
-### Phase 1: MVP
-
-- TS parser/type checker integration;
-- Wasm compilation;
-- basic host APIs: log, time, env;
-- `varta dev` and `varta build --wasm`.
-
-### Phase 2: Core runtime
-
-- fs/net/http APIs;
-- HTTP and limited HTTPS/TLS transport scope decision;
-- async event loop;
-- memory management;
-- error handling;
-- source maps.
-
-### Phase 3: Native binary
-
-- AOT compilation;
-- linker integration;
-- single binary output;
-- packaging metadata.
-
-### Phase 4: Compatibility
-
-- JS support parity;
-- selected npm package compatibility;
-- Node-like API subset.
-
-### Phase 5: Production hardening
-
-- security audit;
-- performance optimization;
-- binary size reduction;
-- reproducible builds;
-- diagnostics.
-
----
-
-## 15. Open questions
-
-1. Which TS/JS compiler frontend should be primary?
-2. Should production use Wasm-first AOT or direct LLVM lowering?
-3. What GC strategy is acceptable, if any?
-4. How should async lowering be represented?
-5. Which npm compatibility guarantees are realistic?
-6. How to balance binary size with debuggability?
-7. How should plugin/extensibility work while remaining secure?
-8. Which TLS backend and trust assumptions should Varta use for HTTPS?
-
----
-
-## 16. Immediate next work
-
-1. Create `varta.config` schema.
-2. Define Varta ABI v0, including memory ownership rules.
-3. Define capability manifest schema v0.
-4. Define async execution contract.
-5. Define canonical capability declaration syntax.
-6. Define AOT strategy and security policy profiles.
-7. Define capability type primitives.
-8. Implement minimal compiler: TS → Wasm.
-9. Implement minimal host runtime: log, env, time.
-10. Implement `varta build` for a single-file TS app.
-11. Add integration test for capability denial.
+The little-endian footer contains Wasm length (u64), manifest length (u64), format
+version 1 (u32), reserved zero flags (u32), and `VARTA3\0\0` (8 bytes). It is read
+at a fixed EOF position with checked arithmetic and capped lengths. Payload bytes
+are never scanned for markers. Outputs are written through temporary files and
+renamed into place.
+
+Native AOT payloads, `VARTA1`/`VARTA2` containers and public native deserialization
+are removed. Rebuild existing native artifacts. Native launchers currently compile
+embedded portable Wasm at startup. Reintroducing cached/AOT machine code requires
+a separate, authenticated provenance design; checksums alone are insufficient.
+
+`check`, `dev` and `build` share semantic/type/bytecode/ABI checks. Artifact `run`
+and `inspect` fully validate bytecode and ABI too. `validate` additionally performs
+policy review, requiring a declaration for every privileged import; this does not
+mean that false or empty declarations grant access. Missing declarations are safe
+to execute because the runtime denies those calls. Inspection includes full grant
+scopes, enablement, versions, imports and exports.

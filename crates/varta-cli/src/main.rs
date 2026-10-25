@@ -1,923 +1,192 @@
+#![forbid(unsafe_code)]
 use clap::{Parser, Subcommand};
-use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
-use varta_common::{CapabilityGrant, CapabilityValue, VartaConfig, VartaError};
-use varta_runtime::VartaRuntime;
-use wasmparser::{Parser as WasmParser, Payload};
+use std::path::{Path, PathBuf};
+use varta_project::{Artifact, CheckedProject, HostPolicy, ProjectError};
 
-const VARTA_HOST_DTS: &str = include_str!("../templates/varta.d.ts");
-
-#[derive(Parser, Debug)]
-#[command(name = "varta", version, about = "Varta secure TS/JS runtime")]
+#[derive(Parser)]
+#[command(
+    name = "varta",
+    version,
+    about = "Varta secure TypeScript subset compiler and runtime"
+)]
 struct Cli {
+    /// Limit run/dev/inspect/validate (or this packaged app) with a host policy JSON file.
+    #[arg(long, global = true, value_name = "PATH")]
+    policy: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new Varta project.
-    Init { name: String },
-    /// Check project types and capabilities.
+    /// Create a new project (refuses to overwrite an existing directory).
+    Init { name: PathBuf },
+    /// Check the supported language, types, policy schema and emitted Wasm.
     Check {
         #[arg(long, default_value = "varta.config.json")]
-        config: String,
+        config: PathBuf,
         #[arg(long)]
         json: bool,
     },
-    /// Run a development Wasm build.
-    Dev,
-    /// Build a production artifact.
+    /// Check, compile and execute portable Wasm with resource budgets.
+    Dev {
+        #[arg(long, default_value = "varta.config.json")]
+        config: PathBuf,
+    },
+    /// Build validated Wasm; --single embeds portable Wasm in a native launcher.
     Build {
         #[arg(long, default_value = "varta.config.json")]
-        config: String,
-        /// Package the application into the varta executable itself.
+        config: PathBuf,
         #[arg(long)]
         single: bool,
     },
-    /// Run a Varta artifact.
-    Run { path: String },
-    /// Inspect binary metadata.
+    /// Execute portable Wasm or a Varta container (native AOT is rejected).
+    Run { path: PathBuf },
+    /// Inspect validated bytecode, ABI and full capability scopes.
     Inspect {
-        path: Option<String>,
+        path: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
+    /// Validate bytecode, ABI, manifest and required capability declarations.
     Validate {
-        path: Option<String>,
+        path: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
+}
+
+fn output(result: varta_runtime::RunOutput) -> i32 {
+    for line in result.lines {
+        println!("{line}");
+    }
+    result.exit_code
+}
+
+fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32, ProjectError> {
+    if policy_path.is_some()
+        && matches!(
+            command,
+            Some(Commands::Init { .. } | Commands::Check { .. } | Commands::Build { .. })
+        )
+    {
+        return Err(ProjectError::Usage("--policy applies to run, dev, inspect, validate, or a packaged app; it is never embedded in a build".into()));
+    }
+    let policy = policy_path.map(HostPolicy::read).transpose()?;
+
+    match command {
+        Some(Commands::Init { name }) => {
+            varta_project::init(&name)?;
+            println!("initialized varta project: {}", name.display());
+        }
+        Some(Commands::Check { config, json }) => {
+            let project = CheckedProject::load(&config)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"status":"ok", "type_check":"internal", "diagnostics":[], "entry":project.config.entry,
+                "policy":project.config.policy, "target":project.config.target, "capabilities":project.artifact.manifest.capabilities})
+                );
+            } else {
+                println!("varta check: ok ({})", config.display());
+            }
+        }
+        Some(Commands::Dev { config }) => {
+            let project = CheckedProject::load(&config)?;
+            let result = match &policy {
+                Some(policy) => project.run_with_policy(policy)?,
+                None => project.run()?,
+            };
+            let code = output(result);
+            println!("varta dev: completed");
+            return Ok(code);
+        }
+        Some(Commands::Build { config, single }) => {
+            let project = CheckedProject::load(&config)?;
+            for path in project.build(single, &std::env::current_exe()?)? {
+                println!("wrote artifact: {}", path.display());
+            }
+        }
+        Some(Commands::Run { path }) => {
+            let artifact = Artifact::read(&path)?;
+            let result = run(&artifact, policy.as_ref())?;
+            let code = output(result);
+            println!("varta run: completed {}", path.display());
+            return Ok(code);
+        }
+        Some(Commands::Inspect { path, json }) => {
+            let path = path.unwrap_or_else(|| "dist/app".into());
+            let metadata = varta_project::inspect_with_policy(
+                &Artifact::read(&path)?,
+                &path,
+                policy.as_ref(),
+            )?;
+            if json {
+                println!("{metadata}");
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&metadata)
+                        .map_err(|e| ProjectError::Artifact(e.to_string()))?
+                );
+            }
+        }
+        Some(Commands::Validate { path, json }) => {
+            let path = path.unwrap_or_else(|| "dist/app".into());
+            let artifact = Artifact::read(&path)?;
+            varta_project::validate(&artifact)?;
+            let authorization = varta_project::authorization(&artifact.manifest, policy.as_ref())?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"status":"ok", "artifact":path, "authorization":authorization})
+                );
+            } else {
+                println!("varta validate: ok ({})", path.display());
+            }
+        }
+        None => {
+            return Ok(output(run(
+                &Artifact::read(&std::env::current_exe()?)?,
+                policy.as_ref(),
+            )?));
+        }
+    }
+    Ok(0)
+}
+
+fn run(
+    artifact: &Artifact,
+    policy: Option<&HostPolicy>,
+) -> Result<varta_runtime::RunOutput, ProjectError> {
+    match policy {
+        Some(policy) => varta_project::run_with_policy(artifact, policy),
+        None => varta_project::run(artifact),
+    }
 }
 
 fn main() {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
-
-    match cli.command {
-        Some(Commands::Init { name }) => {
-            if let Err(error) = init_project(&name) {
-                eprintln!("varta init failed: {error}");
-                std::process::exit(1);
-            }
-            println!("initialized varta project: {name}");
-        }
-        Some(Commands::Check { config, json }) => match check_project(&config, json) {
-            Ok(()) => {
-                if !json {
-                    println!("varta check: ok ({config})");
-                }
-            }
-            Err(error) => {
-                eprintln!("varta check failed: {error}");
-                std::process::exit(1);
-            }
-        },
-        Some(Commands::Dev) => {
-            if std::path::Path::new("varta.config.json").exists() {
-                match load_and_compile("varta.config.json") {
-                    Ok((bytes, capabilities)) => {
-                        let runtime = VartaRuntime::new();
-                        if let Err(error) = runtime.run_wasm_bytes(&bytes, &capabilities) {
-                            eprintln!("varta dev failed: {error:?}");
-                            std::process::exit(1);
-                        }
-                        println!("varta dev: completed");
-                    }
-                    Err(error) => {
-                        eprintln!("varta dev failed: {error:?}");
-                        std::process::exit(1);
-                    }
-                }
-            } else {
-                let runtime = VartaRuntime::new();
-                let bytes = varta_compiler::minimal_module();
-                match runtime.run_wasm_bytes(&bytes, &[]) {
-                    Ok(()) => println!("varta dev: completed"),
-                    Err(error) => eprintln!("varta dev failed: {error:?}"),
-                }
-            }
-        }
-        Some(Commands::Build { config, single }) => match build_project(&config, single) {
-            Ok(()) => {}
-            Err(error) => {
-                eprintln!("varta build failed: {error}");
-                std::process::exit(1);
-            }
-        },
-        Some(Commands::Run { path }) => match read_app_from_file(&path) {
-            Ok((bytes, precompiled, capabilities)) => {
-                let runtime = VartaRuntime::new();
-                match runtime.run_app_bytes(&bytes, precompiled, &capabilities) {
-                    Ok(()) => println!("varta run: completed {path}"),
-                    Err(error) => eprintln!("varta run failed: {error}"),
-                }
-            }
-            Err(error) => eprintln!("varta run failed: {error}"),
-        },
-        None => {
-            run_self_app();
-        }
-        Some(Commands::Validate { path, json }) => {
-            let target = path.unwrap_or_else(|| "dist/app".to_string());
-            if let Err(error) = validate_app(&target, json) {
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::json!({ "status": "failed", "error": error.to_string(), "artifact": target })
-                    );
-                } else {
-                    eprintln!("varta validate failed: {error}");
-                }
-                std::process::exit(1);
-            }
-            if !json {
-                println!("varta validate: ok ({target})");
-            }
-        }
-        Some(Commands::Inspect { path, json }) => {
-            if let Err(error) = inspect_app(&path.unwrap_or_else(|| "dist/app".to_string()), json) {
-                eprintln!("varta inspect failed: {error}");
-                std::process::exit(1);
-            }
-        }
-    }
-}
-
-fn init_project(name: &str) -> Result<(), VartaError> {
-    let root = Path::new(name);
-    fs::create_dir_all(root.join("src")).map_err(io_error)?;
-    fs::write(
-        root.join("varta.config.json"),
-        r#"{
-  "entry": "src/main.ts",
-  "target": "native",
-  "policy": "strict",
-  "out": "dist/app",
-  "capabilities": {
-    "time": {
-      "now": true
-    },
-    "env": {
-      "has": ["PATH"],
-      "print": ["PATH"]
-    },
-    "fs": {
-      "read": ["/data/**"]
-    },
-    "net": {
-      "fetch": ["http://127.0.0.1/**"]
-    }
-  }
-}
-"#,
-    )
-    .map_err(io_error)?;
-    fs::write(
-        root.join("src").join("main.ts"),
-        r#"function add(a: number, b: number) {
-  return a + b;
-}
-
-export function main(): void {
-  console.log("hello from varta");
-  let answer = 40 + 2;
-  console.log(answer);
-  console.log(varta.time.now());
-  console.log(add(3, 4));
-}
-"#,
-    )
-    .map_err(io_error)?;
-    fs::write(root.join("varta.d.ts"), VARTA_HOST_DTS).map_err(io_error)?;
-    Ok(())
-}
-
-fn check_project(config_path: &str, json: bool) -> Result<(), VartaError> {
-    let source = fs::read_to_string(config_path).map_err(io_error)?;
-    let base = Path::new(config_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let config: VartaConfig = serde_json::from_str(&source)
-        .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-    config.validate()?;
-
-    let entry_path = base.join(&config.entry);
-    let capability_ids: Vec<String> = config
-        .normalized_capabilities()
-        .into_iter()
-        .map(|grant| grant.id)
-        .collect();
-
-    let mut deno_status = "skipped".to_string();
-    if let Some(deno) = which_command("deno") {
-        let mut check_command = std::process::Command::new(deno);
-        check_command.arg("check").arg(&entry_path);
-        let type_declarations = base.join("varta.d.ts");
-        if type_declarations.exists() {
-            check_command.arg(&type_declarations);
-        }
-        let output = check_command.output().map_err(io_error)?;
-        if output.status.success() {
-            deno_status = "passed".to_string();
-        } else {
-            if json {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "entry": config.entry,
-                        "policy": config.policy,
-                        "target": config.target,
-                        "capabilities": capability_ids,
-                        "deno_type_check": "failed",
-                        "status": "failed",
-                    })
-                );
-            }
-            return Err(VartaError::InvalidManifest(format!(
-                "typescript type check failed for {}",
-                config.entry
-            )));
-        }
-    }
-
-    let parsed_items = match fs::read_to_string(&entry_path) {
-        Ok(source) => match varta_compiler::parse_typescript(&source) {
-            Ok(items) => Some(items),
-            Err(error) => {
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "entry": config.entry,
-                            "policy": config.policy,
-                            "target": config.target,
-                            "capabilities": capability_ids,
-                            "deno_type_check": deno_status,
-                            "status": "failed",
-                            "error": format!("typescript parse failed: {error}"),
-                        })
-                    );
-                }
-                return Err(VartaError::InvalidManifest(format!(
-                    "typescript parse failed: {error}"
-                )));
-            }
-        },
+    let json = matches!(
+        &cli.command,
+        Some(
+            Commands::Check { json: true, .. }
+                | Commands::Validate { json: true, .. }
+                | Commands::Inspect { json: true, .. }
+        )
+    );
+    match execute(cli.command, cli.policy.as_deref()) {
+        Ok(code) => std::process::exit(code),
         Err(error) => {
             if json {
                 println!(
                     "{}",
-                    serde_json::json!({
-                        "entry": config.entry,
-                        "policy": config.policy,
-                        "target": config.target,
-                        "capabilities": capability_ids,
-                        "deno_type_check": deno_status,
-                        "status": "failed",
-                        "error": format!("failed to read entry {}: {error}", entry_path.display()),
-                    })
+                    serde_json::json!({"status":"failed", "error":error.to_string(), "diagnostics": error.diagnostic().into_iter().collect::<Vec<_>>()})
                 );
             }
-            return Err(VartaError::InvalidManifest(format!(
-                "failed to read entry {}: {error}",
-                entry_path.display()
-            )));
-        }
-    };
-
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "entry": config.entry,
-                "policy": config.policy,
-                "target": config.target,
-                "capabilities": capability_ids,
-                "deno_type_check": deno_status,
-                "parsed_top_level_items": parsed_items,
-                "status": "ok",
-            })
-        );
-    } else {
-        println!("entry: {}", config.entry);
-        println!("policy: {}", config.policy);
-        println!("target: {}", config.target);
-        println!("capabilities: {}", capability_ids.len());
-        if deno_status == "passed" {
-            println!("typescript: type checked with deno");
-        } else {
-            println!("typescript: skipping external type checker (deno not found)");
-        }
-        println!(
-            "typescript: parsed {} top-level items",
-            parsed_items.unwrap_or(0)
-        );
-    }
-
-    Ok(())
-}
-
-fn build_project(config_path: &str, single: bool) -> Result<(), VartaError> {
-    let source = fs::read_to_string(config_path).map_err(io_error)?;
-    let base = Path::new(config_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let config: VartaConfig = serde_json::from_str(&source)
-        .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-    config.validate()?;
-
-    let entry_path = base.join(&config.entry);
-    let entry_source = fs::read_to_string(&entry_path)
-        .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-    varta_compiler::parse_typescript(&entry_source).map_err(|error| {
-        VartaError::InvalidManifest(format!("typescript parse failed: {error}"))
-    })?;
-    let compiled = varta_compiler::compile_typescript(&entry_source).map_err(|error| {
-        VartaError::InvalidManifest(format!("typescript compile failed: {error}"))
-    })?;
-
-    let artifact_path = format!("{}.wasm", config.out);
-    if let Some(parent) = Path::new(&artifact_path).parent() {
-        fs::create_dir_all(parent).map_err(io_error)?;
-    }
-    fs::write(&artifact_path, &compiled).map_err(io_error)?;
-
-    let manifest_capabilities = config
-        .normalized_capabilities()
-        .into_iter()
-        .map(|grant| match grant.value {
-            varta_common::CapabilityValue::PathGlobs(patterns) => serde_json::json!({
-                "id": grant.id,
-                "patterns": patterns,
-            }),
-            varta_common::CapabilityValue::Ports(ports) => serde_json::json!({
-                "id": grant.id,
-                "ports": ports,
-            }),
-            varta_common::CapabilityValue::UrlGlobs(urls) => serde_json::json!({
-                "id": grant.id,
-                "patterns": urls,
-            }),
-            varta_common::CapabilityValue::Boolean(enabled) => serde_json::json!({
-                "id": grant.id,
-                "enabled": enabled,
-            }),
-        })
-        .collect::<Vec<_>>();
-
-    let manifest = serde_json::json!({
-        "entry": config.entry,
-        "policy": config.policy,
-        "target": config.target,
-        "capabilities": manifest_capabilities,
-    });
-    let manifest_path = format!("{}.manifest.json", config.out);
-    fs::write(
-        &manifest_path,
-        serde_json::to_string_pretty(&manifest)
-            .map_err(|error| VartaError::InvalidManifest(error.to_string()))?,
-    )
-    .map_err(io_error)?;
-
-    if single {
-        let output = PathBuf::from(&config.out);
-        if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent).map_err(io_error)?;
-        }
-        std::fs::copy(std::env::current_exe().map_err(io_error)?, &output).map_err(io_error)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = fs::metadata(&output).map_err(io_error)?.permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&output, permissions).map_err(io_error)?;
-        }
-
-        let runtime = VartaRuntime::new();
-        let (payload_magic, payload_bytes) = match runtime.precompile_module(&compiled) {
-            Ok(bytes) => (b"VARTA2\0", bytes),
-            Err(error) => {
-                eprintln!("wasm precompile failed, embedding portable Wasm: {error}");
-                (b"VARTA1\0", compiled.clone())
-            }
-        };
-
-        let mut file = fs::OpenOptions::new()
-            .append(true)
-            .open(&output)
-            .map_err(io_error)?;
-        use std::io::Write;
-        file.write_all(payload_magic).map_err(io_error)?;
-        file.write_all(&(payload_bytes.len() as u64).to_le_bytes())
-            .map_err(io_error)?;
-        file.write_all(&payload_bytes).map_err(io_error)?;
-        let manifest_bytes = serde_json::to_vec(&manifest)
-            .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-        file.write_all(&(manifest_bytes.len() as u64).to_le_bytes())
-            .map_err(io_error)?;
-        file.write_all(&manifest_bytes).map_err(io_error)?;
-        println!("wrote single binary: {}", output.display());
-    }
-
-    println!("wrote artifact: {artifact_path}");
-    println!("wrote manifest: {manifest_path}");
-    Ok(())
-}
-
-fn load_and_compile(config_path: &str) -> Result<(Vec<u8>, Vec<CapabilityGrant>), VartaError> {
-    let source = fs::read_to_string(config_path).map_err(io_error)?;
-    let base = Path::new(config_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let config: VartaConfig = serde_json::from_str(&source)
-        .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-    config.validate()?;
-
-    let entry_path = base.join(&config.entry);
-    let entry_source = fs::read_to_string(&entry_path)
-        .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-    varta_compiler::parse_typescript(&entry_source).map_err(|error| {
-        VartaError::InvalidManifest(format!("typescript parse failed: {error}"))
-    })?;
-    let compiled = varta_compiler::compile_typescript(&entry_source).map_err(|error| {
-        VartaError::InvalidManifest(format!("typescript compile failed: {error}"))
-    })?;
-    Ok((compiled, config.normalized_capabilities()))
-}
-
-fn load_manifest_capabilities(artifact_path: &str) -> Vec<CapabilityGrant> {
-    let manifest_path = artifact_path
-        .strip_suffix(".wasm")
-        .map(|stem| format!("{stem}.manifest.json"))
-        .unwrap_or_else(|| format!("{artifact_path}.manifest.json"));
-
-    let Ok(source) = fs::read_to_string(&manifest_path) else {
-        return Vec::new();
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&source) else {
-        return Vec::new();
-    };
-
-    let mut capabilities = Vec::new();
-    if let Some(capabilities_list) = json.get("capabilities").and_then(|value| value.as_array()) {
-        for capability in capabilities_list {
-            if let Some(id) = capability.as_str() {
-                capabilities.push(CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::Boolean(true),
-                });
-                continue;
-            }
-
-            let Some(id) = capability.get("id").and_then(|value| value.as_str()) else {
-                continue;
-            };
-
-            let grant = if let Some(patterns) = capability
-                .get("patterns")
-                .and_then(|value| value.as_array())
-            {
-                CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::PathGlobs(
-                        patterns
-                            .iter()
-                            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
-                            .collect(),
-                    ),
-                }
-            } else if let Some(urls) = capability.get("urls").and_then(|value| value.as_array()) {
-                CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::UrlGlobs(
-                        urls.iter()
-                            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
-                            .collect(),
-                    ),
-                }
-            } else if let Some(ports) = capability.get("ports").and_then(|value| value.as_array()) {
-                CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::Ports(
-                        ports
-                            .iter()
-                            .filter_map(|value| value.as_u64().map(|port| port as u16))
-                            .collect(),
-                    ),
-                }
-            } else {
-                CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::Boolean(
-                        capability
-                            .get("enabled")
-                            .and_then(|value| value.as_bool())
-                            .unwrap_or(true),
-                    ),
-                }
-            };
-            capabilities.push(grant);
-        }
-    }
-    capabilities
-}
-
-fn io_error(error: std::io::Error) -> VartaError {
-    VartaError::InvalidManifest(error.to_string())
-}
-
-fn which_command(name: &str) -> Option<String> {
-    std::process::Command::new("which")
-        .arg(name)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|path| !path.is_empty())
-}
-
-fn run_self_app() {
-    let Ok(path) = std::env::current_exe() else {
-        eprintln!("varta: could not determine current executable");
-        std::process::exit(1);
-    };
-
-    match read_app_from_file(path.to_string_lossy().as_ref()) {
-        Ok((bytes, precompiled, capabilities)) => {
-            let runtime = VartaRuntime::new();
-            if let Err(error) = runtime.run_app_bytes(&bytes, precompiled, &capabilities) {
-                eprintln!("varta run failed: {error}");
-                std::process::exit(1);
-            }
-        }
-        Err(error) => {
-            eprintln!("varta run failed: {error}");
+            eprintln!("varta failed: {error}");
             std::process::exit(1);
         }
     }
-}
-
-fn read_app_from_file(path: &str) -> Result<(Vec<u8>, bool, Vec<CapabilityGrant>), VartaError> {
-    let data = fs::read(path).map_err(io_error)?;
-    if let Some((wasm, precompiled, manifest)) = extract_app_payload(&data) {
-        return Ok((
-            wasm,
-            precompiled,
-            parse_manifest_capabilities_bytes(&manifest),
-        ));
-    }
-    Ok((data, false, load_manifest_capabilities(path)))
-}
-
-fn extract_app_payload(data: &[u8]) -> Option<(Vec<u8>, bool, Vec<u8>)> {
-    let raw_pos = find_last_magic(data, b"VARTA1\0");
-    let compiled_pos = find_last_magic(data, b"VARTA2\0");
-    let (magic_pos, precompiled) = match (raw_pos, compiled_pos) {
-        (Some(raw), Some(compiled)) => {
-            if compiled > raw {
-                (compiled, true)
-            } else {
-                (raw, false)
-            }
-        }
-        (Some(raw), None) => (raw, false),
-        (None, Some(compiled)) => (compiled, true),
-        (None, None) => return None,
-    };
-    let magic = if precompiled {
-        b"VARTA2\0"
-    } else {
-        b"VARTA1\0"
-    };
-
-    let mut offset = magic_pos + magic.len();
-    if offset + 8 > data.len() {
-        return None;
-    }
-    let wasm_len = usize::from_le_bytes(data[offset..offset + 8].try_into().ok()?);
-    offset += 8;
-    if wasm_len == 0 || offset + wasm_len + 8 > data.len() {
-        return None;
-    }
-    let wasm_bytes = data[offset..offset + wasm_len].to_vec();
-    offset += wasm_len;
-    let manifest_len = usize::from_le_bytes(data[offset..offset + 8].try_into().ok()?);
-    offset += 8;
-    if manifest_len == 0 || offset + manifest_len != data.len() {
-        return None;
-    }
-    let manifest_bytes = data[offset..offset + manifest_len].to_vec();
-    Some((wasm_bytes, precompiled, manifest_bytes))
-}
-
-fn find_last_magic(data: &[u8], magic: &[u8]) -> Option<usize> {
-    (0..=data.len().saturating_sub(magic.len()))
-        .rev()
-        .find(|&i| data[i..].starts_with(magic))
-}
-
-fn parse_manifest_capabilities_bytes(bytes: &[u8]) -> Vec<CapabilityGrant> {
-    let Ok(source) = std::str::from_utf8(bytes) else {
-        return Vec::new();
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(source) else {
-        return Vec::new();
-    };
-
-    let mut capabilities = Vec::new();
-    if let Some(capabilities_list) = json.get("capabilities").and_then(|value| value.as_array()) {
-        for capability in capabilities_list {
-            if let Some(id) = capability.as_str() {
-                capabilities.push(CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::Boolean(true),
-                });
-                continue;
-            }
-
-            let Some(id) = capability.get("id").and_then(|value| value.as_str()) else {
-                continue;
-            };
-
-            let grant = if let Some(patterns) = capability
-                .get("patterns")
-                .and_then(|value| value.as_array())
-            {
-                CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::PathGlobs(
-                        patterns
-                            .iter()
-                            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
-                            .collect(),
-                    ),
-                }
-            } else if let Some(urls) = capability.get("urls").and_then(|value| value.as_array()) {
-                CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::UrlGlobs(
-                        urls.iter()
-                            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
-                            .collect(),
-                    ),
-                }
-            } else if let Some(ports) = capability.get("ports").and_then(|value| value.as_array()) {
-                CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::Ports(
-                        ports
-                            .iter()
-                            .filter_map(|value| value.as_u64().map(|port| port as u16))
-                            .collect(),
-                    ),
-                }
-            } else {
-                CapabilityGrant {
-                    id: id.to_string(),
-                    value: CapabilityValue::Boolean(
-                        capability
-                            .get("enabled")
-                            .and_then(|value| value.as_bool())
-                            .unwrap_or(true),
-                    ),
-                }
-            };
-            capabilities.push(grant);
-        }
-    }
-    capabilities
-}
-
-fn inspect_app(path: &str, json: bool) -> Result<(), VartaError> {
-    let (bytes, precompiled, capabilities) = read_app_from_file(path)?;
-    let capabilities = if capabilities.is_empty() {
-        load_manifest_capabilities(path)
-    } else {
-        capabilities
-    };
-
-    let mut imports = Vec::new();
-    let mut exports = Vec::new();
-    let mut memories = 0u32;
-
-    if !precompiled {
-        let parser = WasmParser::new(0);
-        for payload in parser.parse_all(&bytes) {
-            let payload = match payload {
-                Ok(payload) => payload,
-                Err(error) => return Err(VartaError::InvalidManifest(error.to_string())),
-            };
-            match payload {
-                Payload::ImportSection(reader) => {
-                    for result in reader {
-                        let import = result
-                            .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-                        imports.push(format!(
-                            "{}.{} ({:?})",
-                            import.module, import.name, import.ty
-                        ));
-                    }
-                }
-                Payload::ExportSection(reader) => {
-                    for result in reader {
-                        let export = result
-                            .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-                        exports.push(export.name.to_string());
-                    }
-                }
-                Payload::MemorySection(reader) => {
-                    for result in reader {
-                        result.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-                        memories += 1;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let capability_ids: Vec<String> = capabilities.iter().map(|grant| grant.id.clone()).collect();
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "artifact": path,
-                "size": bytes.len(),
-                "precompiled": precompiled,
-                "capabilities": capability_ids,
-                "imports": imports,
-                "exports": exports,
-                "memories": memories,
-            })
-        );
-    } else {
-        println!("artifact: {path}");
-        println!("size: {} bytes", bytes.len());
-        println!("precompiled: {precompiled}");
-        println!("capabilities:");
-        if capability_ids.is_empty() {
-            println!("  none");
-        } else {
-            for capability in capability_ids {
-                println!("  {capability}");
-            }
-        }
-        if imports.is_empty() {
-            println!("imports: none");
-        } else {
-            println!("imports:");
-            for import in imports {
-                println!("  {import}");
-            }
-        }
-        if exports.is_empty() {
-            println!("exports: none");
-        } else {
-            println!("exports:");
-            for export in exports {
-                println!("  {export}");
-            }
-        }
-        println!("memories: {memories}");
-    }
-    Ok(())
-}
-
-fn validate_app(path: &str, json: bool) -> Result<(), VartaError> {
-    let _ = json;
-    let (bytes, precompiled, capabilities) = read_app_from_file(path)?;
-    let capabilities = if capabilities.is_empty() {
-        load_manifest_capabilities(path)
-    } else {
-        capabilities
-    };
-
-    for capability in &capabilities {
-        if capability.id.trim().is_empty() {
-            return Err(VartaError::InvalidManifest("capability id is empty".into()));
-        }
-
-        match capability.id.split('.').next().unwrap_or("") {
-            "log" | "time" | "env" | "fs" | "process" | "net" => {}
-            other => {
-                return Err(VartaError::InvalidManifest(format!(
-                    "unknown capability namespace: {other}"
-                )));
-            }
-        }
-
-        match &capability.value {
-            CapabilityValue::PathGlobs(patterns) => {
-                if patterns.is_empty() {
-                    return Err(VartaError::InvalidManifest(format!(
-                        "{} has no patterns",
-                        capability.id
-                    )));
-                }
-                for pattern in patterns {
-                    if pattern.trim().is_empty() {
-                        return Err(VartaError::InvalidManifest(format!(
-                            "{} contains an empty pattern",
-                            capability.id
-                        )));
-                    }
-                    if pattern == "*" || pattern == "**" {
-                        return Err(VartaError::InvalidManifest(format!(
-                            "{} has an overly broad pattern: {pattern}",
-                            capability.id
-                        )));
-                    }
-                }
-            }
-            CapabilityValue::UrlGlobs(patterns) => {
-                if patterns.is_empty() {
-                    return Err(VartaError::InvalidManifest(format!(
-                        "{} has no URL patterns",
-                        capability.id
-                    )));
-                }
-                for pattern in patterns {
-                    if pattern.trim().is_empty() || !pattern.contains("://") {
-                        return Err(VartaError::InvalidManifest(format!(
-                            "{} contains an invalid URL pattern: {pattern}",
-                            capability.id
-                        )));
-                    }
-                }
-            }
-            CapabilityValue::Ports(ports) => {
-                if ports.is_empty() || ports.contains(&0) {
-                    return Err(VartaError::InvalidManifest(format!(
-                        "{} has an invalid port list",
-                        capability.id
-                    )));
-                }
-            }
-            CapabilityValue::Boolean(_) => {}
-        }
-    }
-
-    if !precompiled {
-        let mut required = std::collections::BTreeSet::new();
-        let parser = WasmParser::new(0);
-        for payload in parser.parse_all(&bytes) {
-            let payload =
-                payload.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-            if let Payload::ImportSection(reader) = payload {
-                for result in reader {
-                    let import =
-                        result.map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
-                    if import.module != "varta" {
-                        continue;
-                    }
-                    let capability_id = match import.name {
-                        "log_i32" | "log_string" => continue,
-                        "time_now" => "time.now".to_string(),
-                        "env_has" => "env.has".to_string(),
-                        "env_print" => "env.print".to_string(),
-                        "env_get" => "env.get".to_string(),
-                        "fs_print" => "fs.print".to_string(),
-                        "fs_read" => "fs.read".to_string(),
-                        "process_exit" => "process.exit".to_string(),
-                        "net_fetch" => "net.fetch".to_string(),
-                        "net_get" => "net.get".to_string(),
-                        other => {
-                            return Err(VartaError::InvalidManifest(format!(
-                                "unknown host import: {other}"
-                            )));
-                        }
-                    };
-                    required.insert(capability_id);
-                }
-            }
-        }
-
-        for capability_id in required {
-            if !capabilities
-                .iter()
-                .any(|capability| capability.id == capability_id)
-            {
-                return Err(VartaError::InvalidManifest(format!(
-                    "imported host API requires capability namespace: {capability_id}"
-                )));
-            }
-        }
-    }
-
-    if json {
-        let capability_ids: Vec<String> =
-            capabilities.iter().map(|grant| grant.id.clone()).collect();
-        println!(
-            "{}",
-            serde_json::json!({
-                "artifact": path,
-                "capabilities": capability_ids,
-                "status": "ok",
-            })
-        );
-    }
-
-    Ok(())
 }

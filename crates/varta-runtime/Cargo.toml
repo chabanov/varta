@@ -7,8 +7,12 @@ license.workspace = true
 [dependencies]
 varta-common = { path = "../varta-common" }
 thiserror.workspace = true
-tracing.workspace = true
 wasmtime.workspace = true
+wasmparser.workspace = true
+cap-std.workspace = true
+cap-fs-ext.workspace = true
+ureq.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 varta-compiler = { path = "../varta-compiler" }

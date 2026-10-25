@@ -1,51 +1,66 @@
 # Varta
 
-Varta compiles a deliberately small TypeScript subset to WebAssembly and runs it
-in a capability-checked Wasmtime host. Privileged operations exist only as
-explicit host imports and are denied by default. Production artifacts can be
-packaged as a single native binary with `varta build --single`.
+Varta compiles a small, checked TypeScript subset to WebAssembly and runs it in a
+capability-checked Wasmtime host. System access is denied unless the exact
+operation and resource are declared. Applications can be distributed as a single
+native executable containing portable Wasm and its runtime.
 
-Status: MVP / active development. See
-[`docs/architecture.md`](docs/architecture.md) and
-[`docs/development-plan.md`](docs/development-plan.md) for details.
-
-## What it is (and is not)
-
-- Varta is a compiler and secure runtime, not a general-purpose JavaScript
-  runtime.
-- Every accepted language feature stays small, statically analyzable, and maps
-  cleanly to Wasm.
-- Capability IDs such as `fs.read`, `net.fetch`, `env.get`, and `time.now` are
-  matched exactly at runtime.
+Status: MVP / active development. The [architecture contract](docs/architecture.md)
+describes the implemented language, trust boundaries, ABI and limits. The
+[development plan](docs/development-plan.md) tracks audit fixes and next milestones.
 
 ## Quickstart
 
 ```sh
-cargo build
+cargo install --path crates/varta-cli --locked
 varta init my-app
 cd my-app
 varta check
 varta dev
 varta build --single
-./dist/my-app
+./dist/app
 ```
 
-`varta dev` compiles `src/main.ts` to Wasm and executes it in Wasmtime.
-`varta build --single` produces a standalone native executable.
+For development in this repository, use `cargo run -- <command>`. No external
+TypeScript checker is required: check, dev and build share the same subset/type
+and Wasm validation pipeline.
 
-## Project layout
+```ts
+export function main(): void {
+  console.log("hello from varta");
+  console.log(varta.time.now());
+  console.log(varta.result.status());
+}
+```
+
+## Diagnostics
+
+`check`, `build` and `dev` report the actual entry file and the failing source
+range, including errors inside nested expressions:
 
 ```text
-my-app/
-  varta.config.json
-  src/main.ts
-  varta.d.ts
-  dist/app.wasm
+/path/to/app/src/main.ts:2:19: type mismatch for x: expected string, found number
+  |   let x: string = 7;
+  |                   ^
 ```
 
-## Capability declarations
+`varta check --json` returns structured `diagnostics` with category, filename,
+line/column range, UTF-8 byte offsets and a bounded excerpt. Unicode, CRLF and BOM
+positions are supported. See the [diagnostic contract](docs/architecture.md#source-diagnostics)
+for coordinate conventions and public compiler APIs.
 
-`varta.config.json`:
+## Project and permissions
+
+```text
+varta.config.json
+src/main.ts
+varta.d.ts
+dist/app.wasm
+dist/app.manifest.json
+dist/app                 # build --single
+```
+
+Example `varta.config.json`:
 
 ```json
 {
@@ -55,82 +70,85 @@ my-app/
   "out": "dist/app",
   "capabilities": {
     "time": { "now": true },
-    "env": { "has": ["PATH"], "print": ["PATH"], "get": ["PATH"] },
+    "env": { "get": ["APP_NAME"] },
     "fs": { "read": ["/data/**"] },
-    "net": { "fetch": ["http://127.0.0.1/**"] }
+    "net": { "fetch": ["http://example.com/public/**"] }
   }
 }
 ```
 
-Host bindings in `varta.d.ts`:
+Omitted grants, empty lists and false deny access. Permissions for read/print,
+get/has and fetch/get are independent. Paths retain directory boundaries and are
+opened through pinned descriptors with symlinks rejected. Network authority is
+exact; URLs are validated before I/O, with redirects and ambient proxies disabled.
+Only the strict profile and HTTP transport are implemented.
 
-```ts
-declare const varta: {
-  time: { now(): number };
-  env: { has(name: string): boolean; print(name: string): void; get(name: string): string };
-  fs: { read(path: string): string };
-  net: { fetch(url: string): number };
-};
-```
+`inspect --json` shows full permission scopes. Without a host policy the CLI uses
+the package's declared grants. To restrict an untrusted package, supply a separate
+host policy in the manifest format:
 
-Empty or omitted capability sets deny all host operations.
-
-## Sample app
-
-```ts
-// src/main.ts
-export function main(): void {
-  console.log(varta.time.now());
+```json
+{
+  "capabilities": [
+    { "id": "env.get", "patterns": ["APP_NAME"] }
+  ]
 }
 ```
 
-Denied calls produce deterministic denials such as:
-
-```text
-varta log: <capability denied: fs.read>
+```sh
+varta run dist/app.wasm --policy host-policy.json
+varta inspect dist/app.wasm --policy host-policy.json --json
+# A newly built native launcher accepts the same option:
+./dist/app --policy host-policy.json
 ```
+
+An operation must satisfy both the package request and the host policy. Empty
+host capabilities deny everything; malformed or missing policy files fail before
+execution. The host cannot add unrequested rights, and the package cannot override
+the host ceiling. Inspection shows both filters and distinguishes unconditional
+denials from resource checks performed at runtime. `--policy` also works with
+`dev` and `validate`; it is never saved into a build. Native executables themselves
+run with the launching user's OS authority.
+
+## Language and execution
+
+The subset includes typed scalar functions, lexical let/const bindings, integer
+arithmetic, boolean operations, conditions, loops and switch. Numbers use signed
+i32 Wasm semantics. Strings are currently literal host inputs or immediate log
+results. Unsupported constructs, top-level effects and type mismatches fail
+explicitly. There is no general Node/npm compatibility or async execution yet.
+
+Runtime defaults include 8 MiB guest memory, instruction fuel, a 5-second
+execution/HTTP deadline, and bounded host calls, I/O results and output. Host
+failures clear result lengths and expose status through `varta.result.status()`:
+0 success, 1 denied, 2 invalid input, 3 I/O failure, 4 result too large.
 
 ## Commands
 
-- `init <name>`: scaffold a project and capability manifest
-- `check [--config] [--json]`: parse and validate
-- `dev`: compile and run a development Wasm build
-- `build [--config] [--single]`: create Wasm or single native artifact
-- `run <path>`: execute a produced artifact
-- `inspect [path] [--json]`: show binary and capability metadata
-- `validate [path] [--json]`: validate an artifact's manifest
+- `init <name>`: create a project without overwriting an existing directory
+- `check [--config] [--json]`: validate language, types, config and generated Wasm
+- `dev [--config] [--policy]`: check, compile and execute
+- `build [--config] [--single]`: produce validated Wasm and optional native launcher
+- `run <path> [--policy]`: execute portable Wasm or a packaged artifact
+- `inspect [path] [--json] [--policy]`: show validated code and full capability metadata
+- `validate [path] [--json] [--policy]`: check code, ABI, manifest and import declarations
 
-Run `varta --help` for option-level details.
+Failures return nonzero exit codes. `validate` adds policy review: every privileged
+import needs a declaration, even though omitted permissions remain safe to execute
+because the runtime denies them.
 
-## Security model
+Native packaging now uses a fixed VARTA3 footer and portable Wasm. Legacy VARTA1/
+VARTA2 and native AOT payloads are rejected; rebuild old artifacts. This avoids
+accepting untrusted machine code through Wasmtime deserialization.
 
-- Capability enforcement is deny by default before effects.
-- Operation IDs are matched exactly (`fs.print` does not authorize
-  `fs.read`).
-- Guest `ptr/len` values are bounds-checked, capped, and UTF-8 validated.
-- Filesystem paths reject traversal and are canonicalized before matching.
+## Development
 
-## Quality gates
-
-CI runs exactly:
+The workspace separates common schemas/ABI, compiler, runtime, project/artifact
+services and CLI. Workspace code forbids unsafe. Run:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo test -p varta --test smoke
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo test -p varta --test smoke --locked
 ```
-
-## Notes and limitations
-
-- The supported language subset remains intentionally small.
-- Network client support is HTTP-oriented; HTTPS is not implemented yet.
-- Full Node/npm compatibility and advanced storage are long-term work.
-- See [`docs/architecture.md`](docs/architecture.md) for the complete contract.
-
-## License
-
-No license has been declared in this repository yet.
-```
-
-Check line count.

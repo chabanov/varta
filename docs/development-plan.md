@@ -1,323 +1,103 @@
-# Varta — Development Plan & Tech Stack
+# Varta development plan
 
-## 1. Strategic direction
+## Current milestone: architectural hardening
 
-Varta will be built as a small, secure, TS/JS-to-Wasm runtime with optional native binary packaging.
+The first milestone is a checked, bounded single-file TypeScript subset with
+capability-controlled execution and one-file native packaging. The implemented
+contract is in [architecture.md](architecture.md).
 
-Primary scope for MVP:
+The October 2026 architecture audit is addressed as follows:
 
-- single TS entry file;
-- capability-based host APIs;
-- Wasm compilation;
-- dev execution in Wasm VM;
-- production packaging into one standalone artifact.
+| Audit finding | Implemented change | Regression evidence |
+| --- | --- | --- |
+| Untrusted native deserialization | Native AOT entry points removed; portable Wasm only | Rejection through runtime and all artifact commands |
+| Filesystem boundary and check/open race | Component-aware scopes and pinned no-follow descriptors | Allowed file, sibling, traversal, final/intermediate/internal symlink cases |
+| Malformed manifest grants expand rights | One strict schema and operation-specific grant types | Wrong/missing fields and unknown operations rejected |
+| HTTP request injection | Parsed authorized URLs and bounded HTTP library | CR/LF denied before I/O, normalization and authority tests |
+| Unbounded resources | Store memory limits, fuel, epoch deadline, I/O/output/call budgets | Infinite loop, guest memory.grow, output and oversized file tests |
+| Function type order mismatch | Signature interning shared with emission | Mixed-arity functions execute correct results |
+| Silent semantic changes | Lexical scopes, typed IR, structured branch labels | Shadowing, nested switch, default/fallthrough, continue and top-level-effect rejection |
+| Artifact validation misses invalid code | Full Wasm/ABI validation before publish and every artifact command | Invalid operand stack and missing ABI globals rejected |
+| Divergent check/build/dev | Shared project pipeline and deterministic internal subset typing | Identical errors for all three commands |
+| Stale string length and sentinel errors | Reusable result buffer, cleared result globals, status API | Success then denial, structured status, bounded output |
+| Container marker collisions | Fixed versioned EOF footer with checked lengths | Marker literals survive native packaging; overflow lengths rejected |
+| CLI reports success after failure | Central command error/exit handling | Run, inspect and validate return code 1 on bad input |
 
-Non-goals for MVP:
+Additional hardening: source complexity is bounded before recursive parsing;
+syntax errors return typed diagnostics instead of a dropped-diagnostic panic;
+workspace code forbids unsafe; operation/signature metadata has one owner;
+filesystem devices are not readable; proxies and redirects are disabled;
+unsupported compat and HTTPS configurations fail explicitly.
 
-- full Node.js compatibility;
-- arbitrary npm native addons;
-- plugin system;
-- multi-language compilation.
+Quality gates:
 
----
-
-## 2. Recommended tech stack
-
-### 2.1 Core implementation language
-
-**Rust**
-
-Reasons:
-
-- good fit for compiler/runtime tooling;
-- strong memory safety;
-- close ecosystem to Bun/Deno-style runtime development;
-- excellent Wasm tooling and native packaging;
-- safe host-side implementation.
-
-### 2.2 CLI
-
-- `clap` for argument parsing;
-- subcommands: `init`, `check`, `dev`, `build`, `test`, `inspect`, `run`.
-
-### 2.3 TS/JS parsing
-
-MVP:
-
-- `swc_parser` / `swc_core` for fast TS/JS parsing and transformation.
-
-Type checking:
-
-- shell out to `tsc --noEmit` initially;
-- later evaluate Rust-based TypeScript checker integration.
-
-### 2.4 IR / Wasm emission
-
-- custom internal IR;
-- `wasm-encoder` or `walrus` for Wasm module generation;
-- `wasmparser` for validation and inspection.
-
-### 2.5 Wasm runtime (development)
-
-- Wasmtime.
-
-Reasons:
-
-- mature sandbox;
-- capability-oriented runtime;
-- AOT compilation support;
-- async execution APIs;
-- fuel/resource limits possible.
-
-### 2.6 Native binary packaging (production)
-
-MVP approach:
-
-- compile application to Wasm;
-- use Wasmtime AOT compilation;
-- package Wasm + AOT artifact into a Rust launcher binary;
-- embed manifest and assets with `include_bytes!` / runtime asset loader.
-
-This keeps one behavioral contract between dev and prod while producing a deployable binary.
-
-### 2.7 Host APIs
-
-Implemented in Rust:
-
-- `varta.log`
-- `varta.env`
-- `varta.time`
-- `varta.fs`
-- `varta.net`
-- `varta.http`
-
-All host APIs enforce capabilities before performing OS-level operations.
-
-### 2.8 Async runtime
-
-- Tokio for async host I/O;
-- Wasmtime async API where needed;
-- one documented async execution contract.
-
-### 2.9 Observability
-
-- `tracing` for structured logs/traces;
-- source maps for diagnostics;
-- capability audit metadata in debug builds.
-
-### 2.10 Testing
-
-- Rust unit/integration tests in `crates/*/tests`;
-- spec-style tests for CLI behavior;
-- Wasm integration tests for runtime behavior;
-- capability-denial regression tests.
-
-### 2.11 Packaging and repo layout
-
-Recommended:
-
-```text
-varta/
-  Cargo.toml
-  crates/
-    varta-cli/
-    varta-compiler/
-    varta-wasm/
-    varta-runtime/
-    varta-host/
-  docs/
-  examples/
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build --workspace --all-targets --locked
+cargo test --workspace --locked
+cargo test -p varta --test smoke --locked
 ```
 
----
+The CI workflow runs the gates on Linux and macOS. Tests are hermetic and use
+synthetic sources, process-local environment values and temporary files; they do
+not need a network service or external TypeScript checker.
 
-## 3. Development phases
+## Completed follow-up: host policy ceilings
 
-### Phase 0 — Specification freeze
+`run`, `dev`, `inspect`, `validate` and packaged launchers accept an explicit
+`--policy` file. Runtime authorization requires both package and host filters;
+empty ceilings deny all privileges and malformed files never fall back. File
+access uses pinned host directory roots, including when a package supplies a
+symlink as its own root. Inspection reports the two scopes without approximating
+wildcard intersection. Host policies are not persisted into artifacts.
 
-Deliverables:
+Regression coverage includes environment/path narrowing in both directions,
+operation independence, scoped network authorization without network I/O, boolean
+permissions, malformed/missing files, deny-all packaged execution and symlink-root
+escapes. The public runtime and project services expose the same constrained-run
+contract as the CLI.
 
-- `varta.config` schema;
-- Varta ABI v0;
-- capability manifest schema;
-- memory ownership rules;
-- async contract;
-- canonical capability syntax;
-- strict and compat policy profiles;
-- `docs/architecture.md` aligned with all decisions.
+## Completed follow-up: source diagnostics
 
-Exit criteria:
+The shared compiler source context preserves real entry filenames and precise
+semantic ranges through expression/function IR. Human diagnostics show bounded
+excerpts and carets; `check --json` exposes typed categories, UTF-8 byte offsets
+and Unicode line/column ranges. Nested expression errors retain their original
+locations. Virtual source paths are supported without file I/O, and naming a
+source does not change its generated bytecode.
 
-- no contradictory examples;
-- architecture reviewed and stable enough for MVP implementation.
+Regression coverage includes expected/actual type errors, nested calls, unsupported
+annotations, Unicode/CRLF/BOM coordinates, parser/resource-limit errors, bounded
+large-line excerpts, static-data overflow, config-relative entry paths and
+consistent diagnostics across check/build/dev. Valid named-source modules are
+instantiated and executed through Wasmtime as well.
 
----
+## Next milestone: modules and general values
 
-### Phase 1 — Single-file compiler MVP
+Keep the secure subset small while improving usability:
 
-Deliverables:
+1. Add module resolution with a deterministic, explicit dependency graph. Reject
+   undeclared or cyclic initialization semantics until a contract is specified.
+2. Define and implement general string values and ownership before adding arrays
+   or objects. Retained host results must not alias the reusable ABI buffer.
+3. Add structured, programmatic host error handling beyond status inspection.
 
-- Rust CLI scaffold;
-- `varta init`;
-- `varta check`;
-- Rust-based TS/JS parser integration;
-- type-check invocation;
-- simple IR;
-- Wasm emission for a small TS subset;
-- `varta dev` runs Wasm in Wasmtime;
-- host APIs: `log`, `env`, `time`;
-- basic capability enforcement.
+Exit criteria: identical check/build/dev acceptance; documented module and memory
+semantics; behavior tests for every construct; denial tests for each boundary;
+all quality gates passing.
 
-Test cases:
+## Later milestones
 
-- function declarations;
-- variables;
-- strings and numbers;
-- if/while/for;
-- async functions with `await`;
-- basic `fetch`-like typed host call.
-
-Exit criteria:
-
-- one `src/main.ts` compiles and runs in Wasm;
-- denied capability test fails as expected.
-
----
-
-### Phase 2 — Core host platform
-
-Deliverables:
-
-- filesystem host API;
-- network HTTP client;
-- HTTP server;
-- environment/clock/crypto basics;
-- event loop and promise semantics;
-- source maps;
-- structured errors.
-
-Test cases:
-
-- read allowed file;
-- deny disallowed path;
-- fetch allowed URL;
-- deny disallowed host;
-- listen on allowed port;
-- deny unknown port.
-
-Exit criteria:
-
-- end-to-end hello-world-style app works in dev mode.
-
----
-
-### Phase 3 — Native single binary
-
-Deliverables:
-
-- AOT compilation pipeline;
-- embedded capability manifest;
-- embedded asset manifest;
-- `varta build` produces platform binary;
-- `varta run` or direct executable execution;
-- debug metadata toggle.
-
-Test cases:
-
-- build produces one executable;
-- executable runs without external runtime installation;
-- behavior matches dev Wasm execution.
-
-Exit criteria:
-
-- users can run a single binary artifact successfully.
-
----
-
-### Phase 4 — Dependency and compatibility layer
-
-Deliverables:
-
-- package manifest and lockfile;
-- Varta-native packages;
-- tree-shaking;
-- basic npm pure-package compatibility;
-- CommonJS/ESM subset support;
-- dependency capability inheritance rules.
-
-Exit criteria:
-
-- selected pure JS/TS packages work;
-- native addon packages are clearly rejected or isolated.
-
----
-
-### Phase 5 — Production hardening
-
-Deliverables:
-
-- security audit;
-- policy profiles enforcement;
-- resource limits (memory/time/fuel);
-- binary size optimization;
-- reproducible builds where possible;
-- diagnostics and inspect tooling;
-- crash reporting improvements.
-
-Exit criteria:
-
-- documented security guarantees;
-- stable MVP release criteria met.
-
----
-
-## 4. Architecture deliverables tracked to plan
-
-| Deliverable | Phase | Status in architecture.md |
-|---|---:|---|
-| Capability manifest schema | 0 | Added |
-| ABI v0 memory ownership | 0/1 | Added |
-| Async contract | 0/2 | Added |
-| Canonical capability syntax | 0 | Added |
-| Policy profiles | 0 | Added |
-| AOT strategy | 3 | Added |
-| npm compatibility boundary | 4 | Added |
-
----
-
-## 5. Immediate implementation order
-
-1. Rust workspace scaffold.
-2. CLI skeleton.
-3. Wasmtime dev runner.
-4. TS parser integration.
-5. Capability config parser and manifest validator.
-6. Minimal Wasm emitter.
-7. `varta dev` end-to-end.
-8. ABI v0 host imports.
-9. Capability denial tests.
-10. AOT/native packaging.
-
----
-
-## 6. Key risks
-
-- TS type checking without relying on heavy external tooling may be harder than expected.
-- Wasm async semantics can diverge between dev and prod if not specified early.
-- Single native binary size may be large due to embedded Wasm engine.
-- npm compatibility can expand scope significantly.
-- Capability policy must remain both secure and ergonomic.
-
----
-
-## 7. Recommended Definition of Done for MVP
-
-MVP is complete when:
-
-- one TS file can be parsed and type-checked;
-- it compiles to Wasm;
-- it runs in `varta dev`;
-- it builds into one standalone binary;
-- filesystem, HTTP, and network calls require explicit capabilities;
-- denied capabilities produce deterministic typed errors;
-- at least one end-to-end example and its tests pass.
+- HTTPS: select certificate/trust-store policy, keep redirects policy-aware,
+  test TLS failures and budget behavior without an external service.
+- Async: specify cancellation, scheduling and handle lifetimes before exposing
+  promises, timers or asynchronous host operations.
+- Authenticated AOT: define who trusts the signer, which bytes are authenticated,
+  and how engine version, target and CPU requirements are pinned. Never restore
+  arbitrary native deserialization behind a filename or format marker.
+- Package compatibility: only after module/type/memory semantics are stable;
+  evaluate packages against a documented subset rather than promising Node parity.
+- Production: fuzz schemas/containers/Wasm boundaries, expand platform coverage,
+  isolate compilation and blocking host operations where hard OS-level resource
+  isolation is required, and obtain an independent security review.

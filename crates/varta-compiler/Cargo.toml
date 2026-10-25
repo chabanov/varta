@@ -8,6 +8,7 @@ license.workspace = true
 varta-common = { path = "../varta-common" }
 thiserror.workspace = true
 wasm-encoder.workspace = true
+wasmparser.workspace = true
 swc_common = "26.0.0"
 swc_ecma_parser = "46.1.2"
 swc_ecma_ast = "29.0.0"
