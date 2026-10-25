@@ -5,8 +5,8 @@ This document describes the implemented MVP. Future work is tracked separately i
 TypeScript subset to portable WebAssembly and executes it in a capability-checked
 Wasmtime host. It does not provide general JavaScript, Node or npm compatibility.
 
-Primitive Tool Contract v1 and offline discovery are implemented below. Broader
-Application Contracts, validated external invocation, live application state and
+Primitive Tool Contract v1, offline discovery and checked JSON invocation are
+implemented below. Broader Application Contracts, live application state and
 MCP remain **planned** in the [development plan](development-plan.md#product-direction).
 `inspect` reports bytecode, capabilities and an optional public tool catalog.
 
@@ -507,17 +507,16 @@ All artifact commands validate contracts; `validate` additionally reviews grants
 Catalog limits currently equal the shared runtime ceilings: 64 KiB serialized
 input, 1 MiB serialized output, 1 MiB per UTF-8 string, 8 MiB guest memory,
 1,000,000 fuel, 1024 host calls and a five-second deadline. They are fixed in
-contract v1, not configurable grants. The JSON invocation boundary enforcing
-input/output envelopes is not implemented yet. Metadata is public and untrusted:
+contract v1, not configurable grants. The JSON invocation boundary below enforces
+input/output envelopes. Metadata is public and untrusted:
 it is neither an authenticity proof nor an authorization decision. Type/ABI checks
 cannot prove semantic equivalence between same-signature implementations. Runtime
 capability enforcement remains necessary for every actual operation.
 
 ### Tool invocation ABI v1 ownership
 
-The low-level ABI is specified and tested for a **fresh instance per invocation**;
-there is no public external invocation API yet. The trusted host must validate
-inputs, enforce budgets, instantiate without calling `_start`, and then use:
+The low-level ABI uses a **fresh instance per invocation**. The shared dispatcher
+validates inputs, enforces budgets, instantiates without calling `_start`, and uses:
 
 | Value/operation | Physical representation |
 | --- | --- |
@@ -542,8 +541,74 @@ before another guest allocation or dropping the instance. Result handles are not
 retained after return; reading them immediately is required. Every invocation,
 including traps, ends by dropping the instance; helpers do not support persistent
 instances or releasing host roots between repeated calls. Input roots, allocator
-metadata and helper work consume the existing memory/root/fuel budgets. C2 must
-implement these obligations in a shared dispatcher before accepting external calls.
+metadata and helper work consume the existing memory/root/fuel budgets. The shared
+dispatcher implements these obligations, including validation of copy/retain
+results before passing transferred inputs to the handler.
+
+### Checked JSON invocation
+
+`VartaRuntime::invoke_tool` and `invoke_tool_with_policy` accept portable code, a
+published tool name, raw JSON parameter bytes and trusted package/host grants.
+The project APIs `invoke_tool` and `invoke_tool_with_policy` use an artifact's
+validated manifest and, optionally, a `HostPolicy`. The CLI exposes these through
+`varta invoke <artifact> <name> --params '<object>' [--policy <file>] [--json]`.
+The default parameter object is `{}`. Native containers are read as portable
+artifacts; their launchers are not executed. Source files are unnecessary.
+
+Dispatch order is bounded request/name and grant checks, full portable-code and
+catalog validation, exact name lookup in the catalog, complete parameter parsing,
+fresh store creation, argument transfer, handler call and result validation. No
+lookup falls back to an arbitrary export. All arguments are validated before
+instantiation; a bad later argument cannot allow an earlier guest effect. Tool
+modules cannot contain a Wasm start function, and invocation never calls `_start`.
+
+Parameters must form exactly one JSON object, with every declared field present,
+no extras and no duplicate decoded keys (including escaped spellings of a key).
+Object field order is independent of physical argument order. The parser rejects
+trailing data, arrays/objects/null in primitive fields, invalid UTF-8, lone escaped
+surrogates, numeric strings, integer booleans and out-of-range numbers. Integer
+input uses exact plain signed i32 JSON tokens; decimal, exponent and negative-zero
+forms are rejected instead of rounding external values through floating point.
+This is a deliberately narrower wire profile than JSON Schema's mathematical
+integer interpretation. Input bytes include JSON whitespace/escapes. JSON recursion
+limits remain enabled and strings also retain their independent UTF-8 byte cap.
+
+Argument copying, retaining and the handler share one store and fuel/deadline
+budget. Two string arguments cannot alias the reusable input buffer. Copy-helper
+results are bounds/length/UTF-8 checked and compared with the supplied input;
+retention must preserve the handle. Returned strings are bounds/byte-limit/UTF-8
+checked and copied before any further guest allocation. Returned booleans must be
+exactly 0 or 1. Integer and void results preserve their specified representations.
+
+`ToolInvocationOutput` contains `result: { value: <primitive-or-null> }` and
+separately captured `logs`. Serialized result size is checked with a bounded
+counting writer, so escaped output cannot cause an oversized temporary JSON
+allocation. Logs remain subject to the existing separate output budget. There
+is no store, borrowed guest pointer or handle in a successful host result.
+
+`ToolInvocationError` has stable codes: `invalid_arguments`, `unknown_tool`,
+`invalid_artifact`, `invalid_policy`, `invalid_result`, `execution_failed` and
+`guest_exit`. Traps and resource exhaustion are invocation failures, not host
+status values. An authorized guest exit, including exit code 0, does not fabricate
+a successful tool result. The ordinary run/start path retains its exit-code and
+captured-log behavior. Domain/revision errors remain future application work.
+
+Concrete host operations still use the package/host conjunction and descriptor
+scopes. Denials and I/O failures keep their recoverable host statuses; a handler
+may deliberately return a fallback after checking `VartaResult`. Successful tool
+execution is not proof that every attempted host operation succeeded. No rights
+are accepted in the JSON arguments. The API is a trusted local embedding surface;
+caller identities, per-caller tool subsets and remote authentication are not yet
+implemented.
+
+With `--json`, CLI success is one `{status:"ok",result,logs}` record; invocation
+failure is `{status:"failed",code,error,diagnostics:[]}` and exit code 1. Errors
+reading an artifact/policy before dispatch retain ordinary project error handling
+and may have no invocation code. Without `--json`, stdout is the result envelope
+and logs go to stderr. Failures expose no partial result and are never retried.
+Already-performed authorized host effects are not rolled back. Each call has its
+own budgets; shared state, atomic application commits and aggregate queue/accounting
+are not part of this dispatcher milestone.
 
 ## ABI v1 and errors
 

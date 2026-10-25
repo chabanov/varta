@@ -10,7 +10,7 @@ use varta_project::{Artifact, CheckedProject, HostPolicy, ProjectError};
     about = "Varta secure TypeScript subset compiler and runtime"
 )]
 struct Cli {
-    /// Limit run/dev/inspect/validate (or this packaged app) with a host policy JSON file.
+    /// Limit run/dev/invoke/inspect/validate (or this packaged app) with a host policy JSON file.
     #[arg(long, global = true, value_name = "PATH")]
     policy: Option<PathBuf>,
     #[command(subcommand)]
@@ -42,6 +42,17 @@ enum Commands {
     },
     /// Execute portable Wasm or a Varta container (native AOT is rejected).
     Run { path: PathBuf },
+    /// Invoke one published tool with checked JSON parameters, without running main.
+    Invoke {
+        path: PathBuf,
+        name: String,
+        /// One named-argument JSON object (at most 64 KiB; default is an empty object).
+        #[arg(long, default_value = "{}", value_name = "JSON")]
+        params: String,
+        /// Return one JSON record containing the result or a stable invocation error code.
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect validated bytecode, ABI, public tool contracts and full capability scopes without running the app.
     Inspect {
         path: Option<PathBuf>,
@@ -70,7 +81,7 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
             Some(Commands::Init { .. } | Commands::Check { .. } | Commands::Build { .. })
         )
     {
-        return Err(ProjectError::Usage("--policy applies to run, dev, inspect, validate, or a packaged app; it is never embedded in a build".into()));
+        return Err(ProjectError::Usage("--policy applies to run, dev, invoke, inspect, validate, or a packaged app; it is never embedded in a build".into()));
     }
     let policy = policy_path.map(HostPolicy::read).transpose()?;
 
@@ -113,6 +124,38 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
             let code = output(result);
             println!("varta run: completed {}", path.display());
             return Ok(code);
+        }
+        Some(Commands::Invoke {
+            path,
+            name,
+            params,
+            json,
+        }) => {
+            let artifact = Artifact::read(&path)?;
+            let output = match &policy {
+                Some(policy) => varta_project::invoke_tool_with_policy(
+                    &artifact,
+                    &name,
+                    params.as_bytes(),
+                    policy,
+                )?,
+                None => varta_project::invoke_tool(&artifact, &name, params.as_bytes())?,
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"status":"ok", "result":output.result, "logs":output.logs})
+                );
+            } else {
+                for line in output.logs {
+                    eprintln!("{line}");
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string(&output.result)
+                        .map_err(|e| ProjectError::Usage(e.to_string()))?
+                );
+            }
         }
         Some(Commands::Inspect { path, json }) => {
             let path = path.unwrap_or_else(|| "dist/app".into());
@@ -174,6 +217,7 @@ fn main() {
             Commands::Check { json: true, .. }
                 | Commands::Validate { json: true, .. }
                 | Commands::Inspect { json: true, .. }
+                | Commands::Invoke { json: true, .. }
         )
     );
     match execute(cli.command, cli.policy.as_deref()) {
@@ -182,7 +226,7 @@ fn main() {
             if json {
                 println!(
                     "{}",
-                    serde_json::json!({"status":"failed", "error":error.to_string(), "diagnostics": error.diagnostic().into_iter().collect::<Vec<_>>()})
+                    serde_json::json!({"status":"failed", "error":error.to_string(), "code":error.invocation_code(), "diagnostics": error.diagnostic().into_iter().collect::<Vec<_>>()})
                 );
             }
             eprintln!("varta failed: {error}");

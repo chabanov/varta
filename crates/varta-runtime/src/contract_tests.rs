@@ -22,7 +22,7 @@ fn catalog(bytes: &[u8]) -> ToolCatalog {
 
 // Rewrite existing portable sections for hostile-artifact fixtures. No native
 // payload or executable test generator enters production validation.
-fn rewrite(bytes: &[u8], mut edit: impl FnMut(u8, &[u8]) -> Vec<Vec<u8>>) -> Vec<u8> {
+pub(super) fn rewrite(bytes: &[u8], mut edit: impl FnMut(u8, &[u8]) -> Vec<Vec<u8>>) -> Vec<u8> {
     fn length(bytes: &mut Vec<u8>, mut value: usize) {
         loop {
             let next = (value & 0x7f) as u8;
@@ -45,7 +45,7 @@ fn rewrite(bytes: &[u8], mut edit: impl FnMut(u8, &[u8]) -> Vec<Vec<u8>>) -> Vec
     }
     out
 }
-fn replace_catalog(bytes: &[u8], data: &[u8]) -> Vec<u8> {
+pub(super) fn replace_catalog(bytes: &[u8], data: &[u8]) -> Vec<u8> {
     rewrite(bytes, |id, section| {
         let mut section = section.to_vec();
         if id == 0 && section.get(1..1 + TOOL_SECTION.len()) == Some(TOOL_SECTION.as_bytes()) {
@@ -56,7 +56,7 @@ fn replace_catalog(bytes: &[u8], data: &[u8]) -> Vec<u8> {
     })
 }
 
-fn export_index(bytes: &[u8], name: &str) -> u8 {
+pub(super) fn export_index(bytes: &[u8], name: &str) -> u8 {
     for payload in Parser::new(0).parse_all(bytes) {
         if let Payload::ExportSection(reader) = payload.unwrap() {
             for export in reader {

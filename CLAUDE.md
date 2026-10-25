@@ -19,8 +19,15 @@ Primitive Tool Contract v1 and offline discovery are implemented: entry-module
 physical signatures consistent, recompute transitive effects from Wasm, and
 preserve the copy/retain string ownership contract described in `docs/architecture.md`.
 
+Named JSON invocation is implemented in the shared runtime/project path and the
+thin `invoke` CLI. Validate every parameter before instantiation, use one fresh
+bounded store for argument helpers and the handler, never call `_start`, check
+canonical boolean results and all guest string ranges/UTF-8, then copy results
+before dropping the instance. Keep duplicate-key rejection, encoded JSON byte
+limits and typed invocation errors separate from recoverable host statuses.
+
 The platform roadmap is in `docs/development-plan.md`: broader Application
-Contracts, validated external invocation and shared application state, artifact
+Contracts and shared application state, artifact
 trust, then MCP bridges and deployment profiles remain planned. Ordinary source exports must not automatically become
 AI tools; external callers enter the same authorized command/query path as UI/API
 callers, and application state must outlive agent connections.

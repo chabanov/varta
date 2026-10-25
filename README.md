@@ -18,8 +18,8 @@ AI agents through MCP. UI, API and agent callers share the application's command
 and query layer, business rules and state; connecting another agent does not
 create another application state.
 
-Primitive Tool Contract v1 and offline discovery are implemented. A broader
-Application Contract, validated external invocation, a long-lived application
+Primitive Tool Contract v1, offline discovery and checked JSON invocation are
+implemented. A broader Application Contract and a long-lived application
 service, MCP bridges, package signatures and desktop/database/hardware adapters
 remain planned. The [delivery sequence](docs/development-plan.md#delivery-sequence)
 continues with invocation/shared state, artifact provenance and a local MCP bridge.
@@ -86,10 +86,43 @@ published through an explicit entry-module export. Parameters support `number`
 wrap the result as `{ "value": ... }`.
 
 Catalog versions, sizes, handler signatures and transitive system requirements are
-validated on check/build/dev/run/inspect/validate. Publishing a tool grants no
-permissions. A JSON invocation API, shared document state and MCP are the next
-stages; this example only declares a stateless tool. See the
+validated on check/build/dev/run/invoke/inspect/validate. Publishing a tool grants no
+permissions. Shared document state and MCP remain planned; this example declares
+a stateless tool. See the
 [tool contract](docs/architecture.md#tool-contract-v1-and-offline-discovery).
+
+## Invoke a tool
+
+```sh
+varta invoke dist/app.wasm document.previewTitle --params '{"nextTitle":"Draft"}' --json
+varta invoke dist/app document.previewTitle --params '{"nextTitle":"Draft"}' --json
+```
+
+Both commands return one JSON record:
+
+```json
+{"status":"ok","result":{"value":"Draft!"},"logs":[]}
+```
+
+Invocation runs only the published handler, with a fresh instance and the existing
+memory, fuel, time and host-call limits. It does not call `main`. All parameters
+are checked before guest execution: one object, exact required fields, no duplicate
+or unknown fields, no coercion, signed i32 integers, booleans and UTF-8 strings.
+The input is limited to 64 KiB, including JSON whitespace/escaping. Integer input
+uses plain integer notation; decimal/exponent and negative-zero forms are rejected.
+The encoded `{ "value": ... }` result is limited to 1 MiB; logs have their own
+existing output limit. Strings are copied into host-owned results.
+
+`--policy host-policy.json` also restricts invocation. Concrete system operations
+still require both package and host grants. A handler can recover from denied
+operations through `VartaResult`; that does not grant access. Boundary failures
+return exit code 1 and, with `--json`, a stable `code` such as `invalid_arguments`,
+`unknown_tool`, `invalid_result` or `execution_failed`. File/configuration errors
+before dispatch keep the ordinary CLI error handling. Without `--json`, stdout
+contains only `{ "value": ... }` and application logs go to stderr.
+
+This local interface does not provide remote authentication, persistent document
+state or rollback of host effects. Failed calls are not retried automatically.
 
 ## Diagnostics
 

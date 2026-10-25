@@ -11,6 +11,9 @@ pub struct HostPolicy {
 }
 
 impl HostPolicy {
+    pub(crate) fn grants(&self) -> &[CapabilityGrant] {
+        &self.grants
+    }
     pub fn read(path: &Path) -> Result<Self> {
         Self::from_manifest(Manifest::parse(&artifact::read_bounded(
             path,

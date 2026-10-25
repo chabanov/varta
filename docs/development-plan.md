@@ -13,8 +13,8 @@ This is the target direction, not a claim that these platform features already
 exist. The current implementation is the compiler/runtime foundation described
 in [architecture.md](architecture.md): a checked TypeScript subset, local modules,
 strings and reclamation, captured host results, capability policies, native
-packaging, primitive Tool Contract v1 and offline discovery. Broader Application
-Contracts, validated external invocation, a long-lived application service, MCP,
+packaging, primitive Tool Contract v1, offline discovery and checked JSON tool
+invocation. Broader Application Contracts, a long-lived application service, MCP,
 package signatures, GUI/database/hardware adapters and full JS/npm compatibility
 are not implemented yet.
 
@@ -255,8 +255,8 @@ Ordinary exports and dependency modules cannot silently publish tools.
   container format v1 are distinct. Existing no-tool applications keep working;
   tool metadata is inside the Wasm payload, so packaging requires no new footer.
 - String copy/retain exports establish fresh-instance invocation ownership and are
-  tested across input-buffer reuse and collection. An external JSON dispatcher is
-  still C2 work. `domainErrors: []` explicitly leaves typed domain errors to C2.
+  tested across input-buffer reuse and collection. C2.1 below now supplies the JSON
+  dispatcher. `domainErrors: []` leaves typed application errors for later C2 work.
 
 Exit verified: compile a primitive string tool, inspect the same catalog in Wasm
 and native packages after deleting sources, reject invalid catalogs/signatures/
@@ -266,24 +266,48 @@ privileged application code. No LLM connection or MCP server is implemented.
 The complete implemented syntax, limits and ownership rules are in the
 [tool contract](architecture.md#tool-contract-v1-and-offline-discovery).
 
-### C2 — Validated invocation and a live application core (next)
+### C2 — Validated invocation and a live application core (in progress)
 
 Deliver a typed invocation path and a headless application whose state survives
 agent/client connections and is shared by all entry points.
 
-- Add a host API to invoke an explicitly published operation by ID with bounded
-  input/output validation. Unknown fields, wrong types, invalid ranges and string
-  limits fail before application effects; i32 number semantics remain explicit.
-- Define stable contract/domain errors separately from host status codes, protocol
-  errors and execution traps. Do not force revision conflicts into host I/O errors.
+#### C2.1 — Checked named JSON invocation (completed)
+
+- Shared runtime/project APIs and `varta invoke <artifact> <name> --params '<JSON>'`
+  dispatch only published tools, without calling `main` or executing native launchers.
+- A bounded closed-object parser rejects duplicate/unknown/missing parameters,
+  wrong types, invalid UTF-8 and non-i32 input before instantiation. Integers use
+  exact plain integer tokens; decimal/exponent and negative-zero forms are rejected.
+- All argument helpers and the selected handler share a fresh store, fuel,
+  memory, deadline and host-call budgets. String copy/retain results are checked;
+  strings returned to the host are bounds/UTF-8 checked and copied immediately.
+- Canonical booleans and the encoded result envelope are validated. JSON output
+  counting avoids oversized temporary serialization buffers. Logs remain separate.
+- Stable invocation codes distinguish request, catalog/code, policy, result,
+  execution and guest-exit failures. Recoverable host statuses and package/host
+  resource authorization keep their previous semantics.
+- Tests cover real Wasm/native invocation without sources, no startup/private
+  dispatch, strict JSON, primitive boundaries, buffer reuse/collection, hostile
+  result values, escaped-output limits, traps, recovery and permission denials.
+
+This completes the dispatcher slice, not the live application milestone. The
+[implemented invocation contract](architecture.md#checked-json-invocation) describes
+its bounds. It has no persistent state, caller identities, remote listener,
+rollback, automatic retry or application-wide queue/accounting yet.
+
+#### Remaining C2 work (next)
+
+- Add typed application/domain errors on top of the stable invocation codes.
+  Keep them separate from host statuses, protocol errors and traps; revision
+  conflicts must not become host I/O errors.
 - Define application identity, startup/shutdown, state ownership, request identity,
   ordering, revision checks, cancellation and retry/idempotency semantics.
 - Validate a proposed initial model: a long-lived trusted application service owns
   state and serializes mutations; fresh bounded Wasm invocations implement commands.
   The application's lifetime is independent of any agent or MCP connection.
   Decide this model explicitly before adding persistent guest memory or concurrency.
-- Make string input/output transfer safe across invocation boundaries and collection.
-  Host-owned state must never retain borrowed guest pointers after a call ends.
+- Preserve the checked string-transfer boundary when introducing persistent
+  host-owned state. State must never retain guest pointers after a call ends.
 - Keep one command/query path for UI/API/MCP callers. Apply authorization and state
   preconditions at that path, then commit a mutation atomically. A stale revision
   yields a typed conflict; transport failure must not trigger an automatic write retry.

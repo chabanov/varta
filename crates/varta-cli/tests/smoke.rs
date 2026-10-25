@@ -706,6 +706,254 @@ impl Drop for RegressionProject {
 }
 
 #[test]
+fn named_json_invocation_works_without_sources_in_wasm_and_native_artifacts() {
+    let project = RegressionProject::new(
+        r#"
+export function preview(title:string,suffix:string,revision:number,confirmed:boolean):string{
+ if(revision!=42){return "WRONG_ARGUMENT_ORDER";}if(!confirmed){return title;}
+ console.log("preview log");return title+suffix;
+}
+export function main():void{varta.process.exit(99);}
+varta.tool({name:"document.previewTitle",description:"Preview a title"},preview);
+"#,
+        serde_json::json!({"process":{"exit":true}}),
+    );
+    assert!(project.command(&["build", "--single"]).status.success());
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let params =
+        serde_json::json!({"suffix":"🦀\0!","confirmed":true,"title":"Привіт","revision":42})
+            .to_string();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        let output = project.command(&[
+            "invoke",
+            artifact,
+            "document.previewTitle",
+            "--params",
+            &params,
+            "--json",
+        ]);
+        assert!(output.status.success(), "{}", combined(&output));
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["status"], "ok");
+        assert_eq!(result["result"]["value"], "Привіт🦀\0!");
+        assert_eq!(
+            result["logs"],
+            serde_json::json!(["varta log: preview log"])
+        );
+    }
+    let plain = project.command(&[
+        "invoke",
+        "dist/app.wasm",
+        "document.previewTitle",
+        "--params",
+        &params,
+    ]);
+    assert!(plain.status.success(), "{}", combined(&plain));
+    let result: serde_json::Value = serde_json::from_slice(&plain.stdout).unwrap();
+    assert_eq!(result["value"], "Привіт🦀\0!");
+    assert!(String::from_utf8_lossy(&plain.stderr).contains("preview log"));
+}
+
+#[test]
+fn invocation_errors_are_structured_and_do_not_execute_main_or_private_exports() {
+    let project = RegressionProject::new(
+        r#"
+export function exit(title:string,n:number):void{varta.process.exit(17);}
+export function privateFn():void{varta.process.exit(18);}
+export function main():void{varta.process.exit(19);}
+varta.tool({name:"exit",description:"Exit"},exit);
+"#,
+        serde_json::json!({"process":{"exit":true}}),
+    );
+    assert!(project.command(&["build"]).status.success());
+    for (name, params, code) in [
+        ("exit", "{}", "invalid_arguments"),
+        ("exit", r#"{"title":"x","n":1.0}"#, "invalid_arguments"),
+        (
+            "exit",
+            r#"{"title":"x","n":2147483648}"#,
+            "invalid_arguments",
+        ),
+        ("exit", r#"{"title":"x","n":1,"n":2}"#, "invalid_arguments"),
+        (
+            "exit",
+            r#"{"title":"x","n":1,"other":0}"#,
+            "invalid_arguments",
+        ),
+        ("exit", "null", "invalid_arguments"),
+        ("exit", "[]", "invalid_arguments"),
+        ("main", "{}", "unknown_tool"),
+        ("privateFn", "{}", "unknown_tool"),
+        ("exit", r#"{"title":"x","n":1}"#, "guest_exit"),
+    ] {
+        let output = project.command(&[
+            "invoke",
+            "dist/app.wasm",
+            name,
+            "--params",
+            params,
+            "--json",
+        ]);
+        assert_eq!(output.status.code(), Some(1), "{}", combined(&output));
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["status"], "failed");
+        assert_eq!(result["code"], code, "{result}");
+        assert!(result.get("result").is_none());
+    }
+    let params = " ".repeat(varta_common::abi::MAX_INPUT_BYTES + 1);
+    let output = project.command(&[
+        "invoke",
+        "dist/app.wasm",
+        "exit",
+        "--params",
+        &params,
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["code"], "invalid_arguments");
+    fs::write(
+        project.0.join("dist/invalid.wasm"),
+        b"\0asm\x01\0\0\0\x01\x01\xff",
+    )
+    .unwrap();
+    let bad = project.command(&["invoke", "dist/invalid.wasm", "exit", "--json"]);
+    assert_eq!(bad.status.code(), Some(1));
+    let result: serde_json::Value = serde_json::from_slice(&bad.stdout).unwrap();
+    assert_eq!(result["code"], "invalid_artifact");
+}
+
+#[test]
+fn json_invocation_checks_concrete_resources_against_package_and_host_scopes() {
+    let project = RegressionProject::new(
+        r#"
+export function read(name:string):string{
+ const r=varta.result.capture(varta.env.get(name));if(!r.ok){return "DENIED";}return r.value;
+}
+export function has(name:string):number{const r=varta.result.capture(varta.env.has(name));return r.status;}
+export function main():void{varta.process.exit(99);}
+varta.tool({name:"read",description:"Read"},read);
+varta.tool({name:"has",description:"Test"},has);
+"#,
+        serde_json::json!({"env":{"get":["VARTA_INVOKE_*"]}}),
+    );
+    assert!(project.command(&["build", "--single"]).status.success());
+    let host = project.0.join("host.json");
+    fs::write(&host,serde_json::json!({"capabilities":[{"id":"env.get","patterns":["VARTA_INVOKE_ALLOWED","OTHER_ALLOWED"]},{"id":"env.has","patterns":["VARTA_INVOKE_ALLOWED"]}]}).to_string()).unwrap();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for (name, expected) in [
+            ("VARTA_INVOKE_ALLOWED", "VISIBLE"),
+            ("VARTA_INVOKE_SECRET", "DENIED"),
+            ("OTHER_ALLOWED", "DENIED"),
+        ] {
+            let params = serde_json::json!({"name":name}).to_string();
+            let output = varta()
+                .current_dir(&project.0)
+                .args([
+                    "invoke",
+                    artifact,
+                    "read",
+                    "--params",
+                    &params,
+                    "--json",
+                    "--policy",
+                    host.to_str().unwrap(),
+                ])
+                .env("VARTA_INVOKE_ALLOWED", "VISIBLE")
+                .env("VARTA_INVOKE_SECRET", "SECRET_NEVER_RETURNED")
+                .env("OTHER_ALLOWED", "SECRET_NEVER_RETURNED")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", combined(&output));
+            let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(result["result"]["value"], expected);
+            assert!(!combined(&output).contains("SECRET_NEVER_RETURNED"));
+        }
+        let has = project.command(&[
+            "invoke",
+            artifact,
+            "has",
+            "--params",
+            r#"{"name":"VARTA_INVOKE_ALLOWED"}"#,
+            "--policy",
+            host.to_str().unwrap(),
+            "--json",
+        ]);
+        assert!(has.status.success(), "{}", combined(&has));
+        let result: serde_json::Value = serde_json::from_slice(&has.stdout).unwrap();
+        assert_eq!(result["result"]["value"], 1);
+    }
+    fs::write(&host, r#"{"capabilities":[]}"#).unwrap();
+    let denied = project.command(&[
+        "invoke",
+        "dist/app.wasm",
+        "read",
+        "--params",
+        r#"{"name":"VARTA_INVOKE_ALLOWED"}"#,
+        "--policy",
+        host.to_str().unwrap(),
+        "--json",
+    ]);
+    let result: serde_json::Value = serde_json::from_slice(&denied.stdout).unwrap();
+    assert_eq!(result["result"]["value"], "DENIED");
+    fs::write(&host, "{").unwrap();
+    assert_eq!(
+        project
+            .command(&[
+                "invoke",
+                "dist/app.wasm",
+                "read",
+                "--params",
+                r#"{"name":"VARTA_INVOKE_ALLOWED"}"#,
+                "--policy",
+                host.to_str().unwrap(),
+                "--json"
+            ])
+            .status
+            .code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn invoked_filesystem_tools_preserve_descriptor_scopes_and_retained_arguments() {
+    let project = RegressionProject::new(
+        r#"
+export function read(path:string,suffix:string):string{
+ const result=varta.result.capture(varta.fs.read(path));if(!result.ok){return "DENIED";}return result.value+suffix;
+}
+export function main():void{}
+varta.tool({name:"read",description:"Read"},read);
+"#,
+        serde_json::json!({}),
+    );
+    let root = project.0.canonicalize().unwrap();
+    fs::create_dir(root.join("data")).unwrap();
+    let allowed = root.join("data/allowed.txt");
+    let outside = root.join("secret.txt");
+    fs::write(&allowed, "FILE_VALUE").unwrap();
+    fs::write(&outside, "SECRET_FILE_VALUE").unwrap();
+    project.set_capabilities(serde_json::json!({"fs":{"read":[root.join("data/*")]}}));
+    assert!(project.command(&["build"]).status.success());
+    for (path, expected) in [(&allowed, "FILE_VALUE🦀"), (&outside, "DENIED")] {
+        let params = serde_json::json!({"path":path,"suffix":"🦀"}).to_string();
+        let output = project.command(&[
+            "invoke",
+            "dist/app.wasm",
+            "read",
+            "--params",
+            &params,
+            "--json",
+        ]);
+        assert!(output.status.success(), "{}", combined(&output));
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["result"]["value"], expected);
+        assert!(!combined(&output).contains("SECRET_FILE_VALUE"));
+    }
+}
+
+#[test]
 fn tool_catalogs_are_inspected_without_sources_or_execution_in_wasm_and_native_packages() {
     let project = RegressionProject::new(
         r#"

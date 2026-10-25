@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 //! Shared checked project pipeline, portable artifacts and reviewable policy metadata.
 mod artifact;
+mod invoke;
 mod modules;
 mod policy;
 pub use artifact::Artifact;
+pub use invoke::{invoke_tool, invoke_tool_with_policy};
 pub use policy::{HostPolicy, authorization, run_with_policy};
 use std::{
     fs,
@@ -14,6 +16,8 @@ use varta_runtime::{RunOutput, VartaRuntime};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
+    #[error(transparent)]
+    Invocation(#[from] varta_common::ToolInvocationError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -28,6 +32,13 @@ pub enum ProjectError {
     Usage(String),
 }
 impl ProjectError {
+    #[must_use]
+    pub fn invocation_code(&self) -> Option<varta_common::ToolInvocationCode> {
+        match self {
+            Self::Invocation(error) => Some(error.code()),
+            _ => None,
+        }
+    }
     #[must_use]
     pub fn diagnostic(&self) -> Option<&varta_common::Diagnostic> {
         match self {
