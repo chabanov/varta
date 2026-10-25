@@ -1,10 +1,15 @@
-use swc_common::{errors::{DiagnosticBuilder, Handler}, source_map::SmallPos, sync::Lrc, FileName, SourceMap, Span};
+use swc_common::{
+    FileName, SourceMap, Span,
+    errors::{DiagnosticBuilder, Handler},
+    source_map::SmallPos,
+    sync::Lrc,
+};
 use swc_ecma_ast::{Expr, Lit, ModuleItem, Stmt};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
+use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, DataSection, ExportKind, ExportSection, Function,
-    FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemorySection, MemoryType, Module,
-    TypeSection, ValType,
+    FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemorySection,
+    MemoryType, Module, TypeSection, ValType,
 };
 
 /// The smallest valid Wasm module.
@@ -17,7 +22,6 @@ struct LabelFrame {
     breakable: bool,
     continuable: bool,
 }
-
 
 #[derive(Clone, Copy, Default)]
 struct HostImports {
@@ -249,7 +253,7 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
     for value in &string_literals {
         if !string_offsets.contains_key(value) {
             string_offsets.insert(value.clone(), offset);
-            offset += value.as_bytes().len() as u32;
+            offset += value.len() as u32;
         }
     }
     if offset > 65_536 {
@@ -329,17 +333,27 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
     types.ty().function([ValType::I32], []);
     types.ty().function([ValType::I32, ValType::I32], []);
     types.ty().function([], [ValType::I32]);
-    types.ty().function([ValType::I32, ValType::I32], [ValType::I32]);
+    types
+        .ty()
+        .function([ValType::I32, ValType::I32], [ValType::I32]);
     types.ty().function([], []);
     for arity in 1.. {
         let Some(type_index) = arity_type_indices.get(&arity).copied() else {
-            if arity > function_parameters.iter().map(|params| params.len()).max().unwrap_or(0) {
+            if arity
+                > function_parameters
+                    .iter()
+                    .map(|params| params.len())
+                    .max()
+                    .unwrap_or(0)
+            {
                 break;
             }
             continue;
         };
         let _ = type_index;
-        types.ty().function(vec![ValType::I32; arity], [ValType::I32]);
+        types
+            .ty()
+            .function(vec![ValType::I32; arity], [ValType::I32]);
     }
     let mut wasm = Module::new();
     wasm.section(&types);
@@ -378,7 +392,11 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
         let _ = index;
     }
     if let Some(index) = host_imports.process_exit {
-        imports.import("varta", "process_exit", wasm_encoder::EntityType::Function(0));
+        imports.import(
+            "varta",
+            "process_exit",
+            wasm_encoder::EntityType::Function(0),
+        );
         let _ = index;
     }
     if let Some(index) = host_imports.net_fetch {
@@ -447,7 +465,11 @@ pub fn compile_typescript(source: &str) -> Result<Vec<u8>, String> {
 
     let mut exports = ExportSection::new();
     exports.export("memory", ExportKind::Memory, 0);
-    exports.export("_start", ExportKind::Func, functions_begin + main_index as u32);
+    exports.export(
+        "_start",
+        ExportKind::Func,
+        functions_begin + main_index as u32,
+    );
     wasm.section(&exports);
 
     // Code.
@@ -522,7 +544,10 @@ fn collect_functions(module: &swc_ecma_ast::Module) -> Result<Vec<&swc_ecma_ast:
 
 fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, String> {
     let cm: Lrc<SourceMap> = Default::default();
-    let fm = cm.new_source_file(FileName::Custom("input.ts".into()).into(), source.to_string());
+    let fm = cm.new_source_file(
+        FileName::Custom("input.ts".into()).into(),
+        source.to_string(),
+    );
     let handler = Handler::with_emitter_writer(Box::new(std::io::sink()), Some(cm.clone()));
 
     let lexer = Lexer::new(
@@ -534,7 +559,11 @@ fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, String> {
 
     let mut parser = Parser::new_from(lexer);
     for error in parser.take_errors() {
-        return Err(format_parse_error(&cm, &fm, &error.into_diagnostic(&handler)));
+        return Err(format_parse_error(
+            &cm,
+            &fm,
+            &error.into_diagnostic(&handler),
+        ));
     }
 
     parser
@@ -542,7 +571,11 @@ fn parse_module(source: &str) -> Result<swc_ecma_ast::Module, String> {
         .map_err(|error| format_parse_error(&cm, &fm, &error.into_diagnostic(&handler)))
 }
 
-fn format_parse_error<'a>(cm: &Lrc<SourceMap>, fm: &Lrc<swc_common::SourceFile>, diagnostic: &DiagnosticBuilder<'a>) -> String {
+fn format_parse_error<'a>(
+    cm: &Lrc<SourceMap>,
+    fm: &Lrc<swc_common::SourceFile>,
+    diagnostic: &DiagnosticBuilder<'a>,
+) -> String {
     let primary = diagnostic.span.primary_span();
     let span = primary.unwrap_or_else(|| Span::new(fm.start_pos, fm.start_pos));
     let location = cm.lookup_char_pos(span.lo());
@@ -559,35 +592,6 @@ fn format_parse_error<'a>(cm: &Lrc<SourceMap>, fm: &Lrc<swc_common::SourceFile>,
         location.col.to_usize() + 1,
         message
     )
-}
-
-fn find_main(module: &swc_ecma_ast::Module) -> Result<&swc_ecma_ast::FnDecl, String> {
-    let mut main = None;
-    for item in &module.body {
-        let function = match item {
-            ModuleItem::Stmt(Stmt::Decl(swc_ecma_ast::Decl::Fn(function))) => Some(function),
-            ModuleItem::ModuleDecl(swc_ecma_ast::ModuleDecl::ExportDecl(export)) => {
-                if let swc_ecma_ast::Decl::Fn(function) = &export.decl {
-                    Some(function)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-
-        if let Some(function) = function {
-            if function.ident.sym == "main" {
-                if function.function.params.is_empty() {
-                    main = Some(function);
-                } else {
-                    return Err("main() must not take parameters in this MVP".into());
-                }
-            }
-        }
-    }
-
-    main.ok_or_else(|| "expected a top-level function named main()".into())
 }
 
 fn compile_block(
@@ -634,7 +638,14 @@ fn compile_block(
                     let index = *variables
                         .get(&name)
                         .ok_or_else(|| format!("unknown variable: {name}"))?;
-                    compile_expr(&assign.right, output, variables, string_offsets, host, functions)?;
+                    compile_expr(
+                        &assign.right,
+                        output,
+                        variables,
+                        string_offsets,
+                        host,
+                        functions,
+                    )?;
                     output.push(Instruction::LocalSet(index));
                     continue;
                 }
@@ -644,10 +655,9 @@ fn compile_block(
                         if let Expr::Call(inner) = &*call.args[0].expr {
                             if is_env_get_call(inner) && inner.args.len() == 1 {
                                 if let Expr::Lit(Lit::Str(value)) = &*inner.args[0].expr {
-                                    let text = value
-                                        .value
-                                        .as_str()
-                                        .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
+                                    let text = value.value.as_str().ok_or_else(|| {
+                                        "only UTF-8 string literals are supported".to_string()
+                                    })?;
                                     let pointer = *string_offsets.get(text).ok_or_else(|| {
                                         "internal error: missing string offset".to_string()
                                     })?;
@@ -663,10 +673,9 @@ fn compile_block(
                         if let Expr::Call(inner) = &*call.args[0].expr {
                             if is_fs_read_call(inner) && inner.args.len() == 1 {
                                 if let Expr::Lit(Lit::Str(value)) = &*inner.args[0].expr {
-                                    let text = value
-                                        .value
-                                        .as_str()
-                                        .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
+                                    let text = value.value.as_str().ok_or_else(|| {
+                                        "only UTF-8 string literals are supported".to_string()
+                                    })?;
                                     let pointer = *string_offsets.get(text).ok_or_else(|| {
                                         "internal error: missing string offset".to_string()
                                     })?;
@@ -681,10 +690,9 @@ fn compile_block(
                         }
                         match &*call.args[0].expr {
                             Expr::Lit(Lit::Str(value)) => {
-                                let text = value
-                                    .value
-                                    .as_str()
-                                    .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
+                                let text = value.value.as_str().ok_or_else(|| {
+                                    "only UTF-8 string literals are supported".to_string()
+                                })?;
                                 let pointer = *string_offsets.get(text).ok_or_else(|| {
                                     "internal error: missing string offset".to_string()
                                 })?;
@@ -693,14 +701,28 @@ fn compile_block(
                                 output.push(Instruction::Call(host.log_string.unwrap()));
                             }
                             _ => {
-                                compile_expr(&call.args[0].expr, output, variables, string_offsets, host, functions)?;
+                                compile_expr(
+                                    &call.args[0].expr,
+                                    output,
+                                    variables,
+                                    string_offsets,
+                                    host,
+                                    functions,
+                                )?;
                                 output.push(Instruction::Call(host.log_i32.unwrap()));
                             }
                         }
                         continue;
                     }
                 }
-                let produces_value = compile_expr(&expr_stmt.expr, output, variables, string_offsets, host, functions)?;
+                let produces_value = compile_expr(
+                    &expr_stmt.expr,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
                 if produces_value {
                     output.push(Instruction::Drop);
                 }
@@ -716,7 +738,15 @@ fn compile_block(
             }
             Stmt::Empty(_) => {}
             Stmt::Block(block) => {
-                compile_block(&block.stmts, output, variables, string_offsets, labels, host, functions)?;
+                compile_block(
+                    &block.stmts,
+                    output,
+                    variables,
+                    string_offsets,
+                    labels,
+                    host,
+                    functions,
+                )?;
             }
             Stmt::Break(_) => {
                 let position = labels
@@ -735,16 +765,39 @@ fn compile_block(
                 output.push(Instruction::Br(index as u32));
             }
             Stmt::If(if_stmt) => {
-                compile_expr(&if_stmt.test, output, variables, string_offsets, host, functions)?;
+                compile_expr(
+                    &if_stmt.test,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
                 output.push(Instruction::If(BlockType::Empty));
                 labels.push(LabelFrame {
                     breakable: false,
                     continuable: false,
                 });
-                compile_block(std::slice::from_ref(&*if_stmt.cons), output, variables, string_offsets, labels, host, functions)?;
+                compile_block(
+                    std::slice::from_ref(&*if_stmt.cons),
+                    output,
+                    variables,
+                    string_offsets,
+                    labels,
+                    host,
+                    functions,
+                )?;
                 if let Some(alternate) = &if_stmt.alt {
                     output.push(Instruction::Else);
-                    compile_block(std::slice::from_ref(&**alternate), output, variables, string_offsets, labels, host, functions)?;
+                    compile_block(
+                        std::slice::from_ref(&**alternate),
+                        output,
+                        variables,
+                        string_offsets,
+                        labels,
+                        host,
+                        functions,
+                    )?;
                 }
                 labels.pop();
                 output.push(Instruction::End);
@@ -760,10 +813,25 @@ fn compile_block(
                 });
                 output.push(Instruction::Block(BlockType::Empty));
                 output.push(Instruction::Loop(BlockType::Empty));
-                compile_expr(&while_stmt.test, output, variables, string_offsets, host, functions)?;
+                compile_expr(
+                    &while_stmt.test,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
                 output.push(Instruction::I32Eqz);
                 output.push(Instruction::BrIf(1));
-                compile_block(std::slice::from_ref(&*while_stmt.body), output, variables, string_offsets, labels, host, functions)?;
+                compile_block(
+                    std::slice::from_ref(&*while_stmt.body),
+                    output,
+                    variables,
+                    string_offsets,
+                    labels,
+                    host,
+                    functions,
+                )?;
                 output.push(Instruction::Br(0));
                 output.push(Instruction::End);
                 output.push(Instruction::End);
@@ -782,7 +850,14 @@ fn compile_block(
                                     .get(&name)
                                     .ok_or_else(|| format!("unknown variable: {name}"))?;
                                 if let Some(init_expr) = &declarator.init {
-                                    compile_expr(init_expr, output, variables, string_offsets, host, functions)?;
+                                    compile_expr(
+                                        init_expr,
+                                        output,
+                                        variables,
+                                        string_offsets,
+                                        host,
+                                        functions,
+                                    )?;
                                     output.push(Instruction::LocalSet(index));
                                 } else {
                                     output.push(Instruction::I32Const(0));
@@ -791,7 +866,14 @@ fn compile_block(
                             }
                         }
                         swc_ecma_ast::VarDeclOrExpr::Expr(expr) => {
-                            let produces_value = compile_expr(expr, output, variables, string_offsets, host, functions)?;
+                            let produces_value = compile_expr(
+                                expr,
+                                output,
+                                variables,
+                                string_offsets,
+                                host,
+                                functions,
+                            )?;
                             if produces_value {
                                 output.push(Instruction::Drop);
                             }
@@ -819,7 +901,15 @@ fn compile_block(
                     continuable: true,
                 });
                 output.push(Instruction::Block(BlockType::Empty));
-                compile_block(std::slice::from_ref(&*for_stmt.body), output, variables, string_offsets, labels, host, functions)?;
+                compile_block(
+                    std::slice::from_ref(&*for_stmt.body),
+                    output,
+                    variables,
+                    string_offsets,
+                    labels,
+                    host,
+                    functions,
+                )?;
                 output.push(Instruction::End);
                 labels.pop();
                 if let Some(update) = &for_stmt.update {
@@ -838,10 +928,24 @@ fn compile_block(
                         let index = *variables
                             .get(&name)
                             .ok_or_else(|| format!("unknown variable: {name}"))?;
-                        compile_expr(&assign.right, output, variables, string_offsets, host, functions)?;
+                        compile_expr(
+                            &assign.right,
+                            output,
+                            variables,
+                            string_offsets,
+                            host,
+                            functions,
+                        )?;
                         output.push(Instruction::LocalSet(index));
                     } else {
-                        let produces_value = compile_expr(update, output, variables, string_offsets, host, functions)?;
+                        let produces_value = compile_expr(
+                            update,
+                            output,
+                            variables,
+                            string_offsets,
+                            host,
+                            functions,
+                        )?;
                         if produces_value {
                             output.push(Instruction::Drop);
                         }
@@ -856,7 +960,14 @@ fn compile_block(
             Stmt::Switch(switch_stmt) => {
                 let discriminant = variables.len() as u32;
                 let matched = variables.len() as u32 + 1;
-                compile_expr(&switch_stmt.discriminant, output, variables, string_offsets, host, functions)?;
+                compile_expr(
+                    &switch_stmt.discriminant,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
                 output.push(Instruction::LocalSet(discriminant));
                 output.push(Instruction::I32Const(0));
                 output.push(Instruction::LocalSet(matched));
@@ -910,7 +1021,15 @@ fn compile_switch_cases(
         output.push(Instruction::LocalGet(matched));
         output.push(Instruction::I32Eqz);
         output.push(Instruction::If(BlockType::Empty));
-        compile_block(&case.cons, output, variables, string_offsets, labels, host, functions)?;
+        compile_block(
+            &case.cons,
+            output,
+            variables,
+            string_offsets,
+            labels,
+            host,
+            functions,
+        )?;
         output.push(Instruction::End);
         return Ok(());
     };
@@ -922,12 +1041,29 @@ fn compile_switch_cases(
     output.push(Instruction::I32Or);
     output.push(Instruction::LocalTee(matched));
     output.push(Instruction::If(BlockType::Empty));
-    compile_block(&case.cons, output, variables, string_offsets, labels, host, functions)?;
+    compile_block(
+        &case.cons,
+        output,
+        variables,
+        string_offsets,
+        labels,
+        host,
+        functions,
+    )?;
     output.push(Instruction::End);
-    compile_switch_cases(rest, output, variables, string_offsets, labels, discriminant, matched, host, functions)?;
+    compile_switch_cases(
+        rest,
+        output,
+        variables,
+        string_offsets,
+        labels,
+        discriminant,
+        matched,
+        host,
+        functions,
+    )?;
     Ok(())
 }
-
 
 fn compile_expr(
     expr: &Expr,
@@ -956,56 +1092,103 @@ fn compile_expr(
                 Err(format!("unknown identifier: {}", ident.sym))
             }
         }
-        Expr::Bin(bin) => {
-            match bin.op {
-                swc_ecma_ast::BinaryOp::LogicalAnd => {
-                    compile_expr(&bin.left, output, variables, string_offsets, host, functions)?;
-                    let temp = variables.len() as u32 + 2;
-                    output.push(Instruction::LocalTee(temp));
-                    output.push(Instruction::If(BlockType::Result(ValType::I32)));
-                    compile_expr(&bin.right, output, variables, string_offsets, host, functions)?;
-                    output.push(Instruction::Else);
-                    output.push(Instruction::LocalGet(temp));
-                    output.push(Instruction::End);
-                    Ok(true)
-                }
-                swc_ecma_ast::BinaryOp::LogicalOr => {
-                    compile_expr(&bin.left, output, variables, string_offsets, host, functions)?;
-                    let temp = variables.len() as u32 + 2;
-                    output.push(Instruction::LocalTee(temp));
-                    output.push(Instruction::If(BlockType::Result(ValType::I32)));
-                    output.push(Instruction::LocalGet(temp));
-                    output.push(Instruction::Else);
-                    compile_expr(&bin.right, output, variables, string_offsets, host, functions)?;
-                    output.push(Instruction::End);
-                    Ok(true)
-                }
-                _ => {
-                    compile_expr(&bin.left, output, variables, string_offsets, host, functions)?;
-                    compile_expr(&bin.right, output, variables, string_offsets, host, functions)?;
-                    match bin.op {
-                        swc_ecma_ast::BinaryOp::Add => output.push(Instruction::I32Add),
-                        swc_ecma_ast::BinaryOp::Sub => output.push(Instruction::I32Sub),
-                        swc_ecma_ast::BinaryOp::Mul => output.push(Instruction::I32Mul),
-                        swc_ecma_ast::BinaryOp::Div => output.push(Instruction::I32DivS),
-                        swc_ecma_ast::BinaryOp::Mod => output.push(Instruction::I32RemS),
-                        swc_ecma_ast::BinaryOp::Lt => output.push(Instruction::I32LtS),
-                        swc_ecma_ast::BinaryOp::LtEq => output.push(Instruction::I32LeS),
-                        swc_ecma_ast::BinaryOp::Gt => output.push(Instruction::I32GtS),
-                        swc_ecma_ast::BinaryOp::GtEq => output.push(Instruction::I32GeS),
-                        swc_ecma_ast::BinaryOp::EqEq => output.push(Instruction::I32Eq),
-                        swc_ecma_ast::BinaryOp::EqEqEq => output.push(Instruction::I32Eq),
-                        swc_ecma_ast::BinaryOp::NotEq => output.push(Instruction::I32Ne),
-                        swc_ecma_ast::BinaryOp::NotEqEq => output.push(Instruction::I32Ne),
-                        _ => return Err("unsupported binary operator".into()),
-                    };
-                    Ok(true)
-                }
+        Expr::Bin(bin) => match bin.op {
+            swc_ecma_ast::BinaryOp::LogicalAnd => {
+                compile_expr(
+                    &bin.left,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
+                let temp = variables.len() as u32 + 2;
+                output.push(Instruction::LocalTee(temp));
+                output.push(Instruction::If(BlockType::Result(ValType::I32)));
+                compile_expr(
+                    &bin.right,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
+                output.push(Instruction::Else);
+                output.push(Instruction::LocalGet(temp));
+                output.push(Instruction::End);
+                Ok(true)
             }
-        }
+            swc_ecma_ast::BinaryOp::LogicalOr => {
+                compile_expr(
+                    &bin.left,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
+                let temp = variables.len() as u32 + 2;
+                output.push(Instruction::LocalTee(temp));
+                output.push(Instruction::If(BlockType::Result(ValType::I32)));
+                output.push(Instruction::LocalGet(temp));
+                output.push(Instruction::Else);
+                compile_expr(
+                    &bin.right,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
+                output.push(Instruction::End);
+                Ok(true)
+            }
+            _ => {
+                compile_expr(
+                    &bin.left,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
+                compile_expr(
+                    &bin.right,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
+                match bin.op {
+                    swc_ecma_ast::BinaryOp::Add => output.push(Instruction::I32Add),
+                    swc_ecma_ast::BinaryOp::Sub => output.push(Instruction::I32Sub),
+                    swc_ecma_ast::BinaryOp::Mul => output.push(Instruction::I32Mul),
+                    swc_ecma_ast::BinaryOp::Div => output.push(Instruction::I32DivS),
+                    swc_ecma_ast::BinaryOp::Mod => output.push(Instruction::I32RemS),
+                    swc_ecma_ast::BinaryOp::Lt => output.push(Instruction::I32LtS),
+                    swc_ecma_ast::BinaryOp::LtEq => output.push(Instruction::I32LeS),
+                    swc_ecma_ast::BinaryOp::Gt => output.push(Instruction::I32GtS),
+                    swc_ecma_ast::BinaryOp::GtEq => output.push(Instruction::I32GeS),
+                    swc_ecma_ast::BinaryOp::EqEq => output.push(Instruction::I32Eq),
+                    swc_ecma_ast::BinaryOp::EqEqEq => output.push(Instruction::I32Eq),
+                    swc_ecma_ast::BinaryOp::NotEq => output.push(Instruction::I32Ne),
+                    swc_ecma_ast::BinaryOp::NotEqEq => output.push(Instruction::I32Ne),
+                    _ => return Err("unsupported binary operator".into()),
+                };
+                Ok(true)
+            }
+        },
         Expr::Unary(unary) if matches!(unary.op, swc_ecma_ast::UnaryOp::Minus) => {
             output.push(Instruction::I32Const(0));
-            compile_expr(&unary.arg, output, variables, string_offsets, host, functions)?;
+            compile_expr(
+                &unary.arg,
+                output,
+                variables,
+                string_offsets,
+                host,
+                functions,
+            )?;
             output.push(Instruction::I32Sub);
             Ok(true)
         }
@@ -1022,7 +1205,14 @@ fn compile_expr(
                             ));
                         }
                         for arg in &call.args {
-                            compile_expr(&arg.expr, output, variables, string_offsets, host, functions)?;
+                            compile_expr(
+                                &arg.expr,
+                                output,
+                                variables,
+                                string_offsets,
+                                host,
+                                functions,
+                            )?;
                         }
                         output.push(Instruction::Call(function_index as u32));
                         return Ok(true);
@@ -1041,13 +1231,12 @@ fn compile_expr(
                 }
                 match &*call.args[0].expr {
                     Expr::Lit(Lit::Str(value)) => {
-                        let text = value
-                            .value
-                            .as_str()
-                            .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
-                        let pointer = *string_offsets.get(text).ok_or_else(|| {
-                            "internal error: missing string offset".to_string()
+                        let text = value.value.as_str().ok_or_else(|| {
+                            "only UTF-8 string literals are supported".to_string()
                         })?;
+                        let pointer = *string_offsets
+                            .get(text)
+                            .ok_or_else(|| "internal error: missing string offset".to_string())?;
                         output.push(Instruction::I32Const(pointer as i32));
                         output.push(Instruction::I32Const(text.len() as i32));
                         output.push(Instruction::Call(host.env_has.unwrap()));
@@ -1061,13 +1250,12 @@ fn compile_expr(
                 }
                 match &*call.args[0].expr {
                     Expr::Lit(Lit::Str(value)) => {
-                        let text = value
-                            .value
-                            .as_str()
-                            .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
-                        let pointer = *string_offsets.get(text).ok_or_else(|| {
-                            "internal error: missing string offset".to_string()
+                        let text = value.value.as_str().ok_or_else(|| {
+                            "only UTF-8 string literals are supported".to_string()
                         })?;
+                        let pointer = *string_offsets
+                            .get(text)
+                            .ok_or_else(|| "internal error: missing string offset".to_string())?;
                         output.push(Instruction::I32Const(pointer as i32));
                         output.push(Instruction::I32Const(text.len() as i32));
                         output.push(Instruction::Call(host.env_print.unwrap()));
@@ -1081,13 +1269,12 @@ fn compile_expr(
                 }
                 match &*call.args[0].expr {
                     Expr::Lit(Lit::Str(value)) => {
-                        let text = value
-                            .value
-                            .as_str()
-                            .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
-                        let pointer = *string_offsets.get(text).ok_or_else(|| {
-                            "internal error: missing string offset".to_string()
+                        let text = value.value.as_str().ok_or_else(|| {
+                            "only UTF-8 string literals are supported".to_string()
                         })?;
+                        let pointer = *string_offsets
+                            .get(text)
+                            .ok_or_else(|| "internal error: missing string offset".to_string())?;
                         output.push(Instruction::I32Const(pointer as i32));
                         output.push(Instruction::I32Const(text.len() as i32));
                         output.push(Instruction::Call(host.fs_print.unwrap()));
@@ -1099,7 +1286,14 @@ fn compile_expr(
                 if call.args.len() != 1 {
                     return Err("varta.process.exit() expects one number argument".into());
                 }
-                compile_expr(&call.args[0].expr, output, variables, string_offsets, host, functions)?;
+                compile_expr(
+                    &call.args[0].expr,
+                    output,
+                    variables,
+                    string_offsets,
+                    host,
+                    functions,
+                )?;
                 output.push(Instruction::Call(host.process_exit.unwrap()));
                 Ok(false)
             } else if is_net_fetch_call(call) {
@@ -1108,13 +1302,12 @@ fn compile_expr(
                 }
                 match &*call.args[0].expr {
                     Expr::Lit(Lit::Str(value)) => {
-                        let text = value
-                            .value
-                            .as_str()
-                            .ok_or_else(|| "only UTF-8 string literals are supported".to_string())?;
-                        let pointer = *string_offsets.get(text).ok_or_else(|| {
-                            "internal error: missing string offset".to_string()
+                        let text = value.value.as_str().ok_or_else(|| {
+                            "only UTF-8 string literals are supported".to_string()
                         })?;
+                        let pointer = *string_offsets
+                            .get(text)
+                            .ok_or_else(|| "internal error: missing string offset".to_string())?;
                         output.push(Instruction::I32Const(pointer as i32));
                         output.push(Instruction::I32Const(text.len() as i32));
                         output.push(Instruction::Call(host.net_fetch.unwrap()));
@@ -1126,7 +1319,14 @@ fn compile_expr(
                 Err("unsupported call expression".into())
             }
         }
-        Expr::Paren(paren) => compile_expr(&paren.expr, output, variables, string_offsets, host, functions),
+        Expr::Paren(paren) => compile_expr(
+            &paren.expr,
+            output,
+            variables,
+            string_offsets,
+            host,
+            functions,
+        ),
         _ => Err("unsupported expression".into()),
     }
 }
@@ -1284,7 +1484,6 @@ fn collect_variables(statements: &[Stmt]) -> Vec<String> {
     names
 }
 
-
 fn is_env_print_call(call: &swc_ecma_ast::CallExpr) -> bool {
     let swc_ecma_ast::Callee::Expr(callee) = &call.callee else {
         return false;
@@ -1430,7 +1629,6 @@ fn binding_name(pat: &swc_ecma_ast::Pat) -> Option<String> {
     }
 }
 
-
 fn is_supported_log_call(call: &swc_ecma_ast::CallExpr) -> bool {
     match &call.callee {
         swc_ecma_ast::Callee::Expr(expr) => match &**expr {
@@ -1440,7 +1638,8 @@ fn is_supported_log_call(call: &swc_ecma_ast::CallExpr) -> bool {
                     swc_ecma_ast::MemberProp::Ident(ident) => ident.sym == "log",
                     _ => false,
                 };
-                let object_matches = matches!(&*member.obj, Expr::Ident(object) if object.sym == "console");
+                let object_matches =
+                    matches!(&*member.obj, Expr::Ident(object) if object.sym == "console");
                 property_matches && object_matches
             }
             _ => false,
@@ -1494,7 +1693,6 @@ fn is_env_has_call(call: &swc_ecma_ast::CallExpr) -> bool {
     );
     property_ok && object_ok
 }
-
 
 fn function_parameter_names(function: &swc_ecma_ast::FnDecl) -> Vec<String> {
     function

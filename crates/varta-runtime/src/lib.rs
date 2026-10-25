@@ -1,16 +1,8 @@
 use wasmtime::{Engine, Store};
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RuntimeContext {
     pub capabilities: Vec<varta_common::CapabilityGrant>,
-}
-
-impl Default for RuntimeContext {
-    fn default() -> Self {
-        Self {
-            capabilities: Vec::new(),
-        }
-    }
 }
 
 impl RuntimeContext {
@@ -27,10 +19,10 @@ impl RuntimeContext {
             }
             match &grant.value {
                 varta_common::CapabilityValue::Boolean(true) => return true,
-                varta_common::CapabilityValue::PathGlobs(patterns) => {
-                    if patterns.iter().any(|pattern| glob_match(pattern, name)) {
-                        return true;
-                    }
+                varta_common::CapabilityValue::PathGlobs(patterns)
+                    if patterns.iter().any(|pattern| glob_match(pattern, name)) =>
+                {
+                    return true;
                 }
                 _ => {}
             }
@@ -43,10 +35,10 @@ impl RuntimeContext {
             if grant.id != "fs" && !grant.id.starts_with("fs.") {
                 continue;
             }
-            if let varta_common::CapabilityValue::PathGlobs(patterns) = &grant.value {
-                if patterns.iter().any(|pattern| glob_match(pattern, path)) {
-                    return true;
-                }
+            if let varta_common::CapabilityValue::PathGlobs(patterns) = &grant.value
+                && patterns.iter().any(|pattern| glob_match(pattern, path))
+            {
+                return true;
             }
         }
         false
@@ -72,6 +64,12 @@ impl RuntimeContext {
 
 pub struct VartaRuntime {
     engine: Engine,
+}
+
+impl Default for VartaRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VartaRuntime {
@@ -125,13 +123,17 @@ impl VartaRuntime {
         linker.func_wrap("varta", "log_i32", |value: i32| {
             println!("varta log: {value}");
         })?;
-        linker.func_wrap("varta", "process_exit", |caller: wasmtime::Caller<'_, RuntimeContext>, code: i32| {
-            if !caller.data().has_capability_namespace("process") {
-                println!("varta log: <capability denied: process>");
-                return;
-            }
-            std::process::exit(code);
-        })?;
+        linker.func_wrap(
+            "varta",
+            "process_exit",
+            |caller: wasmtime::Caller<'_, RuntimeContext>, code: i32| {
+                if !caller.data().has_capability_namespace("process") {
+                    println!("varta log: <capability denied: process>");
+                    return;
+                }
+                std::process::exit(code);
+            },
+        )?;
         linker.func_wrap(
             "varta",
             "log_string",
@@ -242,7 +244,9 @@ impl VartaRuntime {
                     return 0;
                 }
                 let Ok(value) = std::env::var(name) else {
-                    let Some(wasmtime::Extern::Global(env_len)) = caller.get_export("env_result_len") else {
+                    let Some(wasmtime::Extern::Global(env_len)) =
+                        caller.get_export("env_result_len")
+                    else {
                         return 0;
                     };
                     let _ = env_len.set(&mut caller, wasmtime::Val::I32(0));
@@ -252,11 +256,16 @@ impl VartaRuntime {
                 let Some(wasmtime::Extern::Global(heap)) = caller.get_export("heap") else {
                     return 0;
                 };
-                let Some(wasmtime::Extern::Global(env_len)) = caller.get_export("env_result_len") else {
+                let Some(wasmtime::Extern::Global(env_len)) = caller.get_export("env_result_len")
+                else {
                     return 0;
                 };
                 let current_heap = heap.get(&mut caller).i32().unwrap_or(8192);
-                let base = if current_heap == 0 { 8192 } else { current_heap };
+                let base = if current_heap == 0 {
+                    8192
+                } else {
+                    current_heap
+                };
                 let end = base + value.len() as i32;
                 let size = memory.data_size(&caller) as i32;
                 if end > size {
@@ -336,7 +345,9 @@ impl VartaRuntime {
                 let Some(wasmtime::Extern::Global(heap)) = caller.get_export("heap") else {
                     return 0;
                 };
-                let Some(wasmtime::Extern::Global(result_len)) = caller.get_export("env_result_len") else {
+                let Some(wasmtime::Extern::Global(result_len)) =
+                    caller.get_export("env_result_len")
+                else {
                     return 0;
                 };
                 let current_heap = heap.get(&mut caller).i32().unwrap_or(0);
@@ -356,7 +367,10 @@ impl VartaRuntime {
                 if memory.write(&mut caller, base as usize, &contents).is_err() {
                     return 0;
                 }
-                let _ = heap.set(&mut caller, wasmtime::Val::I32(base + contents.len() as i32));
+                let _ = heap.set(
+                    &mut caller,
+                    wasmtime::Val::I32(base + contents.len() as i32),
+                );
                 let _ = result_len.set(&mut caller, wasmtime::Val::I32(contents.len() as i32));
                 base
             },
@@ -394,29 +408,6 @@ impl VartaRuntime {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runs_minimal_wasm_module() {
-        let runtime = VartaRuntime::new();
-        let module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-        runtime.run_wasm_bytes(&module, &[]).unwrap();
-        runtime.run_app_bytes(&module, false, &[]).unwrap();
-    }
-
-    #[test]
-    fn validates_string_module() {
-        let source = "export function main(): void { console.log(\"hello\"); }";
-        let bytes = varta_compiler::compile_typescript(source).unwrap();
-        let engine = wasmtime::Engine::default();
-        let result = wasmtime::Module::new(&engine, &bytes);
-        assert!(result.is_ok(), "module validation failed: {result:?}");
-    }
-}
-
 
 fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
@@ -498,23 +489,23 @@ fn fetch_http_status(url: &str) -> i32 {
 }
 
 #[cfg(test)]
-mod debug_bytes2 {
-    #[test]
-    fn print_func_bytes() {
-        let source = r#"
-function helper(): void {
-  console.log(7);
-}
+mod tests {
+    use super::*;
 
-export function main(): void {
-  helper();
-  console.log(42);
-}
-"#;
+    #[test]
+    fn runs_minimal_wasm_module() {
+        let runtime = VartaRuntime::new();
+        let module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        runtime.run_wasm_bytes(&module, &[]).unwrap();
+        runtime.run_app_bytes(&module, false, &[]).unwrap();
+    }
+
+    #[test]
+    fn validates_string_module() {
+        let source = "export function main(): void { console.log(\"hello\"); }";
         let bytes = varta_compiler::compile_typescript(source).unwrap();
-        for byte in &bytes { print!("{byte:02x} "); }
-        println!();
-        let result = wasmtime::Module::new(&wasmtime::Engine::default(), &bytes);
-        assert!(result.is_ok(), "{result:?}");
+        let engine = wasmtime::Engine::default();
+        let result = wasmtime::Module::new(&engine, &bytes);
+        assert!(result.is_ok(), "module validation failed: {result:?}");
     }
 }

@@ -51,7 +51,9 @@ fn default_policy() -> String {
 impl VartaConfig {
     pub fn validate(&self) -> Result<()> {
         if self.entry.trim().is_empty() {
-            return Err(VartaError::InvalidManifest("entry must not be empty".into()));
+            return Err(VartaError::InvalidManifest(
+                "entry must not be empty".into(),
+            ));
         }
         if !matches!(self.target.as_str(), "wasm" | "native") {
             return Err(VartaError::InvalidManifest(format!(

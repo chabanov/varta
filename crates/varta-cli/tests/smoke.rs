@@ -54,9 +54,7 @@ fn generated_project_smoke_test() {
         .current_dir(&project)
         .arg("build")
         .status()
-        .expect("failed to run varta build")
-        .success();
-
+        .expect("failed to run varta build");
     let wasm = project.join("dist").join("app.wasm");
     assert!(wasm.exists(), "missing {}", wasm.display());
 
@@ -155,12 +153,12 @@ fn single_binary_smoke_test() {
     )
     .unwrap();
 
-    let init_type = fs::write(
+    fs::write(
         project.join("varta.d.ts"),
         r#"declare const varta: { time: { now(): number } };
 "#,
-    );
-    assert!(init_type.is_ok());
+    )
+    .unwrap();
 
     let check = varta()
         .current_dir(&project)
@@ -184,10 +182,107 @@ fn single_binary_smoke_test() {
         .current_dir(&project)
         .output()
         .expect("failed to run single binary");
-    assert!(run.status.success(), "single binary failed: {}", combined(&run));
+    assert!(
+        run.status.success(),
+        "single binary failed: {}",
+        combined(&run)
+    );
     let output = combined(&run);
     assert!(output.contains("varta log: hello from varta"));
-    assert!(output.lines().any(|line| line.starts_with("varta log: ") && line != "varta log: hello from varta"));
+    assert!(
+        output.lines().any(|line| {
+            line.starts_with("varta log: ") && line != "varta log: hello from varta"
+        })
+    );
+
+    let _ = fs::remove_dir_all(&project);
+}
+
+#[test]
+fn manifest_validation_smoke_test() {
+    let project = temp_project();
+    fs::create_dir_all(project.join("src")).unwrap();
+
+    fs::write(
+        project.join("varta.config.json"),
+        r#"{
+  "entry": "src/main.ts",
+  "target": "native",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": {
+    "time": {
+      "now": true
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("src").join("main.ts"),
+        r#"export function main(): void {
+  console.log(varta.time.now());
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("varta.d.ts"),
+        r#"declare const varta: { time: { now(): number } };
+"#,
+    )
+    .unwrap();
+
+    let check = varta()
+        .current_dir(&project)
+        .arg("check")
+        .output()
+        .expect("failed to run varta check");
+    assert!(check.status.success(), "check failed: {}", combined(&check));
+
+    let build = varta()
+        .current_dir(&project)
+        .arg("build")
+        .output()
+        .expect("failed to run varta build");
+    assert!(build.status.success(), "build failed: {}", combined(&build));
+
+    let validate = varta()
+        .current_dir(&project)
+        .arg("validate")
+        .arg("dist/app.wasm")
+        .output()
+        .expect("failed to run varta validate");
+    assert!(
+        validate.status.success(),
+        "validate failed: {}",
+        combined(&validate)
+    );
+    assert!(
+        combined(&validate).contains("varta validate: ok (dist/app.wasm)"),
+        "expected validation success, got: {}",
+        combined(&validate)
+    );
+
+    let inspect = varta()
+        .current_dir(&project)
+        .arg("inspect")
+        .arg("dist/app.wasm")
+        .arg("--json")
+        .output()
+        .expect("failed to run varta inspect");
+    assert!(
+        inspect.status.success(),
+        "inspect failed: {}",
+        combined(&inspect)
+    );
+    assert!(
+        combined(&inspect).contains("\"precompiled\":false"),
+        "expected raw wasm artifact metadata, got: {}",
+        combined(&inspect)
+    );
 
     let _ = fs::remove_dir_all(&project);
 }
