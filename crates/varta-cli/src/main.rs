@@ -358,7 +358,7 @@ fn build_project(config_path: &str, single: bool) -> Result<(), VartaError> {
             }),
             varta_common::CapabilityValue::UrlGlobs(urls) => serde_json::json!({
                 "id": grant.id,
-                "urls": urls,
+                "patterns": urls,
             }),
             varta_common::CapabilityValue::Boolean(enabled) => serde_json::json!({
                 "id": grant.id,

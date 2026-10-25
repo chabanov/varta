@@ -295,7 +295,7 @@ impl VartaRuntime {
             "varta",
             "env_has",
             |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| -> i32 {
-                if ptr < 0 || len < 0 {
+                if ptr < 0 || len < 0 || len as usize > MAX_HOST_INPUT_BYTES {
                     return 0;
                 }
                 let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
@@ -650,7 +650,10 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 fn fetch_http_body(url: &str) -> Option<Vec<u8>> {
-    let rest = url.strip_prefix("http://")?;
+    let Some(rest) = url.strip_prefix("http://") else {
+        println!("varta log: <unsupported URL scheme: only http:// is supported>");
+        return None;
+    };
     let (host_part, raw_path) = match rest.split_once('/') {
         Some((host, path)) => (host, format!("/{path}")),
         None => (rest, "/".to_string()),
@@ -708,6 +711,7 @@ fn fetch_http_body(url: &str) -> Option<Vec<u8>> {
 
 fn fetch_http_status(url: &str) -> i32 {
     let Some(rest) = url.strip_prefix("http://") else {
+        println!("varta log: <unsupported URL scheme: only http:// is supported>");
         return -1;
     };
     let (host_part, raw_path) = match rest.split_once('/') {
