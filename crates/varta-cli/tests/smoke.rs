@@ -624,3 +624,62 @@ declare const varta: {
 
     let _ = fs::remove_dir_all(&project);
 }
+
+#[test]
+fn cross_operation_capability_denial_smoke_test() {
+    let project = temp_project();
+    fs::create_dir_all(project.join("src")).unwrap();
+
+    fs::write(
+        project.join("varta.config.json"),
+        r#"{
+  "entry": "src/main.ts",
+  "target": "native",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": {
+    "fs": {
+      "read": ["/data/**"]
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("src").join("main.ts"),
+        r#"export function main(): void {
+  varta.fs.print("/data/hello.txt");
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("varta.d.ts"),
+        r#"declare const varta: { fs: { print(path: string): void; read(path: string): string } };
+"#,
+    )
+    .unwrap();
+
+    let check = varta()
+        .current_dir(&project)
+        .arg("check")
+        .output()
+        .expect("failed to run varta check");
+    assert!(check.status.success(), "check failed: {}", combined(&check));
+
+    let dev = varta()
+        .current_dir(&project)
+        .arg("dev")
+        .output()
+        .expect("failed to run varta dev");
+    assert!(dev.status.success(), "dev failed: {}", combined(&dev));
+    assert!(
+        combined(&dev).contains("varta log: <capability denied: fs.print>"),
+        "expected cross-operation denial, got: {}",
+        combined(&dev)
+    );
+
+    let _ = fs::remove_dir_all(&project);
+}

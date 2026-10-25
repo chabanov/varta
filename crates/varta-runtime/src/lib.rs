@@ -1,20 +1,33 @@
 use wasmtime::{Engine, Store};
 
+/// Maximum bytes accepted from a Wasm guest for an input pointer/length pair.
+const MAX_HOST_INPUT_BYTES: usize = 64 * 1024;
+/// Maximum bytes a host function may write into guest memory during one call.
+const MAX_HOST_RESULT_BYTES: usize = 1_048_576;
+/// Maximum total linear memory size maintained by host calls.
+const MAX_RUNTIME_MEMORY_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Clone, Default)]
 pub struct RuntimeContext {
     pub capabilities: Vec<varta_common::CapabilityGrant>,
 }
 
 impl RuntimeContext {
-    pub fn has_capability_namespace(&self, namespace: &str) -> bool {
-        self.capabilities
-            .iter()
-            .any(|grant| grant.id.split('.').next() == Some(namespace))
+    pub fn has_capability(&self, capability_id: &str) -> bool {
+        self.capabilities.iter().any(|grant| {
+            grant.id == capability_id
+                && match &grant.value {
+                    varta_common::CapabilityValue::Boolean(enabled) => *enabled,
+                    varta_common::CapabilityValue::PathGlobs(patterns) => !patterns.is_empty(),
+                    varta_common::CapabilityValue::UrlGlobs(patterns) => !patterns.is_empty(),
+                    varta_common::CapabilityValue::Ports(ports) => !ports.is_empty(),
+                }
+        })
     }
 
     pub fn allows_env_access(&self, capability_id: &str, name: &str) -> bool {
         for grant in &self.capabilities {
-            if grant.id != capability_id && !grant.id.starts_with("env.") {
+            if grant.id != capability_id {
                 continue;
             }
             match &grant.value {
@@ -31,12 +44,17 @@ impl RuntimeContext {
     }
 
     pub fn allows_fs_read(&self, path: &str) -> bool {
+        let Some(normalized) = Self::canonical_fs_path(path) else {
+            return false;
+        };
         for grant in &self.capabilities {
-            if grant.id != "fs" && !grant.id.starts_with("fs.") {
+            if grant.id != "fs.read" {
                 continue;
             }
             if let varta_common::CapabilityValue::PathGlobs(patterns) = &grant.value
-                && patterns.iter().any(|pattern| glob_match(pattern, path))
+                && patterns
+                    .iter()
+                    .any(|pattern| glob_match(&Self::canonical_fs_pattern(pattern), &normalized))
             {
                 return true;
             }
@@ -44,9 +62,110 @@ impl RuntimeContext {
         false
     }
 
+    pub fn allows_fs_print(&self, path: &str) -> bool {
+        let Some(normalized) = Self::canonical_fs_path(path) else {
+            return false;
+        };
+        for grant in &self.capabilities {
+            if grant.id != "fs.print" {
+                continue;
+            }
+            if let varta_common::CapabilityValue::PathGlobs(patterns) = &grant.value
+                && patterns
+                    .iter()
+                    .any(|pattern| glob_match(&Self::canonical_fs_pattern(pattern), &normalized))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Canonicalize the non-wildcard part of a capability pattern so that
+    /// grants match the canonical input path rather than its undeclared alias.
+    fn canonical_fs_pattern(pattern: &str) -> String {
+        use std::path::Path;
+
+        let Some(wildcard) = pattern.find(['*', '?']) else {
+            return Self::canonical_fs_path(pattern).unwrap_or_else(|| pattern.to_string());
+        };
+
+        let prefix = &pattern[..wildcard];
+        let suffix = &pattern[wildcard..];
+        let anchor = prefix.trim_end_matches('/');
+        if anchor.is_empty() {
+            return pattern.to_string();
+        }
+
+        if let Ok(base) = Path::new(anchor).canonicalize() {
+            return format!("{}{}", base.to_string_lossy(), suffix);
+        }
+
+        if let Some(parent) = Path::new(anchor).parent()
+            && parent.exists()
+            && let Ok(base) = parent.canonicalize()
+        {
+            let name = Path::new(anchor)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            return format!("{}{}{}", base.to_string_lossy(), name, suffix);
+        }
+
+        pattern.to_string()
+    }
+
+    /// Resolve a guest path to its canonical form before capability matching.
+    ///
+    /// Traversal is rejected outright, existing paths are followed through
+    /// `std::fs::canonicalize` (including symlink targets), and missing
+    /// final path components fall back to their existing parent or to the
+    /// lexically validated input only when no `..` traversal was present.
+    fn canonical_fs_path(path: &str) -> Option<String> {
+        use std::path::{Component, Path};
+
+        let input = Path::new(path);
+        for component in input.components() {
+            if matches!(component, Component::ParentDir) {
+                return None;
+            }
+        }
+
+        if let Ok(canonical) = input.canonicalize() {
+            return Some(canonical.to_string_lossy().into_owned());
+        }
+
+        if let (Some(parent), Some(name)) = (input.parent(), input.file_name())
+            && !parent.as_os_str().is_empty()
+            && parent.exists()
+            && let Ok(base) = parent.canonicalize()
+        {
+            return Some(base.join(name).to_string_lossy().into_owned());
+        }
+
+        Some(path.to_string())
+    }
+
     pub fn allows_net_fetch(&self, url: &str) -> bool {
         for grant in &self.capabilities {
-            if grant.id != "net.fetch" && !grant.id.starts_with("net.") {
+            if grant.id != "net.fetch" {
+                continue;
+            }
+            let patterns = match &grant.value {
+                varta_common::CapabilityValue::PathGlobs(patterns)
+                | varta_common::CapabilityValue::UrlGlobs(patterns) => patterns,
+                _ => continue,
+            };
+            if patterns.iter().any(|pattern| glob_match(pattern, url)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn allows_net_get(&self, url: &str) -> bool {
+        for grant in &self.capabilities {
+            if grant.id != "net.get" {
                 continue;
             }
             let patterns = match &grant.value {
@@ -127,7 +246,7 @@ impl VartaRuntime {
             "varta",
             "process_exit",
             |caller: wasmtime::Caller<'_, RuntimeContext>, code: i32| {
-                if !caller.data().has_capability_namespace("process") {
+                if !caller.data().has_capability("process.exit") {
                     println!("varta log: <capability denied: process>");
                     return;
                 }
@@ -138,7 +257,7 @@ impl VartaRuntime {
             "varta",
             "log_string",
             |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
-                if ptr < 0 || len < 0 {
+                if ptr < 0 || len < 0 || len as usize > MAX_HOST_INPUT_BYTES {
                     println!("varta log: <invalid string pointer>");
                     return;
                 }
@@ -147,10 +266,14 @@ impl VartaRuntime {
                     return;
                 };
                 let mut buffer = vec![0u8; len as usize];
-                if memory.read(&mut caller, ptr as usize, &mut buffer).is_ok() {
-                    println!("varta log: {}", String::from_utf8_lossy(&buffer));
-                } else {
+                if memory.read(&mut caller, ptr as usize, &mut buffer).is_err() {
                     println!("varta log: <invalid string memory>");
+                    return;
+                }
+                if let Ok(text) = std::str::from_utf8(&buffer) {
+                    println!("varta log: {text}");
+                } else {
+                    println!("varta log: <invalid utf-8>");
                 }
             },
         )?;
@@ -158,7 +281,7 @@ impl VartaRuntime {
             "varta",
             "time_now",
             |caller: wasmtime::Caller<'_, RuntimeContext>| -> i32 {
-                if !caller.data().has_capability_namespace("time") {
+                if !caller.data().has_capability("time.now") {
                     println!("varta log: <capability denied: time>");
                     return 0;
                 }
@@ -195,7 +318,7 @@ impl VartaRuntime {
             "varta",
             "env_print",
             |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
-                if ptr < 0 || len < 0 {
+                if ptr < 0 || len < 0 || len as usize > MAX_HOST_INPUT_BYTES {
                     println!("varta log: <invalid string pointer>");
                     return;
                 }
@@ -226,7 +349,7 @@ impl VartaRuntime {
             "varta",
             "env_get",
             |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| -> i32 {
-                if ptr < 0 || len < 0 {
+                if ptr < 0 || len < 0 || len as usize > MAX_HOST_INPUT_BYTES {
                     return 0;
                 }
                 let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
@@ -253,6 +376,9 @@ impl VartaRuntime {
                     return 0;
                 };
                 let value = value.into_bytes();
+                if value.len() > MAX_HOST_RESULT_BYTES {
+                    return 0;
+                }
                 let Some(wasmtime::Extern::Global(heap)) = caller.get_export("heap") else {
                     return 0;
                 };
@@ -266,10 +392,15 @@ impl VartaRuntime {
                 } else {
                     current_heap
                 };
-                let end = base + value.len() as i32;
-                let size = memory.data_size(&caller) as i32;
-                if end > size {
-                    let pages = ((end - size + 65535) / 65536) as u64;
+                if base < 0 || base as usize > MAX_RUNTIME_MEMORY_BYTES {
+                    return 0;
+                }
+                let desired = base as usize + value.len();
+                if desired > MAX_RUNTIME_MEMORY_BYTES {
+                    return 0;
+                }
+                if desired > memory.data_size(&caller) {
+                    let pages = (desired - memory.data_size(&caller)).div_ceil(65536) as u64;
                     if memory.grow(&mut caller, pages).is_err() {
                         return 0;
                     }
@@ -286,12 +417,8 @@ impl VartaRuntime {
             "varta",
             "fs_print",
             |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
-                if ptr < 0 || len < 0 {
+                if ptr < 0 || len < 0 || len as usize > MAX_HOST_INPUT_BYTES {
                     println!("varta log: <invalid string pointer>");
-                    return;
-                }
-                if !caller.data().has_capability_namespace("fs") {
-                    println!("varta log: <capability denied: fs>");
                     return;
                 }
                 let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
@@ -307,8 +434,8 @@ impl VartaRuntime {
                     println!("varta log: <invalid file path>");
                     return;
                 };
-                if path.contains("..") || !caller.data().allows_fs_read(path) {
-                    println!("varta log: <capability denied: fs.read>");
+                if !caller.data().allows_fs_print(path) {
+                    println!("varta log: <capability denied: fs.print>");
                     return;
                 }
                 match std::fs::read_to_string(path) {
@@ -321,7 +448,7 @@ impl VartaRuntime {
             "varta",
             "fs_read",
             |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| -> i32 {
-                if ptr < 0 || len < 0 {
+                if ptr < 0 || len < 0 || len as usize > MAX_HOST_INPUT_BYTES {
                     return 0;
                 }
                 let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
@@ -334,7 +461,7 @@ impl VartaRuntime {
                 let Ok(path) = std::str::from_utf8(&buffer) else {
                     return 0;
                 };
-                if path.contains("..") || !caller.data().allows_fs_read(path) {
+                if !caller.data().allows_fs_read(path) {
                     println!("varta log: <capability denied: fs.read>");
                     return 0;
                 }
@@ -342,6 +469,10 @@ impl VartaRuntime {
                     println!("varta log: <failed to read file>");
                     return 0;
                 };
+                if contents.len() > MAX_HOST_RESULT_BYTES {
+                    println!("varta log: <result too large>");
+                    return 0;
+                }
                 let Some(wasmtime::Extern::Global(heap)) = caller.get_export("heap") else {
                     return 0;
                 };
@@ -356,10 +487,16 @@ impl VartaRuntime {
                 } else {
                     current_heap
                 };
-                let end = base + contents.len() as i32;
-                let size = memory.data_size(&caller) as i32;
-                if end > size {
-                    let pages = ((end - size + 65535) / 65536) as u64;
+                if base < 0 || base as usize > MAX_RUNTIME_MEMORY_BYTES {
+                    return 0;
+                }
+                let desired = base as usize + contents.len();
+                if desired > MAX_RUNTIME_MEMORY_BYTES {
+                    println!("varta log: <result too large>");
+                    return 0;
+                }
+                if desired > memory.data_size(&caller) {
+                    let pages = (desired - memory.data_size(&caller)).div_ceil(65536) as u64;
                     if memory.grow(&mut caller, pages).is_err() {
                         return 0;
                     }
@@ -379,7 +516,7 @@ impl VartaRuntime {
             "varta",
             "net_fetch",
             |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| -> i32 {
-                if ptr < 0 || len < 0 {
+                if ptr < 0 || len < 0 || len as usize > MAX_HOST_INPUT_BYTES {
                     return -1;
                 }
                 let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
@@ -404,7 +541,7 @@ impl VartaRuntime {
             "varta",
             "net_get",
             |mut caller: wasmtime::Caller<'_, RuntimeContext>, ptr: i32, len: i32| -> i32 {
-                if ptr < 0 || len < 0 {
+                if ptr < 0 || len < 0 || len as usize > MAX_HOST_INPUT_BYTES {
                     return 0;
                 }
                 let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
@@ -417,8 +554,8 @@ impl VartaRuntime {
                 let Ok(url) = std::str::from_utf8(&buffer) else {
                     return 0;
                 };
-                if !caller.data().allows_net_fetch(url) {
-                    println!("varta log: <capability denied: net.fetch>");
+                if !caller.data().allows_net_get(url) {
+                    println!("varta log: <capability denied: net.get>");
                     return 0;
                 }
                 let Some(body) = fetch_http_body(url) else {
@@ -441,10 +578,21 @@ impl VartaRuntime {
                 } else {
                     current_heap
                 };
-                let end = base + body.len() as i32;
-                let size = memory.data_size(&caller) as i32;
-                if end > size {
-                    let pages = ((end - size + 65535) / 65536) as u64;
+                if body.len() > MAX_HOST_RESULT_BYTES {
+                    println!("varta log: <result too large>");
+                    return 0;
+                }
+                if base < 0 || base as usize > MAX_RUNTIME_MEMORY_BYTES {
+                    return 0;
+                }
+                let desired = base as usize + body.len();
+                if desired > MAX_RUNTIME_MEMORY_BYTES {
+                    println!("varta log: <result too large>");
+                    return 0;
+                }
+                if desired > memory.data_size(&caller) {
+                    let size = memory.data_size(&caller);
+                    let pages = desired.saturating_sub(size).div_ceil(65536) as u64;
                     if memory.grow(&mut caller, pages).is_err() {
                         return 0;
                     }
@@ -701,5 +849,103 @@ mod unit_tests {
         };
         assert!(context.allows_env_access("env.has", "PATH"));
         assert!(!context.allows_env_access("env.has", "SECRET"));
+    }
+
+    #[test]
+    fn fs_capability_rejects_traversal_and_symlink_escape() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join("varta-runtime-fs-cap-test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("granted")).unwrap();
+        let granted_file = root.join("granted").join("secret.txt");
+        let outside_file = root.join("outside.txt");
+        fs::write(&granted_file, "safe").unwrap();
+        fs::write(&outside_file, "unsafe").unwrap();
+        let escaped_link = root.join("granted").join("escape.txt");
+        let _ = fs::remove_file(&escaped_link);
+        symlink(&outside_file, &escaped_link).unwrap();
+
+        let context = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "fs.read".to_string(),
+                value: CapabilityValue::PathGlobs(vec![format!(
+                    "{}/**",
+                    root.join("granted").display()
+                )]),
+            }],
+        };
+
+        assert!(context.allows_fs_read(granted_file.to_str().unwrap()));
+        assert!(!context.allows_fs_read(escaped_link.to_str().unwrap()));
+        assert!(!context.allows_fs_read("/data/../secret.txt"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn env_capability_checks_are_operation_specific() {
+        let has_only = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "env.has".to_string(),
+                value: CapabilityValue::PathGlobs(vec!["PATH".to_string()]),
+            }],
+        };
+        assert!(has_only.allows_env_access("env.has", "PATH"));
+        assert!(!has_only.allows_env_access("env.print", "PATH"));
+        assert!(!has_only.allows_env_access("env.get", "PATH"));
+
+        let get_only = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "env.get".to_string(),
+                value: CapabilityValue::PathGlobs(vec!["PATH".to_string()]),
+            }],
+        };
+        assert!(get_only.allows_env_access("env.get", "PATH"));
+        assert!(!get_only.allows_env_access("env.has", "PATH"));
+        assert!(!get_only.allows_env_access("env.print", "PATH"));
+    }
+
+    #[test]
+    fn net_capability_checks_are_operation_specific() {
+        let fetch_only = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "net.fetch".to_string(),
+                value: CapabilityValue::UrlGlobs(vec!["https://example.com/**".to_string()]),
+            }],
+        };
+        assert!(fetch_only.allows_net_fetch("https://example.com/health"));
+        assert!(!fetch_only.allows_net_get("https://example.com/health"));
+
+        let get_only = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "net.get".to_string(),
+                value: CapabilityValue::UrlGlobs(vec!["https://example.com/**".to_string()]),
+            }],
+        };
+        assert!(get_only.allows_net_get("https://example.com/health"));
+        assert!(!get_only.allows_net_fetch("https://example.com/health"));
+    }
+
+    #[test]
+    fn fs_capability_checks_are_operation_specific() {
+        let print_only = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "fs.print".to_string(),
+                value: CapabilityValue::PathGlobs(vec!["/data/**".to_string()]),
+            }],
+        };
+        assert!(print_only.allows_fs_print("/data/hello.txt"));
+        assert!(!print_only.allows_fs_read("/data/hello.txt"));
+
+        let read_only = RuntimeContext {
+            capabilities: vec![CapabilityGrant {
+                id: "fs.read".to_string(),
+                value: CapabilityValue::PathGlobs(vec!["/data/**".to_string()]),
+            }],
+        };
+        assert!(read_only.allows_fs_read("/data/hello.txt"));
+        assert!(!read_only.allows_fs_print("/data/hello.txt"));
     }
 }
