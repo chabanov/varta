@@ -225,6 +225,12 @@ impl<'a> Collected<'a> {
                     self.expression(error, source);
                 }
             }
+            E::ArrayStringHasOwn(base, key) => {
+                self.arrays = true;
+                self.helpers.insert(strings::Helper::ArrayStringHasOwn);
+                self.expression(base, source);
+                self.expression(key, source);
+            }
             E::ArrayHasOwn(base, index) => {
                 self.arrays = true;
                 self.expression(base, source);

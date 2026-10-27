@@ -297,7 +297,7 @@ validation and recoverable syntax/type errors retain their existing boundaries.
 Map allocates its final-length output once and fills present input indices only;
 filter/forEach skip holes, find visits Undefined. Preserve snapshot values/aliases,
 live backing lookup, exact roots and pending exceptions. Sparse literals and
-Object.hasOwn Number/literal keys distinguish holes from explicit Undefined; reads,
+Object.hasOwn Number/String keys distinguish holes from explicit Undefined; reads,
 at, slice, pop/push, search and indexed filling preserve bits. Growth copies the
 bitmap before publication; clear removed payload/bit before count reduction and
 root a popped reference before boxing. New presence helpers are host-free and
@@ -579,6 +579,32 @@ existing fuel/deadlines fatal on adversarial repetition; prefix/suffix are linea
 in needle length. No coercion/regex/omitted needle/borrowed/computed/generic/spread/
 extra arguments or nullable receivers without narrowing. Existing limits and ABI/
 heap/helper exports/host operations remain unchanged.
+V12+ Object.hasOwn(record,key) accepts dynamic narrowed String keys for narrowed
+closed records. Evaluate/root record then key once and preserve key effects before
+presence reads, original receiver identity, explicit Undefined versus absence,
+empty-shape effects, unknown/inherited names and no payload/prototype/JSON access.
+String literal lookup may return false for unrepresentable names or __proto__
+without enabling prototype initializers. Numeric literals and old profiles retain
+their rules; reject coercion/dynamic non-String or union keys, nullable receivers
+without narrowing, symbols, generic/spread calls
+and shadowed Object. Lower through a rooted Boolean value block and a balanced
+decision tree sorted by UTF-16 units, not UTF-8 metadata; preserve original slots
+including bit 31. Use existing comparisons/presence loads and full value-block
+visitors. Preserve earlier operands/pairs, GC/returns/finalizers/status/grants,
+static-data and all execution/type/frame/root limits. No host operation/helper
+export or managed/schema/ABI layout change.
+V12+ Error own keys also admit dynamic narrowed Strings on Error families/only-Error
+unions; root source/key, compare message then mask own-message independently of
+class bits. Literal Strings keep direct reads/false for unknown/unrepresentable
+names; name is inherited. V11 and earlier retain literal-only Error keys. V13+
+array String own keys recognize length or canonical ASCII decimal indices, no
+leading zeros/sign/fraction/exponent/coercion. Reject overlong names before scanning
+at most the maximum bounded index's digit width, then reuse ArrayPresent bounds/
+bitmap. Keep explicit Undefined versus hole, current length, original identity and
+key mutation/throws/GC. Numeric array checks and older profile boundaries persist.
+Visit both operands in collection/effects; private helpers stay allocation/host-free.
+No ABI/layout/import/helper-export change.
+
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail
 even if they ignore its custom section. Do not claim full ECMAScript support from

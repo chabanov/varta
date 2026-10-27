@@ -1889,3 +1889,79 @@ fn public_engine_runs_string_searches_across_virtual_modules() {
         ]
     );
 }
+
+#[test]
+fn public_engine_runs_dynamic_own_keys_across_virtual_modules() {
+    struct OwnSources;
+    impl ModuleLoader for OwnSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./own.ts" {
+                Ok("own.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function own(source:{a?:number;b:number},key:string):boolean{return Object.hasOwn(source,key);}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {own} from './own.ts';export function main():void{const source:{a?:number;b:number}={b:1};console.log(JSON.stringify(['a','b','missing'].map(key=>own(source,key))));source.a=undefined;console.log(JSON.stringify(['a','b','missing'].map(key=>own(source,key))));console.log(JSON.stringify(Object.keys(source)));console.log(own(source,'__proto__'));console.log(JSON.stringify(source));}".into()},&OwnSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: [false,true,false]",
+            "varta log: [true,true,false]",
+            "varta log: [\"b\",\"a\"]",
+            "varta log: 0",
+            "varta log: {\"b\":1}"
+        ]
+    );
+}
+
+#[test]
+fn public_engine_runs_array_and_error_own_keys_across_virtual_modules() {
+    struct OwnSources;
+    impl ModuleLoader for OwnSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./own.ts" {
+                Ok("own.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function arrayOwn(a:(number|undefined)[],key:string):boolean{return Object.hasOwn(a,key);}export function errorOwn(e:Error,key:string):boolean{return Object.hasOwn(e,key);}".into())
+        }
+    }
+    let source = "import {arrayOwn,errorOwn} from './own.ts';export function main():void{const a:(number|undefined)[]=[1,,undefined];console.log(JSON.stringify(['0','1','2','3','length'].map(key=>arrayOwn(a,key))));a[1]=undefined;console.log(JSON.stringify(['0','1','2','3','length'].map(key=>arrayOwn(a,key))));console.log(JSON.stringify(['message','name','__proto__','stack',''].map(key=>errorOwn(TypeError(''),key))));console.log(errorOwn(Error(),'mess'+'age'));console.log(JSON.stringify(Object.keys(a)));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V13,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &OwnSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "varta log: [true,false,true,false,true]",
+                "varta log: [true,true,true,false,true]",
+                "varta log: [true,false,false,false,false]",
+                "varta log: 0",
+                "varta log: [\"0\",\"1\",\"2\"]"
+            ]
+        );
+    }
+}

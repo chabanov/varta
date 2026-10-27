@@ -284,6 +284,24 @@
 // Reject arrays/rest/other properties/dynamic keys/annotations/aggregate throws.
 // Preserve GC/roots/pairs/status/grants/fatal budgets and older profile behavior.
 // No new host operation, helper export or ABI/layout change.
+// V12+ Object.hasOwn(record,key) admits dynamic narrowed String keys on narrowed
+// closed records. Evaluate/root source then key once; lookup observes presence
+// after key effects on the original source. Unknown/inherited names return false,
+// present Undefined is true, and no payload/prototype/JSON access occurs. Compare
+// exact UTF-16/NULs/case using a balanced tree ordered by UTF-16 rather than UTF-8
+// metadata, retaining original presence slots. String literals keep direct lookup,
+// including false for unrepresentable names or __proto__, without new initializers.
+// Dynamic Number/Boolean/Undefined/union keys, symbols/coercion, unchecked/nullable
+// sources without narrowing, generic/spread calls and shadowed Object are rejected.
+// V12+ Error families/only-Error unions admit narrowed dynamic String keys: message
+// reads its own-presence bit independently of class; name/unknown names are absent.
+// Omitted/Undefined messages are absent; explicit empty Strings are present.
+// V13+ arrays admit String keys: length is own even when empty, canonical ASCII
+// decimal indices test current length and presence; holes differ from Undefined.
+// No leading zeros except 0, signs/fractions/exponents/coercion. Numeric array
+// keys keep existing behavior; String|Number unions require narrowing. Preserve
+// earlier-profile boundaries, source/key order, mutation/throws and GC/roots/
+// pairs/returns/finalizers/effects/status/grants and all bounds; no ABI/helper export.
 // V12+ Object.keys(record) returns a fresh dense string[] of present own keys:
 // canonical array indices first numerically, other strings by insertion order.
 // Explicit Undefined is present; absent optional fields are omitted. Input is

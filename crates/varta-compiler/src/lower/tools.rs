@@ -328,6 +328,7 @@ fn expression(
         }
         E::ArrayAt(a, b)
         | E::ArrayHasOwn(a, b)
+        | E::ArrayStringHasOwn(a, b)
         | E::ArrayPush(a, b)
         | E::MaybeIndex(a, b)
         | E::Binary(_, a, b)

@@ -250,6 +250,11 @@ impl Emitter<'_> {
                 bytes,
             } => self.array_reserve(expr.ty, length, *count, *bytes)?,
             E::ArrayHasOwn(base, index) => self.array_has_own(base, index)?,
+            E::ArrayStringHasOwn(base, key) => {
+                self.expr(base)?;
+                self.expr(key)?;
+                self.string_helper(strings::Helper::ArrayStringHasOwn)?;
+            }
             E::ArrayDelete {
                 array,
                 index,

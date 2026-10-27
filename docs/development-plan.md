@@ -50,7 +50,17 @@ to reject writable length/deletion and trap indexed extension. New tests reprodu
 the original failures, verify dense/sparse profiles and execute dependency modules
 in source-free Wasm/native artifacts. No ABI, capability or resource-limit change.
 
-Next: broader **generalized record keys/coercion**, constructors and prototypes,
+Completed: **dynamic String own keys for closed records** in v12+, with exact
+UTF-16 lookup, presence-aware results and rooted source/key evaluation.
+
+Completed: **dynamic String own keys for arrays (v13+) and Error families (v12+)**.
+Array keys preserve canonical index/length and sparse-presence rules; Error keys
+read only own message presence. Key effects, original identity, roots and earlier
+profile boundaries are covered without an ABI change.
+
+Next: specify and implement **typed computed-key reads on closed records** without
+implicit coercion or prototype access.
+Broader generalized record reads/writes/coercion, constructors and prototypes,
 aggregate exception design, scheduler/promise jobs, standard/system API expansion
 and package compatibility. Wider dynamic values remain explicit profile work.
 Shared application state, MCP, signing and external adapters remain later
@@ -1140,10 +1150,30 @@ limits, including adversarial-input regression tests. Maximum byte, module and
 source-free artifact tests preserve grants/host ceilings/status/diagnostics.
 No ABI/import/helper-export/layout change.
 
-Next add checked String.indexOf/lastIndexOf with exact UTF-16 index results and
-method-specific position rules. Generalized keys/coercion, aggregate exception
-design and constructors/prototypes remain language work. Scheduler/promise jobs
-follow retained-root, cancellation, queue and handle lifetime design.
+String.indexOf/lastIndexOf and array reverse search/mutation increments are
+implemented as recorded in the checkpoint follow-up above.
+
+V12+ dynamic String own keys for closed records are implemented. A rooted value
+block evaluates source/key once, then a UTF-16-ordered balanced decision tree reads
+existing presence bits without payload/prototype access. Literal String keys keep
+a direct path, including false for unrepresentable names/__proto__. Existing numeric
+literal and older-profile rules remain unchanged. Tests cover exact
+Unicode ordering, all 32 bits/default limits, argument mutation/throws, GC/pairs/
+finalizers/callbacks, effects/grants/status, modules and source-free artifacts.
+No ABI/import/helper-export/layout change.
+
+Dynamic String own keys now cover arrays in v13+ and Error families/only-Error
+unions in v12+. Allocation-free bounded array parsing reuses current-length/bitmap
+checks; length remains own, holes differ from explicit Undefined. Error lookup
+masks only own-message after exact key matching. Tests cover bitmap edges/max index,
+canonical/unknown/max-byte names, argument mutation/order/throws/fatal limits,
+GC/pairs/finalizers, older profiles, modules, source-free artifacts and grants/status.
+No ABI/import/helper-export/layout change.
+
+Next specify and implement typed computed-key reads on closed records. Dynamic
+record writes/coercion, aggregate exception design and constructors/prototypes
+remain language work. Scheduler/promise jobs follow retained-root, cancellation,
+queue and handle lifetime design.
 
 
 - Grow functions/closures, dynamic object/array behavior, exceptions and the

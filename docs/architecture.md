@@ -530,7 +530,8 @@ prototype mutation or rollback of RHS system effects is provided.
 presence mask, not another host permission or MCP entry point. Unknown literal
 keys return false while evaluating the receiver once. Shadowed Object bindings
 cannot call the intrinsic. General key coercion, dynamic keys and non-record
-receivers are rejected. See the pinned
+receivers are rejected in this profile; the v12+ dynamic record own-key contract
+below adds checked String lookup separately. See the pinned
 [Object.hasOwn](https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.hasown)
 and [optional property](https://www.typescriptlang.org/docs/handbook/2/objects.html#optional-properties)
 references. Reading a statically absent record key returns real Undefined after
@@ -2101,6 +2102,77 @@ grants, host ceilings, saved exceptions/returns/physical pairs, finalizer overri
 named control routing and fatal resource/exit behavior remain unchanged. Tests
 cover TDZ/scopes/captures, nullish/default failures, repeated GC/roots, callback
 inference, modules, source-free artifacts and dependency diagnostics.
+
+### Dynamic record own-key contract
+
+V12+ admits Object.hasOwn(record,key) with a narrowed closed-record source and a
+computed String key. Require exactly two arguments and an unshadowed Object.
+Preserve the admitted own-property semantics of
+[Object.hasOwn](https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.hasown):
+key expressions run before the presence test. There is no ToPropertyKey coercion,
+prototype traversal, getter invocation, payload read or JSON serialization. Unknown
+keys return false; present Undefined differs from absence. The result alone does
+not refine an optional field value. Required inherited-looking names still refer
+to actual own slots. __proto__ lookup does not enable prototype initialization.
+
+Literal String keys retain a direct slot/presence path in v12+. Metadata names are
+UTF-8 and cannot contain lone surrogates, so unrepresentable literal names return
+false without changing shape constraints. Preserve existing numeric-literal key
+rules and every older profile's behavior. Dynamic non-String/union keys and
+unchecked/nullish sources without narrowing remain rejected, as do symbols,
+generic/spread calls. Array/Error extensions below preserve their earlier
+profile boundaries.
+
+V12+ extends computed String own keys to narrowed Error families and Error-only
+unions. Evaluate/root receiver and key before comparing the exact UTF-16 key to
+message, then mask ERROR_OWN_MESSAGE independently of the Error class bits. An
+omitted/Undefined message is absent; an explicit String, including empty, is own.
+Name, stack, cause and inherited/unknown names are absent. Literal String keys
+retain a direct path, including false for lone-surrogate/__proto__ names. V11 and
+earlier retain literal-only Error keys.
+
+V13+ accepts computed String own keys on bounded sparse arrays. The private,
+allocation-free helper recognizes length as own even on an empty array; otherwise
+it accepts only canonical ASCII decimal indices without leading zeros except 0.
+Reject overlong names before scanning; scan at most the decimal width of the
+maximum bounded index. Digit checks precede accumulation; the bounded value cannot
+overflow. Reuse ArrayPresent for current-length/1024 bounds and the existing bitmap,
+so holes differ from explicit Undefined, independent of payload type or capacity.
+V12 and earlier retain their array own-key boundary. Numeric array keys keep
+existing finite/integer/range checks and numeric -0 semantics. Number|String unions
+require narrowing; no ToPropertyKey coercion is added. Array/key roots survive
+key calls, resizing/reassignment, exceptions and GC; key mutation is visible on
+the captured original receiver before lookup. Visit both expressions in helper
+collection and effect analysis. No host import/export, ABI or layout change.
+
+Dynamic lowering uses the existing typed value block with hidden receiver/key
+roots, saved temporary floor and initialized Boolean output. Register roots before
+source evaluation, then evaluate source and key once in order. Key calls may
+mutate presence on the retained record or reassign the caller's source binding;
+lookup observes the former and retains the original receiver identity. Empty
+shapes still evaluate both arguments. Throws skip later arguments/enclosing work;
+handlers/finalizers clear inputs and partial temporaries through existing routes.
+Load the canonical Boolean result before cleaning hidden roots without allocation.
+
+Build a balanced decision tree over field names sorted by unsigned UTF-16 units.
+Do not use UTF-8 metadata order for String comparisons: supplementary/BMP ordering
+differs. Retain original shape slot IDs so high presence bits and JSON/order data
+remain unchanged. Equality and order reuse the pure UTF-16 comparator; a matching
+leaf reads the existing presence bit, while an unmatched path leaves false.
+Only the ordering of the decision tree changes; records retain their layouts.
+At most O(log F) comparison nodes are visited for F <= 32 fields, with comparison
+cost bounded by String/key-name limits and existing execution fuel. Deduplicated
+name literals count against the normal static-data ceiling. Lookup allocates no
+managed values beyond ordinary argument evaluation, and adds no host operation,
+private helper export, schema or ABI/layout change.
+
+Existing value-block layout/effect visitors cover the entire lowered body;
+callback inference uses the resolved Boolean type. Preserve GC/earlier operands/
+physical pairs/saved returns, exact status/grants/host ceilings and all fatal
+source/type/body/frame/root/memory/fuel/deadline bounds. Tests cover optional
+presence, Unicode order and bit 31, key-side mutation/throws, empty shapes,
+JSON/rest/callbacks, GC/finalizers/repeated roots, helper purity, older profiles,
+virtual modules, source-free artifacts and dependency diagnostics.
 
 ### Object.keys contract
 

@@ -9,6 +9,10 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Dynamic String own keys for sparse arrays in v13+ and Error families in v12+,
+  preserving canonical indices/length, holes versus explicit Undefined and own
+  message presence, argument effects, exact roots and older profile boundaries.
+
 - Checked TypeScript-to-Wasm compilation, local module loading, source diagnostics
   and explicit, versioned language profiles.
 - Opt-in binary64 numbers, UTF-16 strings, typed unions, optional fields, bounded
@@ -42,6 +46,8 @@ records the current core stage, completed increments, validation and next work.
   ownership preservation.
 - String.trim/trimStart/trimEnd in v12+, with exact UTF-16 whitespace
   removal, surrogate/NUL preservation, and owned result storage.
+- Dynamic String keys for Object.hasOwn on closed records in v12+, with exact
+  UTF-16 decision ordering, rooted argument evaluation and presence-only lookup.
 - Capability-checked host APIs, independent host policy ceilings, programmatic
   operation results, and bounded execution with managed guest memory.
 - Checked synchronous HTTP/1 handlers in the default language profile.

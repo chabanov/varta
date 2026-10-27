@@ -399,3 +399,6 @@ mod string_range_tests;
 
 #[cfg(test)]
 mod string_search_tests;
+
+#[cfg(test)]
+mod own_key_tests;

@@ -3,6 +3,7 @@ mod allocate;
 mod array_enumeration;
 mod array_fill;
 mod array_index;
+mod array_own_key;
 mod array_push;
 mod array_resize;
 mod array_reverse;
@@ -82,6 +83,7 @@ pub(super) enum Helper {
     ArraySearch,
     ArrayLastIndex,
     ArrayPresent,
+    ArrayStringHasOwn,
     ArraySetPresent,
     ArrayResize,
 }
@@ -106,7 +108,7 @@ impl Helper {
         match self {
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
             Self::Concat => (vec![ValType::I64; 2], vec![ValType::I64]),
-            Self::Compare => (vec![ValType::I64; 2], vec![ValType::I32]),
+            Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
             Self::Collect => (vec![], vec![]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
@@ -152,6 +154,7 @@ impl Helper {
         !matches!(
             self,
             Self::Compare
+                | Self::ArrayStringHasOwn
                 | Self::StringIncludes
                 | Self::StringStartsWith
                 | Self::StringEndsWith
@@ -210,6 +213,7 @@ impl Helper {
             }
             Self::ArrayResize => array_resize::function(helpers[&Self::Allocate]),
             Self::ArrayPresent => sparse::function(false),
+            Self::ArrayStringHasOwn => array_own_key::function(helpers[&Self::ArrayPresent]),
             Self::ArraySetPresent => sparse::function(true),
             Self::ArrayIndex => array_index::function(profile.resizable_arrays()),
         }

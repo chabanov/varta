@@ -413,7 +413,8 @@ including indices removed before their turn; filter/forEach skip holes, while fi
 visits them as undefined. Slice copies presence into fresh storage; pop removes the
 last index even if absent. Push appends present arguments, and assigning within
 length fills a hole. Includes treats a hole as undefined; indexOf skips it.
-Object.hasOwn accepts Number indices or literal keys; dynamic strings/coercion are
+Object.hasOwn accepts Number indices and String keys, including computed keys;
+canonical decimal indices test presence and length is always own. Coercion is
 unsupported. Arrays containing only holes need an element type annotation.
 
 JSON writes null for holes and explicit undefined. Checked parsing creates present
@@ -1115,6 +1116,58 @@ unsupported; it does not infer a narrower caught type from the try body. Earlier
 profiles retain identifier/omitted catch bindings. No host operation, helper export
 or ABI/layout change. See the [contract](docs/architecture.md#catch-binding-pattern-contract).
 
+## Dynamic own-property keys (v12 and later)
+
+Object.hasOwn accepts a computed String key on a narrowed closed record. It tests
+presence, including an explicitly stored undefined, without reading field values:
+
+```ts
+export function main(): void {
+  const value: {name?: string} = {};
+  const key = "name";
+  console.log(Object.hasOwn(value, key)); // 0
+  value.name = undefined;
+  console.log(Object.hasOwn(value, key)); // 1
+  console.log(Object.hasOwn(value, "missing" + "")); // 0
+}
+```
+
+The record and key evaluate once in that order. Key effects can update presence
+before lookup; reassignment of the original source variable does not replace the
+captured receiver. Unknown names, including inherited names not declared as own
+fields, return false. Required own fields named constructor/toString are checked
+normally. No getter, prototype lookup or JSON serialization is performed. A true
+result does not exclude Undefined from an optional field's value.
+
+Comparison preserves exact UTF-16 units, NULs and case without normalization.
+Record metadata names remain bounded UTF-8, so a lone-surrogate key cannot match.
+String literals use the direct presence path, including false for unrepresentable
+names or __proto__; this does not permit prototype initializers. Dynamic keys use
+a balanced decision tree sorted in UTF-16 order, independently of UTF-8 shape
+slot order, then read the existing presence bit. Receiver/key roots and earlier
+operands/physical pairs survive calls, GC and finally cleanup.
+
+Exactly two arguments are required. Dynamic Number/Boolean/Undefined/union keys,
+coercion, symbols, unchecked/nullable receivers without narrowing, generic/spread
+calls and shadowed Object remain unsupported. Existing record numeric-literal
+keys and older profiles retain their rules.
+
+V12+ also accepts computed String keys on narrowed Error families, including
+Error-only unions: message tests its own presence bit, while name and all other
+names return false. Omitted/undefined messages are absent; an explicit empty
+String is present. V13+ admits String keys on arrays: length is always own, and
+canonical decimal index names (0, 1, …) test presence within the current length.
+Holes are absent; explicit Undefined is present. Leading zeros, signs, fractions,
+exponents, NULs, lone surrogates and unknown/inherited names return false. Numeric
+array keys retain their existing checks, including numeric -0 as index 0. Computed
+String|Number union keys require narrowing. Both arguments run once in source
+order, with the original receiver retained across key effects and GC.
+
+No host operation,
+helper export, managed layout or ABI change. All source/type/static-data/frame/root/
+string/memory/fuel/deadline limits remain active. See the
+[contract](docs/architecture.md#dynamic-record-own-key-contract).
+
 ## Object.keys for closed records (v12 and later)
 
 Object.keys returns a fresh dense string array containing present own fields:
@@ -1530,7 +1583,8 @@ export function main(): void {
 An absent field differs from an own property whose value is undefined. New fields
 first assigned after construction join insertion order; overwriting them keeps
 their place, and integer-index keys still enumerate first. `Object.hasOwn` accepts
-closed records and literal keys. Optional field values must be primitives/unions;
+closed records and literal keys in this profile; v12+ adds dynamic String own-key
+lookup as specified above. Optional field values must be primitives/unions;
 readonly fields, deletion, arbitrary new keys and prototype lookup remain unsupported.
 Reads of statically absent literal record keys return undefined, except inherited
 prototype names, which are rejected. Optional inherited names are also rejected.

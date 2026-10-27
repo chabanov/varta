@@ -342,6 +342,7 @@ pub(crate) enum Expression {
         bytes: u32,
     },
     ArrayHasOwn(Box<Expr>, Box<Expr>),
+    ArrayStringHasOwn(Box<Expr>, Box<Expr>),
     ArrayDelete {
         array: Box<Expr>,
         index: Option<Box<Expr>>,

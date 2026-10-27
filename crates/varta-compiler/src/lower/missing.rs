@@ -57,59 +57,77 @@ impl Lower<'_> {
             return Err(unsupported("shadowed Object.hasOwn intrinsic"));
         }
         if call.args.len() != 2 {
-            return Err(invalid("Object.hasOwn expects a record and a literal key"));
+            return Err(invalid("Object.hasOwn expects two arguments"));
         }
         let value = self.expr(&call.args[0].expr)?;
         if self.types.profile.sparse_arrays() && matches!(value.ty, Type::Array(_)) {
-            let index = match &*call.args[1].expr {
-                ast::Expr::Lit(ast::Lit::Str(text)) => {
-                    let key = text
-                        .value
-                        .as_str()
-                        .ok_or_else(|| unsupported("noncanonical array own key"))?;
-                    let number = key
-                        .parse::<u32>()
+            if let ast::Expr::Lit(ast::Lit::Str(text)) = &*call.args[1].expr {
+                // Literal lookups do not need to materialize an unknown key.
+                let key = text.value.as_str();
+                let number = key.and_then(|key| {
+                    key.parse::<u32>()
                         .ok()
-                        .filter(|n| n.to_string() == key && *n != u32::MAX);
-                    if let Some(number) = number {
-                        Expr {
+                        .filter(|n| n.to_string() == key && *n != u32::MAX)
+                });
+                let kind = if let Some(number) = number {
+                    E::ArrayHasOwn(
+                        Box::new(value),
+                        Box::new(Expr {
                             span: call.args[1].expr.span(),
                             ty: Type::Float64,
                             kind: E::Float64(number as f64),
-                        }
-                    } else {
-                        return Ok(Expr {
+                        }),
+                    )
+                } else {
+                    E::Sequence(
+                        Box::new(value),
+                        Box::new(Expr {
                             span: call.span,
                             ty: Type::Boolean,
-                            kind: E::Sequence(
-                                Box::new(value),
-                                Box::new(Expr {
-                                    span: call.span,
-                                    ty: Type::Boolean,
-                                    kind: E::Integer(i32::from(key == "length")),
-                                }),
-                            ),
-                        });
-                    }
-                }
-                _ => self.expr(&call.args[1].expr)?,
-            };
-            if index.ty != Type::Float64 {
-                return Err(type_error(
-                    "array own index must be a number or literal key",
-                ));
+                            kind: E::Integer(i32::from(key == Some("length"))),
+                        }),
+                    )
+                };
+                return Ok(Expr {
+                    span: call.span,
+                    ty: Type::Boolean,
+                    kind,
+                });
             }
+            let key = self.expr(&call.args[1].expr)?;
+            let kind = match key.ty {
+                Type::String => E::ArrayStringHasOwn(Box::new(value), Box::new(key)),
+                Type::Float64 => E::ArrayHasOwn(Box::new(value), Box::new(key)),
+                _ => return Err(self.source.locate(type_error(
+                    "array own key must be a narrowed string or number; coercion is unsupported",
+                ), key.span)),
+            };
             return Ok(Expr {
                 span: call.span,
                 ty: Type::Boolean,
-                kind: E::ArrayHasOwn(Box::new(value), Box::new(index)),
+                kind,
             });
         }
         if self.error_value(value.ty) {
-            if !matches!(&*call.args[1].expr, ast::Expr::Lit(ast::Lit::Str(_))) {
-                return Err(unsupported("dynamic Error own key"));
-            }
-            let message = records::expression_key(&call.args[1].expr)? == "message";
+            let message =
+                match &*call.args[1].expr {
+                    ast::Expr::Lit(ast::Lit::Str(text)) if self.types.profile.closures() => {
+                        text.value.as_str() == Some("message")
+                    }
+                    _ if self.types.profile.closures() => {
+                        let key = self.expr(&call.args[1].expr)?;
+                        if key.ty != Type::String {
+                            return Err(self.source.locate(type_error(
+                            "Error own key must be a narrowed string; coercion is unsupported",
+                        ), key.span));
+                        }
+                        return Ok(self.dynamic_error_own(call.span, value, key));
+                    }
+                    ast::Expr::Lit(ast::Lit::Str(_)) => {
+                        records::expression_key(&call.args[1].expr)? == "message"
+                    }
+                    _ => return Err(unsupported("dynamic Error own key")),
+                };
             return Ok(Expr {
                 span: call.span,
                 ty: Type::Boolean,
@@ -130,6 +148,34 @@ impl Lower<'_> {
         let Type::Record(id) = value.ty else {
             return Err(unsupported("Object.hasOwn on a non-record value"));
         };
+        if self.types.profile.closures() {
+            match &*call.args[1].expr {
+                ast::Expr::Lit(ast::Lit::Str(text)) => {
+                    // Lookup keys do not create a shape. Unrepresentable names,
+                    // including lone surrogates, simply cannot match a field.
+                    let slot = text.value.as_str().and_then(|name| {
+                        self.types.records[id as usize]
+                            .fields
+                            .iter()
+                            .position(|field| field.name == name)
+                            .map(|slot| slot as u32)
+                    });
+                    return Ok(Expr {
+                        span: call.span,
+                        ty: Type::Boolean,
+                        kind: E::HasOwn(Box::new(value), slot),
+                    });
+                }
+                ast::Expr::Lit(ast::Lit::Num(_)) => {}
+                _ => {
+                    let key = self.expr(&call.args[1].expr)?;
+                    if key.ty != Type::String {
+                        return Err(self.source.locate(type_error("dynamic record own key must be a narrowed string; coercion is unsupported"), key.span));
+                    }
+                    return Ok(self.dynamic_record_own(call.span, value, key, id));
+                }
+            }
+        }
         if !matches!(
             &*call.args[1].expr,
             ast::Expr::Lit(ast::Lit::Str(_) | ast::Lit::Num(_))
