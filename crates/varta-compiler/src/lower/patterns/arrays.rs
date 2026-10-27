@@ -31,10 +31,11 @@ impl Lower<'_> {
             vec![],
         )
     }
-    pub(super) fn array_parameter_pattern(
+    pub(super) fn array_binding_pattern(
         &mut self,
         pattern: &ast::ArrayPat,
         value: Expr,
+        mode: Mode,
     ) -> Result<Vec<S>> {
         let span = pattern.span;
         let (source, ty, mut roots, mut body) = self.pattern_source(value, true)?;
@@ -55,15 +56,29 @@ impl Lower<'_> {
         ));
         for (index, entry) in pattern.elems.iter().enumerate() {
             if let Some(ast::Pat::Rest(rest)) = entry {
+                let prepared = if mode == Mode::Assign {
+                    self.prepare_pattern_target(&rest.arg)?
+                } else {
+                    None
+                };
                 let (rest_value, rest_body, rest_roots) =
                     self.pattern_array_rest(span, source, ty, index, done)?;
                 roots.extend(rest_roots);
-                body.extend(rest_body);
-                body.extend(self.initialize_parameter_pattern(&rest.arg, rest_value, None, None)?);
+                if let Some(target) = prepared {
+                    body.extend(self.finish_pattern_target(target, rest_value, None, rest_body)?);
+                } else {
+                    body.extend(rest_body);
+                    body.extend(self.binding_pattern(&rest.arg, rest_value, None, None, mode)?);
+                }
                 break;
             }
-            body.push(self.pattern_done(span, source, ty, index, done));
+            let step = self.pattern_done(span, source, ty, index, done);
             if let Some(entry) = entry {
+                let prepared = if mode == Mode::Assign {
+                    self.prepare_pattern_target(entry)?
+                } else {
+                    None
+                };
                 let absent = unions::widen(undefined(span), Some(read_type), self.types)?;
                 let read = Expr {
                     span,
@@ -82,7 +97,19 @@ impl Lower<'_> {
                         Box::new(read),
                     ),
                 };
-                body.extend(self.initialize_parameter_pattern(entry, value, None, None)?);
+                if let Some(target) = prepared {
+                    let default = if let ast::Pat::Assign(assign) = entry {
+                        Some(&*assign.right)
+                    } else {
+                        None
+                    };
+                    body.extend(self.finish_pattern_target(target, value, default, vec![step])?);
+                } else {
+                    body.push(step);
+                    body.extend(self.binding_pattern(entry, value, None, None, mode)?);
+                }
+            } else {
+                body.push(step);
             }
         }
         Ok(vec![S::Scope(roots, body)])

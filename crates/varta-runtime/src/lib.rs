@@ -351,7 +351,15 @@ mod array_mutation_tests;
 #[cfg(test)]
 mod array_reduce_tests;
 #[cfg(test)]
+mod assignment_pattern_tests;
+#[cfg(test)]
+mod assignment_value_tests;
+#[cfg(test)]
 mod callback_inference_tests;
+#[cfg(test)]
+mod local_binding_tests;
+#[cfg(test)]
+mod member_target_tests;
 #[cfg(test)]
 mod named_function_tests;
 #[cfg(test)]

@@ -16,6 +16,9 @@ pub const BINDING_FLAG: i32 = 512;
 pub const MAX_CAPTURES: usize = 32;
 pub const INTERNAL_KIND: i32 = 0;
 
-/// Compiler budgets for one function's recursive parameter binding patterns.
-pub const MAX_PARAMETER_PATTERN_DEPTH: usize = 64;
-pub const MAX_PARAMETER_PATTERN_NODES: usize = 1024;
+/// Compiler budgets for one parameter list or lexical declaration's patterns.
+pub const MAX_BINDING_PATTERN_DEPTH: usize = 64;
+pub const MAX_BINDING_PATTERN_NODES: usize = 1024;
+/// Parameter lists retain their existing limits.
+pub const MAX_PARAMETER_PATTERN_DEPTH: usize = MAX_BINDING_PATTERN_DEPTH;
+pub const MAX_PARAMETER_PATTERN_NODES: usize = MAX_BINDING_PATTERN_NODES;

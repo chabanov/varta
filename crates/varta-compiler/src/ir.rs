@@ -233,6 +233,12 @@ pub(crate) enum ArraySearch {
 }
 
 pub(crate) enum Expression {
+    Assignment {
+        value: Box<Expr>,
+        input: u32,
+        marker: u32,
+        body: Vec<Statement>,
+    },
     FunctionCheck {
         value: Box<Expr>,
         slot: u32,

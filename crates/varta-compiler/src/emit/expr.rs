@@ -27,6 +27,12 @@ impl Emitter<'_> {
     }
     fn expr_inner(&mut self, expr: &Expr) -> Result<()> {
         match &expr.kind {
+            E::Assignment {
+                value,
+                input,
+                marker,
+                body,
+            } => self.assignment_value(value, *input, *marker, body)?,
             E::FunctionCheck { value, slot } => self.check_function_value(value, *slot)?,
             E::FunctionRef {
                 index,
@@ -431,6 +437,39 @@ impl Emitter<'_> {
             .get(&helper)
             .ok_or_else(|| CompilerError::Internal("missing string helper".into()))?;
         self.code.push(I::Call(*index));
+        Ok(())
+    }
+}
+
+impl Emitter<'_> {
+    /// Statements inside an expression may release only their own temporaries;
+    /// older operands still live on the caller's Wasm stack and shadow roots.
+    fn assignment_value(
+        &mut self,
+        value: &Expr,
+        input: u32,
+        marker: u32,
+        body: &[S],
+    ) -> Result<()> {
+        let memory = self
+            .memory
+            .ok_or_else(|| CompilerError::Internal("missing assignment expression roots".into()))?;
+        let marker = self.local_slots[marker as usize];
+        self.code
+            .extend([I::GlobalGet(memory.roots), I::LocalSet(marker)]);
+        let prior = self.temporary_floor.replace(marker);
+        self.scopes.push(vec![input]);
+        self.expr(value)?;
+        self.write_binding(input, value.ty, true)?;
+        self.end_temporaries();
+        self.statements(body)?;
+        self.scratch_get(input, value.ty);
+        // No allocation occurs between loading the result and its outer expr
+        // wrapper retaining it. Exceptional exits clear the scope through the
+        // ordinary handler/frame path and never publish this success result.
+        self.clear_scopes(self.scopes.len() - 1);
+        self.scopes.pop();
+        self.temporary_floor = prior;
         Ok(())
     }
 }

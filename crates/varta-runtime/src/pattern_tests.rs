@@ -132,7 +132,7 @@ fn destructuring_rejects_tdz_duplicates_untyped_and_unsupported_sources_with_rea
         "function f({[varta.env.get('KEY')]:a}:{a:number}):void{}export function main():void{}",
         "function f({toString}:{}):void{}export function main():void{}",
         "function f(key:string,{[key]:a}:{a:number}):void{}export function main():void{}",
-        "export function main():void{const {a}={a:1};}",
+        "export function main():void{const target={a:1};({a:target.a}={a:'bad'});}",
     ] {
         let error = varta_compiler::compile_typescript_with_profile(
             source,

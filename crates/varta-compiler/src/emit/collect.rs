@@ -36,6 +36,10 @@ impl<'a> Collected<'a> {
             self.unions = true;
         }
         match &expr.kind {
+            E::Assignment { value, body, .. } => {
+                self.expression(value, source);
+                self.statements(body, source);
+            }
             E::FunctionCheck { value, .. } => self.expression(value, source),
             E::FunctionRef { index, fresh, .. } => {
                 self.helpers.insert(strings::Helper::Allocate);

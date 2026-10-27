@@ -201,6 +201,8 @@ mod array_callbacks;
 mod array_iteration;
 mod array_mutation;
 mod arrays;
+mod assignment_patterns;
+mod bindings;
 mod callback_inference;
 mod completion;
 mod declarations;

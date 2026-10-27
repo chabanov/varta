@@ -29,6 +29,12 @@ impl Lower<'_> {
             ast::Expr::Arrow(arrow) => self.arrow(arrow, expected),
             ast::Expr::Fn(function) => self.function_expression(function, expected),
             ast::Expr::Call(call) => self.call(call, expected),
+            ast::Expr::Assign(assign) if matches!(assign.left, ast::AssignTarget::Pat(_)) => {
+                let ast::AssignTarget::Pat(target) = &assign.left else {
+                    return Err(invalid("missing assignment pattern"));
+                };
+                self.destructuring_assignment_value(assign, target, expected)
+            }
             ast::Expr::Cond(branch) if self.types.profile.reference_unions() => {
                 self.conditional(branch, expected)
             }

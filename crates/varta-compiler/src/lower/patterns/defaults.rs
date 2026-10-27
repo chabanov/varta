@@ -6,7 +6,18 @@ impl Lower<'_> {
         value: Expr,
         default: &ast::Expr,
         expected: Option<Type>,
+        mode: Mode,
     ) -> Result<Vec<S>> {
+        let (value, roots, mut body) = self.pattern_default_value(value, default, expected)?;
+        body.extend(self.binding_pattern(pattern, value, None, None, mode)?);
+        Ok(vec![S::Scope(roots, body)])
+    }
+    pub(super) fn pattern_default_value(
+        &mut self,
+        value: Expr,
+        default: &ast::Expr,
+        expected: Option<Type>,
+    ) -> Result<(Expr, Vec<u32>, Vec<S>)> {
         let span = value.span;
         let input_ty = value.ty;
         let input = self.hidden(input_ty);
@@ -25,7 +36,7 @@ impl Lower<'_> {
         if expected.is_some_and(|ty| ty != fallback.ty) {
             return Err(self.source.locate(
                 type_error(format!(
-                    "default parameter mismatch: expected {}, found {}",
+                    "default binding mismatch: expected {}, found {}",
                     expected.unwrap_or(Type::Void),
                     fallback.ty
                 )),
@@ -69,12 +80,6 @@ impl Lower<'_> {
         } else {
             body.push(S::Init(output, fallback));
         }
-        body.extend(self.initialize_parameter_pattern(
-            pattern,
-            local(span, output, ty),
-            None,
-            None,
-        )?);
-        Ok(vec![S::Scope(vec![input, output], body)])
+        Ok((local(span, output, ty), vec![input, output], body))
     }
 }

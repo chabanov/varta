@@ -28,10 +28,11 @@ impl Lower<'_> {
             Ok(undefined(span))
         }
     }
-    pub(super) fn object_parameter_pattern(
+    pub(super) fn object_binding_pattern(
         &mut self,
         pattern: &ast::ObjectPat,
         value: Expr,
+        mode: Mode,
     ) -> Result<Vec<S>> {
         let span = pattern.span;
         let (source, ty, mut roots, mut body) = self.pattern_source(value, false)?;
@@ -42,25 +43,27 @@ impl Lower<'_> {
                     let name = prop.key.id.sym.to_string();
                     excluded.insert(name.clone());
                     let field = self.pattern_field(prop.span, source, ty, &name)?;
-                    body.extend(self.initialize_parameter_pattern(
+                    body.extend(self.binding_pattern(
                         &ast::Pat::Ident(prop.key.clone()),
                         field,
                         prop.value.as_deref(),
                         None,
+                        mode,
                     )?);
                 }
                 ast::ObjectPatProp::KeyValue(prop) => {
                     let name = key(&prop.key).map_err(|(e, span)| self.source.locate(e, span))?;
                     excluded.insert(name.clone());
                     let field = self.pattern_field(prop.key.span(), source, ty, &name)?;
-                    body.extend(self.initialize_parameter_pattern(
-                        &prop.value,
-                        field,
-                        None,
-                        None,
-                    )?);
+                    body.extend(self.binding_pattern(&prop.value, field, None, None, mode)?);
                 }
                 ast::ObjectPatProp::Rest(prop) => {
+                    let prepared = if mode == Mode::Assign {
+                        self.prepare_pattern_target(&prop.arg)?
+                    } else {
+                        None
+                    };
+                    let mut rest_body = Vec::new();
                     let Type::Record(from) = ty else {
                         return Err(invalid("missing source record"));
                     };
@@ -102,7 +105,7 @@ impl Lower<'_> {
                         .collect();
                     let output = self.hidden(result);
                     roots.push(output);
-                    body.push(S::Init(
+                    rest_body.push(S::Init(
                         output,
                         Expr {
                             span,
@@ -110,7 +113,7 @@ impl Lower<'_> {
                             kind: E::Record(fields),
                         },
                     ));
-                    body.push(S::RecordRest {
+                    rest_body.push(S::RecordRest {
                         source,
                         target: output,
                         from,
@@ -119,12 +122,23 @@ impl Lower<'_> {
                         index: self.hidden(Type::Number),
                         cursor: self.hidden(Type::Number),
                     });
-                    body.extend(self.initialize_parameter_pattern(
-                        &prop.arg,
-                        local(span, output, result),
-                        None,
-                        None,
-                    )?);
+                    if let Some(target) = prepared {
+                        body.extend(self.finish_pattern_target(
+                            target,
+                            local(span, output, result),
+                            None,
+                            rest_body,
+                        )?);
+                    } else {
+                        body.extend(rest_body);
+                        body.extend(self.binding_pattern(
+                            &prop.arg,
+                            local(span, output, result),
+                            None,
+                            None,
+                            mode,
+                        )?);
+                    }
                 }
             }
         }

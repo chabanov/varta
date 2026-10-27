@@ -1,5 +1,7 @@
 //! Infer unannotated callback block returns after one semantic lowering pass.
 //! Function bodies live separately, so nested arrows cannot contribute returns.
+//! Assignment expression bodies contain only checked pattern traversal, with no
+//! source return/finally statements; their value type is already resolved.
 use super::*;
 
 fn visit(body: &mut [S], visitor: &mut impl FnMut(&mut S) -> Result<()>) -> Result<()> {

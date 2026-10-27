@@ -1,10 +1,16 @@
-//! Checked parameter binding, preserving source order, TDZ and exact roots.
+//! Checked binding patterns, preserving source order, TDZ and exact roots.
 use super::*;
 mod arrays;
 mod defaults;
 mod names;
 mod objects;
-pub(super) use names::names;
+mod targets;
+pub(super) use names::{names, targets};
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    Initialize,
+    Assign,
+}
 
 fn key(name: &ast::PropName) -> std::result::Result<String, (CompilerError, swc_common::Span)> {
     if let ast::PropName::Computed(computed) = name {
@@ -50,25 +56,34 @@ fn binary(span: swc_common::Span, op: ast::BinaryOp, a: Expr, b: Expr, ty: Type)
     }
 }
 impl Lower<'_> {
-    pub(super) fn initialize_parameter_pattern(
+    pub(super) fn initialize_binding_pattern(
         &mut self,
         pattern: &ast::Pat,
         value: Expr,
         default: Option<&ast::Expr>,
         expected: Option<Type>,
     ) -> Result<Vec<S>> {
-        self.parameter_pattern_inner(pattern, value, default, expected)
+        self.binding_pattern(pattern, value, default, expected, Mode::Initialize)
             .map_err(|e| self.source.locate(e, pattern.span()))
     }
-    fn parameter_pattern_inner(
+    pub(super) fn binding_pattern(
         &mut self,
         pattern: &ast::Pat,
         value: Expr,
         default: Option<&ast::Expr>,
         expected: Option<Type>,
+        mode: Mode,
     ) -> Result<Vec<S>> {
+        if let ast::Pat::Assign(assign) = pattern {
+            return self.binding_pattern(&assign.left, value, Some(&assign.right), expected, mode);
+        }
+        if mode == Mode::Assign
+            && let Some(target) = self.prepare_pattern_target(pattern)?
+        {
+            return self.finish_pattern_target(target, value, default, vec![]);
+        }
         if let Some(default) = default {
-            return self.pattern_default(pattern, value, default, expected);
+            return self.pattern_default(pattern, value, default, expected, mode);
         }
         match pattern {
             ast::Pat::Ident(id) => {
@@ -77,12 +92,9 @@ impl Lower<'_> {
                 self.update(name, value.ty)?;
                 Ok(vec![S::Init(slot, value)])
             }
-            ast::Pat::Assign(assign) => {
-                self.pattern_default(&assign.left, value, &assign.right, None)
-            }
-            ast::Pat::Object(object) => self.object_parameter_pattern(object, value),
-            ast::Pat::Array(array) => self.array_parameter_pattern(array, value),
-            _ => Err(unsupported("parameter binding pattern")),
+            ast::Pat::Object(object) => self.object_binding_pattern(object, value, mode),
+            ast::Pat::Array(array) => self.array_binding_pattern(array, value, mode),
+            _ => Err(unsupported("binding pattern")),
         }
     }
     /// Own the input before testing/narrowing. Nested reads may allocate or throw.
@@ -110,9 +122,9 @@ impl Lower<'_> {
             _ => {
                 return Err(self.source.locate(
                     type_error(if array {
-                        "array parameter pattern requires a checked array"
+                        "array binding pattern requires a checked array"
                     } else {
-                        "object parameter pattern requires a closed record"
+                        "object binding pattern requires a closed record"
                     }),
                     span,
                 ));

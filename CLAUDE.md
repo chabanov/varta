@@ -415,9 +415,54 @@ remaining fields, then remaps live presence/order without allocation/user code;
 keep all 32 bits and zero unused order words. Pattern depth/nodes use shared
 64/1024 limits alongside parser/body/frame/resource budgets. Pure tag/metadata
 operations preserve status; actual effects stay visible to helper analysis and
-real grants. No layout/import/helper/ABI change. Local declaration/assignment/
-catch patterns, primitive boxing, strings/custom iterables, array-as-object
+real grants. No layout/import/helper/ABI change. Catch patterns,
+primitive boxing, strings/custom iterables, array-as-object
 patterns and broader keys/prototypes remain unsupported.
+V12+ local const/let patterns reuse the shared binding mechanism. Predeclare all
+block leaves in TDZ, infer or contextually check one RHS, initialize in source
+order and preserve const/let mutability, shared capture cells, shadowing and roots.
+For let clones captured leaves before the first test and before later updates;
+initializer closures keep their original cells. Const has no per-iteration
+rebinding. Preserve continue/finally update routing and break/return/throw cleanup.
+Shared pattern limits also bound each lexical declaration (64 depth/1024 nodes);
+parameter limits keep aliases. Actual effects remain visible to helper validation
+and real grants/status. No ABI/layout/helper/import change. Destructuring requires
+an initializer; var/ambient, top-level, catch and for-in/of stay unsupported.
+V12+ destructuring assignment statements update initialized mutable locals/
+parameters/captured cells. Validate shared pattern limits and target mutability/
+initialization/guards without declaring names. Root one RHS, traverse live source
+and write in order with explicit Assign mode/Set; never reinitialize captured
+cells. Repeated targets/default reads are allowed; prior writes survive later
+throws. Preserve exact/union type checks and pure Undefined narrowing with owned
+TypeError before the failing write. Defaults use target context; opaque pairs/
+functions stay outside aggregate tags. Retain existing roots/rest/status/permissions/
+helper purity/fatal limits. Parenthesized statements and ordinary for init/update
+are admitted; expression values/chains and member targets are supported below.
+Dynamic record keys, catch and for-in/of remain unsupported. No ABI/helper/import/layout change.
+V12+ destructuring assignment values retain the actual contextual RHS type and
+original identity/fields/holes. Save one RHS in a hidden rooted scope, traverse
+Assign mode and publish it only on success. Propagate result context and allow
+nested chains/arguments/returns/callbacks/admitted expression positions. Embedded
+statement cleanup restores a saved temporary floor, preserving older operands;
+nested floors compose and handler scopes cover RHS evaluation. Load the result
+before clearing its hidden root without allocation; use normal expression/return
+retention afterward. Visitors must traverse both RHS/body for layouts/effects.
+Traversal cannot contain source returns/finalizers; lifted functions remain
+separate. Preserve partial writes, exceptions/fatal limits, cells/pairs/status/
+actual grants and all bounds. No ABI/import/helper/layout change.
+V12+ assignment patterns admit checked record-field/Number array-element targets,
+including default/nested/rest leaves. Initialization patterns still bind names.
+Prepare receiver/key once before source GetV/iterator step/default; rest prepares
+before copy, nested leaves only after acquiring their containing source. Root
+prepared references across allocation/reassignment and commit through ordinary
+setters against saved receiver/key and current backing. Do not re-lower references
+after defaults. Const children are mutable; target types/default context/Undefined
+checks and optional presence/order remain invariant. V12/v13 preserve indexed
+bounds, v14 adds extension/length targets and existing RangeError/fatal policies.
+References/defaults after a throw are skipped, prior writes survive, successful
+expressions return their original RHS. Actual receiver/key/default effects stay
+visible to helper-purity validation and grants/host ceilings. Preserve pattern/
+source/frame/resource bounds, GC/pairs/floors and old profiles. No ABI/helper change.
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail
 even if they ignore its custom section. Do not claim full ECMAScript support from
@@ -497,10 +542,10 @@ All three gates must pass before every commit, and they are run frequently durin
 cargo fmt --all -- --check              # formatting; plain `cargo fmt --all` fixes
 cargo check -p varta-common -p varta-compiler -p varta-runtime -p varta-artifact --lib --locked
 cargo build -p varta-launcher --bin varta-runtime --locked
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build --workspace --all-targets --locked
-cargo test --workspace
-cargo test -p varta --test smoke        # CLI end-to-end tests
+cargo test --workspace --locked
+cargo test -p varta --test smoke --locked # CLI end-to-end tests
 ```
 
 CI runs exactly this set. If clippy fails, fix the code, not the lint; `cargo clippy --fix --allow-dirty` may apply the mechanical part, but review the result as code. Report failures honestly with output; never claim tests pass without running them.

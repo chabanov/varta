@@ -207,6 +207,10 @@ fn expression(
     effects: &mut BTreeSet<String>,
 ) {
     match &expr.kind {
+        E::Assignment { value, body, .. } => {
+            expression(value, functions, visited, effects);
+            statements(body, functions, visited, effects);
+        }
         E::ArrayDelete {
             array,
             index,

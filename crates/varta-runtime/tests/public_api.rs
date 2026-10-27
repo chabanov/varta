@@ -1478,3 +1478,142 @@ fn public_engine_destructures_parameters_across_virtual_modules() {
         ]
     );
 }
+
+#[test]
+fn public_engine_runs_local_binding_patterns_across_virtual_modules() {
+    struct LocalSources;
+    impl ModuleLoader for LocalSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./locals.ts" {
+                Ok("locals.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function snapshot():{label:string;first:number;tail:(number|undefined)[];copy:{flag?:boolean}}{const {name:label='local',...copy}:{name?:string;flag?:boolean}={flag:false};let [first=1,...tail]:number[]=[2,,3];first=first+1;return {label:label,first:first,tail:tail,copy:copy};}export function reader():()=>number{let saved:()=>number=()=>99;for(let {i=0,read=()=>i}:{}={};i<2;i=i+1){saved=read;if(i===0){i=1;}}return saved;}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {snapshot,reader} from './locals.ts';export function main():void{console.log(JSON.stringify(snapshot()));console.log(reader()());}".into()},&LocalSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .inspect_module(&compilation.wasm)
+            .unwrap()
+            .value_abi_version,
+        Some(varta_common::value::SPARSE_VALUE_VERSION)
+    );
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: {\"label\":\"local\",\"first\":3,\"tail\":[null,3],\"copy\":{\"flag\":false}}",
+            "varta log: 0"
+        ]
+    );
+}
+
+#[test]
+fn public_engine_runs_checked_destructuring_assignment_across_virtual_modules() {
+    struct AssignmentSources;
+    impl ModuleLoader for AssignmentSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./assign.ts" {
+                Ok("assign.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function snapshot():{first:number;tail:(number|undefined)[]}{let first=0;let tail:(number|undefined)[]=[];[first,...tail]=[2,,3];return {first:first,tail:tail};}export function reader():()=>number{let value=1;const read=()=>value;({value}={value:3});return read;}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {snapshot,reader} from './assign.ts';export function main():void{console.log(JSON.stringify(snapshot()));console.log(reader()());}".into()},&AssignmentSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .inspect_module(&compilation.wasm)
+            .unwrap()
+            .value_abi_version,
+        Some(varta_common::value::SPARSE_VALUE_VERSION)
+    );
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: {\"first\":2,\"tail\":[null,3]}", "varta log: 3"]
+    );
+}
+
+#[test]
+fn public_engine_returns_assignment_rhs_values_across_virtual_modules() {
+    struct ValueSources;
+    impl ModuleLoader for ValueSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./values.ts" {
+                Ok("values.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function assign(source:{n:number;extra:string}):{n:number;extra:string}{let a=0;let b=0;return ({n:a}=({n:b}=source));}export function assignArray(source:number[]):number[]{let n=0;return ([n=7]=source);}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {assign,assignArray} from './values.ts';export function main():void{const source={extra:'kept',n:2};const original=assign(source);console.log(original===source);console.log(JSON.stringify(original));const input:number[]=[,2];const output=assignArray(input);console.log(output===input);console.log(Object.hasOwn(output,0));console.log(JSON.stringify(output));}".into()},&ValueSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .inspect_module(&compilation.wasm)
+            .unwrap()
+            .value_abi_version,
+        Some(varta_common::value::SPARSE_VALUE_VERSION)
+    );
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 1",
+            "varta log: {\"extra\":\"kept\",\"n\":2}",
+            "varta log: 1",
+            "varta log: 0",
+            "varta log: [null,2]"
+        ]
+    );
+}
+
+#[test]
+fn public_engine_assigns_checked_member_targets_across_virtual_modules() {
+    struct MemberSources;
+    impl ModuleLoader for MemberSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./members.ts" {
+                Ok("members.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function assign(source:{n:number;extra:string},output:{n:number},values:number[]):{n:number;extra:string}{({n:output.n}=source);[values[2]]=[output.n];return ({n:output.n}=source);}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {assign} from './members.ts';export function main():void{const source={extra:'kept',n:2};const output={n:0};const values:number[]=[];console.log(assign(source,output,values)===source);console.log(output.n);console.log(JSON.stringify(values));console.log(Object.hasOwn(values,0));}".into()},&MemberSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 1",
+            "varta log: 2",
+            "varta log: [null,null,2]",
+            "varta log: 0"
+        ]
+    );
+}

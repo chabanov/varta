@@ -1,33 +1,12 @@
 use super::*;
+fn unparen(mut expr: &ast::Expr) -> &ast::Expr {
+    while let ast::Expr::Paren(p) = expr {
+        expr = &p.expr;
+    }
+    expr
+}
 
 impl Lower<'_> {
-    fn predeclare(&mut self, declaration: &ast::VarDecl) -> Result<()> {
-        if declaration.declare || declaration.kind == ast::VarDeclKind::Var {
-            return Err(unsupported("var or ambient local"));
-        }
-        for variable in &declaration.decls {
-            let ast::Pat::Ident(binding) = &variable.name else {
-                return Err(unsupported("binding pattern"));
-            };
-            let annotation = annotation(binding.type_ann.as_deref(), self.types).map_err(|e| {
-                self.source.locate(
-                    e,
-                    binding
-                        .type_ann
-                        .as_ref()
-                        .map_or(binding.span(), |a| a.type_ann.span()),
-                )
-            })?;
-            self.declare(
-                binding.id.sym.as_ref(),
-                annotation,
-                false,
-                declaration.kind != ast::VarDeclKind::Const,
-            )
-            .map_err(|e| self.source.locate(e, binding.span()))?;
-        }
-        Ok(())
-    }
     pub(super) fn block(&mut self, statements: &[ast::Stmt], scope: bool) -> Result<Vec<S>> {
         self.depth += 1;
         if self.depth > 64 {
@@ -62,52 +41,6 @@ impl Lower<'_> {
     fn single(&mut self, statement: &ast::Stmt) -> Result<Vec<S>> {
         Ok(vec![self.statement(statement)?])
     }
-    fn variables(&mut self, declaration: &ast::VarDecl) -> Result<Vec<S>> {
-        let mut output = Vec::new();
-        for variable in &declaration.decls {
-            let ast::Pat::Ident(binding) = &variable.name else {
-                return Err(unsupported("binding pattern"));
-            };
-            let name = binding.id.sym.as_ref();
-            let old = self.binding(name)?;
-            let value = if let Some(init) = variable.init.as_deref() {
-                self.expr_expected(init, old.ty)?
-            } else if self.types.profile.missing()
-                && declaration.kind == ast::VarDeclKind::Let
-                && old
-                    .ty
-                    .is_some_and(|ty| unions::members(ty, self.types).contains(&Type::Undefined))
-            {
-                unions::widen(
-                    Expr {
-                        span: variable.span,
-                        ty: Type::Undefined,
-                        kind: E::Integer(0),
-                    },
-                    old.ty,
-                    self.types,
-                )?
-            } else {
-                return Err(unsupported(
-                    "uninitialized variable without an undefined-capable let annotation",
-                ));
-            };
-            value_type(value.ty).map_err(|e| self.source.locate(e, value.span))?;
-            if old.ty.is_some_and(|ty| ty != value.ty) {
-                return Err(self.source.locate(
-                    type_error(format!(
-                        "type mismatch for {name}: expected {}, found {}",
-                        old.ty.unwrap_or(Type::Void),
-                        value.ty
-                    )),
-                    value.span,
-                ));
-            }
-            self.update(name, value.ty)?;
-            output.push(S::Init(old.slot, value));
-        }
-        Ok(output)
-    }
     fn statement(&mut self, statement: &ast::Stmt) -> Result<S> {
         self.statement_inner(statement)
             .map_err(|e| self.source.locate(e, statement.span()))
@@ -120,7 +53,7 @@ impl Lower<'_> {
             ast::Stmt::Decl(ast::Decl::Var(var)) => S::Block(self.variables(var)?),
             ast::Stmt::Block(block) => S::Block(self.block(&block.stmts, true)?),
             ast::Stmt::Expr(statement) => {
-                if let ast::Expr::Assign(assign) = &*statement.expr {
+                if let ast::Expr::Assign(assign) = unparen(&statement.expr) {
                     self.assignment(assign)?
                 } else {
                     S::Expr(self.expr(&statement.expr)?)
@@ -204,7 +137,7 @@ impl Lower<'_> {
             }
             ast::Stmt::For(statement) => {
                 self.scopes.push(BTreeMap::new());
-                let init = match &statement.init {
+                let mut init = match &statement.init {
                     Some(ast::VarDeclOrExpr::VarDecl(var)) => {
                         self.predeclare(var)
                             .map_err(|e| self.source.locate(e, var.span()))?;
@@ -227,14 +160,19 @@ impl Lower<'_> {
                 self.loops += 1;
                 let body = self.single(&statement.body)?;
                 self.loops -= 1;
-                if self.types.profile.closures() {
-                    let slots = self
+                if self.types.profile.closures()
+                    && matches!(&statement.init, Some(ast::VarDeclOrExpr::VarDecl(var)) if var.kind == ast::VarDeclKind::Let)
+                {
+                    let slots: Vec<_> = self
                         .scopes
                         .last()
                         .ok_or_else(|| invalid("missing loop scope"))?
                         .values()
                         .map(|binding| binding.slot)
                         .collect();
+                    // The first iteration also owns cells distinct from the
+                    // initializer environment captured by default/RHS closures.
+                    init.push(S::Rebind(slots.clone()));
                     update.insert(0, S::Rebind(slots));
                 }
                 let slots = self
@@ -300,11 +238,13 @@ impl Lower<'_> {
         })
     }
     fn expression_statement(&mut self, expression: &ast::Expr) -> Result<Vec<S>> {
-        Ok(vec![if let ast::Expr::Assign(assign) = expression {
-            self.assignment(assign)?
-        } else {
-            S::Expr(self.expr(expression)?)
-        }])
+        Ok(vec![
+            if let ast::Expr::Assign(assign) = unparen(expression) {
+                self.assignment(assign)?
+            } else {
+                S::Expr(self.expr(expression)?)
+            },
+        ])
     }
     fn assignment(&mut self, assign: &ast::AssignExpr) -> Result<S> {
         self.assignment_inner(assign)
@@ -313,6 +253,9 @@ impl Lower<'_> {
     fn assignment_inner(&mut self, assign: &ast::AssignExpr) -> Result<S> {
         if assign.op != ast::AssignOp::Assign {
             return Err(unsupported("compound assignment"));
+        }
+        if let ast::AssignTarget::Pat(pattern) = &assign.left {
+            return self.destructuring_assignment(assign, pattern);
         }
         if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left {
             let field = self.place(member)?;

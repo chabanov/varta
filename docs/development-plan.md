@@ -951,8 +951,50 @@ join existing resource limits. Tests cover full-width presence, default-fuel res
 callbacks, errors/fatal limits, scopes/closures/this/self, virtual modules and
 source-free native/Wasm execution. No ABI/import/helper/layout change is required.
 
-Next extend the checked binding mechanism to local const/let destructuring with
-lexical scope, TDZ and mutability rules. Assignment/catch patterns, generalized
+Local const/let destructuring is implemented additively in v12+ through the shared
+binding mechanism. Blocks and ordinary for initializers predeclare all leaves in
+TDZ, infer or contextually check one RHS evaluation, then initialize in source
+order. Const/let keep mutability and managed closure cells; nested scopes restore
+shadowed bindings. For let now separates the initializer from the first iteration,
+as well as rebinding before later updates; const retains its loop environment.
+Pattern semantics, exact roots, GC/physical pairs, recoverable/fatal paths, status,
+helper purity and actual grants remain intact. Shared 64/1024 pattern budgets also
+bound each lexical declaration. Tests cover scopes/mutability/captures, iteration/
+finally, bounds/default-fuel copies, dependency diagnostics, virtual modules and
+source-free artifacts with real grants/host ceilings. No ABI/helper/layout change.
+
+Checked destructuring assignment statements are implemented in v12+. Existing
+initialized mutable local/parameter/captured targets are validated without new
+bindings; RHS evaluates once and nested source-order writes retain existing cells.
+Defaults see earlier writes/prior values, duplicate targets are allowed and runtime
+errors preserve successful writes before skipping later work. Exact/union types
+and checked Undefined narrowing protect invariant target types; defaults use target
+context. Shared traversal/root/rest/exception rules, bounds, actual grants/status
+and helper purity remain intact. Tests cover closures, partial failures, GC/pairs,
+1024-value default budgets, diagnostics, virtual modules and source-free artifacts.
+No ABI/import/helper/layout change is introduced.
+
+Expression-valued destructuring assignment is implemented additively in v12+.
+Save one rooted RHS and return the original value/type only after traversal;
+identity, unselected fields and sparse holes remain intact. Results work in nested
+chains, arguments, returns, callbacks and supported expression positions. Scoped
+root floors protect earlier operands across embedded traversal statements, while
+normal handlers/finalizers retain cleanup and partial-write semantics. Collection/
+effect visitors see both RHS and body. Tests cover result context, earlier/later
+operand GC, physical pairs, fatal limits/default budgets, helper purity, virtual
+modules and source-free artifacts with real grants/status. No ABI/helper change.
+
+Checked record-field/array-element destructuring targets are implemented in v12+,
+including nested/default/rest targets. Prepared receivers/indices evaluate once
+before corresponding source reads/defaults or rest copying; hidden roots preserve
+identity through allocation, reassignment and array resizing. Existing setters
+retain types/presence/order and profile-specific bounds; length targets require
+v14. Tests cover order/throws, GC/pairs, current backing, fatal limits, legacy gates,
+helper purity, virtual modules and source-free artifacts with grants/ceilings and
+dependency diagnostics. No ABI/helper/layout change.
+
+Next extend checked loop syntax with for-of over bounded arrays, reusing live
+iteration, lexical captures and finally cleanup. Catch patterns, generalized
 keys/coercion and constructors/prototypes remain language work. Scheduler/promise
 jobs follow retained-root, cancellation, queue and handle lifetime design.
 

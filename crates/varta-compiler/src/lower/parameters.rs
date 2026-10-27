@@ -282,7 +282,7 @@ impl Lower<'_> {
                 ty: plan.incoming,
                 kind: E::Local((first + index) as u32),
             };
-            body.extend(self.initialize_parameter_pattern(
+            body.extend(self.initialize_binding_pattern(
                 &plan.binding,
                 incoming,
                 plan.default.as_deref(),

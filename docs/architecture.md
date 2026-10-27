@@ -1612,9 +1612,9 @@ string/number literal keys (including computed literals), nested defaults and a
 final identifier object rest. Array patterns admit nested bindings/defaults,
 elisions and final identifier/aggregate rest; final parameter rest can itself be
 an array pattern. Dynamic keys are rejected before lowering effects. Primitive
-boxing, strings/general iterables, array-as-object patterns, local declarations,
-assignment/catch patterns, broader prototypes and unrestricted unions remain
-outside this increment. Shared function constants bound parameter pattern depth
+boxing, strings/general iterables, array-as-object patterns, catch patterns,
+broader prototypes and unrestricted unions remain
+outside this increment; local declarations are supported below. Shared function constants bound parameter pattern depth
 to 64 and nodes (including elisions/wrappers) to 1024 per function; existing parser
 complexity, semantic type, physical slot, emitted body, frame/memory/root/fuel/
 deadline/host-call limits still apply independently.
@@ -1676,6 +1676,219 @@ keys/defaults/rest, live mutation/exhaustion, type inference and callbacks,
 TDZ/scopes/cells/self/this, nullish and thrown errors, GC/result pairs, all 32 record
 bits, 1024-element rest/default callbacks, bounds/profile gates, helper purity,
 virtual modules and source-free artifacts with status/permissions/authorized exit.
+
+### Local lexical destructuring contract
+
+V12+ local const/let declarations, including ordinary for initializers and explicit
+case blocks, share parameter pattern lowering. Reuse static-key validation,
+recursive defaults/aliases, elisions, object/array rest, live sparse reads and
+persistent exhaustion. Root/source/default/copy ownership, nullish owned TypeError,
+shallow child identity, record presence/enumeration and fatal resource semantics
+remain those of the parameter contract. No second pattern interpreter, host
+operation, helper, managed layout or ABI version is introduced. Earlier profiles
+reject local aggregate patterns; ordinary identifier declarations keep their
+existing annotations, undefined-capable let initialization and physical pairs.
+
+Predeclare every leaf in the enclosing lexical block before lowering statements;
+ordinary for initializers own a separate loop scope. Reject duplicate/reserved
+names and unsupported dynamic keys before initializer evaluation. Infer the input
+aggregate from its initializer, or use the whole-pattern annotation as context
+and validate its exact admitted type. Require an initializer for every aggregate
+pattern. Do not evaluate an initializer during predeclaration. Evaluate each RHS
+once at its declaration position, then initialize leaves in source order using
+the existing managed binding-cell path. Earlier initialized leaves/declarators
+are visible to later defaults; own/later reads or captures remain checked TDZ
+errors, including shadowing an outer name in an RHS. Source identity and the
+innermost available expression range are retained in diagnostics.
+
+Keep const/let mutability on each predeclared leaf: const rejects rebinding in the
+owner or a captured closure; property/element mutation through an aggregate still
+uses ordinary checked setters. Let retains invariant assignment types, shared
+capture cells and existing guard safety. Const union guards remain stable through
+captures; mutable captured union narrowing is rejected, even when capture appears
+after the guard. Separate lexical activations/shadowed blocks own distinct cells,
+and escaping aliases retain their live graphs after scope roots clear. Hidden
+input/default/rest scopes release only their temporary roots after binding transfer;
+no synthetic aggregate binding leaks into source scope.
+
+Ordinary for let loops follow the admitted portions of
+[ForBodyEvaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-forbodyevaluation).
+Rebind captured loop leaves after initialization and before the first test, then
+before each update. This separates closures created by the initializer from the
+first iteration as well as separating subsequent iterations. Copy each leaf's
+current value/reference identity using the existing managed cell operation; only
+captured cells allocate. Continue/finally reaches rebinding and update, while
+break/return/throw preserves escaped prior cells and exits normally through scope
+cleanup. Const initializers have no per-iteration environment, matching their
+immutable binding lifetime. Repeated body declarations create fresh activation
+cells through ordinary initialization. For-in/of and labels remain unsupported.
+
+Shared `MAX_BINDING_PATTERN_DEPTH/NODES` bound a lexical declaration (all its
+declarators) to depth 64/1024 nodes; parameter constants retain aliases to the same
+limits. Parser complexity, semantic type, body, frame/root, memory/fuel/deadline
+and host-call bounds remain independent. Var/ambient, top-level, catch,
+primitive-boxing/string/custom-iterator and broader dynamic-key patterns remain
+unsupported. Actual initializer/default host calls remain visible to helper
+purity analysis and require real package and host grants; pure binding/rest
+operations preserve system status. Tests cover nesting/inference/context, once-only
+RHS/order, TDZ/duplicates/diagnostics, mutability/shadowing/closures/this/self,
+initializer/iteration environments, finally and fatal paths, GC/physical pairs,
+default-fuel 1024-element copies, legacy/profile bounds, virtual modules and
+source-free Wasm/native artifacts with granted/denied operations and host ceilings.
+
+### Checked destructuring assignment contract
+
+V12+ admits object/array assignment patterns targeting existing initialized
+mutable local/parameter bindings, including captured outer cells. Support
+standalone statements, arbitrary enclosing parentheses and ordinary for
+initializer/update statements. Nested defaults/patterns, static keys/aliases,
+elisions and final object/array rest share the existing checked binding path.
+Expression values/chains and checked member targets are implemented below. Other
+expression targets, dynamic record keys, catch and for-in/of patterns remain
+unsupported; diagnostics name these boundaries.
+Earlier profiles reject the pattern assignment path. No ABI/import/helper/layout
+change or indirect-call/host-effect exception is introduced.
+
+The admitted source order follows the supported portions of
+[DestructuringAssignmentEvaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-runtime-semantics-destructuringassignmentevaluation).
+Validate the syntax and shared depth/node limits (64/1024 per assignment) before
+lowering. Resolve every leaf against the current lexical scope, enforcing existing
+mutability, initialization, capture and guard restrictions with actual target
+spans. Do not predeclare names or change binding types. Repeated references are
+permitted and write the same slot/cell sequentially. Evaluate/root the complete
+RHS once, then traverse the original aggregate even if targets change aliases.
+Defaults execute at their position and see previous successful writes or their
+own prior binding value. A runtime throw stops later reads/defaults/writes, while
+earlier writes remain visible to catch/finally and escaped closures.
+
+The shared traversal carries an explicit initialize/assign mode through every
+nested pattern/default/rest. Only assignment leaves emit Set, retaining the
+existing managed cell instead of creating a new activation. Hidden source,
+default, rest and narrowed-value temporaries still use rooted initialization and
+lexical cleanup. Keep source graphs live across overwritten aliases and later
+allocations/collection, and transfer new payloads/status pairs through the normal
+binding writer. Function and physical result defaults can populate existing
+compatible leaves without entering aggregate value tags. This/private self and
+transitive/sibling captures retain ordinary semantics.
+
+Leaf types remain invariant, admitting exact values and declared union widening.
+For an Undefined-capable value whose non-Undefined members fit the target, emit a
+pure guest Undefined test: Undefined throws owned TypeError
+`Invalid destructuring assignment value`, and present values narrow/unbox/widen
+before Set. Other statically incompatible types fail compilation; arbitrary union
+discrimination/coercion is not introduced. Defaults receive the leaf target
+type as context and are checked before publication. Homogeneous array targets
+provide an element context (including Undefined for fixed slots), while a rest
+target retains its exact element type. Opaque Function/result targets do not
+invent array element kinds. Ambiguous nested/empty RHS aggregates require an
+independently typed source. No record context guesses away unselected RHS fields.
+
+Live array length/backing/presence, persistent exhaustion, present dense rest,
+record rest presence/enumeration and shallow identity use the existing traversal.
+Nullish nested aggregates throw the existing owned TypeError. All resource limits
+and authorized exit remain fatal; no catch/finally conversion is added. Pure
+checks/copies preserve system status. Actual RHS/default calls require package
+and host grants and remain visible to Wasm helper-purity validation. Tests cover
+once-only RHS, order/duplicates/defaults/aliases/rest, context/type/mutability/TDZ/
+guards, captured cells/this/self/function/results, partial failures/finalizers,
+GC, default-fuel 1024-element copies, bounds/legacy gates, virtual modules and
+source-free Wasm/native artifacts with real grants, host ceilings and target
+source diagnostics.
+
+### Destructuring member target contract
+
+V12+ Assign mode admits checked record-field and numeric array-element leaves,
+including final object/array rest targets. Initialization mode continues to
+accept binding patterns only; object binding rest remains an identifier. Resolve
+member places through the ordinary checked place lowerer: static record keys,
+Number array keys, invariant field/element types, no Error/result mutation or
+unresolved nullable base. Const receivers permit child mutation. The shared
+64-depth/1024-node pattern budget applies before lowering; receiver/key expressions
+retain ordinary parser/source/body/frame bounds.
+
+Follow the admitted portions of
+[KeyedDestructuringAssignmentEvaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-runtime-semantics-keyeddestructuringassignmentevaluation)
+and IteratorDestructuringAssignmentEvaluation: prepare each non-pattern reference
+before GetV/iterator step and default evaluation. Rest prepares its reference
+before copying/draining. Nested patterns first obtain their source value and only
+then prepare their own leaves. Do not eagerly prepare all pattern references.
+Elisions, live length/backing reads and remembered exhaustion remain unchanged.
+
+Lower a prepared place into hidden rooted receiver/key slots and a typed local,
+field, index or length store. Read/default/check the source only after preparation,
+then emit the ordinary checked setter against the saved reference. Never lower or
+evaluate the member again after default execution. Default values use target
+context and the existing pure Undefined check; optional field writes retain
+presence/insertion order. Resolve current array backing at commit, so key/default
+side effects can resize it without stale addresses. The scope covers reference
+preparation, source reads, defaults, rest allocation and the final write; normal
+unwinding cleans it. Expression temporary floors still protect preceding operands.
+
+V12 existing-slot writes and v13 hole filling keep their bounds; v14 supports
+extension and length targets through the existing setters. Invalid uint32 length
+raises owned RangeError. Numeric index validation remains after RHS/default
+execution, and valid lengths above 1024 or invalid checked indices remain fatal.
+No new layouts/helpers/imports/ABI versions or privileged paths are introduced.
+Actual receiver/key/default effects remain visible to helper-purity validation,
+package grants and host ceilings. Prior writes survive later recoverable errors;
+remaining references/defaults are skipped. Success returns the original RHS.
+Tests validate Wasm execution, reference order/identity, GC, current backing,
+rest/presence/order, partial/fatal failures, profile gates, public virtual modules
+and source-free Wasm/native artifacts with grant denial and dependency diagnostics.
+
+### Destructuring assignment value contract
+
+V12+ checked pattern assignments are expressions with the actual contextual RHS
+type and original value as their success result. Preserve source record/array
+identity, unselected fields and sparse presence; defaults/rest traversal changes
+only targets, while user-authored mutations observe normal reference identity.
+Admit results in local initializers, arguments/receivers, returns, member reads,
+callbacks, supported conditional/operator positions and nested pattern assignment
+chains. Standalone and for init/update statements lower through the same value
+path and discard the result. Ordinary non-pattern assignment expressions remain
+outside this increment, as do dynamic record keys, catch and for-in/of.
+
+Resolve target syntax/bounds/mutability as before, then propagate available result
+context to the RHS; absent context retains homogeneous target inference. Evaluate
+one RHS into a dedicated hidden rooted slot, retaining its exact source type.
+Traverse the shared Assign-mode pattern using a read of that saved slot, and load
+that same slot only after all writes succeed. Outer chains begin traversal only
+after inner completion and receive the original RHS. Never rebuild the result
+from targets or substitute a fresh rest copy. Inferred/annotated results still
+pass ordinary invariant aggregate/union checks; context cannot omit unselected
+source fields or reinterpret an independently typed source array.
+
+A dedicated IR expression owns its RHS, hidden input/marker and checked traversal
+statements. Before evaluation, save the current shadow-root cursor as an
+activation-local temporary floor. Statement cleanup inside the expression restores
+that floor rather than the function's frame end, retaining earlier operands and
+arguments still on the Wasm stack. Nested assignment expressions save/restore
+their own floors. The RHS input lives in an ordinary lexical root scope before
+any traversal/default allocation; result loading precedes scope cleanup without
+an intervening allocation, and the enclosing expression retains it for later
+operands/calls or existing return/finalizer transfer. Markers are typed internal
+i32 locals outside reference tracing and count toward existing frame limits.
+
+Exception handlers include the assignment input scope even during RHS evaluation.
+Throws unwind its hidden roots and older expression temporaries to the existing
+handler marker, skip later target/enclosing effects and publish no success result.
+Previous successful writes remain visible. Fatal budgets and authorized exit retain
+their bypass behavior. Floor restoration is scoped in emission; caller/callee
+frames and source finalizer regions retain their existing lifetimes. No native EH,
+heap/layout change, host operation, helper or ABI version is introduced.
+
+Collection and effect visitors traverse both RHS and traversal statements, so
+schemas/layouts/helpers/canonical references and actual default/RHS host edges
+remain visible. Source return/finally statements cannot live in generated traversal
+bodies; lifted function bodies and outer callback return inference remain separate,
+using the assignment expression's resolved result type. Preserve exact cells,
+physical result pairs, status and package/host grant conjunction.
+
+Tests validate original identity/fields/holes and result contexts, nested chains,
+arguments/members/conditionals/short circuit, callbacks/returns/finalizers, partial
+throws/fatal limits, diagnostics/legacy gates, default-fuel 1024-element arrays,
+GC of earlier operands/pairs and later arguments/results, helper purity, virtual
+modules and source-free native/Wasm artifacts with grants/status/host ceilings.
 
 ### Lexical closures and host ABI v15
 

@@ -67,8 +67,10 @@ impl Emitter<'_> {
     }
     pub(super) fn end_temporaries(&mut self) {
         if let Some(memory) = self.memory {
-            self.code
-                .extend([I::LocalGet(self.frame_end), I::GlobalSet(memory.roots)]);
+            self.code.extend([
+                I::LocalGet(self.temporary_floor.unwrap_or(self.frame_end)),
+                I::GlobalSet(memory.roots),
+            ]);
         }
     }
     pub(super) fn store_root(&mut self, slot: u32) {

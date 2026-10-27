@@ -187,7 +187,43 @@
 // Object rest is fresh/shallow and preserves live presence/enumeration order.
 // Bound pattern depth/nodes to 64/1024 per function plus existing resource limits.
 // Dynamic keys, primitive boxing, string/custom iterables, array-as-object and
-// local declaration/assignment/catch patterns remain unsupported. No ABI change.
+// catch patterns remain unsupported. No ABI change.
+// V12+ local const/let declarations and ordinary for initializers reuse these
+// patterns. Infer the RHS or supply a whole-pattern aggregate annotation; require
+// an initializer and evaluate it once. Predeclare all block leaves in TDZ and
+// initialize in source order. Const rejects rebinding, while children remain
+// mutable; let retains checked assignments/shared cells. For let separates the
+// initializer and first iteration cells, then rebinds before updates. Const keeps
+// one loop environment. Preserve shadowing, escaping closures, GC/pairs/errors,
+// status and actual permissions. Shared pattern budgets also bound each lexical
+// declaration. Var/ambient, top-level, catch and for-in/of patterns
+// remain unsupported. No host import/helper/layout/ABI change.
+// V12+ destructuring assignment statements update existing initialized mutable
+// local/parameter/captured cells in source order after one RHS evaluation. Reuse
+// nested patterns/defaults/rest, admitting duplicate targets/prior-value reads;
+// preserve successful writes on later throws. Keep target types invariant with
+// union widening and checked Undefined narrowing (owned TypeError on absence).
+// Defaults use target context; shared roots/limits/status/grants remain intact.
+// Parenthesized statements, expression results/chains and for init/update are
+// supported. Checked member targets are supported below; dynamic record keys,
+// catch and for-in/of stay unsupported. No ABI change.
+// Assignment expressions return the original contextual RHS identity/type,
+// retaining unselected fields and holes. Save it once, finish traversal and then
+// publish it to arguments/returns/callbacks/chains/admitted expression positions.
+// Scoped temporary floors keep earlier operands rooted during embedded statement
+// cleanup; input scopes cover errors and ordinary retention protects later use.
+// Defaults update targets without filling source properties. Preserve partial
+// writes, GC/pairs/finalizers/status/real grants and all limits. No ABI change.
+// V12+ assignment patterns admit checked record fields and Number array elements,
+// including nested/default/rest targets. Evaluate each receiver/key once before
+// source reads/defaults (rest: before copy), then retain that reference across
+// allocation/reassignment. Writes resolve current backing after default effects.
+// Const children remain mutable; exact types/union widening/Undefined checks and
+// presence/order retain their contracts. V12 replaces existing slots; v13 fills
+// holes within length; v14 extends and admits length targets with existing
+// RangeError/fatal bounds. Declaration/parameter patterns still bind names.
+// General record keys/coercion, Error/result mutation and unresolved nullable
+// receivers remain unsupported. Effects require real grants; no ABI change.
 // checked-f64-utf16-v13 adds sparse presence (host ABI v16/value v12/schema v12).
 // Holes differ from explicit undefined through Object.hasOwn; all-hole literals
 // require an element annotation. Reads/at return undefined for holes; writes within

@@ -9,6 +9,11 @@ Status: MVP / active development. The [architecture contract](docs/architecture.
 describes the implemented language, trust boundaries, ABI and limits. The
 [development plan](docs/development-plan.md) tracks audit fixes and next milestones.
 
+[Repository](https://github.com/chabanov/varta) · [Contributing](CONTRIBUTING.md) ·
+[Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE.md)
+
+Developed by **Squad AI, Inc.** Architecture and technology by **Pavlo Chabanov**.
+
 ## Repository scope
 
 This repository develops the Varta engine and its development tools. Application
@@ -108,6 +113,11 @@ analyzed or modified. Authenticity requires verification by a trusted loader,
 while concrete actions always remain subject to host and caller permissions.
 
 ## Quickstart
+
+Build from a local checkout of this repository. CI uses Rust **1.98.0** on Linux
+and macOS; native compiler/linker tools are required. See
+[development setup](CONTRIBUTING.md#development-setup) for cloning and toolchain
+installation. Windows and cross-target native packaging are not yet verified.
 
 ```sh
 cargo install --path crates/varta-launcher --locked
@@ -702,9 +712,168 @@ Resource limits remain fatal. A function's parameter patterns are bounded to 102
 nodes and depth 64, alongside existing source/type/body/frame limits. Destructured
 rest parameters and nested array rest patterns are supported; object rest must
 end in an identifier. Dynamic keys, primitive boxing, string/custom iterables,
-array-as-object patterns, local declaration/assignment/catch destructuring remain
-unsupported. No ABI, import, managed layout or helper changes. See the
+array-as-object patterns and catch destructuring remain unsupported.
+Local const/let patterns are supported below. No ABI, import, managed layout or helper changes. See the
 [parameter pattern contract](docs/architecture.md#parameter-destructuring-contract).
+
+## Local const and let destructuring (v12 and later)
+
+Local lexical declarations use the same checked object/array binding mechanism
+as parameters, including aliases, nested patterns, defaults, elisions and rest:
+
+```ts
+export function main(): void {
+  const {name: label = "item", ...other}: {name?: string; enabled?: boolean} =
+    {enabled: false};
+  let [first = 0, ...tail]: number[] = [1, , 3];
+  first = first + 1;
+  console.log(label); // item
+  console.log(first); // 2
+  console.log(JSON.stringify(tail)); // [null,3]
+  console.log(JSON.stringify(other)); // {"enabled":false}
+}
+```
+
+The initializer runs once. Its type is inferred, or supplied by an aggregate
+annotation on the whole pattern; empty arrays still need an element context.
+All names in the enclosing block start uninitialized, so own/later reads and
+captures are rejected even across declarators/statements. Names initialize left
+to right and earlier leaves are visible in later defaults. Const prevents binding
+reassignment, including through closures; referenced children remain mutable.
+Let supports the existing checked assignments and shared capture cells. Nested
+blocks restore shadowed bindings, and escaped closures retain their own activation.
+
+Patterns also work in ordinary `for` initializers. For let, the first iteration
+and subsequent updates use distinct captured cells; a closure created in the
+initializer keeps its original bindings. Continue/finally follows the normal
+update path, while break/return/throw leaves the loop scope. Const loop bindings
+retain one environment. For-in/of remains unsupported.
+
+The parameter rules for live array reads, persistent exhaustion, dense rest,
+object rest presence/order/identity, nullish TypeError and fatal resource limits
+also apply. Shared depth/node limits are 64/1024 per lexical declaration, alongside
+existing source/body/frame limits. Initializers are required for destructuring.
+Var/ambient, top-level and catch patterns remain unsupported; checked assignment
+statements are supported below. No new
+host operation, heap layout, helper or ABI version is introduced. See the
+[lexical binding contract](docs/architecture.md#local-lexical-destructuring-contract).
+
+## Destructuring assignment statements (v12 and later)
+
+Existing initialized mutable locals/parameters can be updated with checked
+object/array assignment patterns:
+
+```ts
+export function main(): void {
+  let name = "old";
+  let first = 0;
+  let tail: (number | undefined)[] = [];
+  const read = () => name;
+  ({name = "item"} = {});
+  [first = 1, ...tail] = [2, , 3];
+  console.log(read()); // item
+  console.log(first); // 2
+  console.log(JSON.stringify(tail)); // [null,3]
+}
+```
+
+The RHS evaluates once before any target write. Nested patterns, static aliases/
+keys, defaults, elisions and object/array rest reuse the shared binding machinery.
+Writes update the existing captured cells in source order. Repeated targets are
+allowed; later defaults can read earlier writes or the target's previous value.
+Earlier successful writes remain visible if a later default or checked read
+throws. Const, uninitialized/unknown targets, incompatible types and writes under
+an active union guard are rejected with source diagnostics.
+
+Exact types and declared union widening are accepted. When an array/optional
+field can yield undefined but a compatible target requires a present value, a
+pure guest check throws owned TypeError `Invalid destructuring assignment value`
+for undefined before writing that target. Defaults use the target type as context,
+including empty aggregate/function/result defaults. Homogeneous array targets can
+provide RHS element context; ambiguous nested/empty inputs still need a typed
+source. Aggregate and array types remain invariant, without arbitrary union
+narrowing/coercion. Nullish aggregate errors, live array reads/exhaustion, shallow
+rest identity/presence/order and fatal resource behavior keep their contracts.
+
+Standalone statements (including parentheses), expression results/chains and
+ordinary for initializer/update statements are supported. Checked member targets
+are supported below; dynamic record keys, catch and for-in/of patterns remain
+unsupported. Shared pattern
+limits also apply per assignment. No new import/helper/layout or ABI version is
+introduced. See the [assignment contract](docs/architecture.md#checked-destructuring-assignment-contract).
+
+## Destructuring assignment values (v12 and later)
+
+A successful assignment expression returns its original RHS, preserving identity,
+all source fields, array holes and the actual contextual source type:
+
+```ts
+export function main(): void {
+  let n = 0;
+  const source = {n: 2, extra: "kept"};
+  const original = ({n} = source);
+  console.log(original === source); // 1
+  console.log(original.extra); // kept
+  const values: number[] = [, 3];
+  const same: number[] = ([n = 7] = values);
+  console.log(same === values); // 1
+  console.log(Object.hasOwn(same, 0)); // 0
+  console.log(n); // 7
+}
+```
+
+Use assignment values in local initializers, arguments, returns, member reads,
+callbacks, admitted operators/conditionals and nested assignment chains. Each
+RHS evaluates once; outer targets wait for inner assignments to succeed. Defaults
+only update targets and do not fill source holes/properties. Expected aggregate
+context flows into the RHS, so a declared result type is checked against the whole
+source rather than only selected fields. Existing inference/type restrictions
+still apply to ambiguous aggregate literals and mixed operators.
+
+Earlier operands/arguments, the saved RHS and the returned value remain rooted
+across defaults, collection and later argument evaluation. A failed traversal
+publishes no success result, skips later enclosing work and preserves prior writes
+through catch/finally. Existing mutability/type restrictions, resource
+budgets, status and real grants remain active. No import/helper/layout/ABI change.
+See the [value contract](docs/architecture.md#destructuring-assignment-value-contract).
+
+## Member targets in destructuring assignment (v12 and later)
+
+Assignment patterns can write checked record fields and numeric array elements,
+including nested targets, defaults and final object/array rest:
+
+```ts
+export function main(): void {
+  const output = {n: 0};
+  const values: number[] = [];
+  ({value: output.n = 7} = {});
+  [values[2]] = [output.n]; // v14 permits indexed extension
+  console.log(output.n); // 7
+  console.log(JSON.stringify(values)); // [null,null,7]
+}
+```
+
+Each receiver and array index evaluates once, in source order, before reading
+that source property/element or executing its default. Rest targets evaluate
+before copying. Nested targets wait until their containing source value is read.
+Receivers/indices stay fixed and rooted across defaults, even if a default
+reassigns the original variable or resizes the array; the write uses the saved
+receiver and its current backing. Later references observe earlier writes.
+An exception skips remaining work and preserves successful writes.
+
+Const prevents rebinding the variable; its mutable fields/elements remain valid
+targets. Exact types, union widening, checked Undefined narrowing and target-typed
+defaults reuse ordinary checked writes. The assignment still returns its original
+RHS. Only admitted static record keys and Number array indices are supported;
+Error/result properties, unresolved nullable receivers and coercive properties
+remain rejected. Empty/ambiguous RHS arrays may need an element annotation.
+
+V12 replaces existing array elements; v13 can also fill holes within length.
+V14 extends arrays with holes and admits `.length` targets, using the existing
+RangeError for invalid lengths. Numeric index validation follows default/RHS
+effects. Resource violations, including lengths above 1024, stay fatal.
+Declaration/parameter patterns still bind names. No imports, layouts or ABI
+versions change. See the [member contract](docs/architecture.md#destructuring-member-target-contract).
 
 ## Typed function values (opt-in)
 
@@ -1508,6 +1677,7 @@ available. See the [result contract](docs/architecture.md#programmatic-host-resu
 - `dev [--config] [--policy]`: check, compile and execute
 - `build [--config] [--single] [--launcher PATH]`: produce validated Wasm and an optional runtime-only executable; `--launcher` requires `--single`
 - `run <path> [--policy]`: execute portable Wasm or a packaged artifact
+- `invoke <path> <name> [--params JSON] [--json] [--policy]`: call one published tool without running `main`
 - `inspect [path] [--json] [--policy]`: show validated code and full capability metadata
 - `validate [path] [--json] [--policy]`: check code, ABI, manifest and import declarations
 
@@ -1520,6 +1690,8 @@ VARTA2 and native AOT payloads are rejected; rebuild old artifacts. This avoids
 accepting untrusted machine code through Wasmtime deserialization.
 
 ## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, scope and contribution guidelines.
 
 The workspace separates common schemas/ABI, compiler, runtime, artifact I/O,
 runtime launcher, project services and CLI. Workspace code forbids unsafe. Run:
