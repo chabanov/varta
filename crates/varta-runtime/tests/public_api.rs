@@ -1734,3 +1734,158 @@ fn public_engine_runs_object_keys_across_virtual_modules() {
         ]
     );
 }
+
+#[test]
+fn public_engine_runs_object_values_across_virtual_modules() {
+    struct ValueSources;
+    impl ModuleLoader for ValueSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./values.ts" {
+                Ok("values.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function enumerate(source:{a?:number;b:string;'2'?:number}):(number|string|undefined)[]{return Object.values(source);}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {enumerate} from './values.ts';export function main():void{const source:{a?:number;b:string;'2'?:number}={b:'x'};source.a=undefined;source['2']=2;const items=enumerate(source);console.log(JSON.stringify(items));console.log(Object.hasOwn(items,2));for(const value of items){console.log(value);}}".into()},&ValueSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: [2,\"x\",null]",
+            "varta log: 1",
+            "varta log: 2",
+            "varta log: x",
+            "varta log: undefined"
+        ]
+    );
+}
+
+#[test]
+fn public_engine_runs_array_enumeration_across_virtual_modules() {
+    struct EnumerationSources;
+    impl ModuleLoader for EnumerationSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./enumerate.ts" {
+                Ok("enumerate.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function keys(source:number[]|null):string[]{return Object.keys(source);}export function values(source:number[]):number[]{return Object.values(source);}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {keys,values} from './enumerate.ts';export function main():void{const source:number[]=[,2,,4];console.log(JSON.stringify(keys(source)));const items=values(source);console.log(JSON.stringify(items));console.log(Object.hasOwn(items,0));source[1]=9;items.push(6);console.log(JSON.stringify(items));console.log(JSON.stringify(source));}".into()},&EnumerationSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: [\"1\",\"3\"]",
+            "varta log: [2,4]",
+            "varta log: 1",
+            "varta log: [2,4,6]",
+            "varta log: [null,9,null,4]"
+        ]
+    );
+}
+
+#[test]
+fn public_engine_runs_catch_patterns_across_virtual_modules() {
+    struct CatchSources;
+    impl ModuleLoader for CatchSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./catch.ts" {
+                Ok("catch.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function read(flag:boolean):string{try{if(flag){throw TypeError('owned'+'😀');}throw 1;}catch({name='primitive',message='fallback'}){return name+':'+message;}finally{console.log('finally');}}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {read} from './catch.ts';export function main():void{console.log(read(true));console.log(read(false));try{try{throw null;}catch({message='BAD'}){console.log(message);}}catch({name}){console.log(name);}}".into()},&CatchSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: finally",
+            "varta log: TypeError:owned😀",
+            "varta log: finally",
+            "varta log: primitive:fallback",
+            "varta log: TypeError"
+        ]
+    );
+}
+
+#[test]
+fn public_engine_runs_string_ranges_across_virtual_modules() {
+    struct RangeSources;
+    impl ModuleLoader for RangeSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./ranges.ts" {
+                Ok("ranges.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function cut(source:string,start:number|undefined,end:number|undefined):string{return source.slice(start,end);}export function between(source:string,start:number,end:number):string{return source.substring(start,end);}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {cut,between} from './ranges.ts';export function main():void{const text='A😀B';console.log(JSON.stringify(cut(text,1,2)));console.log(between(text,3,1));console.log(cut(text,-1,undefined));console.log(JSON.stringify([1,2,3].slice(-2)));console.log(JSON.stringify([1,2].map(n=>cut('abc',n,undefined))));}".into()},&RangeSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: \"\\ud83d\"",
+            "varta log: 😀",
+            "varta log: B",
+            "varta log: [2,3]",
+            "varta log: [\"bc\",\"c\"]"
+        ]
+    );
+}
+
+#[test]
+fn public_engine_runs_string_searches_across_virtual_modules() {
+    struct SearchSources;
+    impl ModuleLoader for SearchSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./search.ts" {
+                Ok("search.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function contains(text:string,needle:string,position:number|undefined):boolean{return text.includes(needle,position);}export function begins(text:string,needle:string,position:number):boolean{return text.startsWith(needle,position);}export function finishes(text:string,needle:string,position:number):boolean{return text.endsWith(needle,position);}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {contains,begins,finishes} from './search.ts';export function main():void{const text='A😀B';console.log(contains(text,'\\ud83d',1));console.log(begins(text,'😀',1));console.log(finishes(text,'B',4));console.log([NaN].includes(NaN));console.log(JSON.stringify(['abc','xyz'].map(s=>contains(s,'b',undefined))));}".into()},&SearchSources,varta_common::language::LanguageProfile::CheckedF64Utf16V14).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 1",
+            "varta log: 1",
+            "varta log: 1",
+            "varta log: 1",
+            "varta log: [true,false]"
+        ]
+    );
+}

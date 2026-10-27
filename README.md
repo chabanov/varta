@@ -8,6 +8,9 @@ native executable containing portable Wasm and its runtime.
 Status: MVP / active development. The [architecture contract](docs/architecture.md)
 describes the implemented language, trust boundaries, ABI and limits. The
 [development plan](docs/development-plan.md) tracks audit fixes and next milestones.
+The [2026-10-27 checkpoint](docs/development-plan.md#development-checkpoint--2026-10-27)
+records completed core increments, verified test counts, remaining limits and the
+next step: String.indexOf/lastIndexOf.
 
 [Repository](https://github.com/chabanov/varta) · [Contributing](CONTRIBUTING.md) ·
 [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE.md)
@@ -278,6 +281,78 @@ The operation uses one result allocation and bulk-copy doubling for nonempty
 results. It adds no host import, capability, ABI change or compiler helper.
 Existing string/memory/fuel/deadline limits remain fatal; count coercion, borrowed
 methods and non-string receivers remain unsupported.
+
+## String ranges (v12 and later)
+
+String.slice(start?, end?) and String.substring(start?, end?) accept Number,
+undefined or their union, with a narrowed string receiver:
+
+```ts
+export function main(): void {
+  console.log("abcdef".slice(-3, -1));     // de
+  console.log("abcdef".substring(4, 1));  // bcd
+  console.log(JSON.stringify("A😀B".slice(1, 2))); // "\ud83d"
+}
+```
+
+Both methods index UTF-16 code units, including lone surrogates and embedded NULs.
+Omitted/undefined start is zero; omitted/undefined end is length. NaN becomes zero
+and fractions truncate toward zero. Slice resolves negative bounds relative to
+length and returns empty for a reversed range. Substring clamps negative bounds
+to zero and swaps reversed bounds. Infinities and huge finite values are clamped
+before integer conversion.
+
+The receiver, start and end evaluate once in order, including empty results.
+Nested calls and later bound mutations retain earlier operand values. Nonempty
+results use one owned allocation and a bounded bulk copy, never an interior
+pointer into the source; empty results use the canonical empty string. Existing
+roots preserve receivers/results, saved returns and physical pairs through GC and
+finally. Source and result byte, memory, fuel and deadline bounds remain active;
+exhaustion stays fatal. The maximum-byte tests use an explicit test fuel budget,
+without increasing runtime defaults.
+
+No coercion, borrowed/computed methods, generic/spread calls, extra arguments or
+nullable receiver without narrowing are admitted. Existing Array.slice dispatch
+and earlier profiles retain their behavior. Private Wasm helpers add no host
+operation, capability, helper export or ABI/layout change. See the
+[contract](docs/architecture.md#string-range-contract).
+
+## String search (v12 and later)
+
+String.includes, startsWith and endsWith accept a required string needle and an
+optional Number/Undefined position, including that union, on a narrowed string:
+
+```ts
+export function main(): void {
+  console.log("A😀B".includes("\ude00", 2)); // 1: exact UTF-16 unit
+  console.log("abcdef".startsWith("cd", 2)); // 1
+  console.log("abcdef".endsWith("cd", 4));   // 1: end position is exclusive
+  console.log("abc".includes("", Infinity)); // 1
+}
+```
+
+Includes searches at or after the position; startsWith tests exactly there.
+EndsWith tests the suffix ending at its position. Omitted/undefined positions
+are zero for includes/startsWith and length for endsWith. NaN becomes zero,
+fractions truncate toward zero, and all positions clamp to 0..length before integer
+conversion. Negative positions select zero rather than counting from the end.
+An empty needle always matches after argument effects. Matching is case-sensitive,
+uses UTF-16 code units and preserves lone surrogates/NULs without normalization.
+
+Receiver, needle and position evaluate once in order. Private Wasm helpers read
+existing strings without allocating or calling the host; boolean results are
+canonical. Roots preserve earlier operands across argument effects and GC, while
+throws skip later arguments. Array.includes keeps its existing SameValueZero,
+hole and relative-position behavior. Earlier profiles remain unchanged.
+
+The initial includes implementation scans candidate positions and may exhaust
+execution fuel on large repetitive inputs. Existing fuel/deadline limits stop it
+fatally; they do not become catchable errors. Maximum-byte tests use an explicit
+test fuel budget without increasing runtime defaults. Regex/coercive needles,
+omitted needles, borrowed/computed methods, generic/spread calls, extra arguments
+and nullable receivers without narrowing remain unsupported. No host operation,
+capability, helper export or ABI/layout change. See the
+[contract](docs/architecture.md#string-search-contract).
 
 ## Array mutations (opt-in v14)
 
@@ -712,8 +787,8 @@ Resource limits remain fatal. A function's parameter patterns are bounded to 102
 nodes and depth 64, alongside existing source/type/body/frame limits. Destructured
 rest parameters and nested array rest patterns are supported; object rest must
 end in an identifier. Dynamic keys, primitive boxing, string/custom iterables,
-array-as-object patterns and catch destructuring remain unsupported.
-Local const/let patterns are supported below. No ABI, import, managed layout or helper changes. See the
+array-as-object patterns remain unsupported.
+Local const/let and the narrower catch object patterns are supported below. No ABI, import, managed layout or helper changes. See the
 [parameter pattern contract](docs/architecture.md#parameter-destructuring-contract).
 
 ## Local const and let destructuring (v12 and later)
@@ -754,8 +829,8 @@ The parameter rules for live array reads, persistent exhaustion, dense rest,
 object rest presence/order/identity, nullish TypeError and fatal resource limits
 also apply. Shared depth/node limits are 64/1024 per lexical declaration, alongside
 existing source/body/frame limits. Initializers are required for destructuring.
-Var/ambient, top-level and catch patterns remain unsupported; checked assignment
-statements are supported below. No new
+Var/ambient and top-level patterns remain unsupported; checked assignment
+statements and the narrower catch object patterns are supported below. No new
 host operation, heap layout, helper or ABI version is introduced. See the
 [lexical binding contract](docs/architecture.md#local-lexical-destructuring-contract).
 
@@ -1001,6 +1076,45 @@ so an outer jump cannot falsely prove a guaranteed return. Host effects, status,
 resource limits and fatal exit remain unchanged. Earlier profiles reject labels;
 no ABI/import/helper/layout change. See the [contract](docs/architecture.md#statement-label-contract).
 
+## Catch binding patterns (v12 and later)
+
+A catch object pattern can extract name/message, rename bindings and initialize
+defaults in source order. Both properties have type `string | undefined` because
+Varta's exception channel admits Error families and primitive values:
+
+```ts
+export function main(): void {
+  try {
+    throw TypeError("invalid input");
+  } catch ({name = "Unknown", message: detail = "no message"}) {
+    console.log(name);   // TypeError
+    console.log(detail); // invalid input
+  } finally {
+    console.log("finished");
+  }
+}
+```
+
+Error properties use the existing name/message contract, including inherited
+empty message and native family names. Non-null primitive throws supply undefined
+for these two properties; a default runs only for undefined. Null/undefined throws
+cause an owned TypeError before defaults or the handler body, including for `catch
+({})`. Errors in defaults escape to the outer handler and still execute applicable
+finally blocks. Fatal execution limits and authorized exit continue to bypass them.
+
+All bound names are declared before defaults, so self/later reads remain in TDZ;
+initialized earlier names may be used by later defaults. Bindings are mutable,
+scoped to the handler and receive fresh capture cells on each entry. Defaults
+cannot see declarations inside the handler body. Type inference, exact roots,
+saved returns/pairs, GC and named branches retain their existing contracts.
+
+This increment supports identifier leaves and static name/message keys (including
+literal computed keys), plus an empty object pattern. Array/rest patterns, other
+properties, dynamic keys, catch type annotations and aggregate throws remain
+unsupported; it does not infer a narrower caught type from the try body. Earlier
+profiles retain identifier/omitted catch bindings. No host operation, helper export
+or ABI/layout change. See the [contract](docs/architecture.md#catch-binding-pattern-contract).
+
 ## Object.keys for closed records (v12 and later)
 
 Object.keys returns a fresh dense string array containing present own fields:
@@ -1030,13 +1144,86 @@ are zeroed before length publication, so growth cannot resurrect old keys. Key
 names use the profile's UTF-16 string representation, including Unicode and NUL.
 The existing 32-field/static-data/array/memory/execution bounds remain active.
 
-Inputs must be a checked closed record or its null/undefined union. A nullish
-union value throws owned TypeError before enclosing calls proceed. Arrays,
-primitive boxing, Error/function/result objects, general prototypes/symbols,
+Inputs may be a checked closed record or bounded array, including its null/undefined
+union. A nullish union value throws owned TypeError before enclosing calls proceed.
+Primitive boxing, Error/function/result objects, general prototypes/symbols,
 spread/generic calls and shadowed Object intrinsics remain unsupported. Earlier
 profiles reject this intrinsic. Argument effects require ordinary grants; key
-collection preserves system status. No host import/helper/layout/ABI change.
+collection preserves system status. No host import, helper export, layout or ABI change.
 See the [contract](docs/architecture.md#objectkeys-contract).
+
+## Object.values for closed records (v12 and later)
+
+Object.values returns a fresh dense array of present own values in the same order
+as Object.keys, including explicitly stored undefined and omitting absent fields:
+
+```ts
+export function main(): void {
+  const source: {a?: number; b: string; "2"?: number} = {b: "x"};
+  source.a = undefined;
+  source["2"] = 2;
+  const values: (number | string | undefined)[] = Object.values(source);
+  console.log(JSON.stringify(values)); // [2,"x",null]
+  console.log(Object.hasOwn(values, 2)); // 1: explicit undefined, not a hole
+}
+```
+
+Equal field types retain their type. Compatible field types form an admitted
+homogeneous union element type, including existing record/array/Error references.
+Optional field types retain Undefined even when currently absent; a nullable source
+adds no result member because its absence throws TypeError instead. Empty closed
+records produce an empty `undefined[]`. Incompatible unions, such as two different
+record shapes or array element types, fail compilation; no any/casts/coercion or
+aggregate covariance is introduced.
+
+The argument evaluates once. Values are prepared in rooted typed slots before
+allocation/ordering, using existing union widening and exact numeric packing.
+Changing a source scalar later cannot alter the snapshot. Nested objects/arrays
+remain shared references; changing the returned outer array does not change source
+fields. Strings retain UTF-16 units, including lone surrogates. Tail payloads and
+presence bits are cleared before publishing the result length, preventing stale
+values or child references from reappearing after growth.
+
+The shared key/value enumeration path preserves numeric-key sorting, insertion
+order, GC/earlier operands/results, finally cleanup, status and real grants. As
+with Object.keys, inputs are closed records or bounded arrays, optionally nullable;
+primitive boxing, getters/prototypes/symbols, direct Error/result/function
+inputs, generic/spread calls and shadowed Object remain unsupported. Existing
+32-field, type, source/frame/root, memory/fuel/deadline bounds apply. No import,
+helper export, heap layout or ABI version change. See the
+[contract](docs/architecture.md#objectvalues-contract).
+
+## Object.keys and Object.values for arrays (v12 and later)
+
+Both intrinsics also accept bounded typed arrays. Keys are ascending decimal
+index strings; the non-enumerable length is omitted. Values retain the exact array
+element type, including existing unions, without adding Undefined for skipped holes.
+Both results have independent storage and every slot below their length is present.
+
+```ts
+export function main(): void {
+  const source: (number | undefined)[] = [, undefined, 2, , 4];
+  const keys: string[] = Object.keys(source);
+  const values: (number | undefined)[] = Object.values(source);
+  console.log(JSON.stringify(keys));   // ["1","2","4"]
+  console.log(JSON.stringify(values)); // [null,2,4]
+  console.log(Object.hasOwn(values, 0)); // 1: explicit undefined was retained
+}
+```
+
+The example requires v13+ for sparse literals; v12 admits dense arrays. Deleted
+indices and holes created by writable length in v14 are skipped. A nullable
+single-array union throws TypeError for null/undefined; mixed record/array inputs
+remain unsupported. The source evaluates once before a bounded snapshot walk.
+Nested references remain shared, scalar/union payloads retain their exact bits,
+and later source mutation cannot change the returned outer snapshot.
+
+Decimal keys are created inside Wasm without host operations. Private enumeration
+helpers reserve zeroed backing, retain partial results across allocations and
+publish only initialized live slots. Their temporary roots are restored on return;
+spare payloads/bits stay zero through later growth. Existing 1024-element and
+execution/memory budgets remain active. No host imports, helper exports or ABI/layout
+changes. See the [contract](docs/architecture.md#array-own-enumeration-contract).
 
 ## Typed function values (opt-in)
 

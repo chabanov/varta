@@ -219,7 +219,7 @@ mod json;
 mod labels;
 mod link;
 mod missing;
-mod object_keys;
+mod object_enumeration;
 mod parameters;
 mod patterns;
 mod records;

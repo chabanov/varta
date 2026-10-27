@@ -113,7 +113,6 @@ fn object_keys_rejects_shadowed_intrinsics_unsupported_sources_and_legacy_profil
     for source in [
         "export function main():void{Object.keys();}",
         "export function main():void{Object.keys({},{a:1});}",
-        "export function main():void{Object.keys([1]);}",
         "export function main():void{Object.keys('text');}",
         "export function main():void{Object.keys(1);}",
         "export function main():void{Object.keys(Error('x'));}",

@@ -1,5 +1,47 @@
 # Varta development plan
 
+## Development checkpoint — 2026-10-27
+
+Stage: experimental compiler/runtime core, with K1–K3 implemented in their initial
+checked profiles and K4 language/value work in progress. This is a development
+snapshot, not a production release or full Deno/Bun/ECMAScript compatibility.
+Engine work remains the priority; applications and MCP adapters stay separate.
+
+Completed since baseline commit `526f9ab`:
+
+| Core increment | Implemented boundary |
+| --- | --- |
+| Object.values for records | Exact/admitted union result types, present-own ordering, shallow identity and rooted cached payloads |
+| Object.keys/Object.values for arrays | Ascending own indices, dense results, skipped holes and exact value element types |
+| Catch object bindings | Static name/message keys, aliases/defaults, TDZ, fresh captures and cleanup through outer handlers/finalizers |
+| String.slice/substring | Optional Number/Undefined bounds, exact UTF-16 units, owned result strings and unchanged Array.slice |
+| String.includes/startsWith/endsWith | Required String needle, bounded optional positions, allocation-free unit comparison and unchanged Array.includes |
+
+These additions require v12+; v13/v14 keep their sparse/mutation rules. The default
+remains `checked-i32-utf8-v1`. The latest opt-in profile remains
+`checked-f64-utf16-v14`, with host ABI v17, value ABI v12 and schema v12. This
+checkpoint adds no host operation, capability, helper export or ABI/layout version.
+The source/artifact paths and public engine API are covered by regression tests.
+
+Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **858 workspace
+tests passed**, followed by **162 CLI tests passed** in a separate repeat run.
+Formatting, the core-only library check, runtime-companion build, workspace/all-target
+build and Clippy with warnings denied also passed. This records local verification;
+it does not claim a new cross-platform CI or release qualification.
+
+Current boundaries remain explicit: 32 record fields, 1024 array elements and a
+1 MiB encoded string ceiling, alongside source/type/frame/root/memory/fuel/deadline
+budgets. Catch patterns do not admit arrays/rest/other properties or aggregate
+throws. String search rejects coercion/regex/omitted needles; includes currently
+uses candidate scanning with quadratic worst-case cost, bounded by existing fuel.
+Maximum-string stress tests use explicit test fuel without changing runtime defaults.
+
+Next: **String.indexOf/lastIndexOf**, including UTF-16 index results and their
+method-specific position rules. Wider dynamic values/coercion, aggregate exception
+design, promises/microtasks/async/await, standard/system API expansion and package
+compatibility remain core work. Shared application state, MCP, signing and external
+adapters remain later milestones. Detailed completed contracts and sequencing follow.
+
 ## Product direction
 
 Varta targets general-purpose, typed TS/JS applications compiled to portable
@@ -15,7 +57,8 @@ exist. The current implementation is the compiler/runtime foundation described
 in [architecture.md](architecture.md): a checked TypeScript subset, local modules,
 strings and reclamation, captured host results, capability policies, native
 packaging, primitive Tool Contract v1, offline discovery and checked JSON tool
-invocation. Closed records, dense typed arrays, `null`, graph tracing and bounded
+invocation. Closed records, bounded resizable/sparse typed arrays in opt-in profiles,
+`null`/`undefined`, graph tracing and bounded
 `JSON.stringify`, `varta.json.parse<T>` and the first HTTP/1 service profile are
 implemented. A shared-state application service, broader Application Contracts,
 MCP, package signatures,
@@ -35,7 +78,7 @@ The complete core roadmap must cover:
 | Area | Target | Current gap |
 | --- | --- | --- |
 | Language semantics | ECMAScript values, numbers, strings, objects/arrays, functions/closures, errors and control flow | Default `number` is i32; opt-in binary64 supports closed aggregates and JSON. Opt-in UTF-16 supports lone units and character methods; closed primitive unions, typed functions and initialized lexical captures are implemented; dynamic objects/coercion and broader function semantics remain pending |
-| Memory | Bounded, correct ownership and tracing for full application value graphs | Collector traces closed records, dense arrays, primitive cells and strings; general dynamic object graphs remain pending |
+| Memory | Bounded, correct ownership and tracing for full application value graphs | Collector traces closed records, resizable/sparse arrays, reference unions, Error/closure graphs and strings; general dynamic object graphs remain pending |
 | Scheduling | Event loop, promises, microtasks, async/await, timers, cancellation and shutdown | Synchronous bounded invocations only |
 | Standard APIs | JSON, URL, encodings/binary data, Request/Response/Headers, streams and abort signals | Most standard APIs are absent |
 | System APIs | Capability-checked filesystem, environment, processes and inbound/outbound networking | Existing bounded operations are a small partial API |
@@ -1033,11 +1076,60 @@ layout/effect traversal. Tests cover 32-field/default limits, Unicode/order/JSON
 rest, GC/pairs/callbacks, profile gates, virtual modules and source-free artifacts
 with grants/ceilings and dependency diagnostics. No ABI/import/helper/layout change.
 
-Next add Object.values for closed typed records, deriving an admitted homogeneous
-result element type while preserving presence/order and child-reference roots.
-Catch patterns, generalized keys/coercion and constructors/prototypes remain
-language work. Scheduler/promise jobs follow retained-root, cancellation, queue
-and handle lifetime design.
+Object.values is implemented in v12+ for closed records and nullable single-record
+unions. Shared key/value enumeration derives exact or admitted union array elements
+from field types, preserving presence/JS order, numeric bits and shallow identity.
+Typed cached payloads are rooted before output allocation; compaction reads only
+literals/locals and clears spare values/bits before publishing lengths. Empty
+records yield Undefined[]; unrepresentable unions fail without casts. Tests cover
+32-field default limits, JSON/rest/callbacks, GC/pairs/cached child graphs, profiles,
+virtual modules and source-free artifacts with grants/ceilings and diagnostics.
+No ABI/import/helper-export/layout change; keys retain their existing behavior.
+
+Object.keys/Object.values now also accept bounded arrays and nullable single-array
+unions in v12+. Private guest helpers produce ascending decimal keys and exact
+invariant values while skipping holes and retaining explicit Undefined. Fresh
+zeroed backing and rooted incremental prefixes preserve GC/child graphs, numeric
+bits, shallow identity and later growth. Helper roots are bounded/restored; no
+host/import/helper-export/layout/ABI change. Tests cover all element kinds, 1024
+indices, repeated GC/roots, virtual modules and source-free artifacts with grants,
+host ceilings, status and fatal exit.
+
+Checked catch object patterns are implemented in v12+ for static name/message
+identifier bindings, aliases/defaults and empty patterns. The full primitive/Error
+channel remains unchanged: non-null primitives supply Undefined, nullish inputs
+throw TypeError before binding effects, and Errors retain existing fields. All
+names are predeclared under TDZ, initialized left to right and own fresh capture
+cells; hidden original-value roots and partial leaves clear on every exit. Binding
+failures reach outer handlers/finalizers. Tests cover defaults/effects, GC/pairs,
+returns/branches/callback inference, modules, source-free artifacts and diagnostics.
+Array/rest/other-key patterns and aggregate throws remain explicit future work;
+no ABI/import/helper-export/layout change.
+
+String.slice/substring are implemented in v12+ for narrowed strings with optional
+Number/Undefined bounds. They preserve code-unit UTF-16/NULs/lone surrogates,
+source-order effects and owned result storage; floating-point normalization/clamp
+precedes bounded integer conversion. Pure private helpers retain ordinary GC,
+physical pairs/saved returns/finalizers/status/grants and fatal byte/memory/fuel
+limits. Shared slice dispatch lowers receivers once and keeps array/legacy rules.
+Tests cover numeric edges, nested/throwing bounds, repeated GC, maximum byte
+limits with test fuel, virtual modules and source-free artifacts with host ceilings
+and diagnostics. No ABI/import/helper-export/layout change.
+
+String.includes/startsWith/endsWith are implemented in v12+ with required String
+needles and optional Number/Undefined positions. Exact UTF-16 unit comparisons
+preserve lone surrogates/NULs/case; normalized clamping precedes integer conversion.
+Private guest helpers allocate/call nothing and return canonical booleans. Source
+order, exception/GC/pair/finalizer lifetimes and shared Array.includes dispatch
+retain existing contracts. Candidate scanning is bounded by existing fuel/deadline
+limits, including adversarial-input regression tests. Maximum byte, module and
+source-free artifact tests preserve grants/host ceilings/status/diagnostics.
+No ABI/import/helper-export/layout change.
+
+Next add checked String.indexOf/lastIndexOf with exact UTF-16 index results and
+method-specific position rules. Generalized keys/coercion, aggregate exception
+design and constructors/prototypes remain language work. Scheduler/promise jobs
+follow retained-root, cancellation, queue and handle lifetime design.
 
 
 - Grow functions/closures, dynamic object/array behavior, exceptions and the

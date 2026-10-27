@@ -1,5 +1,6 @@
 //! Nonmoving immutable strings with exact compiler roots and a bounded reusable heap.
 mod allocate;
+mod array_enumeration;
 mod array_index;
 mod array_push;
 mod array_resize;
@@ -10,6 +11,8 @@ mod compare;
 mod concat;
 mod roots;
 mod sparse;
+mod string_range;
+mod string_search;
 use std::collections::BTreeMap;
 use varta_common::abi;
 use wasm_encoder::{BlockType, Function, Instruction as I, MemArg, ValType};
@@ -52,10 +55,17 @@ pub(super) enum Helper {
     Snapshot,
     Concat,
     Compare,
+    StringIncludes,
+    StringStartsWith,
+    StringEndsWith,
+    StringSlice,
+    StringSubstring,
     Allocate,
     Collect,
     RootPush,
     ArrayIndex,
+    ArrayKeys,
+    ArrayValues,
     ArrayPush,
     ArraySlice,
     ArraySearch,
@@ -64,6 +74,13 @@ pub(super) enum Helper {
     ArrayResize,
 }
 impl Helper {
+    pub(super) fn string_search(mode: crate::ir::StringSearch) -> Self {
+        match mode {
+            crate::ir::StringSearch::Includes => Self::StringIncludes,
+            crate::ir::StringSearch::StartsWith => Self::StringStartsWith,
+            crate::ir::StringSearch::EndsWith => Self::StringEndsWith,
+        }
+    }
     pub(super) fn signature(self) -> (Vec<ValType>, Vec<ValType>) {
         match self {
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
@@ -82,10 +99,15 @@ impl Helper {
                 ],
                 vec![ValType::I32],
             ),
-            Self::ArraySlice => (
+            Self::StringIncludes | Self::StringStartsWith | Self::StringEndsWith => (
+                vec![ValType::I64, ValType::I64, ValType::F64],
+                vec![ValType::I32],
+            ),
+            Self::StringSlice | Self::StringSubstring | Self::ArraySlice => (
                 vec![ValType::I64, ValType::F64, ValType::F64],
                 vec![ValType::I64],
             ),
+            Self::ArrayKeys | Self::ArrayValues => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayPush => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::ArrayResize => (vec![ValType::I64, ValType::I32], vec![]),
             Self::ArrayPresent => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
@@ -94,7 +116,10 @@ impl Helper {
         }
     }
     pub(super) fn needs_arena(self) -> bool {
-        self != Self::Compare
+        !matches!(
+            self,
+            Self::Compare | Self::StringIncludes | Self::StringStartsWith | Self::StringEndsWith
+        )
     }
     pub(super) fn body(
         self,
@@ -114,9 +139,22 @@ impl Helper {
             Self::ArraySearch => {
                 array_search::function(helpers[&Self::Compare], profile.sparse_arrays())
             }
+            Self::StringIncludes => string_search::function(crate::ir::StringSearch::Includes),
+            Self::StringStartsWith => string_search::function(crate::ir::StringSearch::StartsWith),
+            Self::StringEndsWith => string_search::function(crate::ir::StringSearch::EndsWith),
+            Self::StringSlice | Self::StringSubstring => {
+                string_range::function(helpers[&Self::Allocate], self == Self::StringSubstring)
+            }
             Self::ArraySlice => array_slice::function(
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
+                profile.sparse_arrays(),
+            ),
+            Self::ArrayKeys | Self::ArrayValues => array_enumeration::function(
+                globals,
+                helpers[&Self::Allocate],
+                helpers[&Self::RootPush],
+                self == Self::ArrayKeys,
                 profile.sparse_arrays(),
             ),
             Self::ArrayPush => {

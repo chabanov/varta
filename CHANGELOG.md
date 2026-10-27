@@ -4,6 +4,8 @@
 
 The workspace currently uses package version `0.1.0`. These entries describe the
 development snapshot; they do not announce a published release.
+The [2026-10-27 checkpoint](docs/development-plan.md#development-checkpoint--2026-10-27)
+records the current core stage, completed increments, validation and next work.
 
 ### Added
 
@@ -23,6 +25,16 @@ development snapshot; they do not announce a published release.
   exact finalizer/scope routing and target-aware completion inference.
 - Object.keys for closed records in v12+, with presence-aware JS key ordering,
   fresh dense UTF-16 string-array results, nullable checks and rooted snapshots.
+- Object.values for closed records in v12+, with inferred homogeneous/union
+  arrays, shared own-property ordering, rooted payload preparation and shallow identity.
+- Object.keys/Object.values for bounded arrays in v12+, including sparse own-index
+  enumeration, exact element types and rooted host-free decimal key creation.
+- Catch object binding patterns in v12+ for name/message, with aliases/defaults,
+  TDZ, rooted initialization and existing exception/finalizer routing.
+- String.slice/substring in v12+, with bounded Number/Undefined normalization,
+  exact UTF-16 ranges, owned result storage and preserved Array.slice dispatch.
+- String.includes/startsWith/endsWith in v12+, with exact UTF-16 matching,
+  bounded positions, allocation-free helpers and unchanged Array.includes rules.
 - Capability-checked host APIs, independent host policy ceilings, programmatic
   operation results, and bounded execution with managed guest memory.
 - Checked synchronous HTTP/1 handlers in the default language profile.

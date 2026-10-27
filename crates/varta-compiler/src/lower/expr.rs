@@ -384,6 +384,38 @@ impl Lower<'_> {
         {
             return self.function_call_method(call, member);
         }
+        if let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && matches!(method.sym.as_ref(), "slice" | "substring")
+        {
+            // Lower the shared slice receiver exactly once, including lifted
+            // functions/captures, before choosing array or string semantics.
+            let value = self.expr(&member.obj)?;
+            if method.sym == "slice"
+                && self.types.profile.resizable_arrays()
+                && unions::members(value.ty, self.types)
+                    .iter()
+                    .any(|ty| matches!(ty, Type::Array(_)))
+            {
+                return self.array_plain_method(call, value, "slice");
+            }
+            return self.string_range(call, value, method.sym.as_ref());
+        }
+        if let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && matches!(method.sym.as_ref(), "includes" | "startsWith" | "endsWith")
+        {
+            let value = self.expr(&member.obj)?;
+            if method.sym == "includes"
+                && self.types.profile.resizable_arrays()
+                && unions::members(value.ty, self.types)
+                    .iter()
+                    .any(|ty| matches!(ty, Type::Array(_)))
+            {
+                return self.array_plain_method(call, value, "includes");
+            }
+            return self.string_search(call, value, method.sym.as_ref());
+        }
         if self.types.profile.resizable_arrays()
             && let ast::Expr::Member(member) = &**callee
             && let ast::MemberProp::Ident(method) = &member.prop
@@ -392,8 +424,6 @@ impl Lower<'_> {
                 "push"
                     | "pop"
                     | "at"
-                    | "slice"
-                    | "includes"
                     | "indexOf"
                     | "map"
                     | "filter"
@@ -461,7 +491,10 @@ impl Lower<'_> {
             return self.array_is_array(call);
         }
         if name == "Object.keys" {
-            return self.object_keys(call);
+            return self.object_enumeration(call, object_enumeration::Kind::Keys);
+        }
+        if name == "Object.values" {
+            return self.object_enumeration(call, object_enumeration::Kind::Values);
         }
         if name == "Object.hasOwn" && self.types.profile.missing() {
             return self.own_property(call);

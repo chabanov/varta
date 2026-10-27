@@ -10,7 +10,7 @@ mod functions;
 mod labels;
 mod missing;
 mod numbers;
-mod object_keys;
+mod object_enumeration;
 mod patterns;
 mod records;
 mod repeat;
@@ -776,13 +776,14 @@ impl Emitter<'_> {
         for statement in statements {
             match statement {
                 S::Trap => self.code.push(I::Unreachable),
-                S::RecordKeys {
+                S::RecordEnumerate {
                     source,
                     target,
                     shape,
                     slots,
+                    values,
                 } => {
-                    self.record_keys(*source, *target, *shape, *slots)?;
+                    self.record_enumerate(*source, *target, *shape, *slots, values)?;
                     self.end_temporaries();
                 }
                 S::RecordRest {

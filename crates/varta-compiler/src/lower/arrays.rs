@@ -131,6 +131,14 @@ impl Lower<'_> {
             return self.array_callback(call, member, method, expected);
         }
         let base = self.expr(&member.obj)?;
+        self.array_plain_method(call, base, method)
+    }
+    pub(super) fn array_plain_method(
+        &mut self,
+        call: &ast::CallExpr,
+        base: Expr,
+        method: &str,
+    ) -> Result<Expr> {
         let Type::Array(id) = base.ty else {
             return Err(type_error(
                 "array method requires a narrowed array receiver",

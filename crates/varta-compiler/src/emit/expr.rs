@@ -60,6 +60,34 @@ impl Emitter<'_> {
                 arguments,
                 *output,
             )?,
+            E::StringSearch(mode, value, needle, position) => {
+                self.expr(value)?;
+                self.expr(needle)?;
+                self.array_bound(
+                    position,
+                    if *mode == ir::StringSearch::EndsWith {
+                        f64::INFINITY
+                    } else {
+                        0.0
+                    },
+                )?;
+                self.string_helper(strings::Helper::string_search(*mode))?;
+            }
+            E::StringRange {
+                value,
+                start,
+                end,
+                substring,
+            } => {
+                self.expr(value)?;
+                self.array_bound(start, 0.0)?;
+                self.array_bound(end, f64::INFINITY)?;
+                self.string_helper(if *substring {
+                    strings::Helper::StringSubstring
+                } else {
+                    strings::Helper::StringSlice
+                })?;
+            }
             E::StringRepeat {
                 value,
                 count,
@@ -87,6 +115,22 @@ impl Emitter<'_> {
                 self.box_union(value.ty)?;
             }
             E::UnboxUnion(value) => self.unbox_union(value, expr.ty)?,
+            E::IsError(value) => {
+                self.expr(value)?;
+                if value.ty.is_union() {
+                    self.code.extend([
+                        I::I32WrapI64,
+                        I::I32Load(strings::WORD),
+                        I::I32Const(varta_common::value::ValueKind::Error as i32),
+                        I::I32Eq,
+                    ]);
+                } else {
+                    for _ in 0..value.ty.width() {
+                        self.code.push(I::Drop);
+                    }
+                    self.code.push(I::I32Const(i32::from(value.ty.is_error())));
+                }
+            }
             E::IsNullish(value) => self.is_nullish(value)?,
             E::IsUndefined(value) => {
                 self.expr(value)?;
@@ -167,6 +211,14 @@ impl Emitter<'_> {
             }
             E::ArrayPop(base) => self.array_pop(base, expr.ty)?,
             E::Array(elements) => self.array(expr.ty, elements)?,
+            E::ArrayEnumerate { value, keys } => {
+                self.expr(value)?;
+                self.string_helper(if *keys {
+                    strings::Helper::ArrayKeys
+                } else {
+                    strings::Helper::ArrayValues
+                })?;
+            }
             E::ArrayReserve {
                 length,
                 count,

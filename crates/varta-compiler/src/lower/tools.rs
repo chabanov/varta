@@ -245,6 +245,18 @@ fn expression(
                 }
             }
         }
+        E::StringSearch(_, value, needle, position) => {
+            expression(value, functions, visited, effects);
+            expression(needle, functions, visited, effects);
+            expression(position, functions, visited, effects);
+        }
+        E::StringRange {
+            value, start, end, ..
+        } => {
+            expression(value, functions, visited, effects);
+            expression(start, functions, visited, effects);
+            expression(end, functions, visited, effects);
+        }
         E::StringRepeat {
             value,
             count,
@@ -270,9 +282,11 @@ fn expression(
         | E::ErrorText(a)
         | E::ErrorOwn(a)
         | E::BoxUnion(a)
+        | E::IsError(a)
         | E::IsUndefined(a)
         | E::IsNullish(a)
         | E::UnboxUnion(a) => expression(a, functions, visited, effects),
+        E::ArrayEnumerate { value, .. } => expression(value, functions, visited, effects),
         E::ArrayReserve { length, .. } => expression(length, functions, visited, effects),
         E::Array(values) => {
             for value in values.iter().flatten() {
@@ -335,6 +349,11 @@ fn statements(
 ) {
     for statement in body {
         match statement {
+            S::RecordEnumerate { values, .. } => {
+                for value in values {
+                    expression(value, functions, visited, effects);
+                }
+            }
             S::Throw(e) | S::Init(_, e) | S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
                 expression(e, functions, visited, effects)
             }

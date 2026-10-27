@@ -62,6 +62,27 @@ impl<'a> Collected<'a> {
                     self.expression(arg, source);
                 }
             }
+            E::StringSearch(mode, value, needle, position) => {
+                self.helpers.insert(strings::Helper::string_search(*mode));
+                self.expression(value, source);
+                self.expression(needle, source);
+                self.expression(position, source);
+            }
+            E::StringRange {
+                value,
+                start,
+                end,
+                substring,
+            } => {
+                self.helpers.insert(if *substring {
+                    strings::Helper::StringSubstring
+                } else {
+                    strings::Helper::StringSlice
+                });
+                self.expression(value, source);
+                self.expression(start, source);
+                self.expression(end, source);
+            }
             E::StringRepeat {
                 value,
                 count,
@@ -149,6 +170,15 @@ impl<'a> Collected<'a> {
             E::ArrayPop(base) => {
                 self.helpers.insert(strings::Helper::Allocate);
                 self.expression(base, source);
+            }
+            E::ArrayEnumerate { value, keys } => {
+                self.arrays = true;
+                self.helpers.insert(if *keys {
+                    strings::Helper::ArrayKeys
+                } else {
+                    strings::Helper::ArrayValues
+                });
+                self.expression(value, source);
             }
             E::ArrayReserve { length, .. } => {
                 self.arrays = true;
@@ -262,7 +292,8 @@ impl<'a> Collected<'a> {
                 self.expression(a, source);
                 self.expression(b, source);
             }
-            E::IsNullish(a)
+            E::IsError(a)
+            | E::IsNullish(a)
             | E::IsUndefined(a)
             | E::UnboxUnion(a)
             | E::Negative(a)
@@ -309,7 +340,10 @@ impl<'a> Collected<'a> {
     fn statements(&mut self, body: &[S], source: &'a crate::source::Source) {
         for statement in body {
             match statement {
-                S::RecordKeys { .. } => {
+                S::RecordEnumerate { values, .. } => {
+                    for value in values {
+                        self.expression(value, source);
+                    }
                     self.arrays = true;
                     if self.types.profile.sparse_arrays() {
                         self.helpers.insert(strings::Helper::ArraySetPresent);

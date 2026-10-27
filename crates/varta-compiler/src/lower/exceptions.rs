@@ -75,32 +75,64 @@ impl Lower<'_> {
         self.next += 1;
         self.local_types.insert(marker, Type::Number);
         self.scopes.push(BTreeMap::new());
+        let mut prefix = Vec::new();
+        let mut hidden_root = None;
         let binding = if let Some(param) = &catch.param {
-            let ast::Pat::Ident(id) = param else {
-                return Err(unsupported("catch binding pattern"));
-            };
-            if id.type_ann.is_some() {
-                return Err(unsupported("catch binding annotation"));
-            }
             let ty = self.exception_type()?;
-            let slot = self.next;
-            self.declare(id.id.sym.as_ref(), Some(ty), true, true)?;
-            Some(slot)
+            if let ast::Pat::Ident(id) = param {
+                if id.type_ann.is_some() {
+                    return Err(self
+                        .source
+                        .locate(unsupported("catch binding annotation"), id.span()));
+                }
+                let slot = self.next;
+                self.declare(id.id.sym.as_ref(), Some(ty), true, true)?;
+                Some(slot)
+            } else {
+                if !self.types.profile.closures() {
+                    return Err(self.source.locate(
+                        unsupported("catch destructuring requires checked-f64-utf16-v12"),
+                        param.span(),
+                    ));
+                }
+                let ast::Pat::Object(pattern) = param else {
+                    return Err(self.source.locate(
+                        unsupported("catch binding other than identifier or object pattern"),
+                        param.span(),
+                    ));
+                };
+                if pattern.type_ann.is_some() {
+                    return Err(self
+                        .source
+                        .locate(unsupported("catch binding annotation"), pattern.span));
+                }
+                for (name, span) in patterns::names(std::slice::from_ref(param))
+                    .map_err(|(e, span)| self.source.locate(e, span))?
+                {
+                    self.declare(&name, None, false, true)
+                        .map_err(|e| self.source.locate(e, span))?;
+                }
+                let slot = self.hidden(ty);
+                hidden_root = Some(slot);
+                prefix = self.catch_binding_pattern(pattern, slot, ty)?;
+                Some(slot)
+            }
         } else {
             None
         };
-        let handler = self.block(&catch.body.stmts, false)?;
-        let slots = self
+        prefix.extend(self.block(&catch.body.stmts, false)?);
+        let mut slots: Vec<_> = self
             .scopes
             .pop()
             .ok_or_else(|| invalid("missing catch scope"))?
             .values()
             .map(|b| b.slot)
             .collect();
+        slots.extend(hidden_root);
         Ok(S::TryCatch {
             body,
             binding,
-            handler: vec![S::Scope(slots, handler)],
+            handler: vec![S::Scope(slots, prefix)],
             marker,
         })
     }

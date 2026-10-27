@@ -186,8 +186,9 @@
 // persistent exhaustion; sparse rest admits Undefined and fills holes densely.
 // Object rest is fresh/shallow and preserves live presence/enumeration order.
 // Bound pattern depth/nodes to 64/1024 per function plus existing resource limits.
-// Dynamic keys, primitive boxing, string/custom iterables, array-as-object and
-// catch patterns remain unsupported. No ABI change.
+// Dynamic keys, primitive boxing, string/custom iterables and array-as-object
+// patterns remain unsupported. Narrower catch object patterns are specified below.
+// No ABI change.
 // V12+ local const/let declarations and ordinary for initializers reuse these
 // patterns. Infer the RHS or supply a whole-pattern aggregate annotation; require
 // an initializer and evaluate it once. Predeclare all block leaves in TDZ and
@@ -249,15 +250,66 @@
 // exception state, status/grants and resource bounds retain their contracts.
 // Completion/callback analysis preserves exact named targets through inner loops.
 // Labels count toward nesting limits. No ABI/import/helper/layout change.
+// V12+ String.slice(start?,end?) and substring(start?,end?) accept narrowed
+// String receivers and Number/Undefined bounds, including unions. Omitted or
+// undefined start is zero/end is length; NaN -> zero and fractions truncate.
+// Slice resolves negatives relative to length and empties reversed ranges;
+// substring clamps negative bounds to zero and swaps reversed bounds. Clamp
+// infinities/huge finite values before integer conversion. Preserve UTF-16 units,
+// lone surrogates/NULs, argument order, roots/GC/pairs/returns/finalizers and actual
+// effects. Copy nonempty ranges into owned strings, never interior pointers;
+// empty results are canonical after effects. Existing Array.slice/older profiles
+// and all bounds remain intact; resource failure/exit stay fatal. No coercion,
+// borrowed/computed/generic/spread methods, extra args or nullable receiver without
+// narrowing; no host operation, helper export or ABI/layout change.
+// V12+ String.includes/startsWith/endsWith require String needles and narrowed
+// String receivers, with an optional Number/Undefined position (including union).
+// Default includes/startsWith to zero, endsWith to length. NaN -> zero; truncate
+// fractions and clamp 0..UTF-16 length before conversion, without relative negatives.
+// Empty needles match after effects; compare exact units/case/NULs/surrogates,
+// never unaligned byte subsequences or normalized Unicode. Private guest helpers
+// allocate/call nothing and return canonical booleans. Initial includes scans
+// candidates with fuel-bounded quadratic worst case. Preserve roots/GC/pairs/
+// returns/finalizers, status/grants and fatal limits; Array.includes/older profiles
+// retain their existing rules. No coercive/regex/omitted needles, extra args,
+// borrowed/computed/generic/spread calls or nullable receivers without narrowing.
+// No host operation, helper export or ABI/layout change.
+// V12+ catch object patterns support static name/message identifier bindings,
+// aliases/defaults and empty patterns. Field types are string|undefined across the
+// full primitive/Error-family channel. Non-null primitives supply undefined;
+// nullish throws produce TypeError before defaults/body. Errors retain existing
+// family names and message semantics. Names initialize in source order under TDZ,
+// are mutable and get fresh capture cells per entry. Defaults cannot see body
+// declarations; failures escape the original handler through outer finalizers.
+// Reject arrays/rest/other properties/dynamic keys/annotations/aggregate throws.
+// Preserve GC/roots/pairs/status/grants/fatal budgets and older profile behavior.
+// No new host operation, helper export or ABI/layout change.
 // V12+ Object.keys(record) returns a fresh dense string[] of present own keys:
 // canonical array indices first numerically, other strings by insertion order.
 // Explicit Undefined is present; absent optional fields are omitted. Input is
 // evaluated once; no payload serialization or source/result aliasing occurs.
 // Nullable single-record unions throw TypeError on absence. Unsupported kinds
-// (including arrays/boxed primitives/Error/result/functions), generic/spread calls
+// (boxed primitives/Error/result/functions), generic/spread calls
 // and shadowed Object remain rejected. Internal roots/floors protect earlier
 // operands, returns, GC/pairs and exceptions. Clear spare slots/bits before
 // publishing length. Status/grants and all bounds persist; no ABI/helper change.
+// V12+ Object.values(record) returns a fresh dense array in Object.keys order,
+// omitting absent fields and keeping explicit Undefined. Infer the common field
+// type or an admitted closed union; empty records yield undefined[]. Reject
+// incompatible record/array unions rather than casting. Nullable source absence
+// throws TypeError and does not widen the element type. Read/widen each payload
+// once into rooted slots; preserve exact Number bits, immutable strings/unions
+// and shared child identities through allocation, ordering, GC and finalizers.
+// Keys/values share enumeration and canonical tail cleanup; status/grants and
+// all bounds persist. Same input/call restrictions; no ABI/helper/layout change.
+// V12+ Object.keys(array) and Object.values(array) also accept a bounded typed
+// array or nullable single-array union. Keys are ascending decimal index strings,
+// excluding length. Values preserve the exact element type without widening for
+// skipped holes (v13+); explicit Undefined remains present. Results are fresh dense
+// arrays with shared nested identities and zero spare slots/bits. Private guest
+// helpers root partial prefixes across key allocations and restore temporary roots.
+// No host call/coercion/status change; existing bounds and older profiles persist.
+// Mixed array/record sources remain rejected; no ABI/layout/helper-export change.
 // checked-f64-utf16-v13 adds sparse presence (host ABI v16/value v12/schema v12).
 // Holes differ from explicit undefined through Object.hasOwn; all-hole literals
 // require an element annotation. Reads/at return undefined for holes; writes within

@@ -1,6 +1,7 @@
 //! Checked binding patterns, preserving source order, TDZ and exact roots.
 use super::*;
 mod arrays;
+mod caught;
 mod defaults;
 mod names;
 mod objects;

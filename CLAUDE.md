@@ -415,9 +415,9 @@ remaining fields, then remaps live presence/order without allocation/user code;
 keep all 32 bits and zero unused order words. Pattern depth/nodes use shared
 64/1024 limits alongside parser/body/frame/resource budgets. Pure tag/metadata
 operations preserve status; actual effects stay visible to helper analysis and
-real grants. No layout/import/helper/ABI change. Catch patterns,
-primitive boxing, strings/custom iterables, array-as-object
-patterns and broader keys/prototypes remain unsupported.
+real grants. No layout/import/helper/ABI change. Primitive boxing, strings/custom
+iterables, array-as-object patterns and broader keys/prototypes remain unsupported.
+The narrower catch object pattern contract is specified below.
 V12+ local const/let patterns reuse the shared binding mechanism. Predeclare all
 block leaves in TDZ, infer or contextually check one RHS, initialize in source
 order and preserve const/let mutability, shared capture cells, shadowing and roots.
@@ -510,6 +510,75 @@ Fresh dense String arrays use UTF-16 literals, existing capacity/layout/helpers;
 compact keys, zero removed payloads/bits then publish both lengths. No source
 aliasing or resurrected slots. Preserve caller operands, GC/pairs/finalizers,
 status/actual grants and all bounds; no ABI/import/helper/layout change.
+V12+ Object.values shares typed record enumeration with Object.keys. Derive the
+homogeneous result element through existing union interning; preserve exact field
+kinds, optional Undefined, unique record/array union limits and no opaque fields.
+Empty records return Undefined[]. Outer nullability throws, not an element widening.
+Prepare each field once into rooted cached slots before output allocation; entries
+in compaction are literals/locals only, with no calls/boxing/user code. Keep cache,
+source/output and earlier operand/pair roots across allocations. Order by presence
+and JS keys, pack numeric bits exactly and retain shallow reference identity. Clear
+spare payloads/bits then publish both lengths with no allocation in between. Generic
+RecordEnumerate collectors/effect visitors traverse entries; no source-return sites
+enter internal value blocks. Preserve GC/finalizers/status/grants, all bounds and
+old profiles. No ABI/import/helper-export/layout change.
+V12+ Object.keys/Object.values also accept bounded arrays or nullable single-array
+unions; mixed record/array inputs remain rejected. Keys are decimal String[] in
+ascending own-index order, omitting length. Values preserve the exact invariant
+element type; sparse holes are skipped without widening and explicit Undefined is
+present. ArrayEnumerate selects private host-free helpers. Snapshot length/backing
+once, reserve zeroed geometric capacity with live length zero, root backing before
+cell allocation and root cell before decimal-key allocations. Publish payload,
+presence and both lengths without allocating between them; GC sees only canonical
+completed prefixes. Preserve child masks/numeric bits, shallow identity and zero
+spare slots/bits. Format indices directly as bounded UTF-16 decimal, never through
+host output/JSON/coercion. Save/restore helper temporary roots on success, preserving
+earlier operands/pairs/finalizers and bounded repeated calls. Keep effect/layout
+visitors, nullable errors, exact grants/status and all budgets/old profiles intact.
+No host import, helper export or ABI/layout change.
+V12+ catch object patterns expose static name/message keys with identifier leaves,
+aliases/defaults and empty patterns over the complete primitive/Error channel.
+Reject arrays/rest/other keys/annotations/dynamic keys/aggregate throws and older
+profiles; do not infer a narrower thrown type from a try body. Predeclare all
+BoundNames in TDZ before defaults, initialize in source order, preserve mutability
+and fresh capture cells, and resolve defaults before handler-body declarations.
+Transfer the original union to a hidden exact root before channel clear, include
+it in handler cleanup scopes, then reject nullish values before defaults/body.
+Non-null primitives yield Undefined; Errors yield existing family-aware fields.
+Use pure internal IsError tag tests to guard Error payload access and existing
+String|Undefined widening/defaults. Binding failures escape the inactive original
+handler and route through outer handlers/finalizers. Traverse all defaults/layouts/
+effects and preserve callback completion, GC/partial bindings/returns/pairs/status/
+grants/fatal limits. No new host operation/helper export or ABI/layout change.
+V12+ String.slice/substring accept narrowed String receivers and zero to two
+Number/Undefined bounds only. Evaluate receiver/start/end once in order; retain
+prior operands across nested effects, exceptions and allocations. Lower shared
+slice receivers once before choosing array/string dispatch; preserve existing
+Array.slice and older profiles. Typed StringRange selects private guest helpers.
+NaN -> zero, truncate fractions, default start zero/end length, clamp before
+integer conversion. Slice resolves negatives relative to length and empties
+reversed ranges; substring clamps negatives to zero and swaps reversed bounds.
+Copy exact UTF-16 units/NULs/lone surrogates into one owned nonempty result; never
+return an interior GC pointer. Empty results are canonical after argument effects.
+Keep collector roots, physical pairs/returns/finalizers, full effect visitors,
+status/grants and all byte/memory/fuel/deadline limits; bulk-copy exhaustion is
+fatal. Reject coercion/borrowed/computed/generic/spread/extra args and nullable
+receivers without narrowing. No host operation/helper export or ABI/layout change.
+V12+ String.includes/startsWith/endsWith require narrowed String receivers and
+String needles, with optional Number/Undefined positions. Evaluate/root receiver,
+needle and position once in order. Includes shares dispatch with Array.includes:
+lower its receiver once and preserve array SameValueZero/holes/relative bounds and
+old profiles. Default positions to zero except endsWith uses length. NaN -> zero,
+truncate fractions and clamp 0..UTF-16 length before integer conversion; negatives
+are not relative. Empty needles match after all effects. Reject candidate ranges
+before subtraction and compare exact UTF-16 units, never unaligned bytes. Private
+StringSearch helpers allocate/call nothing and return canonical booleans; keep
+full operand/effect visitors, GC/pairs/saved results/finalizers/status/grants.
+Initial includes uses bounded candidate scanning (quadratic worst case), with
+existing fuel/deadlines fatal on adversarial repetition; prefix/suffix are linear
+in needle length. No coercion/regex/omitted needle/borrowed/computed/generic/spread/
+extra arguments or nullable receivers without narrowing. Existing limits and ABI/
+heap/helper exports/host operations remain unchanged.
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail
 even if they ignore its custom section. Do not claim full ECMAScript support from

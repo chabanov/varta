@@ -4,6 +4,9 @@ This document describes the implemented MVP. Future work is tracked separately i
 [development-plan.md](development-plan.md). Varta compiles a deliberately small
 TypeScript subset to portable WebAssembly and executes it in a capability-checked
 Wasmtime host. It does not provide general JavaScript, Node or npm compatibility.
+The [2026-10-27 development checkpoint](development-plan.md#development-checkpoint--2026-10-27)
+records the current delivery state and local verification; the contracts below
+remain the source of truth for individual features and profile boundaries.
 
 Primitive Tool Contract v1, offline discovery and checked JSON invocation are
 implemented below. Broader Application Contracts, live application state and
@@ -926,6 +929,97 @@ remain fatal and bypass catch/finally. Status and capability authority are uncha
 Tests cover normalization/infinities, Unicode, nested operand effects, GC, maximum
 byte bounds with explicit test fuel, helper-count limits and source-free execution.
 
+### String range contract
+
+V12+ admits String.slice(start?,end?) and String.substring(start?,end?) on a
+narrowed String receiver, with zero to two Number/Undefined bounds (including
+their union). Earlier profiles, non-string/nullable receivers without narrowing,
+coercion, borrowed/computed methods, spread/generic calls and extra arguments
+remain rejected. Follow the admitted parts of
+[String.prototype.slice](https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.slice)
+and [String.prototype.substring](https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.substring).
+
+Supply zero for omitted/undefined start and length for omitted/undefined end;
+normalizing the latter with positive Infinity is equivalent for bounded strings.
+Apply ToIntegerOrInfinity: NaN becomes zero and fractions truncate toward zero.
+Slice resolves negative integers relative to code-unit length, clamps both bounds
+and uses an empty result for end before start. Substring clamps both bounds to
+0..length and swaps if start exceeds end. Clamp in floating point before integer
+conversion, including infinities and huge finite inputs. The resulting indices
+are bounded by the source's existing UTF-16 byte limit.
+
+Lower a shared slice receiver exactly once before selecting array/string
+semantics, preserving lifted functions/captures and existing Array.slice rules
+(including older profiles). Typed StringRange IR preserves receiver/start/end
+order; emission retains earlier operands on the Wasm stack and in exact roots
+across later bounds, nested calls and pending-exception checks. Actual operand
+effects remain visible to helper validation and tool/capability analysis. A
+throwing earlier operand skips all later operands and enclosing effects.
+
+Private StringSlice/StringSubstring helpers receive the rooted source and
+normalized typed bounds. They compute unit indices, allocate once for nonempty
+results and bulk-copy the exact selected UTF-16 bytes. Never return interior
+slices: the nonmoving collector expects a root to identify its owned allocation.
+Canonical empty results allocate nothing, after all argument effects. Whole-string
+ranges still copy into owned storage. Preserve lone surrogate units, NULs, content
+comparison and immutable string ownership. No user/host call or further allocation
+occurs during copying. Helper locals are private activation-local scratch and
+cannot overwrite live outer receiver/bound operands.
+
+The existing 1 MiB encoded string ceiling, memory/root/frame/type/source/body
+budgets, Wasmtime bulk-copy fuel and deadline checks remain active. Resource
+failure and authorized exit stay fatal; status and grants are unchanged. No new
+host operation/import, capability, helper export, schema or ABI/layout change.
+Tests cover bound normalization, UTF-16 edges, effect/throw order, nested calls,
+GC/detached sources/child graphs/pairs/saved returns, maximum-byte copying with
+explicit test fuel, fatal budgets, arrays/older profiles, virtual modules,
+source-free artifacts, exact grants/host ceilings and dependency diagnostics.
+
+### String search contract
+
+V12+ admits String.includes/startsWith/endsWith with a required String needle and
+optional Number/Undefined position (including the union), on a narrowed String
+receiver. Reject omitted/coercive/regex needles, nullable receivers without
+narrowing, other position types, borrowed/computed methods, extra arguments,
+spread/generic calls and earlier profiles. Follow the admitted parts of
+[String.prototype.includes](https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.includes),
+[startsWith](https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.startswith)
+and [endsWith](https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.endswith).
+
+Default omitted/undefined includes/startsWith positions to zero; endsWith defaults
+to length (positive Infinity before clamping is equivalent). NaN becomes zero;
+truncate fractions, clamp to 0..code-unit length in floating point, then convert
+to a bounded integer. Negatives are not relative to the end. Empty needles match
+at every admitted position, including empty sources and clamped endpoints.
+Includes walks candidate starts at/after the position, startsWith tests that start
+alone, and endsWith tests the candidate ending at its exclusive position. Reject
+overlong candidate ranges before subtraction; never read beyond either payload.
+
+Typed StringSearch IR and private StringIncludes/StringStartsWith/StringEndsWith
+helpers return canonical 0/1. Compare exact UTF-16 units with aligned unit offsets,
+not unaligned byte subsequences. Preserve case, lone surrogates, embedded NULs and
+combining sequences without Unicode normalization. Helpers allocate nothing and
+make no host/helper calls. Existing exact-root expression wrappers retain receiver
+and needle through position effects, nested calls, pending-exception checks and
+collection; earlier scalar/physical-pair operands and saved booleans survive
+ordinary finalizer/return routing. Layout/effect visitors traverse all three
+operands, retaining actual capability effects and host-free helper validation.
+
+Shared includes dispatch lowers the receiver once before selecting string or
+array semantics, including lifted functions/captures. Preserve Array.includes
+SameValueZero, arbitrary checked needles, sparse presence and relative positions
+under its existing profiles. No new host operation/import, capability, helper
+export, schema or heap/ABI layout is introduced; status and grants are unchanged.
+
+The initial includes scan compares each bounded candidate until mismatch; worst
+case cost is O((n-m+1)*m) code-unit comparisons. Prefix/suffix checks are O(m),
+extra helper space is O(1), and no new search-size ceiling is added. All work is
+Wasm-fuel metered with existing deadline/string/memory/frame/root/type/source/body
+limits. Adversarial repetition can exhaust fuel and remains fatal, bypassing
+catch/finally. Tests cover this boundary, maximum strings with explicit test fuel,
+UTF-16 unit alignment, effects/throws, GC/pairs/saved results, array/legacy rules,
+virtual modules and source-free artifacts with grants/ceilings and diagnostics.
+
 ### Array mutation profile and host ABI v17
 
 `checked-f64-utf16-v14` selects **host ABI v17 with unchanged value ABI v12/schema
@@ -1612,9 +1706,9 @@ string/number literal keys (including computed literals), nested defaults and a
 final identifier object rest. Array patterns admit nested bindings/defaults,
 elisions and final identifier/aggregate rest; final parameter rest can itself be
 an array pattern. Dynamic keys are rejected before lowering effects. Primitive
-boxing, strings/general iterables, array-as-object patterns, catch patterns,
-broader prototypes and unrestricted unions remain
-outside this increment; local declarations are supported below. Shared function constants bound parameter pattern depth
+boxing, strings/general iterables, array-as-object patterns, broader prototypes
+and unrestricted unions remain outside this increment; local declarations and the
+narrower catch object pattern contract are specified below. Shared function constants bound parameter pattern depth
 to 64 and nodes (including elisions/wrappers) to 1024 per function; existing parser
 complexity, semantic type, physical slot, emitted body, frame/memory/root/fuel/
 deadline/host-call limits still apply independently.
@@ -1966,13 +2060,55 @@ Tests cover aliases, block/switch labels, all loops, generated rest loops, final
 overrides, captures/GC/pairs, invalid targets/depth/legacy gates, virtual modules
 and source-free artifacts with grant denial, host ceilings and source diagnostics.
 
+### Catch binding pattern contract
+
+V12+ adds checked object CatchParameter patterns, following the admitted parts of
+[CatchClauseEvaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-try-statement-runtime-semantics-catchclauseevaluation).
+The exception channel remains the complete primitive/Error-family union; never
+infer it from the protected body or admit aggregate throws through a pattern.
+Support empty object patterns and static name/message keys with identifier leaves,
+aliases and defaults. Literal computed keys use existing key normalization. Reject
+other properties, dynamic keys, array/rest patterns, annotations, invalid leaves,
+duplicates and older profiles with located diagnostics. Existing source/pattern,
+type/frame/root/body and execution budgets remain active.
+
+Predeclare every BoundName uninitialized and mutable under the shared pattern
+budget before lowering any default. Initialize leaves in source order with the
+existing typed default machinery; direct self/later reads remain in TDZ. Handler
+body declarations do not participate in default resolution, but duplicate lexical
+names remain errors. Captured leaves receive fresh managed cells per catch entry.
+Before clearing the exception channel, the existing TryCatch emitter transfers the
+original union into one hidden exact root. Include that root in the complete
+handler scope even when there are no named leaves. Clear it and partially
+initialized bindings on every normal/branch/return/throw exit.
+
+After channel transfer/clear and before any property/default effect, reject
+null/undefined with owned TypeError `Cannot destructure null or undefined`. The
+handler catching the original value is already inactive, so binding failures
+escape to an outer handler and run applicable finalizers. This applies to empty
+object patterns too. Non-null primitive throws supply Undefined for name/message;
+Errors use existing family-aware string fields, including inherited empty message.
+Both field types are String|Undefined; defaults remove Undefined only through
+existing union rules, without casts or narrowing based on the try body.
+
+Internal IsError tests the canonical union member tag without a host call; only
+its true branch may read Error payloads. Existing rooted immutable union widening
+retains property strings through further allocation. Layout/effect visitors walk
+the predicate and full default/handler statements; callback completion inference
+accounts for those statements without inventing normal exits. No new host import,
+helper export, exception version or heap/ABI layout is introduced. Status, exact
+grants, host ceilings, saved exceptions/returns/physical pairs, finalizer override,
+named control routing and fatal resource/exit behavior remain unchanged. Tests
+cover TDZ/scopes/captures, nullish/default failures, repeated GC/roots, callback
+inference, modules, source-free artifacts and dependency diagnostics.
+
 ### Object.keys contract
 
 V12+ admits the unshadowed Object.keys intrinsic for one checked closed-record
 argument, optionally in a null/undefined union with a single record shape. Reject
 unsupported source kinds, generic/spread/invalid-arity calls and earlier profiles.
-No primitive boxing, arrays, Error/result/function objects or prototype/symbol
-semantics are implied. Nullish union values throw owned TypeError
+Bounded array inputs are specified below; primitive boxing, Error/result/function
+objects and prototype/symbol semantics remain unsupported. Nullish union values throw owned TypeError
 `Cannot convert undefined or null to object` before result construction or later
 enclosing effects. Argument errors/fatal traps preserve their existing behavior.
 
@@ -1994,7 +2130,7 @@ are selected in sorted static order; a bounded walk of the live order trailer
 selects non-index names, preserving all 32 presence bits. Root the output before
 any further work. No shared source backing or payload edges enter the result.
 
-A pure RecordKeys statement writes only inside the allocated output. Clear every
+A pure RecordEnumerate statement writes only inside the allocated output. Clear every
 removed tail payload/presence bit while the old length is valid, then publish the
 new length in both stable array cell and backing. Prefix slots stay present and
 spare capacity remains zero; later growth/push cannot resurrect removed names.
@@ -2013,6 +2149,96 @@ cover ordering/presence/Unicode, nullable failures, snapshots, tail clearing,
 32-field/default-fuel bounds, GC/pairs/earlier operands/results, callback inference,
 legacy gates, virtual modules and source-free artifacts with grants/ceilings and
 source diagnostics. No host import, guest helper export or ABI/layout change.
+
+### Object.values contract
+
+V12+ adds unshadowed Object.values for one checked closed record or nullable
+single-record union, reusing the admitted
+[Object.values](https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.values)
+own-value ordering. Numeric index names sort first, other fields retain insertion
+order. Presence controls inclusion independently of Undefined payloads. Direct
+boxed primitives/Error/result/function inputs and getters/prototypes/symbols
+remain unsupported, as do spread/generic/invalid-arity calls and earlier profiles.
+Nullish union absence throws the existing owned TypeError before payload preparation
+or enclosing effects; no input is coerced through JSON.
+
+Derive the element type from declared field types through the existing closed-union
+interner: equal types stay equal, compatible primitives/reference members flatten
+into one homogeneous union, and unrepresentable combinations fail compilation.
+Preserve the one-record-shape/one-array-element-kind union restrictions and opaque
+Function/result exclusions. Optional fields retain Undefined in the inferred type;
+outer source nullability does not widen it. Empty records use Undefined[] because
+this profile has no Never/Any array element kind. Context does not cast a fixed
+inferred result into an incompatible array type.
+
+Key/value intrinsics share one lowering/emission path and RecordEnumerate IR.
+Evaluate/root the source once, narrow after the nullish check, then read/widen each
+closed-shape payload once into a typed cached slot. Register cache roots before
+argument evaluation and keep all cache values alive through output allocation.
+The internal value block's temporary floor retains earlier operands/physical pairs;
+handlers clean all roots on failure and no partial output is published. Literal
+key entries and cached value entries are the only internal ordering operands: no
+user calls, boxing allocations or recoverable throws occur during compaction.
+
+Allocate an invariant array of the derived kind, then copy cached entries into
+its present own-property prefix in shared enumeration order. Pack Float64 bits
+without conversion; preserve canonical primitive/union cells and actual child
+masks, never tracing numeric payload bits. Copy reference identity without cloning
+children. Clear all removed payloads/bits while the old length is valid, then
+publish cell/backing lengths before any later allocation or host observation.
+This final clearing phase is allocation-free, including when zero payloads would
+not be canonical live union/reference values. Later growth cannot resurrect them.
+
+The output is an independent outer snapshot with shared nested references and
+immutable scalar/union values. Existing dense/sparse representations, status,
+permissions, helper purity, type/source/body/frame/root/resource budgets and fatal
+exit behavior remain intact. Layout/effect visitors traverse preparation plus the
+entry expressions; callback inference sees the resolved value-block result type.
+Tests cover order/presence/null/UTF-16/numeric edges, shallow identity, typed JSON/
+rest/callbacks, union rejection, GC/pairs/returns/cache roots, 32-field default
+budgets, legacy gates, virtual modules and source-free artifacts with real grants,
+host ceilings and source diagnostics. No ABI/import/helper-export/layout change.
+
+### Array own enumeration contract
+
+V12+ Object.keys/Object.values also accept a checked bounded array or nullable
+single-array union. The shared source block evaluates/roots the argument once and
+performs the existing nullish TypeError check before later enclosing effects.
+Mixed array/record sources, primitive boxing, general keys/prototypes/getters,
+spread/generic calls, shadowed Object and earlier profiles remain rejected.
+Follow the admitted own-enumerable rules of
+[EnumerableOwnProperties](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-enumerableownproperties):
+walk indices in ascending order and exclude length. V12 arrays are dense; v13+
+presence bits skip holes independently of explicit Undefined payloads.
+
+Object.keys returns String[]. Object.values preserves the invariant source array
+element type exactly: skipped holes do not add Undefined or permit aggregate
+covariance. No payload is read for keys. Values copy canonical slots, preserving
+Float64 bits and actual String/union/Error/record/array child identities. Both
+outputs have fresh cells/backing and a dense present prefix, including empty and
+all-hole inputs. Their outer snapshots do not mutate source storage.
+
+Typed ArrayEnumerate IR selects private ArrayKeys/ArrayValues Wasm helpers, with
+no host imports, helper exports or ABI/layout change. Capture the current source
+length/backing once after argument effects; enforce the existing maximum count.
+Reserve geometric zeroed capacity from that length using the profile's layout,
+with initially zero live length. Root backing before cell allocation and root the
+cell before any index-string allocation. Copy one payload, set its presence bit,
+then publish both lengths without allocation in between. At every possible GC
+point, only the completed prefix is live; numeric bits are never reference edges.
+All skipped/spare slots and bits remain zero, so growth cannot resurrect payloads.
+
+Key formatting handles only bounded nonnegative indices: count decimal digits,
+allocate one UTF-16 string and write code units directly. It introduces no general
+coercion, serialization, capability or status update. The nonmoving source/output
+roots protect raw pointers across allocator/collector calls. Helpers save/restore
+the temporary-root cursor, so repeated calls do not retain obsolete outputs or
+consume unbounded roots. Existing expression/value-block roots preserve earlier
+operands, physical pairs, nested calls, saved results and finalizers. Actual
+argument effects remain visible to validation and grants; fatal limits/exit stay
+fatal. Tests exercise all admitted element kinds, presence/mutation/order, 1024
+indices, repeated collection, virtual modules and source-free artifacts with host
+ceilings and exact-operation denial. Existing profile budgets remain unchanged.
 
 ### Destructuring assignment value contract
 

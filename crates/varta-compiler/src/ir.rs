@@ -232,6 +232,13 @@ pub(crate) enum ArraySearch {
     IndexOf,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringSearch {
+    Includes,
+    StartsWith,
+    EndsWith,
+}
+
 pub(crate) enum Expression {
     Assignment {
         value: Box<Expr>,
@@ -256,6 +263,13 @@ pub(crate) enum Expression {
         arguments: Vec<u32>,
         output: Option<u32>,
     },
+    StringSearch(StringSearch, Box<Expr>, Box<Expr>, Box<Expr>),
+    StringRange {
+        value: Box<Expr>,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        substring: bool,
+    },
     StringRepeat {
         value: Box<Expr>,
         count: Box<Expr>,
@@ -271,6 +285,7 @@ pub(crate) enum Expression {
     BoxUnion(Box<Expr>),
     UnboxUnion(Box<Expr>),
     IsUndefined(Box<Expr>),
+    IsError(Box<Expr>),
     IsNullish(Box<Expr>),
     Conditional(Box<Expr>, Box<Expr>, Box<Expr>),
     UnionLogical(BinaryOp, Box<Expr>, Box<Expr>),
@@ -303,6 +318,10 @@ pub(crate) enum Expression {
     Json(Box<Expr>),
     ParseJson(Box<Expr>),
     Array(Vec<Option<Expr>>),
+    ArrayEnumerate {
+        value: Box<Expr>,
+        keys: bool,
+    },
     ArrayReserve {
         length: Box<Expr>,
         count: u32,
@@ -344,11 +363,12 @@ pub(crate) enum Statement {
     },
     Init(u32, Expr),
     Rebind(Vec<u32>),
-    RecordKeys {
+    RecordEnumerate {
         source: u32,
         target: u32,
         shape: u32,
         slots: [u32; 4],
+        values: Vec<Expr>,
     },
     RecordRest {
         source: u32,

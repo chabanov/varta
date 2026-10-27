@@ -1,4 +1,4 @@
-//! Compact canonical literal names into a fresh dense array in own-key order.
+//! Compact typed entries into a rooted dense array in shared own-property order.
 use super::*;
 use varta_common::value as values;
 const WORD_BYTES: usize = size_of::<u32>();
@@ -9,12 +9,13 @@ fn word(offset: usize) -> wasm_encoder::MemArg {
     }
 }
 impl Emitter<'_> {
-    pub(super) fn record_keys(
+    pub(super) fn record_enumerate(
         &mut self,
         source: u32,
         target: u32,
         shape: u32,
         slots: [u32; 4],
+        entries: &[Expr],
     ) -> Result<()> {
         let source = self.local_slots[source as usize];
         let target = self.local_slots[target as usize];
@@ -55,7 +56,7 @@ impl Emitter<'_> {
                 I::I32And,
                 I::If(BlockType::Empty),
             ]);
-            self.key_slot(backing, cursor, &fields[slot].name)?;
+            self.entry_slot(backing, cursor, &entries[slot])?;
             self.code.push(I::End);
         }
         if !names.is_empty() {
@@ -87,7 +88,7 @@ impl Emitter<'_> {
                     I::I32Eq,
                     I::If(BlockType::Empty),
                 ]);
-                self.key_slot(backing, cursor, &fields[slot].name)?;
+                self.entry_slot(backing, cursor, &entries[slot])?;
                 self.code.push(I::End);
             }
             self.code.extend([
@@ -146,7 +147,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
-    fn key_slot(&mut self, backing: u32, cursor: u32, name: &str) -> Result<()> {
+    fn entry_slot(&mut self, backing: u32, cursor: u32, value: &Expr) -> Result<()> {
         self.code.extend([
             I::LocalGet(backing),
             I::LocalGet(cursor),
@@ -154,11 +155,10 @@ impl Emitter<'_> {
             I::I32Mul,
             I::I32Add,
         ]);
-        self.expr(&Expr {
-            span: swc_common::DUMMY_SP,
-            ty: Type::String,
-            kind: E::String(self.profile.string_bytes(name)),
-        })?;
+        // Entries are generated literals/rooted locals only: no user code,
+        // allocation or output resizing can occur while the backing is selected.
+        self.expr(value)?;
+        self.pack_slot(value.ty);
         self.code.push(I::I64Store(arrays::slot(0)));
         self.end_temporaries();
         self.code.extend([

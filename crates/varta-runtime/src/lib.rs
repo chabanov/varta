@@ -382,3 +382,18 @@ mod label_tests;
 
 #[cfg(test)]
 mod object_keys_tests;
+
+#[cfg(test)]
+mod object_values_tests;
+
+#[cfg(test)]
+mod array_enumeration_tests;
+
+#[cfg(test)]
+mod catch_pattern_tests;
+
+#[cfg(test)]
+mod string_range_tests;
+
+#[cfg(test)]
+mod string_search_tests;
