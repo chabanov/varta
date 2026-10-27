@@ -2,6 +2,10 @@ use crate::{CapabilityGrant, CapabilityValue, GrantKind, Result, VartaError, cap
 use serde::{Deserialize, Serialize};
 
 const SCHEMA_VERSION: u32 = 1;
+pub const STRICT_POLICY: &str = "strict";
+fn default_policy() -> String {
+    STRICT_POLICY.into()
+}
 fn schema_version() -> u32 {
     SCHEMA_VERSION
 }
@@ -21,7 +25,7 @@ pub struct Manifest {
     pub entry: Option<String>,
     #[serde(default)]
     pub target: Option<String>,
-    #[serde(default = "crate::config::default_policy")]
+    #[serde(default = "default_policy")]
     pub policy: String,
     pub capabilities: Vec<WireGrant>,
 }
@@ -44,15 +48,15 @@ impl Manifest {
             abi_version: crate::abi::VERSION,
             entry: None,
             target: None,
-            policy: "strict".into(),
+            policy: STRICT_POLICY.into(),
             capabilities: grants
                 .iter()
                 .map(|g| WireGrant {
                     id: g.id.clone(),
                     patterns: match &g.value {
-                        CapabilityValue::PathGlobs(p) | CapabilityValue::UrlGlobs(p) => {
-                            Some(p.clone())
-                        }
+                        CapabilityValue::PathGlobs(p)
+                        | CapabilityValue::UrlGlobs(p)
+                        | CapabilityValue::ListenEndpoints(p) => Some(p.clone()),
                         _ => None,
                     },
                     enabled: match g.value {
@@ -78,8 +82,8 @@ impl Manifest {
             ));
         }
         if self.schema_version != SCHEMA_VERSION
-            || self.abi_version != crate::abi::VERSION
-            || self.policy != "strict"
+            || !crate::abi::supported(self.abi_version)
+            || self.policy != STRICT_POLICY
             || self
                 .target
                 .as_ref()
@@ -106,6 +110,9 @@ impl Manifest {
                         CapabilityValue::PathGlobs(p.clone())
                     }
                     (Some(GrantKind::Urls), Some(p), None) => CapabilityValue::UrlGlobs(p.clone()),
+                    (Some(GrantKind::Listeners), Some(p), None) => {
+                        CapabilityValue::ListenEndpoints(p.clone())
+                    }
                     _ => {
                         return Err(VartaError::InvalidManifest(format!(
                             "invalid grant shape for {}",

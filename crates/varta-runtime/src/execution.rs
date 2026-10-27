@@ -35,6 +35,7 @@ impl Execution {
                 output: RunOutput::default(),
                 output_bytes: 0,
                 host_calls: 0,
+                http_control: None,
                 deadline: Instant::now() + Duration::from_secs(abi::DEADLINE_SECONDS),
             },
         );
@@ -57,7 +58,9 @@ impl Execution {
     pub fn instantiate(&mut self, module: &Module) -> Result<Instance, wasmtime::Error> {
         let mut linker = wasmtime::Linker::new(self.store.engine());
         host::register(&mut linker)?;
-        linker.instantiate(&mut self.store, module)
+        let instance = linker.instantiate(&mut self.store, module)?;
+        crate::exceptions::initial(&instance, &mut self.store)?;
+        Ok(instance)
     }
     pub fn check_deadline(&self) -> Result<(), wasmtime::Error> {
         if Instant::now() >= self.store.data().deadline {

@@ -1,7 +1,26 @@
 use super::*;
 
-pub(super) fn check(declaration: &ast::FnDecl, index: usize, source: &Source) -> Result<Signature> {
+pub(super) fn check(
+    declaration: &ast::FnDecl,
+    index: usize,
+    source: &Source,
+    types: &mut ir::ValueTypes,
+) -> Result<Signature> {
     let function = &declaration.function;
+    let receiver = if let Some(parameter) = &function.this_param {
+        if !types.profile.closures() {
+            return Err(source.locate(
+                unsupported("declaration this requires checked-f64-utf16-v12"),
+                parameter.span,
+            ));
+        }
+        Some(
+            function_expressions::receiver_type(parameter.type_ann.as_deref(), types)
+                .map_err(|e| source.locate(e, parameter.span))?,
+        )
+    } else {
+        None
+    };
     if function.is_async
         || function.is_generator
         || function.type_params.is_some()
@@ -15,12 +34,20 @@ pub(super) fn check(declaration: &ast::FnDecl, index: usize, source: &Source) ->
         .body
         .as_ref()
         .ok_or_else(|| invalid("function body is required"))?;
-    let params: Vec<_> = function
-        .params
-        .iter()
-        .map(|param| parameter(param, source).map_err(|e| source.locate(e, param.span())))
-        .collect::<Result<_>>()?;
-    if params.iter().copied().map(Type::width).sum::<u32>() as usize
+    for parameter in &function.params {
+        if !parameter.decorators.is_empty() {
+            return Err(unsupported("parameter decorator"));
+        }
+    }
+    let patterns: Vec<_> = function.params.iter().map(|p| p.pat.clone()).collect();
+    let plans = parameters::analyze(&patterns, None, None, types, Some(source))?;
+    let shape = parameters::shape(&plans);
+    let params: Vec<_> = plans.iter().map(|p| p.incoming).collect();
+    if receiver
+        .into_iter()
+        .chain(params.iter().copied())
+        .map(Type::width)
+        .sum::<u32>() as usize
         > varta_common::abi::MAX_WASM_PARAMETERS
     {
         return Err(invalid("function parameters exceed 32 Wasm value slots"));
@@ -29,50 +56,21 @@ pub(super) fn check(declaration: &ast::FnDecl, index: usize, source: &Source) ->
         .return_type
         .as_ref()
         .map_or(declaration.ident.span, |a| a.type_ann.span());
-    let result = annotation(function.return_type.as_deref())
+    let result = annotation(function.return_type.as_deref(), types)
         .map_err(|e| source.locate(e, result_span))?
         .unwrap_or_else(|| {
             if contains_value_return(&body.stmts) {
-                Type::Number
+                types.number()
             } else {
                 Type::Void
             }
         });
     Ok(Signature {
+        receiver,
         index,
-        names: function
-            .params
-            .iter()
-            .map(|param| {
-                // parameter() above has already rejected every other pattern.
-                match &param.pat {
-                    ast::Pat::Ident(binding) => binding.id.sym.to_string(),
-                    _ => unreachable!(),
-                }
-            })
-            .collect(),
+        shape,
+        names: plans.iter().map(|p| p.name.clone()).collect(),
         params,
         result,
     })
-}
-
-fn parameter(param: &ast::Param, source: &Source) -> Result<Type> {
-    if !param.decorators.is_empty() {
-        return Err(unsupported("parameter decorator"));
-    }
-    let ast::Pat::Ident(binding) = &param.pat else {
-        return Err(unsupported("parameter pattern"));
-    };
-    if binding.id.optional {
-        return Err(unsupported("optional parameter"));
-    }
-    let span = binding
-        .type_ann
-        .as_ref()
-        .map_or(binding.span(), |a| a.type_ann.span());
-    let ty = annotation(binding.type_ann.as_deref())
-        .map_err(|e| source.locate(e, span))?
-        .ok_or_else(|| invalid("parameters require primitive or VartaResult annotations"))?;
-    value_type(ty).map_err(|e| source.locate(e, span))?;
-    Ok(ty)
 }

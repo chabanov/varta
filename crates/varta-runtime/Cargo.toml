@@ -14,6 +14,12 @@ cap-fs-ext.workspace = true
 ureq.workspace = true
 url.workspace = true
 serde_json.workspace = true
+ryu-js.workspace = true
+
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 varta-compiler = { path = "../varta-compiler" }

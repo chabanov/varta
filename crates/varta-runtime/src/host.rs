@@ -13,7 +13,7 @@ fn global(
     Ok(())
 }
 
-fn reset(caller: &mut Caller<'_, RuntimeContext>) -> Result<(), wasmtime::Error> {
+pub(super) fn reset(caller: &mut Caller<'_, RuntimeContext>) -> Result<(), wasmtime::Error> {
     caller.data_mut().tick()?;
     global(caller, abi::RESULT_LEN, 0)?;
     global(caller, abi::RESULT_STATUS, HostStatus::Ok as i32)
@@ -24,6 +24,7 @@ fn input(
     ptr: i32,
     len: i32,
     limit: usize,
+    utf16: bool,
 ) -> Result<String, HostFailure> {
     if ptr < 0 || len < 0 || len as usize > limit {
         return Err(HostFailure::invalid());
@@ -35,12 +36,19 @@ fn input(
         .data(&*caller)
         .get(ptr as usize..(ptr as usize).saturating_add(len as usize))
         .ok_or_else(HostFailure::invalid)?;
+    if utf16 {
+        let text = varta_common::text::resource(bytes).map_err(|_| HostFailure::invalid())?;
+        if text.len() > limit {
+            return Err(HostFailure::invalid());
+        }
+        return Ok(text);
+    }
     std::str::from_utf8(bytes)
         .map(ToOwned::to_owned)
         .map_err(|_| HostFailure::invalid())
 }
 
-fn failure(
+pub(super) fn failure(
     caller: &mut Caller<'_, RuntimeContext>,
     error: HostFailure,
 ) -> Result<(), wasmtime::Error> {
@@ -51,12 +59,35 @@ fn failure(
         .emit(format!("varta log: {}", error.message))
 }
 
-fn result(caller: &mut Caller<'_, RuntimeContext>, bytes: &[u8]) -> Result<i32, HostFailure> {
+pub(super) fn result(
+    caller: &mut Caller<'_, RuntimeContext>,
+    bytes: &[u8],
+) -> Result<i32, HostFailure> {
     if bytes.len() > abi::MAX_RESULT_BYTES {
         return Err(HostFailure::too_large());
     }
     // Host results are UTF-8 strings in this ABI, including files and HTTP bodies.
     std::str::from_utf8(bytes).map_err(|_| HostFailure::invalid())?;
+    result_bytes(caller, bytes)
+}
+/// Convert well-formed host UTF-8 exactly once; the shared buffer holds UTF-16LE bytes.
+pub(super) fn result16(
+    caller: &mut Caller<'_, RuntimeContext>,
+    bytes: &[u8],
+) -> Result<i32, HostFailure> {
+    if bytes.len() > abi::MAX_RESULT_BYTES {
+        return Err(HostFailure::too_large());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| HostFailure::invalid())?;
+    result_bytes(caller, &varta_common::text::encode(text))
+}
+pub(super) fn result_bytes(
+    caller: &mut Caller<'_, RuntimeContext>,
+    bytes: &[u8],
+) -> Result<i32, HostFailure> {
+    if bytes.len() > abi::MAX_RESULT_BYTES {
+        return Err(HostFailure::too_large());
+    }
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(HostFailure::invalid());
     };
@@ -80,6 +111,35 @@ fn result(caller: &mut Caller<'_, RuntimeContext>, bytes: &[u8]) -> Result<i32, 
 }
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
+    crate::number::register(linker)?;
+    crate::utf16::register(linker)?;
+    crate::unions::register(linker)?;
+    crate::references::register(linker)?;
+    // Internal feature negotiation: binding is authorized by the service runner.
+    linker.func_wrap(
+        "varta",
+        varta_common::HostOperation::HttpService.name(),
+        |mut caller: Caller<'_, RuntimeContext>| -> Result<(), wasmtime::Error> {
+            caller.data_mut().tick()
+        },
+    )?;
+    linker.func_wrap(
+        "varta",
+        varta_common::HostOperation::HttpStop.name(),
+        |mut caller: Caller<'_, RuntimeContext>| -> Result<(), wasmtime::Error> {
+            reset(&mut caller)?;
+            let Some((endpoint, control)) = caller.data().http_control.clone() else {
+                return failure(&mut caller, HostFailure::invalid());
+            };
+            if !caller.data().policy.listen(&endpoint) {
+                return failure(&mut caller, HostFailure::denied("net.listen", &endpoint));
+            }
+            control.shutdown();
+            Ok(())
+        },
+    )?;
+    crate::json::register(linker)?;
+    crate::json_parse::register(linker)?;
     linker.func_wrap(
         "varta",
         "log_i32",
@@ -93,7 +153,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         "log_string",
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
             caller.data_mut().tick()?;
-            match input(&mut caller, ptr, len, abi::MAX_RESULT_BYTES) {
+            match input(&mut caller, ptr, len, abi::MAX_RESULT_BYTES, false) {
                 Ok(text) => caller.data_mut().emit(format!("varta log: {text}")),
                 Err(error) => failure(&mut caller, error),
             }
@@ -132,7 +192,12 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             Err(wasmtime::Error::new(GuestExit(code)))
         },
     )?;
-    for (name, id) in [("env_has", "env.has"), ("env_get", "env.get")] {
+    for (name, id, utf16) in [
+        ("env_has", "env.has", false),
+        ("env_get", "env.get", false),
+        ("env_has16", "env.has", true),
+        ("env_get16", "env.get", true),
+    ] {
         linker.func_wrap(
             "varta",
             name,
@@ -142,7 +207,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                   -> Result<i32, wasmtime::Error> {
                 reset(&mut caller)?;
                 let value = (|| {
-                    let name = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES)?;
+                    let name = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES, utf16)?;
                     if !caller.data().policy.env(id, &name) {
                         return Err(HostFailure::denied(id, &name));
                     }
@@ -150,7 +215,11 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                         return Ok(std::env::var_os(&name).is_some() as i32);
                     }
                     let value = std::env::var(&name).map_err(HostFailure::io)?;
-                    result(&mut caller, value.as_bytes())
+                    if utf16 {
+                        result16(&mut caller, value.as_bytes())
+                    } else {
+                        result(&mut caller, value.as_bytes())
+                    }
                 })();
                 match value {
                     Ok(value) => Ok(value),
@@ -162,35 +231,40 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
-    linker.func_wrap(
-        "varta",
-        "env_print",
-        |mut caller: Caller<'_, RuntimeContext>,
-         ptr: i32,
-         len: i32|
-         -> Result<(), wasmtime::Error> {
-            reset(&mut caller)?;
-            let value = (|| {
-                let name = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES)?;
-                if !caller.data().policy.env("env.print", &name) {
-                    return Err(HostFailure::denied("env.print", &name));
+    for (name, utf16) in [("env_print", false), ("env_print16", true)] {
+        linker.func_wrap(
+            "varta",
+            name,
+            move |mut caller: Caller<'_, RuntimeContext>,
+                  ptr: i32,
+                  len: i32|
+                  -> Result<(), wasmtime::Error> {
+                reset(&mut caller)?;
+                let value = (|| {
+                    let name = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES, utf16)?;
+                    if !caller.data().policy.env("env.print", &name) {
+                        return Err(HostFailure::denied("env.print", &name));
+                    }
+                    let value = std::env::var(&name).map_err(HostFailure::io)?;
+                    if value.len() > abi::MAX_RESULT_BYTES {
+                        return Err(HostFailure::too_large());
+                    }
+                    Ok(format!("varta env: {name}={value}"))
+                })();
+                match value {
+                    Ok(line) => caller.data_mut().emit(line),
+                    Err(error) => failure(&mut caller, error),
                 }
-                let value = std::env::var(&name).map_err(HostFailure::io)?;
-                if value.len() > abi::MAX_RESULT_BYTES {
-                    return Err(HostFailure::too_large());
-                }
-                Ok(format!("varta env: {name}={value}"))
-            })();
-            match value {
-                Ok(line) => caller.data_mut().emit(line),
-                Err(error) => failure(&mut caller, error),
-            }
-        },
-    )?;
-    for (name, id) in [
-        ("fs_read", "fs.read"),
-        ("net_get", "net.get"),
-        ("net_fetch", "net.fetch"),
+            },
+        )?;
+    }
+    for (name, id, utf16) in [
+        ("fs_read", "fs.read", false),
+        ("net_get", "net.get", false),
+        ("net_fetch", "net.fetch", false),
+        ("fs_read16", "fs.read", true),
+        ("net_get16", "net.get", true),
+        ("net_fetch16", "net.fetch", true),
     ] {
         linker.func_wrap(
             "varta",
@@ -201,7 +275,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                   -> Result<i32, wasmtime::Error> {
                 reset(&mut caller)?;
                 let value = (|| {
-                    let target = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES)?;
+                    let target = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES, utf16)?;
                     let bytes = if id == "fs.read" {
                         caller.data().policy.read(id, &target)?
                     } else {
@@ -220,7 +294,11 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                         }
                         body
                     };
-                    result(&mut caller, &bytes)
+                    if utf16 {
+                        result16(&mut caller, &bytes)
+                    } else {
+                        result(&mut caller, &bytes)
+                    }
                 })();
                 match value {
                     Ok(value) => Ok(value),
@@ -232,24 +310,26 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
-    linker.func_wrap(
-        "varta",
-        "fs_print",
-        |mut caller: Caller<'_, RuntimeContext>,
-         ptr: i32,
-         len: i32|
-         -> Result<(), wasmtime::Error> {
-            reset(&mut caller)?;
-            let value = (|| {
-                let path = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES)?;
-                let bytes = caller.data().policy.read("fs.print", &path)?;
-                String::from_utf8(bytes).map_err(|_| HostFailure::invalid())
-            })();
-            match value {
-                Ok(text) => caller.data_mut().emit(text),
-                Err(error) => failure(&mut caller, error),
-            }
-        },
-    )?;
+    for (name, utf16) in [("fs_print", false), ("fs_print16", true)] {
+        linker.func_wrap(
+            "varta",
+            name,
+            move |mut caller: Caller<'_, RuntimeContext>,
+                  ptr: i32,
+                  len: i32|
+                  -> Result<(), wasmtime::Error> {
+                reset(&mut caller)?;
+                let value = (|| {
+                    let path = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES, utf16)?;
+                    let bytes = caller.data().policy.read("fs.print", &path)?;
+                    String::from_utf8(bytes).map_err(|_| HostFailure::invalid())
+                })();
+                match value {
+                    Ok(text) => caller.data_mut().emit(text),
+                    Err(error) => failure(&mut caller, error),
+                }
+            },
+        )?;
+    }
     Ok(())
 }

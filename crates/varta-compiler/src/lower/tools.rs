@@ -56,6 +56,9 @@ pub(super) fn collect(
                 let signature = scopes[path]
                     .get(&handler)
                     .ok_or_else(|| invalid("unknown tool handler"))?;
+                if signature.receiver.is_some() || signature.shape.extended() {
+                    return Err(unsupported("typed receiver in Tool Contract v1"));
+                }
                 if signature.index == main {
                     return Err(invalid("main cannot be published as a tool"));
                 }
@@ -65,7 +68,9 @@ pub(super) fn collect(
                     .zip(&signature.params)
                     .map(|(name, ty)| {
                         Ok(ToolParameter {
-                            name: name.clone(),
+                            name: name.clone().ok_or_else(|| {
+                                unsupported("destructured Tool Contract v1 parameter")
+                            })?,
                             value_type: value_type(*ty)?,
                         })
                     })
@@ -175,7 +180,7 @@ fn value_type(ty: Type) -> Result<ToolType> {
         Type::Boolean => ToolType::Boolean,
         Type::String => ToolType::String,
         Type::Void => ToolType::Void,
-        _ => return Err(unsupported("VartaResult in a tool signature")),
+        _ => return Err(unsupported("non-primitive value in tool contract v1")),
     })
 }
 
@@ -189,6 +194,12 @@ fn effects_for(
         statements(&functions[index].body, functions, visited, effects);
     }
 }
+pub(super) fn function_effects(index: usize, functions: &[ir::Function]) -> BTreeSet<String> {
+    let mut effects = BTreeSet::new();
+    effects_for(index, functions, &mut BTreeSet::new(), &mut effects);
+    effects
+}
+
 fn expression(
     expr: &Expr,
     functions: &[ir::Function],
@@ -196,6 +207,78 @@ fn expression(
     effects: &mut BTreeSet<String>,
 ) {
     match &expr.kind {
+        E::ArrayDelete {
+            array,
+            index,
+            error,
+        } => {
+            expression(array, functions, visited, effects);
+            if let Some(index) = index {
+                expression(index, functions, visited, effects);
+            }
+            if let Some(error) = error {
+                expression(error, functions, visited, effects);
+            }
+        }
+        E::FunctionCheck { value, .. } => expression(value, functions, visited, effects),
+        E::FunctionCall {
+            callee,
+            ignored_receiver,
+            args,
+            ..
+        } => {
+            expression(callee, functions, visited, effects);
+            if let Some(value) = ignored_receiver {
+                expression(value, functions, visited, effects);
+            }
+            for arg in args {
+                expression(arg, functions, visited, effects);
+            }
+            for (index, function) in functions.iter().enumerate() {
+                if visited.insert(index) {
+                    statements(&function.body, functions, visited, effects);
+                }
+            }
+        }
+        E::StringRepeat {
+            value,
+            count,
+            error,
+            ..
+        } => {
+            expression(value, functions, visited, effects);
+            expression(count, functions, visited, effects);
+            expression(error, functions, visited, effects);
+        }
+        E::Conditional(c, a, b) => {
+            expression(c, functions, visited, effects);
+            expression(a, functions, visited, effects);
+            expression(b, functions, visited, effects);
+        }
+        E::UnionLogical(_, a, b) => {
+            expression(a, functions, visited, effects);
+            expression(b, functions, visited, effects);
+        }
+        E::NewError(_, a)
+        | E::ErrorName(a)
+        | E::ErrorMessage(a)
+        | E::ErrorText(a)
+        | E::ErrorOwn(a)
+        | E::BoxUnion(a)
+        | E::IsUndefined(a)
+        | E::IsNullish(a)
+        | E::UnboxUnion(a) => expression(a, functions, visited, effects),
+        E::ArrayReserve { length, .. } => expression(length, functions, visited, effects),
+        E::Array(values) => {
+            for value in values.iter().flatten() {
+                expression(value, functions, visited, effects);
+            }
+        }
+        E::Record(fields) | E::OptionalRecord(fields, _) => {
+            for (_, value) in fields {
+                expression(value, functions, visited, effects);
+            }
+        }
         E::Host(host, args) => {
             if let Some(id) = host.capability() {
                 effects.insert(id.into());
@@ -210,13 +293,32 @@ fn expression(
                 expression(arg, functions, visited, effects);
             }
         }
-        E::Binary(_, a, b) => {
+        E::ArraySearch(_, a, b, c) | E::ArraySlice(a, b, c) => {
+            expression(a, functions, visited, effects);
+            expression(b, functions, visited, effects);
+            expression(c, functions, visited, effects);
+        }
+        E::ArrayAt(a, b)
+        | E::ArrayHasOwn(a, b)
+        | E::ArrayPush(a, b)
+        | E::MaybeIndex(a, b)
+        | E::Binary(_, a, b)
+        | E::Index(a, b)
+        | E::Sequence(a, b) => {
             expression(a, functions, visited, effects);
             expression(b, functions, visited, effects);
         }
-        E::Negative(a) | E::Not(a) | E::Capture(a) | E::ResultField(_, a) => {
-            expression(a, functions, visited, effects)
-        }
+        E::ArrayPop(a)
+        | E::HasOwn(a, _)
+        | E::Negative(a)
+        | E::Undefined(a)
+        | E::Not(a)
+        | E::Capture(a)
+        | E::ResultField(_, a)
+        | E::Field(a, _)
+        | E::Json(a)
+        | E::ParseJson(a)
+        | E::Length(a) => expression(a, functions, visited, effects),
         _ => {}
     }
 }
@@ -228,8 +330,41 @@ fn statements(
 ) {
     for statement in body {
         match statement {
-            S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
+            S::Throw(e) | S::Init(_, e) | S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
                 expression(e, functions, visited, effects)
+            }
+            S::ArrayLength {
+                array,
+                length,
+                error,
+            } => {
+                expression(array, functions, visited, effects);
+                expression(length, functions, visited, effects);
+                expression(error, functions, visited, effects);
+            }
+            S::SetField(a, _, b) => {
+                expression(a, functions, visited, effects);
+                expression(b, functions, visited, effects);
+            }
+            S::SetIndex {
+                array: a,
+                index: i,
+                value: b,
+                ..
+            } => {
+                expression(a, functions, visited, effects);
+                expression(i, functions, visited, effects);
+                expression(b, functions, visited, effects);
+            }
+            S::TryCatch { body, handler, .. } => {
+                statements(body, functions, visited, effects);
+                statements(handler, functions, visited, effects);
+            }
+            S::TryFinally {
+                body, finalizer, ..
+            } => {
+                statements(body, functions, visited, effects);
+                statements(finalizer, functions, visited, effects);
             }
             S::Block(b) | S::Scope(_, b) => statements(b, functions, visited, effects),
             S::If(e, a, b) => {

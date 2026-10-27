@@ -2,24 +2,72 @@
 
 ## Product direction
 
-Varta targets contract-driven, typed TS/JS applications whose supported source
-compiles to portable Wasm and ships with a controlled execution environment.
-Developers should be able to build desktop applications, data services and robot
-software, then explicitly expose selected application operations to external AI
-agents through MCP. The application owns its state and business rules; UI, API
-and AI callers enter the same command/query layer.
+Varta targets general-purpose, typed TS/JS applications compiled to portable
+Wasm and shipped with a controlled execution environment. A developer should be
+able to implement a JSON HTTP server in TS/JS using Varta's own runtime APIs,
+without writing a separate Rust/Node/Python server wrapper for each application.
+Network I/O belongs in the runtime; routes, payload schemas and business rules
+belong in the TS/JS application. Explicit AI tools and MCP are optional interfaces
+on top of a capable application core, not prerequisites for ordinary applications.
 
 This is the target direction, not a claim that these platform features already
 exist. The current implementation is the compiler/runtime foundation described
 in [architecture.md](architecture.md): a checked TypeScript subset, local modules,
 strings and reclamation, captured host results, capability policies, native
 packaging, primitive Tool Contract v1, offline discovery and checked JSON tool
-invocation. Broader Application Contracts, a long-lived application service, MCP,
-package signatures, GUI/database/hardware adapters and full JS/npm compatibility
-are not implemented yet.
+invocation. Closed records, dense typed arrays, `null`, graph tracing and bounded
+`JSON.stringify`, `varta.json.parse<T>` and the first HTTP/1 service profile are
+implemented. A shared-state application service, broader Application Contracts,
+MCP, package signatures,
+GUI/database/hardware adapters and full JS/npm compatibility are not implemented
+yet. HTTP listeners are independent of the existing outbound client.
+
+### Runtime target and compatibility
+
+The product target is a self-contained JS/TS runtime in the same application
+category as Deno/Bun, retaining Varta's TS/JS → Wasm → controlled-runtime path.
+The current deliberately small checked subset is an implementation stage, not
+the permanent product boundary. A JSON server is the first vertical acceptance
+scenario, not the definition of a complete runtime.
+
+The complete core roadmap must cover:
+
+| Area | Target | Current gap |
+| --- | --- | --- |
+| Language semantics | ECMAScript values, numbers, strings, objects/arrays, functions/closures, errors and control flow | Default `number` is i32; opt-in binary64 supports closed aggregates and JSON. Opt-in UTF-16 supports lone units and character methods; closed primitive unions, typed functions and initialized lexical captures are implemented; dynamic objects/coercion and broader function semantics remain pending |
+| Memory | Bounded, correct ownership and tracing for full application value graphs | Collector traces closed records, dense arrays, primitive cells and strings; general dynamic object graphs remain pending |
+| Scheduling | Event loop, promises, microtasks, async/await, timers, cancellation and shutdown | Synchronous bounded invocations only |
+| Standard APIs | JSON, URL, encodings/binary data, Request/Response/Headers, streams and abort signals | Most standard APIs are absent |
+| System APIs | Capability-checked filesystem, environment, processes and inbound/outbound networking | Existing bounded operations are a small partial API |
+| Modules/packages | ES module semantics, a documented resolution/loading policy and tested package compatibility | Explicit local named-function modules only |
+| Distribution | Independent runtime, portable guest artifacts and target-specific native packaging | Runtime-only companion implemented; cross-target packaging, signing and platform release distribution remain pending |
+| Verification | A pinned conformance target, public-API compatibility cases, negative/security tests and resource/performance measurements | Current regression tests prove the MVP contract, not Deno/Bun or ECMAScript completeness |
+
+Do not treat unsupported JS as solved by providing an application-specific host
+wrapper, and do not claim full compatibility because a few server examples run.
+Track each missing semantic/API explicitly. Package/API compatibility and broader
+language semantics continue after the first HTTP milestone.
+
+Before extending the value representation, specify the intended JS semantics and
+version/profile migration: binary64 Number values (including -0/NaN/infinities),
+UTF-16 string behavior including lone surrogates, null versus undefined,
+coercion/equality, property ordering and aliasing. Existing ABI/contract v1 i32
+artifacts must retain their documented interpretation or be rejected by version;
+never reinterpret them silently as the future JS-compatible profile. Preserve
+clear diagnostics for features not yet implemented.
+
+Primary references: [ECMAScript language values](https://tc39.es/ecma262/multipage/ecmascript-data-types-and-values.html),
+[Deno HTTP server](https://docs.deno.com/runtime/fundamentals/http_server/) and
+[Bun HTTP server](https://bun.sh/docs/runtime/http/server). These define semantic
+and developer-experience references, not a claim of current Varta support.
 
 ### Architecture commitments
 
+- Keep the engine application-agnostic. Application entities, state schemas,
+  commands, domain validation and domain permissions are defined by TS/JS
+  applications. The engine supplies generic execution, state ownership,
+  transactions, versions, limits and authorization mechanisms. Reference examples
+  must not become built-in document/editor/robot profiles in engine crates.
 - Define the supported TS/JS language profile explicitly. Grow it through concrete
   application requirements; unsupported dynamic behavior continues to fail clearly.
 - Keep source compilation separate from interface publication. An ordinary source
@@ -46,7 +94,40 @@ are not implemented yet.
   compilation does not guarantee secrecy of business logic, and signature checks
   require a trusted verifier. Credentials belong to trusted host-side providers.
 
-### Reference application profiles
+### Current repository scope
+
+Core development comes first. The engine consists of `varta-common`,
+`varta-compiler` and `varta-runtime`. Project loading/configuration, scaffolding,
+packaging and CLI presentation are supporting development tools. They consume
+engine APIs and must not become engine dependencies.
+
+No separate application project is being built in this repository. The scenarios
+below are deferred consumers of the core, not work items for built-in domain
+models. First design and verify the generic mechanisms; only then build a separate
+TS/JS project using those real APIs. Test source fixtures remain necessary for
+compiler/runtime regression coverage.
+
+### Active priority: a usable application core
+
+The immediate priority is engine capability, not an editor example or MCP.
+The active order is **K1 structured values/JSON → K2 server lifecycle/inbound
+HTTP → K3 runtime packaging and end-to-end validation**, now implemented in their
+initial checked profiles. K4.1 and K4.2's binary64/aggregate/JSON increments are
+implemented; separate undefined-capable and UTF-16 profiles are also available.
+K4.2 adds primitive unions and checked optional/missing values, extends unions to references and continues with broader dynamic values and external adapters. JavaScript semantic
+compatibility is a cross-cutting requirement, followed by the wider language,
+scheduler, standard-library and module/package work below. Generic application
+state and AI integration remain later work. Existing C1/C2.1 achievements below are preserved;
+they do not dictate the priority of the remaining core work.
+
+A native TS/JS program serving a real JSON object is the acceptance scenario for
+these generic capabilities. It is first exercised through compiler/runtime/CLI
+regression fixtures, not a domain-specific server implementation inside Varta.
+Only after the APIs actually work should a separate application project use them.
+An external wrapper around `varta invoke`, or a guest returning a string that a
+separate host parses as JSON, does not satisfy this acceptance scenario.
+
+### Deferred external validation scenarios
 
 | Profile | Example contract operations | Required behavior |
 | --- | --- | --- |
@@ -54,11 +135,16 @@ are not implemented yet.
 | Data service | Find records, change an allowed business status | Enforce identity/data scopes, transactions, bounded queries and stable errors |
 | Robot software | Read telemetry, start a mission, request a stop | Validate state/command limits; define duplicate, timeout and disconnect behavior; keep the local safety controller independent of AI transport |
 
-The selected first demonstration is a **headless document application**: a title,
-revision and small command/query interface, controlled by two test clients and
-then an external MCP client. It exercises shared state and conflicting changes
+A **headless document application** was selected as a possible later shared-state
+demonstration: a title, revision and small command/query interface, controlled by
+two test clients and then an external MCP client. It is deferred behind the active
+core priorities and is not the next implementation task. It exercises shared state and conflicting changes
 without requiring a GUI toolkit, database service or physical hardware. This is
-the agreed first application profile, not a commitment to a GUI framework.
+a future external validation scenario, not a commitment to a GUI framework.
+It must be built as a separate TS/JS application on public Varta APIs, with its
+own source, configuration and domain rules. Choosing this demonstration does not
+authorize adding document models, title rules, rename commands or application
+roles to `varta-common`, `varta-runtime`, `varta-project` or the core CLI.
 
 ## Completed milestone: architectural hardening
 
@@ -223,15 +309,660 @@ middle-block aliases, free-block splitting/coalescing, loop/switch exits, static
 and host buffer isolation, per-value limits, live-set exhaustion, root capacity,
 fuel, and real CLI/Wasm/native behavior with unchanged permission denials.
 
+## Completed follow-up: engine and tooling boundaries
+
+- Core contracts no longer contain project path/output configuration.
+  `VartaConfig` and `CapabilitySpec` now belong to `varta-project`.
+- Runtime inspection returns backend-independent metadata; project tooling no
+  longer imports Wasmtime, and CLI has no direct runtime dependency.
+- Removed the production empty-module test helper and unsupported port-list
+  permission types. Unsupported grant shapes continue to fail closed.
+- Removed cancelled application-model files and empty abandoned directories.
+  No domain models or application profiles were added to engine production code.
+- A Cargo dependency-graph regression guards layer direction; a public API
+  integration test uses the engine without project tooling or a CLI process.
+  CI separately builds core libraries.
+
+The repository contains engine libraries, their development tooling, tests,
+documentation and CI. `target` is ignored build output. Native packages now use
+the independent `varta-runtime` companion; dependency guards cover artifact I/O
+and launcher crates as well as engine libraries.
+
 ## Delivery sequence
 
-The contract platform becomes the main development track. Bounded collections
-remain planned, but no longer precede discovery and invocation merely to expand
-the language. The initial boundary can use primitive guest parameters/results
-with a host-side JSON envelope; that does not require general guest objects.
-The names below are work packages, not CLI commands. C1 now specifies the
-versioned tool metadata and low-level invocation ABI; later application and MCP
-contracts remain to be designed.
+Core language/runtime capabilities now take precedence over the remaining
+contract-platform work. Initial K1–K3 and K4.1 profiles below are implemented;
+K4.2's number/aggregate/JSON increments are implemented; remaining value work is active.
+C1 and C2.1 are completed
+foundations; the unimplemented portions of C2–C5 are deferred. Work-package names
+are not implemented commands or a frozen public API.
+
+### K1 — Structured guest values and JSON (checked profile implemented)
+
+- Specify a checked data profile before emission: typed record literals, named
+  field access, nesting, optional/null semantics and collection limits. Begin
+  with the closed record shapes needed to construct ordinary JSON responses;
+  broader arrays and dynamic JSON are separate incremental extensions.
+- Define representation, aliasing and ownership for records and contained strings.
+  Extend roots/tracing or choose a validated bounded representation explicitly;
+  tracing must retain nested objects/strings through aliases and field writes.
+- Implement guest-visible JSON serialization with correct escaping, UTF-8 and
+  encoded-byte/depth limits. A record must serialize as a JSON object, not as a
+  quoted JSON string or the tool protocol's `{value: ...}` envelope.
+- Add schema-checked JSON parsing incrementally before accepting structured
+  request bodies. Define duplicate/unknown/missing fields and errors explicitly.
+  JSON number handling must agree with the supported numeric profile; never
+  silently round or truncate unsupported external values into i32.
+- Preserve identical check/build/dev acceptance and test actual Wasm behavior,
+  malformed input, escaping, retained nested values and resource exhaustion.
+
+Implemented first increment: closed structurally typed records containing i32,
+boolean, UTF-8 string, null and nested record fields can be constructed, passed,
+returned, aliased, mutated and serialized in compiled Wasm. Object identity and
+source evaluation/key enumeration order are preserved. The collector traces
+record edges, keeps live strings/objects in place and reuses dead storage.
+`JSON.stringify` uses a versioned descriptor ABI with checked memory, escaping,
+cycle/depth/node/output limits and no added system authority. Compiler negatives,
+hostile ABI data, repeated collection, effect catalogs and CLI dev/Wasm/native/
+named invocation exercise the same path. No application model was added.
+
+Implemented second increment: homogeneous dense arrays support `T[]`/`Array<T>`,
+contextually typed empty literals, numeric indexing/replacement, `.length`,
+nesting, identity and parameter/result transfer. The collector traces every array
+reference, including beyond 32 elements. JSON checks array headers, kinds, ranges,
+cycles and shared traversal/output budgets. The profile is capped at 1024 elements
+per fixed-length array and 128 distinct array element types. Out-of-range indices
+trap; sparse/resizable arrays remain pending. Undefined values are available in
+the separate K4 v2 binary64 profile. Structured-value ABI
+v2 adds arrays while the runtime continues to accept v1 records/scalars without
+reinterpretation. Host ABI, artifact and primitive tool versions are unchanged.
+
+Implemented third increment: `varta.json.parse<T>(text)` compiles a bounded closed
+schema, checks complete JSON input and creates ordinary owned values using the
+same guest allocator/root stack. It rejects duplicate/unknown/missing fields,
+wrong types, unsupported number forms and budget violations. Parsed record order
+is normalized by schema; this is a checked Varta extension, not the dynamic
+ECMAScript JSON.parse API. Invalid input traps and named dispatch reports
+`execution_failed`; system status is preserved. Runtime validation checks helper
+signatures, transitive host-free call graphs and schema/descriptor consistency,
+including modules without a tool catalog. Source-free Wasm/native artifacts use
+the same parser and existing permissions. Host/value/container versions remain
+unchanged; parsing has its own schema format version 1 and new registered import.
+
+K1's initial checked data path is implemented. K2 below now provides its first
+HTTP request/response, handler and lifetime profile.
+`undefined`, optional/dynamic properties, general JSON.parse/revivers, recoverable
+parse-result APIs, prototypes/hooks and full JS Number/UTF-16 semantics remain
+broader language/runtime work. Tool Contract v1 signatures remain primitive;
+structured wire contracts need their own explicit version.
+
+### K2 — Generic server lifecycle and inbound HTTP (first profile implemented)
+
+- Specify bootstrap/handler registration, application lifetime, request lifetime,
+  shutdown and ownership. A long-lived listener must not be treated as one guest
+  call that consumes the current five-second execution deadline forever.
+- Start with checked named synchronous handlers if that is sufficient. A host-driven
+  event loop can dispatch bounded guest calls without first promising general
+  JS promises, closures or arbitrary async semantics. Freeze the callback/request/
+  response ABI and error behavior before implementation.
+- Provide generic guest-facing server primitives and typed request/response data.
+  The developer writes routes and payload construction in TS/JS. Core code does
+  not contain application endpoints or example response schemas.
+- HTTP handler registration is independent of `varta.tool` and MCP. Ordinary
+  server handlers need no AI-tool declaration and are not published to agents
+  automatically. Reuse checked marshalling/execution mechanisms without making
+  the tool catalog the mandatory entry point for all applications.
+- Introduce an actual listener capability with validated address/port scopes and
+  package/host conjunction before binding a socket. Outbound grants must never
+  authorize listening. Do not revive an unused port-list placeholder as authority.
+- Use a maintained HTTP implementation rather than hand-written framing. Bound
+  connections, headers, bodies, responses, pending work, per-request fuel/memory/
+  deadlines and aggregate work. Define disconnect, malformed request and trap
+  isolation, backpressure and descriptor cleanup.
+- Separate normal HTTP response bodies from tool invocation/MCP envelopes. Test
+  real loopback requests with hermetic listeners and verify denied binds before
+  effect. Keep HTTPS support explicit and separate from an initial HTTP profile.
+
+Exit: a compiled TS fixture starts a permitted listener through Varta's API,
+returns a real JSON object with a JSON content type, handles repeated requests,
+isolates failed handlers and shuts down cleanly. No application-specific host
+wrapper or MCP connection is required.
+
+Implemented: `varta.http.serve({hostname,port}, handler)` is an entry-module
+compile-time declaration, with typed `VartaHttpRequest` / `VartaHttpResponse` and
+no required tool publication. The compiler generates an isolated string adapter
+using real checked JSON/record mechanisms. Versioned HTTP metadata advertises the
+handler, exact bind endpoint, effects and fixed limits. Its feature import makes
+older runtimes fail explicitly. Runtime validation recomputes effects and checks
+host-free transfer helpers before execution.
+
+A permitted listener starts after bounded bootstrap. It outlives bootstrap's
+five-second deadline; each request receives a fresh bounded store. Hyper/Tokio
+own framing/timers. The first profile serializes connections, closes after one
+reply, caps headers/body/envelopes, rejects unsupported framing/response headers,
+isolates handler failures and supports owned graceful shutdown. Readiness/logs
+stream through runtime events and the thin CLI. Loopback tests cover JSON bodies,
+headers, repeated requests, slow input, malformed framing, fuel traps, scope
+conjunction before bind, shutdown, and source-free Wasm/native artifacts.
+
+Remaining extensions: concurrent/streaming requests, persistent guest state,
+standard Request/Response classes, async JS, keep-alive and TLS/HTTP2. Authentication
+and domain routes are application responsibilities. The checked HTTP acceptance
+path and K3 runtime-only packaging are implemented. No separate application
+project has been added.
+
+### K3 — Runtime-only packaging and independent core validation (implemented)
+
+- `varta-artifact` owns portable Wasm/manifest and fixed-footer container I/O,
+  independent of VM and source tooling. The project re-export remains available;
+  I/O errors now use shared `VartaError`. Existing VARTA3 layouts are preserved.
+- `varta-launcher` builds `varta-runtime`, with no production dependency on the
+  TS compiler, SWC, project tooling or development CLI/parser. It executes artifacts,
+  invokes checked tools, inspects metadata and enforces optional host ceilings.
+- `build --single` requires a sibling companion or explicit trusted `--launcher`.
+  A private snapshot negotiates strict version/ABI/native-target compatibility
+  and validates the payload without executing guest code before outputs are written.
+  Probe output/time budgets, rejection of packaged candidates and preservation
+  of existing output on preflight failure have regression coverage.
+- Core dependency/public-API tests remain; CI builds the launcher independently
+  and runs packaging regressions on Linux/macOS. Local validation is on macOS;
+  Windows, cross-target packaging, release installers and signatures remain pending.
+- K2 regression compiles/packages the HTTP fixture, removes source/configuration,
+  deploys only the native executable in another directory and serves JSON with
+  owned shutdown. Both standalone runtime and native self-execution are covered.
+  Tool invocation/inspection also work source-free through the independent launcher.
+
+This completes the first core HTTP/distribution acceptance path, not general
+JS/TS compatibility. The user's current priority remains the core; no separate
+application project has been added.
+
+### K4 — ECMAScript value profile and language expansion
+
+#### K4.1 — Profile negotiation and migration contract (implemented)
+
+New compiler output declares `checked-i32-utf8-v1` in strict bounded
+`varta.language` metadata. Runtime validation rejects unknown/malformed/duplicate
+profiles before native compilation or execution; inspection distinguishes declared,
+legacy ABI v1 and unspecified raw Wasm. Older ABI v1 artifacts preserve current
+semantics. The runtime companion's protocol v2 reports supported profiles, which
+packaging checks on its private snapshot. The physical ABIs/container do not change.
+Regression tests cover both profile origins, existing arithmetic/string/identity
+behavior, traps, unsupported source values, profile corruption and offline discovery
+through runtime, CLI and native artifacts. This is a compatibility foundation;
+K4.2 below adds opt-in binary64 with checked aggregates/JSON and a further
+undefined-capable profile. A further UTF-16 profile is implemented; dynamic object behavior remains pending.
+
+#### Target value semantics (compatibility target)
+
+The pinned reference is **ECMAScript 2025, ECMA-262 16th edition**. The proposed
+`ecmascript-2025-v1` name is reserved for the future value-semantics profile; it is
+deliberately absent from the supported profile registry. It does not mean all of
+ECMAScript 2025 or web/Node/npm APIs are available. Publish a feature/conformance
+matrix as each part becomes executable; do not infer support from the profile name.
+
+| Value area | Required future behavior |
+| --- | --- |
+| Number | IEEE-754 binary64, preserving signed zero, NaN and infinities; floating-point arithmetic, remainder and division; no i32 wrapping for ordinary Number operations |
+| String | UTF-16 code-unit values, including lone surrogates; code-unit length/indexing and lexical comparison; no implicit Unicode normalization |
+| Null/undefined | Distinct values/tags; void calls and missing properties can produce undefined; neither is integer zero |
+| Identity | Object/array aliases preserve identity through mutation and tracing; primitives compare by their defined value rules |
+
+These are target requirements, derived from the pinned
+[ECMAScript 2025 value types](https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html).
+Internal storage may use f64 or an explicitly specified tagged representation, but
+must not lose signed zero or conflate NaN payload bits with heap references. The
+collector traces actual reference tags, never arbitrary number/string bits. Object
+property slots and array elements must preserve the same value distinctions.
+
+Strict equality must return false for different value types and NaN, and treat
+the signed zeroes as equal. Object equality uses identity. `Object.is`/SameValue
+and SameValueZero need their own semantics. Loose equality, relational operations,
+truthiness and string/number conversion must follow the specified conversion order,
+including short-circuit operand values and observable left-to-right effects.
+Accepted mixed-type expressions must not reuse today's same-type comparisons.
+See the pinned [abstract operations](https://tc39.es/ecma262/2025/multipage/abstract-operations.html).
+Until an operation exists, the compiler must reject it explicitly. TypeScript
+annotations may restrict admission but must not change the meaning of an accepted
+JavaScript value/operation.
+
+Standard JSON must preserve the specified distinctions: non-finite numbers become
+JSON null, negative zero serializes as zero, undefined object fields are omitted
+and undefined array elements become null; top-level stringify may return undefined.
+Surrogates need well-formed escaping. Generic parsing needs binary64 numbers and
+ordinary JSON object behavior. See the pinned
+[JSON algorithms](https://tc39.es/ecma262/2025/multipage/structured-data.html#sec-json-object).
+The existing `varta.json.parse<T>` is a separate strict schema API: duplicate/unknown
+field rejection, integer-only schemas and bounds remain versioned contracts. Do
+not silently turn it into unrestricted `JSON.parse` or weaken AI input validation.
+Numeric-index property ordering, insertion order of other string keys, symbols,
+holes and out-of-range array reads need their standard semantics when admitted;
+the current closed-record/fixed-array restrictions are not the final JS model.
+The property-order reference is
+[OrdinaryOwnPropertyKeys](https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinaryownpropertykeys).
+
+#### K4.2 — Value/ABI design and implementation (in progress)
+
+The first scalar increment is implemented as **`checked-f64-utf8-v1` / host ABI v2**.
+Project `languageProfile` and explicit compiler profile APIs select it for a whole
+source graph; existing APIs/configurations default to the old profile. Number
+parameters/locals/results use separate f64 slots, captured Number results use
+`(f64,i32)`, and UTF-8 string handles retain exact roots. There is no NaN boxing or
+dynamic Number heap layout. Host ABI v2 adds typed numeric logging, remainder and
+exact checked process-exit imports; old pointer/i32 imports retain their meanings.
+Artifact readers now validate manifest/code ABI agreement using the existing pinned
+wasmparser dependency, without adding a VM/compiler dependency to distribution I/O.
+
+Tests cover fractional/large/subnormal values, signed zero, NaN/infinity,
+division/remainder, comparisons/truthiness, short-circuit effects, switch/loops,
+function/module slots, captured status and collection with live strings. Public
+engine APIs, dev, portable Wasm, independent runtime and native packages execute
+the new path. Downgraded/missing metadata, incorrect signatures, legacy aggregate
+metadata and manifest mismatches fail before execution. Permission denials and
+host ceilings remain enforced. This is not full ECMAScript compatibility.
+
+The aggregate/JSON increment is also implemented: **value ABI v3 / schema v2**,
+with Float64 tag 6, raw numeric bits in eight-byte slots, reference-only tracing
+and exact checked array indices. Separate JSON v3 imports bind the layout and
+return full i64 parse payloads; allocator/retainer signatures and host-free effect
+checks remain mandatory. Strict finite decimal/exponent parsing uses the existing
+serde_json parser with round-trip conversion enabled. ECMAScript numeric text
+uses exact-pinned ryu-js 1.0.3; -0 serializes to 0 and non-finite values to null.
+Mixed metadata, descriptor/schema disagreement and unimplemented tool/HTTP
+publication fail explicitly. Legacy i32 schemas/layouts retain their semantics.
+
+Runtime/public-API/dev/native tests cover mutation/aliasing, signed zero, IEEE
+rounding, formatting thresholds, partial-input rejection before allocation,
+collection of nested reference graphs, incorrect indices, helper effects and
+permission/host-ceiling preservation. Inspection reports the actual value ABI;
+companion negotiation advertises ABI maxima and probes the concrete payload.
+
+The undefined increment is implemented in **`checked-f64-utf8-v2` / host ABI v3 /
+value ABI v4 / schema v3**. Undefined tag 7 has a canonical zero payload and is
+separate from null. Void expressions/calls, explicit undefined annotations,
+parameters/returns, typed typeof and nullish comparisons preserve effect order.
+JSON v4 omits undefined object fields, emits null for array entries and returns
+actual undefined at the root. Canonicality and traversal limits also apply to
+omitted fields. Typed JSON parsing cannot target undefined or missing fields.
+New imports/metadata prevent old runtimes from reinterpreting the representation;
+all previous profiles remain available. Tests cover lexical shadowing/TDZ, void
+captures/status, GC, malformed payloads/versions, public APIs and source-free native
+packages under package/host authority.
+
+The UTF-16 increment is implemented in **`checked-f64-utf16-v1` / host ABI v4 /
+value ABI v5 / schema v4**. Guest strings store UTF-16LE byte slices, preserving
+lone surrogates through literals, concatenation, calls, aggregates and tracing.
+Length/charAt/charCodeAt and unsigned code-unit comparisons use the pinned String
+semantics for admitted numeric arguments. Separate string/JSON imports prevent
+legacy UTF-8 reinterpretation. JSON escapes lone units and strict parsing retains
+them before guest allocation. Resource names reject lone units and NUL before OS
+effects; well-formed UTF-8 host results convert exactly to owned UTF-16. Physical
+and converted byte limits remain bounded. Record keys/schema metadata retain
+UTF-8; surrogate keys and general string bracket access are not yet admitted.
+Tests round-trip every u16 and cover effect order, GC pressure, real system I/O,
+permissions/host ceilings, malformed encodings/versions, public engine APIs and
+source-free native execution. No application project is introduced.
+
+The primitive-union increment is implemented in **`checked-f64-utf16-v2` / host
+ABI v5 / value ABI v6 / schema v5**. Closed primitive annotations use immutable,
+canonical tagged cells with exact string-only child tracing. Initialization,
+reassignment, function boundaries, record fields and explicitly typed array
+elements preserve actual types and full Number bits. Direct-local typeof/null/
+undefined guards narrow branches; writes under refinement are rejected to keep
+loop assumptions sound. Mixed primitive ternaries, truthiness, strict equality,
+nullish-only loose equality and short-circuit union operators execute in source
+order. JSON handles dynamic undefined fields/entries/roots; typed parsing remains
+explicitly non-union. Version/import/cell validation, GC pressure, malformed
+payloads, module/public APIs, source-free execution and unchanged system authority
+are tested. Older profiles retain their contracts.
+
+The missing-value increment is implemented in **`checked-f64-utf16-v3` / host
+ABI v6 / value ABI v7 / schema v6**. Closed optional primitive fields retain
+separate presence and insertion-order metadata; explicit undefined stays an own
+property. Object.hasOwn, statically absent record reads, nullable numeric reads of
+primitive arrays/UTF-16 strings and undefined-capable let/return initialization
+use real values and exact roots. Inherited optional names and reference-element
+reads are rejected until their semantics are supported. Assignment appends newly
+present declared fields only after RHS success. JSON validates required/absent
+slots and full trailers, preserves enumeration and counts omitted slots against
+budgets. Strict parsing remains non-optional/non-union and creates fully present
+required records in the new layout. Tests cover 32-field masks, malformed metadata,
+source order, declaration/return rules, collection pressure, permissions, public
+module APIs and native source-free artifacts. Earlier profiles remain frozen.
+
+The reference-union increment is implemented in **`checked-f64-utf16-v4` / host
+ABI v7 / value ABI v8 / schema v7**. One record shape and one array element type
+may join primitives in a checked union. Tag 9/typed v2 value imports validate
+canonical reference cells and shallow managed layouts without reinterpreting
+primitive tag 8 or old imports. Identity, aliases and exact tracing survive
+boxing, optional fields and nullable object/array-element reads. typeof object
+retains Null/Record/Array, while Array.isArray and null/undefined guards recover
+known types in branches. Contextual literals/function returns remain supported.
+JSON recursively serializes references, rejects cycles and keeps omission/budget
+rules; strict parsing remains non-union/non-optional. Tests cover malformed cells,
+source order, guards, GC pressure, independent/public/native execution and system
+authority. Existing profiles retain their contracts.
+
+The checked-JSON increment is implemented in **`checked-f64-utf16-v5` / host
+ABI v8 / value ABI v8 / schema v8**. `json_parse_v9` supports optional fields and
+closed primitive/reference unions while retaining `json_stringify_v8`. A union
+selects its unique JSON-kind member without coercion; missing optional fields
+retain clear presence bits and canonical undefined slots. Required fields still
+must be present even when admitting undefined. Strict backward schemas, unique
+member kinds and descriptor optional flags are checked before guest allocation.
+Parsing preserves finite binary64 bits and lone UTF-16 units, exact cell/child
+roots and alias identity. Duplicate/unknown keys, invalid members and resource
+budgets remain enforced. Tests cover malformed metadata/helpers, no partial
+allocation, collection, module APIs, source-free artifacts and host ceilings.
+Earlier profiles remain frozen; no application logic or new capability is added.
+
+The resizable-array increment is implemented in **`checked-f64-utf16-v6` / host
+ABI v9 / value ABI v9 / schema v9**. Stable array identity owns replaceable,
+geometrically grown dense storage; push evaluates all arguments before appending,
+and pop returns the actual removed value or undefined while clearing its slot.
+Aliases and parsed arrays share changes across records/functions/modules. GC
+traces the identity's sole backing edge and every live reference element, including
+arrays beyond 32 slots; returned children survive collection after removal.
+Versioned v3 value operations/JSON imports validate cell/storage agreement and
+canonical spare slots. The current limit remains 1024; indexed writes are bounded
+replacements, with length assignment/holes/indexed extension still deferred.
+Tests cover effects, union/reference values, malformed layouts/versions, resource
+bounds, GC, public APIs, source-free packages and host ceilings. No application
+logic or new capability is added; older profiles keep inline fixed arrays.
+
+The same v6 profile now also implements `at` and `slice` as additive compiler
+operations over ABI/layout v9. Number/Undefined bounds retain optional union
+values and source-order effects; fractions truncate, NaN maps to zero and negative/
+infinite/outside bounds follow the checked dense-array algorithms without integer
+conversion traps. At returns the original element or Undefined. Every slice has
+fresh storage/identity and shares nested object/array references. Selected slots
+and actual reference masks are copied, spare slots are zero, and the new backing
+is retained before identity allocation can collect. Tests cover edge cases,
+mutating arguments, GC, the complete helper dependency set, pure status, public module
+APIs, source-free execution and host ceilings. No import, capability or versioned
+representation changed; earlier profiles retain their admitted behavior.
+
+The same v6 profile now implements `includes`/`indexOf` over ABI/layout v9.
+A shared allocation-free search helper compares actual kinds/payloads, UTF-16
+contents and underlying reference identity. Includes uses SameValueZero; indexOf
+uses strict equality. Needle/Number-or-Undefined starting bounds preserve source
+order and exact roots through later allocations, including detached pop results.
+Tests cover numeric edge cases, mixed values, optional bounds, GC, all ten helper
+dependencies, public APIs, source-free artifacts and permission/status preservation.
+No capability, import or representation changed; earlier profiles are unchanged.
+
+Next specify and implement wider dynamic values and external adapters. Broader
+shape unions, sparse collections, further array operations, prototype values and
+general coercion still need explicit semantics and layouts. Tool/HTTP publication
+in the newer profiles remains pending;
+no legacy field/schema/handler is reinterpreted.
+The remaining rollout must satisfy these rules:
+
+1. Existing host ABI v1, structured-value v1/v2, Tool Contract v1 and HTTP v1 stay
+   frozen. Old artifacts either execute through their existing paths or fail by
+   version; never infer binary64/UTF-16 from the newest compiler version.
+2. A further semantics-breaking profile requires a new host ABI (ABI v2 belongs
+   to binary64/UTF-8 v1, ABI v3 to its undefined increment, ABI v4 to UTF-16, ABI v5 to primitive unions, ABI v6 to missing values, ABI v7 to reference unions, ABI v8 to checked optional/union JSON, ABI v9 to resizable arrays, ABI v10 to primitive exceptions, ABI v11 to Error objects, ABI v12 to native error families and ABI v13 to recoverable checked JSON; further breaking layouts need a new version)
+   and explicit language metadata. A future runtime must validate the profile/ABI
+   combination, reject missing metadata, and reject incompatible value layouts.
+   Earlier runtimes must reject that version even if they ignore new custom-section names.
+3. Keep tool v1's exact i32/boolean/UTF-8 JSON contract. A new-profile handler needs
+   an explicitly checked adapter or a new tool/invocation contract; never round,
+   truncate or coerce external arguments/results to fit the old slots. HTTP v1's
+   transfer layout also needs an adapter or a new HTTP contract. Strict integer
+   port/status/process parameters must be checked before any OS operation.
+4. Host filesystem/URL/environment strings need an explicit conversion policy for
+   lone surrogates and NUL. Reject unrepresentable/security-invalid inputs before
+   effect; do not silently replace characters that change resource identity.
+5. Add executable conformance cases for fractional/large numbers, signed zero,
+   NaN/infinity, division/remainder, UTF-16/lone surrogates, undefined/null, equality,
+   coercion, property order and JSON. Exercise compiler/runtime/public API/native
+   execution, collection pressure and permission denials in both old/new profiles.
+
+After that increment, expand closures/errors, scheduling, standard APIs and
+module/package compatibility from the roadmap above. Application-state/MCP work
+remains deferred behind core capabilities; no application project is required.
+
+#### K4.3 — Wider language and asynchronous runtime (in progress)
+
+The first explicit guest-exception increment is implemented in
+**`checked-f64-utf16-v7` / host ABI v10 / value ABI v9 / schema v9**. Primitive
+throw and try/catch work across named calls/modules, with typed guardable catch
+bindings, rethrow, lexical scopes and ordinary return/break/continue. The reserved
+root/global channel preserves thrown cells across frame unwinds; pending checks
+stop unfinished expressions before later effects. Runtime initialization and
+uncaught boundaries validate channel state and return owned typed values with
+bounded diagnostics. Resource traps, checked JSON/index failures and authorized
+exit remain fatal; system statuses retain their existing meaning. Tests cover
+primitive bits/UTF-16, nested control flow, GC/repeated catches, malformed channels,
+public APIs, source-free artifacts and host ceilings.
+
+Finally/abrupt-completion handling is implemented additively in the same profile:
+one finalizer per region, exact saved return/exception roots, nested completion
+ordering and override semantics for return/throw/break/continue. Fatal traps and
+authorized exit bypass finalization. Completion analysis checks overridden returns;
+tests include collection, captured-result pairs and source-free execution.
+
+The first generic Error value model is implemented in
+**`checked-f64-utf16-v8` / host ABI v11 / value ABI v10 / schema v10**: nominal
+identity, checked string/undefined constructors, immutable name/message reads,
+toString, instanceof narrowing and exact ownership through calls/aggregates/catches/
+finalizers. Message presence/non-enumerability follow the admitted standard rules.
+Uncaught errors own full UTF-16 messages; malformed objects/channel versions and
+old observers fail closed. This remains a deliberate subset: writable properties,
+cause/options, error families, subclasses, prototype behavior and stack traces
+need further implementation. JSON parsing cannot synthesize Error objects.
+
+The next error increment is implemented in **`checked-f64-utf16-v9` / host ABI v12 /
+value ABI v11 / schema v11**: TypeError, RangeError and SyntaxError constructors,
+nominal family annotations/unions, the Error base type, family-specific instanceof
+narrowing and correct names/toString/owned diagnostics. A versioned header class
+and immutable exception selector keep earlier readers/profiles frozen. Identity,
+roots, presence and status survive calls, aggregates, rethrow, finally and GC.
+These are explicit guest exceptions; checked JSON/index failures remain fatal.
+
+The first recoverable API error increment is implemented in
+**`checked-f64-utf16-v10` / host ABI v13 / value/schema v11**. Checked JSON syntax
+failures become SyntaxError and closed-schema mismatches become TypeError through
+the versioned json_parse_v13 import. Whole-input grammar/resource validation and
+typed limit tracking separate input mistakes from fatal budgets without matching
+error strings. Error construction is owned/rooted, publication checks the empty
+channel and untrusted helpers, and the compiler checks pending before observing
+results or later effects. Tests cover Unicode, schema/type/numeric failures,
+limits/corruption, GC/repeated recovery, host ceilings and source-free execution.
+Older profiles keep fatal parsing; system status and authority remain unchanged.
+
+String.repeat is implemented additively in the native-family profile (v9) and
+successors: Number/Undefined count normalization, exact UTF-16 repetition and
+recoverable RangeError for negative normalized counts/infinities. One bounded
+result allocation, bulk-copy doubling, rooted operands and activation-local
+scratch preserve effects/ownership without new imports, helpers or ABI versions.
+String/memory/fuel/deadline limits remain fatal. Tests include GC, nested calls,
+module/public APIs, status/host ceilings and source-free artifacts.
+
+Recoverable JSON.stringify cycle failures depend on admitting cyclic structures
+in the source value model. Current closed type DAGs cannot create them from TS;
+raw malformed/cyclic Wasm fixtures continue to fail fatally. Specify recursive/
+dynamic types and their validation before treating this as a source capability.
+
+Next expand standard APIs and recoverable language/API errors without
+weakening fatal budgets or capability checks. General JSON.parse, serializer
+exceptions and remaining native families, writable
+properties, causes/options, custom subclasses and stack traces need further work.
+Typed function values and capture-free arrows are implemented in
+**`checked-f64-utf16-v11` / host ABI v14 / unchanged value/schema v11**. Exact
+function types support locals/reassignment, arguments, returns and calls; expected
+types supply arrow parameter context. Named references have stable identity across
+module aliases; each arrow evaluation creates a fresh managed object. Closed direct
+Wasm dispatch checks semantic signatures, preserves evaluation order, roots and
+pending exceptions, and keeps JSON helper host-effect analysis unchanged. Explicit
+function/type/body bounds prevent unbounded dispatcher expansion. Tests cover GC,
+malformed cells, hidden host effects, public APIs, grants and source-free execution.
+Captures, function-valued aggregates/unions/JSON and wider function syntax remain
+unsupported; no application logic or asynchronous machinery enters this increment.
+
+Lexical closures over initialized bindings are implemented in
+**`checked-f64-utf16-v12` / host ABI v15 / unchanged value/schema v11**. Captured
+parameters/locals/catch bindings use shared managed cells; nested closures forward
+cells and escaping closures retain their complete graph. Mutations remain visible
+across sibling closures while separate activations stay independent. For-loop let
+bindings are copied before update, including continue/finally paths; body bindings
+are allocated anew on entry. Exact edge masks preserve non-reference bits, host
+result pairs and GC of unreachable cycles. Entry guards validate function,
+environment and binding metadata before user effects. JSON helper call-graph
+purity, capability checks and fatal resource limits remain unchanged.
+
+Captures before binding initialization, mutable captured union refinement and
+captures under an active refinement are rejected. Later TDZ/ReferenceError and
+alias-aware refinement work must specify those semantics before admission.
+Function expressions and private self bindings are now implemented below.
+Outer-binding recursive initialization, function-valued aggregates/JSON and
+broader function syntax remain pending. Tests exercise nested/escaped mutable
+closures, per-iteration bindings, roots/cycles, exceptions/finally, malformed memory,
+limits, helper effects and source-free/public APIs.
+
+The first Array callback increment is implemented additively in v12: map/filter/
+forEach/find use ordinary typed function dispatch and capturing closures. Receiver
+and callback evaluate once; traversal snapshots length and reads the current
+backing at each turn. Filter/forEach skip removed slots; find admits Undefined in
+its callback value and visits deleted indices. Predicates preserve pre-call values
+and reference identity. Map supports checked value results/void-to-undefined;
+filter/find apply checked truthiness; forEach discards results. Typed wrappers share
+existing frame roots, exception routing, effect validation and resource bounds.
+Tests cover mutations/regrowth, empty/1024-element arrays, errors/limits, malformed
+callbacks, collection, permissions and source-free/public APIs. No ABI/import or
+permission changes are required.
+
+The sparse-array increment is implemented in **checked-f64-utf16-v13 / host ABI
+v16 / value ABI v12 / schema v12**. A bounded presence bitmap follows typed backing
+slots; holes and spare data are canonical zero, and bitmap bytes are never traced
+as child references. Sparse literals, hasOwn, reads/at, filling existing slots,
+slice, pop/push, includes/indexOf and callback traversal preserve presence. Map
+allocates its final-length result once and fills only visited indices, retaining
+holes after callback shrinkage. Filter/forEach skip holes; find visits Undefined.
+Checked JSON renders holes as null and parses fully present arrays. Versioned v6
+value imports, json_stringify_v12/json_parse_v14 and value_is_error_class_v2 bind
+the new representation; old profiles retain their contracts and v12 map trap.
+Tests cover bitmap boundaries/growth, 1024-length maps, GC, malformed data, version
+substitution, helper purity, public/source-free APIs and capability ceilings.
+
+Bounded delete, indexed extension and writable length are implemented in
+**checked-f64-utf16-v14 / host ABI v17 / unchanged value/schema v12**. Indexed
+writes retain the original receiver/key and evaluate RHS before numeric write
+checks/growth; extension creates holes. Length shrink clears references and bits,
+while growth allocates/copies before publishing or reuses zero spare storage.
+Invalid numeric uint32 lengths raise owned RangeError, valid lengths above the
+1024 resource ceiling remain fatal, and deleting nonconfigurable length raises
+TypeError. Array-only numeric/literal delete preserves length and returns true
+for absence. The thirteenth bounded host-free helper preserves canonical sparse
+layout, exact roots, helper purity, status and authority. Tests include independent
+mutation models, operand order/errors, callbacks, GC, boundary lengths/indices,
+profile compatibility and source-free/public APIs.
+
+Reduce/some/every are implemented additively in v12 and successors with unchanged
+ABI/imports/helpers. Typed wrappers snapshot length after receiver/callback/seed
+effects, skip live missing entries and preserve prior element/accumulator roots.
+Some/every short-circuit through checked truthiness and return false/true for
+empty/all-hole arrays. Reduce supports exact typed accumulators, an optional seed
+(including explicit Undefined), first-present initialization without a seed, and
+an owned TypeError for an empty/all-hole array without a seed. Inline reducers
+contextually type parameters and returns; checked unions, aggregate/function and
+physical-result accumulators retain their ownership. Tests cover sparse mutation,
+operand order, short circuits, errors/fatal limits, malformed callbacks, GC,
+1024-element traversals at default fuel, helper purity, permissions/host ceilings
+and public/source-free execution.
+
+Contextual callback return and reduce seed inference are implemented additively
+in v12 and successors. Unannotated inline Array callback blocks infer actual typed
+return sites and supported closed unions, including bare/fallthrough Undefined;
+ordinary arrows retain prior defaults. Bodies lower once and nested arrow returns
+remain separate. Finally saved returns receive exact inferred slot/root types
+before emission, preserving aggregate/union/multi-slot ownership through GC.
+Reduce context comes from explicit callback annotations/function signatures, then
+surrounding aggregate result positions, enabling empty/nested arrays and optional
+record seeds. Wider outer scalar results never widen a numeric seed. Exact
+signatures, ambiguous-type rejection, operand order, authority and all budgets
+remain intact. Tests cover these rules, errors/diagnostics, GC/finalizers, helper
+purity, modules, host ceilings and source-free/public engine use.
+
+Anonymous function expressions, typed this/thisArg and checked function.call are
+implemented additively in v12 and successors. Function expressions share capture,
+return-inference and direct-dispatch mechanisms. Explicit this is separate from
+positional parameters, exact in function types and rooted through normal physical
+parameters/cells; receiver mode discriminates even identical Wasm signatures.
+Six Array callback methods accept optional thisArg with once-only source order
+before snapshot length; reduce keeps its seed/Undefined receiver semantics.
+Arrows preserve lexical this through escaped/transitive captures. Calls preserve
+strict primitive/null/undefined values and ignored receiver effects. Tests cover
+GC/finalizers, sparse mutation, errors/fatal limits, malformed targets, slot/fuel
+bounds, authority/helper purity and source-free/public execution. No ABI/import/
+layout/helper change is needed.
+
+Named-expression self bindings and declaration receivers are implemented
+additively in v12+. Named expressions require an annotated/contextual result and
+own a private immutable name, behind the parameter/body scope. A hidden rooted
+self parameter carries the actual callee identity into each activation; entry
+checks validate signature/code/environment before effects. Escaped closures retain
+it through existing cells, while alias reassignment and shadowing stay separate.
+Declaration this is included in exact types/physical parameters and canonical
+imported references; direct bare calls supply checked Undefined, call/Array paths
+supply explicit receivers. Entry main and legacy tool/HTTP contracts stay
+receiver-free. Tests cover recursion/scopes, GC, pairs/slot limits, errors/fatal
+recursion, forged self inputs, helper purity/permissions and source-free/public
+APIs. No heap/import/helper/ABI change is introduced.
+
+Optional/default/rest parameters are implemented additively in v12+. One call
+normalizer checks arity/types, supplies missing Undefined and builds fresh bounded
+rest arrays. Exact function modes participate in dispatch even for equal physical
+signatures. Extended callees separate rooted incoming ABI slots from sequential
+source-binding initialization: defaults run after supplied argument effects and
+only for Undefined, see prior initialized parameters/this/private self, and cannot
+read later parameters or body declarations. Incoming roots clear after transfer;
+normal capture cells/GC/finalizer/result-pair ownership remain intact. Array
+callbacks receive their real implicit arguments, optional tails and checked rest;
+reduce preserves the exact accumulator type. Tests cover these semantics, scopes,
+GC, errors/fatal limits, mode substitution, helper purity, permissions and source-
+free/module/public execution. No layout/helper/import/ABI change is required.
+
+Bounded spread-call arguments are implemented additively in v12+. Narrowed array
+segments and explicit values work with declarations, closures and explicit
+Function.call receivers. Shallow snapshots preserve source evaluation order and
+child identity; sparse holes become Undefined. A rooted wrapper validates the
+1024 flattened-argument cap (fatal), dynamic arity/types (owned TypeError), pads
+optional slots and builds a fresh dense rest array before defaults/body code.
+Explicit Function/physical-result pairs retain their widths outside aggregates.
+Pure guest Undefined checks avoid per-element host-call budget use. Existing
+function/physical-slot/body/resource limits, helper purity, actual grants/status
+and profile/ABI boundaries remain intact. Tests cover v12/v13/v14 default-fuel
+limits, ordering, holes/defaults, exceptions, GC/pairs, forged dispatch, diagnostics,
+virtual modules and source-free artifacts with host ceilings/authorized exit.
+No layout/helper/import/ABI change is required.
+
+Parameter destructuring is implemented additively in v12+: closed record/array
+patterns, nesting/renaming/static literal keys, top/nested defaults, elisions,
+object/array rest and destructured array rest parameters. Incoming aggregate
+signatures stay exact; all BoundNames start in TDZ and leaves initialize in source
+order with ordinary shared capture cells. Nullable nested aggregates throw owned
+TypeError before later defaults/body code. Array reads observe live mutation and
+retain iterator exhaustion; rest is fresh/dense and maps sparse holes to Undefined.
+Object rest preserves source presence/enumeration order and shallow child identity.
+Pure guest tests/metadata copies retain status, exact roots, GC, physical pairs,
+helper purity and actual permissions. Shared pattern budgets (64 depth/1024 nodes)
+join existing resource limits. Tests cover full-width presence, default-fuel rest/
+callbacks, errors/fatal limits, scopes/closures/this/self, virtual modules and
+source-free native/Wasm execution. No ABI/import/helper/layout change is required.
+
+Next extend the checked binding mechanism to local const/let destructuring with
+lexical scope, TDZ and mutability rules. Assignment/catch patterns, generalized
+keys/coercion and constructors/prototypes remain language work. Scheduler/promise
+jobs follow retained-root, cancellation, queue and handle lifetime design.
+
+
+- Grow functions/closures, dynamic object/array behavior, exceptions and the
+  corresponding memory model under the explicit compatibility profile.
+- Implement event-loop and promise-job semantics, timers, async/await, cancellation
+  and handle lifetime with bounded queues and correct retained roots.
+- Expand standard JSON/Web/binary APIs on that foundation. The initial synchronous
+  HTTP handler profile is a delivery increment, not the final language/API ceiling.
 
 ### C1 — Tool Contract v1 and offline discovery (completed)
 
@@ -266,10 +997,11 @@ privileged application code. No LLM connection or MCP server is implemented.
 The complete implemented syntax, limits and ownership rules are in the
 [tool contract](architecture.md#tool-contract-v1-and-offline-discovery).
 
-### C2 — Validated invocation and a live application core (in progress)
+### C2 — Validated invocation and generic application state (partly complete, deferred)
 
-Deliver a typed invocation path and a headless application whose state survives
-agent/client connections and is shared by all entry points.
+The typed invocation path is implemented. Generic state ownership, transactional
+updates and shared application lifetime remain deferred until the active language,
+JSON, server-lifecycle and packaging work is established.
 
 #### C2.1 — Checked named JSON invocation (completed)
 
@@ -295,8 +1027,13 @@ This completes the dispatcher slice, not the live application milestone. The
 its bounds. It has no persistent state, caller identities, remote listener,
 rollback, automatic retry or application-wide queue/accounting yet.
 
-#### Remaining C2 work (next)
+#### Remaining C2 work (after K1–K3)
 
+- Design the generic application-state contract and ownership/transaction ABI
+  before implementation: application-defined state types, bounded host storage,
+  guest access, validated changes and atomic commit. The engine must not know
+  document fields, command names or domain rules. Revision preconditions belong
+  to generic request metadata rather than reserved application parameter names.
 - Add typed application/domain errors on top of the stable invocation codes.
   Keep them separate from host statuses, protocol errors and traps; revision
   conflicts must not become host I/O errors.
@@ -314,10 +1051,12 @@ rollback, automatic retry or application-wide queue/accounting yet.
 - Enforce per-call budgets and bounded application-level queues/accounting so that
   reconnecting or making repeated calls cannot reset all resource controls.
 
-Exit: two test clients inspect and rename the same document through the same
-service; state persists across connections, stale writes fail, unauthorized calls
-have no effect, and malformed/trapping calls do not partially commit changes.
-GUI rendering and general guest arrays/objects are outside this first demonstration.
+Exit: generic core tests demonstrate shared state across client connections,
+revision conflicts, authorization and atomic rejection of malformed/trapping
+commands. A separately built TS/JS document application then demonstrates reading
+and renaming through those public APIs with two clients. Its title schema,
+commands and validation live in the application. State survives client disconnects;
+disk persistence and a GUI are separate requirements, not implied by this milestone.
 
 ### C3 — Artifact provenance and trusted loading
 
@@ -357,37 +1096,54 @@ Deliver external-agent discovery and control of the C2 application through MCP.
 - Test disconnect/reconnect, multiple agents, duplicate requests and changing
   document revisions. State belongs to the application, not the MCP session.
 
-Exit: an external MCP client lists tools from a compiled app, reads a document,
-renames it through the common command path and observes a conflict when another
-client has changed it. No source code, embedded model or AI-provider SDK is needed
+Exit: an external MCP client lists and invokes published tools from a separately
+compiled TS/JS application through the common command path, including generic
+state/revision behavior when supported. No application command names or state
+fields are built into the bridge. No source code, embedded model or AI-provider SDK is needed
 inside the Wasm module. No remote listener is enabled by this local milestone.
 
-### C5 — Deployment profiles and remote access
+### C5 — Generic adapters and remote access (deferred)
 
-- Desktop: select UI/rendering and event-loop adapters; route edits through the
-  same commands and history/undo model used by tools. Choose a GUI framework only
-  after the headless contract/control path works.
-- Server: add database adapters with scoped credentials, transaction boundaries,
-  concurrency limits and tenant/record authorization; keep secrets host-owned.
-- Remote MCP: add authenticated Streamable HTTP with HTTPS, explicit listener
-  configuration, authorization and network deployment tests before remote exposure.
-- Robot: build a simulator first, then hardware adapters. Keep hard real-time and
-  safety/interlock enforcement in the local controller; define command expiry,
-  deduplication, progress and disconnect/stop behavior before physical deployment.
+- Define versioned host-adapter boundaries, permissions, ownership, event handling
+  and resource budgets before adding optional platform integrations.
+- Add authenticated remote MCP with HTTPS, explicit listener configuration and
+  network deployment tests after local generic dispatch works.
 - Establish a supported OS/CPU/runtime matrix and packaging tests. Evaluate small
   devices against actual runtime/memory constraints rather than assuming support.
+- Keep GUI behavior, database business operations, document history and robot
+  missions/safety workflows in separate applications or integrations. They are not
+  built-in engine models. Future external projects validate generic adapter APIs
+  only after the required core mechanisms have been implemented.
 
-Exit criteria are profile-specific; desktop, server and robot support must not be
-claimed merely because the shared Wasm and MCP layers run on a development host.
+Desktop/server/robot support must not be claimed merely because Wasm and MCP run
+on a development host. Selecting or implementing a reference application is not
+part of current core development.
+
+### K5 — Modules, standard system APIs and package compatibility
+
+- Grow ES module resolution/loading under explicit host authority and resource
+  budgets; track implemented import/export and initialization semantics.
+- Expand filesystem/process/network APIs as generic runtime facilities with
+  operation/resource-specific permission checks and portable error behavior.
+- Evaluate real package compatibility against an explicit target. Separate loader,
+  language and Node/Web API gaps; do not promise npm compatibility from syntax alone.
+
+### K6 — Conformance and runtime readiness
+
+- Pin a supported ECMAScript edition/profile and build a compatibility matrix
+  with a maintained conformance-suite strategy plus Varta-specific runtime tests.
+- Exercise ordinary server/CLI/library programs through actual public APIs,
+  independent of MCP and domain-specific host implementations.
+- Track correctness, malformed-input/security behavior, leak-free lifecycle,
+  startup/memory/throughput and supported platforms before calling the runtime ready.
 
 ### Supporting language and runtime work
 
-- Expand the language profile through the reference application: bounded records,
-  arrays, JSON interoperability and enums only when their semantics/ownership are
-  specified and the contract boundary needs them. Full JS/npm compatibility is
-  a separate compatibility effort.
-- String-containing collections require tracing their referenced values; the flat
-  string collector must not be assumed sufficient for an object graph.
+- K1 provides the initial checked values/JSON path. Continue resizable/dynamic
+  collections, enums and numeric-profile expansion through explicit semantics/ownership
+  contracts. Full JS/npm compatibility remains a separate compatibility effort.
+- Preserve tracing for strings, records and arrays as richer value graphs are
+  introduced; new value kinds need explicit collector and ownership contracts.
 - Async/events require cancellation, task/handle lifetime, retained roots, scheduling
   and queue budgets before exposing promises or long-running guest operations.
 - Continue model/differential tests, fuzzing and performance measurements of the
@@ -406,7 +1162,7 @@ and application core remain independent of transport/protocol revisions.
 ## Later milestones
 
 - HTTPS deployment and asynchronous execution follow the C5 and supporting-work
-  contracts above; neither is implied by the current synchronous HTTP client.
+  contracts above; neither is supplied by the initial synchronous HTTP handler profile.
 - Authenticated AOT: define who trusts the signer, which bytes are authenticated,
   and how engine version, target and CPU requirements are pinned. Never restore
   arbitrary native deserialization behind a filename or format marker.

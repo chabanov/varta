@@ -31,7 +31,7 @@ impl HostPolicy {
 pub fn run_with_policy(artifact: &Artifact, host: &HostPolicy) -> Result<RunOutput> {
     Ok(VartaRuntime::new().run_wasm_bytes_with_policy(
         &artifact.wasm,
-        &artifact.manifest.grants()?,
+        &artifact.grants()?,
         &host.grants,
     )?)
 }
@@ -66,10 +66,9 @@ pub fn authorization(requested: &Manifest, host: Option<&HostPolicy>) -> Result<
 fn enabled(grant: &CapabilityGrant) -> bool {
     match &grant.value {
         CapabilityValue::Boolean(enabled) => *enabled,
-        CapabilityValue::PathGlobs(patterns) | CapabilityValue::UrlGlobs(patterns) => {
-            !patterns.is_empty()
-        }
-        CapabilityValue::Ports(_) => false,
+        CapabilityValue::PathGlobs(patterns)
+        | CapabilityValue::UrlGlobs(patterns)
+        | CapabilityValue::ListenEndpoints(patterns) => !patterns.is_empty(),
     }
 }
 

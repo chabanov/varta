@@ -1,20 +1,25 @@
 #![forbid(unsafe_code)]
 pub mod abi;
 mod capability;
-mod config;
 mod diagnostic;
+pub mod exceptions;
 mod host;
+pub mod http;
 mod invocation;
+pub mod json;
+pub mod language;
+pub mod launcher;
 mod manifest;
 mod module;
+pub mod text;
 mod tool;
+pub mod value;
 pub use capability::*;
-pub use config::*;
 pub use diagnostic::*;
-pub use host::HostOperation;
+pub use host::{HostOperation, HostScalar};
 pub use invocation::*;
 pub use manifest::*;
-pub use module::ModuleInfo;
+pub use module::{ModuleInfo, WasmImport, WasmInspection};
 pub use tool::*;
 
 #[derive(Debug, thiserror::Error)]
@@ -32,3 +37,6 @@ pub type Result<T> = std::result::Result<T, VartaError>;
 
 /// Host declarations for editors; semantic checking is implemented by the compiler.
 pub const HOST_DECLARATIONS: &str = include_str!("varta.d.ts");
+
+/// Opaque, capture-free function object layout for the checked function profile.
+pub mod function;

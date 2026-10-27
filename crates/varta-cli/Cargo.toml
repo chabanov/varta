@@ -9,7 +9,6 @@ name = "varta"
 path = "src/main.rs"
 
 [dependencies]
-varta-runtime = { path = "../varta-runtime" }
 varta-project = { path = "../varta-project" }
 clap = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

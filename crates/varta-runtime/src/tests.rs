@@ -167,9 +167,7 @@ fn native_payloads_and_invalid_wasm_are_rejected_by_safe_api() {
             .is_err()
     );
     assert!(runtime.run_wasm_bytes(b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x07\x0a\x01\x06_start\0\0\x0a\x05\x01\x03\0\x1a\x0b", &[]).is_err());
-    runtime
-        .run_wasm_bytes(&varta_compiler::minimal_module(), &[])
-        .unwrap();
+    runtime.run_wasm_bytes(b"\0asm\x01\0\0\0", &[]).unwrap();
 }
 
 #[test]

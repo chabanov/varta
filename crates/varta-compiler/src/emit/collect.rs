@@ -1,0 +1,375 @@
+use super::*;
+type Location<'a> = (swc_common::Span, &'a crate::source::Source);
+pub(super) struct Collected<'a> {
+    pub hosts: BTreeSet<Host>,
+    pub canonical_functions: BTreeSet<usize>,
+    pub strings: BTreeMap<Vec<u8>, Location<'a>>,
+    pub helpers: BTreeSet<strings::Helper>,
+    pub layouts: BTreeMap<records::LayoutKey, Location<'a>>,
+    pub arrays: bool,
+    pub unions: bool,
+    pub schemas: BTreeMap<Type, Location<'a>>,
+    schema_types: BTreeSet<Type>,
+    types: &'a ir::ValueTypes,
+}
+impl<'a> Collected<'a> {
+    pub fn gather(program: &'a ir::Program) -> Self {
+        let mut result = Self {
+            hosts: BTreeSet::new(),
+            canonical_functions: BTreeSet::new(),
+            strings: BTreeMap::new(),
+            helpers: BTreeSet::new(),
+            layouts: BTreeMap::new(),
+            arrays: false,
+            unions: false,
+            types: &program.types,
+            schemas: BTreeMap::new(),
+            schema_types: BTreeSet::new(),
+        };
+        for function in &program.functions {
+            result.statements(&function.body, &function.source);
+        }
+        result
+    }
+    fn expression(&mut self, expr: &Expr, source: &'a crate::source::Source) {
+        if expr.ty.is_union() {
+            self.unions = true;
+        }
+        match &expr.kind {
+            E::FunctionCheck { value, .. } => self.expression(value, source),
+            E::FunctionRef { index, fresh, .. } => {
+                self.helpers.insert(strings::Helper::Allocate);
+                if !fresh {
+                    self.canonical_functions.insert(*index);
+                }
+            }
+            E::FunctionCall {
+                callee,
+                ignored_receiver,
+                args,
+                ..
+            } => {
+                self.expression(callee, source);
+                if let Some(value) = ignored_receiver {
+                    self.expression(value, source);
+                }
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
+            E::StringRepeat {
+                value,
+                count,
+                error,
+                ..
+            } => {
+                self.helpers.insert(strings::Helper::Allocate);
+                self.expression(value, source);
+                self.expression(count, source);
+                self.expression(error, source);
+            }
+            E::NewError(_, value) => {
+                self.helpers.insert(strings::Helper::Allocate);
+                self.expression(value, source);
+            }
+            E::ErrorOwn(value) | E::ErrorMessage(value) => self.expression(value, source),
+            E::ErrorText(value) | E::ErrorName(value) => {
+                if matches!(&expr.kind, E::ErrorText(_)) {
+                    self.helpers.insert(strings::Helper::Concat);
+                }
+                for class in varta_common::value::ErrorClass::ALL {
+                    for text in [class.name().to_owned(), format!("{}: ", class.name())] {
+                        self.strings
+                            .entry(self.types.profile.string_bytes(&text))
+                            .or_insert((expr.span, source));
+                    }
+                }
+                self.expression(value, source);
+            }
+            E::BoxUnion(value) => {
+                self.helpers.insert(strings::Helper::Allocate);
+                self.expression(value, source);
+            }
+            E::UnionLogical(op, a, b) => {
+                self.hosts.insert(self.types.profile.host_operation(
+                    if *op == BinaryOp::NullishCoalescing {
+                        Host::UnionNullish
+                    } else {
+                        Host::UnionTruthy
+                    },
+                ));
+                self.expression(a, source);
+                self.expression(b, source);
+            }
+            E::Conditional(c, a, b) => {
+                self.expression(c, source);
+                self.expression(a, source);
+                self.expression(b, source);
+            }
+
+            E::ParseJson(text) => {
+                self.hosts.insert(self.types.profile.json_parse());
+                self.helpers.insert(strings::Helper::Allocate);
+                self.schemas.entry(expr.ty).or_insert((expr.span, source));
+                self.schema_type(expr.ty, (expr.span, source));
+                self.expression(text, source);
+            }
+            E::ArraySearch(_, base, needle, from) => {
+                self.arrays = true;
+                self.helpers.insert(strings::Helper::ArraySearch);
+                self.helpers.insert(strings::Helper::Compare);
+                self.expression(base, source);
+                self.expression(needle, source);
+                self.expression(from, source);
+            }
+            E::ArraySlice(base, start, end) => {
+                self.arrays = true;
+                self.helpers.insert(strings::Helper::ArraySlice);
+                self.expression(base, source);
+                self.expression(start, source);
+                self.expression(end, source);
+            }
+            E::ArrayAt(base, index) => {
+                if expr.ty != Type::Undefined {
+                    self.helpers.insert(strings::Helper::Allocate);
+                }
+                self.expression(base, source);
+                self.expression(index, source);
+            }
+            E::ArrayPush(base, values) => {
+                self.helpers.insert(strings::Helper::ArrayPush);
+                self.expression(base, source);
+                self.expression(values, source);
+            }
+            E::ArrayPop(base) => {
+                self.helpers.insert(strings::Helper::Allocate);
+                self.expression(base, source);
+            }
+            E::ArrayReserve { length, .. } => {
+                self.arrays = true;
+                self.helpers.insert(strings::Helper::Allocate);
+                self.expression(length, source);
+            }
+            E::Array(values) => {
+                self.arrays = true;
+                self.helpers.insert(strings::Helper::Allocate);
+                for value in values.iter().flatten() {
+                    self.expression(value, source);
+                }
+            }
+            E::ArrayDelete {
+                array,
+                index,
+                error,
+            } => {
+                self.arrays = true;
+                self.expression(array, source);
+                if let Some(index) = index {
+                    self.expression(index, source);
+                }
+                if let Some(error) = error {
+                    self.expression(error, source);
+                }
+            }
+            E::ArrayHasOwn(base, index) => {
+                self.arrays = true;
+                self.expression(base, source);
+                self.expression(index, source);
+            }
+            E::MaybeIndex(base, index) => {
+                if expr.ty != Type::Undefined {
+                    self.helpers.insert(strings::Helper::Allocate);
+                }
+                if base.ty == Type::String {
+                    self.hosts.insert(Host::StringCharAt16);
+                    self.helpers.insert(strings::Helper::Snapshot);
+                }
+                self.expression(base, source);
+                self.expression(index, source);
+            }
+            E::HasOwn(value, _) => self.expression(value, source),
+            E::Index(array, index) => {
+                self.helpers.insert(strings::Helper::ArrayIndex);
+                self.expression(array, source);
+                self.expression(index, source);
+            }
+            E::String(s) => {
+                self.strings.entry(s.clone()).or_insert((expr.span, source));
+            }
+            E::Record(fields) | E::OptionalRecord(fields, _) => {
+                if let Type::Record(id) = expr.ty {
+                    self.layouts
+                        .entry(records::layout_key(id, fields, &self.types.records))
+                        .or_insert((expr.span, source));
+                    for field in &self.types.records[id as usize].fields {
+                        self.strings
+                            .entry(field.name.as_bytes().to_vec())
+                            .or_insert((expr.span, source));
+                    }
+                }
+                self.helpers.insert(strings::Helper::Allocate);
+                for (_, value) in fields {
+                    self.expression(value, source);
+                }
+            }
+            E::Json(value) => {
+                self.hosts.insert(self.types.profile.json_stringify());
+                if matches!(
+                    expr.ty,
+                    Type::String | Type::Union(_) | Type::ReferenceUnion(_)
+                ) {
+                    self.helpers.insert(strings::Helper::Snapshot);
+                }
+                if expr.ty.is_union() {
+                    self.helpers.insert(strings::Helper::Allocate);
+                }
+                self.expression(value, source);
+            }
+            E::Host(host, args) => {
+                self.hosts.insert(*host);
+                if host.returns_string() {
+                    self.helpers.insert(strings::Helper::Snapshot);
+                }
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
+            E::Call(_, args) => {
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
+            E::Binary(op, a, b) => {
+                if a.ty == Type::Float64 && *op == BinaryOp::Mod {
+                    self.hosts.insert(Host::FloatRemainder);
+                }
+                if a.ty == Type::String {
+                    self.helpers.insert(if *op == BinaryOp::Add {
+                        strings::Helper::Concat
+                    } else {
+                        strings::Helper::Compare
+                    });
+                }
+                self.expression(a, source);
+                self.expression(b, source);
+            }
+            E::Sequence(a, b) => {
+                self.expression(a, source);
+                self.expression(b, source);
+            }
+            E::IsNullish(a)
+            | E::IsUndefined(a)
+            | E::UnboxUnion(a)
+            | E::Negative(a)
+            | E::Undefined(a)
+            | E::Not(a)
+            | E::Capture(a)
+            | E::ResultField(_, a)
+            | E::Field(a, _)
+            | E::Length(a) => self.expression(a, source),
+            _ => {}
+        }
+    }
+    fn schema_type(&mut self, ty: Type, location: Location<'a>) {
+        if !self.schema_types.insert(ty) {
+            return;
+        }
+        match ty {
+            Type::Union(id) | Type::ReferenceUnion(id) => {
+                self.unions = true;
+                let members = self.types.unions[id as usize].clone();
+                for member in members {
+                    self.schema_type(member, location);
+                }
+            }
+            Type::Record(id) => {
+                self.layouts
+                    .entry(records::canonical_layout(id, &self.types.records))
+                    .or_insert(location);
+                let fields = self.types.records[id as usize].fields.clone();
+                for field in fields {
+                    self.strings
+                        .entry(field.name.into_bytes())
+                        .or_insert(location);
+                    self.schema_type(field.ty, location);
+                }
+            }
+            Type::Array(id) => {
+                self.arrays = true;
+                self.schema_type(self.types.arrays[id as usize], location);
+            }
+            _ => {}
+        }
+    }
+    fn statements(&mut self, body: &[S], source: &'a crate::source::Source) {
+        for statement in body {
+            match statement {
+                S::Throw(e) | S::Init(_, e) | S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
+                    self.expression(e, source)
+                }
+                S::ArrayLength {
+                    array,
+                    length,
+                    error,
+                } => {
+                    self.expression(array, source);
+                    self.expression(length, source);
+                    self.expression(error, source);
+                }
+                S::SetField(a, _, b) => {
+                    self.expression(a, source);
+                    self.expression(b, source);
+                }
+                S::SetIndex {
+                    array: a,
+                    index: i,
+                    value: b,
+                    ..
+                } => {
+                    self.helpers.insert(strings::Helper::ArrayIndex);
+                    self.expression(a, source);
+                    self.expression(i, source);
+                    self.expression(b, source);
+                }
+                S::TryCatch { body, handler, .. } => {
+                    self.statements(body, source);
+                    self.statements(handler, source);
+                }
+                S::TryFinally {
+                    body, finalizer, ..
+                } => {
+                    self.statements(body, source);
+                    self.statements(finalizer, source);
+                }
+                S::Block(b) | S::Scope(_, b) => self.statements(b, source),
+                S::If(e, a, b) => {
+                    self.expression(e, source);
+                    self.statements(a, source);
+                    self.statements(b, source);
+                }
+                S::While(e, b) => {
+                    self.expression(e, source);
+                    self.statements(b, source);
+                }
+                S::For(a, e, u, b) => {
+                    self.statements(a, source);
+                    if let Some(e) = e {
+                        self.expression(e, source);
+                    }
+                    self.statements(u, source);
+                    self.statements(b, source);
+                }
+                S::Switch { value, cases, .. } => {
+                    self.expression(value, source);
+                    for (e, b) in cases {
+                        if let Some(e) = e {
+                            self.expression(e, source);
+                        }
+                        self.statements(b, source);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}

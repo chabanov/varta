@@ -85,6 +85,11 @@ impl Policy {
         .then_some(url)
     }
 
+    pub(crate) fn listen(&self, endpoint: &str) -> bool {
+        self.both(|grants| grants.iter().any(|g| g.id == "net.listen"
+            && matches!(&g.value, CapabilityValue::ListenEndpoints(p) if p.iter().any(|p| p == endpoint))))
+    }
+
     pub(crate) fn read(&self, id: &str, input: &str) -> Result<Vec<u8>, crate::HostFailure> {
         self.files.read(id, input)
     }

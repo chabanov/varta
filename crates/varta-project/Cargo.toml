@@ -5,11 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+varta-artifact = { path = "../varta-artifact" }
 varta-common = { path = "../varta-common" }
 varta-compiler = { path = "../varta-compiler" }
 varta-runtime = { path = "../varta-runtime" }
 serde_json.workspace = true
 thiserror.workspace = true
-wasmtime.workspace = true
+serde.workspace = true
 cap-std.workspace = true
 cap-fs-ext.workspace = true

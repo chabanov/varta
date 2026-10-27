@@ -12,28 +12,75 @@ MCP remain **planned** in the [development plan](development-plan.md#product-dir
 
 ## Boundaries
 
+Varta supplies application-independent mechanisms. Domain entities, state schemas,
+business commands, validation rules and domain permissions belong to separate
+TS/JS applications. Reference editor/server/robot scenarios are consumers of the
+engine, not built-in application models. Domain fixtures in tests do not define
+public engine APIs. Generic state and transaction support remains planned in the
+development plan; the current checked invocation API is stateless.
+
+Generic JSON, networking and event-loop primitives belong to the engine. A TS/JS
+application should eventually be able to serve JSON directly through Varta APIs;
+per-application host wrappers are not the target architecture. Closed records and
+bounded JSON serialization and the initial HTTP/1 service/lifecycle profile are
+implemented, including runtime-only packaging. Generic shared state and MCP
+remain later work.
+
 ```text
 CLI -> varta-project -> varta-compiler -> validated portable Wasm
                     -> varta-runtime -> checked host adapters
-                    -> artifact reader/writer
+                    -> varta-artifact -> portable container reader/writer
+varta-runtime (binary in varta-launcher) -> varta-artifact + varta-runtime (library)
           all layers -> varta-common (schema, ABI, host operation registry)
 ```
 
-- `varta-common`: strict configuration and manifest schemas, operation identities,
-  host signatures, ABI constants and editor declarations.
+- `varta-common`: strict artifact/contract schemas, operation identities, host
+  signatures, ABI constants, diagnostics and editor declarations.
 - `varta-compiler`: bounded module graph, syntax parsing, lexical name resolution, subset/type checking,
   typed intermediate representation, Wasm emission and full bytecode validation.
 - `varta-runtime`: bounded module validation, Wasmtime execution, resource limits,
   pinned filesystem capabilities, HTTP transport and host result handling.
-- `varta-project`: confined source loading and one checked pipeline for check/dev/build; versioned artifacts,
-  manifest serialization, policy review and inspection.
+- `varta-artifact`: bounded portable artifact/container I/O and atomic writes;
+  common types and wasmparser for host-ABI/manifest consistency, without a VM or compiler.
+- `varta-launcher`: execution-only native companion (`varta-runtime` binary);
+  depends on common, artifact and runtime, without project/compiler/SWC/clap.
+- `varta-project`: development tooling, project configuration, confined source loading
+  and one checked pipeline for check/dev/build; verified launcher selection,
+  policy review and inspection.
 - `varta-cli`: argument parsing, presentation and process exit codes.
+
+The common/compiler/runtime libraries form the engine; artifact/launcher supply
+its independent distribution layer; project/CLI are development tooling.
+No engine or distribution crate depends on tooling or CLI, including in tests.
+Runtime depends on compiler only for
+test fixtures, not in production. CLI calls project tooling rather than runtime
+directly. Project inspection consumes `WasmInspection`/`WasmImport` values from
+`VartaRuntime::inspect_module` and has no direct Wasmtime dependency. Advanced
+runtime validation APIs still return backend modules for specialized embedders.
+
+Project configuration types `VartaConfig` and `CapabilitySpec` are exported by
+`varta-project`; callers migrating from `varta-common` must update those imports.
+The on-disk configuration, manifest, host ABI and artifact formats are unchanged.
+Numeric port-list grants remain rejected. Implemented net.listen permissions use
+canonical literal IP:port endpoints, with an exact operation-specific grant type. The compiler's empty-module
+fixture helper is not a production API; its regression fixture lives in tests.
+
+A dependency-graph test guards the permitted crate directions. An external-style
+integration test compiles/inspects/invokes using public engine APIs, without project
+files or CLI. CI separately checks core libraries and builds the runtime companion
+without project tooling. Tests and their
+small source fixtures remain part of engine verification, not shipped applications.
 
 Workspace code forbids `unsafe`. New dependencies are exact-pinned: `cap-std` and
 `cap-fs-ext` supply descriptor-relative, no-follow filesystem operations;
 `url` supplies one structured URL interpretation; `ureq` supplies bounded HTTP
 framing and timeouts. Implementing these protocols with ambient path checks and
-handwritten HTTP caused the audit's permission bypasses.
+handwritten HTTP caused the audit's permission bypasses. Inbound framing uses
+exact-pinned Hyper 1.12.0, hyper-util 0.1.21, http-body-util 0.1.5 and Tokio 1.54.1
+with server/HTTP1 and bounded I/O/runtime features. These dependencies provide
+maintained protocol parsing, body framing and timers, instead of a new handwritten
+server parser. See [Hyper's HTTP1 builder](https://docs.rs/hyper/1.12.0/hyper/server/conn/http1/struct.Builder.html)
+and [Tokio runtime bounds](https://docs.rs/tokio/1.54.1/tokio/runtime/struct.Builder.html).
 
 ## Compilation contract
 
@@ -58,22 +105,23 @@ locals; default selection and fallthrough follow source order.
 Supported:
 
 - local source modules with a zero-argument `main(): void` in the entry file;
-- synchronous named functions with `number`/`boolean`/`string` parameters and results;
+- synchronous named functions with primitive, `null` and closed-record parameters/results;
+- closed object literals, dense homogeneous arrays, nested references, typed field/index reads/writes, `JSON.stringify` and `varta.json.parse<T>`;
 - immutable `VartaResult<T>` values with typed `ok`, `status` and `value` fields;
-- primitive local `let`/`const` bindings with initializers and block scoping;
+- local `let`/`const` value bindings with initializers and block scoping;
 - integer arithmetic, comparisons, boolean literals, `!`, `&&` and `||`;
 - if/else, while, for, switch, unlabelled break/continue, return;
 - UTF-8 string literals and retained host results, including dynamic host arguments;
 - string concatenation with `+` and content equality/ordering comparisons;
 - type-only interfaces/aliases and built-in declarations.
 
-Parameters require explicit primitive or `VartaResult<T>` annotations. Numeric/void function
+Parameters require explicit primitive, inline object or `VartaResult<T>` annotations. Numeric/void function
 results may be inferred from the supported return forms; explicit result
 annotations are recommended. Value-returning functions must return on every
 supported control-flow path. Case-local declarations require an explicit block.
 String-returning functions require explicit `: string` result annotations;
-result-returning functions require `: VartaResult<T>`. String and captured-result
-types may be inferred from local initializers. Assignment, parameters and
+result-returning functions require `: VartaResult<T>`; object/null returns also
+require explicit annotations. Value types may be inferred from local initializers. Assignment, parameters and
 returns require exact types; const and use-before-initialization rules also apply
 to strings. Conditions, numeric arithmetic and switch remain number/boolean operations.
 String indexing, properties, interpolation, implicit coercion, compound assignment
@@ -86,12 +134,2152 @@ returns Unix seconds representable in i32 and reports invalid input outside that
 range rather than wrapping.
 
 Unsupported import/export forms, top-level effects, async/generators, classes, closures, var,
-objects/arrays, casts, any and unsupported syntax fail
+sparse/resizable arrays, dynamic objects, casts, any and unsupported syntax fail
 explicitly. They are never silently discarded. Source is capped at 1 MiB with
 lexical complexity limits before recursive parsing. Static strings occupy at most
-one 64 KiB page. Parse errors retain source line/column positions.
+one 64 KiB page shared with object descriptors. Parse errors retain source line/column positions.
+
+### Language profiles and migration
+
+Source semantics and physical host/value ABIs have separate version identities.
+Every newly compiled module has one bounded `varta.language` custom section:
+
+```json
+{"schemaVersion":1,"profile":"checked-i32-utf8-v1"}
+```
+
+`varta-common::language` owns the strict schema, profile registry and typed errors.
+Metadata is capped at 1 KiB. Unknown profiles/fields, missing/duplicate JSON fields,
+unsupported schema versions, duplicate language sections and duplicate/invalid
+host ABI sections fail before Wasmtime compilation or guest instantiation. An
+explicit language profile requires exactly one matching host ABI section. All runtime
+entry points, including offline inspection and tool invocation, use that check.
+Invocation reports `invalid_artifact` for an invalid language profile.
+
+`WasmInspection.language` and development CLI inspection's top-level `language`
+report the supported profile and its origin:
+
+| Input metadata | Report and behavior |
+| --- | --- |
+| Explicit supported language section + ABI v1 | `profile:"checked-i32-utf8-v1", origin:"declared"` |
+| Explicit binary64 scalar profile + ABI v2 | `profile:"checked-f64-utf8-v1", origin:"declared"` |
+| Explicit undefined-capable profile + ABI v3 | `profile:"checked-f64-utf8-v2", origin:"declared"` |
+| Explicit UTF-16 profile + ABI v4 | `profile:"checked-f64-utf16-v1", origin:"declared"` |
+| Explicit primitive-union profile + ABI v5 | `profile:"checked-f64-utf16-v2", origin:"declared"` |
+| Explicit missing-value profile + ABI v6 | `profile:"checked-f64-utf16-v3", origin:"declared"` |
+| Explicit reference-union profile + ABI v7 | `profile:"checked-f64-utf16-v4", origin:"declared"` |
+| Explicit checked-JSON profile + ABI v8 | `profile:"checked-f64-utf16-v5", origin:"declared"` |
+| Explicit resizable-array profile + ABI v9 | `profile:"checked-f64-utf16-v6", origin:"declared"` |
+| Explicit primitive-exception profile + ABI v10 | `profile:"checked-f64-utf16-v7", origin:"declared"` |
+| Explicit Error-object profile + ABI v11 | `profile:"checked-f64-utf16-v8", origin:"declared"` |
+| Explicit native-error-family profile + ABI v12 | `profile:"checked-f64-utf16-v9", origin:"declared"` |
+| Explicit recoverable-JSON profile + ABI v13 | `profile:"checked-f64-utf16-v10", origin:"declared"` |
+| Explicit function-value profile + ABI v14 | `profile:"checked-f64-utf16-v11", origin:"declared"` |
+| Explicit lexical-closure profile + ABI v15 | `profile:"checked-f64-utf16-v12", origin:"declared"` |
+| Explicit sparse-array profile + ABI v16 | `profile:"checked-f64-utf16-v13", origin:"declared"` |
+| Explicit array-mutation profile + ABI v17 | `profile:"checked-f64-utf16-v14", origin:"declared"` |
+| ABI v1 without a language section (older Varta output) | Same profile, `origin:"legacyHostAbi"`; existing behavior is preserved |
+| Neither section (generic portable Wasm) | `profile:null, origin:"unspecified"`; no claim about source-language semantics |
+| Unknown/invalid/duplicate profile or ABI | Reject; no fallback to the current profile |
+| ABI v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17 without an explicit matching profile | Reject; only ABI v1 has a legacy fallback |
+
+The default i32 profile describes the existing checked subset, not full JavaScript. Arithmetic
+wraps/truncates/traps as documented above. `-0` becomes integer zero. Floating-point
+values and global `undefined`/`NaN`/`Infinity` are unavailable; a local binding with
+one of those names remains an ordinary binding. `void` functions have no value,
+not a general undefined value. Same-type `==`/`===` compare the same supported
+values; mixed-type operators fail type checking. Strings compare by content and
+UTF-16 ordering over valid UTF-8; objects/arrays compare by identity. Existing
+record ordering, dense array bounds, strict checked JSON and host result rules
+remain unchanged. Numeric literal acceptance is based on the parsed numeric value:
+an integer-valued source spelling may be accepted even when checked JSON rejects
+that spelling (for example, `1.0`). The positive literal operand of unary minus
+must itself fit i32; write the minimum via arithmetic or checked JSON instead.
+
+The declaration is validated compatibility metadata, not proof of compiler/source
+provenance and not authorization. Arbitrary Wasm can claim a profile; permission,
+memory and ABI checks remain independent. Removing all custom sections cannot
+make unsafe native payloads acceptable or grant system access. VARTA3/footer,
+manifest, host ABI v1, structured values v1/v2, Tool Contract v1 and HTTP v1 keep
+their meanings; this change adds metadata without reinterpreting payload slots.
+
+The future ECMAScript profile is specified in the
+[K4 migration contract](development-plan.md#k4--ecmascript-value-profile-and-language-expansion).
+It is not accepted by this compiler/runtime. A semantics-breaking profile must use
+a new mandatory host ABI as well as explicit language metadata: old runtimes can
+ignore unknown custom sections, but already reject a future host ABI version.
+Missing future-profile metadata must fail, never inherit the legacy fallback.
+
+### Binary64 profile and host ABI v2
+
+The opt-in `checked-f64-utf8-v1` profile implements the first numeric increment of
+K4.2. Select it with `"languageProfile":"checked-f64-utf8-v1"` in project config,
+or `compile_typescript_with_profile`/`compile_modules_with_profile` in the compiler
+API. Omission still selects `checked-i32-utf8-v1`. The whole source graph has one
+profile; check/dev/build use the same selection and diagnostics. It is a checked
+profile with closed typed aggregates, not the reserved complete `ecmascript-2025-v1` profile.
+
+The physical representation is intentionally explicit:
+
+| Source/internal value | Wasm representation in ABI v2 |
+| --- | --- |
+| `number` literals, parameters, locals and returns | `f64` scalar, with IEEE-754 binary64 rounding and signed zero |
+| `boolean`, `null` and internal control indices | `i32`; null remains a separate static type |
+| UTF-8 string handle | Existing immutable packed `i64` slice with exact roots |
+| `VartaResult<number>` | `(f64 payload, i32 status)` |
+| Other supported captured host results | Existing payload representation plus `i32 status` |
+
+There is no NaN boxing or untyped numeric heap slot. Floating values never enter
+the exact root set; string handles remain typed roots. The float scratch local is
+distinct from control/status and string temporaries. Tagged layouts need their own checked ABI; the UTF-16 increment uses the separate
+ABI v4 described below. No existing descriptor/tag is redefined.
+GC stress tests preserve signed zero/NaN and a live string alias through collection.
+
+Finite/fractional/exponent/large source literals, `NaN`/`Infinity`, unary +/- and
+numeric +, -, *, /, %, comparisons, !, &&/||, conditions and switch use binary64
+semantics. Globals can be shadowed by lexical bindings; TDZ checks still apply.
+Functions/modules preserve f64 signatures. Wasm arithmetic/comparisons implement
+rounding, non-finite results and signed zero. Numeric truthiness uses `abs(x)>0`,
+false for both zeroes and NaN; short-circuiting evaluates each operand once and
+returns the selected value. Mixed-type coercion is still rejected. The semantic
+reference is [ECMAScript Number operations](https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html#sec-ecmascript-language-types-number-type),
+implemented using [Wasm floating operations](https://webassembly.github.io/spec/core/exec/numerics.html#floating-point-operations).
+
+`HostOperation::scalar_signature` is the shared physical signature registry;
+`signature` derives counts from it. Host ABI v2 adds these internal imports:
+
+| Import | Signature | Behavior |
+| --- | --- | --- |
+| `log_f64` | `(f64) -> ()` | Bounded diagnostic output, preserving negative zero and naming NaN/Infinity |
+| `number_remainder` | `(f64,f64) -> f64` | Truncating floating remainder using Rust's `%`, including zero, subnormal and non-finite cases |
+| `process_exit_f64` | `(f64) -> ()` | Same `process.exit` authority; accepts only exact finite signed-i32 codes |
+
+These are ABI imports, not new source APIs. Each consumes the host-call budget;
+logging and remainder preserve system status and use no capability. Wasm has no
+floating remainder opcode; the intrinsic avoids an inaccurate divide/truncate
+formula when the quotient overflows. See [Rust f64 remainder](https://doc.rust-lang.org/std/primitive.f64.html#impl-Rem-for-f64).
+Diagnostic finite formatting uses Rust Display, not a new implementation of
+ECMAScript Number::toString or Node console formatting. `time.now`, `net.fetch`
+and system status retain their exact i32 host values and are widened to f64 in
+guest expressions; clock units and error meanings do not change. Exit checks
+package/host authority first, then rejects fractional/non-finite/out-of-range codes
+with invalid-input status, without trapping or truncating. Authorized valid exit
+still ends execution. The old i32 host imports keep their signatures.
+
+Validation requires language/profile and ABI v2 agreement, typed import signatures
+and minimum host-ABI availability. Removing language metadata, downgrading the ABI
+or mixing old structured-value/JSON/tool/HTTP metadata is rejected. Artifact I/O
+also requires manifest ABI to match portable code. Missing Wasm sidecars still
+mean zero grants, deriving only the ABI version from the payload header (ABI v1
+when unspecified). Invalid artifact failures retain the `invalid_artifact` JSON
+invocation code even when rejection occurs during loading.
+
+Typed arrays/records and JSON now use value ABI v3 below. Tool Contract v1 and
+HTTP v1 still require future adapters for this profile. UTF-16, undefined,
+dynamic values and coercion remain pending. The default profile keeps
+all its existing aggregate/JSON/tool/HTTP features and i32 behavior. ABI v1/v2,
+the scalar profile names and legacy value layouts now remain distinct frozen
+contracts; a future breaking UTF-16/tagged profile must negotiate a new mandatory
+ABI so these runtimes reject it before effects. Packaging protocol v2's supported
+profile list includes all seventeen checked profiles; update companion and CLI together.
+
+### Undefined profile and host ABI v3
+
+`checked-f64-utf8-v2` is a separate opt-in profile with **host ABI v3/value ABI v4**.
+Earlier profiles retain their source and physical contracts. Undefined has its
+own static type and descriptor/array **tag 7**. Its canonical payload is zero in
+an i32 scalar/eight-byte aggregate slot; the tag distinguishes it from null,
+false and zero. It is never a reference. Runtime boundaries reject nonzero
+undefined payloads even when the corresponding JSON field would be omitted.
+
+The compiler supports the global `undefined` value, explicit `: undefined`
+annotations, parameters/returns, object fields and homogeneous undefined arrays.
+Lexical bindings may shadow the global and preserve use-before-initialization
+checks. `void expression` evaluates its operand once, discards all physical slots
+and produces undefined. Guest/host void calls likewise produce undefined in an
+expression; their physical no-result signatures remain unchanged. Explicit void
+functions may return undefined (discarded before returning); undefined-returning
+functions may return bare or fall through to undefined. Main remains `()->()`.
+Captured `VartaResult<void>.value` is undefined; status/permission checks are
+unchanged. `log_undefined(i32)->()` validates zero, preserves status and captures
+bounded diagnostic output, with no capability.
+
+Null and undefined are falsy. Supported typed `typeof` expressions return the
+corresponding strings while evaluating operands once (`typeof null` is object).
+Comparisons involving nullish values distinguish strict and loose equality:
+null == undefined is true, null === undefined is false, and either is unequal
+to other primitive/reference types. Strict comparisons of different supported
+static value types are false. Both operands still run in source order. With a
+statically nullish left operand, || evaluates/returns its right operand and &&
+skips it. General coercion, runtime unions, missing-property/out-of-range values,
+uninitialized locals and typeof undeclared identifiers remain outside this
+checked increment. The reference is the pinned
+[void/typeof operators](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-void-operator)
+and [equality operations](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-islooselyequal).
+
+`json_stringify_v4(i32 kind,i32 low,i32 high)->i32` binds value ABI v4. Ordinary
+values use the existing bounded text/result-length/owned-snapshot convention.
+An undefined root returns canonical zero and clears result length, preserving
+system status. Since JSON text cannot be empty, this is distinct from every
+successful text result. Intrinsic typing returns Undefined for a statically
+undefined input and String for the other admitted value types; no fake empty
+string or implicit union conversion is introduced. Object fields with undefined
+values are omitted, undefined array entries emit null, and normal null values
+still emit null. All keys/slots/payloads are validated, including omitted fields;
+omitted fields count toward depth/node limits and preserve constructor effects.
+See the [pinned JSON rules](https://tc39.es/ecma262/2025/multipage/structured-data.html#sec-json.stringify).
+
+`json_parse_v4(i32,i32,i32,i32)->i64` requires **schema v3/descriptor v4** and the
+same finite Number, closed-shape, complete-validation-before-allocation and
+host-free helper contracts. JSON has no undefined value, so undefined targets,
+including nested fields/elements, are rejected at compile time; missing fields
+remain errors. Legacy imports/schemas/descriptors cannot be substituted. New
+imports require host ABI v3, and missing or incompatible profile metadata fails
+before instantiation. Launcher maxima are 7/8; default i32 and the v1 binary64
+profile continue using their existing versions.
+
+### UTF-16 profile and host ABI v4
+
+`checked-f64-utf16-v1` selects **host ABI v4/value ABI v5/JSON schema v4**.
+It inherits binary64/undefined behavior while changing string payloads to UTF-16LE.
+The immutable i64 slice handle still packs a byte pointer in the low 32 bits and
+**byte length** in the high 32 bits. Length must be even, but pointers need not
+be aligned. All u16 values, including lone surrogates and NUL, are admitted.
+Literals retain SWC's code units without a lossy Unicode conversion. The compiler
+interns actual encoded bytes under the existing 64 KiB static-data budget.
+Record keys/descriptors/schema names retain their explicitly validated UTF-8
+metadata encoding; surrogate object keys remain unsupported in this closed profile.
+
+Concatenation copies code units verbatim, so separately created leading/trailing
+surrogates can form a pair. Comparison loads unsigned little-endian u16 units in
+lexical order, without normalization, locale conversion or handle comparison.
+`.length` returns the code-unit count as Number. `.charAt(position?)` produces a
+one-unit String (possibly a lone surrogate), or empty String out of range.
+`.charCodeAt(position?)` returns the unit Number, or NaN out of range. The receiver
+and optional numeric position run once in source order. Missing/NaN positions
+become zero, fractional positions truncate toward zero, and infinities are out
+of range. Other argument types and string bracket access remain rejected rather
+than approximating dynamic unions or coercion. The pinned reference is
+[ECMAScript 2025 String methods](https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.charat).
+
+New pure imports are `log_string16(i32,i32)->()`,
+`string_char_at16(i32,i32,f64)->i32` and
+`string_char_code_at16(i32,i32,f64)->f64`. Ranges, even byte lengths, 1 MiB string
+bytes and execution/output/host-call budgets are enforced. charAt borrows the
+existing host buffer/result-length convention; the compiler immediately snapshots
+its UTF-16 bytes into the same traced heap. Empty charAt still clears result
+length. Pure operations preserve the last system status. Diagnostic logs replace
+unpaired units with U+FFFD; this is display-only and cannot authorize a resource.
+Use JSON to inspect exact code units.
+
+Encoding-specific privileged imports are `env_has16`, `env_get16`, `env_print16`,
+`fs_read16`, `fs_print16`, `net_get16` and `net_fetch16`, with the corresponding
+legacy signatures and **same exact capability IDs**. Inputs have both a 64 KiB
+stored-byte and UTF-8-conversion limit. Resource conversion rejects lone surrogates,
+odd byte lengths and NUL before policy checks or OS calls. It performs no lossy
+replacement or normalization. Package/host scope conjunction, pinned filesystem
+access and URL validation remain unchanged. UTF-8 host results convert to UTF-16;
+invalid UTF-8 fails, and stored results must still fit 1 MiB. Binary I/O and native
+non-Unicode resource names need separate APIs. No new capability kind is added.
+The runtime rejects legacy string imports under this profile; previous profiles
+cannot import these ABI v4 operations.
+
+`json_stringify_v5` / `json_parse_v5` retain their v4 physical signatures but bind
+value v5/schema v4 exactly. JSON string values encode paired surrogates as Unicode
+scalars and unpaired units as lowercase `\uxxxx`, including nested fields/arrays.
+The output becomes an owned UTF-16 string; existing undefined behavior remains.
+See [QuoteJSONString](https://tc39.es/ecma262/2025/multipage/structured-data.html#sec-quotejsonstring).
+The strict parser checks the physical UTF-16 input before converting to UTF-8
+JSON transport: raw lone units in unescaped string-token positions are escaped
+losslessly; invalid escapes or units outside strings are rejected. Both physical
+and converted input have a 64 KiB cap. serde_json's byte-string visitor preserves
+escaped lone surrogates; ordinary transport UTF-8 is validated first. Complete
+schema/key/duplicate/traversal validation still precedes guest allocation. Parsed
+strings are owned UTF-16 buffers, with exact roots across allocator callbacks.
+JSON UTF-8 output and converted UTF-16 output each have their existing 1 MiB cap.
+
+All earlier ABI/profile/layout combinations retain their interpretation. Explicit
+profile/ABI agreement, versioned JSON imports/descriptors and launcher payload
+probing prevent downgrades before execution. Runtime-only/source-free artifacts
+use the same path. Tests cover every u16 round trip, scalar/surrogate ordering,
+method edge cases/effect order, nested JSON, malformed encodings/versions,
+collection pressure, permission denials, real outbound loopback HTTP, public
+engine APIs and native packaging. Tool/HTTP publication in this profile, dynamic
+keys/values, unions, string coercion and additional String methods remain pending.
+
+### Primitive unions and host ABI v5
+
+`checked-f64-utf16-v2` uses **host ABI v5/value ABI v6/JSON schema v5**. It retains
+the UTF-16/binary64/undefined behavior and admits closed unions of Number, String,
+Boolean, Null and Undefined. Members are canonicalized, flattened and deduplicated;
+one-member unions collapse to their member. At most 16 syntactic members and 128
+interned union types are accepted. No object/array member, any/unknown, assertion
+or implicit conversion is introduced. All earlier profiles reject union annotations.
+
+A union uses one **i64 managed handle**, with a 16-byte immutable payload:
+`u32 member_kind; u32 count=1; u64 member_payload`. The handle's high word is
+16 bytes, low word is an aligned pointer into the owned heap. The ordinary
+16-byte block header has `ALLOCATED | HEAP_UNION_FLAG(16)` and a link/reference
+mask equal to 1 only for a String member. The unused fourth header word has no
+semantic content. `PrimitiveUnion = 8` is a new reference tag supported only in
+value v6. Record/array slots remain eight bytes and carry a union-cell handle.
+Every primitive cell is separately allocated; aliases copy its handle and
+assignments replace handles. There is no observable cell identity or mutation.
+
+Numbers store raw f64 bits, booleans require 0/1, null/undefined require zero,
+and strings retain the UTF-16 pointer/byte-length handle. The shared
+`PrimitiveBox::read` validates cell size/alignment/range, allocated kind, count,
+member tag, scalar canonicality, reference mask and bounded even string ranges.
+Cells cannot contain another cell/object/array. Numeric bits never become GC
+edges, including NaNs or payloads resembling pointers. The collector traces
+union blocks as a single masked child slot alongside records/arrays. Compiler
+roots protect the member before allocating its cell, protect cells across calls
+and nested allocation, and retain extracted strings across collection. Heap,
+root-stack, fuel, deadline and host-call limits remain unchanged.
+
+The compiler widens a supported primitive or a subset union into an expected
+union for local initialization/reassignment, parameters, returns, record fields
+and explicitly typed array elements. It rejects narrowing without a guard and
+structural aggregate conversion. Mixed primitive ternaries infer a union;
+identical ordinary value branches retain their physical type. Direct-local
+`typeof x ===/!== "number"/"string"/"boolean"/"object"/"undefined"`, `x ===/!== null`
+and strict global-undefined comparisons narrow the matching/opposite branch of
+an if/ternary, including reversed operands. Here typeof object can only select
+Null, because object union members are not admitted. Shadowed undefined stays an
+ordinary binding. Guard refinements are keyed by resolved local slots, cannot
+escape their branch and do not change the slot's physical type. Extracting a
+primitive checks the runtime member tag before loading its payload. Writes to a
+refined binding are rejected, preventing stale assumptions in loops; broad flow
+analysis and post-return narrowing remain pending. See the
+[TypeScript narrowing reference](https://www.typescriptlang.org/docs/handbook/2/narrowing.html).
+
+New pure typed imports are `union_log(i64)->()`, `union_typeof(i64)->i32`,
+`union_truthy(i64)->i32`, `union_nullish(i64)->i32`,
+`union_strict_equal(i64,i64)->i32` and `union_nullish_equal(i64,i64)->i32`.
+All validate canonical cells and preserve system status. typeof returns borrowed
+UTF-16 text through result length and immediate owned snapshot. Numeric/boolean
+logs retain the existing diagnostic formatting; strings use diagnostic U+FFFD
+replacement for lone units. Truthiness distinguishes empty strings, false,
+null/undefined, signed zero and NaN. Strict equality compares actual member types,
+then f64 numeric equality or UTF-16 content (never cell handles). NaN remains
+unequal to itself and +/-0 equal. Union ==/!= is admitted only with a statically
+nullish operand, with no other coercion. Both operands evaluate once, in order.
+Union &&/||/?? returns the selected boxed operand and skips the other when
+appropriate; ?? tests only null/undefined. General string/coercive operators are
+rejected until the value is appropriately narrowed. The reference is the pinned
+[ECMAScript abstract operations](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-isstrictlyequal).
+
+`json_stringify_v6` and `json_parse_v6` retain their predecessor signatures but
+bind value v6/schema v5. Serialization validates and unwraps primitive cells,
+including omitted undefined fields, and counts logical values rather than box
+implementation nodes. Undefined record fields are omitted, array entries become
+null and a root undefined result has zero result length. An undefined-capable
+union root therefore has source type String|Undefined; the compiler snapshots
+text and boxes the actual result before another call can reuse its buffer.
+Strict typed JSON parsing still accepts only supported non-union targets, with
+UTF-16 strings and complete validation before guest allocation. Union targets and
+nested union fields/elements are explicitly rejected. No ordinary JSON.parse or
+mixed JSON parser is claimed.
+
+Explicit profile/host/value/schema/import agreement is validated before effects;
+union intrinsics require a value ABI section even without JSON. All earlier
+profiles/layouts remain frozen. Public engine APIs, real check/dev/build, independent
+runtime, source-free native artifacts, malformed payload/version rejection,
+permission/host ceilings and collection pressure are regression tested. Dynamic
+object/array unions, missing values, optional/uninitialized bindings, general
+coercion, broader narrowing and new-profile tool/HTTP adapters remain next work.
+
+### Missing values and host ABI v6
+
+`checked-f64-utf16-v3` selects **host ABI v6/value ABI v7/JSON schema v6**.
+The earlier source profiles retain their rejection/trapping rules. Closed record
+annotations admit optional **primitive/primitive-union** fields: x?:T has value
+type T|Undefined, while independently retaining the own-property presence bit.
+Absent optional initializer fields receive canonical undefined slot values but
+are not own properties. An explicit x:undefined is present. Required fields,
+unknown keys, duplicate fields, readonly properties and optional reference types
+remain checked/rejected. Optional names inherited from Object.prototype are
+rejected because absent access would require prototype values. Required own
+fields with such names still shadow the prototype normally. Structural conversion
+of pre-existing aggregate aliases is not introduced.
+
+Value v7 retains descriptor/key/count and eight-byte slot offsets. The static
+16-byte descriptor entry stores `OPTIONAL_FIELD_FLAG = 1<<31` in the slot word;
+its remaining bits identify the canonical slot. Every v7 record appends a trailer
+after its n slots: `u32 presence; u32 order[n]`. Total payload size is **12+12*n**
+bytes (including the original eight-byte metadata), including for zero fields.
+The presence mask uses all 32 bits. The first popcount(presence) order entries
+are unique present slot IDs; unused order entries must be zero. The heap header
+retains the exact reference mask and ordinary record kind flag. Reserved absent
+slots remain traced according to their static type; numeric bits and the trailer
+are never reference edges. The collector therefore uses the same bounded slot
+scan without interpreting presence/order words as handles.
+
+Constructor operands run once in source order before creating absent placeholders.
+Own integer keys enumerate first in numeric order; remaining names retain source
+insertion order. Assigning an absent declared field stores its typed value, then
+appends its slot ID and sets its presence bit. Both steps occur only after RHS
+success. Reassignment, including undefined, preserves the original insertion
+position. No deletion, sparse object shape, arbitrary property creation, getters,
+prototype mutation or rollback of RHS system effects is provided.
+
+`Object.hasOwn(record, literalKey)` is a checked compiler intrinsic reading the
+presence mask, not another host permission or MCP entry point. Unknown literal
+keys return false while evaluating the receiver once. Shadowed Object bindings
+cannot call the intrinsic. General key coercion, dynamic keys and non-record
+receivers are rejected. See the pinned
+[Object.hasOwn](https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.hasown)
+and [optional property](https://www.typescriptlang.org/docs/handbook/2/objects.html#optional-properties)
+references. Reading a statically absent record key returns real Undefined after
+evaluating the receiver. Known inherited names require prototype lookup and are
+rejected, rather than returning a false undefined. Assignments to unknown keys
+remain rejected. A direct-local guard is still required before consuming a
+union field as a specific primitive; hasOwn alone does not exclude undefined.
+
+Primitive-array numeric reads now have type element|Undefined; string bracket
+reads have type String|Undefined. Base and index expressions run once, left to
+right, with exact roots across nested calls/collection. Before address conversion,
+checks require a finite, exact, nonnegative index below the actual length.
+NaN, infinities, negative/fractional and excessive numbers return undefined;
+-0 selects zero. In-range primitive payloads preserve full Number bits or the
+existing immutable union handle. UTF-16 string indexing returns exactly one unit,
+including lone surrogates, through the existing charAt/snapshot/cell machinery.
+Out-of-range indexing differs from charAt's empty-string result. There is no
+property-key coercion or prototype/negative-index property lookup. Indexed reads
+of arrays of objects/arrays are rejected until reference unions exist; length,
+construction, serialization and in-range writes still work for these arrays.
+Writes retain the exact existing bounds check and cannot resize arrays. The
+pinned string-index reference is
+[String exotic objects](https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-string-exotic-objects).
+
+An annotated let without an initializer is permitted only if its type includes
+Undefined; initialization stores a real Undefined value/cell at that declaration.
+Use-before-declaration and self-initialization remain errors. Bare/implicit
+function return is permitted for an undefined-capable result and produces the
+matching physical value; no silent zero/string substitution is made. Const
+without an initializer and other uninitialized types remain rejected.
+
+`json_stringify_v7` / `json_parse_v7` retain predecessor physical signatures with
+value v7/schema v6 contexts. New serialization validates exact record length,
+matching descriptor version/count, key/slot uniqueness, optional tag admissibility,
+presence bounds, required presence, canonical absent undefined slots and complete
+insertion-order metadata, even for omitted fields. Every reserved slot consumes
+traversal budget. JSON output sorts integer-index keys first, then own insertion
+order, and omits undefined fields. Array/root undefined behavior remains unchanged.
+The strict parser continues to reject optional/union target schemas. Required
+record parsing creates a fully present trailer with canonical schema enumeration
+order before publishing owned values; descriptor/schema checks and host-free
+allocator validation still precede allocation. Older descriptors/imports cannot
+be substituted. Pure operations preserve system status and resource authority.
+
+Tests cover missing versus explicit undefined, insertion/reassignment/numeric-key
+order, all 32 presence bits, scalar/index/UTF-16 edge cases, declaration/return
+semantics, malformed trailers and omitted payloads/traversal budgets, GC pressure,
+module/public APIs, source-free native execution and package/host ceilings.
+Prototype values, reference unions, resizing/sparse arrays, optional JSON parsing
+and external adapters remain future work; no application domain is introduced.
+
+### Reference unions and host ABI v7
+
+`checked-f64-utf16-v4` selects **host ABI v7/value ABI v8/JSON schema v7**. It extends
+the checked union set with at most one closed Record shape and one Array element
+type, in addition to the existing primitives/null/undefined. Duplicate types
+collapse; ambiguous multiple record shapes or array element types are rejected.
+This restriction lets a tag guard recover the exact physical shape without an
+unchecked assertion or a hidden structural copy. Structural widening of mutable
+aggregate aliases and generic/discriminated object unions remain pending.
+
+`ReferenceUnion = 9` is a new reference-only tag, supported exclusively by value
+v8. PrimitiveUnion tag 8 and its primitive-only validation retain their meaning.
+The cell representation stays immutable tag/count=1/payload with the existing
+union heap flag. A reference member stores the original record/array i64 handle;
+its header child mask is 1. Primitive Number bits never become edges. Ordinary
+value v8 records retain v7's fixed slots/presence/order trailer with descriptor
+version 8; arrays retain their typed fixed-length layout and may contain tag 9.
+Field/array reference masks include reference cells, and the collector follows
+cell -> record/array -> nested children without copying or moving any value.
+
+The shared `ReferenceBox::read` validates the cell and either the frozen primitive
+contract or a bounded shallow managed aggregate. This includes aligned/ranged
+pointers, exact heap kind, allocated block size, count/length, descriptor version,
+key/slot uniqueness, kind-admissibility/reference masks, required/absent presence
+and insertion order. Array tags/counts/reference flags are checked. Child graphs
+are traversed only by consumers that need them; cyclic graphs cannot cause
+recursive type/identity validation. JSON retains its independent complete
+traversal and cycle/depth/node/output budgets. Cells cannot contain another cell
+as their member. Tag 8 cannot be used to smuggle a reference through a legacy
+primitive import or serializer.
+
+Widening a primitive subset or exact reference into an expected reference union
+copies the handle/cell, preserving actual identity and all bits. Contextual record
+and array literals select the unique relevant union member before final boxing,
+including optional/nested fields and ternary/function-return contexts. No source
+annotation clones the object. In-range indexed object/array reads box the same
+reference, while invalid/out-of-range numeric indices return boxed Undefined.
+The inherited v3 rules for exact indices, source order, missing fields and bounded
+writes remain in force. Optional fields may now contain reference members; their
+absent slot remains canonical Undefined and explicit undefined still sets presence.
+
+`typeof` reports object for Record, Array and Null. A direct-local typeof object
+guard therefore retains **all three** candidates rather than conflating null or
+an array with a record. Existing null/undefined guards can remove those members.
+`Array.isArray(value)` accepts the supported value types and tests actual Array
+kind; direct-local calls or their negation refine if/ternary branches. Shadowed
+Array bindings cannot call this intrinsic. Static known-kind arguments still run
+once, then yield the correct constant result. Other guards, broad flow analysis
+and writes to refined local bindings remain outside this increment. Mutation of
+an extracted record field/array element is allowed and visible to all aliases.
+The reference is the pinned
+[Array.isArray algorithm](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.isarray)
+and [TypeScript narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html).
+
+New pure imports are `value_log_v2(i64)->()`, `value_typeof_v2(i64)->i32`,
+`value_truthy_v2(i64)->i32`, `value_nullish_v2(i64)->i32`,
+`value_strict_equal_v2(i64,i64)->i32`, `value_nullish_equal_v2(i64,i64)->i32` and
+`value_is_array_v2(i64)->i32`. Canonical cells/aggregate headers are validated before
+observation. Scalar/string diagnostic formatting stays unchanged; reference logs
+serialize bounded JSON, without a result-buffer alias or system-status reset.
+Empty arrays/records remain truthy. Strict reference equality compares the
+underlying identity, never cell identity or object contents. Numeric/string rules,
+including NaN and signed zero, remain unchanged. Logical operators return the
+selected operand and skip RHS effects as before; loose equality remains limited
+to statically nullish comparisons. See the pinned
+[strict equality rules](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-isstrictlyequal).
+
+`json_stringify_v8` / `json_parse_v8` retain predecessor signatures while binding
+value v8/schema v7 exactly. Serialization unwraps tag 9 into the real logical
+value and validates every traversed field, including omitted absent/undefined
+slots. Repeated aliases are permitted; cycles are rejected. Undefined record,
+array and root rules stay unchanged. The strict parser still rejects optional/
+union targets and creates ordinary required v8 records/arrays through checked
+host-free helpers. Generic mixed JSON decoding is not claimed.
+
+Profile/host/value/schema/import agreement prevents earlier runtimes from
+reinterpreting new reference cells. Legacy union intrinsics cannot be substituted
+even though their scalar signatures match. New value imports require value ABI
+metadata. Package grants, host ceilings, UTF-16 resource conversion, output and
+execution budgets remain unchanged. Tests cover aliases/mutation/identity,
+null/array/record guards, nullable nested indexing, malformed payloads/versions,
+cycles, arrays beyond 32 elements and GC pressure, public module APIs, source-free
+native execution and preserved system authority. Broader shape unions, dynamic
+objects, resizable/sparse arrays, union JSON parsing and external adapters remain
+next work; no application-specific state is added.
+
+### Checked optional/union JSON and host ABI v8
+
+`checked-f64-utf16-v5` selects **host ABI v8/value ABI v8/JSON schema v8**.
+It inherits the reference-union profile's source semantics, cell/aggregate layouts,
+GC, encoding and permissions. A new pure import
+`json_parse_v9(i32 inputPtr,i32 inputBytes,i32 schemaPtr,i32 schemaBytes)->i64`
+selects the extended schema; `json_stringify_v8` and v2 value operations are reused.
+Import/profile/schema/value agreement is checked, and old runtimes reject ABI v8.
+All earlier profiles keep their schema versions and non-union/non-optional parsing.
+Tool/HTTP adapters for these newer profiles remain pending.
+
+Schema v8 adds `undefined`, `primitiveUnion { members }`,
+`referenceUnion { members }` nodes and an optional boolean on record fields
+(default false and omitted when serialized false). Strict backward type edges,
+unique member kinds and a maximum of seven union members prevent recursive,
+nested or ambiguous schemas. The reference-union kind must agree with whether
+Record/Array members occur. Each union permits at most one Record shape and one
+Array element type; primitives retain their distinct tags. Optional fields must
+admit undefined, directly or through a union. Legacy schemas reject extended
+nodes/optional fields and retain their prior type-count ceiling; v8 allows the
+bounded union table plus the undefined node. Static memory/schema-byte limits
+still apply. Every descriptor key, slot, value kind, optional flag, version and
+count must agree with the schema before any guest helper is called.
+
+Parsing selects a union's member using the JSON token kind: object, array,
+string, finite Number, boolean or null. It never tries multiple object shapes
+or coerces a mismatched value. A bounded borrowed `serde_json::RawValue` preserves
+the token until that unique member's checked decoder consumes it, including
+duplicate-key detection and lossless UTF-16 escape decoding. Enabling the existing
+serde_json dependency's `raw_value` feature adds no new dependency. Nested token
+re-scanning is bounded by the existing input/depth limits; each logical value is
+counted once, including missing declared fields, independently of wrapper cells.
+Duplicate and unknown keys, invalid transport, non-finite numbers, wrong members,
+array overflow and input/node/depth/schema budgets still fail closed.
+
+A missing optional field becomes a checked Undefined value in its declared slot;
+its presence bit stays clear. Required fields must be present even when their
+union includes undefined. No JSON token produces Undefined. The compiler rejects
+pure undefined roots, required pure-undefined fields and pure-undefined array
+elements; optional undefined-only fields can only be absent. Complete validation
+finishes before allocation. Parsed unions create owned tag-8/tag-9 cells with the
+selected member tag/count=1/payload and exact String/Record/Array child bit. Every
+child is retained before another allocation; no numeric payload becomes a root.
+Records contain all typed slots plus the unchanged v8 presence/order trailer.
+Present keys use the existing schema-normalized JS enumeration order; absent
+slots are excluded and unused order entries are zero. Assignment to an absent
+field then appends normally. Parsed objects have fresh identity; copies of their
+references preserve aliases and mutation.
+
+Allocator/retainer signatures and host-free call graphs are independently
+validated for the new import. Failed input/schema/descriptor checks publish no
+partial tree. Execution fuel/deadline, heap/root/output limits, capability grants,
+host ceilings and pure-operation system status remain unchanged. Regression tests
+cover mixed nested arrays, optional primitive/reference/undefined-only fields,
+required union fields, lone surrogates, signed zero, alias mutation, GC pressure,
+hostile schemas/descriptors/helpers, validation before allocation, version
+substitution, public module APIs and source-free native/Wasm execution. Generic
+JSON.parse/revivers, broader shape unions, dynamic keys/prototypes, resizing and
+external adapters remain future work.
+
+### Resizable arrays and host ABI v9
+
+`checked-f64-utf16-v6` selects **host ABI v9/value ABI v9/JSON schema v9**.
+It inherits checked optional/union JSON, UTF-16 and the closed value types, and
+adds direct `array.push(...items)` and `array.pop()` intrinsics on a statically
+known/narrowed Array receiver. There is no prototype lookup or generic borrowed
+method. Arguments are checked against the exact element type, contextually boxed
+when needed, and evaluated once in source order. A temporary rooted argument
+array holds all values before the append helper runs, so an argument's nested
+push/pop completes before the outer push chooses its length/backing. Zero-argument
+push evaluates its receiver and returns the current Number length without mutation.
+Pop accepts no arguments and returns the element type joined with Undefined.
+These admitted dense-array operations follow the pinned
+[push](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.push)
+and [pop](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.pop)
+value/order rules within the explicit checked bounds.
+
+Array tag 5 now refers to a **stable 16-byte identity cell** with payload
+`[element_kind:u32, live_length:u32, storage:i64]`. Its heap kind flag is 32 and
+its child mask is exactly 1: the sole edge at payload offset 8 owns the backing.
+The backing uses array heap flag 8 and payload
+`[element_kind:u32, live_length:u32, slots:capacity*8]`; its packed byte length
+encodes capacity. Capacity is zero or a power of two, at most 1024, and never
+below the live length. Both headers carry the same kind and live length; unused
+slots are canonical zero. The backing reference bit reflects the element kind,
+including union cells, and never Number payload bits. Value v9 record descriptors
+retain fixed typed slots and the previous presence/order trailer with version 9.
+Primitive/reference cell tags 8/9 keep their payload representation, while their
+aggregate members are validated under the selected value version.
+
+Construction allocates/zeros a suitable backing, retains it, then publishes the
+identity cell. Push first checks total length <=1024, then, when needed, allocates
+a geometrically larger backing and copies live slots. Existing array/argument
+roots keep both old backings and all children alive across collection. A new
+backing is initialized completely before publication; the append and length
+updates perform no further allocation. Overflow/failed allocation changes no
+target slots or length; argument side effects have already occurred. Old backing
+blocks become reclaimable normally. Pop clears the removed slot and updates both
+lengths before returning/boxing its actual value. The value is rooted before any
+boxing allocation; a returned object retains its original identity. Capacity
+is retained after pop and reused by later pushes.
+
+GC recognizes flag 32 as exactly one edge, independent of live length, and traces
+backing slots only through their live count/reference bit. Fixed-point tracing
+handles chains/aliases without a 32-element cutoff. Index reads/writes resolve
+the current backing after evaluating operands; a nested mutation cannot leave a
+cached stale backing address. Missing reads retain real Undefined behavior.
+Indexed writes remain bounded replacements; holes, indexed extension, writable
+length, deletion, spreads, constructors, iterators and methods beyond push/pop/
+at/slice/includes/indexOf are deferred.
+The closed element types/union-shape restrictions and conservative narrowing stay.
+
+New pure imports `value_log_v3`, `value_typeof_v3`, `value_truthy_v3`,
+`value_nullish_v3`, `value_strict_equal_v3`, `value_nullish_equal_v3` and
+`value_is_array_v3` retain their v2 scalar signatures but validate value v9.
+`Vector::read` checks cell/backing flags, alignment/ranges, masks, matching kind/
+length, bounded capacity and zero spare slots without recursively reading children.
+Reference observations retain bounded shallow validation; JSON recursively checks
+all live elements with its cycle/depth/node/byte budgets using stable identities.
+`json_stringify_v9` binds value v9 and `json_parse_v10` binds schema v9; physical
+signatures are unchanged. Schemas retain v8's checked DAG/union/optional rules and
+create owned zeroed backing/cell pairs through the same validated host-free helpers.
+Old JSON/value imports cannot substitute for these operations. Metadata/profile/
+ABI agreement and launcher protocol v2 negotiation reject incompatible artifacts.
+
+Append, slice and search are typed internal Wasm helpers, making **ten** compiler
+helpers in the full dependency set. Pop and relative at reads are emitted directly; no
+system import or capability is added. Package/host permissions, status, fuel/deadline, exact roots and memory
+bounds remain enforced. Regression tests cover aliases, nested effect order,
+mutating RHS/index expressions, union/reference pop values, JSON, growth to 1024,
+zero-length calls, collection beyond 32 elements, detached returned children,
+malformed layouts/versions, public APIs, source-free artifacts and host ceilings.
+Earlier profiles retain their original inline fixed arrays. New-profile Tool/HTTP
+adapters, general sparse/dynamic arrays and full ECMAScript compatibility are pending.
+
+### Relative array access and shallow slicing
+
+The v6 profile also admits direct `array.at(index?)` and
+`array.slice(start?,end?)` intrinsics. This is an additive compiler extension:
+host/value/schema ABI v9, launcher protocol, heap flags and import signatures
+stay unchanged. Existing admitted programs and earlier profiles keep their
+semantics; earlier profiles do not gain these methods. The method bodies are
+ordinary portable Wasm over the existing managed array representation, and the
+runtime companion still validates the complete concrete payload before packaging.
+No external adapter or application-specific state is introduced.
+
+Bounds must be Number, Undefined or their closed union. An omitted bound is
+Undefined; an explicitly supplied bound, including a void expression, evaluates
+once with its ordinary effects. String/boolean/null coercion, spreads, extra
+arguments, method extraction and non-array/unnarrowed receivers are rejected.
+The semantics use the pinned
+[at algorithm](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.at)
+and [slice algorithm](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.slice)
+for the admitted dense arrays and primitive bounds.
+
+At defaults Undefined to zero, maps NaN to zero, and truncates other finite
+indices toward zero while retaining infinities. A negative relative index adds
+the current length. An outside index returns real Undefined; an inside read
+returns the original element, boxed only when the element is not already a union.
+Signed zero, UTF-16 strings, null/undefined and reference identity are preserved.
+Bounds are checked before converting to an integer or calculating a slot address.
+Numeric bracket reads retain their separate exact-index behavior: a fractional
+bracket index remains missing rather than adopting at's truncation.
+
+Slice evaluates receiver, start and end once in order, with prior operands held
+on the Wasm stack and exact roots. After all argument effects, the helper reads
+the current array length/backing. Undefined start means zero and Undefined end
+means length; numeric NaN means zero for either. Truncated relative bounds are
+clamped to [0,length], with negative indices relative to the end; the copied
+count is max(end-start,0). Infinities/extreme finite values never reach a trapping
+integer conversion. Primitive normalization has no user callbacks/coercion hooks.
+
+Every slice, including an empty one or the full range, creates fresh backing and
+identity blocks. Only selected canonical slots are copied, preserving the source
+element kind and actual reference mask. Scalar bits and member cells remain
+unchanged; object/array children are shared. Replacing/pushing/popping slots in
+one array cannot resize or replace slots in the other. Mutating an extracted
+shared child is visible through either array. New capacity follows the existing
+zero/power-of-two policy and the 1024-element bound; spare slots are zero.
+
+The source remains rooted across range copying and both allocations. The copied
+backing is complete, marked with its real element-reference bit and explicitly
+retained before identity-cell allocation can collect. The returned identity owns
+that backing before temporary roots are restored. Allocation failure publishes
+no partial result and performs no slice mutation on the source. Reclamation,
+fuel/deadline, heap/root/output limits and pure-operation system status remain
+unchanged. Regression tests cover optional union bounds, NaN/infinities/fractions,
+source order and nested mutations, empty/full fresh identity, shared references,
+UTF-16/signed zero, GC pressure, the complete helper dependency set, public module APIs,
+source-free native/Wasm execution and denied privileged argument effects.
+
+### Dense array search
+
+V6 also implements direct `includes(value?,fromIndex?)` and
+`indexOf(value?,fromIndex?)`, retaining host/value/schema ABI v9. The pinned
+[includes](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.includes)
+and [indexOf](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.indexof)
+rules supply SameValueZero versus strict equality: includes finds NaN, indexOf
+returns -1 for it, and both match positive/negative zero. Results are a canonical
+Boolean or a binary64 first index/-1. The admitted arrays are dense; holes and
+prototype lookup remain unsupported.
+
+The needle can be any supported checked value, independently of the array's
+static element type. No coercion, widening or shape cast occurs. Primitive and
+reference cells are unwrapped to actual kind/payload; kinds must match. Strings
+use the existing UTF-16 comparator, including lone units, empty strings and NULs.
+Records/arrays compare underlying identity, not shape, contents or cell identity.
+Different record/array types need no union join because no narrowed value escapes.
+Captured results and other non-value types remain rejected.
+
+Receiver, needle and starting-index expressions evaluate once in that order before
+reading the current length/backing. Omitted needle means Undefined; optional
+Number/Undefined starting bounds use the existing normalization. NaN defaults to
+zero, fractions truncate, negative offsets are relative to the end, and infinities
+are bounded before conversion. Empty/outside searches still execute arguments.
+Prior operands remain exactly rooted across later argument allocations, including
+needles detached by pop. The scan/comparator allocate nothing and invoke no host
+operation or user hook; numeric payload bits never become roots or pointers.
+
+One shared typed search helper plus the existing comparator makes a maximum of
+ten helpers. Function indices/dependencies are resolved through the emitter table;
+no new import, capability, layout or metadata version is introduced. Fuel/deadline,
+heap/root limits and system status remain enforced. Tests cover mixed primitives,
+NaN/zero, UTF-16 content, reference identity, optional bounds, argument effects,
+GC, all ten helpers, public module APIs, source-free artifacts and host ceilings.
+Earlier profiles retain their admitted operations.
+
+### Additive String.repeat operation
+
+The native-family profile (`checked-f64-utf16-v9`) and its successors also support
+`String.repeat(count?)` as a pure compiler operation. Host/value/schema versions,
+imports/exports, layouts and the ten-helper ceiling are unchanged. The admitted
+Number/Undefined rules follow the pinned
+[String.prototype.repeat algorithm](https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.repeat):
+undefined/omitted/NaN become zero, finite fractions truncate toward zero, and a
+negative normalized count or either infinity raises RangeError even for an empty
+receiver. A finite count on an empty receiver returns empty without conversion to
+an integer index. Coercive arguments, non-string/borrowed receivers and boxed
+String objects remain unsupported.
+
+Lowering records the receiver, count and typed boxed RangeError expression. Two
+hidden i32 copy slots are shared per function activation, allocated only in
+functions using repeat, and are never GC roots. Emission evaluates both operands
+once before touching these slots, so nested calls/repeats preserve their operands.
+The receiver stays exactly rooted through count side effects and allocation.
+Invalid counts use the existing guest exception channel and handler/finalizer
+unwind path, with the fixed message "Invalid string repeat count". Earlier profiles
+remain explicitly unsupported, rather than receiving malformed Error values.
+
+After count validation, an empty/zero result needs no result allocation. Other
+results check the complete UTF-16 byte length against the existing 1 MiB string
+budget before bounded integer conversion. One result block is allocated; the
+first copy comes from the immutable receiver and subsequent bulk copies double
+the filled prefix, clipping the final copy. The number of copy instructions is
+logarithmic in the repetition count and total copied bytes are linear in output.
+No call/allocation occurs during copying; the final owned packed handle is rooted
+through the usual expression path. Existing fuel charges and all resource limits
+remain fatal and bypass catch/finally. Status and capability authority are unchanged.
+Tests cover normalization/infinities, Unicode, nested operand effects, GC, maximum
+byte bounds with explicit test fuel, helper-count limits and source-free execution.
+
+### Array mutation profile and host ABI v17
+
+`checked-f64-utf16-v14` selects **host ABI v17 with unchanged value ABI v12/schema
+v12**. The new source profile freezes indexed extension and writable-length rules
+that differ from v13's checked existing-index-only writes. Sparse vector/backing,
+record, Error, closure and exception layouts, v6 value operations and the
+json_stringify_v12/json_parse_v14 boundary remain unchanged. There is no new host
+import or capability. Earlier profiles retain their rules and helper ceilings;
+launcher protocol v2 now advertises 17/12 and the new profile.
+
+For indexed assignment, receiver, numeric key and RHS evaluate once in that order.
+Each live reference is rooted through later operand effects and allocation. A key
+or RHS exception stops the requested write; prior operand side effects are not
+rolled back. Numeric-domain checks happen after RHS effects: only finite integral
+indices 0..1023 are admitted. Negative/nonintegral/nonfinite or out-of-bound writes
+fail fatally in this checked subset; arbitrary numeric own-property/coercion rules
+remain unsupported. The original receiver and key are retained even if the RHS
+reassigns their source variables. If index >= current length, resize creates holes
+through index, then the value is written and that index marked present. Current
+length/backing are resolved after RHS effects; identity/aliases remain stable.
+
+Length assignment accepts Number and also supports literal `["length"]`. Following
+the admitted numeric part of [ArraySetLength](https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-arraysetlength),
+NaN/infinities, fractions, negatives and values > 2^32-1 raise a recoverable owned
+RangeError with fixed message `Invalid array length`, before resize. Negative zero
+is accepted as zero. Valid uint32 lengths above 1024 instead exceed the existing
+resource bound and trap fatally; they are not reclassified as language errors.
+No string/boolean/null/undefined/object coercion is supplied. The receiver/RHS
+are evaluated once before validation, and both counts reflect the resulting live
+receiver state. New holes remain distinct from present Undefined.
+
+The internal host-free ArrayResize helper checks its bounded length and compares
+it with capacity. Growth beyond capacity allocates/zeros a geometric backing,
+copies live payloads and the complete bitmap, initializes flags/masks/counts and
+publishes the new backing and vector count without intervening allocation or user
+code. The old backing stays rooted through allocation. Growth within capacity only
+publishes lengths because spare data/bits are already zero. Shrink clears every
+removed payload and presence bit before reducing backing/vector counts; capacity
+is retained. Removed edges cannot retain children, while separately rooted aliases
+stay live. A reference RHS is rooted across growth before publication into the
+array. No partial allocated backing is exposed by a recoverable error. Fuel/memory
+or other fatal traps abandon execution rather than providing transactional rollback.
+
+Array-only [delete](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-delete-operator-runtime-semantics-evaluation)
+evaluates the receiver and computed numeric key once, clears a present slot/bit
+without allocation, preserves length and returns canonical true. A missing,
+negative/fractional/nonfinite or out-of-range numeric key is absent in this closed
+array model and returns true without mutation. Canonical literal index strings
+are supported; other literal names are absent. Deleting own nonconfigurable length
+(`.length` or `["length"]`) raises owned TypeError `Cannot delete array length`,
+matching module strictness. Dynamic strings, private keys, non-array properties,
+non-reference operands and general property deletion are unsupported. No inherited
+or user-defined own properties/configurability are introduced.
+
+Map/filter/forEach still use initial length and live presence; find still visits
+Undefined for missing indices. Deletion/shrink skip later visits where required,
+and later extension inside the original range is visible. Pre-predicate values
+and detached references stay rooted. Sparse JSON rendering, presence validation,
+parsing, status and package/host grants retain their contracts. Helper validation
+still rejects any reachable host import through callback/wrapper dispatch.
+
+The new helper raises the v14 internal-function ceiling to 13, while v13 keeps 12
+and preceding profiles keep 10. Source function/type/body, memory/root, fuel,
+deadline, host-call/output and array length bounds remain. Tests cover evaluation
+order, receiver/key reassignment, RHS errors, limits versus RangeError, strict
+length deletion, live callbacks, retained aliases/GC, maximum index/length,
+independent deterministic mutation models, helper purity/bounds and source-free
+module/public/CLI execution. Compound/assignment-expression forms, generalized
+keys/coercion, constructors/prototypes and additional collection APIs remain
+separate language work.
+
+### Sparse array profile and host ABI v16
+
+`checked-f64-utf16-v13` selects **host ABI v16/value ABI v12/schema v12**. It
+inherits v12 functions/closures and Array callbacks while adding explicit index
+presence. The new mandatory versions prevent older readers from reinterpreting
+backing metadata. Existing profiles keep their source, layout, helper and budget
+contracts; v12's missing-map-index trap remains frozen there. Launcher protocol
+v2 advertises the new profile and 16/12 maxima; container/manifest formats and
+capability IDs are unchanged.
+
+Array identity remains the 16-byte vector cell `[kind:u32,length:u32,backing:i64]`,
+heap flag32/mask1. The v12 backing is `[kind:u32,length:u32,payload:i64[capacity],
+presence:u8[128]]`: the original eight-byte metadata and slot offsets stay fixed,
+and a 1024-bit bitmap follows capacity slots. Bit `index % 8` in byte `index / 8`
+marks presence. Allocation flags are **1 | 8 | 1024**, distinguishing these blocks
+from old dense storage. Capacity still grows geometrically up to 1024 elements;
+zero capacity still owns the bounded bitmap. Packed backing byte length, not a
+possibly larger recycled block size, locates the bitmap. Canonical readers require
+exact layout/flags/kind/count/mask agreement, power-of-two or zero capacity,
+zero spare payloads, zero bits beyond live length and zero payloads for holes.
+Present undefined/zero/empty-string payloads remain distinct through their bits.
+
+The collector follows the existing live payload-slot range and actual element
+reference mask. Hole payloads are canonical zero and cannot retain children;
+bitmap bytes lie outside that range and are never interpreted as references.
+Growth copies existing payloads and bitmap before publishing a new backing.
+Appending copies argument presence as well as payload; spare bits/payload stay
+zero. Removed payloads and bits are cleared before reducing both lengths, and
+returned references acquire their normal temporary roots before boxing allocation.
+Indexed replacement evaluates/root operands in source order, completes the RHS,
+writes the payload and then marks presence without an intervening allocation.
+It still requires an existing index within length; indexed extension is pending.
+
+Two internal host-free helpers query/set checked presence. V13 permits at most
+12 internal helpers, while older profiles retain 10. Source hasOwn uses Number
+indices (nonfinite/fractional/negative/out-of-range values are absent) or canonical
+literal index strings. Numeric -0 selects index0; literal `"-0"` is a distinct,
+unsupported own property and is absent. The own `"length"` property is true;
+other literal names are absent in this closed-array subset. Dynamic strings,
+coercive keys and arbitrary own properties remain unsupported. Query base and
+numeric key expressions execute once before reading current presence.
+
+Sparse literals are admitted within the existing element/length bounds; all-hole
+literals require an explicit array element type. Bracket/at reads return real
+Undefined for a hole before loading/unboxing its payload. Writes within length
+fill holes. Slice preserves holes at shifted indices in a fresh vector/backing.
+Pop decrements length even for a hole, returns Undefined for absence and clears
+storage/bitmap before later allocation. Includes compares holes as Undefined,
+while indexOf skips them. These behaviors follow the admitted portions of the
+[ECMAScript indexed-collection algorithms](https://tc39.es/ecma262/2025/multipage/indexed-collections.html).
+No prototype lookups or generic array-like receivers are introduced.
+
+Map snapshots the input length after operand evaluation, allocates one final-length
+all-hole output with geometric capacity and fills only indices present at their
+turn. Absent indices are retained without invoking the callback. This removes
+v12's dense-output restriction in the new profile and avoids per-index temporary
+append arrays. Filter/forEach skip holes and find visits them as Undefined;
+pre-callback snapshots, current backing lookup, mutation/regrowth and captured
+state semantics remain. Partial output stays private until successful return.
+Source errors unwind normally, and earlier callback mutations are not rolled back.
+Resource/ABI traps and authorized exit remain fatal.
+
+Value v12 retains all preceding tags and scalar/record/Error/closure layouts,
+with v12 record descriptors. Versioned v6 value observation/equality imports and
+value_is_error_class_v2 validate v12 aggregates before observation, preserve status
+and require no new capability. json_stringify_v12 renders holes as null, counting
+them against logical traversal/depth/byte limits and validating zero hole/spare
+payloads before output. json_parse_v14 binds schema12/value12, validates the whole
+closed input/schema before allocation and builds fully present bitmaps for parsed
+arrays. JSON null never becomes absence. A round trip may require a nullable schema
+and never restores holes. Syntax/schema failures retain owned SyntaxError/TypeError;
+metadata/helper/budget failures stay fatal. The primitive/Error exception channel
+and family selector remain unchanged; arrays still cannot be thrown as values.
+Mixed older imports, profiles, values or schemas are rejected before effects.
+
+Tests cover literal/explicit-undefined distinctions, filling, callback shrinkage,
+byte/word bitmap boundaries, growth, shifted slices, pop/search, 1024-length maps,
+reference roots under collection, optional/union JSON, malformed/zero/unused bits,
+version downgrade attempts, helper effects, status/permissions, public APIs and
+source-free portable/native artifacts. V14 above adds delete, writable length and indexed extension; constructors,
+species/prototypes and generalized properties remain separate work.
+
+### Additive Array reduction and quantifiers
+
+Reduce/some/every extend the v12 closure profile and all successors through the
+same ordinary typed IR and direct function dispatch as map/filter/forEach/find.
+No new import, helper, layout, capability, exception selector, protocol or ABI
+version is required. V12 stays host v15/value/schema v11; v13 stays host v16/value/
+schema v12; v14 stays host v17/value/schema v12. Pre-v12 profiles reject them.
+
+The supported portions follow the ECMAScript 2025
+[reduce](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.reduce),
+[some](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.some)
+and [every](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.every)
+algorithms over Varta's closed arrays. Receiver, callback and optional seed
+expressions evaluate exactly once, in that order, before the wrapper snapshots
+length. Argument failures stop subsequent evaluation and never enter traversal.
+The wrapper validates the function signature and closed code identity even when
+no invocation will be needed. It reads live presence/backing at each turn, skips
+removed indices/holes and ignores appends beyond the initial range. Replacements,
+fills and regrowth inside that range are visible. There are no inherited array
+properties, getters, coercion hooks or borrowed array-like receivers in this
+subset. V12 uses current dense length; v13+ use their presence bitmap.
+
+Some/every accept a callback plus optional thisArg. Fixed callback parameters
+form a checked prefix `(element, Number index, receiver)`. Inline arrows infer
+parameters and expression results; unannotated blocks infer typed returns as
+described in the callback inference contract below.
+The shared predicate path applies checked truthiness, including reference/function
+values and void-to-Undefined, and rejects VartaResult physical pairs. Some returns
+canonical true immediately on a truthy result, otherwise false; every returns
+canonical false immediately on a falsy result, otherwise true. Empty/all-hole
+arrays produce false/true respectively, without invoking callbacks.
+
+Reduce requires one or two arguments. A seed expression determines the exact
+accumulator type U; without a seed U is the element type T. A void seed expression
+is evaluated for effects and normalized to Undefined. Explicit Undefined counts
+as a supplied seed independently of its value. Reducer signatures take an exact
+fixed parameter prefix `(U accumulator, T value, Number index, receiver)` and return
+exactly U. Inline arrows receive both parameter and return context, including
+union widening and contextual record/array returns; named/local/returned function
+values retain invariant signature checks. Seed context now comes from reducer
+annotations/signatures or a surrounding aggregate result, as specified below.
+Unconstrained/ambiguous seeds still require annotations. Generic call arguments,
+Optional/default/rest parameters are specified below; generalized function syntax
+remains unsupported.
+Typed thisArg is specified below.
+
+With a seed, every visited present entry invokes the reducer and an empty/all-hole
+array returns the seed unchanged. Without one, a separate initialization flag
+selects the first present value as accumulator without invoking the callback.
+Every later present entry receives the previous accumulator and the pre-callback
+snapshot of the current value. No present entry constructs and throws an owned
+TypeError with the fixed message `Reduce of empty array with no initial value`
+through the existing pending-exception channel. No synthetic zero, undefined or
+hole value initializes an absent accumulator. The uninitialized Wasm local is
+never read or returned on that path.
+
+Array, callback, seed and evolving accumulator use ordinary typed frame roots.
+Each current element retains its own root through callback effects, including
+removal of its source slot. Update accumulator roots only after a successful
+callback, preserving old reference operands across allocation; results transfer
+through the existing return-root contract. Records/arrays, strings, unions, Error
+objects, function values and multi-slot VartaResult accumulators retain their
+ordinary representation. Function-valued aggregates/JSON remain unsupported.
+
+Source throws and callback finalizer overrides use existing completion routing;
+no later entry runs after a pending exception. Earlier user effects persist.
+Resource/ABI traps and authorized exit remain fatal and bypass guest catch/finally.
+Pure traversal preserves system status and grants. Actual host calls still match
+both package and host grants, and helper validation follows every wrapper/dispatch
+edge to reject host effects. Wrappers consume existing user-function, semantic
+type, code-size, frame/root, fuel/deadline and memory budgets; no additional
+managed helper is introduced. Tests cover sparse mutations, source order, exact
+results/types/arity, empty/malformed callbacks, 1024 entries at default fuel,
+collection with detached operands and closure accumulators, source/fatal errors,
+helper purity, host ceilings and source-free/public engine execution.
+
+### Additive Array callback operations
+
+The v12 closure profile also implements map/filter/forEach/find as compiler
+operations under **host ABI v15/value ABI v11/schema v11**, without new host
+imports, helpers, capabilities, layouts or protocol versions. Earlier profiles
+reject these methods. They use the existing function/closure representation and
+checked direct dispatch, not a parallel callback engine.
+
+The supported traversal follows the bounded dense-array portions of the
+[ECMAScript 2025 indexed-collection algorithms](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.map),
+including the distinct [find traversal](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-findviapredicate).
+Receiver/callback expressions run once in source order. Length is snapshotted
+before the first callback; each visited value is loaded from the current backing.
+Appends outside that range are ignored. Filter/forEach skip indices removed before
+their turn. Find still visits them as undefined. Replacements/regrowth inside the
+range are visible. Filter and find snapshot the element before invoking the
+predicate; predicate mutations do not cause a second read of that slot. Returning
+references preserves the original object identity and its live contents.
+
+These methods take one callback and an optional thisArg (specified below); zero
+through three callback
+fixed parameters form a checked prefix of `(value, Number index, receiver)`.
+Optional/default/rest forms follow the parameter contract below.
+The first type is the array element type for map/filter/forEach, and the element
+union Undefined for find. This checked find annotation differs from unchecked TS
+Array declarations so removal cannot feed an unrepresented value into a callback.
+Named functions, returned functions, local values and capture-bearing arrows all
+use the same signature checks. Unused trailing arguments have no source-visible
+arguments or reflection semantics. Typed this and optional/default/rest parameters
+follow their contracts below. Inline arrows infer
+parameter types; expressions infer result types. Unannotated inline callback
+blocks now infer typed return sites, as specified below. Explicit result
+annotations remain authoritative. Generic/async,
+prototype/borrowed methods remain unsupported. Optional/default/rest forms and typed
+thisArg and function expressions are specified below.
+
+Map returns a fresh array of the callback's checked value type; declared void
+results become real Undefined entries. Function and VartaResult elements remain
+unsupported. Filter returns a fresh same-element array; predicates accept checked
+JS values through truthiness, including references and functions, but not physical
+VartaResult pairs. Find returns element|Undefined and stops after the first truthy
+predicate; no match returns canonical Undefined. ForEach discards any admitted
+result, including physical pairs/functions, and returns source undefined.
+
+Map is deliberately restricted to visits with present dense elements. If an index
+is absent at its turn, the existing checked-index trap ends execution. A shorter
+or undefined-filled result would change later callback behavior, so no such
+substitution is made. Sparse-map support requires a versioned array presence
+representation. Removal of a just-read element is supported if no later visited
+index is absent. Filter/forEach/find need no sparse output and retain their stated
+removal behavior. No species, proxy, prototype or generalized array-like-object
+semantics are claimed.
+
+Lowering emits one bounded typed wrapper per method call site, using ordinary IR
+loops, array reads/appends, shadow-rooted bindings and FunctionCall dispatch. Its
+array and callback parameters stay rooted, and a per-iteration binding retains the
+snapshotted element across predicate allocations/removal. Map return operands are
+rooted through append allocation; partial results are private until return.
+Reference backings are selected after operand effects. Every wrapper checks the
+callback handle/signature/closed code target even for empty arrays, without running
+user code. Captured environments/cells use the existing entry checks when called.
+Pending exceptions stop the loop before append/later effects and propagate through
+normal try/finally. A throwing callback's earlier mutations remain observable;
+there is no transaction or rollback. Fatal traps/limits and authorized exit bypass
+source catch/finally.
+
+Wrappers consume the existing 256 named/lifted-function budget and 65,536-byte
+body bound, including their dispatch expansion. The fixed ten managed helpers,
+128 semantic function types, 1024 array elements and ordinary memory/root/fuel/
+deadline/host-call/output limits remain in force. Pure predicate/value operations
+preserve system status while consuming their existing host-call budget where
+applicable. Actual privileged calls still require both package and host grants.
+JSON helper validation follows the wrapper and callback's direct call edges and
+still rejects reachable host imports. Tests cover source order, mutation/removal/
+regrowth, empty/maximum arrays, truthiness, types, early returns, exceptions/fatal
+limits, malformed callback objects, exact roots under collection, helper effects,
+public modules and source-free native/portable execution.
+
+### Contextual callback return and reduce seed inference
+
+This compiler-only increment applies to Array callbacks in v12 and successors.
+It changes no runtime ABI, memory representation, host registry operation,
+capability, helper count or artifact protocol. Existing artifacts retain their
+signatures and behavior. Ordinary arrows outside the Array callback context keep
+the existing Number/void default; typed function contexts and explicit return
+annotations remain exact and authoritative.
+
+For an unannotated inline map/filter/forEach/find/some/every block, lower the body
+once with deferred return checking. Its ordinary lexical scopes, guards, captures,
+side effects, generated function indices and resource accounting are resolved by
+the existing semantic path, without speculative re-lowering. Traverse only that
+body's statement IR to collect typed return sites; nested arrow functions have
+separate bodies and do not contribute. All syntactic sites contribute
+conservatively, including unreachable/overridden finalizer returns. A bare return
+or a possible normal completion adds Undefined if any value-returning site exists.
+A body without a value-returning site retains void, including throw-only callbacks.
+
+Identical types retain their exact type, including function or physical-result
+values for forEach. Differing return types use the existing closed union interner:
+primitive/reference/Error members are admitted under its limits; multiple record
+shapes, multiple array element types, function unions and VartaResult unions remain
+unsupported. Each return is widened to the chosen type through existing checked
+boxing. Bare returns become canonical Undefined; the existing completion checker
+inserts an implicit Undefined return when needed. Predicate truthiness, map value
+restrictions and forEach result discard are checked afterward without coercion or
+relaxation. Explicit reducer return types continue to use their accumulator type.
+
+Finally saved-return locals are deferred until the inferred type is known. Then
+allocate an exact typed saved slot per finalizer and enclose it in a lexical root
+scope; physical result pairs retain both slots and reference results retain their
+exact root. This preserves pending returns across allocating finalizers, finalizer
+overrides, nested finalizers, thrown values and every branch exit. Return-expression
+boxing is performed before the normal save/unwind path. No new emitter or runtime
+exception path is introduced.
+
+For reduce with a seed, contextual type U is selected in this order:
+
+1. An inline reducer's annotated first parameter, or its explicit return annotation
+   if that parameter has none.
+2. For other function values, the already resolved function signature's first
+   required parameter, or its result type for optional/rest-first or zero-parameter
+   reducers.
+3. Otherwise, an aggregate literal seed may use the surrounding expected result
+   type from variable/return/argument positions. A union result selects the matching
+   record/array member for this fallback rather than widening the accumulator.
+4. With no context, infer the seed expression as before.
+
+Lower the seed once with that expected type, recursively contextualizing nested
+arrays/records and optional fields. Require the resulting type to equal U, then
+check the callback's existing exact parameter prefix and return contract. Explicit
+callback union contexts may widen a scalar seed, but an outer wider scalar result
+alone never widens it: a number accumulator used in addition stays Number. Empty
+or all-hole arrays without context still fail; no usage-constraint solver, any,
+shape coercion or type assertion is supplied. Generic calls remain unsupported;
+typed thisArg is defined below. An unseeded reducer still uses the element type and its first-present
+initialization rule.
+
+Resolved non-inline callbacks are retained as IR operands and not lowered again.
+Runtime order remains receiver, callback, seed once each, then the length snapshot.
+Callback/seed throws stop later effects. Existing root transfer, live presence,
+function/code/type bounds, checked host effects, status and grants remain intact.
+Tests instantiate emitted Wasm and cover inferred unions/fallthrough, nested arrow
+isolation, return-slot widths and GC through finalizers, seed contexts/signatures,
+argument order, diagnostics/rejected ambiguity, older profile gates, helper purity,
+capability ceilings and source-free/public execution.
+
+### Anonymous function expressions and typed this
+
+This additive compiler increment is available in v12 and successors. Anonymous,
+synchronous, nongeneric function expressions use the existing managed function/
+environment/capture cells, pending-exception channel and direct Wasm dispatch.
+No host import/registry operation, capability, heap layout, schema, helper count,
+ABI or launcher protocol version is added. Existing compiled artifacts keep their
+meaning. Named expression/self bindings and declaration this are implemented
+below. Constructors, arguments, bind/apply, generators, async,
+function-valued aggregates and object method calls remain separate work.
+
+Function expressions accept exact function-type context and inline Array
+callback parameter prefixes. An unannotated result uses the same single-lowering
+return inference as callback blocks. Each evaluation creates a fresh identity;
+initialized outer bindings use the same shared cells and lexical restrictions
+as arrows. The implementation translates the expression's body/positional
+parameters into the common lifting input with a nonlexical-this mode, retaining
+source spans and checks. A new ordinary function boundary removes outer this;
+it must never accidentally capture the surrounding function's receiver.
+
+TypeScript's explicit this annotation is stored separately by the parser and is
+not a positional source parameter. A function-type `(this:T, value:V)=>R` has
+logical parameters `[V]`, receiver T and result R. `this:void` maps to Undefined;
+other receivers must be a checked JS value, including function values, but not a
+physical VartaResult pair. Function expressions take T from an explicit this
+annotation or expected function type; conflicting annotations fail. Reading this
+without this context, or top-level this, fails explicitly. No implicit object-method
+or thisArg-based inference is claimed. Named declarations now support an explicit
+receiver through the contract below; legacy tool/HTTP signatures stay receiver-free.
+
+This increment follows strict receiver handling: supplied primitives, Null and
+Undefined retain their exact values without global-object fallback or boxing.
+A direct function-value call supplies Undefined; a receiver contract excluding
+it is a compile-time error. Arrow functions retain lexical this through ordinary
+capture cells and transitive environments; their own typed dynamic receiver
+context is unsupported. A new function expression establishes its own boundary
+and can only read its own typed this. Shape/coercion/variance conversions are not
+introduced. Explicit receiver mode remains part of exact function-type identity.
+
+Internally a receiver-bearing user function has T as its first physical value
+parameter, before positional parameters, followed by its existing environment
+slot. This slot uses normal parameter roots/cell capture and contributes to the
+32 physical-slot ceiling; physical result pairs in positional arguments retain
+their usual width. Internal function types distinguish receiver mode even when
+two functions have identical Wasm parameter/results. Closed dispatch matches both
+that mode and the complete physical signature/result, and its checked target set
+rejects code-index substitution between `(this:Number)=>Number` and
+`(value:Number)=>Number`. No physical signature/layout changes apply to old code.
+
+Map/filter/forEach/find/some/every accept exactly one or two arguments. They lower
+receiver, callback and optional thisArg once and preserve that runtime order. The
+wrapper receives thisArg as its third parameter, roots its actual typed value and
+snapshots length only after argument effects. A typed callback receiver must
+accept that value; omitted thisArg is Undefined. Each invocation widens the rooted
+value to its checked receiver type without reevaluating the source expression.
+Arrows and functions lacking typed this ignore the supplied value but still
+evaluate its expression, even for empty arrays. Presence, initial-length bounds,
+pre-callback snapshots and short circuits remain unchanged. Reduce accepts no
+thisArg; its optional second argument stays the seed and callback this is Undefined.
+
+The checked `fn.call(thisArg, ...positional)` intrinsic evaluates the function,
+receiver and positional arguments once in order and uses the same dispatch,
+rooting and pending-exception path. Only fixed, nonspread arguments are accepted.
+Missing thisArg supplies Undefined; logical argument counts/types remain exact.
+An unused receiver is explicitly evaluated/discarded at its full physical width
+before positional arguments; its imports/effects remain visible to collection and
+helper-purity traversal. No ambient reflection or Function.prototype is exposed.
+
+Receiver, callback and later operand allocations use existing exact expression/
+frame roots. Escaped arrows retain receiver cells/graphs; nested finalizers use
+normal inferred saved-return roots. Source errors unwind and preserve prior user
+effects, while resource/ABI traps and authorized exit remain fatal. System status
+and both package/host permission checks retain their roles. Tests exercise all
+six methods, strict scalar/null/undefined/function receivers, source order and
+ignored effects, lexical/escaped capture under GC, sparse mutation/finalizers,
+malformed code identity, parameter/fuel limits, helper effects, operation/host
+ceilings and source-free/public module execution.
+
+### Named-expression self bindings and declaration receivers
+
+This additive v12+ compiler increment preserves host/value/schema versions,
+managed layouts, helpers, imports, capability rules and artifact protocols.
+Named function expressions share ordinary expression lifting, exact receiver/
+parameter types and managed captures. Their result must be known from an explicit
+return annotation or expected function context before lowering the body; no
+recursive return-type solver is introduced. Anonymous expression inference keeps
+its existing behavior. Forward capture/recursive initialization through an
+uninitialized surrounding variable remains unsupported.
+
+Create an immutable private self binding behind the function's parameter/body
+scope. It is visible only inside the expression and nested closures; parameters
+and body locals can shadow it without changing external bindings. Reserved engine
+intrinsic names retain their binding restrictions. Self resolves before a same-
+named module declaration or uninitialized outer variable. Assigning the private
+name fails statically; reassigning an external alias does not alter it.
+
+Logical function types contain only the explicit receiver and source parameters.
+A named expression appends one private Function-typed physical parameter after
+those parameters and before the existing environment parameter. Closed dispatch
+matches logical signatures without that private suffix, then passes the actual
+callee object to named-expression targets. Ordinary/anonymous/declaration targets
+receive their unchanged argument list. Self names do not create permanent roots,
+self-capturing environment cycles or another heap layout. Fresh expression identity
+is unchanged.
+
+The callee roots this incoming handle through the ordinary parameter-root path.
+Before environment/cell allocation or user effects, verify the self object's
+managed function header, semantic signature, exact code target and equality of
+its environment edge with the supplied environment. Existing environment/binding
+checks then validate the capture graph. The private name uses that exact handle;
+recursive calls therefore retain the original object and its environment. Nested
+arrows/functions capture the immutable binding through the usual managed cell,
+including escaped/transitive captures. Incoming roots protect the handle while
+captured parameter cells are allocated. Shadowing, finally, return/throw and frame
+exits use the existing ownership/completion paths. Multi-slot arguments/results
+retain both physical slots while self remains one rooted slot.
+
+The self parameter, explicit receiver and environment all count against the
+32-physical-slot ceiling. Existing 128 semantic-type, 256-function, capture count,
+body size, root-stack, memory, fuel/deadline and host-call limits remain active.
+Unbounded recursion fails fatally through those limits; source catch/finally does
+not convert it to a recoverable error. Host-free helper analysis still follows
+all closed direct-call edges, including recursive cycles and receiver calls.
+
+Top-level named declarations now accept a typed this parameter in v12+; parse it
+separately and retain it in the shared compiler signature without adding a logical
+source parameter/name. The physical receiver is first, followed by source
+parameters, with no closure-environment parameter on the declaration itself.
+References/import aliases intern the receiver-aware type and retain lazy canonical
+identity with a zero environment. Bare direct calls insert checked Undefined;
+reject contracts excluding it. Function.call and Array callbacks provide the
+normal checked explicit receiver. The declaration's this can be captured by
+returned arrows through ordinary parameter cells. Recursive declarations follow
+the same strict-this rule: use name.call(this, ...) when Undefined is excluded.
+
+Main must remain receiver-free. Earlier profiles reject declaration this, and
+Tool Contract v1/HTTP v1 reject receiver-bearing handlers rather than silently
+erasing a receiver or altering their adapters. No public tool or HTTP boundary is
+reinterpreted. Optional/default/rest parameters are implemented below. Constructors/
+method receivers, arguments, bind/apply and broader dynamic functions remain separate work.
+Tests validate recursion and private scope, alias/import identity, mixed target
+calling conventions, receivers and lexical captures, escaped roots under GC,
+physical pairs and slot limits, exceptions/finalizers/fatal recursion, forged self
+metadata/environment before effects, helper purity, permissions/host ceilings
+and public/source-free native execution.
+
+### Optional, default and rest parameter contract
+
+This additive v12+ compiler increment retains the host/value/schema/exception
+versions, managed layouts, helpers, capabilities and artifact protocol. Earlier
+profiles reject the syntax. Fixed signatures keep their physical types and
+behavior. Logical function types now track optional positions and a final rest
+mode in addition to receiver, parameter types and result. Closed dispatch requires
+those modes to match as well as the complete physical call signature, preventing
+rest/fixed code substitution even when both physically take one array handle.
+No parameter variance or implicit function-type adaptation is introduced.
+
+The source subset admits identifier parameters with `?`, identifier defaults and
+a final typed array rest parameter in declarations, arrows, anonymous/named
+expressions and function types. Defaults are implementations rather than part of
+a function-type syntax. They follow the supported portions of
+[parameter initialization](https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-functiondeclarationinstantiation)
+and [TypeScript optional/rest parameters](https://www.typescriptlang.org/docs/handbook/2/functions.html#optional-parameters).
+Arguments, overloads, unrestricted dynamic arity and generic function syntax
+remain unsupported. Bounded spread calls and parameter patterns follow the contracts below.
+
+For optional/default T, the incoming call slot admits T|Undefined using existing
+closed union layouts. Optional body bindings keep that union; a default body
+binding uses its annotated/contextual T. Defaults fire only for omission/Undefined,
+not Null, zero, false or NaN. A type context may supply an unannotated parameter
+and its optional/rest mode. Scalar literal defaults infer Number/String/Boolean/
+Null (including parentheses/negative numeric literals); other expressions require
+an annotation or context. Types outside the existing undefined-union model,
+including Function and physical VartaResult pairs, cannot be optional/default
+parameters. They remain valid required parameters in extended functions.
+
+Compute minimum arity through the last required fixed position. A default before
+a later required parameter still requires that argument position; its public
+parameter is required and undefined-capable, matching a required T|Undefined
+function-type slot. Optional `?` followed by a required parameter is rejected.
+Missing optional tail values become canonical Undefined; extra fixed-call
+arguments still fail. A rest parameter must be last and have one checked array
+type. Its tail arguments are checked/widened in order and packed into a fresh,
+fully present dense array, capped at 1024 elements; empty tails also get fresh
+identity. Rest children retain their usual reference identity. Packing occurs
+before callee entry, so its bounded allocation/resource failure cannot start
+default initializers. Source-supplied argument effects always precede defaults.
+
+Call lowering handles declarations, function values and Function.call through
+one argument normalization path. Receiver effects remain before positional
+arguments. Named self/receiver/environment slots retain their order and count
+toward physical limits; rest contributes one array slot, while required physical
+result pairs keep both slots. Logical function types distinguish required versus
+optional positions and rest versus ordinary arrays. Default implementation details
+are not a variance conversion.
+
+Extended functions reserve incoming ABI locals separately from body bindings.
+Root incoming parameter payloads before any entry/capture allocation. Declare
+all source parameter names uninitialized, then initialize them left to right.
+Earlier bindings and typed this/private self/outer bindings are visible; reading
+or capturing self/later uninitialized parameters fails statically under the
+existing checked TDZ policy. The body is lowered only afterward, keeping its
+lexical declarations out of initializer scope. Defaults lower once through the
+ordinary expression/call/exception pipeline; their values are type checked before
+publishing that parameter binding. Present values are safely narrowed/unboxed;
+optional/rest/required bindings transfer their canonical incoming payloads.
+
+Captured body parameters use ordinary managed cells created only on their
+initialization branch. Earlier cells remain live/mutable through later initializer
+closures and escaping callbacks. A lexical prologue scope clears incoming ABI
+roots after successful transfer, while body binding roots, receiver and private
+self remain intact. This avoids retaining stale argument graphs for the rest of
+the activation. Strings/records/arrays, closure graphs and required multi-slot
+results preserve their exact roots and return/finalizer ownership. Source throws
+skip later initializers and body effects; resource traps/authorized exit remain
+fatal. Pure normalization/default tests preserve system status; actual initializer
+or tail-argument host calls still require both package and host grants, and helper
+purity follows their real Wasm call edges.
+
+Array traversal supplies the actual three value/index/array arguments (four for
+reduce). A fixed prefix still ignores trailing implicit arguments. Optional extra
+positions receive Undefined/defaults; rest captures the remaining values with
+checked element types, including the heterogeneous source array if captured.
+Empty arrays still validate function metadata but do not execute defaults. Inline
+callback defaults use parameter contexts and body result inference as before.
+Reduce keeps an exact accumulator result; named optional/rest-first reducers use
+their result as seed context, avoiding an accidental Undefined widening from an
+optional accumulator parameter. Explicit inline accumulator annotations, including
+default patterns, continue to provide seed context.
+
+Main stays parameter-free and legacy Tool/HTTP entry contracts retain their exact
+required signatures. Existing type/function/code/frame/root/fuel/deadline/host-call/
+memory bounds remain active. Tests cover optional/default/required ordering,
+undefined/null distinctions, fresh rest arrays and type/capacity checks, scopes/
+captures/self/this, exceptions and fatal initialization, GC with incoming tails
+and physical pairs, mode substitution, helper purity, source diagnostics, profile
+gates, module/public APIs, host ceilings and source-free native execution.
+
+### Bounded spread-call contract
+
+V12+ accepts checked positional spreads for declarations, typed function values,
+closures and `fn.call(explicitThis, ...arrays)`. Each spread operand must be a
+narrowed checked Array(T). Empty/all-hole literals receive an element context
+when available; absence of values otherwise uses Undefined. String/general
+iterables, implicit/spread receivers, host/built-in/Array method spreads, array/
+object spread literals and arbitrary union discrimination/coercion remain outside
+this increment. Parameter patterns are supported below. Existing profile/entry contracts
+and heap/schema/host versions are unchanged.
+
+Evaluate callee, explicit receiver and all positional operand segments once in
+source order. Each array spread immediately uses the existing pure shallow slice
+helper to snapshot length, presence and elements before later operands run. Thus
+later mutation of the source cannot change already-expanded argument values;
+referenced children retain their identity and observe ordinary child mutation.
+Sparse holes consume canonical Undefined, including present Undefined entries in
+the resulting fresh dense rest array. Earlier dense profiles retain their layouts.
+Snapshot allocation/operand throws stop later operands, and fatal resource limits
+remain fatal. All source effects finish before dynamic count/type validation or
+callee initialization, unless an operand itself fails.
+
+A generated wrapper receives rooted callee/receiver/explicit operands/private
+snapshots, retaining physical widths (including required Function/VartaResult
+pairs). Validate callable metadata before expansion. Sum flattened length and
+compare against shared `abi::MAX_SPREAD_ARGUMENTS = MAX_ARRAY_ELEMENTS = 1024`;
+excess emits a fatal Wasm trap, bypassing guest catch/finally. Dynamic count below
+the last required position or above a fixed signature throws owned TypeError
+`Invalid spread argument count`. It cannot run default initializers or target
+body code. Each wrapper counts toward the 256 function and 65536-byte body limits;
+its operand segments, callee and receiver count toward the 32 physical-slot limit.
+Memory/root/fuel/deadline/host-call bounds remain unchanged.
+
+Expand snapshots into typed private fixed slots and one fresh dense rest array,
+without a heterogeneous all-arguments object. Missing optional tails initialize
+to Undefined; fixed explicit prefixes use known positions, while subsequent
+values dispatch by their dynamic position. Exact types and declared union
+widening are accepted. An Undefined-capable element may narrow to its compatible
+non-Undefined member set; absent Undefined throws TypeError if that destination
+requires a present value. Other incompatible element types throw owned TypeError
+`Invalid spread argument type`; arbitrary union tag matching is not introduced.
+Validate every supplied slot before invoking the existing bound receiver/function
+path, so neither defaults nor body effects begin on count/type errors. Supplied
+source effects precede these errors. Rest packing uses bounded preallocation and
+present writes in sparse profiles, existing bounded push in dense v12.
+
+Generated calls retain exact roots for snapshots, receiver/callee closures,
+children, fixed payloads, rest output and physical pairs across allocation,
+collection, exceptions and finalizers. Default omission tests and spread
+Undefined narrowing use pure guest union-tag checks rather than consuming one
+host operation per element. Actual operand/target host effects still require real
+package and host grants, retain status semantics and remain visible through the
+Wasm call graph to helper-purity validation. No new host import/helper/layout or
+ABI version is introduced. Tests cover default-fuel 1024-value calls in v12/v13/
+v14, sparse/default behavior, evaluation/snapshot/identity order, errors/fatal
+limits, GC/pairs, forged dispatch, helper purity, diagnostics, virtual modules,
+source-free Wasm/native launches, status, permission ceilings and authorized exit.
+
+### Parameter destructuring contract
+
+V12+ declarations, arrows, anonymous/named expressions, callbacks and typed
+function values accept recursive object/array binding patterns. Function-type
+parameters may carry matching aggregate patterns without changing the logical
+signature. Source annotations or function/callback context supply the incoming
+aggregate type; destructuring never changes call arity, optional/rest modes or
+physical receiver/self/environment/result slots. Main and legacy Tool/HTTP entries
+retain their contracts. Earlier profiles reject aggregate parameter patterns.
+
+Admit closed record object patterns with shorthand bindings, static aliases,
+string/number literal keys (including computed literals), nested defaults and a
+final identifier object rest. Array patterns admit nested bindings/defaults,
+elisions and final identifier/aggregate rest; final parameter rest can itself be
+an array pattern. Dynamic keys are rejected before lowering effects. Primitive
+boxing, strings/general iterables, array-as-object patterns, local declarations,
+assignment/catch patterns, broader prototypes and unrestricted unions remain
+outside this increment. Shared function constants bound parameter pattern depth
+to 64 and nodes (including elisions/wrappers) to 1024 per function; existing parser
+complexity, semantic type, physical slot, emitted body, frame/memory/root/fuel/
+deadline/host-call limits still apply independently.
+
+The admitted semantics follow supported portions of ECMAScript
+[BindingInitialization](https://tc39.es/ecma262/2025/multipage/syntax-directed-operations.html#sec-runtime-semantics-bindinginitialization),
+[IteratorBindingInitialization](https://tc39.es/ecma262/2025/multipage/syntax-directed-operations.html#sec-runtime-semantics-iteratorbindinginitialization)
+and [property/rest binding](https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-destructuring-binding-patterns).
+Collect all BoundNames before lowering any initializer, declare them uninitialized,
+and reject duplicate/reserved names or own/later reads/captures using real source
+spans. Reserve rooted incoming ABI slots separately whenever a pattern needs
+initialization. Initialize leaves in parameter/property/element order, updating
+the lexical binding only after its value is ready. Earlier names, initialized
+this/private self and outer bindings are visible; body declarations are not.
+Captured leaves use ordinary shared managed cells, including mutation from later
+defaults and escaping/sibling closures. Lexical scopes release only hidden
+aggregate/default temporaries and incoming roots after transfer, preserving leaf
+roots, captured cells, receiver/self and physical result-pair ownership.
+
+Top-level defaults retain their declared/contextual parameter type and trigger
+only on Undefined. Nested defaults remove Undefined from the present type and
+join admitted fallback types without Null/false/zero/NaN coercion. Aggregate
+literal defaults receive the corresponding available type context; uncontextual
+empty literals still need a type. Lower each default once; own/later references
+are rejected even on statically present paths. Pure guest Undefined/nullish tag
+tests preserve system status and do not spend host calls per binding. A nullable/
+undefined-capable aggregate is checked before unboxing; Null/Undefined throws an
+owned TypeError `Cannot destructure null or undefined`. Throws stop all later
+bindings/defaults/body effects, preserve outer finalizers, and retain existing
+fatal budget/authorized-exit behavior.
+
+Object field reads occur at each binding's position, so prior default mutation
+is observed. Missing non-inherited closed keys yield Undefined; inherited reads
+without a declared own field remain unsupported. Duplicate property keys with
+distinct bound names are permitted and re-read in source order. At object rest,
+copy the remaining typed payloads into a fresh rooted record, then transfer the
+live presence mask and filtered enumeration order through a pure bounded Wasm
+statement. No allocation/user code occurs during metadata transfer. Keep canonical
+zero unused order entries, optional flags and all 32 presence bits; absent fields
+stay absent, explicit Undefined stays present. Child objects keep their identity.
+The target owns the existing record layout and can be mutated independently.
+
+Array patterns advance a per-pattern index over live length/backing/presence;
+elisions advance without reading the value. Track exhaustion persistently: once
+done, later source growth cannot resume iteration. Each element read admits
+Undefined for holes/end-of-input; nested aggregate patterns guard that value
+before reading. At rest, capture the current remaining length, allocate a fresh
+bounded dense array and copy remaining values in order. Sparse v13+ rest types
+admit Undefined and publish holes as present Undefined entries; dense v12 retains
+the source element type. Rest has no user callbacks while copying and preserves
+child identity. No general iterator/prototype protocol is introduced.
+
+The generated prologue uses the existing checked IR, dispatch, managed heap,
+shadow roots and exception channel. Pure record metadata transfer and tag tests
+add no import/helper/layout/schema/host/exception/artifact ABI version. Actual
+default effects remain visible in Wasm helper-purity analysis and require both
+package and host grants. Tests validate actual Wasm and cover nesting/renaming/
+keys/defaults/rest, live mutation/exhaustion, type inference and callbacks,
+TDZ/scopes/cells/self/this, nullish and thrown errors, GC/result pairs, all 32 record
+bits, 1024-element rest/default callbacks, bounds/profile gates, helper purity,
+virtual modules and source-free artifacts with status/permissions/authorized exit.
+
+### Lexical closures and host ABI v15
+
+`checked-f64-utf16-v12` selects **host ABI v15/value ABI v11/schema v11**. It
+inherits v11's exact function types and APIs and adds captures of initialized
+lexical parameters, locals and catch bindings. No host import, capability or
+aggregate/JSON tag is introduced. The new host version and explicit profile bind
+the changed function layout and collector semantics; older profiles retain their
+contracts and v11 rejects captures.
+
+A captured binding is one shared managed cell per lexical activation, including
+captured parameters. Direct reads/writes in the owner and all sibling/escaped
+closures access that same cell. Identity uses the declaring function and unique
+lexical slot, so shadowed names and separate calls remain distinct. Captures are
+discovered by actual free reads/writes; nested arrows forward the same cells
+through intervening environments even when the middle body never reads them.
+At most 32 cells are captured by one arrow. Immutable const bindings stay
+immutable; referenced object/array contents retain their ordinary mutation rules.
+
+The v12 physical function body is 24 bytes: `[signature:u32, fields=2:u32,
+user-code-index:u32, reserved-zero:u32, environment:i64]`. Heap flag **128** now
+participates in tracing, with mask **2** for a nonzero environment and **0** for
+an empty one. Named references remain canonical lazy roots and have zero
+environments; arrow evaluations remain fresh identities. Environment blocks use
+flag **256**, body `[kind=0:u32, count:u32, binding-handle:i64...]`, exact lengths
+and an all-reference count-bit mask. Each binding uses flag **512**, body
+`[semantic-type-id:u32, fields:u32, payload:i64, optional-status:i64]`, with 16
+bytes for ordinary values or 24 for VartaResult pairs. Only actual reference
+payloads set bit 0; status and numeric/function/type metadata are never reference
+edges. Result status occupies a zero-extended u32 slot. Cell type IDs are a
+module-internal deterministic table of complete semantic types, including function
+signatures. No cell/environment handle is a source value or external JSON pointer.
+
+The collector traverses function → environment → binding → reference payload,
+using its existing bounded mark/fixed-point/sweep lifecycle; unreachable cycles
+are collectible. Captured numeric locals still root their cell handles. Incoming
+reference parameters are rooted before any parameter boxing; incoming capture
+cells are checked and rooted before allocations. Declaration initializers finish
+before allocating/publishing a new cell. Reassignment updates the existing cell
+only after RHS success; returned handles and retained operand roots follow the
+ordinary transfer rules. Scope/exception exits clear frame roots without erasing
+escaped cells. No guest stack address escapes into an environment.
+
+For `for (let ...)`, the first cell is created on initialization and a fresh copy
+is created at the iteration boundary before evaluating update. Continue routes
+through that boundary, after any finally body. Break/return/throw leave without
+copying. Lexical declarations in loop bodies allocate fresh cells on each entry.
+Captured catch bindings allocate a new cell before clearing the exception channel.
+This preserves identity/lifetime across repeated entries and escaped closures.
+
+Only lifted arrows in v12 take an extra hidden i64 environment parameter; named
+source functions retain their physical signatures. The total, including the
+hidden parameter, is limited to 32 physical slots. Closed direct dispatch passes
+the environment only to those targets and requires zero for named targets. Entry
+checks validate exact lengths, aligned bounded allocations, flags, masks, counts,
+reserved words and expected binding type IDs before user effects. Noncanonical
+Boolean/null/undefined payloads and status high words are rejected. Existing
+function/type/body, root, heap, fuel, deadline and host-call budgets remain fatal.
+JSON helper purity still follows direct call edges and rejects reachable host
+imports, including calls through capturing callbacks. Package/host grants remain
+the only authority for each actual privileged operation.
+
+This increment rejects capture of any binding not initialized at arrow creation,
+including self-initialization. Forward/TDZ captures require later ReferenceError
+and initialization-state semantics. It also rejects guard refinement of a mutable
+captured union, including captures discovered later after a guard: callbacks and
+loop back edges must not invalidate a previously checked type. Capturing under an
+active refinement is rejected rather than carrying a narrowed snapshot across
+mutations. Copying to a separate immutable local can establish a stable value.
+Function expressions, private self bindings and typed this are implemented above.
+Broader function syntax, function-valued records/arrays, unions/JSON/throws,
+arguments and async remain pending. Modern Tool/HTTP
+adapters remain pending. Tests cover shared/independent activations, nested
+forwarding, shadowing, loops, pairs/references, exception/finally behavior, cyclic
+GC, malformed environments/cells, bounds, hidden host effects and public/module/
+source-free artifact execution.
+
+### Typed function values and host ABI v14
+
+`checked-f64-utf16-v11` selects **host ABI v14/value ABI v11/schema v11** and
+inherits v10's recoverable checked JSON and earlier source operations. The new
+host version freezes function-value source semantics; it introduces no host import,
+capability, aggregate value tag or JSON schema node. Older profiles reject function
+values and arrows. Launcher negotiation includes the new profile and ABI maximum.
+
+Exact, invariant function types `(name:T,...)=>R` admit function-valued locals,
+assignment, parameters, returns and calls. Named module functions become stable
+objects; imported/reexported aliases of the same definition compare identical.
+Every evaluation of an arrow creates a fresh object. Expression and block arrows
+can take parameter/result context from an expected function type; otherwise
+parameters require annotations and expression results infer their actual type.
+Block results retain the existing Number/void default unless explicitly annotated.
+There is no result-discard or parameter/result variance conversion. Matching
+function types support identity equality; typeof returns `"function"`, and a
+function is truthy. Entry `main` cannot be taken as a value or called through one.
+
+Function objects use ordinary managed allocations and packed rooted i64 handles.
+Their 16-byte body is `[semantic-signature:u32, reserved-zero:u32,
+user-function-index:u32, reserved-zero:u32]`. Heap flags are allocated **1 | 128**,
+with zero child-reference mask/link. Function metadata is never traced as pointers.
+Named references are allocated lazily and cached in exact permanent root slots
+immediately after the 8-byte exception root. Their count is subtracted from the
+64 KiB root-stack capacity; arrow objects have only ordinary live-expression,
+binding and return roots and can be reclaimed. No environment or captured edge
+exists in this increment. Limits include 128 semantic function types, 256 total
+named/lifted functions, 32 physical parameter slots and 65,536 bytes per emitted
+function body. Dispatch expansion is checked against the same body bound as runtime
+validation. Existing memory/fuel/deadline/host-call limits also apply.
+
+Calling evaluates the callee once, checks its length, aligned memory/block bounds,
+allocation flags, reserved words and exact semantic signature, then evaluates each
+argument once in source order. Emission selects a direct-call branch from the
+closed set of non-main user functions with that complete semantic signature. A
+same-sized Wasm signature alone does not admit a target. Unknown code indices
+trap. Hidden physical slots preserve arguments and multi-slot captured results;
+expression roots keep live references across nested allocation. Pending guest
+exceptions are checked before using results or continuing effects; traps and
+permitted process exit bypass source catch/finally as before.
+
+No Wasm table or indirect call is introduced. Existing JSON helper validation
+therefore follows every dispatch branch with its unchanged direct call-graph
+analysis and rejects any reachable host import. Function values confer no host
+authority: each concrete privileged call still checks package and host grants.
+Malformed function cells fail fatally rather than becoming catchable source errors.
+
+Capturing outer locals, function expressions, async/generic arrows, default/rest/
+optional parameters, this/arguments and function properties/call/apply/bind are
+unsupported. Functions cannot be record fields, array elements, union members,
+JSON values or thrown values yet; explicit diagnostics preserve the existing
+value/JSON boundaries. These restrictions are frozen for v11. V12 above adds initialized lexical captures
+with explicit environments and binding ownership; Array callback APIs and promise
+scheduling follow that foundation. Modern
+Tool/HTTP adapters remain pending. Tests exercise Wasmtime execution, semantic
+signature distinctions, source order, nested/returned functions, exception/finally
+behavior, collection, malformed cells, hidden helper effects, public module APIs,
+permissions and source-free native/portable artifacts.
+
+### Recoverable checked JSON and host ABI v13
+
+`checked-f64-utf16-v10` selects **host ABI v13/value ABI v11/schema v11**. It
+inherits v9 and changes only the declared failure semantics of `varta.json.parse<T>`
+through the exclusive `json_parse_v13(i32,i32,i32,i32)->i64` import. Serialization
+retains json_stringify_v11; v5 value operations, Error layouts and the immutable
+version_v3=3 channel selector retain their meaning. Earlier profiles/imports keep
+fatal parse failures. A matching profile/import, value section and validated
+host-free allocation/retention exports are required before entry.
+
+The new decoder first validates metadata/descriptors, input ranges and UTF-16
+transport. Normalization distinguishes malformed physical byte length (fatal),
+unpaired source units outside JSON strings (SyntaxError), and raw/transcoded byte
+limits (fatal). An input-byte-bounded iterative RawValue grammar pass checks the
+entire JSON source without numeric conversion or Unicode loss. A separate bounded
+walk checks whole-input depth/node/array/string limits before schema matching,
+including data under unknown fields or a mismatched root type. Only then does the
+existing checked schema decoder run. Its typed limit side channel also counts
+synthetic optional values; no classification depends on parsing an error message.
+All parsing finishes before any decoded guest value is allocated.
+
+Malformed grammar becomes SyntaxError; grammatical JSON outside the strict closed
+schema becomes TypeError, including duplicate/unknown/missing fields, wrong kinds,
+unsupported keys and numbers outside the checked finite domain. This TypeError
+rule is specific to Varta's typed API. Syntax/type messages are fixed trusted text
+and never include source input. The additive common JsonDecodeError API separates
+syntax, type, schema and typed JsonInputLimit failures. Syntax positions in that
+UTF-8 API use the parser's line/byte-column convention; guest messages omit them.
+The previous parse_json/UTF-16 conversion APIs retain their error behavior.
+
+On a recoverable failure the host constructs only a bounded owned message, native
+Error object and reference cell through the same guest allocator/retainer. It
+checks deadline, helper results, complete cell/object data, descriptor consistency
+and a canonical empty pending/value/root channel before publication. The reserved
+root and value are set before pending=1; result length is cleared and the import
+returns an unused physical zero. The compiler checks pending immediately after
+this import, before unboxing the result or performing later argument/expression
+effects. Existing handlers/finalizers unwind it, and uncaught errors use the same
+owned typed boundary. A pre-existing pending channel is rejected rather than
+overwritten. No partially decoded user value is published on input failure.
+
+All size/traversal budgets, fuel/deadline, host/output/root/memory exhaustion,
+metadata/ABI/channel corruption, allocator/retainer failures, index traps and
+authorized exit remain fatal and bypass catch/finally. Post-decode checks also
+cover scalar results. Pure decoding/recovery preserves system status, requires no
+new capability and cannot expand concrete resource grants or a host ceiling.
+General dynamic JSON.parse, serializer error conversion, other language/API
+errors and newer-profile Tool/HTTP adapters remain pending.
+
+### Native error families and host ABI v12
+
+`checked-f64-utf16-v9` selects **host ABI v12/value ABI v11/schema v11** and adds
+the closed built-in TypeError, RangeError and SyntaxError families. Constructors
+with/without new preserve single argument evaluation, checked string/undefined
+messages, fresh identity, inherited immutable names and own non-enumerable message
+presence. Instanceof Error accepts every supported error; a specific family guard
+accepts only that family. The supported class/name/inheritance rules follow the
+pinned [native-error algorithms](https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-native-error-types-used-in-this-standard).
+Prototype editing and arbitrary subclasses are not implemented.
+
+The 16-byte Error layout and tag 10 remain, with a versioned flags word at offset
+0: bit 0 is own-message presence; bits above it encode a closed ErrorClass
+(0 Error, 1 TypeError, 2 RangeError, 3 SyntaxError). Unknown codes are rejected.
+Count 1, exact heap flags/mask and the message slot at offset 8 retain their
+meaning. V10 readers continue to accept only class 0; v11 readers validate the
+class before observation. Collector edges are unchanged. Name/toString source
+operations read the object class, including through a boxed error union, once.
+Object.hasOwn masks only the presence bit. JSON validates the full object/message
+and emits `{}` for every admitted family.
+
+In v9, the source Error annotation expands to a closed union of all four nominal
+classes. A specific native annotation remains one class. Widening/closed unions
+preserve membership, sibling parameters reject mismatches, and direct-local guards
+partition the members. All family members use the same physical Error tag; their
+brand is in the validated object header, not a name/message lookalike record.
+Pure `value_*_v5` imports use value v11; `value_is_error_class(i64,i32)->i32`
+validates both the cell/object and class argument (0 means the Error base guard).
+Earlier operation variants are rejected under v9. `json_stringify_v11` and
+`json_parse_v12` select value/schema v11; schemas still cannot construct errors.
+
+The channel selector is immutable i32 `varta.exception.version_v3=3`, replacing
+v8's `varta.exception.version=2`. Each profile requires its own selector and rejects
+the other, and initialization validates the value before guest effects. This
+binds final boundary decoding to the declared representation. Base Error keeps
+the existing owned ThrownValue::Error shape; native families return the additive
+ThrownValue::NativeError { class, message, has_message }. Full UTF-16 survives
+store disposal and bounded escaped diagnostics include the correct class name.
+Calls, arrays/records, catch/rethrow, finalizer overrides and GC preserve identity,
+roots and class. No capability, fatal-trap conversion or native EH feature is
+added. Automatic language/API exceptions, remaining native families, cause/options,
+writable error properties, custom subclasses/prototypes and stack traces remain
+future work; new-profile Tool/HTTP adapters remain pending.
+
+### Nominal Error objects and host ABI v11
+
+`checked-f64-utf16-v8` selects **host ABI v11/value ABI v10/schema v10**. It inherits
+v7 and adds a nominal `Error` type, `Error(message?)`/`new Error(message?)`, direct
+local `instanceof Error` narrowing, immutable `name`/`message` reads and `toString()`.
+The unshadowed constructor accepts zero or one string/undefined argument (or their
+union), once, without coercion. Each call creates a distinct reference. Default
+name is inherited `"Error"`; omitted/undefined message has no own property and
+reads as empty, while an explicit string, including empty, is own/non-enumerable.
+Object.hasOwn accepts literal keys on Error; JSON.stringify validates its message
+but emits `{}`. The admitted constructor/presence/toString rules follow the pinned
+[ECMAScript Error algorithms](https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-error-constructor).
+Mutation, cause/options, native error families/subclasses, stack traces, dynamic
+properties, prototype editing and arbitrary message coercion remain unsupported.
+
+Value tag **Error = 10** is admitted only in value v10. Its packed i64 handle
+points to a **16-byte** managed object with exact allocated/Error heap flags
+(Error flag **64**), child mask 1, own-message flag 0/1, count 1 and an eight-byte
+UTF-16 message handle at offset 8. An absent message requires canonical zero.
+The collector traces the message using the same bounded fixed-point pass as other
+values. Error participates in exact roots, arrays, records, optional/reference
+unions, strict identity equality, typeof object and truthiness. Plain records
+with name/message fields remain records and never pass instanceof Error. Reference
+cell readers validate the Error header, mask, lengths, message range and flags;
+old primitive/reference readers reject its tag.
+
+The pending/value/root channel remains, but v8 additionally requires an immutable
+i32 `varta.exception.version` export equal to **2**, checked before guest effects.
+V7 rejects this extra export and keeps primitive-only catches. V8 catches the five
+primitive kinds plus Error; aggregate throws remain unsupported. Existing finalizer
+completion routing saves Error cells/returns with exact roots. Uncaught Error
+values are copied to `ThrownValue::Error { message, has_message }`; full UTF-16
+units survive store disposal, while display bounds and escapes diagnostic text.
+
+Pure **v4 value operations** (`value_*_v4`) and `value_is_error` validate value
+v10 before observation and preserve system status. `json_stringify_v10` validates
+v10 descriptors/children, including hidden Error messages. `json_parse_v11` accepts
+schema v10 with the preceding closed optional/union rules and v10 descriptors;
+no JSON schema node can manufacture Error. Resizable array readers select the
+value version explicitly, so Error elements cannot enter v9 observers. All older
+profiles/imports/layouts retain their meaning. These operations add no capability;
+fatal execution budgets, checked JSON/index traps and authorized exit remain
+outside catch/finally. New-profile Tool/HTTP adapters remain pending.
+
+### Primitive guest exceptions and host ABI v10
+
+`checked-f64-utf16-v7` selects **host ABI v10/value ABI v9/schema v9**, inherits
+v6's values/arrays/JSON and adds explicit `throw`/`try/catch/finally` across named calls.
+This is the first K4.3 language increment. Throws accept the five checked primitive
+kinds (Number, boolean, string, null, undefined), including closed primitive unions.
+Every catch binding has their canonical union and requires ordinary guard narrowing
+before type-specific operations. Omitted bindings, lexical shadowing, nesting,
+rethrow and ordinary return/break/continue are supported. Error objects,
+aggregate/unknown throws, catch type annotations/destructuring and stack traces
+remain pending. The admitted completion/scope rules follow the pinned
+[throw](https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-throw-statement)
+and [try/catch](https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-try-statement)
+algorithms, without claiming general exception compatibility.
+
+The channel uses two mutable global exports:
+`varta.exception.pending:i32` and `varta.exception.value:i64`. Pending is 0/1;
+value is a canonical managed primitive-cell handle, never the raw numeric payload.
+A fixed eight-byte root at the beginning of the existing shadow-root region holds
+the same handle during propagation. The root cursor starts after this reservation;
+it reduces the available root stack by eight bytes. Value ABI metadata v9, both
+typed globals and exported 32-bit memory covering the reservation are mandatory.
+Unexpected exception-prefixed exports in other profiles, missing/wrong globals,
+missing value metadata and mismatched profile/ABI fail before entry. Native Wasm
+start sections are rejected for v7; initial flag/value/root must be zero before
+`_start`, so initialization cannot execute guest code ahead of channel checks.
+The heap/cell/record/array layouts and JSON/value imports remain unchanged.
+
+Throw evaluates its expression once and widens to the primitive union. It publishes
+the cell in the global and reserved root, then marks it pending. Every generated
+named-call site checks pending immediately, before completing its expression or
+executing later effects. A function without a local handler restores its frame
+and returns physical zero placeholders; its caller dispatches the pending value
+before observing them. Physical function signatures, including captured-result
+pairs, remain typed. The global root keeps the actual String child live across
+all frame unwinds; numeric member bits are never traced.
+
+A handler saves the temporary-root cursor at try entry. Exception dispatch clears
+abandoned lexical roots, restores that cursor and branches to the nearest active
+handler. Landing stores/root-registers the catch binding before clearing pending,
+value and the reserved root. The catch's own throws target the outer handler.
+Normal completion bypasses the catch. Deferred branch resolution uses the complete
+emitted control stack, including expression-level conditionals/logical operators
+and switch tests, to discard incomplete operand stacks correctly. Handler scope
+cleanup and ordinary control transfers retain exact roots and source order.
+The channel is private per instance and adds no host operation or capability.
+
+Finally is an additive compiler operation under the same v7/ABI v10 contract;
+it changes no imports, exported globals or heap layouts. Each protected region
+has one emitted finalizer, hidden completion/cursor locals, a rooted saved primitive
+exception and a typed saved return value (including both captured-result slots).
+Normal flow and return/break/continue leaving the region route to that finalizer.
+Branches within an enclosed loop/switch stay within the protected body. The
+exception landing saves and roots the pending cell before clearing the global
+channel, allowing calls and local catches inside the finalizer to run normally.
+Normal finalizer completion restores the saved completion; abrupt finalizer
+completion replaces it. Its own catch/finalizer are already inactive, so new throws
+reach outer handlers and new completions traverse only remaining outer finalizers.
+Scope exits clear abandoned roots and restore the temporary cursor before finalizer
+execution. Saved return references retain identity, exact bits/code units and
+their original evaluation time. Static completion analysis accounts for a finalizer
+break/continue overriding a return when checking value-returning functions.
+
+After a normal `_start` return, the runtime checks canonical flag/value/root state.
+A pending cell is validated by PrimitiveBox and copied into owned `ThrownValue`:
+binary64 bits, boolean, UTF-16 units, null or undefined. `RuntimeError::Uncaught`
+contains that value after the instance/store are gone. Error display escapes JSON
+string text and truncates to 256 code units; the owned API value remains complete.
+Corrupt channels/cells fail as value-ABI errors. This is distinct from recoverable
+host status, which is not reset or automatically thrown by guest exception logic.
+
+Fuel/deadline, memory/root/output/host-call limits, invalid JSON/index traps and
+authorized process exit abort through the existing execution path. They cannot be
+caught by this guest channel and do not execute finally. No native EH/GC feature or dependency is enabled.
+Tool/HTTP adapters for newer profiles remain pending, so their legacy boundaries
+are not reinterpreted. Tests cover cross-module calls, interrupted expressions and
+captured-result pairs, nesting/rethrow/scopes/loops/returns, all primitive values,
+GC and repeated catches, malformed initial/final state and exports, fatal limits,
+public APIs, source-free artifacts and host-policy/exit behavior.
+
+### Structured values and JSON
+
+The original i32 profile uses structured-value ABI v1/v2. The binary64 profile
+uses **v3**, with unchanged eight-byte payload slots and heap ownership metadata
+and a new `Float64 = 6` tag. Field/element payloads are raw IEEE-754 bits, using
+Wasm reinterpret instructions on store/load. Reference masks and array reference
+flags exclude numbers, including NaNs and bit patterns resembling pointers.
+Record descriptors carry version 3; arrays carry their element tag. The module's
+`varta.values` section binds this layout to the binary64 profile. Legacy descriptors
+and imports cannot interpret the new tag; v3 cannot reinterpret the legacy i32 tag.
+`inspect` reports the module's actual `valueAbiVersion` separately from host ABI.
+
+Object identity, source evaluation order, field mutation, dense homogeneous arrays,
+nested references and exact root lifetimes are retained. Binary64 `.length` widens
+the exact count to f64. Subscript conversion checks finite/integral/nonnegative
+values below the element budget before converting to i32; the existing address
+helper then checks actual length. Fractional, NaN, infinite, negative and excessive
+indices trap before load/store, and -0 indexes element 0. Fixed lengths, no holes
+and trapping out-of-range access remain the checked profile's explicit restrictions.
+
+Host ABI v2 adds versioned value imports:
+
+| Import | Physical signature | Contract |
+| --- | --- | --- |
+| `json_stringify_v3` | `(i32 kind,i32 low,i32 high) -> i32 ptr` | Value ABI v3; bounded UTF-8 text transferred through existing result buffer and immediate owned snapshot |
+| `json_parse_v3` | `(i32 ptr,i32 bytes,i32 schema_ptr,i32 schema_bytes) -> i64 payload` | Schema v2; complete validated scalar bits or owned reference handle, without splitting Number bits through an i32 return |
+
+Both are pure, capability-free, host-call-budgeted operations that preserve system
+status. The result-length global is cleared by v3 parsing; its full result is in
+the i64 slot, reinterpreted to f64 for a Number or kept as an owned reference.
+Legacy JSON signatures and return/global conventions remain unchanged.
+
+Binary64 serialization uses exact-pinned
+[ryu-js 1.0.3](https://docs.rs/ryu-js/1.0.3/ryu_js/) for ECMAScript finite Number
+text, including decimal/exponent thresholds and shortest round-trip digits. This
+dependency avoids a custom numeric-formatting algorithm. Negative zero emits `0`;
+NaN and either infinity emit `null`, including inside aggregates. Existing UTF-8,
+cycle, shape/range, depth/node and encoded-output limits still apply. See the
+[pinned JSON algorithms](https://tc39.es/ecma262/2025/multipage/structured-data.html#sec-json.stringify).
+These serialization rules are distinct from diagnostic `log_f64` formatting.
+
+`varta.json.parse<T>` in this profile compiles **schema v2**, with `float64`
+numeric nodes and no legacy `i32` nodes. It accepts finite JSON decimals/exponents,
+rounds Number input to binary64 and preserves -0/subnormals. serde_json's existing
+parser is built with `float_roundtrip` for correct decimal conversion. Overflowing
+numbers (for example 1e400), NaN/Infinity tokens, duplicate/unknown/missing fields,
+type mismatches and resource violations fail. This intentionally strict finite
+schema API is not unrestricted ECMAScript `JSON.parse`. Schema v1 retains exact
+i32 notation/range requirements. Descriptor version, field tags and canonical
+slots must agree with the selected schema before and after transfer.
+
+Complete input validation precedes allocation. V3 reuses the validated host-free
+allocate/retain exports, helper-signature/effect checks, owned construction and
+root/deadline/fuel rules below. Invalid descriptors/schemas expose no partial
+guest result. Tests cover high-bit Number returns, formatting boundaries, aliases,
+mutations, parsed allocation, collection beyond 32 array entries, invalid indices,
+mixed versions, hidden host calls in helpers and source-free native artifacts.
+
+Launcher protocol v2 advertises supported host/value ABI maxima (currently 17/12);
+its profile list and actual offline payload probe determine compatibility. Update
+CLI and companion together. Container/manifest formats and existing i32 programs
+retain their meaning; old scalar-only runtimes reject v3 metadata/new imports.
+
+Both checked numeric profiles support closed object literals with primitive/null
+and nested record/array fields. Inline types such as `{count:number;meta:{ok:boolean}}`
+are structural: field names/types determine the shape, independent of declaration
+order. Assignment, arguments and results require exactly the same shape. Locals
+infer shapes; parameters and object-returning functions need inline annotations.
+Named aliases/interfaces remain erased and cannot supply object annotations yet.
+The default profile retains i32 number and valid UTF-8 string semantics; it does not
+silently redefine old scalars as the future binary64/UTF-16 JS profile.
+
+Objects have identity. Copies, parameters, returns and nested fields retain the
+same reference, and `===`/`!==` (also `==`/`!=` within this exact-type subset)
+compare identity. `const` prevents rebinding but permits typed field mutation.
+Field selection and assignment evaluate the base once; assignment evaluates the
+RHS afterwards. Dot access and literal string/integer bracket access are supported.
+Object fields use identifier/string/unsigned integer keys or shorthand bindings.
+Initializer expressions run once in source order. Enumeration puts canonical
+array-index keys first in numeric order, then other keys in creation order; type
+annotation order does not change enumeration.
+
+There are at most 32 fields per record, 128 structural shapes across the module
+graph and 256 UTF-8 bytes per key. In this original profile, missing/new fields, optional/readonly fields,
+dynamic/computed keys, spreads, methods/getters/setters, `__proto__`, deletion,
+prototypes and general implicit coercion fail explicitly. `undefined` requires the
+separate v2 binary64 profile; the later UTF-16 v3 profile above supplies checked optional/missing values.
+`null` is a distinct supported value, rather than a missing-field marker.
+`VartaResult<T>` remains a distinct immutable two-slot type, not a record field.
+
+`JSON.stringify(value)` accepts exactly one supported value and returns compact
+JSON text. It preserves nesting, key order, scalar values, Unicode and escaping;
+a record becomes an ordinary JSON object, with no tool envelope. Serialization
+needs no capability, consumes one host call, and preserves `result_status`.
+Its result uses the bounded host buffer and is immediately snapshotted/rooted in
+the managed heap. Checked parsing is described below; general `JSON.parse`,
+`toJSON`, replacers and indentation remain pending.
+The encoded output is capped at 1 MiB, including escapes; depth is at most 64 and
+traversal visits at most 4096 values (including repeated aliases). Cycles, malformed
+memory and limit failures trap without publishing a partial result. Saved host
+results remain valid. Pure serialization cannot be captured as a system call.
+
+New modules constructing records/arrays or importing serialization advertise
+exactly one `varta.values` custom section containing little-endian u32 version 2.
+The runtime accepts versions 1 and 2, preserving v1 scalar/record interpretations;
+older runtimes reject v2 instead of silently interpreting the new array kind.
+Duplicate, malformed and unsupported versions fail validation. This section is required for
+`varta.json_stringify(i32 kind,i32 low,i32 high)->i32 result_ptr`. Value tags are
+0 null, 1 canonical sign-extended i32, 2 boolean 0/1, 3 packed UTF-8 slice and
+4 packed record and (since v2) 5 packed array. The low/high words carry one u64. Null is zero. This versioned
+extension leaves host ABI v1 and primitive Tool Contract v1 interpretation intact;
+new scalar profiles or structured tool parameters/results require explicit migration.
+
+Record handles are i64, with the payload pointer in low32 and payload byte length
+in high32, referencing the same nonmoving heap as strings. A record's 16-byte
+block header uses allocated bit 1, mark bit 2 and record bit 4; the link word at
+offset 8 holds a reference-field bitmask while allocated, or the next pointer
+while free. Payload is `[descriptor_ptr:u32,field_count:u32]` followed by 8-byte
+canonical field slots. Static descriptors contain `[version:u32,count:u32]` (version 1 or 2) and
+16-byte entries `[key_ptr,key_bytes,slot,value_kind]` in enumeration order.
+Canonical slots are sorted by field name; descriptors preserve each literal's
+creation order separately. Keys/descriptors share the checked 64 KiB static pool.
+The serializer validates every header/range/length/tag, static descriptor/key,
+slot uniqueness and duplicate key before reading values. It accepts no native
+pointers, code hooks or additional authority.
+
+The collector marks exact roots, then iteratively traces reference masks on
+marked records and all reference elements of marked arrays to a fixed point
+before sweeping. It follows nested objects, arrays and owned strings, skips static slices, preserves record kind/mask on live blocks and
+allocates nothing during tracing. Scans consume guest fuel. Binding and temporary
+roots protect aliases, function returns, literal operands and assignment bases
+across allocation; replaced edges can be collected once no other root retains
+them. Memory, root-stack, per-string and execution limits remain shared.
+
+### Dense arrays
+
+Arrays use homogeneous exact element types: `number[]`, `Array<string>`,
+`{text:string}[]`, `number[][]` and equivalent nested forms. Literals infer from
+their elements; empty literals need context from a binding, parameter, return or
+containing typed field/array. Mixed types, void/captured results, tuples, readonly
+arrays and sparse/spread literals fail explicitly. The built-in `Array` type cannot
+be redeclared. Existing source/AST complexity limits still apply independently
+of the per-array element limit; wide flat literals do not count as deep expression
+chains, and each element retains its expression-chain budget.
+
+The first profile supports at most 1024 elements per array and 128 interned array
+element types across the source graph. Array length is determined at construction.
+`.length` reads it; assigning length, push/pop, arbitrary properties, deletion,
+resizing, constructors and iterators are not implemented. Numeric i32 indices can
+be computed at runtime; negative, empty or out-of-range access traps. This differs
+from general JavaScript, where a missing element may be `undefined` and a write
+may extend the array. String indices/coercion and holes are explicitly unsupported.
+These restrictions are a stage of the runtime's compatibility profile.
+
+Literals evaluate each element once in source order. Indexed reads evaluate base
+then index. Writes evaluate base, index and RHS once in that order, then check the
+index and store; an invalid write runs its RHS but writes no array element. Bounds
+checks precede address arithmetic. Copies/arguments/returns preserve identity,
+`const` permits element replacement and exact-type equality compares references.
+Nested arrays/records and mutable aliases retain ordinary shared references.
+`JSON.stringify` produces ordinary JSON arrays and shares cycle/depth/node/encoded
+byte limits with records; it preserves the last system status and grants no access.
+Primitive Tool Contract v1 signatures still reject arrays and objects.
+
+A packed i64 handle carries payload pointer/byte length, as for records. Array
+blocks use allocated bit 1, mark bit 2 and array bit 8. The allocated link word is
+0 for scalar elements or 1 for reference elements; it is not a 32-element mask.
+Payload is `[element_kind:u32,length:u32]` followed by 8-byte canonical slots.
+The serializer validates the block, exact payload size, count, element kind (even
+for empty arrays), every value and recursion budgets. The collector follows all
+reference slots, preserves kind/link metadata on live blocks and reuses dead
+storage. Mixed array/record graphs share exact binding/temporary roots and the
+same bounded heap; strings and returned JSON remain snapshotted and immutable.
+No system import or capability was added; array indexing uses one typed internal
+Wasm helper within the seven-helper ceiling.
+
+### Checked JSON parsing
+
+`varta.json.parse<T>(text)` requires exactly one explicit supported type argument
+and one string. The compiler derives the schema from primitive/null, inline record
+and dense-array types, including nested combinations. It checks the actual runtime
+JSON against this schema. It supports the same closed shapes and exact i32/UTF-8
+profile as literals; `any`, void, VartaResult, optional/readonly fields, unions,
+tuples, named object aliases and arbitrary generic types remain unsupported.
+
+Input must contain one complete JSON value, with no trailing data. Every declared
+record field is required, unknown fields fail and duplicate keys are rejected
+after JSON escape decoding. Types do not coerce. Numbers must use plain signed i32
+integer notation; fractions, decimal/exponent forms, negative zero and values
+outside i32 range fail instead of rounding or truncating. Invalid UTF-8 and lone
+escaped surrogates fail. Encoded input (including whitespace/escapes) is capped at
+64 KiB, depth at 64, visited values at 4096 and each array at 1024 elements.
+
+The checked extension **normalizes object enumeration to schema order**: canonical
+integer-index keys first, then other field names in UTF-8 byte order,
+independent of input key order. Arrays retain their element order. Parsed values
+have ordinary identity, aliases, mutation and collection behavior. Each decoded
+object/array is freshly allocated; scalar strings are immutable owned slices.
+Dynamic ECMAScript JSON.parse, revivers and general exception handling remain
+pending. This API is deliberately schema-driven and has no unchecked cast mode.
+
+Complete syntax/type/field/limit validation precedes the first guest allocation.
+Failure traps with a `checked JSON` diagnostic and publishes no partial value.
+Named invocation maps this to `execution_failed`; its fresh-store behavior lets
+subsequent calls run independently. Invalid outer tool arguments still fail at the
+existing invocation boundary before instantiation. Parsing is pure, requires no
+capability and preserves `result_status`; it cannot be captured as a privileged
+system call. A future recoverable parse-result API needs a separate value/error
+contract rather than fabricating a successful fallback record.
+
+The compiler embeds a version-1 `varta_common::json::JsonSchema` as bounded JSON
+in the shared 64 KiB static pool, alongside strings and record descriptors. It
+contains `version`, `root` and a flat `types` table. Types describe null, i32,
+boolean, string, record (`descriptor`, sorted `fields` with `name`/`ty`) or array
+(`element` type index). At most 260 type nodes are permitted; child indices must
+strictly precede their parent, making cycles/forward references invalid without
+recursive schema validation. Duplicate/unknown schema members, unsupported
+versions, invalid roots, field ordering/count/key sizes and excessive depth fail.
+The runtime also verifies every static record descriptor's version/count,
+slot permutation, field name and physical value kind against the checked schema.
+Schema bytes cannot supply native pointers or system authority.
+
+The registered import is
+`varta.json_parse(i32 input_ptr,i32 input_bytes,i32 schema_ptr,i32 schema_bytes)->i32`.
+It requires exported bounded ABI memory, mutable result globals, exactly one host
+ABI section, structured-value ABI metadata and no Wasm start function. A compiled
+parser module exports `varta.value_abi.allocate(i32 bytes)->i32 payload_ptr` and
+`varta.value_abi.retain(i64 handle)->i64 handle`. Both must be guest functions with
+the exact signatures and no transitive host imports or indirect calls, including
+when there is no tool catalog. Unknown/unused reserved value-ABI exports fail.
+The runtime validates allocation alignment, header flags, sizes and memory ranges,
+and requires retention to preserve the handle before accepting it.
+
+After validation, the host owns the checked input tree before any callback can
+grow Wasm memory. It builds children first through the guest allocator and retains
+each child before allocating its parent. The same fuel, memory, root-stack and
+deadline limits apply; parsing consumes one host call. Parent record reference
+masks and array element metadata use the existing collector contract. No separate
+host bump heap or borrowed result-buffer references are published. The import
+returns the low 32 value bits; reference byte length goes in `env_result_len` and
+scalar success sets it to zero. Compiler expression roots discard temporary roots and retain the resulting
+owned value with no intervening allocation.
+Existing scalar/record/array layouts, host ABI v1, tool v1 and artifact versions
+retain their interpretation; old runtimes reject the unknown new import.
 
 ### String values and ownership
+
+This section describes the frozen UTF-8 profiles. The UTF-16 profile uses the
+same handle/ownership/collector machinery with the encoding-specific imports
+and even byte lengths specified above.
 
 A string is an immutable UTF-8 slice represented internally as one i64: the high
 32 bits hold byte length, and the low 32 bits hold its memory pointer. User
@@ -121,6 +2309,9 @@ UTF-8 checks and operation/resource authorization. A string value conveys no
 authority. No new host import, capability, manifest or artifact version is needed.
 
 ### String operators
+
+The byte-level implementation below is for UTF-8 profiles; UTF-16 storage and
+direct code-unit comparison are defined in the ABI v4 section above.
 
 `string + string` concatenates UTF-8 content into a new immutable slice. Both
 operands are evaluated exactly once, left to right, including nested user/host
@@ -161,8 +2352,8 @@ authorization and input checks.
 
 ### String memory reclamation
 
-The compiler maintains exact string roots in a bounded shadow stack. A function
-frame reserves one root slot for each string or `VartaResult<string>` binding,
+The compiler maintains exact reference roots in a bounded shadow stack. A function
+frame reserves one root slot for each string, record, array or `VartaResult<string>` binding,
 including parameters. Assignments replace that slot; aliases retain independent
 slots. Lexical scope exit clears its bindings, including exits through `break`
 and `continue`. Function return removes the frame after evaluating its return
@@ -171,26 +2362,26 @@ even if its last source use was earlier; there is no last-use optimization yet.
 
 Expression roots protect evaluated operands and call arguments while later
 operands or nested calls allocate. Each expression restores its temporary-root
-mark and roots its resulting string payload; complete expression statements and
+mark and roots its resulting reference payload; complete expression statements and
 assignments remove consumed temporaries. Callee parameters are rooted before any
 allocation. Return transfer has no intervening allocation between removing the
-callee frame and rooting the caller's result. Numeric/boolean values and result
+callee frame and rooting the caller's result. Numeric/boolean/null values and result
 statuses are never mistaken for pointers. Static literals and empty strings do
 not require heap marking. `VartaResult<string>` roots only its immutable payload.
 
 Allocated blocks have a 16-byte header and 8-byte alignment. Allocation first
 searches the free list and splits sufficiently large blocks. If appending would
 grow committed memory, it runs one mark/sweep pass: mark blocks referenced by the
-active roots, free unmarked blocks, coalesce adjacent free blocks, and trim a
+active roots and transitive record/array edges, free unmarked blocks, coalesce adjacent free blocks, and trim a
 free trailing run from the logical heap. Allocation retries before requesting
 additional pages. The collector neither moves live data nor changes host status;
 all scans, free-list traversal and zeroing use guest fuel. Live data, allocation
 metadata or fragmentation can still exhaust memory; no compaction is implemented.
 
 The root stack is 64 KiB (8192 packed slice slots) across active frames and
-temporaries. A function whose fixed string frame exceeds that bound is rejected
+temporaries. A function whose fixed reference frame exceeds that bound is rejected
 with a source diagnostic. Dynamic frame/temporary overflow traps before writing
-past the root region. Programs requiring owned strings initially commit 18 Wasm
+past the root region. Programs requiring owned strings, records or arrays initially commit 18 Wasm
 pages for static data, host buffer and roots; literal/comparison-only programs
 retain the one-page minimum. Actual heap blocks grow memory on demand. Freed
 blocks are reused during the run, while committed Wasm pages retain their
@@ -455,9 +2646,9 @@ no handwritten request-line/header construction.
 The entry module may explicitly publish an exported named function:
 
 ```ts
-export function previewTitle(nextTitle: string): string { return nextTitle + "!"; }
+export function echo(value: string): string { return value; }
 export function main(): void {}
-varta.tool({ name: "document.previewTitle", description: "Preview a title" }, previewTitle);
+varta.tool({ name: "text.echo", description: "Return supplied text" }, echo);
 ```
 
 `varta.tool` is a compile-time form, accepted only as a direct top-level call in
@@ -610,6 +2801,102 @@ Already-performed authorized host effects are not rolled back. Each call has its
 own budgets; shared state, atomic application commits and aggregate queue/accounting
 are not part of this dispatcher milestone.
 
+## HTTP service v1
+
+The compiler recognizes exactly one entry-module top-level
+`varta.http.serve({hostname:"127.0.0.1",port:8080}, handler)` declaration. Options
+must be literal IP and u16 port values, with no unknown/duplicate fields; DNS
+hostnames and dynamic registration are not part of this profile. The named handler
+may be local or imported and has signature
+`(VartaHttpRequest) => VartaHttpResponse`. It need not be an exported source
+function or AI tool. Entry `main():void` still performs bounded bootstrap; a
+controlled exit from main skips service startup. Registration does not execute at
+source top level and adds no application routes/models to the engine.
+
+The built-in structural transport types are:
+
+```ts
+interface VartaHttpHeader { name: string; value: string }
+interface VartaHttpRequest {
+  method: string; target: string; body: string; headers: VartaHttpHeader[];
+}
+interface VartaHttpResponse {
+  status: number; body: string; headers: VartaHttpHeader[];
+}
+```
+
+The request target retains path/query syntax; no route normalization, decoding or
+authentication is supplied. Header names are normalized by the HTTP library and
+repeated values remain entries. Bodies are UTF-8 text; handlers can use checked
+JSON parsing. Response body bytes are sent directly, with no tool/MCP envelope.
+The application chooses content type and performs identity/domain validation.
+The initial profile supports synchronous stateless requests, not shared guest
+state, closures/promises or standard web Request/Response classes.
+
+`net.listen` requires `ListenEndpoints`, serialized as manifest `patterns` and
+configured as `"net":{"listen":["127.0.0.1:8080"]}`. Entries must be canonical
+SocketAddr strings, including `[::1]:8080` for IPv6. There are no globs, DNS names,
+bare numeric port lists or boolean fallback. Empty lists deny. Exact requested
+endpoint and exact host ceiling must both permit the bind **before any socket is
+opened**. An outbound URL grant never permits listening; all-interface binds
+such as `0.0.0.0:8080` need that explicit endpoint. Port 0 authorizes an OS-selected
+port for that IP only; it does not match an explicit nonzero-port grant. The actual
+address is reported through a readiness event.
+
+A bounded `varta.http` custom section holds strict `HttpContract` v1: canonical
+`bind`, the reserved handler `export`, sorted `requiredEffects` (handler effects
+plus net.listen), and immutable `limits`. Duplicate/malformed sections, unknown
+members, unsupported versions, changed limits, misbound exports or effect mismatch
+fail offline validation. The metadata must occur with the internal
+`varta.http_service() -> ()` feature import; this no-op marker gives old runtimes
+an explicit unknown-import failure. It grants no authority. Host ABI v1 and
+structured value ABI v2 are required, with no Wasm start function.
+
+The compiler creates one internal string adapter with signature `(i64)->i64`:
+checked parse of the request record, one call to the typed source handler, then
+bounded JSON serialization of the response record. It exports
+`varta.http_abi.handle`, `varta.http_abi.copy_string(i32,i32)->i64` and
+`varta.http_abi.retain_string(i64)->i64`. Copy/retain must be host-free transitively,
+including without a tool catalog; indirect calls are rejected. Ordinary source
+exports do not become network handlers. HTTP metadata never turns a function into
+an AI tool. Named tool invocation does not start the service or execute main.
+
+After bootstrap drops its store/deadline, the host owns one listener and reactor.
+Every HTTP request gets a fresh store with existing fuel, five-second execution,
+8 MiB memory and host-call/output limits. Input copying, retention, checked parsing
+and the handler share that budget; main is not rerun. The response is copied and
+validated before the store is released. There is no instance reuse after a trap.
+A malformed handler response, guest exit, fuel exhaustion or checked JSON failure
+produces a generic 500, with details only in trusted diagnostic events. Already
+performed authorized effects are not rolled back; later requests can proceed.
+
+Hyper owns HTTP1 parsing/framing. The initial reactor accepts one connection at a
+time and closes it after one response. There is at most one guest worker, guarded
+by a permit that survives connection cancellation, and no unbounded worker queue.
+Bounds are 32 headers / 4 KiB header data, 1 KiB target, 8 KiB raw body, 64 KiB
+encoded request record, and 1 MiB encoded response record/body. Header reads have
+a two-second timeout, body reads two seconds and a connection ten seconds. Body
+and header overflow, malformed framing, unsupported upgrades/CONNECT/trailers and
+invalid UTF-8 fail before guest dispatch. Status must be 200–599; 204/205/304 require
+an empty body. Response header names/values use the HTTP library's validation;
+connection/framing/hop-by-hop headers are forbidden. The runtime controls length
+and connection closure. HEAD suppresses content and reports representation length
+where permitted. TLS, HTTP2, streaming and keep-alive remain pending.
+
+`varta.http.stop()` / `varta.http_stop() -> ()` closes only the owning service.
+The request context carries its unforgeable shutdown handle and requested endpoint;
+the operation checks net.listen again. An outside-service call returns invalid-input
+status and cannot stop another instance. Shutdown stops acceptance first and lets
+the current response finish within connection bounds. The synchronous embedding
+API can use `run_observed` with `RuntimeEvent::Listening {address,shutdown}`;
+`HttpShutdown::shutdown` is idempotent and also wakes an idle listener. Observer
+callbacks are trusted synchronous sinks and must return promptly; slow sinks apply
+backpressure. CLI/project layers report readiness and stream request output, with
+no library printing. Without an observer, captured lifetime output is capped at
+1 MiB and overflow stops the service with an error. Each request retains its own
+output ceiling regardless of observer. The independent runtime companion and
+packaged executable serve source-free HTTP through this same runtime event path.
+
 ## ABI v1 and errors
 
 Imports live under `varta`. `HostOperation` in `varta-common` owns their names,
@@ -625,11 +2912,13 @@ signatures, result globals and advertised ABI versions fail before instantiation
   unbounded host bump allocation and no guest-controlled host heap pointer.
 - Compiled string values snapshot those borrowed bytes into immutable execution
   storage. The layout is static data `[0, 65536)`, reusable host results
-  `[65536, 1114112)`, exact string roots `[1114112, 1179648)`, then the managed
-  string heap `[1179648, 8388608)`, including block headers. Unreachable blocks are
+  `[65536, 1114112)`, exact reference roots `[1114112, 1179648)`, then the managed
+  string/record/array heap `[1179648, 8388608)`, including block headers. Unreachable blocks are
   reused during execution; the entire instance is released when execution ends.
-- Every host operation first clears result length/status. Failed string calls
+- Every privileged system operation first clears result length/status. Failed string calls
   return pointer 0 and length 0. No previous result length can be reused.
+- Logging and pure JSON serialization/parsing preserve the last system status. Serialization
+  replaces result bytes/length; compiled code snapshots retained results immediately.
 - `varta.result.status()` reads the structured status without clearing it.
 
 Status codes:
@@ -684,7 +2973,7 @@ Capturing a variable, arbitrary expression, user-function call, status inspectio
 or logging call is rejected: these would not reliably identify one fresh host
 status. Put capture inside a user wrapper and return its `VartaResult<T>` instead.
 All existing time, environment, filesystem, network and process operations are
-supported. Logging is excluded because it does not reset status on success.
+supported. Logging and pure JSON serialization/parsing are excluded because they preserve system status.
 
 A successful empty string, false or zero has `ok == true`; a failed call keeps its
 original fallback value with `ok == false`. Fallbacks are empty string, false and
@@ -700,17 +2989,17 @@ payloads retain the existing immutable i64 slice representation and snapshot
 ownership. Number/boolean payloads use i32; void uses an unused zero i32 payload.
 Each logical result local/parameter maps to two physical slots, and a result
 return uses two Wasm results. Field selection evaluates its base once and keeps
-the selected component; `.ok` compares the saved status with zero. Records require
+the selected component; `.ok` compares the saved status with zero. Captured results require
 no heap allocation or extra host call. The existing 32 physical Wasm-parameter
 limit remains, so a result consumes two of those slots. Raw host imports, global
 exports, ABI v1, capabilities and artifact formats remain unchanged.
 
 The built-in type cannot be redeclared or fabricated through object literals.
-Nested result types, arbitrary generics, destructuring, computed fields, field
+Nested result types, arbitrary generics, destructuring of a result pair, computed fields, field
 writes and implicit conversion/comparison of a whole result are unsupported.
 The shared editor declarations expose readonly fields and the same capture API.
 This provides explicit branching on recoverable host failures, without introducing
-general objects or exceptions. Fuel/deadline/call/output exhaustion, Wasm traps
+general exceptions. Closed objects are provided separately. Fuel/deadline/call/output exhaustion, Wasm traps
 and retained-string allocation failure still stop execution. An authorized
 `process.exit` still exits with its requested code and produces no result;
 a denied exit returns a failed `VartaResult<void>`.
@@ -720,9 +3009,13 @@ a denied exit returns a failed `VartaResult<void>`.
 | Resource | Default limit |
 | --- | --- |
 | Guest linear memory | 8 MiB, enforced by Store limits including memory.grow |
-| Managed string storage | Within the 8 MiB memory budget, after static page, 1 MiB host buffer and 64 KiB root stack; includes block metadata |
-| String roots | 8192 slice slots across active frames and temporaries |
+| Managed string/record/array storage | Within the 8 MiB memory budget, after static page, 1 MiB host buffer and 64 KiB root stack; includes block metadata |
+| Reference roots | 8192 handle slots across active frames and temporaries |
 | One string value | 1 MiB of UTF-8 bytes |
+| Object fields / shapes / key bytes | 32 / 128 across graph / 256 UTF-8 bytes |
+| Array elements / element types | 1024 per array / 128 across graph |
+| JSON serialization | 1 MiB encoded, depth 64, 4096 visited values per call |
+| Checked JSON parsing | 64 KiB encoded input, depth 64, 4096 values; schemas at most 260 types / 64 KiB in the shared static pool |
 | Guest instructions | 1,000,000 fuel units |
 | Execution/HTTP deadline | 5 seconds |
 | Host calls | 1024 per execution |
@@ -734,7 +3027,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Manifest/config | 256 KiB |
 | Wasm signatures | 256 distinct complete parameter/result signatures |
 | Function parameters | 32 physical Wasm values; each captured result uses two |
-| Defined functions | 256 user functions plus at most six compiler string helpers |
+| Defined functions | 256 user functions, one HTTP adapter and at most ten compiler memory/string/array helpers |
 
 Preflight limits also bound signatures, function count/body size, memories,
 tables and globals before native compilation. Store budgets apply before Wasm
@@ -745,7 +3038,9 @@ caller. Errors and guest exit do not terminate an embedding process.
 ## Artifact format and validation
 
 Standalone Wasm has a strict sidecar `*.manifest.json`. A missing sidecar means
-zero capabilities; an unreadable or malformed sidecar is an error. Embedded
+zero capabilities and the payload's declared host ABI (v1 when absent); an
+unreadable or malformed sidecar is an error. Manifest/code ABI mismatch is an
+error. Embedded
 manifests are authoritative even when empty and never fall back to a sidecar.
 
 `build --single` emits:
@@ -764,6 +3059,61 @@ Native AOT payloads, `VARTA1`/`VARTA2` containers and public native deserializat
 are removed. Rebuild existing native artifacts. Native launchers currently compile
 embedded portable Wasm at startup. Reintroducing cached/AOT machine code requires
 a separate, authenticated provenance design; checksums alone are insufficient.
+
+### Independent runtime companion and packaging
+
+`varta-artifact::Artifact` owns portable/container I/O. The tooling re-export
+`varta_project::Artifact` remains available; its I/O methods now return the shared
+`VartaError`. The container layout/version is unchanged. Existing VARTA3 containers
+with a development-CLI native prefix remain readable by both loaders; their own
+native argument interface remains whatever was built into that prefix. Embedded
+manifests always win over sidecars. This does not restore VARTA1/VARTA2 or AOT.
+
+`varta build --single` resolves only the sibling `varta-runtime` executable, or
+explicit `--launcher PATH`; it never searches cwd/PATH or copies the development
+CLI as a fallback. Install/build both binaries. Plain Wasm builds need no companion.
+The new executable is the independent runtime plus portable payload, not compiler
+or source tooling. `CheckedProject::build(true, path)` follows the same validation.
+
+The native companion is a trusted build input. Packaging first opens a bounded
+regular file (512 MiB maximum) and copies it into private staging (0700 on Unix).
+It closes/syncs the snapshot before executing it and rejects a recognized capsule,
+including malformed capsules, so an already packaged application's main cannot
+be used as a probe. `--runtime-info` must return strict launcher protocol v2
+metadata matching package version, OS, architecture, pointer width, host ABI,
+value ABI, HTTP contract and supported language-profile list. Protocol v1
+companions must be rebuilt/updated for new builds; their existing VARTA3 payloads
+remain readable. `--validate` then validates the staged portable Wasm
+and manifest without instantiation, main, tool handlers or binding a listener.
+Each subprocess has a five-second deadline and 4 KiB stdout/stderr limits. Only
+after both probes pass are the public output files written. Probe failures leave
+existing outputs untouched; staging is removed on success and error.
+
+The protocol checks compatibility; it is not authentication or a sandbox for
+arbitrary native inputs. Dependency guards independently enforce the repository
+launcher's production graph. Native code executes with the builder/launcher's OS
+authority; package authenticity remains separate planned work. Packaging currently
+requires a runnable same-OS/CPU companion, not a cross-target executable. Linux
+and macOS are the CI matrix; Windows and cross-target distribution are unverified.
+
+The small runtime argument parser provides:
+
+| Context | Interface |
+| --- | --- |
+| Packaged self | `[--policy PATH]`, `--invoke NAME [--params JSON] [--json] [--policy PATH]`, `--inspect [--json] [--policy PATH]` |
+| Explicit portable/native artifact | `run PATH [--policy PATH]`, `invoke PATH NAME [--params JSON] [--json] [--policy PATH]`, `inspect PATH [--json] [--policy PATH]` |
+| Build negotiation | `--runtime-info`, `--validate PATH` (bytecode/manifest validation only) |
+| Help/version | `--help`, `--version` |
+
+No source/project commands are included. Bare runtime execution without an artifact
+fails. Unknown, repeated and misplaced flags fail. Invocation retains the checked
+JSON envelope and typed error codes, never runs main, and applies the exact same
+host/package conjunction. Inspection validates without executing and emits
+`{artifact, manifest, module, toolCatalog, hostCeiling, combination:"allOf"}`.
+`module` is the shared `WasmInspection`; top-level `toolCatalog` supplies generated
+JSON input/output schemas for discovery. Development CLI inspection retains its existing format.
+Internal `--validate` performs code/ABI validation, while the development CLI's
+`validate` additionally reviews privileged-import declarations as described below.
 
 `check`, `dev` and `build` share semantic/type/bytecode/ABI checks. Artifact `run`
 and `inspect` fully validate bytecode and ABI too. `validate` additionally performs

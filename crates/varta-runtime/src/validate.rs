@@ -6,7 +6,8 @@ pub(crate) fn module(
     engine: &Engine,
     bytes: &[u8],
 ) -> Result<(Module, Option<varta_common::ToolCatalog>), RuntimeError> {
-    preflight(bytes)?;
+    let language = preflight(bytes)?;
+    let version = language.profile.map_or(abi::VERSION, |p| p.host_abi());
     if bytes.len() > abi::MAX_WASM_BYTES || !bytes.starts_with(b"\0asm\x01\0\0\0") {
         return Err(wasmtime::Error::msg("expected a bounded portable Wasm module").into());
     }
@@ -23,15 +24,23 @@ pub(crate) fn module(
         let wasmtime::ExternType::Func(ty) = import.ty() else {
             return Err(wasmtime::Error::msg("only function imports are supported").into());
         };
-        let (params, results) = varta_common::HostOperation::from_name(import.name())
-            .ok_or_else(|| error("unknown host operation"))?
-            .signature();
-        if ty.params().len() != params
-            || ty.results().len() != results
-            || ty
-                .params()
-                .chain(ty.results())
-                .any(|ty| !matches!(ty, wasmtime::ValType::I32))
+        let host = varta_common::HostOperation::from_name(import.name())
+            .ok_or_else(|| error("unknown host operation"))?;
+        let (params, results) = host.scalar_signature();
+        let matches =
+            |actual: wasmtime::ValType, expected: &varta_common::HostScalar| match expected {
+                varta_common::HostScalar::I32 => matches!(actual, wasmtime::ValType::I32),
+                varta_common::HostScalar::F64 => matches!(actual, wasmtime::ValType::F64),
+                varta_common::HostScalar::I64 => matches!(actual, wasmtime::ValType::I64),
+            };
+        if language
+            .profile
+            .is_some_and(|p| p.host_operation(host) != host)
+            || host.minimum_abi() > version
+            || ty.params().len() != params.len()
+            || ty.results().len() != results.len()
+            || !ty.params().zip(params).all(|(a, b)| matches(a, b))
+            || !ty.results().zip(results).all(|(a, b)| matches(a, b))
         {
             return Err(
                 wasmtime::Error::msg(format!("invalid host signature: {}", import.name())).into(),
@@ -46,6 +55,7 @@ pub(crate) fn module(
             return Err(wasmtime::Error::msg("_start must have signature () -> ()").into());
         }
     }
+    crate::exceptions::validate(&module, language.profile.unwrap_or_default())?;
     check_exports(&module)?;
     let tools = crate::contracts::validate(&module, bytes)?;
     Ok((module, tools))
@@ -54,14 +64,40 @@ pub(crate) fn module(
 fn error(message: &str) -> RuntimeError {
     wasmtime::Error::msg(message.to_owned()).into()
 }
+pub(crate) fn value_version(bytes: &[u8]) -> Result<Option<u32>, RuntimeError> {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::CustomSection(section) =
+            payload.map_err(|e| error(&e.to_string()))?
+            && section.name() == varta_common::value::VALUE_SECTION
+        {
+            return Ok(Some(u32::from_le_bytes(
+                section
+                    .data()
+                    .try_into()
+                    .map_err(|_| error("invalid structured value ABI"))?,
+            )));
+        }
+    }
+    Ok(None)
+}
 
-fn preflight(bytes: &[u8]) -> Result<(), RuntimeError> {
+fn preflight(bytes: &[u8]) -> Result<varta_common::language::LanguageInspection, RuntimeError> {
     use wasmparser::{Parser, Payload};
     if bytes.len() > abi::MAX_WASM_BYTES {
         return Err(error("Wasm exceeds size limit"));
     }
+    let language = crate::language::inspect(bytes)?;
+    let mut values = 0;
+    let mut union_imports = false;
+    let mut json_imports = std::collections::BTreeSet::new();
+    let mut http = false;
+    let mut tools = false;
+    let mut value_version = None;
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.map_err(|e| error(&e.to_string()))? {
+            Payload::StartSection { .. } if language.profile.is_some_and(|p| p.exceptions()) => {
+                return Err(error("exception profile forbids a Wasm start function"));
+            }
             Payload::TypeSection(reader) => {
                 for (count, ty) in reader.into_iter_err_on_gc_types().enumerate() {
                     let ty = ty.map_err(|e| error(&e.to_string()))?;
@@ -76,9 +112,67 @@ fn preflight(bytes: &[u8]) -> Result<(), RuntimeError> {
             Payload::ImportSection(reader) if reader.count() > 64 => {
                 return Err(error("too many imports"));
             }
+            Payload::ImportSection(reader) => {
+                for import in reader {
+                    let import = import.map_err(|e| error(&e.to_string()))?;
+                    union_imports |= import.module == "varta"
+                        && varta_common::HostOperation::from_name(import.name).is_some_and(|op| {
+                            matches!(
+                                op.minimum_abi(),
+                                abi::UNION_VERSION
+                                    | abi::REFERENCE_VERSION
+                                    | abi::VECTOR_VERSION
+                                    | abi::ERROR_VERSION
+                                    | abi::ERROR_FAMILY_VERSION
+                                    | abi::SPARSE_VERSION
+                            )
+                        });
+
+                    if import.module == "varta"
+                        && let Some(operation) = varta_common::HostOperation::from_name(import.name)
+                        && matches!(
+                            operation,
+                            varta_common::HostOperation::JsonStringify
+                                | varta_common::HostOperation::JsonParse
+                                | varta_common::HostOperation::JsonStringifyV3
+                                | varta_common::HostOperation::JsonParseV3
+                                | varta_common::HostOperation::JsonStringifyV4
+                                | varta_common::HostOperation::JsonParseV4
+                                | varta_common::HostOperation::JsonParseV5
+                                | varta_common::HostOperation::JsonStringifyV5
+                                | varta_common::HostOperation::JsonParseV6
+                                | varta_common::HostOperation::JsonStringifyV6
+                                | varta_common::HostOperation::JsonStringifyV7
+                                | varta_common::HostOperation::JsonParseV7
+                                | varta_common::HostOperation::JsonStringifyV9
+                                | varta_common::HostOperation::JsonStringifyV8
+                                | varta_common::HostOperation::JsonParseV8
+                                | varta_common::HostOperation::JsonParseV9
+                                | varta_common::HostOperation::JsonParseV10
+                                | varta_common::HostOperation::JsonParseV11
+                                | varta_common::HostOperation::JsonParseV12
+                                | varta_common::HostOperation::JsonParseV13
+                                | varta_common::HostOperation::JsonParseV14
+                                | varta_common::HostOperation::JsonStringifyV11
+                                | varta_common::HostOperation::JsonStringifyV12
+                                | varta_common::HostOperation::JsonStringifyV10
+                        )
+                    {
+                        json_imports.insert(operation);
+                    }
+                }
+            }
             Payload::FunctionSection(reader)
                 if reader.count() as usize
-                    > abi::MAX_USER_FUNCTIONS + abi::MAX_INTERNAL_FUNCTIONS =>
+                    > abi::MAX_USER_FUNCTIONS
+                        + if language.profile.is_some_and(|p| p.array_mutations()) {
+                            abi::MAX_INTERNAL_FUNCTIONS
+                        } else if language.profile.is_some_and(|p| p.sparse_arrays()) {
+                            abi::SPARSE_INTERNAL_FUNCTIONS
+                        } else {
+                            abi::LEGACY_INTERNAL_FUNCTIONS
+                        }
+                        + abi::MAX_HTTP_HANDLERS =>
             {
                 return Err(error("too many functions"));
             }
@@ -111,20 +205,58 @@ fn preflight(bytes: &[u8]) -> Result<(), RuntimeError> {
                 return Err(error("too many globals"));
             }
             Payload::CodeSectionEntry(body) => {
-                if body.range().len() > 65_536 {
+                if body.range().len() > abi::MAX_WASM_FUNCTION_BODY_BYTES {
                     return Err(error("function body exceeds compilation budget"));
                 }
             }
             Payload::CustomSection(section)
-                if section.name() == abi::SECTION
-                    && section.data() != abi::VERSION.to_le_bytes() =>
+                if section.name() == varta_common::value::VALUE_SECTION =>
             {
-                return Err(error("unsupported Wasm ABI version"));
+                values += 1;
+                value_version = section.data().try_into().ok().map(u32::from_le_bytes);
+                if values > 1
+                    || !section.data().try_into().ok().is_some_and(|version| {
+                        varta_common::value::supported_version(u32::from_le_bytes(version))
+                    })
+                {
+                    return Err(error("unsupported or duplicate structured value ABI"));
+                }
+            }
+            Payload::CustomSection(section) if section.name() == varta_common::http::SECTION => {
+                http = true;
+            }
+            Payload::CustomSection(section) if section.name() == varta_common::TOOL_SECTION => {
+                tools = true;
             }
             _ => {}
         }
     }
-    Ok(())
+    let profile = language.profile.unwrap_or_default();
+    let mismatch = value_version
+        .is_some_and(|v| !varta_common::value::compatible_version(v, profile.value_abi()))
+        || json_imports
+            .iter()
+            .any(|op| *op != profile.json_parse() && *op != profile.json_stringify())
+        || profile.binary64() && (http || tools);
+    if mismatch {
+        let message = match profile {
+            varta_common::language::LanguageProfile::CheckedF64Utf8V1 => {
+                "binary64 requires value ABI v3 and cannot use legacy JSON/tool/HTTP contracts"
+            }
+            varta_common::language::LanguageProfile::CheckedF64Utf8V2 => {
+                "undefined profile requires value ABI v4 and matching JSON imports; tool/HTTP adapters are unavailable"
+            }
+            _ => "structured value ABI or JSON imports do not match the language profile",
+        };
+        return Err(varta_common::language::LanguageError(message.into()).into());
+    }
+    if http && value_version != Some(varta_common::value::VALUE_VERSION) {
+        return Err(error("HTTP requires structured value ABI v2"));
+    }
+    if (!json_imports.is_empty() || union_imports || profile.exceptions()) && values != 1 {
+        return Err(error("JSON import requires structured value ABI metadata"));
+    }
+    Ok(language)
 }
 
 fn check_exports(module: &Module) -> Result<(), RuntimeError> {
@@ -132,8 +264,18 @@ fn check_exports(module: &Module) -> Result<(), RuntimeError> {
     let mut needs_memory = false;
     let mut needs_result = false;
     for import in module.imports() {
-        needs_memory |= !matches!(import.name(), "log_i32" | "process_exit" | "time_now");
-        needs_result |= matches!(import.name(), "env_get" | "fs_read" | "net_get");
+        needs_memory |= !matches!(
+            import.name(),
+            "log_i32"
+                | "log_f64"
+                | "log_undefined"
+                | "number_remainder"
+                | "process_exit_f64"
+                | "process_exit"
+                | "time_now"
+        );
+        needs_result |= varta_common::HostOperation::from_name(import.name())
+            .is_some_and(|host| host.needs_result_globals());
     }
     if needs_memory {
         match module.get_export("memory") {

@@ -1,7 +1,15 @@
-//! Flat nonmoving mark/sweep: roots are compiler-provided immutable slices, no object graph.
+//! Nonmoving mark/sweep with exact roots and bounded record-edge tracing.
 use super::*;
 
-pub(super) fn function(globals: Globals) -> Function {
+const EDGE_CURSOR: u32 = 8;
+const EDGE_MASK: u32 = 9;
+const CHILD: u32 = 10;
+const CHANGED: u32 = 11;
+const BLOCK: u32 = 12;
+const FIELD_COUNT: u32 = 13;
+const IS_ARRAY: u32 = 14;
+
+pub(super) fn function(globals: Globals, trace_values: bool, closures: bool) -> Function {
     const ROOT_CURSOR: u32 = 0;
     const CURRENT: u32 = 1;
     const SIZE: u32 = 2;
@@ -12,7 +20,10 @@ pub(super) fn function(globals: Globals) -> Function {
     const PTR: u32 = 7;
     const AGAIN: u32 = 0;
     const DONE: u32 = 1;
-    let mut function = Function::new([(PTR + 1, ValType::I32)]);
+    let mut function = Function::new([(
+        if trace_values { IS_ARRAY + 1 } else { PTR + 1 },
+        ValType::I32,
+    )]);
     instructions(
         &mut function,
         [
@@ -63,6 +74,14 @@ pub(super) fn function(globals: Globals) -> Function {
             I::Br(AGAIN),
             I::End,
             I::End,
+        ],
+    );
+    if trace_values {
+        trace(&mut function, globals, closures);
+    }
+    instructions(
+        &mut function,
+        [
             I::I32Const(abi::OWNED_STRING_BASE as i32),
             I::LocalSet(CURRENT),
             I::Block(BlockType::Empty),
@@ -80,7 +99,10 @@ pub(super) fn function(globals: Globals) -> Function {
             I::I32And,
             I::If(BlockType::Empty),
             I::LocalGet(CURRENT),
-            I::I32Const(ALLOCATED),
+            I::LocalGet(CURRENT),
+            I::I32Load(FLAG),
+            I::I32Const(!MARKED),
+            I::I32And,
             I::I32Store(FLAG),
             I::I32Const(0),
             I::LocalSet(PREVIOUS_FREE),
@@ -147,4 +169,173 @@ pub(super) fn function(globals: Globals) -> Function {
         ],
     );
     function
+}
+
+// Fixed-point tracing is iterative: no native/Wasm recursion or allocation during
+// collection. Every newly reached block is marked once; scans consume guest fuel.
+fn trace(function: &mut Function, globals: Globals, closures: bool) {
+    use varta_common::value as values;
+    const CURRENT: u32 = 1;
+    const AGAIN: u32 = 0;
+    const DONE: u32 = 1;
+    instructions(
+        function,
+        [
+            I::Loop(BlockType::Empty),
+            I::I32Const(0),
+            I::LocalSet(CHANGED),
+            I::I32Const(abi::OWNED_STRING_BASE as i32),
+            I::LocalSet(CURRENT),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(CURRENT),
+            I::GlobalGet(globals.heap),
+            I::I32GeU,
+            I::BrIf(DONE),
+            I::LocalGet(CURRENT),
+            I::I32Load(FLAG),
+            I::I32Const(ALLOCATED | MARKED),
+            I::I32And,
+            I::I32Const(ALLOCATED | MARKED),
+            I::I32Eq,
+            I::LocalGet(CURRENT),
+            I::I32Load(FLAG),
+            I::I32Const(
+                values::HEAP_ERROR_FLAG
+                    | values::HEAP_RECORD_FLAG
+                    | values::HEAP_ARRAY_FLAG
+                    | values::HEAP_UNION_FLAG
+                    | values::HEAP_VECTOR_FLAG
+                    | if closures {
+                        varta_common::function::HEAP_FLAG
+                            | varta_common::function::ENVIRONMENT_FLAG
+                            | varta_common::function::BINDING_FLAG
+                    } else {
+                        0
+                    },
+            ),
+            I::I32And,
+            I::I32Eqz,
+            I::I32Eqz,
+            I::I32And,
+            I::If(BlockType::Empty),
+            I::LocalGet(CURRENT),
+            I::I32Load(FLAG),
+            I::I32Const(values::HEAP_ARRAY_FLAG),
+            I::I32And,
+            I::LocalSet(IS_ARRAY),
+            I::LocalGet(CURRENT),
+            I::I32Load(LINK),
+            I::LocalSet(EDGE_MASK),
+            I::LocalGet(CURRENT),
+            I::I32Const((HEADER as usize + values::RECORD_META_BYTES) as i32),
+            I::I32Add,
+            I::LocalSet(EDGE_CURSOR),
+            I::LocalGet(CURRENT),
+            I::I32Load(FLAG),
+            I::I32Const(values::HEAP_VECTOR_FLAG),
+            I::I32And,
+            I::If(BlockType::Result(ValType::I32)),
+            I::I32Const(1),
+            I::Else,
+            I::LocalGet(CURRENT),
+            I::I32Const(HEADER as i32 + 4),
+            I::I32Add,
+            I::I32Load(WORD),
+            I::End,
+            I::LocalTee(FIELD_COUNT),
+            I::LocalGet(IS_ARRAY),
+            I::If(BlockType::Result(ValType::I32)),
+            I::I32Const(values::MAX_ARRAY_ELEMENTS as i32),
+            I::Else,
+            I::I32Const(values::MAX_RECORD_FIELDS as i32),
+            I::End,
+            I::I32GtU,
+            I::If(BlockType::Empty),
+            I::Unreachable,
+            I::End,
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(FIELD_COUNT),
+            I::I32Eqz,
+            I::BrIf(DONE),
+            I::LocalGet(EDGE_MASK),
+            I::I32Const(1),
+            I::I32And,
+            I::If(BlockType::Empty),
+            I::LocalGet(EDGE_CURSOR),
+            I::I64Load(ROOT),
+            I::I32WrapI64,
+            I::LocalTee(CHILD),
+            I::I32Const((abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES) as i32),
+            I::I32GeU,
+            I::If(BlockType::Empty),
+            I::LocalGet(CHILD),
+            I::GlobalGet(globals.heap),
+            I::I32GeU,
+            I::If(BlockType::Empty),
+            I::Unreachable,
+            I::End,
+            I::LocalGet(CHILD),
+            I::I32Const(HEADER as i32),
+            I::I32Sub,
+            I::LocalSet(BLOCK),
+            I::LocalGet(BLOCK),
+            I::I32Load(FLAG),
+            I::I32Const(ALLOCATED),
+            I::I32And,
+            I::I32Eqz,
+            I::If(BlockType::Empty),
+            I::Unreachable,
+            I::End,
+            I::LocalGet(BLOCK),
+            I::I32Load(FLAG),
+            I::I32Const(MARKED),
+            I::I32And,
+            I::I32Eqz,
+            I::If(BlockType::Empty),
+            I::LocalGet(BLOCK),
+            I::LocalGet(BLOCK),
+            I::I32Load(FLAG),
+            I::I32Const(MARKED),
+            I::I32Or,
+            I::I32Store(FLAG),
+            I::I32Const(1),
+            I::LocalSet(CHANGED),
+            I::End,
+            I::End,
+            I::End,
+            I::LocalGet(EDGE_CURSOR),
+            I::I32Const(values::RECORD_SLOT_BYTES as i32),
+            I::I32Add,
+            I::LocalSet(EDGE_CURSOR),
+            I::LocalGet(IS_ARRAY),
+            I::I32Eqz,
+            I::If(BlockType::Empty),
+            I::LocalGet(EDGE_MASK),
+            I::I32Const(1),
+            I::I32ShrU,
+            I::LocalSet(EDGE_MASK),
+            I::End,
+            I::LocalGet(FIELD_COUNT),
+            I::I32Const(1),
+            I::I32Sub,
+            I::LocalSet(FIELD_COUNT),
+            I::Br(AGAIN),
+            I::End,
+            I::End,
+            I::End,
+            I::LocalGet(CURRENT),
+            I::LocalGet(CURRENT),
+            I::I32Load(WORD),
+            I::I32Add,
+            I::LocalSet(CURRENT),
+            I::Br(AGAIN),
+            I::End,
+            I::End,
+            I::LocalGet(CHANGED),
+            I::BrIf(AGAIN),
+            I::End,
+        ],
+    );
 }

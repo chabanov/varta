@@ -7,12 +7,33 @@ use std::path::PathBuf;
 const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
 type Symbols = BTreeMap<String, Signature>;
 
-pub(crate) fn lower(graph: &Graph) -> Result<ir::Program> {
+pub(crate) fn lower(
+    graph: &Graph,
+    profile: varta_common::language::LanguageProfile,
+) -> Result<ir::Program> {
     let mut definitions: BTreeMap<PathBuf, Symbols> = BTreeMap::new();
+    let mut types = ir::ValueTypes {
+        profile,
+        ..Default::default()
+    };
     let mut next = 0;
     let mut main = None;
     for path in &graph.order {
         let unit = &graph.units[path];
+        if profile.binary64()
+            && let Some(item) = unit
+                .ast
+                .body
+                .iter()
+                .find(|item| tools::is_declaration(item) || http::is_declaration(item))
+        {
+            return Err(unit.source.locate(
+                unsupported(
+                    "tool/HTTP contracts in binary64 profile; adapters are not implemented",
+                ),
+                item.span(),
+            ));
+        }
         let mut symbols = BTreeMap::new();
         for declaration in declarations::collect(&unit.ast, &unit.source)? {
             if next >= MAX_FUNCTIONS {
@@ -22,10 +43,13 @@ pub(crate) fn lower(graph: &Graph) -> Result<ir::Program> {
                 ));
             }
             let name = declaration.ident.sym.to_string();
-            let signature = signature::check(declaration, next, &unit.source)
+            let signature = signature::check(declaration, next, &unit.source, &mut types)
                 .map_err(|e| unit.source.locate(e, declaration.ident.span))?;
             if path == &graph.entry && name == "main" {
-                if !signature.params.is_empty() || signature.result != Type::Void {
+                if signature.receiver.is_some()
+                    || !signature.params.is_empty()
+                    || signature.result != Type::Void
+                {
                     return Err(unit.source.locate(
                         invalid("main must have signature () -> void"),
                         declaration.ident.span,
@@ -33,7 +57,7 @@ pub(crate) fn lower(graph: &Graph) -> Result<ir::Program> {
                 }
                 main = Some(next);
             }
-            if matches!(name.as_str(), "varta" | "console" | "log")
+            if matches!(name.as_str(), "varta" | "console" | "log" | "JSON")
                 || symbols.insert(name.clone(), signature).is_some()
             {
                 return Err(unit.source.locate(
@@ -54,6 +78,7 @@ pub(crate) fn lower(graph: &Graph) -> Result<ir::Program> {
     })?;
     let scopes = link_bindings(graph, &definitions)?;
     let mut functions = Vec::new();
+    let mut generated = BTreeMap::new();
     for path in &graph.order {
         let unit = &graph.units[path];
         for declaration in declarations::collect(&unit.ast, &unit.source)? {
@@ -64,14 +89,26 @@ pub(crate) fn lower(graph: &Graph) -> Result<ir::Program> {
                 &scopes[path],
                 &unit.source,
                 main,
+                &mut types,
+                (&mut generated, &mut next),
             )?);
         }
     }
+    functions.extend(generated.into_values());
     let tools = super::tools::collect(graph, &scopes, &functions, main)?;
+    let http = http::collect(graph, &scopes, &mut functions, &mut types, main)?;
+    if profile.binary64() && (!tools.is_empty() || http.is_some()) {
+        return Err(entry.source.locate(
+            unsupported("tool/HTTP contracts in binary64 profile; adapters are not implemented"),
+            entry.ast.span(),
+        ));
+    }
     Ok(ir::Program {
         functions,
         main,
         tools,
+        http,
+        types,
     })
 }
 
@@ -99,7 +136,7 @@ fn link_bindings(
                             binding.span,
                         )
                     })?;
-                if matches!(binding.local.as_str(), "varta" | "console" | "log")
+                if matches!(binding.local.as_str(), "varta" | "console" | "log" | "JSON")
                     || scope
                         .insert(binding.local.clone(), signature.clone())
                         .is_some()
@@ -147,43 +184,74 @@ fn body(
     functions: &Symbols,
     source: &Source,
     entry: usize,
+    types: &mut ir::ValueTypes,
+    synthesized: (&mut BTreeMap<usize, ir::Function>, &mut usize),
 ) -> Result<ir::Function> {
+    let (generated, next_function) = synthesized;
     let mut lower = Lower {
         source,
+        types,
         functions,
         scopes: vec![BTreeMap::new()],
         next: 0,
         local_types: BTreeMap::new(),
+        refinements: BTreeMap::new(),
         result: signature.result,
+        infer_returns: false,
         entry,
         loops: 0,
         switches: 0,
         depth: 0,
+        repeat_slots: None,
+        generated,
+        next_function,
+        index: signature.index,
+        outer: Default::default(),
+        captures: Default::default(),
+        cells: Default::default(),
+        guarded: Default::default(),
     };
-    for (param, ty) in declaration.function.params.iter().zip(&signature.params) {
-        let ast::Pat::Ident(binding) = &param.pat else {
-            return Err(source.locate(unsupported("parameter pattern"), param.span()));
-        };
-        lower
-            .declare(binding.id.sym.as_ref(), Some(*ty), true, true)
-            .map_err(|e| source.locate(e, binding.span()))?;
+    if let Some(ty) = signature.receiver {
+        lower.declare("this", Some(ty), true, false)?;
     }
+    let patterns: Vec<_> = declaration
+        .function
+        .params
+        .iter()
+        .map(|p| p.pat.clone())
+        .collect();
+    let plans = parameters::analyze(
+        &patterns,
+        Some(&signature.params),
+        Some(&signature.shape),
+        lower.types,
+        Some(lower.source),
+    )?;
+    lower.reserve_parameters(&plans)?;
+    let mut prologue = lower.initialize_parameters(&plans, signature.receiver.is_some())?;
     let body = declaration
         .function
         .body
         .as_ref()
         .ok_or_else(|| source.locate(invalid("missing function body"), declaration.span()))?;
-    let statements = lower.block(&body.stmts, false)?;
-    if signature.result != Type::Void && !returns(&statements) {
-        return Err(source.locate(
-            invalid("value-returning function must return on every path"),
-            declaration.ident.span,
-        ));
-    }
+    prologue.extend(lower.block(&body.stmts, false)?);
+    let mut statements = prologue;
+    finish_body(&mut lower, &mut statements, declaration.span())?;
+
     Ok(ir::Function {
+        shape: signature.shape.clone(),
+        self_slot: None,
+        receiver: signature.receiver,
+        cells: lower.cells,
+        captures: vec![],
+        environment: false,
         source: source.clone(),
         span: declaration.span(),
-        params: signature.params.clone(),
+        params: signature
+            .receiver
+            .into_iter()
+            .chain(signature.params.iter().copied())
+            .collect(),
         result: signature.result,
         locals: (0..lower.next)
             .map(|slot| {
@@ -196,4 +264,34 @@ fn body(
             .collect(),
         body: statements,
     })
+}
+
+pub(super) fn finish_body(
+    lower: &mut Lower<'_>,
+    statements: &mut Vec<S>,
+    span: swc_common::Span,
+) -> Result<()> {
+    if !returns(statements)
+        && (lower.result == Type::Undefined
+            || lower.types.profile.missing()
+                && unions::members(lower.result, lower.types).contains(&Type::Undefined))
+    {
+        let value = unions::widen(
+            Expr {
+                span,
+                ty: Type::Undefined,
+                kind: E::Integer(0),
+            },
+            Some(lower.result),
+            lower.types,
+        )?;
+        statements.push(S::Return(Some(value)));
+    }
+    if lower.result != Type::Void && !returns(statements) {
+        return Err(lower.source.locate(
+            invalid("value-returning function must return on every path"),
+            span,
+        ));
+    }
+    Ok(())
 }

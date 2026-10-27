@@ -26,7 +26,7 @@ fn order_byte(function: &mut Function, byte: u32) {
         ],
     );
 }
-pub(super) fn function() -> Function {
+pub(super) fn function(utf16: bool) -> Function {
     const LEFT: u32 = 0;
     const RIGHT: u32 = 1;
     const LEFT_PTR: u32 = 2;
@@ -80,17 +80,27 @@ pub(super) fn function() -> Function {
             I::LocalGet(LEFT_PTR),
             I::LocalGet(INDEX),
             I::I32Add,
-            I::I32Load8U(BYTE),
+            if utf16 {
+                I::I32Load16U(BYTE)
+            } else {
+                I::I32Load8U(BYTE)
+            },
             I::LocalSet(LEFT_BYTE),
             I::LocalGet(RIGHT_PTR),
             I::LocalGet(INDEX),
             I::I32Add,
-            I::I32Load8U(BYTE),
+            if utf16 {
+                I::I32Load16U(BYTE)
+            } else {
+                I::I32Load8U(BYTE)
+            },
             I::LocalSet(RIGHT_BYTE),
         ],
     );
-    order_byte(&mut function, LEFT_BYTE);
-    order_byte(&mut function, RIGHT_BYTE);
+    if !utf16 {
+        order_byte(&mut function, LEFT_BYTE);
+        order_byte(&mut function, RIGHT_BYTE);
+    }
     instructions(
         &mut function,
         [
@@ -109,7 +119,7 @@ pub(super) fn function() -> Function {
             I::Return,
             I::End,
             I::LocalGet(INDEX),
-            I::I32Const(1),
+            I::I32Const(if utf16 { 2 } else { 1 }),
             I::I32Add,
             I::LocalSet(INDEX),
             I::Br(REPEAT_DEPTH),

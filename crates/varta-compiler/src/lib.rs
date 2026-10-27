@@ -6,7 +6,15 @@ mod ir;
 mod lower;
 mod modules;
 pub use modules::{Compilation, ModuleLoader, ModuleSource};
+#[cfg(test)]
+mod array_tests;
+#[cfg(test)]
+mod http_tests;
+#[cfg(test)]
+mod json_parse_tests;
 mod parse;
+#[cfg(test)]
+mod record_tests;
 #[cfg(test)]
 mod result_tests;
 mod source;
@@ -16,11 +24,6 @@ mod string_operation_tests;
 mod tool_tests;
 
 pub use error::CompilerError;
-
-#[must_use]
-pub fn minimal_module() -> Vec<u8> {
-    b"\0asm\x01\0\0\0".to_vec()
-}
 
 /// Parse an in-memory source using the compatibility filename `input.ts`.
 pub fn parse_typescript(source: &str) -> Result<usize, CompilerError> {
@@ -38,6 +41,21 @@ pub fn parse_typescript_with_path(
 
 pub fn compile_typescript(source: &str) -> Result<Vec<u8>, CompilerError> {
     compile_typescript_with_path(source, std::path::Path::new("input.ts"))
+}
+
+pub fn compile_typescript_with_profile(
+    source: &str,
+    profile: varta_common::language::LanguageProfile,
+) -> Result<Vec<u8>, CompilerError> {
+    compile_modules_with_profile(
+        ModuleSource {
+            path: "input.ts".into(),
+            text: source.into(),
+        },
+        &modules::NoImports,
+        profile,
+    )
+    .map(|c| c.wasm)
 }
 
 /// Compile without reading files; `path` identifies diagnostics for the supplied text.
@@ -62,10 +80,22 @@ pub fn compile_modules(
     entry: ModuleSource,
     loader: &dyn ModuleLoader,
 ) -> Result<Compilation, CompilerError> {
+    compile_modules_with_profile(
+        entry,
+        loader,
+        varta_common::language::LanguageProfile::default(),
+    )
+}
+
+pub fn compile_modules_with_profile(
+    entry: ModuleSource,
+    loader: &dyn ModuleLoader,
+    profile: varta_common::language::LanguageProfile,
+) -> Result<Compilation, CompilerError> {
     use swc_common::Spanned;
     let graph = modules::Graph::load(entry, loader)?;
     let root = &graph.units[&graph.entry];
-    let program = lower::lower(&graph)?;
+    let program = lower::lower(&graph, profile)?;
     let bytes = emit::emit(&program).map_err(|e| root.source.locate(e, root.ast.span()))?;
     wasmparser::Validator::new()
         .validate_all(&bytes)
@@ -92,6 +122,24 @@ fn bounded_source(source: &str) -> Result<(), CompilerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn checked_profile_does_not_silently_accept_unimplemented_js_values_or_coercions() {
+        for expression in [
+            "1.5",
+            "2147483648",
+            "undefined",
+            "NaN",
+            "Infinity",
+            "void 0",
+            "1==\"1\"",
+            "null===0",
+            r#""\uD800""#,
+        ] {
+            let source = format!("export function main():void{{const value={expression};}}");
+            let error = compile_typescript(&source).unwrap_err();
+            assert!(error.diagnostic().is_some(), "{expression}: {error}");
+        }
+    }
     #[test]
     fn parse_diagnostics_include_source_position_and_typed_variant() {
         let error = compile_typescript("export function main( {").unwrap_err();

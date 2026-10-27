@@ -1,0 +1,54 @@
+//! Versioned closed JSON schemas, including checked optional fields and unions.
+mod classified;
+mod decode;
+pub use classified::{JsonDecodeError, JsonInputLimit};
+mod schema;
+pub use schema::{JsonField, JsonSchema, JsonType};
+
+pub const SCHEMA_VERSION: u32 = 1;
+pub const NUMBER_SCHEMA_VERSION: u32 = 2;
+pub const UNDEFINED_SCHEMA_VERSION: u32 = 3;
+pub const UTF16_SCHEMA_VERSION: u32 = 4;
+pub const UNION_SCHEMA_VERSION: u32 = 5;
+pub const MISSING_SCHEMA_VERSION: u32 = 6;
+pub const REFERENCE_SCHEMA_VERSION: u32 = 7;
+pub const CHECKED_SCHEMA_VERSION: u32 = 8;
+pub const VECTOR_SCHEMA_VERSION: u32 = 9;
+pub const ERROR_SCHEMA_VERSION: u32 = 10;
+pub const ERROR_FAMILY_SCHEMA_VERSION: u32 = 11;
+pub const SPARSE_SCHEMA_VERSION: u32 = 12;
+pub const MAX_SCHEMA_BYTES: usize = crate::abi::RESULT_BASE;
+pub const LEGACY_MAX_SCHEMA_TYPES: usize =
+    4 + crate::value::MAX_RECORD_SHAPES + crate::value::MAX_ARRAY_TYPES;
+pub const MAX_SCHEMA_TYPES: usize = LEGACY_MAX_SCHEMA_TYPES + 1 + crate::value::MAX_UNION_TYPES;
+pub const MAX_UNION_MEMBERS: usize = 7;
+
+#[derive(Debug, thiserror::Error)]
+pub enum CheckedJsonError {
+    #[error("invalid JSON schema: {0}")]
+    Schema(String),
+    #[error("invalid JSON input: {0}")]
+    Input(String),
+}
+
+/// A completely checked tree, before any guest allocation. Record fields are in
+/// canonical schema-slot order, independently of the input object's key order.
+#[derive(Debug, PartialEq, Eq)]
+pub enum JsonValue {
+    Null,
+    Undefined,
+    Union { ty: u32, value: Box<JsonValue> },
+    I32(i32),
+    Float64(u64),
+    Boolean(bool),
+    String(String),
+    String16(Vec<u16>),
+    Record { ty: u32, fields: Vec<JsonValue> },
+    Array { ty: u32, values: Vec<JsonValue> },
+}
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod classified_tests;

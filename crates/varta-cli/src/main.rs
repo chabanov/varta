@@ -39,6 +39,9 @@ enum Commands {
         config: PathBuf,
         #[arg(long)]
         single: bool,
+        /// Use this trusted native runtime companion instead of the sibling varta-runtime.
+        #[arg(long, requires = "single", value_name = "PATH")]
+        launcher: Option<PathBuf>,
     },
     /// Execute portable Wasm or a Varta container (native AOT is rejected).
     Run { path: PathBuf },
@@ -67,7 +70,7 @@ enum Commands {
     },
 }
 
-fn output(result: varta_runtime::RunOutput) -> i32 {
+fn output(result: varta_project::RunOutput) -> i32 {
     for line in result.lines {
         println!("{line}");
     }
@@ -96,7 +99,7 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
                 println!(
                     "{}",
                     serde_json::json!({"status":"ok", "type_check":"internal", "diagnostics":[], "entry":project.config.entry, "modules":project.modules,
-                "policy":project.config.policy, "target":project.config.target, "capabilities":project.artifact.manifest.capabilities})
+                "policy":project.config.policy, "target":project.config.target, "languageProfile":project.config.language_profile, "abiVersion":project.artifact.manifest.abi_version, "capabilities":project.artifact.manifest.capabilities})
                 );
             } else {
                 println!("varta check: ok ({})", config.display());
@@ -104,17 +107,20 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
         }
         Some(Commands::Dev { config }) => {
             let project = CheckedProject::load(&config)?;
-            let result = match &policy {
-                Some(policy) => project.run_with_policy(policy)?,
-                None => project.run()?,
-            };
+            let result = run(&project.artifact, policy.as_ref())?;
             let code = output(result);
             println!("varta dev: completed");
             return Ok(code);
         }
-        Some(Commands::Build { config, single }) => {
+        Some(Commands::Build {
+            config,
+            single,
+            launcher,
+        }) => {
             let project = CheckedProject::load(&config)?;
-            for path in project.build(single, &std::env::current_exe()?)? {
+            let executable = std::env::current_exe()?;
+            let launcher = launcher.unwrap_or_else(|| varta_project::runtime_launcher(&executable));
+            for path in project.build(single, &launcher)? {
                 println!("wrote artifact: {}", path.display());
             }
         }
@@ -201,11 +207,18 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
 fn run(
     artifact: &Artifact,
     policy: Option<&HostPolicy>,
-) -> Result<varta_runtime::RunOutput, ProjectError> {
-    match policy {
-        Some(policy) => varta_project::run_with_policy(artifact, policy),
-        None => varta_project::run(artifact),
-    }
+) -> Result<varta_project::RunOutput, ProjectError> {
+    varta_project::run_observed(
+        artifact,
+        policy,
+        std::sync::Arc::new(|event| match event {
+            varta_project::RuntimeEvent::Listening { address, .. } => {
+                eprintln!("varta listening: http://{address}")
+            }
+            varta_project::RuntimeEvent::Output(line) => println!("{line}"),
+            varta_project::RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
+        }),
+    )
 }
 
 fn main() {

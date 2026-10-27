@@ -3,22 +3,74 @@ use super::*;
 impl Lower<'_> {
     pub(super) fn condition(&mut self, expr: &ast::Expr) -> Result<Expr> {
         let expr = self.expr(expr)?;
+        let expr = self.truth(expr)?;
+        if self.types.profile.has_undefined() && matches!(expr.ty, Type::Null | Type::Undefined) {
+            return Ok(expr);
+        }
         scalar(expr.ty).map_err(|e| self.source.locate(e, expr.span))?;
         Ok(expr)
     }
     pub(super) fn expr(&mut self, expression: &ast::Expr) -> Result<Expr> {
+        self.expr_expected(expression, None)
+    }
+    pub(super) fn expr_expected(
+        &mut self,
+        expression: &ast::Expr,
+        expected: Option<Type>,
+    ) -> Result<Expr> {
         self.depth += 1;
         if self.depth > 64 {
             return Err(self
                 .source
                 .locate(invalid("expression nesting exceeds 64"), expression.span()));
         }
-        let result = self.expr_inner(expression);
+        let context = self.context(expression, expected);
+        let result = match expression {
+            ast::Expr::Arrow(arrow) => self.arrow(arrow, expected),
+            ast::Expr::Fn(function) => self.function_expression(function, expected),
+            ast::Expr::Call(call) => self.call(call, expected),
+            ast::Expr::Cond(branch) if self.types.profile.reference_unions() => {
+                self.conditional(branch, expected)
+            }
+            ast::Expr::Array(array) => self.array(array, context),
+            ast::Expr::Object(object) => self.record(object, context),
+            ast::Expr::Paren(paren) => self.expr_expected(&paren.expr, expected),
+            _ => self.expr_inner(expression),
+        };
         self.depth -= 1;
-        result.map_err(|e| self.source.locate(e, expression.span()))
+        result
+            .map(|value| {
+                if value.ty == Type::Void && self.types.profile.has_undefined() {
+                    Expr {
+                        span: value.span,
+                        ty: Type::Undefined,
+                        kind: E::Undefined(Box::new(value)),
+                    }
+                } else {
+                    value
+                }
+            })
+            .and_then(|value| unions::widen(value, expected, self.types))
+            .map_err(|e| self.source.locate(e, expression.span()))
     }
     fn expr_inner(&mut self, expression: &ast::Expr) -> Result<Expr> {
         let (ty, kind) = match expression {
+            ast::Expr::This(_) => {
+                if self.binding("this").is_err() && !self.outer.contains_key("this") {
+                    return Err(unsupported(
+                        "this requires an explicit typed function receiver",
+                    ));
+                }
+                return self.expr(&ast::Expr::Ident(ast::Ident {
+                    span: expression.span(),
+                    ctxt: Default::default(),
+                    sym: "this".into(),
+                    optional: false,
+                }));
+            }
+            ast::Expr::Lit(ast::Lit::Num(n)) if self.types.profile.binary64() => {
+                (Type::Float64, E::Float64(n.value))
+            }
             ast::Expr::Lit(ast::Lit::Num(n)) => {
                 if n.value.fract() != 0.0 || n.value < i32::MIN as f64 || n.value > i32::MAX as f64
                 {
@@ -27,44 +79,186 @@ impl Lower<'_> {
                 (Type::Number, E::Integer(n.value as i32))
             }
             ast::Expr::Lit(ast::Lit::Bool(b)) => (Type::Boolean, E::Integer(i32::from(b.value))),
-            ast::Expr::Lit(ast::Lit::Str(s)) => (
-                Type::String,
-                E::String(
+            ast::Expr::Lit(ast::Lit::Null(_)) => (Type::Null, E::Integer(0)),
+            ast::Expr::Lit(ast::Lit::Str(s)) => {
+                let bytes = if self.types.profile.utf16() {
+                    s.value
+                        .as_wtf8()
+                        .to_ill_formed_utf16()
+                        .flat_map(u16::to_le_bytes)
+                        .collect()
+                } else {
                     s.value
                         .as_str()
                         .ok_or_else(|| unsupported("non-UTF-8 string"))?
-                        .into(),
-                ),
-            ),
+                        .as_bytes()
+                        .to_vec()
+                };
+                (Type::String, E::String(bytes))
+            }
             ast::Expr::Ident(name) => {
-                let binding = self.binding(name.sym.as_ref())?;
+                if self.outer.contains_key(name.sym.as_ref()) {
+                    self.resolve_binding(name.sym.as_ref())?;
+                }
+                if self.types.profile.has_undefined()
+                    && name.sym == "undefined"
+                    && !self.functions.contains_key("undefined")
+                    && self.binding("undefined").is_err()
+                {
+                    return Ok(Expr {
+                        span: expression.span(),
+                        ty: Type::Undefined,
+                        kind: E::Integer(0),
+                    });
+                }
+                if self.types.profile.binary64()
+                    && !self.functions.contains_key(name.sym.as_ref())
+                    && self.binding(name.sym.as_ref()).is_err()
+                {
+                    let value = match name.sym.as_ref() {
+                        "NaN" => Some(f64::NAN),
+                        "Infinity" => Some(f64::INFINITY),
+                        _ => None,
+                    };
+                    if let Some(value) = value {
+                        return Ok(Expr {
+                            span: expression.span(),
+                            ty: Type::Float64,
+                            kind: E::Float64(value),
+                        });
+                    }
+                }
+                if self.binding(name.sym.as_ref()).is_err()
+                    && let Some(signature) = self.functions.get(name.sym.as_ref()).cloned()
+                {
+                    return self.function_reference(&signature, expression.span());
+                }
+                let binding = self.resolve_binding(name.sym.as_ref())?;
                 if !binding.initialized {
                     return Err(invalid(format!(
                         "binding used before initialization: {}",
                         name.sym
                     )));
                 }
-                (
-                    binding.ty.ok_or_else(|| invalid("missing binding type"))?,
-                    E::Local(binding.slot),
-                )
+                let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
+                if let Some(narrow) = self.refinements.get(&binding.slot).copied() {
+                    let local = Expr {
+                        span: expression.span(),
+                        ty,
+                        kind: E::Local(binding.slot),
+                    };
+                    return Ok(if narrow.is_union() {
+                        Expr {
+                            ty: narrow,
+                            ..local
+                        }
+                    } else {
+                        Expr {
+                            span: expression.span(),
+                            ty: narrow,
+                            kind: E::UnboxUnion(Box::new(local)),
+                        }
+                    });
+                }
+                (ty, E::Local(binding.slot))
             }
             ast::Expr::Paren(paren) => return self.expr(&paren.expr),
             ast::Expr::Unary(unary) => {
+                if unary.op == ast::UnaryOp::Delete {
+                    return self.array_delete(&unary.arg, unary.span);
+                }
                 let value = self.expr(&unary.arg)?;
                 match unary.op {
-                    ast::UnaryOp::Minus if value.ty == Type::Number => {
-                        (Type::Number, E::Negative(Box::new(value)))
+                    ast::UnaryOp::TypeOf if value.ty.is_union() => {
+                        return Ok(Expr {
+                            span: expression.span(),
+                            ty: Type::String,
+                            kind: E::Host(
+                                self.types.profile.host_operation(Host::UnionTypeOf),
+                                vec![value],
+                            ),
+                        });
                     }
-                    ast::UnaryOp::Bang if matches!(value.ty, Type::Number | Type::Boolean) => {
+                    ast::UnaryOp::Bang
+                        if self.types.profile.unions()
+                            && matches!(
+                                value.ty,
+                                Type::Function(_)
+                                    | Type::Error
+                                    | Type::NativeError(_)
+                                    | Type::String
+                                    | Type::Union(_)
+                                    | Type::ReferenceUnion(_)
+                            ) =>
+                    {
+                        let value = self.truth(value)?;
+                        (Type::Boolean, E::Not(Box::new(value)))
+                    }
+                    ast::UnaryOp::Void if self.types.profile.has_undefined() => {
+                        (Type::Undefined, E::Undefined(Box::new(value)))
+                    }
+                    ast::UnaryOp::TypeOf if self.types.profile.has_undefined() => {
+                        let name = match value.ty {
+                            Type::Function(_) => "function",
+                            Type::Undefined | Type::Void => "undefined",
+                            Type::Error
+                            | Type::NativeError(_)
+                            | Type::Null
+                            | Type::Record(_)
+                            | Type::Array(_) => "object",
+                            Type::Number | Type::Float64 => "number",
+                            Type::Boolean => "boolean",
+                            Type::String => "string",
+                            _ => return Err(unsupported("typeof an opaque result value")),
+                        };
+                        return Ok(Expr {
+                            span: expression.span(),
+                            ty: Type::String,
+                            kind: E::Sequence(
+                                Box::new(value),
+                                Box::new(Expr {
+                                    span: expression.span(),
+                                    ty: Type::String,
+                                    kind: E::String(self.types.profile.string_bytes(name)),
+                                }),
+                            ),
+                        });
+                    }
+                    ast::UnaryOp::Minus if matches!(value.ty, Type::Number | Type::Float64) => {
+                        (value.ty, E::Negative(Box::new(value)))
+                    }
+                    ast::UnaryOp::Plus if value.ty == Type::Float64 => return Ok(value),
+                    ast::UnaryOp::Bang
+                        if matches!(value.ty, Type::Number | Type::Float64 | Type::Boolean)
+                            || self.types.profile.has_undefined()
+                                && matches!(value.ty, Type::Null | Type::Undefined) =>
+                    {
                         (Type::Boolean, E::Not(Box::new(value)))
                     }
                     _ => return Err(unsupported("unary operator")),
                 }
             }
+            ast::Expr::New(new) => return self.new_error(new),
+            ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::InstanceOf => {
+                return self.instance_of_error(binary);
+            }
             ast::Expr::Bin(binary) => {
                 let left = self.expr(&binary.left)?;
                 let right = self.expr(&binary.right)?;
+                if left.ty.is_error() && right.ty.is_error() && left.ty != right.ty {
+                    return self.union_binary(binary.op, left, right, expression.span());
+                }
+                if left.ty.is_union() || right.ty.is_union() {
+                    return self.union_binary(binary.op, left, right, expression.span());
+                }
+                let (left, right) = if self.types.profile.has_undefined() {
+                    match super::undefined::binary(binary.op, left, right, expression.span()) {
+                        super::undefined::Binary::Folded(value) => return Ok(value),
+                        super::undefined::Binary::Unchanged(left, right) => (left, right),
+                    }
+                } else {
+                    (left, right)
+                };
                 if left.ty != right.ty {
                     return Err(self.source.locate(
                         type_error(format!(
@@ -75,20 +269,24 @@ impl Lower<'_> {
                     ));
                 }
                 let result = match binary.op {
-                    ast::BinaryOp::Add if matches!(left.ty, Type::Number | Type::String) => left.ty,
+                    ast::BinaryOp::Add
+                        if matches!(left.ty, Type::Number | Type::Float64 | Type::String) =>
+                    {
+                        left.ty
+                    }
                     ast::BinaryOp::Sub
                     | ast::BinaryOp::Mul
                     | ast::BinaryOp::Div
                     | ast::BinaryOp::Mod
-                        if left.ty == Type::Number =>
+                        if matches!(left.ty, Type::Number | Type::Float64) =>
                     {
-                        Type::Number
+                        left.ty
                     }
                     ast::BinaryOp::Lt
                     | ast::BinaryOp::LtEq
                     | ast::BinaryOp::Gt
                     | ast::BinaryOp::GtEq
-                        if matches!(left.ty, Type::Number | Type::String) =>
+                        if matches!(left.ty, Type::Number | Type::Float64 | Type::String) =>
                     {
                         Type::Boolean
                     }
@@ -96,12 +294,24 @@ impl Lower<'_> {
                     | ast::BinaryOp::EqEqEq
                     | ast::BinaryOp::NotEq
                     | ast::BinaryOp::NotEqEq
-                        if matches!(left.ty, Type::Number | Type::Boolean | Type::String) =>
+                        if matches!(
+                            left.ty,
+                            Type::Number
+                                | Type::Float64
+                                | Type::Boolean
+                                | Type::String
+                                | Type::Null
+                                | Type::Function(_)
+                                | Type::Error
+                                | Type::NativeError(_)
+                                | Type::Record(_)
+                                | Type::Array(_)
+                        ) =>
                     {
                         Type::Boolean
                     }
                     ast::BinaryOp::LogicalAnd | ast::BinaryOp::LogicalOr
-                        if matches!(left.ty, Type::Number | Type::Boolean) =>
+                        if matches!(left.ty, Type::Number | Type::Float64 | Type::Boolean) =>
                     {
                         left.ty
                     }
@@ -112,7 +322,10 @@ impl Lower<'_> {
                     E::Binary(binary.op, Box::new(left), Box::new(right)),
                 )
             }
-            ast::Expr::Call(call) => return self.call(call),
+            ast::Expr::Cond(branch) if self.types.profile.unions() => {
+                return self.conditional(branch, None);
+            }
+            ast::Expr::Call(call) => return self.call(call, None),
             ast::Expr::Member(member) => return self.result_field(member),
             _ => return Err(unsupported("expression")),
         };
@@ -122,41 +335,190 @@ impl Lower<'_> {
             kind,
         })
     }
-    fn call(&mut self, call: &ast::CallExpr) -> Result<Expr> {
-        if call.type_args.is_some() || call.args.iter().any(|a| a.spread.is_some()) {
-            return Err(unsupported("generic or spread call"));
+    fn call(&mut self, call: &ast::CallExpr, expected: Option<Type>) -> Result<Expr> {
+        if let ast::Callee::Expr(callee) = &call.callee
+            && callee_name(callee).as_deref() == Some("varta.json.parse")
+        {
+            if call.args.iter().any(|arg| arg.spread.is_some()) {
+                return Err(unsupported("spread to a JSON intrinsic"));
+            }
+            return self.parse_json(call);
+        }
+        if call.type_args.is_some() {
+            return Err(unsupported("generic call"));
         }
         let ast::Callee::Expr(callee) = &call.callee else {
             return Err(unsupported("callee"));
         };
+        if call.args.iter().any(|arg| arg.spread.is_some()) {
+            return self.spread_call(call, callee);
+        }
+        if let ast::Expr::Ident(id) = &**callee
+            && self.outer.contains_key(id.sym.as_ref())
+        {
+            self.resolve_binding(id.sym.as_ref())?;
+        }
+        if self.types.profile.function_values()
+            && match &**callee {
+                ast::Expr::Ident(id) => self.binding(id.sym.as_ref()).is_ok(),
+                ast::Expr::Paren(_)
+                | ast::Expr::Call(_)
+                | ast::Expr::Arrow(_)
+                | ast::Expr::Fn(_)
+                | ast::Expr::This(_)
+                | ast::Expr::Cond(_) => true,
+                _ => false,
+            }
+        {
+            return self.function_call(call, callee);
+        }
+        if self.types.profile.closures()
+            && let ast::Expr::Member(member) = &**callee
+            && matches!(&member.prop, ast::MemberProp::Ident(id) if id.sym=="call")
+        {
+            return self.function_call_method(call, member);
+        }
+        if self.types.profile.resizable_arrays()
+            && let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && matches!(
+                method.sym.as_ref(),
+                "push"
+                    | "pop"
+                    | "at"
+                    | "slice"
+                    | "includes"
+                    | "indexOf"
+                    | "map"
+                    | "filter"
+                    | "forEach"
+                    | "find"
+                    | "reduce"
+                    | "some"
+                    | "every"
+            )
+        {
+            return self.array_method(call, member, method.sym.as_ref(), expected);
+        }
+        if let ast::Expr::Member(member) = &**callee
+            && matches!(&member.prop,ast::MemberProp::Ident(id) if id.sym=="repeat")
+        {
+            return self.string_repeat(call, member);
+        }
+        if self.types.profile.utf16()
+            && let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && matches!(method.sym.as_ref(), "charAt" | "charCodeAt")
+        {
+            let value = self.expr(&member.obj)?;
+            if value.ty != Type::String {
+                return Err(type_error("string method requires a string receiver"));
+            }
+            if call.args.len() > 1 {
+                return Err(invalid(
+                    "string method expects zero or one numeric argument",
+                ));
+            }
+            let index = if let Some(arg) = call.args.first() {
+                self.expr(&arg.expr)?
+            } else {
+                Expr {
+                    span: call.span,
+                    ty: Type::Float64,
+                    kind: E::Float64(0.0),
+                }
+            };
+            if index.ty != Type::Float64 {
+                return Err(type_error("string index must be a number"));
+            }
+            let (host, ty) = if method.sym == "charAt" {
+                (Host::StringCharAt16, Type::String)
+            } else {
+                (Host::StringCharCodeAt16, Type::Float64)
+            };
+            return Ok(Expr {
+                span: call.span,
+                ty,
+                kind: E::Host(host, vec![value, index]),
+            });
+        }
+        if let Some(class) = self.error_callee(callee) {
+            return self.error_constructor(class, &call.args, call.type_args.is_some(), call.span);
+        }
+        if let ast::Expr::Member(member) = &**callee
+            && matches!(&member.prop,ast::MemberProp::Ident(id) if id.sym=="toString")
+        {
+            return self.error_to_string(call, member);
+        }
         let name = callee_name(callee).ok_or_else(|| unsupported("callee"))?;
+        if name == "Array.isArray" && self.types.profile.reference_unions() {
+            return self.array_is_array(call);
+        }
+        if name == "Object.hasOwn" && self.types.profile.missing() {
+            return self.own_property(call);
+        }
         if name == "varta.result.capture" {
             return self.capture(call);
+        }
+        if name == "JSON.stringify" {
+            if call.args.len() != 1 {
+                return Err(invalid("JSON.stringify expects one value"));
+            }
+            let value = self.expr(&call.args[0].expr)?;
+            if value.ty.value_kind().is_none() {
+                return Err(unsupported("JSON.stringify value type"));
+            }
+            let ty = if value.ty.is_union()
+                && unions::members(value.ty, self.types).contains(&Type::Undefined)
+            {
+                unions::intern(vec![Type::String, Type::Undefined], self.types)?
+            } else if value.ty == Type::Undefined {
+                Type::Undefined
+            } else {
+                Type::String
+            };
+            return Ok(Expr {
+                span: call.span,
+                ty,
+                kind: E::Json(Box::new(value)),
+            });
         }
         if let Some(signature) = self.functions.get(&name).cloned() {
             if signature.index == self.entry {
                 return Err(unsupported("calling main"));
             }
-            if call.args.len() != signature.params.len() {
+            if !signature.shape.extended() && call.args.len() != signature.params.len() {
                 return Err(invalid(format!(
                     "function {name} expects {} arguments",
                     signature.params.len()
                 )));
             }
+            let values = self.call_arguments(&call.args, &signature.params, &signature.shape)?;
             let mut args = Vec::new();
-            for (arg, ty) in call.args.iter().zip(signature.params) {
-                let value = self.expr(&arg.expr)?;
+            if let Some(ty) = signature.receiver {
+                let value = unions::widen(
+                    Expr {
+                        span: call.span,
+                        ty: Type::Undefined,
+                        kind: E::Integer(0),
+                    },
+                    Some(ty),
+                    self.types,
+                )?;
                 if value.ty != ty {
                     return Err(self.source.locate(
-                        type_error(format!(
-                            "argument type mismatch: expected {ty}, found {}",
-                            value.ty
-                        )),
-                        value.span,
+                        type_error("bare declaration call requires an undefined-capable this type"),
+                        call.span,
                     ));
                 }
                 args.push(value);
             }
+            args.extend(self.bind_arguments(
+                values,
+                &signature.params,
+                &signature.shape,
+                call.span,
+            )?);
             return Ok(Expr {
                 span: call.span,
                 ty: signature.result,
@@ -169,7 +531,7 @@ impl Lower<'_> {
             }
             return Ok(Expr {
                 span: call.span,
-                ty: Type::Number,
+                ty: self.types.number(),
                 kind: E::Status,
             });
         }
@@ -178,10 +540,20 @@ impl Lower<'_> {
                 if call.args.len() != 1 {
                     return Err(invalid("log expects one argument"));
                 }
-                let arg = self.expr(&call.args[0].expr)?;
+                let mut arg = self.expr(&call.args[0].expr)?;
+                if arg.ty.is_error() {
+                    arg = Expr {
+                        span: arg.span,
+                        ty: Type::String,
+                        kind: E::ErrorText(Box::new(arg)),
+                    };
+                }
                 let host = match arg.ty {
                     Type::String => Host::LogString,
                     Type::Number | Type::Boolean => Host::LogInt,
+                    Type::Float64 => Host::LogFloat,
+                    Type::Undefined => Host::LogUndefined,
+                    Type::Union(_) | Type::ReferenceUnion(_) => Host::UnionLog,
                     _ => {
                         return Err(self
                             .source
@@ -191,17 +563,21 @@ impl Lower<'_> {
                 return Ok(Expr {
                     span: call.span,
                     ty: Type::Void,
-                    kind: E::Host(host, vec![arg]),
+                    kind: E::Host(self.types.profile.host_operation(host), vec![arg]),
                 });
             }
-            "varta.time.now" => (Host::Time, None, Type::Number),
+            "varta.http.stop" => (Host::HttpStop, None, Type::Void),
+            "varta.time.now" => (Host::Time, None, self.types.number()),
             "varta.env.has" => (Host::EnvHas, Some(Type::String), Type::Boolean),
             "varta.env.get" => (Host::EnvGet, Some(Type::String), Type::String),
             "varta.env.print" => (Host::EnvPrint, Some(Type::String), Type::Void),
             "varta.fs.read" => (Host::FsRead, Some(Type::String), Type::String),
             "varta.fs.print" => (Host::FsPrint, Some(Type::String), Type::Void),
-            "varta.net.fetch" => (Host::NetFetch, Some(Type::String), Type::Number),
+            "varta.net.fetch" => (Host::NetFetch, Some(Type::String), self.types.number()),
             "varta.net.get" => (Host::NetGet, Some(Type::String), Type::String),
+            "varta.process.exit" if self.types.profile.binary64() => {
+                (Host::ExitFloat, Some(Type::Float64), Type::Void)
+            }
             "varta.process.exit" => (Host::Exit, Some(Type::Number), Type::Void),
             _ => return Err(unsupported("call")),
         };
@@ -226,7 +602,7 @@ impl Lower<'_> {
         Ok(Expr {
             span: call.span,
             ty: result,
-            kind: E::Host(host, args),
+            kind: E::Host(self.types.profile.host_operation(host), args),
         })
     }
 }

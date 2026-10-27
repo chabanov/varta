@@ -10,7 +10,7 @@ pub struct CapabilityGrant {
 pub enum CapabilityValue {
     PathGlobs(Vec<String>),
     UrlGlobs(Vec<String>),
-    Ports(Vec<u16>),
+    ListenEndpoints(Vec<String>),
     Boolean(bool),
 }
 
@@ -23,6 +23,7 @@ pub fn capability_kind(id: &str) -> Option<GrantKind> {
         "time.now" | "process.exit" => Some(GrantKind::Boolean),
         "env.has" | "env.print" | "env.get" | "fs.read" | "fs.print" => Some(GrantKind::Patterns),
         "net.fetch" | "net.get" => Some(GrantKind::Urls),
+        "net.listen" => Some(GrantKind::Listeners),
         _ => None,
     }
 }
@@ -32,6 +33,7 @@ pub enum GrantKind {
     Boolean,
     Patterns,
     Urls,
+    Listeners,
 }
 
 impl CapabilityGrant {
@@ -78,6 +80,26 @@ impl CapabilityGrant {
                 }
                 Ok(())
             }
+            (GrantKind::Listeners, CapabilityValue::ListenEndpoints(endpoints)) => {
+                if endpoints.len() > 64 {
+                    return Err(VartaError::InvalidManifest(
+                        "too many listener endpoints".into(),
+                    ));
+                }
+                for endpoint in endpoints {
+                    let addr = endpoint.parse::<std::net::SocketAddr>().map_err(|_| {
+                        VartaError::InvalidManifest(
+                            "listener grants require literal IP:port endpoints".into(),
+                        )
+                    })?;
+                    if addr.to_string() != *endpoint {
+                        return Err(VartaError::InvalidManifest(
+                            "listener endpoint must be canonical".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            }
             _ => Err(VartaError::InvalidManifest(format!(
                 "invalid grant shape for {}",
                 self.id
@@ -90,9 +112,9 @@ pub fn validate_grants(grants: &[CapabilityGrant]) -> Result<()> {
     let patterns: usize = grants
         .iter()
         .map(|grant| match &grant.value {
-            CapabilityValue::PathGlobs(patterns) | CapabilityValue::UrlGlobs(patterns) => {
-                patterns.len()
-            }
+            CapabilityValue::PathGlobs(patterns)
+            | CapabilityValue::UrlGlobs(patterns)
+            | CapabilityValue::ListenEndpoints(patterns) => patterns.len(),
             _ => 0,
         })
         .sum();

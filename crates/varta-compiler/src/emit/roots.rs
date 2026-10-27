@@ -2,12 +2,13 @@
 use super::*;
 use varta_common::abi;
 
-pub(super) fn slots(types: &[Type]) -> Vec<Option<u32>> {
+pub(super) fn slots(types: &[Type], cells: &BTreeSet<u32>) -> Vec<Option<u32>> {
     let mut count = 0;
     types
         .iter()
-        .map(|ty| {
-            if ty.has_string() {
+        .enumerate()
+        .map(|(index, ty)| {
+            if ty.needs_root() || cells.contains(&(index as u32)) {
                 let offset = count;
                 count += abi::STRING_ROOT_SLOT_BYTES as u32;
                 Some(offset)
@@ -23,7 +24,7 @@ impl Emitter<'_> {
             return Ok(());
         };
         let bytes = self.root_slots.iter().flatten().count() * abi::STRING_ROOT_SLOT_BYTES;
-        if bytes > abi::STRING_ROOT_BYTES {
+        if bytes > abi::STRING_ROOT_BYTES - self.reserved_roots {
             return Err(function.source.locate(
                 CompilerError::Invalid("function string roots exceed root stack capacity".into()),
                 function.span,
@@ -48,7 +49,13 @@ impl Emitter<'_> {
             I::GlobalSet(memory.roots),
         ]);
         for slot in 0..function.params.len() {
-            self.store_root(slot as u32);
+            // Boxed parameters still hold their incoming payload here. Root it
+            // until every captured parameter has been copied into its own cell.
+            if function.params[slot].needs_root() {
+                self.write_root(slot as u32, self.local_slots[slot]);
+            } else {
+                self.store_root(slot as u32);
+            }
         }
         Ok(())
     }
@@ -68,12 +75,20 @@ impl Emitter<'_> {
         if self.memory.is_none() {
             return;
         }
+        let physical = self
+            .cell_slots
+            .get(&slot)
+            .copied()
+            .unwrap_or(self.local_slots[slot as usize]);
+        self.write_root(slot, physical);
+    }
+    fn write_root(&mut self, slot: u32, physical: u32) {
         if let Some(offset) = self.root_slots[slot as usize] {
             self.code.extend([
                 I::LocalGet(self.frame_base),
                 I::I32Const(offset as i32),
                 I::I32Add,
-                I::LocalGet(self.local_slots[slot as usize]),
+                I::LocalGet(physical),
                 I::I64Store(strings::ROOT),
             ]);
         }
@@ -92,7 +107,12 @@ impl Emitter<'_> {
                     I::I64Const(0),
                     I::I64Store(strings::ROOT),
                     I::I64Const(0),
-                    I::LocalSet(self.local_slots[slot as usize]),
+                    I::LocalSet(
+                        self.cell_slots
+                            .get(&slot)
+                            .copied()
+                            .unwrap_or(self.local_slots[slot as usize]),
+                    ),
                 ]);
             }
         }
@@ -109,8 +129,6 @@ impl Emitter<'_> {
                 }
             })
             .ok_or_else(|| CompilerError::Internal("missing branch target".into()))?;
-        self.clear_scopes(self.labels[index].scope_depth);
-        self.code.push(I::Br(self.depth(index)));
-        Ok(())
+        self.complete_branch(index)
     }
 }

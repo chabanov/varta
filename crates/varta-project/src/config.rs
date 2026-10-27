@@ -1,16 +1,17 @@
-use crate::{CapabilityGrant, CapabilityValue, Result, VartaError};
+use varta_common::{CapabilityGrant, CapabilityValue, Result, STRICT_POLICY, VartaError};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub enum CapabilitySpec {
     Patterns(Vec<String>),
-    Ports(Vec<u16>),
     Enabled(bool),
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VartaConfig {
+    #[serde(default, rename = "languageProfile")]
+    pub language_profile: varta_common::language::LanguageProfile,
     pub entry: String,
     pub target: String,
     #[serde(default = "default_policy")]
@@ -22,7 +23,7 @@ pub struct VartaConfig {
 }
 
 pub(crate) fn default_policy() -> String {
-    "strict".into()
+    STRICT_POLICY.into()
 }
 
 impl VartaConfig {
@@ -38,12 +39,12 @@ impl VartaConfig {
                 self.target
             )));
         }
-        if self.policy != "strict" {
+        if self.policy != STRICT_POLICY {
             return Err(VartaError::InvalidManifest(
                 "only the strict policy is implemented".into(),
             ));
         }
-        crate::validate_grants(&self.normalized_capabilities())
+        varta_common::validate_grants(&self.normalized_capabilities())
     }
 
     #[must_use]
@@ -56,13 +57,17 @@ impl VartaConfig {
                     .map(move |(operation, spec)| CapabilityGrant {
                         id: format!("{namespace}.{operation}"),
                         value: match spec {
+                            CapabilitySpec::Patterns(patterns)
+                                if namespace == "net" && operation == "listen" =>
+                            {
+                                CapabilityValue::ListenEndpoints(patterns.clone())
+                            }
                             CapabilitySpec::Patterns(patterns) if namespace == "net" => {
                                 CapabilityValue::UrlGlobs(patterns.clone())
                             }
                             CapabilitySpec::Patterns(patterns) => {
                                 CapabilityValue::PathGlobs(patterns.clone())
                             }
-                            CapabilitySpec::Ports(ports) => CapabilityValue::Ports(ports.clone()),
                             CapabilitySpec::Enabled(enabled) => CapabilityValue::Boolean(*enabled),
                         },
                     })
@@ -112,5 +117,15 @@ mod tests {
         let mut config = config(serde_json::json!({}));
         config.policy = "compat".into();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn unsupported_numeric_port_lists_are_rejected_by_the_project_schema() {
+        for operation in ["fetch", "listen"] {
+            let operations = std::collections::BTreeMap::from([(operation, vec![80, 443])]);
+            let value = serde_json::json!({"entry":"src/main.ts","target":"wasm","out":"dist/app",
+                "capabilities":{"net":operations}});
+            assert!(serde_json::from_value::<VartaConfig>(value).is_err());
+        }
     }
 }

@@ -1,0 +1,16 @@
+[package]
+name = "varta-launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "varta-runtime"
+path = "src/main.rs"
+
+[dependencies]
+varta-artifact = { path = "../varta-artifact" }
+varta-common = { path = "../varta-common" }
+varta-runtime = { path = "../varta-runtime" }
+serde_json.workspace = true
+thiserror.workspace = true

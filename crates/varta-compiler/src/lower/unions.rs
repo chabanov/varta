@@ -1,0 +1,290 @@
+//! Closed primitive unions: exact widening, branch-local narrowing, no coercion.
+use super::*;
+use references::Guard;
+
+pub(super) fn primitive(ty: Type) -> bool {
+    matches!(
+        ty,
+        Type::Float64 | Type::Boolean | Type::String | Type::Null | Type::Undefined
+    )
+}
+pub(super) fn members(ty: Type, types: &ir::ValueTypes) -> Vec<Type> {
+    if let Type::Union(id) | Type::ReferenceUnion(id) = ty {
+        types.unions[id as usize].clone()
+    } else {
+        vec![ty]
+    }
+}
+pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Type> {
+    if !types.profile.unions() {
+        return Err(unsupported("union types require checked-f64-utf16-v2"));
+    }
+    let mut values: Vec<_> = values
+        .into_iter()
+        .flat_map(|ty| members(ty, types))
+        .collect();
+    values.sort();
+    values.dedup();
+    if values.is_empty()
+        || values.iter().any(|ty| {
+            !primitive(*ty)
+                && !(types.profile.reference_unions()
+                    && matches!(ty, Type::Record(_) | Type::Array(_))
+                    || (types.profile.errors() && ty.is_error()))
+        })
+    {
+        return Err(unsupported(
+            "union members other than number, boolean, string, null or undefined",
+        ));
+    }
+    let references = values.iter().any(|ty| {
+        matches!(
+            ty,
+            Type::Record(_) | Type::Array(_) | Type::Error | Type::NativeError(_)
+        )
+    });
+    if values
+        .iter()
+        .filter(|ty| matches!(ty, Type::Record(_)))
+        .count()
+        > 1
+        || values
+            .iter()
+            .filter(|ty| matches!(ty, Type::Array(_)))
+            .count()
+            > 1
+    {
+        return Err(unsupported(
+            "multiple record shapes or array element types in one union",
+        ));
+    }
+    if values.len() == 1 {
+        return Ok(values[0]);
+    }
+    if let Some(id) = types.unions.iter().position(|u| u == &values) {
+        return Ok(if references {
+            Type::ReferenceUnion(id as u32)
+        } else {
+            Type::Union(id as u32)
+        });
+    }
+    if types.unions.len() >= varta_common::value::MAX_UNION_TYPES {
+        return Err(invalid("union type count exceeds limit"));
+    }
+    let id = types.unions.len() as u32;
+    types.unions.push(values);
+    Ok(if references {
+        Type::ReferenceUnion(id)
+    } else {
+        Type::Union(id)
+    })
+}
+pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes) -> Result<Expr> {
+    let Some(ty @ (Type::Union(id) | Type::ReferenceUnion(id))) = expected else {
+        return Ok(value);
+    };
+    let target = &types.unions[id as usize];
+    if members(value.ty, types).iter().any(|m| !target.contains(m)) {
+        return Err(type_error(format!(
+            "value {} is not a member of the expected union",
+            value.ty
+        )));
+    }
+    if value.ty.is_union() {
+        return Ok(Expr { ty, ..value });
+    }
+    Ok(Expr {
+        span: value.span,
+        ty,
+        kind: E::BoxUnion(Box::new(value)),
+    })
+}
+impl Lower<'_> {
+    pub(super) fn join(&mut self, a: Expr, b: Expr) -> Result<(Type, Expr, Expr)> {
+        let ty = intern(vec![a.ty, b.ty], self.types)?;
+        Ok((
+            ty,
+            widen(a, Some(ty), self.types)?,
+            widen(b, Some(ty), self.types)?,
+        ))
+    }
+    pub(super) fn truth(&mut self, value: Expr) -> Result<Expr> {
+        if matches!(value.ty, Type::Function(_)) {
+            return Ok(Expr {
+                span: value.span,
+                ty: Type::Boolean,
+                kind: E::Sequence(
+                    Box::new(value),
+                    Box::new(Expr {
+                        span: swc_common::DUMMY_SP,
+                        ty: Type::Boolean,
+                        kind: E::Integer(1),
+                    }),
+                ),
+            });
+        }
+        if value.ty.is_union() {
+            return Ok(Expr {
+                span: value.span,
+                ty: Type::Boolean,
+                kind: E::Host(
+                    self.types.profile.host_operation(Host::UnionTruthy),
+                    vec![value],
+                ),
+            });
+        }
+        if matches!(value.ty, Type::String | Type::Error | Type::NativeError(_))
+            && self.types.profile.unions()
+        {
+            let ty = intern(vec![value.ty, Type::Undefined], self.types)?;
+            return self.truth(widen(value, Some(ty), self.types)?);
+        }
+        Ok(value)
+    }
+    pub(super) fn union_binary(
+        &mut self,
+        op: ast::BinaryOp,
+        a: Expr,
+        b: Expr,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        use ast::BinaryOp::*;
+        if matches!(op, LogicalAnd | LogicalOr | NullishCoalescing) {
+            let (ty, a, b) = self.join(a, b)?;
+            return Ok(Expr {
+                span,
+                ty,
+                kind: E::UnionLogical(op, Box::new(a), Box::new(b)),
+            });
+        }
+        if matches!(op, EqEq | NotEq)
+            && (matches!(a.ty, Type::Null | Type::Undefined)
+                || matches!(b.ty, Type::Null | Type::Undefined))
+        {
+            let (_, a, b) = self.join(a, b)?;
+            let value = Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Host(
+                    self.types.profile.host_operation(Host::UnionNullishEqual),
+                    vec![a, b],
+                ),
+            };
+            return Ok(if op == NotEq {
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::Not(Box::new(value)),
+                }
+            } else {
+                value
+            });
+        }
+        if !matches!(op, EqEqEq | NotEqEq) {
+            return Err(unsupported(
+                "union operator; narrow the value before arithmetic or coercive comparison",
+            ));
+        }
+        let (_, a, b) = self.join(a, b)?;
+        let value = Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::Host(
+                self.types.profile.host_operation(Host::UnionStrictEqual),
+                vec![a, b],
+            ),
+        };
+        Ok(if op == NotEqEq {
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Not(Box::new(value)),
+            }
+        } else {
+            value
+        })
+    }
+    /// A guard refines only a direct local. Writes under its refinement are
+    /// rejected, so loops cannot reuse stale assumptions after a back edge.
+    pub(super) fn guard(&mut self, test: &ast::Expr, yes: bool) -> Result<()> {
+        if !self.types.profile.unions() {
+            return Ok(());
+        }
+        if let ast::Expr::Paren(p) = test {
+            return self.guard(&p.expr, yes);
+        }
+        if self.types.profile.reference_unions()
+            && let ast::Expr::Unary(unary) = test
+            && unary.op == ast::UnaryOp::Bang
+        {
+            return self.guard(&unary.arg, !yes);
+        }
+        if self.types.profile.reference_unions()
+            && let ast::Expr::Call(call) = test
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let ast::Expr::Member(member) = &**callee
+            && matches!(&*member.obj,ast::Expr::Ident(id) if id.sym=="Array")
+            && matches!(&member.prop,ast::MemberProp::Ident(id) if id.sym=="isArray")
+            && self.binding("Array").is_err()
+            && !self.functions.contains_key("Array")
+            && call.args.len() == 1
+            && let ast::Expr::Ident(id) = &*call.args[0].expr
+        {
+            return self.refine(id.sym.as_ref(), Guard::Array, yes);
+        }
+        if let ast::Expr::Bin(binary) = test
+            && binary.op == ast::BinaryOp::InstanceOf
+            && let Some(class) = self.error_callee(&binary.right)
+            && (class == varta_common::value::ErrorClass::Error
+                || self.types.profile.error_families())
+            && let ast::Expr::Ident(id) = &*binary.left
+        {
+            return self.refine(id.sym.as_ref(), Guard::Error(class), yes);
+        }
+        let ast::Expr::Bin(binary) = test else {
+            return Ok(());
+        };
+        let positive = match binary.op {
+            ast::BinaryOp::EqEqEq => yes,
+            ast::BinaryOp::NotEqEq => !yes,
+            _ => return Ok(()),
+        };
+        let identify = |a: &ast::Expr, b: &ast::Expr| -> Option<(String, Guard)> {
+            if let ast::Expr::Unary(u) = a
+                && u.op == ast::UnaryOp::TypeOf
+                && let ast::Expr::Ident(id) = &*u.arg
+                && let ast::Expr::Lit(ast::Lit::Str(text)) = b
+            {
+                let ty = match text.value.as_str()? {
+                    "number" => Type::Float64,
+                    "boolean" => Type::Boolean,
+                    "string" => Type::String,
+                    "undefined" => Type::Undefined,
+                    "object" => return Some((id.sym.to_string(), Guard::Object)),
+                    _ => return None,
+                };
+                return Some((id.sym.to_string(), Guard::Exact(ty)));
+            }
+            if let ast::Expr::Ident(id) = a
+                && matches!(b, ast::Expr::Lit(ast::Lit::Null(_)))
+            {
+                return Some((id.sym.to_string(), Guard::Exact(Type::Null)));
+            }
+            if let ast::Expr::Ident(id) = a
+                && let ast::Expr::Ident(undefined) = b
+                && undefined.sym == "undefined"
+                && self.binding("undefined").is_err()
+                && !self.functions.contains_key("undefined")
+            {
+                return Some((id.sym.to_string(), Guard::Exact(Type::Undefined)));
+            }
+            None
+        };
+        let Some((name, matched)) =
+            identify(&binary.left, &binary.right).or_else(|| identify(&binary.right, &binary.left))
+        else {
+            return Ok(());
+        };
+        self.refine(&name, matched, positive)
+    }
+}

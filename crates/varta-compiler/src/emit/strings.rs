@@ -1,31 +1,37 @@
 //! Nonmoving immutable strings with exact compiler roots and a bounded reusable heap.
 mod allocate;
+mod array_index;
+mod array_push;
+mod array_resize;
+mod array_search;
+mod array_slice;
 mod collect;
 mod compare;
 mod concat;
 mod roots;
+mod sparse;
 use std::collections::BTreeMap;
 use varta_common::abi;
 use wasm_encoder::{BlockType, Function, Instruction as I, MemArg, ValType};
 
 pub(super) const LENGTH_SHIFT: u32 = i32::BITS;
 pub(super) const MEMORY: u32 = 0;
-const ALIGN: u32 = 8;
+const ALIGN: u32 = varta_common::value::HEAP_ALIGNMENT as u32;
 const HEADER: u32 = abi::STRING_HEADER_BYTES as u32;
-const FLAGS: u64 = 4;
-const NEXT: u64 = 8;
-const ALLOCATED: i32 = 1;
+const FLAGS: u64 = varta_common::value::HEAP_FLAGS_OFFSET as u64;
+const NEXT: u64 = varta_common::value::HEAP_LINK_OFFSET as u64;
+pub(super) const ALLOCATED: i32 = varta_common::value::HEAP_ALLOCATED_FLAG as i32;
 const MARKED: i32 = 2;
-const WORD: MemArg = MemArg {
+pub(super) const WORD: MemArg = MemArg {
     offset: 0,
     align: 2,
     memory_index: MEMORY,
 };
-const FLAG: MemArg = MemArg {
+pub(super) const FLAG: MemArg = MemArg {
     offset: FLAGS,
     ..WORD
 };
-const LINK: MemArg = MemArg {
+pub(super) const LINK: MemArg = MemArg {
     offset: NEXT,
     ..WORD
 };
@@ -49,6 +55,13 @@ pub(super) enum Helper {
     Allocate,
     Collect,
     RootPush,
+    ArrayIndex,
+    ArrayPush,
+    ArraySlice,
+    ArraySearch,
+    ArrayPresent,
+    ArraySetPresent,
+    ArrayResize,
 }
 impl Helper {
     pub(super) fn signature(self) -> (Vec<ValType>, Vec<ValType>) {
@@ -59,20 +72,60 @@ impl Helper {
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
             Self::Collect => (vec![], vec![]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
+            Self::ArraySearch => (
+                vec![
+                    ValType::I64,
+                    ValType::I32,
+                    ValType::I64,
+                    ValType::F64,
+                    ValType::I32,
+                ],
+                vec![ValType::I32],
+            ),
+            Self::ArraySlice => (
+                vec![ValType::I64, ValType::F64, ValType::F64],
+                vec![ValType::I64],
+            ),
+            Self::ArrayPush => (vec![ValType::I64; 2], vec![ValType::I32]),
+            Self::ArrayResize => (vec![ValType::I64, ValType::I32], vec![]),
+            Self::ArrayPresent => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
+            Self::ArraySetPresent => (vec![ValType::I64, ValType::I32, ValType::I32], vec![]),
+            Self::ArrayIndex => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
         }
     }
     pub(super) fn needs_arena(self) -> bool {
         self != Self::Compare
     }
-    pub(super) fn body(self, globals: Globals, helpers: &BTreeMap<Self, u32>) -> Function {
+    pub(super) fn body(
+        self,
+        globals: Globals,
+        helpers: &BTreeMap<Self, u32>,
+        trace_values: bool,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Function {
         // Emission adds the complete allocator dependency set before indexing.
         match self {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
             Self::Concat => concat::function(helpers[&Self::Allocate]),
-            Self::Compare => compare::function(),
+            Self::Compare => compare::function(profile.utf16()),
             Self::Allocate => allocate::function(globals, helpers[&Self::Collect]),
-            Self::Collect => collect::function(globals),
+            Self::Collect => collect::function(globals, trace_values, profile.closures()),
             Self::RootPush => roots::function(globals.roots),
+            Self::ArraySearch => {
+                array_search::function(helpers[&Self::Compare], profile.sparse_arrays())
+            }
+            Self::ArraySlice => array_slice::function(
+                helpers[&Self::Allocate],
+                helpers[&Self::RootPush],
+                profile.sparse_arrays(),
+            ),
+            Self::ArrayPush => {
+                array_push::function(helpers[&Self::Allocate], profile.sparse_arrays())
+            }
+            Self::ArrayResize => array_resize::function(helpers[&Self::Allocate]),
+            Self::ArrayPresent => sparse::function(false),
+            Self::ArraySetPresent => sparse::function(true),
+            Self::ArrayIndex => array_index::function(profile.resizable_arrays()),
         }
     }
 }

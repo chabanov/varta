@@ -9,17 +9,18 @@ impl Lower<'_> {
             let ast::Pat::Ident(binding) = &variable.name else {
                 return Err(unsupported("binding pattern"));
             };
+            let annotation = annotation(binding.type_ann.as_deref(), self.types).map_err(|e| {
+                self.source.locate(
+                    e,
+                    binding
+                        .type_ann
+                        .as_ref()
+                        .map_or(binding.span(), |a| a.type_ann.span()),
+                )
+            })?;
             self.declare(
                 binding.id.sym.as_ref(),
-                annotation(binding.type_ann.as_deref()).map_err(|e| {
-                    self.source.locate(
-                        e,
-                        binding
-                            .type_ann
-                            .as_ref()
-                            .map_or(binding.span(), |a| a.type_ann.span()),
-                    )
-                })?,
+                annotation,
                 false,
                 declaration.kind != ast::VarDeclKind::Const,
             )
@@ -69,12 +70,28 @@ impl Lower<'_> {
             };
             let name = binding.id.sym.as_ref();
             let old = self.binding(name)?;
-            let value = self.expr(
-                variable
-                    .init
-                    .as_deref()
-                    .ok_or_else(|| unsupported("uninitialized variable"))?,
-            )?;
+            let value = if let Some(init) = variable.init.as_deref() {
+                self.expr_expected(init, old.ty)?
+            } else if self.types.profile.missing()
+                && declaration.kind == ast::VarDeclKind::Let
+                && old
+                    .ty
+                    .is_some_and(|ty| unions::members(ty, self.types).contains(&Type::Undefined))
+            {
+                unions::widen(
+                    Expr {
+                        span: variable.span,
+                        ty: Type::Undefined,
+                        kind: E::Integer(0),
+                    },
+                    old.ty,
+                    self.types,
+                )?
+            } else {
+                return Err(unsupported(
+                    "uninitialized variable without an undefined-capable let annotation",
+                ));
+            };
             value_type(value.ty).map_err(|e| self.source.locate(e, value.span))?;
             if old.ty.is_some_and(|ty| ty != value.ty) {
                 return Err(self.source.locate(
@@ -87,7 +104,7 @@ impl Lower<'_> {
                 ));
             }
             self.update(name, value.ty)?;
-            output.push(S::Set(old.slot, value));
+            output.push(S::Init(old.slot, value));
         }
         Ok(output)
     }
@@ -98,6 +115,8 @@ impl Lower<'_> {
     fn statement_inner(&mut self, statement: &ast::Stmt) -> Result<S> {
         Ok(match statement {
             ast::Stmt::Empty(_) => S::Block(vec![]),
+            ast::Stmt::Throw(t) => self.throw_statement(t)?,
+            ast::Stmt::Try(t) => self.try_statement(t)?,
             ast::Stmt::Decl(ast::Decl::Var(var)) => S::Block(self.variables(var)?),
             ast::Stmt::Block(block) => S::Block(self.block(&block.stmts, true)?),
             ast::Stmt::Expr(statement) => {
@@ -108,7 +127,46 @@ impl Lower<'_> {
                 }
             }
             ast::Stmt::Return(ret) => {
-                let value = ret.arg.as_deref().map(|expr| self.expr(expr)).transpose()?;
+                if self.infer_returns {
+                    return Ok(S::Return(
+                        ret.arg.as_deref().map(|expr| self.expr(expr)).transpose()?,
+                    ));
+                }
+                let mut value = ret
+                    .arg
+                    .as_deref()
+                    .map(|expr| self.expr_expected(expr, Some(self.result)))
+                    .transpose()?;
+                if self.types.profile.has_undefined() {
+                    if self.result == Type::Void
+                        && value.as_ref().is_some_and(|v| v.ty == Type::Undefined)
+                    {
+                        return Ok(S::Block(vec![
+                            S::Expr(
+                                value
+                                    .take()
+                                    .ok_or_else(|| invalid("missing return value"))?,
+                            ),
+                            S::Return(None),
+                        ]));
+                    }
+                    if value.is_none()
+                        && (self.result == Type::Undefined
+                            || self.types.profile.missing()
+                                && unions::members(self.result, self.types)
+                                    .contains(&Type::Undefined))
+                    {
+                        value = Some(unions::widen(
+                            Expr {
+                                span: ret.span,
+                                ty: Type::Undefined,
+                                kind: E::Integer(0),
+                            },
+                            Some(self.result),
+                            self.types,
+                        )?);
+                    }
+                }
                 if value.as_ref().map_or(Type::Void, |e| e.ty) != self.result {
                     return Err(self.source.locate(
                         type_error(format!(
@@ -123,13 +181,18 @@ impl Lower<'_> {
             }
             ast::Stmt::If(branch) => {
                 let test = self.condition(&branch.test)?;
+                let saved = self.refinements.clone();
+                self.guard(&branch.test, true)?;
                 let yes = self.single(&branch.cons)?;
+                self.refinements = saved.clone();
+                self.guard(&branch.test, false)?;
                 let no = branch
                     .alt
                     .as_ref()
                     .map(|s| self.single(s))
                     .transpose()?
                     .unwrap_or_default();
+                self.refinements = saved;
                 S::If(test, yes, no)
             }
             ast::Stmt::While(statement) => {
@@ -155,7 +218,7 @@ impl Lower<'_> {
                     .as_deref()
                     .map(|e| self.condition(e))
                     .transpose()?;
-                let update = statement
+                let mut update = statement
                     .update
                     .as_deref()
                     .map(|e| self.expression_statement(e))
@@ -164,6 +227,16 @@ impl Lower<'_> {
                 self.loops += 1;
                 let body = self.single(&statement.body)?;
                 self.loops -= 1;
+                if self.types.profile.closures() {
+                    let slots = self
+                        .scopes
+                        .last()
+                        .ok_or_else(|| invalid("missing loop scope"))?
+                        .values()
+                        .map(|binding| binding.slot)
+                        .collect();
+                    update.insert(0, S::Rebind(slots));
+                }
                 let slots = self
                     .scopes
                     .pop()
@@ -178,6 +251,7 @@ impl Lower<'_> {
                 scalar(value.ty).map_err(|e| self.source.locate(e, value.span))?;
                 let discriminant = self.next;
                 let selected = self.next + 1;
+                self.local_types.insert(discriminant, value.ty);
                 self.next += 2;
                 let mut cases = Vec::new();
                 let mut default = false;
@@ -240,14 +314,78 @@ impl Lower<'_> {
         if assign.op != ast::AssignOp::Assign {
             return Err(unsupported("compound assignment"));
         }
+        if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left {
+            let field = self.place(member)?;
+            if self.types.profile.array_mutations()
+                && let E::Length(array) = field.kind
+            {
+                let length = self.expr_expected(&assign.right, Some(self.types.number()))?;
+                if length.ty != self.types.number() {
+                    return Err(self.source.locate(
+                        type_error("array length requires number; coercion is unsupported"),
+                        length.span,
+                    ));
+                }
+                let error = self.array_error(
+                    varta_common::value::ErrorClass::RangeError,
+                    "Invalid array length",
+                    assign.span,
+                )?;
+                return Ok(S::ArrayLength {
+                    array: *array,
+                    length,
+                    error,
+                });
+            }
+            if !matches!(field.kind, E::Field(_, _) | E::Index(_, _)) {
+                return Err(unsupported(
+                    "assignment to immutable result property or array length",
+                ));
+            }
+            let value = self.expr_expected(&assign.right, Some(field.ty))?;
+            if value.ty != field.ty {
+                return Err(self.source.locate(
+                    type_error(format!(
+                        "object field type mismatch: expected {}, found {}",
+                        field.ty, value.ty
+                    )),
+                    value.span,
+                ));
+            }
+            return Ok(match field.kind {
+                E::Field(object, index) => S::SetField(*object, index, value),
+                E::Index(object, index) => {
+                    let slots = self.types.profile.sparse_arrays().then(|| {
+                        (
+                            self.hidden(object.ty),
+                            self.hidden(if self.types.profile.array_mutations() {
+                                Type::Float64
+                            } else {
+                                Type::Number
+                            }),
+                        )
+                    });
+                    S::SetIndex {
+                        array: *object,
+                        index: *index,
+                        value,
+                        slots,
+                    }
+                }
+                _ => return Err(invalid("missing mutable property")),
+            });
+        }
         let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(name)) = &assign.left else {
             return Err(unsupported("assignment target"));
         };
-        let binding = self.binding(name.id.sym.as_ref())?;
+        let binding = self.resolve_binding(name.id.sym.as_ref())?;
         if !binding.mutable || !binding.initialized {
             return Err(invalid("assignment to constant or uninitialized binding"));
         }
-        let value = self.expr(&assign.right)?;
+        if self.refinements.contains_key(&binding.slot) {
+            return Err(unsupported("assignment to a guard-refined union binding"));
+        }
+        let value = self.expr_expected(&assign.right, binding.ty)?;
         if Some(value.ty) != binding.ty {
             return Err(self.source.locate(
                 type_error(format!(

@@ -5,7 +5,7 @@ pub(super) fn collect<'a>(
 ) -> Result<Vec<&'a ast::FnDecl>> {
     let mut declarations = Vec::new();
     for item in &module.body {
-        if super::tools::is_declaration(item) {
+        if super::tools::is_declaration(item) || super::http::is_declaration(item) {
             continue;
         }
         let declaration = match item {
@@ -24,15 +24,36 @@ pub(super) fn collect<'a>(
         };
         match declaration {
             ast::Decl::Fn(function) if !function.declare => declarations.push(function),
-            ast::Decl::TsInterface(interface) if interface.id.sym == "VartaResult" => {
+            ast::Decl::TsInterface(interface)
+                if matches!(
+                    interface.id.sym.as_ref(),
+                    "VartaResult"
+                        | "Array"
+                        | "VartaHttpRequest"
+                        | "VartaHttpResponse"
+                        | "VartaHttpHeader"
+                ) =>
+            {
                 return Err(source.locate(
-                    unsupported("redeclaring the built-in VartaResult type"),
+                    unsupported(&format!(
+                        "redeclaring the built-in {} type",
+                        interface.id.sym
+                    )),
                     interface.id.span,
                 ));
             }
-            ast::Decl::TsTypeAlias(alias) if alias.id.sym == "VartaResult" => {
+            ast::Decl::TsTypeAlias(alias)
+                if matches!(
+                    alias.id.sym.as_ref(),
+                    "VartaResult"
+                        | "Array"
+                        | "VartaHttpRequest"
+                        | "VartaHttpResponse"
+                        | "VartaHttpHeader"
+                ) =>
+            {
                 return Err(source.locate(
-                    unsupported("redeclaring the built-in VartaResult type"),
+                    unsupported(&format!("redeclaring the built-in {} type", alias.id.sym)),
                     alias.id.span,
                 ));
             }
@@ -44,8 +65,10 @@ pub(super) fn collect<'a>(
                             source.locate(unsupported("ambient declaration"), declaration.span())
                         );
                     };
-                    if !matches!(binding.id.sym.as_ref(), "varta" | "console" | "log")
-                        || declaration.init.is_some()
+                    if !matches!(
+                        binding.id.sym.as_ref(),
+                        "varta" | "console" | "log" | "JSON"
+                    ) || declaration.init.is_some()
                     {
                         return Err(
                             source.locate(unsupported("ambient declaration"), declaration.span())

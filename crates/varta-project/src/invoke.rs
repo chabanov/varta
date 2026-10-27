@@ -7,12 +7,7 @@ pub fn invoke_tool(
     name: &str,
     arguments: &[u8],
 ) -> Result<ToolInvocationOutput> {
-    Ok(VartaRuntime::new().invoke_tool(
-        &artifact.wasm,
-        name,
-        arguments,
-        &artifact.manifest.grants()?,
-    )?)
+    Ok(VartaRuntime::new().invoke_tool(&artifact.wasm, name, arguments, &artifact.grants()?)?)
 }
 pub fn invoke_tool_with_policy(
     artifact: &Artifact,
@@ -24,7 +19,7 @@ pub fn invoke_tool_with_policy(
         &artifact.wasm,
         name,
         arguments,
-        &artifact.manifest.grants()?,
+        &artifact.grants()?,
         host.grants(),
     )?)
 }
