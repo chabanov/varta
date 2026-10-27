@@ -993,10 +993,51 @@ v14. Tests cover order/throws, GC/pairs, current backing, fatal limits, legacy g
 helper purity, virtual modules and source-free artifacts with grants/ceilings and
 dependency diagnostics. No ABI/helper/layout change.
 
-Next extend checked loop syntax with for-of over bounded arrays, reusing live
-iteration, lexical captures and finally cleanup. Catch patterns, generalized
-keys/coercion and constructors/prototypes remain language work. Scheduler/promise
-jobs follow retained-root, cancellation, queue and handle lifetime design.
+Intrinsic array for-of is implemented in v12+. One rooted source is traversed
+through live length/backing; v13+ holes yield Undefined. Lexical const/let heads
+receive fresh capture cells per iteration, while assignment identifiers/members/
+patterns retain checked writes. Iterator values precede reference/default effects;
+TDZ, patterns, GC/pairs, branch/finalizer cleanup and status/grants retain their
+contracts. Nullable array absence is recoverable TypeError; bounds/fuel/exit stay
+fatal. Tests cover 1024-element default budgets, virtual modules and source-free
+artifacts with grant denial, host ceilings and dependency diagnostics. No ABI,
+helper, import or layout change. General iterables and async iteration remain open.
+
+Checked do-while is implemented in v12+. Dedicated typed IR runs the body first,
+routes continue through finalizers to the trailing condition and skips that test
+for break/return/throw. Body scopes/captures, condition-root cleanup and actual
+effect visitors retain ordinary semantics. Completion/callback inference recognizes
+guaranteed first-body returns/throws without inventing normal exits; possible
+break/continue paths still permit fallthrough. Tests cover ordering, overrides,
+truthiness, GC/pairs, bounded condition roots, profile gates, virtual modules and
+source-free artifacts with grants/ceilings and dependency diagnostics. No ABI,
+helper, import or layout change; existing resource/exit failures remain fatal.
+
+Checked statement labels and named break/continue are implemented in v12+. Unique
+function-local IDs resolve active targets; iteration aliases bind to actual loop
+continues before generated initializer/rest loops. Non-loop statements allow
+named break. Existing finalizer routing and exact scope cleanup preserve captures,
+GC, saved returns/pairs and fatal limits. Completion analysis propagates named
+paths through inner loops until their own label, keeping callback/function return
+inference sound. Tests cover loops/blocks/switches/aliases, invalid targets/depth,
+legacy gates, virtual modules and source-free artifacts with grants/ceilings and
+dependency diagnostics. No ABI/helper/import/layout change.
+
+Object.keys is implemented in v12+ for closed records and nullable single-record
+unions. One rooted argument yields a fresh dense String array of present own keys:
+index names sort numerically, other names follow insertion order, and explicit
+Undefined differs from absence. Pure metadata enumeration avoids payload reads;
+compaction zeros tail payloads/bits before publishing both lengths. Internal value
+blocks preserve caller roots/floors and exception/return lifetimes, with full
+layout/effect traversal. Tests cover 32-field/default limits, Unicode/order/JSON/
+rest, GC/pairs/callbacks, profile gates, virtual modules and source-free artifacts
+with grants/ceilings and dependency diagnostics. No ABI/import/helper/layout change.
+
+Next add Object.values for closed typed records, deriving an admitted homogeneous
+result element type while preserving presence/order and child-reference roots.
+Catch patterns, generalized keys/coercion and constructors/prototypes remain
+language work. Scheduler/promise jobs follow retained-root, cancellation, queue
+and handle lifetime design.
 
 
 - Grow functions/closures, dynamic object/array behavior, exceptions and the

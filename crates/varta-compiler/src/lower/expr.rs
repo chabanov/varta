@@ -460,6 +460,9 @@ impl Lower<'_> {
         if name == "Array.isArray" && self.types.profile.reference_unions() {
             return self.array_is_array(call);
         }
+        if name == "Object.keys" {
+            return self.object_keys(call);
+        }
         if name == "Object.hasOwn" && self.types.profile.missing() {
             return self.own_property(call);
         }

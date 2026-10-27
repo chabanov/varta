@@ -196,7 +196,7 @@
 // initializer and first iteration cells, then rebinds before updates. Const keeps
 // one loop environment. Preserve shadowing, escaping closures, GC/pairs/errors,
 // status and actual permissions. Shared pattern budgets also bound each lexical
-// declaration. Var/ambient, top-level, catch and for-in/of patterns
+// declaration. Var/ambient, top-level, catch and for-in patterns
 // remain unsupported. No host import/helper/layout/ABI change.
 // V12+ destructuring assignment statements update existing initialized mutable
 // local/parameter/captured cells in source order after one RHS evaluation. Reuse
@@ -206,7 +206,7 @@
 // Defaults use target context; shared roots/limits/status/grants remain intact.
 // Parenthesized statements, expression results/chains and for init/update are
 // supported. Checked member targets are supported below; dynamic record keys,
-// catch and for-in/of stay unsupported. No ABI change.
+// catch and for-in stay unsupported. No ABI change.
 // Assignment expressions return the original contextual RHS identity/type,
 // retaining unselected fields and holes. Save it once, finish traversal and then
 // publish it to arguments/returns/callbacks/chains/admitted expression positions.
@@ -224,6 +224,40 @@
 // RangeError/fatal bounds. Declaration/parameter patterns still bind names.
 // General record keys/coercion, Error/result mutation and unresolved nullable
 // receivers remain unsupported. Effects require real grants; no ABI change.
+// V12+ intrinsic array for-of accepts const/let and checked assignment heads,
+// including member targets and shared object/array patterns. Evaluate/root the
+// source once, then read live length/backing and the current value before head
+// reference/default effects. V13+ visits holes as Undefined (element|Undefined);
+// v12 dense arrays retain the declared element type. Fresh lexical captures are
+// created each iteration; existing assignment targets keep their cells. Normal
+// break/continue/finally/return/throw cleanup, GC/pairs, resource limits, status
+// and actual grants remain intact. Nullable arrays raise TypeError before heads;
+// other sources fail compilation. For-in/await-of, var/using, strings and
+// general iterables remain unsupported. No ABI/helper/layout/import change.
+// V12+ do-while runs its body before checking the condition. Continue tests after
+// finalizers; break/return/throw skip the test unless a finalizer overrides them.
+// Body-block names remain local; each execution creates fresh captured bindings.
+// Existing truthiness, cleanup/GC/pairs, status/grants and fatal limits apply.
+// Guaranteed first-body returns/throws inform completion and callback inference;
+// possible break/continue paths still permit fallthrough. Clear test temporaries
+// before repeating. Earlier profiles remain unsupported. No ABI change.
+// V12+ labels permit named break to active supported statements and named
+// continue to while/do-while/for/array-for-of (including label chains). Labels
+// have a separate per-function namespace; unknown/duplicate/non-loop continue
+// targets and cross-function jumps are rejected. Unlabeled branches are unchanged.
+// Named routes cross finalizers and clear only exited scopes; closures, pairs,
+// exception state, status/grants and resource bounds retain their contracts.
+// Completion/callback analysis preserves exact named targets through inner loops.
+// Labels count toward nesting limits. No ABI/import/helper/layout change.
+// V12+ Object.keys(record) returns a fresh dense string[] of present own keys:
+// canonical array indices first numerically, other strings by insertion order.
+// Explicit Undefined is present; absent optional fields are omitted. Input is
+// evaluated once; no payload serialization or source/result aliasing occurs.
+// Nullable single-record unions throw TypeError on absence. Unsupported kinds
+// (including arrays/boxed primitives/Error/result/functions), generic/spread calls
+// and shadowed Object remain rejected. Internal roots/floors protect earlier
+// operands, returns, GC/pairs and exceptions. Clear spare slots/bits before
+// publishing length. Status/grants and all bounds persist; no ABI/helper change.
 // checked-f64-utf16-v13 adds sparse presence (host ABI v16/value v12/schema v12).
 // Holes differ from explicit undefined through Object.hasOwn; all-hole literals
 // require an element annotation. Reads/at return undefined for holes; writes within

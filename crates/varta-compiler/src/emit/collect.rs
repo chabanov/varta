@@ -36,6 +36,7 @@ impl<'a> Collected<'a> {
             self.unions = true;
         }
         match &expr.kind {
+            E::ValueBlock { body, .. } => self.statements(body, source),
             E::Assignment { value, body, .. } => {
                 self.expression(value, source);
                 self.statements(body, source);
@@ -308,6 +309,12 @@ impl<'a> Collected<'a> {
     fn statements(&mut self, body: &[S], source: &'a crate::source::Source) {
         for statement in body {
             match statement {
+                S::RecordKeys { .. } => {
+                    self.arrays = true;
+                    if self.types.profile.sparse_arrays() {
+                        self.helpers.insert(strings::Helper::ArraySetPresent);
+                    }
+                }
                 S::Throw(e) | S::Init(_, e) | S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
                     self.expression(e, source)
                 }
@@ -345,13 +352,15 @@ impl<'a> Collected<'a> {
                     self.statements(body, source);
                     self.statements(finalizer, source);
                 }
-                S::Block(b) | S::Scope(_, b) => self.statements(b, source),
+                S::Block(b) | S::Scope(_, b) | S::Label { body: b, .. } => {
+                    self.statements(b, source)
+                }
                 S::If(e, a, b) => {
                     self.expression(e, source);
                     self.statements(a, source);
                     self.statements(b, source);
                 }
-                S::While(e, b) => {
+                S::While(e, b) | S::DoWhile(e, b) => {
                     self.expression(e, source);
                     self.statements(b, source);
                 }

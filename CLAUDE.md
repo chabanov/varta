@@ -427,7 +427,7 @@ rebinding. Preserve continue/finally update routing and break/return/throw clean
 Shared pattern limits also bound each lexical declaration (64 depth/1024 nodes);
 parameter limits keep aliases. Actual effects remain visible to helper validation
 and real grants/status. No ABI/layout/helper/import change. Destructuring requires
-an initializer; var/ambient, top-level, catch and for-in/of stay unsupported.
+an initializer; var/ambient, top-level, catch and for-in stay unsupported.
 V12+ destructuring assignment statements update initialized mutable locals/
 parameters/captured cells. Validate shared pattern limits and target mutability/
 initialization/guards without declaring names. Root one RHS, traverse live source
@@ -438,7 +438,7 @@ TypeError before the failing write. Defaults use target context; opaque pairs/
 functions stay outside aggregate tags. Retain existing roots/rest/status/permissions/
 helper purity/fatal limits. Parenthesized statements and ordinary for init/update
 are admitted; expression values/chains and member targets are supported below.
-Dynamic record keys, catch and for-in/of remain unsupported. No ABI/helper/import/layout change.
+Dynamic record keys, catch and for-in remain unsupported. No ABI/helper/import/layout change.
 V12+ destructuring assignment values retain the actual contextual RHS type and
 original identity/fields/holes. Save one RHS in a hidden rooted scope, traverse
 Assign mode and publish it only on success. Propagate result context and allow
@@ -463,6 +463,53 @@ References/defaults after a throw are skipped, prior writes survive, successful
 expressions return their original RHS. Actual receiver/key/default effects stay
 visible to helper-purity validation and grants/host ceilings. Preserve pattern/
 source/frame/resource bounds, GC/pairs/floors and old profiles. No ABI/helper change.
+V12+ intrinsic array for-of supports const/let binding heads and checked existing
+identifier/member/pattern assignments. Predeclare lexical head TDZ before one
+rooted RHS; reject incompatible sources and throw owned TypeError for nullable
+array absence before head/body. Test live length/backing; v12 reads dense element
+types, v13+ visits holes as Undefined. Save current value before assignment head
+references/defaults. Reuse Scope/For IR with per-step current/leaf scopes; Init
+creates fresh cells for both captured let/const each iteration. Assignments reuse
+existing cells/setters. Preserve break/continue/switch/finally/return/throw cleanup,
+GC/pairs/callback inference, status, actual grants, all bounds and old profiles.
+Source reassignment cannot redirect iteration; growth/shrink/deletion remain live.
+No new ABI/import/helper/layout or iterator objects/hooks. For-in/await-of, var/
+using, strings/custom iterables remain unsupported. Empty sources need
+type context; head type annotations remain a parser error.
+V12+ do-while owns body/test IR and runs the body first. Emit break block, loop
+header and continue block so continue reaches the trailing condition and break/
+return/throw skip it after applicable finalizers. Clear condition temporaries
+before the repeat branch. Lower body scope before the condition; captured body
+bindings initialize fresh cells while outer bindings stay shared. Completion
+analysis propagates body returns/throws and permits normal exit only for normal/
+break/continue body paths; callback inference must visit do bodies and recognize
+guaranteed first returns. Preserve finalizer overrides, GC/pairs/saved returns,
+truthiness, actual body/test effects, grants/status and all fatal budgets. Earlier
+profiles remain rejected; labels are supported below. No ABI/helper/import/layout change.
+V12+ statement labels have unique per-function control IDs, active duplicate/
+unknown/continue-kind checks and the existing nesting budget. Reset state across
+functions/wrappers; names do not declare bindings. Label chains immediately around
+loops share iteration targets; named break also admits non-loop statements. Emit
+unbreakable label wrapper blocks and bind continues to actual loop targets; take
+pending names before source for/for-of initializers so generated rest loops cannot
+steal them. Route resolved block indices through existing finalizers/cleanup;
+unlabeled branches remain nearest-loop/switch. Retain named branch sets through
+inner loops/switches in completion analysis, consume only matching IDs and preserve
+finalizer overrides. Never mistake an outer jump for a guaranteed return. Traverse
+label bodies for layouts/effects/callbacks. Preserve captures/GC/pairs/status/grants,
+fatal limits and all older profiles; no ABI/import/helper/layout change.
+V12+ Object.keys accepts one unshadowed closed record or nullable single-record
+union; reject unsupported sources/spreads/generics/arity/old profiles. Root input
+once and throw owned TypeError for nullish union absence. Enumerate present index
+keys numerically then other names by insertion, preserving explicit Undefined and
+all 32 bits; never serialize/read payloads. Use a typed internal value block with
+saved temporary floor, registered input/output roots before RHS and success loading
+before cleanup. Visitors traverse its body for layouts/helpers/effects; callback
+inference uses the resolved type and excludes internal non-return statements.
+Fresh dense String arrays use UTF-16 literals, existing capacity/layout/helpers;
+compact keys, zero removed payloads/bits then publish both lengths. No source
+aliasing or resurrected slots. Preserve caller operands, GC/pairs/finalizers,
+status/actual grants and all bounds; no ABI/import/helper/layout change.
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail
 even if they ignore its custom section. Do not claim full ECMAScript support from

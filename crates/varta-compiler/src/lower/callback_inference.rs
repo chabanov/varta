@@ -1,13 +1,19 @@
 //! Infer unannotated callback block returns after one semantic lowering pass.
 //! Function bodies live separately, so nested arrows cannot contribute returns.
-//! Assignment expression bodies contain only checked pattern traversal, with no
-//! source return/finally statements; their value type is already resolved.
+//! Assignment and internal value blocks contain no source return/finally sites;
+//! their value type is resolved and nested user functions live separately.
 use super::*;
 
 fn visit(body: &mut [S], visitor: &mut impl FnMut(&mut S) -> Result<()>) -> Result<()> {
     for statement in body {
         match statement {
-            S::Block(body) | S::Scope(_, body) | S::While(_, body) => visit(body, visitor)?,
+            S::Block(body)
+            | S::Scope(_, body)
+            | S::While(_, body)
+            | S::DoWhile(_, body)
+            | S::Label { body, .. } => {
+                visit(body, visitor)?;
+            }
             S::If(_, yes, no) => {
                 visit(yes, visitor)?;
                 visit(no, visitor)?;

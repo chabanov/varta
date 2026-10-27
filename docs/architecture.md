@@ -102,7 +102,7 @@ one operation, independent of source declaration order. Branch labels account fo
 every enclosing Wasm block, loop and if. Each nested switch has distinct temporary
 locals; default selection and fallthrough follow source order.
 
-Supported:
+Baseline supported syntax (`checked-i32-utf8-v1`; opt-in extensions follow):
 
 - local source modules with a zero-argument `main(): void` in the entry file;
 - synchronous named functions with primitive, `null` and closed-record parameters/results;
@@ -1721,7 +1721,8 @@ captured cells allocate. Continue/finally reaches rebinding and update, while
 break/return/throw preserves escaped prior cells and exits normally through scope
 cleanup. Const initializers have no per-iteration environment, matching their
 immutable binding lifetime. Repeated body declarations create fresh activation
-cells through ordinary initialization. For-in/of and labels remain unsupported.
+cells through ordinary initialization. Array for-of is supported below; for-in
+remains unsupported; labels are supported below.
 
 Shared `MAX_BINDING_PATTERN_DEPTH/NODES` bound a lexical declaration (all its
 declarators) to depth 64/1024 nodes; parameter constants retain aliases to the same
@@ -1744,7 +1745,7 @@ standalone statements, arbitrary enclosing parentheses and ordinary for
 initializer/update statements. Nested defaults/patterns, static keys/aliases,
 elisions and final object/array rest share the existing checked binding path.
 Expression values/chains and checked member targets are implemented below. Other
-expression targets, dynamic record keys, catch and for-in/of patterns remain
+expression targets, dynamic record keys, catch and for-in patterns remain
 unsupported; diagnostics name these boundaries.
 Earlier profiles reject the pattern assignment path. No ABI/import/helper/layout
 change or indirect-call/host-effect exception is introduced.
@@ -1836,6 +1837,183 @@ Tests validate Wasm execution, reference order/identity, GC, current backing,
 rest/presence/order, partial/fatal failures, profile gates, public virtual modules
 and source-free Wasm/native artifacts with grant denial and dependency diagnostics.
 
+### Array for-of contract
+
+V12+ admits intrinsic for-of over checked arrays (including a checked array type
+with null/undefined). Support one const/let declaration without an initializer,
+or a checked identifier/member/object/array assignment head. Var/using, for-in,
+for-await-of, strings and arbitrary iterables remain unsupported. Earlier
+profiles reject the syntax. Head annotations are rejected by the TypeScript parser;
+ambiguous empty RHS literals need a typed source. Shared pattern/source/frame
+bounds and invariant binding/target types continue to apply.
+
+The admitted order follows
+[ForIn/OfHeadEvaluation and ForIn/OfBodyEvaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-forinofheadevaluation-tdznames-expr-iterationkind)
+and the intrinsic
+[array value iterator](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-%arrayiteratorprototype%.next).
+Predeclare lexical head names in their own TDZ scope before lowering the RHS;
+reject own/later reads and captures even if an outer name exists. Evaluate/root
+one source value. Narrow its unique array member only after a pure nullish check;
+nullish values throw owned TypeError `Cannot iterate null or undefined` before
+head/body effects. Incompatible non-array sources are compile errors.
+
+Lower through existing Scope/For/Init/Set IR. A hidden numeric index tests live
+length at each step, reads the current backing and saves the element before any
+assignment-reference/default effects. V12 dense reads retain the declared element
+type; v13+ nullable reads visit every index and box holes as Undefined. No snapshot
+length, presence filter, user iterator object or return hook is introduced. The
+index increases once after normal body/continue; break/return/throw never restart
+the iterator. Source-variable reassignment cannot change the rooted array identity.
+Growth can add visits, shrink can end them and later writes/deletions are visible.
+
+Each step owns a scope containing the current value and lexical head leaves.
+Initialize creates fresh managed cells for captured let and const bindings every
+iteration; do not clone the previous iteration or reuse its cells. Shared pattern
+lowering preserves TDZ, default/rest semantics and captures. Assignment heads keep
+existing cells and use the checked setters; only after the element is rooted do
+their receiver/key effects execute. Undefined-capable assignments retain the
+existing checked narrowing and partial-write behavior.
+
+Ordinary loop labels and completion/finalizer routing clear iteration/body roots
+on continue/break/throw/return, while source roots live until loop exit and escaped
+captures own their cells. Finalizers still see the current iteration's bindings
+before cleanup; existing saved returns, physical pairs and callback-return
+inference remain intact. Fatal resource limits/exit bypass handlers unchanged.
+Pure traversal preserves status; actual source/head/default/body effects stay
+visible to helper-purity validation, grants and host ceilings. No ABI, import,
+helper or heap-layout change. Tests cover live mutation, holes, captures/TDZ,
+patterns/targets, finalizer routing, GC/pairs, 1024-element default budgets,
+legacy gates, virtual modules and source-free artifacts with real permissions.
+
+### Do-while contract
+
+V12+ admits checked do-while with the existing condition truthiness and lexical
+body scopes. Earlier profiles reject it; labels are supported below. Follow
+[DoWhileLoopEvaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-do-while-statement-runtime-semantics-labelledevaluation):
+run the body first, then evaluate the condition exactly once after normal or
+continue completion. Break/return/throw skip it unless an intervening finalizer
+replaces the completion. Nested loops/switches retain ordinary branch targets.
+
+A dedicated typed IR statement retains both body and condition. Lower the body
+with an active loop target, restore its lexical scope, then lower the condition.
+Emit an outer break block, loop header and inner continue block; continue exits
+the inner block to reach the condition, while break exits the outer block. After
+condition evaluation/truth conversion, restore the temporary-root floor before
+branching to the loop header. Existing branch/finalizer emission performs lexical
+cleanup and preserves current bindings through finalizers. Each execution of a
+body-block declaration initializes fresh capture cells; outer cells remain shared.
+
+Completion analysis must account for guaranteed first execution. Propagate body
+return/throw possibilities; admit normal loop exit only when the body can finish
+normally, break or continue. Unconditional first-body returns/throws therefore
+satisfy function completion checks, while possible break/continue paths do not.
+Callback inference visits do-while bodies and uses that completion result, keeping
+exact return types when no normal exit exists and Undefined on possible fallthrough.
+Finalizer overrides, deferred saved returns and physical result pairs retain their
+existing behavior. Constant-condition infinite-loop inference is not introduced.
+
+Layout/helper/effect visitors traverse body and condition, including transitive
+host calls. Pure control flow preserves system status; actual effects require
+package grants and any host ceiling. Memory/root, fuel, deadline, host-call and
+source/body/frame bounds remain unchanged, and resource traps/authorized exit
+bypass guest handlers. No new import/helper/layout/ABI version. Tests cover order,
+truthiness, abrupt completion, finalizer overrides, captures/GC, bounded condition
+roots, callback inference, legacy gates, dependency diagnostics, virtual modules
+and source-free Wasm/native artifacts with grant denial and host ceilings.
+
+### Statement label contract
+
+V12+ supports labels around admitted statements and named break/continue. Follow
+[LabelledEvaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-labelled-statements-runtime-semantics-labelledevaluation).
+Labels have a control namespace separate from bindings and a lifetime confined to
+one function and the labeled statement. Reject unknown labels, active duplicates
+and named continue to non-iteration statements. Sibling reuse is valid. Chains of
+labels immediately enclosing a while/do-while/for/array-for-of share its iteration
+target; enclosing a block/if/switch does not make a continue target. Label nesting
+uses the existing 64-level scope/expression budget. Earlier profiles reject labels.
+
+Lowering assigns unique per-function IDs, retains named branch IDs in typed IR
+and resets label state for every lifted function/generated wrapper. Labels do not
+create lexical environments. Emission wraps each labeled statement in a block
+that is not an unlabeled break target; a map resolves its named break ID to that
+block. Iteration label chains bind to the actual loop's continue target: while
+header, do-while trailing-condition block, for update block, or for-of step/update.
+
+A source for/for-of takes its pending iteration labels before emitting any
+initializer. Generated destructuring/rest loops in an initializer or source
+expression therefore cannot consume the label chain. Named targets use stable
+active block indices and the existing complete-branch/finalizer machinery; no
+source name or guest integer becomes a dynamic branch address. Remove mappings
+when the corresponding statement/loop ends. Unlabeled branch selection is unchanged.
+
+Crossing a finalizer routes the exact target through existing completion slots,
+runs inner finalizers before outer ones and permits completion overrides. Clear
+roots only for scopes actually left: for continue keeps the loop environment
+until its update/rebind, for-of clears iteration heads but retains its source,
+and named break also clears the loop scope skipped by its enclosing label block.
+Escaped cells remain retained by their closures. Saved returns/result pairs,
+exception channels, GC and resource/exit bypass behavior keep their contracts.
+
+Completion analysis carries a bounded set of named break/continue IDs alongside
+ordinary completion kinds. Inner loops/switches consume only unlabelled branches;
+named branches propagate until the matching label. Sequence analysis retains
+unreached named paths, and finalizers replace body paths when they cannot complete
+normally. Matching break/iteration-continue admits normal completion, preserving
+sound function-return and callback-Undefined inference. Visitors traverse label
+bodies for returns, layouts, helpers and transitive effects. Real grants, status,
+all source/frame/root/resource bounds and existing ABIs remain unchanged.
+Tests cover aliases, block/switch labels, all loops, generated rest loops, finalizer
+overrides, captures/GC/pairs, invalid targets/depth/legacy gates, virtual modules
+and source-free artifacts with grant denial, host ceilings and source diagnostics.
+
+### Object.keys contract
+
+V12+ admits the unshadowed Object.keys intrinsic for one checked closed-record
+argument, optionally in a null/undefined union with a single record shape. Reject
+unsupported source kinds, generic/spread/invalid-arity calls and earlier profiles.
+No primitive boxing, arrays, Error/result/function objects or prototype/symbol
+semantics are implied. Nullish union values throw owned TypeError
+`Cannot convert undefined or null to object` before result construction or later
+enclosing effects. Argument errors/fatal traps preserve their existing behavior.
+
+Follow the admitted parts of
+[Object.keys](https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.keys)
+and [OrdinaryOwnPropertyKeys](https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinaryownpropertykeys).
+Enumerate present canonical array-index names (0..4294967294) numerically first,
+then remaining own string names in live insertion order. Presence differs from
+payload Undefined, so absent fields are omitted and explicitly written Undefined
+fields included. All admitted record fields are enumerable. Do not read/serialize
+payloads or invoke user code during enumeration. Typed JSON/rest inputs retain
+existing metadata rules; overwrites do not reorder fields.
+
+Lower to an internal typed value block: root one input, perform pure nullish
+checking/narrowing, initialize a fresh String array at the closed shape's bounded
+capacity, and compact literal names into its own-key prefix. The collector retains
+both UTF-8 layout names and separately encoded UTF-16 result strings. Numeric names
+are selected in sorted static order; a bounded walk of the live order trailer
+selects non-index names, preserving all 32 presence bits. Root the output before
+any further work. No shared source backing or payload edges enter the result.
+
+A pure RecordKeys statement writes only inside the allocated output. Clear every
+removed tail payload/presence bit while the old length is valid, then publish the
+new length in both stable array cell and backing. Prefix slots stay present and
+spare capacity remains zero; later growth/push cannot resurrect removed names.
+Allocation and collection use existing helpers, layouts and ABI versions.
+
+The value block saves/restores an activation-local temporary floor and registers
+input/output/narrowed roots before argument evaluation. Internal statements cannot
+drop earlier enclosing operands/arguments; handlers clean failed inputs and publish
+no result. Load the success output before clearing hidden roots without allocation,
+then retain it through normal enclosing expression/return/finalizer paths. Internal
+value blocks contain no source return/finalizer sites; callback inference uses their
+resolved result type. Layout/helper/effect visitors traverse their complete bodies.
+Argument effects remain visible to host-free helper validation and real grants;
+pure enumeration preserves status and existing resource/fatal boundaries. Tests
+cover ordering/presence/Unicode, nullable failures, snapshots, tail clearing,
+32-field/default-fuel bounds, GC/pairs/earlier operands/results, callback inference,
+legacy gates, virtual modules and source-free artifacts with grants/ceilings and
+source diagnostics. No host import, guest helper export or ABI/layout change.
+
 ### Destructuring assignment value contract
 
 V12+ checked pattern assignments are expressions with the actual contextual RHS
@@ -1846,7 +2024,7 @@ Admit results in local initializers, arguments/receivers, returns, member reads,
 callbacks, supported conditional/operator positions and nested pattern assignment
 chains. Standalone and for init/update statements lower through the same value
 path and discard the result. Ordinary non-pattern assignment expressions remain
-outside this increment, as do dynamic record keys, catch and for-in/of.
+outside this increment, as do dynamic record keys, catch and for-in.
 
 Resolve target syntax/bounds/mutability as before, then propagate available result
 context to the RHS; absent context retains homogeneous target inference. Evaluate

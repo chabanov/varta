@@ -747,7 +747,8 @@ Patterns also work in ordinary `for` initializers. For let, the first iteration
 and subsequent updates use distinct captured cells; a closure created in the
 initializer keeps its original bindings. Continue/finally follows the normal
 update path, while break/return/throw leaves the loop scope. Const loop bindings
-retain one environment. For-in/of remains unsupported.
+retain one environment. Array for-of loops use per-iteration environments as
+described below; for-in remains unsupported.
 
 The parameter rules for live array reads, persistent exhaustion, dense rest,
 object rest presence/order/identity, nullish TypeError and fatal resource limits
@@ -797,7 +798,7 @@ rest identity/presence/order and fatal resource behavior keep their contracts.
 
 Standalone statements (including parentheses), expression results/chains and
 ordinary for initializer/update statements are supported. Checked member targets
-are supported below; dynamic record keys, catch and for-in/of patterns remain
+are supported below; dynamic record keys, catch and for-in patterns remain
 unsupported. Shared pattern
 limits also apply per assignment. No new import/helper/layout or ABI version is
 introduced. See the [assignment contract](docs/architecture.md#checked-destructuring-assignment-contract).
@@ -874,6 +875,168 @@ RangeError for invalid lengths. Numeric index validation follows default/RHS
 effects. Resource violations, including lengths above 1024, stay fatal.
 Declaration/parameter patterns still bind names. No imports, layouts or ABI
 versions change. See the [member contract](docs/architecture.md#destructuring-member-target-contract).
+
+## Array for-of loops (v12 and later)
+
+For-of reads the values of a checked array once in ascending index order. In
+sparse profiles (v13+), holes are visited as undefined, so an inferred loop variable
+has the array element type plus Undefined:
+
+```ts
+export function main(): void {
+  const values: number[] = [1, , 3];
+  for (const value of values) {
+    if (typeof value === "number") {
+      console.log(value); // 1, then 3
+    } else {
+      console.log("missing");
+    }
+  }
+  const rows: {n?: number}[] = [{}, {n: 2}];
+  for (const {n = 7} of rows) {
+    console.log(n); // 7, then 2
+  }
+}
+```
+
+Use const/let declarations, existing mutable identifiers, checked member targets
+or object/array assignment patterns. Lexical head names are in TDZ during source
+evaluation, stay local to the loop, and receive fresh capture cells each iteration.
+Const prevents rebinding; let permits checked mutation. Head patterns reuse defaults,
+rest, source-order initialization and the shared pattern budgets. Empty arrays
+need an independently typed source, and type annotations on the loop head are not
+admitted by the TypeScript syntax.
+
+Evaluate and root the source once; assigning its original variable does not
+replace the array being traversed. Length, backing and values remain live:
+push/extension may add later visits, shrinking may end the loop, and holes or
+deleted elements yield undefined. No length snapshot or hole skipping is used.
+The current value is obtained before an assignment head evaluates its receiver
+and index, so those effects only change later reads. A required assignment target
+rejects undefined with the existing checked TypeError; earlier writes remain.
+
+Break/continue, nested loops/switches, return/throw and finally follow existing
+cleanup rules. Owned nullish array sources throw TypeError before targets/body;
+incompatible source types fail compilation. Pure traversal preserves system
+status, while source/head/default/body host calls require normal grants and host
+ceilings. Array limits, fuel/deadlines, memory bounds and authorized exit retain
+their behavior. V12 dense arrays infer their declared element type; earlier
+profiles reject for-of. For-in, for-await-of, var/using heads, strings and
+custom iterables remain unsupported. No iterator object, import, helper, layout
+or ABI version is added. See the [loop contract](docs/architecture.md#array-for-of-contract).
+
+## Do-while loops (v12 and later)
+
+Do-while executes the body before evaluating its condition. Even a false initial
+condition permits one body execution:
+
+```ts
+export function main(): void {
+  let n = 0;
+  do {
+    n = n + 1;
+    try {
+      if (n < 3) { continue; }
+    } finally {
+      console.log(n); // 1, 2, 3
+    }
+  } while (n < 3);
+}
+```
+
+Continue runs applicable finalizers and then tests the condition. Break, return
+and throw skip the condition; a finalizer can replace those completions using the
+existing rules. Nested loops/switches keep their own targets. Body-block names
+remain local to that block; the trailing condition cannot read them. Captured
+body bindings receive fresh cells on each body execution, while outer variables
+retain their shared cells.
+
+The condition uses the existing checked truthiness rules. Its effects execute
+once per completed body/continue and may throw recoverable errors. Temporary
+roots are cleared before the next iteration. Unconditional first-body returns/
+throws are recognized by function completion analysis, including callback return
+inference; possible break/continue paths still require a return afterward for
+non-void functions. Body and condition effects retain real grants, status, memory,
+fuel, host-call and deadline bounds. Authorized exit/resource traps remain fatal.
+Earlier profiles reject do-while. Labels are supported below. No import, helper,
+layout or ABI version changes. See the [contract](docs/architecture.md#do-while-contract).
+
+## Labels and named branches (v12 and later)
+
+Labels let a branch leave or continue an enclosing loop directly:
+
+```ts
+export function main(): void {
+  outer: for (let n = 0; n < 3; n = n + 1) {
+    for (const value of [1, 2]) {
+      try {
+        if (n < 2) { continue outer; }
+        break outer;
+      } finally {
+        console.log(n); // 0, 1, 2
+      }
+    }
+  }
+}
+```
+
+Break may name any active supported labeled statement, including a block or
+switch. Continue must name a while, do-while, for or array for-of loop; a chain
+such as `a: b: for (...)` gives both labels the same iteration target. For continue
+runs the update/per-iteration rebinding, while continue rechecks its test,
+do-while continue checks its trailing condition, and for-of continue advances to
+the next value. Unlabeled branches retain their nearest-loop/switch behavior.
+
+Labels occupy a separate namespace from variables. Unknown labels, duplicate
+active names, non-loop continue targets and jumps across function boundaries are
+rejected with source diagnostics. A name can be reused after its labeled statement
+ends. Labels count toward the existing nesting limit and do not create a lexical
+scope; blocks/loops still provide their own scopes.
+
+Crossed finalizers execute from inner to outer and may replace pending branches,
+returns or throws. Roots are cleared for the scopes actually left, while escaped
+captures and saved result pairs remain valid. Completion/callback analysis retains
+named targets through inner loops and consumes them only at the matching label,
+so an outer jump cannot falsely prove a guaranteed return. Host effects, status,
+resource limits and fatal exit remain unchanged. Earlier profiles reject labels;
+no ABI/import/helper/layout change. See the [contract](docs/architecture.md#statement-label-contract).
+
+## Object.keys for closed records (v12 and later)
+
+Object.keys returns a fresh dense string array containing present own fields:
+
+```ts
+export function main(): void {
+  const value: {a?: number; b: number; "2"?: number} = {b: 1};
+  value.a = undefined;
+  value["2"] = 2;
+  const keys = Object.keys(value);
+  console.log(JSON.stringify(keys)); // ["2","b","a"]
+  for (const key of keys) { console.log(key); }
+}
+```
+
+Canonical array-index names from 0 through 4294967294 come first in numeric order;
+other names retain insertion order. Overwriting a field keeps its position, and
+first assigning an optional field appends its non-index name. An absent optional
+field is omitted; an explicitly stored undefined is included. Enumeration uses
+presence/order metadata, without reading values or converting the object to JSON.
+Typed JSON and object-rest records retain their existing order rules.
+
+Evaluate the argument once and return an independent snapshot. Later source
+changes do not change the keys array, and mutating that array does not change the
+source. All result slots below length are present; removed spare payloads and bits
+are zeroed before length publication, so growth cannot resurrect old keys. Key
+names use the profile's UTF-16 string representation, including Unicode and NUL.
+The existing 32-field/static-data/array/memory/execution bounds remain active.
+
+Inputs must be a checked closed record or its null/undefined union. A nullish
+union value throws owned TypeError before enclosing calls proceed. Arrays,
+primitive boxing, Error/function/result objects, general prototypes/symbols,
+spread/generic calls and shadowed Object intrinsics remain unsupported. Earlier
+profiles reject this intrinsic. Argument effects require ordinary grants; key
+collection preserves system status. No host import/helper/layout/ABI change.
+See the [contract](docs/architecture.md#objectkeys-contract).
 
 ## Typed function values (opt-in)
 

@@ -291,6 +291,12 @@ pub(crate) enum Expression {
     ResultField(ResultField, Box<Expr>),
     Record(Vec<(u32, Expr)>),
     OptionalRecord(Vec<(u32, Expr)>, u32),
+    ValueBlock {
+        output: u32,
+        marker: u32,
+        roots: Vec<u32>,
+        body: Vec<Statement>,
+    },
     HasOwn(Box<Expr>, Option<u32>),
     MaybeIndex(Box<Expr>, Box<Expr>),
     Field(Box<Expr>, u32),
@@ -338,6 +344,12 @@ pub(crate) enum Statement {
     },
     Init(u32, Expr),
     Rebind(Vec<u32>),
+    RecordKeys {
+        source: u32,
+        target: u32,
+        shape: u32,
+        slots: [u32; 4],
+    },
     RecordRest {
         source: u32,
         target: u32,
@@ -366,6 +378,7 @@ pub(crate) enum Statement {
     Scope(Vec<u32>, Vec<Statement>),
     If(Expr, Vec<Statement>, Vec<Statement>),
     While(Expr, Vec<Statement>),
+    DoWhile(Expr, Vec<Statement>),
     For(Vec<Statement>, Option<Expr>, Vec<Statement>, Vec<Statement>),
     Switch {
         value: Expr,
@@ -373,6 +386,13 @@ pub(crate) enum Statement {
         selected: u32,
         cases: Vec<(Option<Expr>, Vec<Statement>)>,
     },
+    Label {
+        id: u32,
+        iteration: bool,
+        body: Vec<Statement>,
+    },
+    BreakLabel(u32),
+    ContinueLabel(u32),
     Break,
     Continue,
 }

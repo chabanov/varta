@@ -27,6 +27,12 @@ impl Emitter<'_> {
     }
     fn expr_inner(&mut self, expr: &Expr) -> Result<()> {
         match &expr.kind {
+            E::ValueBlock {
+                output,
+                marker,
+                roots,
+                body,
+            } => self.value_block(expr.ty, *output, *marker, roots, body)?,
             E::Assignment {
                 value,
                 input,
@@ -467,6 +473,34 @@ impl Emitter<'_> {
         // No allocation occurs between loading the result and its outer expr
         // wrapper retaining it. Exceptional exits clear the scope through the
         // ordinary handler/frame path and never publish this success result.
+        self.clear_scopes(self.scopes.len() - 1);
+        self.scopes.pop();
+        self.temporary_floor = prior;
+        Ok(())
+    }
+}
+
+impl Emitter<'_> {
+    fn value_block(
+        &mut self,
+        ty: Type,
+        output: u32,
+        marker: u32,
+        roots: &[u32],
+        body: &[S],
+    ) -> Result<()> {
+        let memory = self
+            .memory
+            .ok_or_else(|| CompilerError::Internal("missing value-block roots".into()))?;
+        let marker = self.local_slots[marker as usize];
+        self.code
+            .extend([I::GlobalGet(memory.roots), I::LocalSet(marker)]);
+        let prior = self.temporary_floor.replace(marker);
+        self.scopes.push(roots.to_vec());
+        self.statements(body)?;
+        self.scratch_get(output, ty);
+        // Loading precedes root cleanup without allocation; the enclosing expr
+        // retains the success result. Handlers own all roots before RHS effects.
         self.clear_scopes(self.scopes.len() - 1);
         self.scopes.pop();
         self.temporary_floor = prior;

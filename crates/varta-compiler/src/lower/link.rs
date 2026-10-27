@@ -200,6 +200,8 @@ fn body(
         infer_returns: false,
         entry,
         loops: 0,
+        labels: Vec::new(),
+        next_label: 0,
         switches: 0,
         depth: 0,
         repeat_slots: None,

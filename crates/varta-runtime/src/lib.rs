@@ -370,3 +370,15 @@ mod pattern_tests;
 mod spread_tests;
 #[cfg(test)]
 mod this_tests;
+
+#[cfg(test)]
+mod for_of_tests;
+
+#[cfg(test)]
+mod do_while_tests;
+
+#[cfg(test)]
+mod label_tests;
+
+#[cfg(test)]
+mod object_keys_tests;

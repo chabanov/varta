@@ -15,6 +15,14 @@ development snapshot; they do not announce a published release.
   object/array destructuring for parameters, local declarations and assignments.
 - Expression-valued destructuring assignments and checked record-field/array-element
   targets, including defaults and rest. V14 adds indexed extension and writable length.
+- Intrinsic array for-of in v12+, with binding/assignment patterns, per-iteration
+  lexical captures, live mutation, sparse Undefined visits and finally cleanup.
+- Checked do-while in v12+, with trailing-condition continue, finalizer routing,
+  capture/root cleanup and guaranteed-first-body completion/return inference.
+- Statement labels and named break/continue in v12+, including loop aliases,
+  exact finalizer/scope routing and target-aware completion inference.
+- Object.keys for closed records in v12+, with presence-aware JS key ordering,
+  fresh dense UTF-16 string-array results, nullable checks and rooted snapshots.
 - Capability-checked host APIs, independent host policy ceilings, programmatic
   operation results, and bounded execution with managed guest memory.
 - Checked synchronous HTTP/1 handlers in the default language profile.

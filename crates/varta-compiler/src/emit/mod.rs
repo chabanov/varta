@@ -7,8 +7,10 @@ mod exceptions;
 mod expr;
 mod finally;
 mod functions;
+mod labels;
 mod missing;
 mod numbers;
+mod object_keys;
 mod patterns;
 mod records;
 mod repeat;
@@ -40,6 +42,9 @@ struct Emitter<'a> {
     schemas: &'a BTreeMap<Type, (u32, u32)>,
     code: Vec<I<'static>>,
     labels: Vec<Label>,
+    named_breaks: BTreeMap<u32, usize>,
+    named_continues: BTreeMap<u32, usize>,
+    pending_labels: Vec<u32>,
     hosts: &'a BTreeMap<Host, u32>,
     strings: &'a BTreeMap<Vec<u8>, u32>,
     functions_begin: u32,
@@ -537,6 +542,9 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             schemas: &schema_offsets,
             code: Vec::new(),
             labels: Vec::new(),
+            named_breaks: BTreeMap::new(),
+            named_continues: BTreeMap::new(),
+            pending_labels: Vec::new(),
             hosts: &hosts,
             strings: &offsets,
             functions_begin,
@@ -768,6 +776,15 @@ impl Emitter<'_> {
         for statement in statements {
             match statement {
                 S::Trap => self.code.push(I::Unreachable),
+                S::RecordKeys {
+                    source,
+                    target,
+                    shape,
+                    slots,
+                } => {
+                    self.record_keys(*source, *target, *shape, *slots)?;
+                    self.end_temporaries();
+                }
                 S::RecordRest {
                     source,
                     target,
@@ -916,9 +933,29 @@ impl Emitter<'_> {
                     }
                     self.end();
                 }
+                S::DoWhile(test, body) => {
+                    let names = std::mem::take(&mut self.pending_labels);
+                    self.push_label(I::Block(BlockType::Empty), true, false);
+                    let again = self.push_label(I::Loop(BlockType::Empty), false, false);
+                    // Continue leaves the body block and reaches the condition;
+                    // break leaves the outer block without evaluating it.
+                    let continuing = self.push_label(I::Block(BlockType::Empty), false, true);
+                    self.bind_continues(&names, continuing);
+                    self.statements(body)?;
+                    self.end();
+                    self.expr(test)?;
+                    self.truthy(test.ty);
+                    self.end_temporaries();
+                    self.code.push(I::BrIf(self.depth(again)));
+                    self.end();
+                    self.end();
+                    self.unbind_continues(&names);
+                }
                 S::While(test, body) => {
+                    let names = std::mem::take(&mut self.pending_labels);
                     self.push_label(I::Block(BlockType::Empty), true, false);
                     let again = self.push_label(I::Loop(BlockType::Empty), false, true);
+                    self.bind_continues(&names, again);
                     self.expr(test)?;
                     self.truthy(test.ty);
                     self.code.push(I::I32Eqz);
@@ -927,8 +964,10 @@ impl Emitter<'_> {
                     self.code.push(I::Br(self.depth(again)));
                     self.end();
                     self.end();
+                    self.unbind_continues(&names);
                 }
                 S::For(init, test, update, body) => {
+                    let names = std::mem::take(&mut self.pending_labels);
                     self.statements(init)?;
                     self.push_label(I::Block(BlockType::Empty), true, false);
                     let again = self.push_label(I::Loop(BlockType::Empty), false, false);
@@ -938,13 +977,15 @@ impl Emitter<'_> {
                         self.code.push(I::I32Eqz);
                         self.code.push(I::BrIf(self.target(false)?));
                     }
-                    self.push_label(I::Block(BlockType::Empty), false, true);
+                    let continuing = self.push_label(I::Block(BlockType::Empty), false, true);
+                    self.bind_continues(&names, continuing);
                     self.statements(body)?;
                     self.end();
                     self.statements(update)?;
                     self.code.push(I::Br(self.depth(again)));
                     self.end();
                     self.end();
+                    self.unbind_continues(&names);
                 }
                 S::Switch {
                     value,
@@ -1005,6 +1046,13 @@ impl Emitter<'_> {
                     }
                     self.end();
                 }
+                S::Label {
+                    id,
+                    iteration,
+                    body,
+                } => self.named_label(*id, *iteration, body)?,
+                S::BreakLabel(id) => self.named_branch(*id, false)?,
+                S::ContinueLabel(id) => self.named_branch(*id, true)?,
                 S::Break => self.branch(false)?,
                 S::Continue => self.branch(true)?,
             }

@@ -207,6 +207,7 @@ fn expression(
     effects: &mut BTreeSet<String>,
 ) {
     match &expr.kind {
+        E::ValueBlock { body, .. } => statements(body, functions, visited, effects),
         E::Assignment { value, body, .. } => {
             expression(value, functions, visited, effects);
             statements(body, functions, visited, effects);
@@ -370,13 +371,15 @@ fn statements(
                 statements(body, functions, visited, effects);
                 statements(finalizer, functions, visited, effects);
             }
-            S::Block(b) | S::Scope(_, b) => statements(b, functions, visited, effects),
+            S::Block(b) | S::Scope(_, b) | S::Label { body: b, .. } => {
+                statements(b, functions, visited, effects)
+            }
             S::If(e, a, b) => {
                 expression(e, functions, visited, effects);
                 statements(a, functions, visited, effects);
                 statements(b, functions, visited, effects);
             }
-            S::While(e, b) => {
+            S::While(e, b) | S::DoWhile(e, b) => {
                 expression(e, functions, visited, effects);
                 statements(b, functions, visited, effects);
             }

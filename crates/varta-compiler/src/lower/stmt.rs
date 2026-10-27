@@ -38,7 +38,7 @@ impl Lower<'_> {
         self.depth -= 1;
         Ok(result)
     }
-    fn single(&mut self, statement: &ast::Stmt) -> Result<Vec<S>> {
+    pub(super) fn single(&mut self, statement: &ast::Stmt) -> Result<Vec<S>> {
         Ok(vec![self.statement(statement)?])
     }
     fn statement(&mut self, statement: &ast::Stmt) -> Result<S> {
@@ -48,6 +48,7 @@ impl Lower<'_> {
     fn statement_inner(&mut self, statement: &ast::Stmt) -> Result<S> {
         Ok(match statement {
             ast::Stmt::Empty(_) => S::Block(vec![]),
+            ast::Stmt::Labeled(statement) => self.labeled_statement(statement)?,
             ast::Stmt::Throw(t) => self.throw_statement(t)?,
             ast::Stmt::Try(t) => self.try_statement(t)?,
             ast::Stmt::Decl(ast::Decl::Var(var)) => S::Block(self.variables(var)?),
@@ -128,6 +129,16 @@ impl Lower<'_> {
                 self.refinements = saved;
                 S::If(test, yes, no)
             }
+            ast::Stmt::DoWhile(statement) => {
+                if !self.types.profile.closures() {
+                    return Err(unsupported("do-while requires checked-f64-utf16-v12"));
+                }
+                self.loops += 1;
+                let body = self.single(&statement.body)?;
+                self.loops -= 1;
+                let test = self.condition(&statement.test)?;
+                S::DoWhile(test, body)
+            }
             ast::Stmt::While(statement) => {
                 let test = self.condition(&statement.test)?;
                 self.loops += 1;
@@ -135,6 +146,7 @@ impl Lower<'_> {
                 self.loops -= 1;
                 S::While(test, body)
             }
+            ast::Stmt::ForOf(statement) => self.for_of(statement)?,
             ast::Stmt::For(statement) => {
                 self.scopes.push(BTreeMap::new());
                 let mut init = match &statement.init {
@@ -223,13 +235,19 @@ impl Lower<'_> {
                 }
             }
             ast::Stmt::Break(statement) => {
-                if statement.label.is_some() || self.loops + self.switches == 0 {
+                if let Some(label) = &statement.label {
+                    return self.named_branch(label, false);
+                }
+                if self.loops + self.switches == 0 {
                     return Err(unsupported("break target"));
                 }
                 S::Break
             }
             ast::Stmt::Continue(statement) => {
-                if statement.label.is_some() || self.loops == 0 {
+                if let Some(label) = &statement.label {
+                    return self.named_branch(label, true);
+                }
+                if self.loops == 0 {
                     return Err(unsupported("continue target"));
                 }
                 S::Continue

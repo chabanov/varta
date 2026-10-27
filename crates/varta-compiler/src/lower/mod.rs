@@ -51,6 +51,8 @@ struct Lower<'a> {
     infer_returns: bool,
     entry: usize,
     loops: usize,
+    labels: Vec<(String, u32, bool)>,
+    next_label: u32,
     switches: usize,
     depth: usize,
     repeat_slots: Option<(u32, u32)>,
@@ -209,12 +211,15 @@ mod declarations;
 mod errors;
 mod exceptions;
 mod expr;
+mod for_of;
 mod function_expressions;
 mod functions;
 mod http;
 mod json;
+mod labels;
 mod link;
 mod missing;
+mod object_keys;
 mod parameters;
 mod patterns;
 mod records;

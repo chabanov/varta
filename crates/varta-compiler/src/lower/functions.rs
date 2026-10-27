@@ -332,6 +332,8 @@ impl Lower<'_> {
             infer_returns,
             entry: self.entry,
             loops: 0,
+            labels: Vec::new(),
+            next_label: 0,
             switches: 0,
             depth: self.depth,
             repeat_slots: None,

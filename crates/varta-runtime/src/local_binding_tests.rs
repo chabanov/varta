@@ -159,7 +159,7 @@ fn local_patterns_reject_tdz_duplicate_const_writes_and_unsupported_forms() {
         "export function main():void{const {a}:number=1;}",
         "export function main():void{const target={a:0};({a:target.a}={a:'bad'});}",
         "export function main():void{try{throw 1;}catch({a}){}}",
-        "export function main():void{for(const {a} of [{a:1}]){}}",
+        "export function main():void{for(const {a} of [1]){}}",
     ] {
         let error = varta_compiler::compile_typescript_with_profile(
             source,
