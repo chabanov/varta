@@ -196,6 +196,9 @@ impl Lower<'_> {
     }
     pub(super) fn place(&mut self, member: &ast::MemberExpr) -> Result<Expr> {
         let value = self.expr(&member.obj)?;
+        self.place_value(member, value)
+    }
+    pub(super) fn place_value(&mut self, member: &ast::MemberExpr, value: Expr) -> Result<Expr> {
         match value.ty {
             Type::Error | Type::NativeError(_) => Err(unsupported("Error property mutation")),
             Type::Record(_) => self.record_field(member, value, false),

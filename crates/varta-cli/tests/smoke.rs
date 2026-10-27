@@ -8370,3 +8370,286 @@ fn array_and_error_own_keys_run_in_source_free_artifacts() {
         }
     }
 }
+
+#[test]
+fn computed_record_reads_run_across_modules_and_source_free_artifacts() {
+    for profile in ["checked-f64-utf16-v12", "checked-f64-utf16-v14"] {
+        let project = RegressionProject::new(
+            "import {read} from './read.ts';export function main():void{const source:{a?:number;b:string}={b:'owned'};console.log(JSON.stringify(['a','b','missing'].map(key=>read(source,key))));source.a=2.5;console.log(JSON.stringify(['a','b','missing'].map(key=>read(source,key))));try{read(source,'constructor');}catch(error){console.log(error instanceof TypeError);}console.log(JSON.stringify(Object.keys(source)));}",
+            serde_json::json!({}),
+        );
+        fs::write(project.0.join("src/read.ts"),"export function read(source:{a?:number;b:string},key:string):number|string|undefined{return source[key];}").unwrap();
+        project.language_profile(profile);
+        let check = project.command(&["check"]);
+        assert!(check.status.success(), "{}", combined(&check));
+        let build = project.command(&["build", "--single"]);
+        assert!(build.status.success(), "{}", combined(&build));
+        let mut dev = varta();
+        dev.arg("dev");
+        let mut commands = vec![dev];
+        for artifact in ["dist/app.wasm", "dist/app"] {
+            for mut command in [varta(), Command::new(runtime_path())] {
+                command.args(["run", artifact]);
+                commands.push(command);
+            }
+        }
+        commands.push(Command::new(project.0.join("dist/app")));
+        for (index, mut command) in commands.into_iter().enumerate() {
+            if index == 1 {
+                fs::remove_dir_all(project.0.join("src")).unwrap();
+                fs::remove_file(project.0.join("varta.config.json")).unwrap();
+            }
+            let output = command.current_dir(&project.0).output().unwrap();
+            assert!(output.status.success(), "{profile}: {}", combined(&output));
+            assert_eq!(
+                String::from_utf8(output.stdout)
+                    .unwrap()
+                    .lines()
+                    .take(4)
+                    .collect::<Vec<_>>(),
+                [
+                    "[null,\"owned\",null]",
+                    "[2.5,\"owned\",null]",
+                    "1",
+                    "[\"b\",\"a\"]"
+                ]
+                .map(|s| format!("varta log: {s}")),
+                "{profile}"
+            );
+        }
+    }
+}
+
+#[test]
+fn computed_record_reads_preserve_grants_status_host_ceilings_and_fatal_exit() {
+    let project = RegressionProject::new(
+        "function source(resource:string):{b:number}{varta.env.print(resource);return {b:1};}function key(resource:string,name:string):string{varta.env.print(resource);return name;}function stop():string{varta.process.exit(7);return 'b';}export function main():void{console.log(source('VARTA_READ_ALLOWED')['b'+'']);console.log(varta.result.status());console.log(({b:1})[key('VARTA_READ_DENIED','b')]);console.log(varta.result.status());try{console.log(({b:1})[stop()]);}catch(e){console.log('BAD_CATCH');}finally{console.log('continued');}}",
+        serde_json::json!({"env":{"print":["VARTA_READ_ALLOWED"],"get":["VARTA_READ_DENIED"]},"process":{"exit":true}}),
+    );
+    project.language_profile("checked-f64-utf16-v14");
+    project.host_policy(serde_json::json!([]));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for restricted in [false, true] {
+        let mut dev = varta();
+        dev.arg("dev");
+        let mut wasm = varta();
+        wasm.args(["run", "dist/app.wasm"]);
+        let mut runtime = Command::new(runtime_path());
+        runtime.args(["run", "dist/app.wasm"]);
+        for mut command in [dev, wasm, runtime, Command::new(project.0.join("dist/app"))] {
+            command
+                .current_dir(&project.0)
+                .env("VARTA_READ_ALLOWED", "ALLOWED_VALUE")
+                .env("VARTA_READ_DENIED", "NEVER_DISCLOSE");
+            if restricted {
+                command.args(["--policy", "host-policy.json"]);
+            }
+            let output = command.output().unwrap();
+            let text = combined(&output);
+            assert_eq!(
+                output.status.code(),
+                Some(if restricted { 0 } else { 7 }),
+                "{text}"
+            );
+            assert_eq!(
+                text.matches("ALLOWED_VALUE").count(),
+                usize::from(!restricted),
+                "{text}"
+            );
+            assert!(
+                text.contains(&format!(
+                    "varta log: 1\nvarta log: {}",
+                    u8::from(restricted)
+                )),
+                "{text}"
+            );
+            assert!(
+                text.contains(
+                    "<capability denied: env> (VARTA_READ_DENIED)\nvarta log: 1\nvarta log: 1"
+                ),
+                "{text}"
+            );
+            assert!(!text.contains("NEVER_DISCLOSE"), "{text}");
+            assert!(!text.contains("BAD_CATCH"), "{text}");
+            assert_eq!(text.contains("varta log: continued"), restricted, "{text}");
+        }
+    }
+}
+
+#[test]
+fn computed_record_reads_invalid_keys_keep_dependency_source_ranges() {
+    let project = RegressionProject::new(
+        "import {bad} from './bad.ts';export function main():void{bad();}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v14");
+    let source = "export function bad():void{const source={n:1};source[true];}";
+    let dependency = project.0.join("src/bad.ts");
+    fs::write(&dependency, source).unwrap();
+    let check = project.command(&["check", "--json"]);
+    assert_eq!(check.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let diagnostic = &json["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "type_error");
+    assert_eq!(
+        diagnostic["file"],
+        serde_json::json!(dependency.canonicalize().unwrap())
+    );
+    assert_eq!(
+        diagnostic["range"]["start"]["byte_offset"],
+        source.find("true").unwrap()
+    );
+    assert_eq!(
+        diagnostic["range"]["end"]["byte_offset"],
+        source.find("true").unwrap() + 4
+    );
+    assert!(!project.0.join("dist").exists());
+}
+
+#[test]
+fn computed_record_writes_run_across_modules_and_source_free_artifacts() {
+    for profile in ["checked-f64-utf16-v12", "checked-f64-utf16-v14"] {
+        let project = RegressionProject::new(
+            "import {put,putError} from './write.ts';export function main():void{const source:{n:number;label:string;extra?:number}={n:1,label:'old'};put(source,'n',2.5);put(source,'label','new');put(source,'extra',3);console.log(JSON.stringify(source));try{put(source,'label',3);}catch(error){console.log(error instanceof TypeError);}try{put(source,'missing',4);}catch(error){console.log(error instanceof TypeError);}const errors={type:TypeError('old'),range:RangeError('old')};putError(errors,'type',TypeError('new'));try{putError(errors,'type',RangeError('wrong'));}catch(error){console.log(error instanceof TypeError);}console.log(errors.type.message);console.log(JSON.stringify(Object.keys(source)));}",
+            serde_json::json!({}),
+        );
+        fs::write(project.0.join("src/write.ts"),"export function put(source:{n:number;label:string;extra?:number},key:string,item:number|string|undefined):void{source[key]=item;}export function putError(source:{type:TypeError;range:RangeError},key:string,item:TypeError|RangeError|number):void{source[key]=item;}").unwrap();
+        project.language_profile(profile);
+        let check = project.command(&["check"]);
+        assert!(check.status.success(), "{}", combined(&check));
+        let build = project.command(&["build", "--single"]);
+        assert!(build.status.success(), "{}", combined(&build));
+        let mut dev = varta();
+        dev.arg("dev");
+        let mut commands = vec![dev];
+        for artifact in ["dist/app.wasm", "dist/app"] {
+            for mut command in [varta(), Command::new(runtime_path())] {
+                command.args(["run", artifact]);
+                commands.push(command);
+            }
+        }
+        commands.push(Command::new(project.0.join("dist/app")));
+        for (index, mut command) in commands.into_iter().enumerate() {
+            if index == 1 {
+                fs::remove_dir_all(project.0.join("src")).unwrap();
+                fs::remove_file(project.0.join("varta.config.json")).unwrap();
+            }
+            let output = command.current_dir(&project.0).output().unwrap();
+            assert!(output.status.success(), "{profile}: {}", combined(&output));
+            assert_eq!(
+                String::from_utf8(output.stdout)
+                    .unwrap()
+                    .lines()
+                    .take(6)
+                    .collect::<Vec<_>>(),
+                [
+                    "{\"n\":2.5,\"label\":\"new\",\"extra\":3}",
+                    "1",
+                    "1",
+                    "1",
+                    "new",
+                    "[\"n\",\"label\",\"extra\"]"
+                ]
+                .map(|s| format!("varta log: {s}")),
+                "{profile}"
+            );
+        }
+    }
+}
+
+#[test]
+fn computed_record_writes_preserve_operand_grants_status_host_ceilings_and_fatal_exit() {
+    let project = RegressionProject::new(
+        "function source(resource:string):{n:number}{varta.env.print(resource);return {n:1};}function key(resource:string):string{varta.env.print(resource);return 'n';}function item(resource:string):number|string{varta.env.print(resource);return 2;}function stop():number|string{varta.process.exit(7);return 4;}export function main():void{source('VARTA_WRITE_ALLOWED')['n'+'']=2;console.log(varta.result.status());const value={n:1,s:'old'};value[key('VARTA_WRITE_DENIED')]=3;console.log(varta.result.status());console.log(value.n);value['n'+'']=item('VARTA_WRITE_ALLOWED');console.log(varta.result.status());console.log(value.n);try{value['n'+'']=stop();}catch(error){console.log('BAD_CATCH');}finally{console.log('continued');}console.log(value.n);}",
+        serde_json::json!({"env":{"print":["VARTA_WRITE_ALLOWED"],"get":["VARTA_WRITE_DENIED"]},"process":{"exit":true}}),
+    );
+    project.language_profile("checked-f64-utf16-v14");
+    project.host_policy(serde_json::json!([]));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for restricted in [false, true] {
+        let mut dev = varta();
+        dev.arg("dev");
+        let mut wasm = varta();
+        wasm.args(["run", "dist/app.wasm"]);
+        let mut runtime = Command::new(runtime_path());
+        runtime.args(["run", "dist/app.wasm"]);
+        for mut command in [dev, wasm, runtime, Command::new(project.0.join("dist/app"))] {
+            command
+                .current_dir(&project.0)
+                .env("VARTA_WRITE_ALLOWED", "ALLOWED_VALUE")
+                .env("VARTA_WRITE_DENIED", "NEVER_DISCLOSE");
+            if restricted {
+                command.args(["--policy", "host-policy.json"]);
+            }
+            let output = command.output().unwrap();
+            let text = combined(&output);
+            assert_eq!(
+                output.status.code(),
+                Some(if restricted { 0 } else { 7 }),
+                "{text}"
+            );
+            assert_eq!(
+                text.matches("ALLOWED_VALUE").count(),
+                2 * usize::from(!restricted),
+                "{text}"
+            );
+            assert!(text.contains(&format!("varta log: {}\nvarta log: <capability denied: env> (VARTA_WRITE_DENIED)\nvarta log: 1\nvarta log: 3",u8::from(restricted))),"{text}");
+            assert!(
+                text.contains(&format!(
+                    "varta log: {}\nvarta log: 2",
+                    u8::from(restricted)
+                )),
+                "{text}"
+            );
+            assert!(!text.contains("NEVER_DISCLOSE"), "{text}");
+            assert!(!text.contains("BAD_CATCH"), "{text}");
+            assert_eq!(text.contains("varta log: continued"), restricted, "{text}");
+            if restricted {
+                assert!(
+                    text.contains("varta log: continued\nvarta log: 4"),
+                    "{text}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn computed_record_writes_invalid_keys_and_values_keep_dependency_source_ranges() {
+    let project = RegressionProject::new(
+        "import {bad} from './bad.ts';export function main():void{bad();}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v14");
+    for (source, invalid) in [
+        (
+            "export function bad():void{const value={n:1};value[true]=2;}",
+            "true",
+        ),
+        (
+            "export function bad():void{const value={n:1};const key='n';value[key]='wrong';}",
+            "'wrong'",
+        ),
+    ] {
+        let dependency = project.0.join("src/bad.ts");
+        fs::write(&dependency, source).unwrap();
+        let check = project.command(&["check", "--json"]);
+        assert_eq!(check.status.code(), Some(1));
+        let json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+        let diagnostic = &json["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "type_error");
+        assert_eq!(
+            diagnostic["file"],
+            serde_json::json!(dependency.canonicalize().unwrap())
+        );
+        let start = source.find(invalid).unwrap();
+        assert_eq!(diagnostic["range"]["start"]["byte_offset"], start);
+        assert_eq!(
+            diagnostic["range"]["end"]["byte_offset"],
+            start + invalid.len()
+        );
+        assert!(!project.0.join("dist").exists());
+    }
+}

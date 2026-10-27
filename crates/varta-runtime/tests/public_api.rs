@@ -1965,3 +1965,93 @@ fn public_engine_runs_array_and_error_own_keys_across_virtual_modules() {
         );
     }
 }
+
+#[test]
+fn public_engine_runs_computed_record_reads_across_virtual_modules() {
+    struct ReadSources;
+    impl ModuleLoader for ReadSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./read.ts" {
+                Ok("read.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function read(source:{a?:number;b:string},key:string):number|string|undefined{return source[key];}".into())
+        }
+    }
+    let source = "import {read} from './read.ts';export function main():void{const source:{a?:number;b:string}={b:'owned'};console.log(JSON.stringify(['a','b','missing'].map(key=>read(source,key))));source.a=2.5;console.log(JSON.stringify(['a','b','missing'].map(key=>read(source,key))));try{read(source,'constructor');}catch(error){console.log(error instanceof TypeError);}console.log(JSON.stringify(Object.keys(source)));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &ReadSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "varta log: [null,\"owned\",null]",
+                "varta log: [2.5,\"owned\",null]",
+                "varta log: 1",
+                "varta log: [\"b\",\"a\"]"
+            ]
+        );
+    }
+}
+
+#[test]
+fn public_engine_runs_computed_record_writes_across_virtual_modules() {
+    struct WriteSources;
+    impl ModuleLoader for WriteSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./write.ts" {
+                Ok("write.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function put(source:{n:number;label:string;extra?:number},key:string,item:number|string|undefined):void{source[key]=item;}export function putError(source:{type:TypeError;range:RangeError},key:string,item:TypeError|RangeError|number):void{source[key]=item;}".into())
+        }
+    }
+    let source = "import {put,putError} from './write.ts';export function main():void{const source:{n:number;label:string;extra?:number}={n:1,label:'old'};put(source,'n',2.5);put(source,'label','new');put(source,'extra',3);console.log(JSON.stringify(source));try{put(source,'label',3);}catch(error){console.log(error instanceof TypeError);}try{put(source,'missing',4);}catch(error){console.log(error instanceof TypeError);}const errors={type:TypeError('old'),range:RangeError('old')};putError(errors,'type',TypeError('new'));try{putError(errors,'type',RangeError('wrong'));}catch(error){console.log(error instanceof TypeError);}console.log(errors.type.message);console.log(JSON.stringify(Object.keys(source)));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &WriteSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "varta log: {\"n\":2.5,\"label\":\"new\",\"extra\":3}",
+                "varta log: 1",
+                "varta log: 1",
+                "varta log: 1",
+                "varta log: new",
+                "varta log: [\"n\",\"label\",\"extra\"]"
+            ]
+        );
+    }
+}

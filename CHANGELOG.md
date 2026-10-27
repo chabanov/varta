@@ -9,6 +9,12 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Typed computed String assignment statements on closed records in v12+, with
+  prepared receiver/key roots, exact selected-field checks, Error family guards,
+  optional presence/order and catchable failures after RHS effects.
+- Typed computed String reads on closed records in v12+, with inferred field/Undefined
+  unions, presence-aware UTF-16 lookup, preserved payload identity and rooted operand
+  effects. Unsupported inherited lookups raise TypeError; prototype access stays closed.
 - Dynamic String own keys for sparse arrays in v13+ and Error families in v12+,
   preserving canonical indices/length, holes versus explicit Undefined and own
   message presence, argument effects, exact roots and older profile boundaries.

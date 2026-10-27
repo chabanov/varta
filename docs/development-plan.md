@@ -23,8 +23,8 @@ remains `checked-i32-utf8-v1`. The latest opt-in profile remains
 checkpoint adds no host operation, capability, helper export or ABI/layout version.
 The source/artifact paths and public engine API are covered by regression tests.
 
-Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **858 workspace
-tests passed**, followed by **162 CLI tests passed** in a separate repeat run.
+Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **935 workspace
+tests passed**, followed by **173 CLI tests passed** in a separate repeat run.
 Formatting, the core-only library check, runtime-companion build, workspace/all-target
 build and Clippy with warnings denied also passed. This records local verification;
 it does not claim a new cross-platform CI or release qualification.
@@ -58,8 +58,21 @@ Array keys preserve canonical index/length and sparse-presence rules; Error keys
 read only own message presence. Key effects, original identity, roots and earlier
 profile boundaries are covered without an ABI change.
 
-Next: specify and implement **typed computed-key reads on closed records** without
-implicit coercion or prototype access.
+Completed: **typed computed-key reads on closed records** in v12+. Narrowed String
+keys return the admitted union of field types and Undefined through presence-aware
+UTF-16 lookup. Key effects run once on the retained original receiver; scalar bits,
+reference identity and GC/exception/finalizer lifetimes are preserved. Unsupported
+inherited names throw TypeError unless declared own; no prototype access or coercion.
+Literal exact types and older-profile rules remain unchanged, with no ABI change.
+
+Completed: **typed computed-key writes on closed records** in v12+. Simple assignment
+statements prepare source/key before RHS effects, then check full selected-field
+types before storing. Preserve shapes, invariant arrays, Error families, optional
+presence/order and root/exception/GC lifetimes. Unknown keys and mismatched values
+throw TypeError after RHS success; no new properties, coercion or ABI change.
+
+Next: specify **computed record assignment expressions**, retaining prepared inputs,
+the original RHS result type/value and correct ownership across chained writes.
 Broader generalized record reads/writes/coercion, constructors and prototypes,
 aggregate exception design, scheduler/promise jobs, standard/system API expansion
 and package compatibility. Wider dynamic values remain explicit profile work.
@@ -1170,8 +1183,24 @@ canonical/unknown/max-byte names, argument mutation/order/throws/fatal limits,
 GC/pairs/finalizers, older profiles, modules, source-free artifacts and grants/status.
 No ABI/import/helper-export/layout change.
 
-Next specify and implement typed computed-key reads on closed records. Dynamic
-record writes/coercion, aggregate exception design and constructors/prototypes
+Typed computed-key reads on closed records are implemented in v12+ as specified in
+the [computed read contract](architecture.md#computed-record-read-contract). Tests
+cover admitted result unions/optional presence, exact UTF-16 ordering, all slots,
+numeric bits/reference identity, source/key mutation and throws, GC/pairs/finalizers,
+helper purity, bounds/profiles, virtual modules and source-free artifacts.
+No ABI/import/helper-export/layout change.
+
+Typed computed-key assignment statements are implemented in v12+ as specified in
+the [computed write contract](architecture.md#computed-record-write-contract).
+Prepared source/key/RHS roots, full field/member checks and pure Error-family guards
+preserve exact payloads, optional presence/order and existing limits. Regressions
+cover modules/source-free artifacts, diagnostics, effects/grants/status, failure
+order, invariant types, all slots, GC/saved pairs/finalizers and fatal budgets.
+No ABI/import/helper-export/layout change.
+
+Next specify computed record assignment expressions with original RHS results,
+prepared inputs and chained ownership. Generalized coercion, aggregate exception
+design and constructors/prototypes
 remain language work. Scheduler/promise jobs follow retained-root, cancellation,
 queue and handle lifetime design.
 

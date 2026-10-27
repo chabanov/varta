@@ -223,6 +223,8 @@ mod object_enumeration;
 mod own_keys;
 mod parameters;
 mod patterns;
+mod record_reads;
+mod record_writes;
 mod records;
 mod reduce_inference;
 mod references;

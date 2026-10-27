@@ -1,5 +1,5 @@
 use super::*;
-fn unparen(mut expr: &ast::Expr) -> &ast::Expr {
+pub(super) fn unparen(mut expr: &ast::Expr) -> &ast::Expr {
     while let ast::Expr::Paren(p) = expr {
         expr = &p.expr;
     }
@@ -276,7 +276,18 @@ impl Lower<'_> {
             return self.destructuring_assignment(assign, pattern);
         }
         if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left {
-            let field = self.place(member)?;
+            let base = self.expr(&member.obj)?;
+            if self.types.profile.closures()
+                && let Type::Record(shape) = base.ty
+                && let ast::MemberProp::Computed(key) = &member.prop
+                && !matches!(
+                    &*key.expr,
+                    ast::Expr::Lit(ast::Lit::Str(_) | ast::Lit::Num(_))
+                )
+            {
+                return self.dynamic_record_write(assign, base, &key.expr, shape);
+            }
+            let field = self.place_value(member, base)?;
             if self.types.profile.array_mutations()
                 && let E::Length(array) = field.kind
             {

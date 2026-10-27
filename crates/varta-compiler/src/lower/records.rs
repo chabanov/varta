@@ -27,22 +27,22 @@ pub(super) fn expression_key(expr: &ast::Expr) -> Result<String> {
         _ => return Err(unsupported("dynamic object key")),
     })
 }
+pub(super) const INHERITED_NAMES: &[&str] = &[
+    "constructor",
+    "__defineGetter__",
+    "__defineSetter__",
+    "hasOwnProperty",
+    "__lookupGetter__",
+    "__lookupSetter__",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "toString",
+    "valueOf",
+    "__proto__",
+];
 pub(super) fn inherited(name: &str) -> bool {
-    matches!(
-        name,
-        "constructor"
-            | "__defineGetter__"
-            | "__defineSetter__"
-            | "hasOwnProperty"
-            | "__lookupGetter__"
-            | "__lookupSetter__"
-            | "isPrototypeOf"
-            | "propertyIsEnumerable"
-            | "toLocaleString"
-            | "toString"
-            | "valueOf"
-            | "__proto__"
-    )
+    INHERITED_NAMES.contains(&name)
 }
 pub(super) fn property_key(name: &ast::PropName) -> Result<String> {
     match name {
@@ -201,7 +201,7 @@ impl Lower<'_> {
         })
     }
     pub(super) fn record_field(
-        &self,
+        &mut self,
         member: &ast::MemberExpr,
         value: Expr,
         read: bool,
@@ -218,6 +218,16 @@ impl Lower<'_> {
                 ) =>
             {
                 expression_key(&key.expr)?
+            }
+            ast::MemberProp::Computed(key) if read && self.types.profile.closures() => {
+                let key = self.expr(&key.expr)?;
+                if key.ty != Type::String {
+                    return Err(self.source.locate(
+                        type_error("computed record key must be a narrowed string; coercion is unsupported"),
+                        key.span,
+                    ));
+                }
+                return self.dynamic_record_read(member.span, value, key, index);
             }
             ast::MemberProp::Computed(_) => return Err(unsupported("dynamic object property")),
             _ => return Err(unsupported("private object property")),

@@ -206,7 +206,7 @@
 // union widening and checked Undefined narrowing (owned TypeError on absence).
 // Defaults use target context; shared roots/limits/status/grants remain intact.
 // Parenthesized statements, expression results/chains and for init/update are
-// supported. Checked member targets are supported below; dynamic record keys,
+// supported. Checked member targets are supported below; dynamic record pattern keys,
 // catch and for-in stay unsupported. No ABI change.
 // Assignment expressions return the original contextual RHS identity/type,
 // retaining unselected fields and holes. Save it once, finish traversal and then
@@ -302,6 +302,28 @@
 // keys keep existing behavior; String|Number unions require narrowing. Preserve
 // earlier-profile boundaries, source/key order, mutation/throws and GC/roots/
 // pairs/returns/finalizers/effects/status/grants and all bounds; no ABI/helper export.
+// V12+ record[key] reads accept narrowed closed records and String keys. Join all
+// field types with Undefined under existing exact union limits. Evaluate/root
+// receiver then key once; observe key mutations on the original receiver. Test
+// presence before reading the selected payload; preserve numeric bits/identity.
+// Missing/absent non-inherited keys yield Undefined. Inherited names without a
+// declared own field throw TypeError; static inherited reads still fail at compile
+// time. No prototype lookup/getters/coercion. Preserve literal exact types, older
+// profiles, roots/GC/pairs/returns/finalizers/status/grants and all fatal bounds.
+// Dynamic pattern targets, non-String/union keys, nullable sources without narrowing and
+// unrepresentable result unions remain rejected. No ABI/import/helper export.
+// V12+ record[key]=rhs simple statements prepare/root source and String key before
+// RHS effects, then check the selected field's exact type before storing. Unknown/
+// inherited non-own keys or incompatible values throw TypeError after RHS success.
+// Preserve numeric bits, record/array identity/types and exact Error families;
+// do not join all field types or erase shapes. Unambiguous aggregate literals
+// receive context; impossible RHS kinds fail at their source span. Optional
+// Undefined writes publish presence/order through the existing field store.
+// IsUnionMember checks tags and exact Error class bits without host calls or
+// allocation. Preserve operand effects, GC/roots/child graphs/returns/pairs/finalizers,
+// status/grants and fatal bounds. No dynamic property creation, coercion/prototypes,
+// expression/chained/compound writes, increment, pattern targets or deletion.
+// Literal/legacy rules and ABI/import/helper exports remain unchanged.
 // V12+ Object.keys(record) returns a fresh dense string[] of present own keys:
 // canonical array indices first numerically, other strings by insertion order.
 // Explicit Undefined is present; absent optional fields are omitted. Input is

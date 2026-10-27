@@ -141,6 +141,7 @@ impl Emitter<'_> {
                 }
             }
             E::IsNullish(value) => self.is_nullish(value)?,
+            E::IsUnionMember(value, member) => self.is_union_member(value, *member)?,
             E::IsUndefined(value) => {
                 self.expr(value)?;
                 if value.ty.is_union() {

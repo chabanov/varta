@@ -10,7 +10,7 @@ describes the implemented language, trust boundaries, ABI and limits. The
 [development plan](docs/development-plan.md) tracks audit fixes and next milestones.
 The [2026-10-27 checkpoint](docs/development-plan.md#development-checkpoint--2026-10-27)
 records completed core increments, verified test counts, remaining limits and the
-next step: String.indexOf/lastIndexOf.
+next steps for checked record access.
 
 [Repository](https://github.com/chabanov/varta) · [Contributing](CONTRIBUTING.md) ·
 [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE.md)
@@ -874,7 +874,7 @@ rest identity/presence/order and fatal resource behavior keep their contracts.
 
 Standalone statements (including parentheses), expression results/chains and
 ordinary for initializer/update statements are supported. Checked member targets
-are supported below; dynamic record keys, catch and for-in patterns remain
+are supported below; dynamic record keys in patterns, catch and for-in patterns remain
 unsupported. Shared pattern
 limits also apply per assignment. No new import/helper/layout or ABI version is
 introduced. See the [assignment contract](docs/architecture.md#checked-destructuring-assignment-contract).
@@ -1167,6 +1167,91 @@ No host operation,
 helper export, managed layout or ABI change. All source/type/static-data/frame/root/
 string/memory/fuel/deadline limits remain active. See the
 [contract](docs/architecture.md#dynamic-record-own-key-contract).
+
+## Computed record reads (v12 and later)
+
+Closed records accept a computed, narrowed String key. The result combines every
+declared field type with Undefined, so check it before using a specific type:
+
+```ts
+export function main(): void {
+  const value: {name: string; score?: number} = {name: "Varta"};
+  const key = "score";
+  console.log(value[key]); // undefined
+  value.score = 2.5;
+  const found = value[key];
+  if (typeof found === "number") { console.log(found + 1); } // 3.5
+}
+```
+
+The record and key evaluate once in order. Lookup reads the original receiver
+after key effects, including field mutations, and preserves shallow reference
+identity and exact numeric bits. Missing and absent optional fields yield Undefined;
+an explicit Undefined field remains own. Keys compare exact UTF-16 units, including
+NULs, without case folding or normalization; lone-surrogate keys cannot match the
+UTF-8 metadata names. Empty records still evaluate the key.
+
+Prototype lookup remains unsupported. A computed inherited name such as toString,
+constructor or __proto__ raises a catchable TypeError unless it names a declared
+own field. Static inherited reads retain their compile-time rejection. No getters,
+key coercion or prototype initialization are added. Dynamic Number/Boolean keys
+remain rejected. Union keys and nullable sources require narrowing. Computed writes
+are specified below. Literal String/Number accesses retain their exact field
+types and earlier-profile rules. A result requiring multiple record shapes or
+multiple array element types is rejected by the existing union limits.
+
+The compiler reuses the balanced UTF-16 lookup tree and existing typed union
+storage, roots and exception handling. All resource bounds remain active, with
+no host operation, helper export or ABI/layout change. See the
+[contract](docs/architecture.md#computed-record-read-contract).
+
+## Computed record writes (v12 and later)
+
+Simple assignment statements accept a narrowed String key on a narrowed closed
+record. The selected field keeps its declared type:
+
+```ts
+function put(value: {name: string; score?: number}, key: string,
+             item: string | number | undefined): void {
+  value[key] = item;
+}
+export function main(): void {
+  const value: {name: string; score?: number} = {name: "Varta"};
+  put(value, "score", 2.5);
+  console.log(JSON.stringify(value)); // {"name":"Varta","score":2.5}
+  try { put(value, "name", 3); }
+  catch (error) { console.log(error instanceof TypeError); } // 1
+}
+```
+
+Receiver, key and right-hand side run once in that order. The receiver and key
+are retained before RHS effects; reassignment of their original variables does
+not redirect the store. After RHS success, an exact UTF-16 lookup selects a
+declared field. A compatible value is stored with its Number bits/reference
+identity intact. An absent optional field becomes present even for Undefined;
+first insertion records order, while replacement keeps it. Integer-index names
+still enumerate first numerically.
+
+Unknown keys, including inherited names without declared own fields, throw
+TypeError after RHS effects. An incompatible selected-field value also throws
+TypeError without performing the requested store. Earlier RHS mutations/effects
+are preserved. New properties, coercion, getters/setters and prototype access
+remain unsupported. A value that cannot match any field is rejected at compile
+time; an empty record still evaluates all three operands before failing at runtime.
+
+Checks preserve full record shapes, invariant array element types and exact Error
+families. No combined field union or erased type is invented: a source may have
+several record shapes/array types when each store uses an admitted RHS type. An
+aggregate literal receives context only if one corresponding shape/array type is
+available; ambiguous empty literals require an explicitly typed value.
+
+Standalone/parenthesized statements and ordinary for initializer/update positions
+are supported. Assignment expressions/chains, compound assignments, increment,
+destructuring targets, dynamic deletion, non-String keys and unnarrowed nullable
+receivers remain unsupported. Literal accesses/writes and earlier profiles retain
+their rules. All bounds, exact roots, exception/finalizer cleanup and grants/status
+remain active, with no host operation, helper export or ABI/layout change. See the
+[contract](docs/architecture.md#computed-record-write-contract).
 
 ## Object.keys for closed records (v12 and later)
 

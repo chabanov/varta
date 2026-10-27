@@ -1840,7 +1840,7 @@ standalone statements, arbitrary enclosing parentheses and ordinary for
 initializer/update statements. Nested defaults/patterns, static keys/aliases,
 elisions and final object/array rest share the existing checked binding path.
 Expression values/chains and checked member targets are implemented below. Other
-expression targets, dynamic record keys, catch and for-in patterns remain
+expression targets, dynamic record keys in patterns, catch and for-in patterns remain
 unsupported; diagnostics name these boundaries.
 Earlier profiles reject the pattern assignment path. No ABI/import/helper/layout
 change or indirect-call/host-effect exception is introduced.
@@ -2174,6 +2174,129 @@ presence, Unicode order and bit 31, key-side mutation/throws, empty shapes,
 JSON/rest/callbacks, GC/finalizers/repeated roots, helper purity, older profiles,
 virtual modules, source-free artifacts and dependency diagnostics.
 
+### Computed record read contract
+
+V12+ admits `record[key]` reads with a narrowed closed-record receiver and narrowed
+String key. The result type is the union of all declared field types and Undefined,
+flattened and interned with the existing union representation. Empty shapes return
+Undefined. Existing representability limits apply: at most one record shape and
+one array element type per union, with admitted primitive/Error members. Reject
+unsupported result unions at the access span, without erasure or casts. Context
+cannot narrow an arbitrary String key or hide other possible field kinds.
+
+Follow the admitted source-order and own-data-property parts of
+[computed property evaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-evaluate-property-access-with-expression-key)
+and [OrdinaryGet](https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinaryget).
+There is no ToPropertyKey coercion, getter or prototype traversal. Lookup of a
+declared own field reads its current typed payload only if present; absent optional
+fields and unknown non-inherited names return Undefined. Preserve explicit
+Undefined presence, Number bits and shallow reference identity. Known inherited
+names without a declared own field raise owned TypeError `Inherited record property
+access is unsupported`, after key effects. This checked boundary is intentionally
+stricter than ordinary prototype lookup; do not return a fabricated Undefined.
+Required own inherited-looking fields still read normally. The shared inherited
+name table keeps static rejection and dynamic checks aligned. Literal String/Number
+access paths, including static inherited-key rejection, retain their earlier rules.
+
+Reject dynamic non-String/union keys, unchecked/nullish sources without narrowing,
+compound assignments/destructuring targets/deletion, symbols,
+assertions, index signatures and older profiles. This increment does not add
+computed object initializers, destructuring keys, Array/Error computed reads or
+general dynamic objects. Array numeric reads retain their own dispatch.
+Simple computed record writes are specified separately below.
+
+An existing typed value block roots the receiver and key, initializes a typed
+Undefined result after both operands succeed, then dispatches a balanced tree
+sorted by exact unsigned UTF-16 units. Retain original UTF-8 shape slot IDs and all
+32 presence bits. Add checked inherited-name leaves to the tree; matching own
+leaves test presence before loading/widening payloads. Only the selected leaf runs.
+Existing union fields reuse their cells; widening scalars/references uses ordinary
+bounded union allocations. This is not an allocation-free operation. Deduplicated
+name literals and generated bodies count against normal static/body limits.
+
+Evaluate source then key exactly once, including empty shapes and unknown names.
+Key mutation is visible on the retained original receiver; source-variable
+reassignment does not redirect the read. Register hidden roots before either
+operand; preserve source, key, selected child graphs, earlier operands and physical
+pairs through allocation/GC. Transfer the result before clearing internal roots,
+without intervening allocation. Existing exception routes discard partial values,
+skip later effects and preserve outer catch/finally and saved returns. Internal
+bodies contain no source returns; callback inference uses the resolved value type.
+Layout and transitive-effect visitors traverse the complete value block, including
+source/key calls and inherited-key throws. Preserve actual grants, host ceilings
+and system status. No new host operation/import/helper export, schema or ABI/layout
+version is introduced. All source/type/frame/root/string/memory/fuel/deadline limits
+remain active and exhaustion/authorized exits remain fatal. Regressions execute
+Wasm, public virtual modules and source-free portable/native artifacts and cover
+diagnostic ranges, profile gates, UTF-16 order, type/presence/identity, key mutation,
+throws, bit 31, maximum keys, helper purity, repeated GC and finalizer/root cleanup.
+
+### Computed record write contract
+
+V12+ admits `record[key] = rhs` as a simple assignment statement, including outer
+parentheses and ordinary for initializer/update positions. Require a narrowed
+closed-record receiver and narrowed String key. Literal String/Number paths and
+earlier-profile behavior remain unchanged. Reject compound assignments, ordinary
+assignment expressions/chains, increment, destructuring member targets, computed
+initializers, dynamic deletion/property creation, index signatures, non-String/
+unnarrowed union keys and unchecked/nullish receivers without narrowing. Array
+numeric mutation and Error immutability keep their separate dispatch/contracts.
+
+Preserve admitted [assignment evaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-assignment-operators-runtime-semantics-evaluation)
+order: evaluate receiver, key, then RHS exactly once. Register hidden receiver/key/
+value roots in a lexical scope before operand evaluation. Save the original
+receiver identity and key before RHS effects, including reassignments of their
+source bindings. Perform lookup, value checks and the actual store after RHS
+success, including empty shapes and unknown/inherited keys. A source/key throw
+skips later operands; an RHS throw skips lookup/store. Earlier mutations and system
+effects are not rolled back. Existing catch/finally routes clean all partial roots,
+preserve saved returns/physical pairs and retain fatal budget/authorized-exit rules.
+
+RHS values must have admitted primitive, exact record/array or Error types, including
+existing closed unions; functions and captured result pairs remain unsupported.
+If a nonempty shape has no field whose type overlaps the RHS type, reject at the
+RHS span before emitting code. Do not join all field types or erase shape/array
+information: independently typed fields may have multiple record shapes/array
+types even though a single RHS union still admits only one of each. Contextualize
+an object/array literal only when exactly one corresponding field member type is
+available; otherwise infer normally or require an explicitly typed value. Null/
+Undefined, Number bits and reference identity receive no coercion or conversion.
+
+Reuse the balanced UTF-16 lookup tree and original shape slot IDs. Unknown names,
+including unshadowed inherited names, throw owned TypeError `Unknown computed record
+write key` after RHS effects, rather than creating properties or invoking prototype
+setters. Declared own inherited-looking names write normally. On a matched field,
+intersect the complete static RHS members with the declared field members. Empty
+intersection throws owned TypeError `Invalid computed record field value`.
+For partial intersections, a private IsUnionMember IR check tests exact union tags;
+Error members additionally check the exact class bits only after the Error tag
+matches. Record/array tag checks are safe only after full static shape/element-type
+identity matches, since an RHS union has at most one of each. Do not treat Error
+families or two different array/record types as interchangeable.
+
+Only the successful branch may unbox/retype the proven subset, widen to the exact
+field type, store through the existing SetField path and publish presence. A failed
+type check must not store payloads or change presence/order. An absent optional
+field becomes own even when storing Undefined; first presence appends insertion
+order and replacement preserves position. Integer-index names still enumerate
+first numerically. All 32 slots/bits retain their interpretation.
+Existing union cells are reused when compatible; scalar/reference widening uses
+ordinary bounded allocations. Retain the prepared receiver, key, RHS and child
+graphs through checks, allocation and GC, and clear lexical roots on every exit.
+No managed shape/array/union metadata, schema or ABI version changes.
+
+IsUnionMember allocates/calls nothing and returns a canonical Boolean; its operand
+must remain visible in layout/effect visitors. The full Scope/Init/lookup/store/
+throw body is traversed for actual effects and helper purity. Preserve exact grants,
+host ceilings and system status, with no new host operation/import/helper export.
+Static-data/type/source/body/frame/root/string/memory/fuel/deadline limits remain
+active. Tests execute Wasm, public virtual modules and source-free portable/native
+artifacts, including profile/literal boundaries, source ranges, UTF-16 ordering,
+invariant shapes/arrays, Error families, optional ordering/bit 31, source/key/RHS
+effects and throws, GC/partial cleanup/saved returns and pairs, helper purity and
+fatal limits/authorized exits. This is a checked assignment boundary, not general
+ECMAScript object mutation or prototype support.
+
 ### Object.keys contract
 
 V12+ admits the unshadowed Object.keys intrinsic for one checked closed-record
@@ -2322,7 +2445,7 @@ Admit results in local initializers, arguments/receivers, returns, member reads,
 callbacks, supported conditional/operator positions and nested pattern assignment
 chains. Standalone and for init/update statements lower through the same value
 path and discard the result. Ordinary non-pattern assignment expressions remain
-outside this increment, as do dynamic record keys, catch and for-in.
+outside this increment, as do dynamic record keys in patterns, catch and for-in.
 
 Resolve target syntax/bounds/mutability as before, then propagate available result
 context to the RHS; absent context retains homogeneous target inference. Evaluate

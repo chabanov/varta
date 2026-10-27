@@ -318,6 +318,7 @@ impl<'a> Collected<'a> {
                 self.expression(b, source);
             }
             E::IsError(a)
+            | E::IsUnionMember(a, _)
             | E::IsNullish(a)
             | E::IsUndefined(a)
             | E::UnboxUnion(a)

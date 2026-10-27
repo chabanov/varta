@@ -299,6 +299,8 @@ pub(crate) enum Expression {
     BoxUnion(Box<Expr>),
     UnboxUnion(Box<Expr>),
     IsUndefined(Box<Expr>),
+    /// Exact member of a statically known union; shape/array IDs are proven by lowering.
+    IsUnionMember(Box<Expr>, Type),
     IsError(Box<Expr>),
     IsNullish(Box<Expr>),
     Conditional(Box<Expr>, Box<Expr>, Box<Expr>),

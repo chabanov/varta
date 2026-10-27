@@ -1,5 +1,6 @@
 //! Dynamic string lookup over a bounded closed shape. Reuse exact UTF-16
 //! comparison and presence reads without exposing payloads or prototype lookup.
+//! The decision tree also serves typed record reads with prepared leaf bodies.
 use super::*;
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
     Expr {
@@ -23,38 +24,26 @@ fn compare(span: swc_common::Span, key: u32, name: &[u8], op: ast::BinaryOp) -> 
         ),
     }
 }
-fn lookup(
-    span: swc_common::Span,
-    source: u32,
-    key: u32,
-    output: u32,
-    record: Type,
-    fields: &[(u32, Vec<u8>)],
-) -> Vec<S> {
+pub(super) fn lookup(span: swc_common::Span, key: u32, fields: &mut [(Vec<u8>, Vec<S>)]) -> Vec<S> {
     if fields.is_empty() {
         return vec![];
     }
     let middle = fields.len() / 2;
-    let (slot, name) = &fields[middle];
-    let miss = if fields.len() == 1 {
+    let (left, rest) = fields.split_at_mut(middle);
+    // The nonempty check above ensures middle is strictly below fields.len().
+    let ((name, body), right) = rest.split_first_mut().expect("nonempty lookup partition");
+    let miss = if left.is_empty() && right.is_empty() {
         vec![]
     } else {
         vec![S::If(
             compare(span, key, name, ast::BinaryOp::Lt),
-            lookup(span, source, key, output, record, &fields[..middle]),
-            lookup(span, source, key, output, record, &fields[middle + 1..]),
+            lookup(span, key, left),
+            lookup(span, key, right),
         )]
     };
     vec![S::If(
         compare(span, key, name, ast::BinaryOp::EqEqEq),
-        vec![S::Set(
-            output,
-            Expr {
-                span,
-                ty: Type::Boolean,
-                kind: E::HasOwn(Box::new(local(span, source, record)), Some(*slot)),
-            },
-        )],
+        std::mem::take(body),
         miss,
     )]
 }
@@ -131,9 +120,21 @@ impl Lower<'_> {
         // Shape slots are sorted as UTF-8 metadata; JS string comparison uses
         // UTF-16 units. Reorder the decision tree, never the original slots.
         fields.sort_by(|a, b| a.1.encode_utf16().cmp(b.1.encode_utf16()));
-        let fields: Vec<_> = fields
+        let mut fields: Vec<_> = fields
             .into_iter()
-            .map(|(slot, name)| (slot, self.types.profile.string_bytes(name)))
+            .map(|(slot, name)| {
+                (
+                    self.types.profile.string_bytes(name),
+                    vec![S::Set(
+                        output,
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::HasOwn(Box::new(local(span, source, record)), Some(slot)),
+                        },
+                    )],
+                )
+            })
             .collect();
         let mut body = vec![
             S::Init(source, value),
@@ -147,7 +148,7 @@ impl Lower<'_> {
                 },
             ),
         ];
-        body.extend(lookup(span, source, name, output, record, &fields));
+        body.extend(lookup(span, name, &mut fields));
         Expr {
             span,
             ty: Type::Boolean,

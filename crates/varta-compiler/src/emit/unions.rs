@@ -1,6 +1,43 @@
 use super::*;
 use varta_common::value as values;
 impl Emitter<'_> {
+    pub(super) fn is_union_member(&mut self, value: &Expr, member: Type) -> Result<()> {
+        if !value.ty.is_union() {
+            return Err(CompilerError::Internal(
+                "member check requires a union".into(),
+            ));
+        }
+        let tag = member
+            .value_kind()
+            .ok_or_else(|| CompilerError::Internal("member check requires a value type".into()))?;
+        self.expr(value)?;
+        self.code.extend([
+            I::I32WrapI64,
+            I::LocalTee(self.temporary),
+            I::I32Load(strings::WORD),
+            I::I32Const(tag as i32),
+            I::I32Eq,
+        ]);
+        if let Some(class) = member.error_class() {
+            // All Error families share a union tag. Only after that tag matches
+            // may we dereference the Error payload and test its exact class.
+            self.code.extend([
+                I::If(BlockType::Result(ValType::I32)),
+                I::LocalGet(self.temporary),
+                I::I64Load(records::field(0)),
+                I::I32WrapI64,
+                I::I32Load(strings::WORD),
+                I::I32Const(values::ERROR_CLASS_SHIFT as i32),
+                I::I32ShrU,
+                I::I32Const(class as i32),
+                I::I32Eq,
+                I::Else,
+                I::I32Const(0),
+                I::End,
+            ]);
+        }
+        Ok(())
+    }
     /// The value's references remain rooted while allocation can collect.
     pub(super) fn box_union(&mut self, ty: Type) -> Result<()> {
         if ty.needs_root() {

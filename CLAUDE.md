@@ -605,6 +605,41 @@ key mutation/throws/GC. Numeric array checks and older profile boundaries persis
 Visit both operands in collection/effects; private helpers stay allocation/host-free.
 No ABI/layout/import/helper-export change.
 
+V12+ computed record reads require a narrowed closed record and String key. Join
+all field types with Undefined under existing exact union limits; reject multiple
+record shapes/array types without erasure. Root receiver then key once, initialize
+Undefined after key success, dispatch the shared balanced UTF-16 tree and test
+presence before the selected payload read/widen. Keep exact numeric bits and
+reference identity; observe key mutations on the original receiver, never a later
+source-binding reassignment. Unknown/absent non-inherited fields return Undefined;
+unshadowed inherited names raise owned TypeError after key effects rather than
+fabricating missing values. Share the inherited-name table with static rejection;
+declared required own fields win. Preserve literal paths/exact types, older profiles,
+Array numeric access, union allocations, GC/earlier operands/pairs/saved returns,
+callback inference, effect/layout visitors, catch/finally cleanup/status/grants and
+all fatal bounds. Reject coercion/non-String/union keys, nullable sources without
+narrowing, dynamic pattern targets/deletion and unrepresentable unions. No host
+operation/import/helper export or ABI/schema/layout change.
+
+V12+ simple computed record writes evaluate/root source, narrowed String key and
+RHS once in that order. Capture receiver/key before RHS effects, then lookup/check/
+store after success; keep earlier mutations even when the requested store fails.
+Reject impossible RHS types at their span, functions/result pairs, non-String/
+unnarrowed union keys and nullish receivers without narrowing. Contextualize
+aggregate literals only for one unambiguous corresponding type, never a merged
+field union. Per leaf intersect full static types, preserving record shapes,
+invariant arrays and exact Error families. Partial union checks use host-free
+IsUnionMember tags plus exact Error class bits after matching the Error tag; only
+then unbox/retype/widen and SetField. Unknown/inherited non-own names and bad field
+values throw TypeError after RHS effects, with no requested payload/presence/order
+mutation. Keep own inherited-looking fields, optional Undefined presence/order,
+all 32 bits and literal/legacy/Array rules. Scope roots retain all inputs/child
+graphs through GC, exceptions, saved returns/pairs and finalizers; visitors traverse
+member-check operands and the full statement body. Simple statements/for headers
+only: reject expression/chained/compound assignments, increment, dynamic pattern
+targets/deletion/property creation/coercion/prototypes. Preserve status/grants and
+all fatal bounds; no host operation/import/helper export or ABI/schema/layout change.
+
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail
 even if they ignore its custom section. Do not claim full ECMAScript support from

@@ -402,3 +402,7 @@ mod string_search_tests;
 
 #[cfg(test)]
 mod own_key_tests;
+#[cfg(test)]
+mod record_read_tests;
+#[cfg(test)]
+mod record_write_tests;
