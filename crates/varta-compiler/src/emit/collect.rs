@@ -83,6 +83,10 @@ impl<'a> Collected<'a> {
                 self.expression(start, source);
                 self.expression(end, source);
             }
+            E::StringTrim { value, mode } => {
+                self.helpers.insert(strings::Helper::string_trim(*mode));
+                self.expression(value, source);
+            }
             E::StringRepeat {
                 value,
                 count,
@@ -140,9 +144,13 @@ impl<'a> Collected<'a> {
                 self.schema_type(expr.ty, (expr.span, source));
                 self.expression(text, source);
             }
-            E::ArraySearch(_, base, needle, from) => {
+            E::ArraySearch(mode, base, needle, from) => {
                 self.arrays = true;
-                self.helpers.insert(strings::Helper::ArraySearch);
+                if *mode == ir::ArraySearch::LastIndexOf {
+                    self.helpers.insert(strings::Helper::ArrayLastIndex);
+                } else {
+                    self.helpers.insert(strings::Helper::ArraySearch);
+                }
                 self.helpers.insert(strings::Helper::Compare);
                 self.expression(base, source);
                 self.expression(needle, source);
@@ -170,6 +178,17 @@ impl<'a> Collected<'a> {
             E::ArrayPop(base) => {
                 self.helpers.insert(strings::Helper::Allocate);
                 self.expression(base, source);
+            }
+            E::ArrayReverse(base) => {
+                self.helpers.insert(strings::Helper::ArrayReverse);
+                self.expression(base, source);
+            }
+            E::ArrayFill(base, value, start, end) => {
+                self.helpers.insert(strings::Helper::ArrayFill);
+                self.expression(base, source);
+                self.expression(value, source);
+                self.expression(start, source);
+                self.expression(end, source);
             }
             E::ArrayEnumerate { value, keys } => {
                 self.arrays = true;

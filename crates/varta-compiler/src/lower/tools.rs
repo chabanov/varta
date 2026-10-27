@@ -257,6 +257,9 @@ fn expression(
             expression(start, functions, visited, effects);
             expression(end, functions, visited, effects);
         }
+        E::StringTrim { value, .. } => {
+            expression(value, functions, visited, effects);
+        }
         E::StringRepeat {
             value,
             count,
@@ -316,6 +319,12 @@ fn expression(
             expression(a, functions, visited, effects);
             expression(b, functions, visited, effects);
             expression(c, functions, visited, effects);
+        }
+        E::ArrayFill(a, b, c, d) => {
+            expression(a, functions, visited, effects);
+            expression(b, functions, visited, effects);
+            expression(c, functions, visited, effects);
+            expression(d, functions, visited, effects);
         }
         E::ArrayAt(a, b)
         | E::ArrayHasOwn(a, b)

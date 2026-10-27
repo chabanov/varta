@@ -8140,3 +8140,47 @@ fn string_searches_invalid_arguments_keep_dependency_source_ranges() {
         assert!(!project.0.join("dist").exists());
     }
 }
+
+#[test]
+fn reviewed_array_and_trim_regressions_run_in_modules_and_source_free_artifacts() {
+    for profile in ["checked-f64-utf16-v13", "checked-f64-utf16-v14"] {
+        let project = RegressionProject::new(
+            "import {verify} from './checks.ts';export function main():void{verify();}",
+            serde_json::json!({}),
+        );
+        fs::write(project.0.join("src/checks.ts"),r"export function verify():void{const a=[1,2,1,3];console.log(a.lastIndexOf(1));console.log(a.lastIndexOf(1,undefined));console.log(a.lastIndexOf(1,1));console.log(a.lastIndexOf(1,Infinity));console.log(a.lastIndexOf(1,-100));const sparse:number[]=[1,,3];console.log(JSON.stringify(sparse.reverse()));console.log(Object.hasOwn(sparse,1));console.log(sparse.reverse()===sparse);const text=' \u0085x\u0085 '.trim();console.log(text.charCodeAt(0));console.log(text.length);}").unwrap();
+        project.language_profile(profile);
+        let check = project.command(&["check"]);
+        assert!(check.status.success(), "{profile}: {}", combined(&check));
+        let build = project.command(&["build", "--single"]);
+        assert!(build.status.success(), "{profile}: {}", combined(&build));
+        let mut dev = varta();
+        dev.arg("dev");
+        let mut commands = vec![dev];
+        for artifact in ["dist/app.wasm", "dist/app"] {
+            for mut command in [varta(), Command::new(runtime_path())] {
+                command.args(["run", artifact]);
+                commands.push(command);
+            }
+        }
+        commands.push(Command::new(project.0.join("dist/app")));
+        for (index, mut command) in commands.into_iter().enumerate() {
+            if index == 1 {
+                fs::remove_dir_all(project.0.join("src")).unwrap();
+                fs::remove_file(project.0.join("varta.config.json")).unwrap();
+            }
+            let output = command.current_dir(&project.0).output().unwrap();
+            assert!(output.status.success(), "{profile}: {}", combined(&output));
+            assert_eq!(
+                String::from_utf8(output.stdout)
+                    .unwrap()
+                    .lines()
+                    .take(10)
+                    .collect::<Vec<_>>(),
+                ["2", "0", "0", "2", "-1", "[3,null,1]", "0", "1", "133", "3"]
+                    .map(|s| format!("varta log: {s}")),
+                "{profile}"
+            );
+        }
+    }
+}

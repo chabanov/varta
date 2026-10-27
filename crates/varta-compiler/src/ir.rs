@@ -230,6 +230,7 @@ pub(crate) struct Expr {
 pub(crate) enum ArraySearch {
     Includes,
     IndexOf,
+    LastIndexOf,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -237,6 +238,15 @@ pub(crate) enum StringSearch {
     Includes,
     StartsWith,
     EndsWith,
+    IndexOf,
+    LastIndexOf,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringTrimMode {
+    Trim,
+    TrimStart,
+    TrimEnd,
 }
 
 pub(crate) enum Expression {
@@ -269,6 +279,10 @@ pub(crate) enum Expression {
         start: Box<Expr>,
         end: Box<Expr>,
         substring: bool,
+    },
+    StringTrim {
+        value: Box<Expr>,
+        mode: StringTrimMode,
     },
     StringRepeat {
         value: Box<Expr>,
@@ -335,6 +349,8 @@ pub(crate) enum Expression {
     },
     ArrayPush(Box<Expr>, Box<Expr>),
     ArrayPop(Box<Expr>),
+    ArrayReverse(Box<Expr>),
+    ArrayFill(Box<Expr>, Box<Expr>, Box<Expr>, Box<Expr>),
     ArrayAt(Box<Expr>, Box<Expr>),
     ArraySearch(ArraySearch, Box<Expr>, Box<Expr>, Box<Expr>),
     ArraySlice(Box<Expr>, Box<Expr>, Box<Expr>),

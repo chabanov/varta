@@ -65,13 +65,18 @@ impl Emitter<'_> {
                 self.expr(needle)?;
                 self.array_bound(
                     position,
-                    if *mode == ir::StringSearch::EndsWith {
-                        f64::INFINITY
-                    } else {
-                        0.0
+                    match *mode {
+                        ir::StringSearch::EndsWith | ir::StringSearch::LastIndexOf => f64::INFINITY,
+                        _ => 0.0,
                     },
                 )?;
                 self.string_helper(strings::Helper::string_search(*mode))?;
+                if matches!(
+                    *mode,
+                    ir::StringSearch::IndexOf | ir::StringSearch::LastIndexOf
+                ) {
+                    self.code.push(I::F64ConvertI32S);
+                }
             }
             E::StringRange {
                 value,
@@ -87,6 +92,10 @@ impl Emitter<'_> {
                 } else {
                     strings::Helper::StringSlice
                 })?;
+            }
+            E::StringTrim { value, mode } => {
+                self.expr(value)?;
+                self.string_helper(strings::Helper::string_trim(*mode))?;
             }
             E::StringRepeat {
                 value,
@@ -189,7 +198,11 @@ impl Emitter<'_> {
                 self.array_bound(from, 0.0)?;
                 self.code
                     .push(I::I32Const(i32::from(*mode == ir::ArraySearch::Includes)));
-                self.string_helper(strings::Helper::ArraySearch)?;
+                if *mode == ir::ArraySearch::LastIndexOf {
+                    self.string_helper(strings::Helper::ArrayLastIndex)?;
+                } else {
+                    self.string_helper(strings::Helper::ArraySearch)?;
+                }
                 if *mode == ir::ArraySearch::Includes {
                     self.code.extend([I::I32Const(0), I::I32GeS]);
                 } else {
@@ -210,6 +223,18 @@ impl Emitter<'_> {
                 self.code.push(I::F64ConvertI32U);
             }
             E::ArrayPop(base) => self.array_pop(base, expr.ty)?,
+            E::ArrayReverse(base) => {
+                self.expr(base)?;
+                self.string_helper(strings::Helper::ArrayReverse)?;
+            }
+            E::ArrayFill(base, value, start, end) => {
+                self.expr(base)?;
+                self.expr(value)?;
+                self.pack_slot(value.ty);
+                self.array_bound(start, 0.0)?;
+                self.array_bound(end, f64::INFINITY)?;
+                self.string_helper(strings::Helper::ArrayFill)?;
+            }
             E::Array(elements) => self.array(expr.ty, elements)?,
             E::ArrayEnumerate { value, keys } => {
                 self.expr(value)?;

@@ -403,3 +403,56 @@ fn mutation_profile_keeps_the_complete_thirteen_helper_dependency_bound() {
         "varta log: 0"
     );
 }
+
+#[test]
+fn array_reverse_validates_and_preserves_identity_in_each_admitted_profile() {
+    let source = "export function main():void{const a=[1,2,3];console.log(a.reverse()===a);console.log(JSON.stringify(a));console.log(JSON.stringify(a.reverse()));const empty:number[]=[];console.log(empty.reverse()===empty);console.log(JSON.stringify(empty));console.log(JSON.stringify([1,2,3,4].reverse()));}";
+    for profile in [
+        LanguageProfile::CheckedF64Utf16V6,
+        LanguageProfile::CheckedF64Utf16V12,
+        LanguageProfile::CheckedF64Utf16V13,
+        LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let bytes = varta_compiler::compile_typescript_with_profile(source, profile).unwrap();
+        wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&bytes, &[])
+                .unwrap()
+                .lines,
+            lines(&["1", "[3,2,1]", "[1,2,3]", "1", "[]", "[4,3,2,1]"]),
+            "{profile:?}"
+        );
+    }
+}
+#[test]
+fn array_reverse_moves_sparse_presence_and_reference_payloads_together() {
+    let source = "export function main():void{const child={n:1};const a:({n:number}|undefined)[]=[child,,undefined,,];const reversed=a.reverse();console.log(reversed===a);console.log(JSON.stringify(a));console.log(Object.hasOwn(a,0));console.log(Object.hasOwn(a,1));console.log(Object.hasOwn(a,2));console.log(Object.hasOwn(a,3));console.log(a[3]===child);console.log(JSON.stringify(a.reverse()));console.log(Object.hasOwn(a,0));console.log(Object.hasOwn(a,1));console.log(Object.hasOwn(a,2));console.log(Object.hasOwn(a,3));}";
+    for profile in [
+        LanguageProfile::CheckedF64Utf16V13,
+        LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let bytes = varta_compiler::compile_typescript_with_profile(source, profile).unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&bytes, &[])
+                .unwrap()
+                .lines,
+            lines(&[
+                "1",
+                "[null,null,null,{\"n\":1}]",
+                "0",
+                "1",
+                "0",
+                "1",
+                "1",
+                "[{\"n\":1},null,null,null]",
+                "1",
+                "0",
+                "1",
+                "0"
+            ]),
+            "{profile:?}"
+        );
+    }
+}

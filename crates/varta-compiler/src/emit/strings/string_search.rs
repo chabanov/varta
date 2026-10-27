@@ -97,6 +97,7 @@ pub(super) fn function(mode: StringSearch) -> Function {
             ],
         ),
         StringSearch::StartsWith => {}
+        _ => {}
     }
     if mode == StringSearch::Includes {
         instructions(

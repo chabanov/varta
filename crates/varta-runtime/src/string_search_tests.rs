@@ -268,3 +268,56 @@ fn string_searches_argument_effects_remain_visible_to_helper_purity_validation()
         "{error}"
     );
 }
+
+#[test]
+fn string_indexof_lastindexof_basic_utf16_and_numbers() {
+    let source = "export function main():void{console.log('abcabc'.indexOf('bca'));console.log('abcabc'.indexOf('bca',2));console.log('abcabc'.lastIndexOf('bca'));console.log('abcabc'.lastIndexOf('bca',4));console.log('abcabc'.lastIndexOf('bca',3));console.log('abcabc'.indexOf(''));console.log('abcabc'.indexOf('x'));console.log('abcabc'.lastIndexOf('x'));console.log('A😀B'.indexOf('😀'));console.log('A😀B'.lastIndexOf('😀'));}";
+    let out = run(source);
+    assert_eq!(
+        out.lines,
+        lines(&["1", "-1", "1", "1", "1", "0", "-1", "-1", "1", "1"])
+    );
+}
+
+#[test]
+fn string_indexof_lastindexof_reject_earlier_profiles() {
+    let source = "export function main():void{console.log('abc'.indexOf('b'));console.log('abc'.lastIndexOf('b'));}";
+    for profile in [
+        LanguageProfile::CheckedF64Utf16V11,
+        LanguageProfile::CheckedF64Utf16V10,
+        LanguageProfile::CheckedF64Utf8V2,
+    ] {
+        let result = varta_compiler::compile_typescript_with_profile(source, profile);
+        assert!(result.is_err());
+    }
+}
+
+#[test]
+fn string_indexof_lastindexof_normalize_positions_without_js_relative_negative_indexing() {
+    let cases = [
+        ("undefined", "1", "1"),
+        ("NaN", "1", "1"),
+        ("-Infinity", "1", "-1"),
+        ("Infinity", "-1", "1"),
+        ("-1.9", "1", "-1"),
+        ("0.9", "1", "-1"),
+        ("1.9", "1", "1"),
+        ("2.9", "-1", "1"),
+        ("3.9", "-1", "1"),
+        ("4.9", "-1", "1"),
+        ("1e300", "-1", "1"),
+        ("-1e300", "1", "-1"),
+        ("-0", "1", "-1"),
+    ];
+    let mut source = String::from("export function main():void{");
+    let mut expected = Vec::new();
+    for (position, index, last) in cases {
+        source.push_str(&format!(
+            "console.log('abcd'.indexOf('b',{position}));console.log('abcd'.lastIndexOf('b',{position}));")
+        );
+        expected.push(format!("varta log: {index}"));
+        expected.push(format!("varta log: {last}"));
+    }
+    source.push('}');
+    assert_eq!(run(&source).lines, expected);
+}

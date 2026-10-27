@@ -403,6 +403,32 @@ impl Lower<'_> {
         }
         if let ast::Expr::Member(member) = &**callee
             && let ast::MemberProp::Ident(method) = &member.prop
+            && matches!(method.sym.as_ref(), "trim" | "trimStart" | "trimEnd")
+        {
+            let value = self.expr(&member.obj)?;
+            return self.string_trim(call, value, method.sym.as_ref());
+        }
+        if self.types.profile.closures()
+            && let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && matches!(method.sym.as_ref(), "indexOf" | "lastIndexOf")
+        {
+            let value = self.expr(&member.obj)?;
+            if value.ty == Type::String {
+                return self.string_search(call, value, method.sym.as_ref());
+            }
+            if matches!(method.sym.as_ref(), "indexOf" | "lastIndexOf")
+                && matches!(value.ty, Type::Array(_))
+                && self.types.profile.resizable_arrays()
+            {
+                return self.array_plain_method(call, value, method.sym.as_ref());
+            }
+            return Err(type_error(
+                "String.indexOf/lastIndexOf requires a narrowed string receiver",
+            ));
+        }
+        if let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
             && matches!(method.sym.as_ref(), "includes" | "startsWith" | "endsWith")
         {
             let value = self.expr(&member.obj)?;
@@ -425,6 +451,7 @@ impl Lower<'_> {
                     | "pop"
                     | "at"
                     | "indexOf"
+                    | "lastIndexOf"
                     | "map"
                     | "filter"
                     | "forEach"
@@ -432,6 +459,8 @@ impl Lower<'_> {
                     | "reduce"
                     | "some"
                     | "every"
+                    | "reverse"
+                    | "fill"
             )
         {
             return self.array_method(call, member, method.sym.as_ref(), expected);

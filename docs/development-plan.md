@@ -36,11 +36,25 @@ throws. String search rejects coercion/regex/omitted needles; includes currently
 uses candidate scanning with quadratic worst-case cost, bounded by existing fuel.
 Maximum-string stress tests use explicit test fuel without changing runtime defaults.
 
-Next: **String.indexOf/lastIndexOf**, including UTF-16 index results and their
-method-specific position rules. Wider dynamic values/coercion, aggregate exception
-design, promises/microtasks/async/await, standard/system API expansion and package
-compatibility remain core work. Shared application state, MCP, signing and external
-adapters remain later milestones. Detailed completed contracts and sequencing follow.
+Completed: **String.indexOf/lastIndexOf** and **Array.lastIndexOf**, including
+UTF-16/code-unit index results and their method-specific position rules.
+Checked compiler support and allocation-free helpers are available in the
+relevant resizable/UTF-16 profiles.
+
+Review follow-up restores the method and compatibility boundaries: Array.lastIndexOf
+uses reverse dispatch, distinguishes an omitted position from explicit Undefined,
+and clamps/rejects bounds before conversion; Array.reverse uses the complete i64
+handle for sparse bitmap access. Trimming excludes U+0085 while retaining the full
+ECMAScript WhiteSpace/LineTerminator set. Reinstated v13 regression checks continue
+to reject writable length/deletion and trap indexed extension. New tests reproduce
+the original failures, verify dense/sparse profiles and execute dependency modules
+in source-free Wasm/native artifacts. No ABI, capability or resource-limit change.
+
+Next: broader **generalized record keys/coercion**, constructors and prototypes,
+aggregate exception design, scheduler/promise jobs, standard/system API expansion
+and package compatibility. Wider dynamic values remain explicit profile work.
+Shared application state, MCP, signing and external adapters remain later
+milestones. Detailed completed contracts and sequencing follow.
 
 ## Product direction
 

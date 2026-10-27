@@ -333,6 +333,8 @@ mod recoverable_json_tests;
 
 #[cfg(test)]
 mod string_repeat_tests;
+#[cfg(test)]
+mod string_trim_tests;
 
 #[cfg(test)]
 mod function_value_tests;

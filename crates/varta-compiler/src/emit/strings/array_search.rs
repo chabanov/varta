@@ -18,7 +18,7 @@ const BITMAP: u32 = 12;
 const AGAIN: u32 = 0;
 const DONE: u32 = 1;
 const NOT_FOUND: i32 = -1;
-pub(super) fn function(compare: u32, sparse: bool) -> Function {
+pub(super) fn function(compare: u32, sparse: bool, last: bool) -> Function {
     let mut f = Function::new([
         (6, ValType::I32),
         (1, ValType::I64),
@@ -40,39 +40,12 @@ pub(super) fn function(compare: u32, sparse: bool) -> Function {
             I::I32Const(NOT_FOUND),
             I::Return,
             I::End,
-            I::LocalGet(FROM),
-            I::LocalGet(FROM),
-            I::F64Ne,
-            I::If(BlockType::Result(ValType::F64)),
-            I::F64Const(0.0.into()),
-            I::Else,
-            I::LocalGet(FROM),
-            I::F64Trunc,
-            I::End,
-            I::LocalSet(FROM),
-            I::LocalGet(FROM),
-            I::LocalGet(LENGTH),
-            I::F64ConvertI32U,
-            I::F64Ge,
-            I::If(BlockType::Empty),
-            I::I32Const(NOT_FOUND),
-            I::Return,
-            I::End,
-            I::LocalGet(FROM),
-            I::F64Const(0.0.into()),
-            I::F64Lt,
-            I::If(BlockType::Result(ValType::F64)),
-            I::LocalGet(FROM),
-            I::LocalGet(LENGTH),
-            I::F64ConvertI32U,
-            I::F64Add,
-            I::F64Const(0.0.into()),
-            I::F64Max,
-            I::Else,
-            I::LocalGet(FROM),
-            I::End,
-            I::I32TruncF64U,
-            I::LocalSet(INDEX),
+        ],
+    );
+    start_index(&mut f, last);
+    instructions(
+        &mut f,
+        [
             I::LocalGet(SOURCE),
             I::I32Load(WORD),
             I::LocalSet(ELEMENT),
@@ -92,15 +65,24 @@ pub(super) fn function(compare: u32, sparse: bool) -> Function {
     resolve(&mut f, KIND, NEEDLE);
     instructions(
         &mut f,
-        [
-            I::Block(BlockType::Empty),
-            I::Loop(BlockType::Empty),
-            I::LocalGet(INDEX),
-            I::LocalGet(LENGTH),
-            I::I32GeU,
-            I::BrIf(DONE),
-        ],
+        [I::Block(BlockType::Empty), I::Loop(BlockType::Empty)],
     );
+    if last {
+        instructions(
+            &mut f,
+            [I::LocalGet(INDEX), I::I32Const(0), I::I32LtS, I::BrIf(DONE)],
+        );
+    } else {
+        instructions(
+            &mut f,
+            [
+                I::LocalGet(INDEX),
+                I::LocalGet(LENGTH),
+                I::I32GeU,
+                I::BrIf(DONE),
+            ],
+        );
+    }
     if sparse {
         sparse::get(&mut f, BITMAP, INDEX);
         f.instruction(&I::If(BlockType::Empty));
@@ -165,7 +147,7 @@ pub(super) fn function(compare: u32, sparse: bool) -> Function {
         [
             I::LocalGet(INDEX),
             I::I32Const(1),
-            I::I32Add,
+            if last { I::I32Sub } else { I::I32Add },
             I::LocalSet(INDEX),
             I::Br(AGAIN),
             I::End,
@@ -175,6 +157,89 @@ pub(super) fn function(compare: u32, sparse: bool) -> Function {
         ],
     );
     f
+}
+/// Normalize in floating point and reject/clamp before integer conversion.
+/// Reverse search keeps negative relative indices negative until the miss check;
+/// forward search retains its existing zero-clamping and upper-bound rejection.
+fn start_index(f: &mut Function, last: bool) {
+    instructions(
+        f,
+        [
+            I::LocalGet(FROM),
+            I::LocalGet(FROM),
+            I::F64Ne,
+            I::If(BlockType::Result(ValType::F64)),
+            I::F64Const(0.0.into()),
+            I::Else,
+            I::LocalGet(FROM),
+            I::F64Trunc,
+            I::End,
+            I::LocalSet(FROM),
+        ],
+    );
+    if last {
+        instructions(
+            f,
+            [
+                I::LocalGet(FROM),
+                I::F64Const(0.0.into()),
+                I::F64Lt,
+                I::If(BlockType::Result(ValType::F64)),
+                I::LocalGet(FROM),
+                I::LocalGet(LENGTH),
+                I::F64ConvertI32U,
+                I::F64Add,
+                I::Else,
+                I::LocalGet(FROM),
+                I::LocalGet(LENGTH),
+                I::I32Const(1),
+                I::I32Sub,
+                I::F64ConvertI32U,
+                I::F64Min,
+                I::End,
+                I::LocalSet(FROM),
+                I::LocalGet(FROM),
+                I::F64Const(0.0.into()),
+                I::F64Lt,
+                I::If(BlockType::Empty),
+                I::I32Const(NOT_FOUND),
+                I::Return,
+                I::End,
+                I::LocalGet(FROM),
+                I::I32TruncF64U,
+                I::LocalSet(INDEX),
+            ],
+        );
+    } else {
+        instructions(
+            f,
+            [
+                I::LocalGet(FROM),
+                I::LocalGet(LENGTH),
+                I::F64ConvertI32U,
+                I::F64Ge,
+                I::If(BlockType::Empty),
+                I::I32Const(NOT_FOUND),
+                I::Return,
+                I::End,
+                I::LocalGet(FROM),
+                I::F64Const(0.0.into()),
+                I::F64Lt,
+                I::If(BlockType::Result(ValType::F64)),
+                I::LocalGet(FROM),
+                I::LocalGet(LENGTH),
+                I::F64ConvertI32U,
+                I::F64Add,
+                I::F64Const(0.0.into()),
+                I::F64Max,
+                I::Else,
+                I::LocalGet(FROM),
+                I::End,
+                I::I32TruncF64U,
+                I::LocalSet(INDEX),
+            ],
+        );
+    }
 }
 fn resolve(f: &mut Function, kind: u32, payload: u32) {
     instructions(

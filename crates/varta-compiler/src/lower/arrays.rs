@@ -145,7 +145,7 @@ impl Lower<'_> {
             ));
         };
         let element = self.types.arrays[id as usize];
-        if matches!(method, "includes" | "indexOf") {
+        if matches!(method, "includes" | "indexOf" | "lastIndexOf") {
             if call.args.len() > 2 {
                 return Err(invalid(format!(
                     "array.{method} expects at most two arguments"
@@ -166,11 +166,23 @@ impl Lower<'_> {
                     needle.span,
                 ));
             }
-            let from = self.array_bound(call.args.get(1), call.span)?;
+            // Omission starts a reverse search at the last element, while an
+            // explicitly supplied Undefined still normalizes to zero.
+            let from = if method == "lastIndexOf" && call.args.len() < 2 {
+                Expr {
+                    span: call.span,
+                    ty: Type::Float64,
+                    kind: E::Float64(f64::INFINITY),
+                }
+            } else {
+                self.array_bound(call.args.get(1), call.span)?
+            };
             let (mode, ty) = if method == "includes" {
                 (ir::ArraySearch::Includes, Type::Boolean)
-            } else {
+            } else if method == "indexOf" {
                 (ir::ArraySearch::IndexOf, self.types.number())
+            } else {
+                (ir::ArraySearch::LastIndexOf, self.types.number())
             };
             return Ok(Expr {
                 span: call.span,
@@ -204,7 +216,36 @@ impl Lower<'_> {
                 kind,
             });
         }
-        let (ty, kind) = if method == "pop" {
+        let (ty, kind) = if method == "reverse" {
+            if !call.args.is_empty() {
+                return Err(invalid("array.reverse expects no arguments"));
+            }
+            (base.ty, E::ArrayReverse(Box::new(base)))
+        } else if method == "fill" {
+            if call.args.is_empty() {
+                return Err(invalid("array.fill expects a value"));
+            }
+            if call.args.len() > 3 {
+                return Err(invalid("array.fill expects at most three arguments"));
+            }
+            let value = self.expr_expected(&call.args[0].expr, Some(element))?;
+            if value.ty != element {
+                return Err(self
+                    .source
+                    .locate(type_error("array.fill element type mismatch"), value.span));
+            }
+            let start = self.array_bound(call.args.get(1), call.span)?;
+            let end = self.array_bound(call.args.get(2), call.span)?;
+            (
+                base.ty,
+                E::ArrayFill(
+                    Box::new(base),
+                    Box::new(value),
+                    Box::new(start),
+                    Box::new(end),
+                ),
+            )
+        } else if method == "pop" {
             if !call.args.is_empty() {
                 return Err(invalid("array.pop expects no arguments"));
             }

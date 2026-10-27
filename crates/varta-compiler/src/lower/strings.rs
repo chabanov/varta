@@ -186,12 +186,59 @@ impl Lower<'_> {
             "includes" => ir::StringSearch::Includes,
             "startsWith" => ir::StringSearch::StartsWith,
             "endsWith" => ir::StringSearch::EndsWith,
+            "indexOf" => ir::StringSearch::IndexOf,
+            "lastIndexOf" => ir::StringSearch::LastIndexOf,
             _ => return Err(invalid("unknown string search method")),
+        };
+        let ty = match method {
+            "includes" | "startsWith" | "endsWith" => Type::Boolean,
+            "indexOf" | "lastIndexOf" => self.types.number(),
+            _ => unreachable!(),
         };
         Ok(Expr {
             span: call.span,
-            ty: Type::Boolean,
+            ty,
             kind: E::StringSearch(mode, Box::new(value), Box::new(needle), Box::new(position)),
+        })
+    }
+}
+
+impl Lower<'_> {
+    pub(super) fn string_trim(
+        &mut self,
+        call: &ast::CallExpr,
+        value: Expr,
+        method: &str,
+    ) -> Result<Expr> {
+        if !self.types.profile.closures() {
+            return Err(unsupported(&format!(
+                "String.{method} requires checked-f64-utf16-v12"
+            )));
+        }
+        if value.ty != Type::String {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "String.{method} requires a narrowed string receiver"
+                )),
+                value.span,
+            ));
+        }
+        if !call.args.is_empty() {
+            return Err(invalid(format!("String.{method} expects no arguments")));
+        }
+        let mode = match method {
+            "trim" => ir::StringTrimMode::Trim,
+            "trimStart" => ir::StringTrimMode::TrimStart,
+            "trimEnd" => ir::StringTrimMode::TrimEnd,
+            _ => return Err(invalid("unknown string trim method")),
+        };
+        Ok(Expr {
+            span: call.span,
+            ty: Type::String,
+            kind: E::StringTrim {
+                value: Box::new(value),
+                mode,
+            },
         })
     }
 }

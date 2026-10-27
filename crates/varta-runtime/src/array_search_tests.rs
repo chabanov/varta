@@ -197,3 +197,65 @@ export function main():void {
         &["1", "1", "1", "1", r#"[2.5,"😀","kept!"]"#].map(|s| format!("varta log: {s}"))
     ));
 }
+
+#[test]
+fn array_last_index_of_returns_last_match_and_respects_position() {
+    let output = run(r#"
+export function main():void {
+ const v=[1,2,1,3];
+ console.log(v.lastIndexOf(1));
+ console.log(v.lastIndexOf(1,1));
+ console.log(v.lastIndexOf(9));
+ console.log(v.lastIndexOf(1,-2));
+ let empty:number[]=[];
+ console.log(empty.lastIndexOf(1));
+}"#);
+    assert_eq!(
+        output.lines,
+        ["2", "0", "-1", "2", "-1"].map(|s| format!("varta log: {s}"))
+    );
+}
+
+#[test]
+fn array_last_index_of_normalizes_positions_in_dense_and_sparse_profiles() {
+    let source = "export function main():void{const a=[1,2,1,3];console.log(a.lastIndexOf(1));console.log(a.lastIndexOf(1,undefined));console.log(a.lastIndexOf(1,NaN));console.log(a.lastIndexOf(1,Infinity));console.log(a.lastIndexOf(1,-Infinity));console.log(a.lastIndexOf(1,-100));console.log(a.lastIndexOf(1,-4));console.log(a.lastIndexOf(1,-2));console.log(a.lastIndexOf(1,1));console.log(a.lastIndexOf(1,2.9));console.log(a.lastIndexOf(1,-1.9));console.log(a.lastIndexOf(1,1e300));console.log(a.lastIndexOf(1,-1e300));console.log(a.indexOf(1));console.log(a.indexOf(1,Infinity));console.log(a.includes(1,-100));}";
+    let expected = [
+        "2", "0", "0", "2", "-1", "-1", "0", "2", "0", "2", "2", "2", "-1", "0", "-1", "1",
+    ]
+    .map(|s| format!("varta log: {s}"));
+    for profile in [
+        LanguageProfile::CheckedF64Utf16V6,
+        LanguageProfile::CheckedF64Utf16V12,
+        LanguageProfile::CheckedF64Utf16V13,
+        LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let bytes = varta_compiler::compile_typescript_with_profile(source, profile).unwrap();
+        wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&bytes, &[])
+                .unwrap()
+                .lines,
+            expected,
+            "{profile:?}"
+        );
+    }
+}
+#[test]
+fn array_last_index_of_skips_holes_but_matches_explicit_undefined() {
+    let source = "function missing():number|undefined{return undefined;}export function main():void{const a:(number|undefined)[]=[undefined,,1,,undefined];console.log(a.lastIndexOf(undefined));console.log(a.lastIndexOf(undefined,3));console.log(a.lastIndexOf(undefined,missing()));const holes:number[]=[,,,];console.log(holes.lastIndexOf(undefined));console.log([NaN].lastIndexOf(NaN));console.log([0,-0].lastIndexOf(0));}";
+    for profile in [
+        LanguageProfile::CheckedF64Utf16V13,
+        LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let bytes = varta_compiler::compile_typescript_with_profile(source, profile).unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&bytes, &[])
+                .unwrap()
+                .lines,
+            ["4", "0", "0", "-1", "-1", "1"].map(|s| format!("varta log: {s}")),
+            "{profile:?}"
+        );
+    }
+}

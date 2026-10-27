@@ -35,6 +35,13 @@ records the current core stage, completed increments, validation and next work.
   exact UTF-16 ranges, owned result storage and preserved Array.slice dispatch.
 - String.includes/startsWith/endsWith in v12+, with exact UTF-16 matching,
   bounded positions, allocation-free helpers and unchanged Array.includes rules.
+- String.indexOf/lastIndexOf in v12+, with UTF-16 code-unit indices,
+  method-specific position normalization and allocation-free helpers.
+- Array.lastIndexOf, Array.reverse, and Array.fill in resizable-array profiles,
+  with tagged-value matching/bounds, in-place mutation, sparse handling and
+  ownership preservation.
+- String.trim/trimStart/trimEnd in v12+, with exact UTF-16 whitespace
+  removal, surrogate/NUL preservation, and owned result storage.
 - Capability-checked host APIs, independent host policy ceilings, programmatic
   operation results, and bounded execution with managed guest memory.
 - Checked synchronous HTTP/1 handlers in the default language profile.
@@ -42,6 +49,18 @@ records the current core stage, completed increments, validation and next work.
 - Portable Wasm artifacts and native executables with an independent execution-only
   runtime companion, without shipping the TypeScript compiler.
 - Contributor and security policies, an MIT license, and GitHub issue/PR templates.
+
+### Fixed
+
+- Dispatch Array.lastIndexOf to reverse search instead of Array.indexOf. Omitted
+  positions start at the final element; explicit undefined/NaN select zero,
+  positive infinity clamps to the final index and positions below -length miss.
+- Generate valid sparse Array.reverse helpers by retaining the i64 array handle
+  for bitmap lookup; keep payloads, presence and identity together in v13/v14.
+- Preserve U+0085 in trim/trimStart/trimEnd: it is not ECMAScript WhiteSpace or a
+  LineTerminator. Tests cover all 25 admitted whitespace/line-terminator units.
+- Restore v13 rejection of writable length/deletion and fatal indexed extension
+  checks, remove the temporary .bak file and add source-free regression coverage.
 
 ### Compatibility and limits
 

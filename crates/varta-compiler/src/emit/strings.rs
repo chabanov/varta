@@ -1,9 +1,11 @@
 //! Nonmoving immutable strings with exact compiler roots and a bounded reusable heap.
 mod allocate;
 mod array_enumeration;
+mod array_fill;
 mod array_index;
 mod array_push;
 mod array_resize;
+mod array_reverse;
 mod array_search;
 mod array_slice;
 mod collect;
@@ -11,8 +13,10 @@ mod compare;
 mod concat;
 mod roots;
 mod sparse;
+mod string_index;
 mod string_range;
 mod string_search;
+mod string_trim;
 use std::collections::BTreeMap;
 use varta_common::abi;
 use wasm_encoder::{BlockType, Function, Instruction as I, MemArg, ValType};
@@ -58,8 +62,13 @@ pub(super) enum Helper {
     StringIncludes,
     StringStartsWith,
     StringEndsWith,
+    StringIndexOf,
+    StringLastIndexOf,
     StringSlice,
     StringSubstring,
+    StringTrim,
+    StringTrimStart,
+    StringTrimEnd,
     Allocate,
     Collect,
     RootPush,
@@ -68,7 +77,10 @@ pub(super) enum Helper {
     ArrayValues,
     ArrayPush,
     ArraySlice,
+    ArrayReverse,
+    ArrayFill,
     ArraySearch,
+    ArrayLastIndex,
     ArrayPresent,
     ArraySetPresent,
     ArrayResize,
@@ -79,6 +91,15 @@ impl Helper {
             crate::ir::StringSearch::Includes => Self::StringIncludes,
             crate::ir::StringSearch::StartsWith => Self::StringStartsWith,
             crate::ir::StringSearch::EndsWith => Self::StringEndsWith,
+            crate::ir::StringSearch::IndexOf => Self::StringIndexOf,
+            crate::ir::StringSearch::LastIndexOf => Self::StringLastIndexOf,
+        }
+    }
+    pub(super) fn string_trim(mode: crate::ir::StringTrimMode) -> Self {
+        match mode {
+            crate::ir::StringTrimMode::Trim => Self::StringTrim,
+            crate::ir::StringTrimMode::TrimStart => Self::StringTrimStart,
+            crate::ir::StringTrimMode::TrimEnd => Self::StringTrimEnd,
         }
     }
     pub(super) fn signature(self) -> (Vec<ValType>, Vec<ValType>) {
@@ -89,7 +110,7 @@ impl Helper {
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
             Self::Collect => (vec![], vec![]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
-            Self::ArraySearch => (
+            Self::ArraySearch | Self::ArrayLastIndex => (
                 vec![
                     ValType::I64,
                     ValType::I32,
@@ -99,7 +120,11 @@ impl Helper {
                 ],
                 vec![ValType::I32],
             ),
-            Self::StringIncludes | Self::StringStartsWith | Self::StringEndsWith => (
+            Self::StringIncludes
+            | Self::StringStartsWith
+            | Self::StringEndsWith
+            | Self::StringIndexOf
+            | Self::StringLastIndexOf => (
                 vec![ValType::I64, ValType::I64, ValType::F64],
                 vec![ValType::I32],
             ),
@@ -107,9 +132,17 @@ impl Helper {
                 vec![ValType::I64, ValType::F64, ValType::F64],
                 vec![ValType::I64],
             ),
+            Self::StringTrim | Self::StringTrimStart | Self::StringTrimEnd => {
+                (vec![ValType::I64], vec![ValType::I64])
+            }
             Self::ArrayKeys | Self::ArrayValues => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayPush => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::ArrayResize => (vec![ValType::I64, ValType::I32], vec![]),
+            Self::ArrayReverse => (vec![ValType::I64], vec![ValType::I64]),
+            Self::ArrayFill => (
+                vec![ValType::I64, ValType::I64, ValType::F64, ValType::F64],
+                vec![ValType::I64],
+            ),
             Self::ArrayPresent => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
             Self::ArraySetPresent => (vec![ValType::I64, ValType::I32, ValType::I32], vec![]),
             Self::ArrayIndex => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
@@ -118,7 +151,12 @@ impl Helper {
     pub(super) fn needs_arena(self) -> bool {
         !matches!(
             self,
-            Self::Compare | Self::StringIncludes | Self::StringStartsWith | Self::StringEndsWith
+            Self::Compare
+                | Self::StringIncludes
+                | Self::StringStartsWith
+                | Self::StringEndsWith
+                | Self::StringIndexOf
+                | Self::StringLastIndexOf
         )
     }
     pub(super) fn body(
@@ -137,19 +175,29 @@ impl Helper {
             Self::Collect => collect::function(globals, trace_values, profile.closures()),
             Self::RootPush => roots::function(globals.roots),
             Self::ArraySearch => {
-                array_search::function(helpers[&Self::Compare], profile.sparse_arrays())
+                array_search::function(helpers[&Self::Compare], profile.sparse_arrays(), false)
+            }
+            Self::ArrayLastIndex => {
+                array_search::function(helpers[&Self::Compare], profile.sparse_arrays(), true)
             }
             Self::StringIncludes => string_search::function(crate::ir::StringSearch::Includes),
             Self::StringStartsWith => string_search::function(crate::ir::StringSearch::StartsWith),
             Self::StringEndsWith => string_search::function(crate::ir::StringSearch::EndsWith),
+            Self::StringIndexOf => string_index::function(false),
+            Self::StringLastIndexOf => string_index::function(true),
             Self::StringSlice | Self::StringSubstring => {
                 string_range::function(helpers[&Self::Allocate], self == Self::StringSubstring)
             }
+            Self::StringTrim => string_trim::function(helpers[&Self::Allocate], true, true),
+            Self::StringTrimStart => string_trim::function(helpers[&Self::Allocate], true, false),
+            Self::StringTrimEnd => string_trim::function(helpers[&Self::Allocate], false, true),
             Self::ArraySlice => array_slice::function(
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
                 profile.sparse_arrays(),
             ),
+            Self::ArrayReverse => array_reverse::function(profile.sparse_arrays()),
+            Self::ArrayFill => array_fill::function(profile.sparse_arrays()),
             Self::ArrayKeys | Self::ArrayValues => array_enumeration::function(
                 globals,
                 helpers[&Self::Allocate],
