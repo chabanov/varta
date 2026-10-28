@@ -31,18 +31,89 @@ impl Lower<'_> {
         if self.binding("Object").is_ok() || self.functions.contains_key("Object") {
             return Err(unsupported(&format!("shadowed {name} intrinsic")));
         }
+        if self.types.profile.property_deletion() {
+            if call.type_args.is_some() {
+                return Err(invalid(format!("{name} has no type arguments")));
+            }
+            let span = call.span;
+            let value = if let Some(first) = call.args.first() {
+                self.expr(&first.expr)?
+            } else {
+                Expr {
+                    span,
+                    ty: Type::Undefined,
+                    kind: E::Integer(0),
+                }
+            };
+            let ty = value.ty;
+            let input = self.hidden(ty);
+            let mut body = vec![S::Init(input, value)];
+            for (index, arg) in call.args.iter().enumerate() {
+                if arg.spread.is_some() {
+                    return Err(unsupported(&format!("{name} argument spread")));
+                }
+                if index > 0 {
+                    body.push(S::Expr(self.expr(&arg.expr)?));
+                }
+            }
+            let result = self.enumerate_value(local(span, input, ty), kind, span)?;
+            let output = self.hidden(result.ty);
+            let marker = self.hidden(Type::Number);
+            let result_ty = result.ty;
+            body.push(S::Init(output, result));
+            return Ok(Expr {
+                span,
+                ty: result_ty,
+                kind: E::ValueBlock {
+                    output,
+                    marker,
+                    roots: vec![input, output],
+                    body,
+                },
+            });
+        }
         if call.args.len() != 1 || call.type_args.is_some() {
             return Err(invalid(format!(
                 "{name} expects one value and no type arguments"
             )));
         }
         let value = self.expr(&call.args[0].expr)?;
+        self.enumerate_value(value, kind, call.span)
+    }
+    pub(super) fn enumerate_value(
+        &mut self,
+        value: Expr,
+        kind: Kind,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        let name = kind.name();
         let present: Vec<_> = unions::members(value.ty, self.types)
             .into_iter()
             .filter(|ty| !matches!(ty, Type::Null | Type::Undefined))
             .collect();
+        if self.types.profile.property_deletion() {
+            if present == [Type::String] {
+                return self.string_enumeration(value, kind, span);
+            }
+            if present.contains(&Type::String)
+                && present.iter().all(|ty| {
+                    matches!(
+                        ty,
+                        Type::String | Type::Float64 | Type::Boolean | Type::BigInt
+                    )
+                })
+            {
+                return self.mixed_primitive_enumeration(value, kind, span);
+            }
+            if present
+                .iter()
+                .all(|ty| matches!(ty, Type::Float64 | Type::Boolean | Type::BigInt))
+            {
+                return self.empty_primitive_enumeration(value, kind, span);
+            }
+        }
         if let [Type::Array(id)] = present.as_slice() {
-            return self.array_enumeration(value, *id, kind, call.span);
+            return self.array_enumeration(value, *id, kind, span);
         }
         let shape = match present.as_slice() {
             [Type::Record(id)] => *id,
@@ -59,10 +130,9 @@ impl Lower<'_> {
             Kind::Values if fields.is_empty() => Type::Undefined,
             Kind::Values => {
                 unions::intern(fields.iter().map(|field| field.ty).collect(), self.types)
-                    .map_err(|e| self.source.locate(e, call.span))?
+                    .map_err(|e| self.source.locate(e, span))?
             }
         };
-        let span = call.span;
         let record = Type::Record(shape);
         let (source, mut roots, mut body) = self.enumeration_source(value, record, span)?;
         let result = arrays::intern(element, self.types)?;
@@ -165,7 +235,7 @@ impl Lower<'_> {
             },
         })
     }
-    fn enumeration_source(
+    pub(super) fn enumeration_source(
         &mut self,
         value: Expr,
         narrowed: Type,

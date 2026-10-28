@@ -3275,3 +3275,56 @@ fn public_engine_bigint_values_run_across_modules_with_v13_values_and_json_error
         ]
     );
 }
+
+#[test]
+fn public_engine_property_deletion_v30_runs_across_modules() {
+    struct DeletionSources;
+    impl ModuleLoader for DeletionSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./values.ts" {
+                Ok("values.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function make():{n?:number;s?:string;big?:bigint|undefined}{return {n:1,s:'x',big:3n};}export function clear(v:{n?:number;s?:string;big?:bigint|undefined},key:string):boolean{return delete v[key];}export function text():string{return '😀';}export function reader(n:number):()=>number{return ()=>n;}".into())
+        }
+    }
+    let source = "import {make,clear,text,reader} from './values.ts';export function main():void{const r=make();console.log(clear(r,'n'));console.log(r.n);console.log(clear(r,'big'));r.n=7;console.log(JSON.stringify(r));console.log(clear(r,'s'));console.log(JSON.stringify(r));console.log(JSON.stringify(Object.entries(r)));console.log(JSON.stringify(Object.entries(text())));console.log(Object.is(r,r));console.log(Object.is(NaN,NaN));console.log(Object.is(-0,0));console.log(Object.is(Object.assign(r,{n:8}),r));console.log(JSON.stringify(Object.assign({},{n:9,s:text()})));const read=reader(5);console.log(read());}";
+    let compiled = varta_compiler::compile_modules_with_profile(
+        ModuleSource {
+            path: "entry.ts".into(),
+            text: source.into(),
+        },
+        &DeletionSources,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V30,
+    )
+    .unwrap();
+    let runtime = VartaRuntime::new();
+    let info = runtime.inspect_module(&compiled.wasm).unwrap();
+    assert_eq!(
+        info.language.profile,
+        Some(varta_common::language::LanguageProfile::CheckedF64Utf16V30)
+    );
+    assert_eq!(info.value_abi_version, Some(13));
+    assert_eq!(
+        runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap().lines,
+        [
+            "varta log: 1",
+            "varta log: undefined",
+            "varta log: 1",
+            "varta log: {\"s\":\"x\",\"n\":7}",
+            "varta log: 1",
+            "varta log: {\"n\":7}",
+            "varta log: [[\"n\",7]]",
+            "varta log: [[\"0\",\"\\ud83d\"],[\"1\",\"\\ude00\"]]",
+            "varta log: 1",
+            "varta log: 1",
+            "varta log: 0",
+            "varta log: 1",
+            "varta log: {\"n\":9,\"s\":\"😀\"}",
+            "varta log: 5"
+        ]
+    );
+}

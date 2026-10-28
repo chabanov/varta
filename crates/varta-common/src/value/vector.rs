@@ -72,6 +72,7 @@ impl Vector {
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
         ) {
             return Err(invalid());
         }
@@ -87,7 +88,10 @@ impl Vector {
         let length = word(data, ptr + ARRAY_LENGTH_OFFSET as usize)? as usize;
         let storage_handle = (word(data, ptr + VECTOR_STORAGE_OFFSET as usize)? as u64)
             | ((word(data, ptr + VECTOR_STORAGE_OFFSET as usize + 4)? as u64) << i32::BITS);
-        let sparse = matches!(version, SPARSE_VALUE_VERSION | BIGINT_VALUE_VERSION);
+        let sparse = matches!(
+            version,
+            SPARSE_VALUE_VERSION | BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION
+        );
         let (storage, bytes) = managed(
             data,
             storage_handle,

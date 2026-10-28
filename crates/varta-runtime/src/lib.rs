@@ -110,6 +110,8 @@ mod primitive_operator_tests;
 mod primitive_string;
 #[cfg(test)]
 mod primitive_string_tests;
+#[cfg(test)]
+mod property_deletion_tests;
 mod random;
 #[cfg(test)]
 mod random_tests;
@@ -428,6 +430,10 @@ mod string_repeat_tests;
 mod string_trim_tests;
 
 #[cfg(test)]
+mod function_envelope_tests;
+#[cfg(test)]
+mod function_value14_tests;
+#[cfg(test)]
 mod function_value_tests;
 
 #[cfg(test)]
@@ -477,6 +483,12 @@ mod label_tests;
 mod object_keys_tests;
 
 #[cfg(test)]
+mod object_assign_tests;
+#[cfg(test)]
+mod object_entries_tests;
+#[cfg(test)]
+mod object_is_tests;
+#[cfg(test)]
 mod object_values_tests;
 
 #[cfg(test)]
@@ -503,3 +515,26 @@ mod record_read_tests;
 mod record_write_tests;
 #[cfg(test)]
 mod simple_assignment_tests;
+
+/// Encode a value14 graph without invoking guest functions or `toJSON` hooks.
+/// The owner catalog must come from immutable module metadata. `function_work`
+/// is decremented by bounded capture validation; malformed graphs remain errors.
+pub fn encode_value_graph_with_functions(
+    data: &[u8],
+    kind: varta_common::value::ValueKind,
+    payload: u64,
+    catalog: &varta_common::function::FunctionCatalog,
+    function_work: &mut u64,
+) -> Result<Option<Vec<u8>>, RuntimeError> {
+    if catalog.value_version != varta_common::value::FUNCTION_VALUE_VERSION {
+        return Err(wasmtime::Error::msg("function graph codec requires value14").into());
+    }
+    catalog.validate().map_err(wasmtime::Error::new)?;
+    Ok(json::render_with_functions(
+        data,
+        kind as u32,
+        payload,
+        catalog,
+        function_work,
+    )?)
+}

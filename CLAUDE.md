@@ -1506,7 +1506,7 @@ helpers host-free and validate schema13 descriptors before publishing channel4
 errors. Owned uncaught BigInt payloads retain all bytes; diagnostics stay bounded.
 
 V28 and older source/value/exception selectors remain frozen. The v29 corpus has
-66 cases: 55 supported, 11 known unsupported, 7 untested feature rows. Its original
+69 cases: 58 supported, 11 known unsupported, 7 untested feature rows. Its original
 BigInt-array gap was observed as unexpected support and reviewed before promotion;
 the unchanged coercive-width gap was later promoted after observed support.
 
@@ -1557,3 +1557,88 @@ relational operators. Cache both source operands before boxing/rooting arguments
 Keep scalar Number/String/equality and known-nullish guest fast paths, so loops
 do not consume native call ceilings. The Node oracle fixture covers eight modes
 by 256 pairs. Object/Symbol coercion and unrestricted storage remain unfinished.
+
+V30 property_deletion inherits v29 layouts/hosts and adds optional-record deletion
+and primitive delete keys. Cache the receiver before key conversion. Install a
+fresh canonical undefined value before clearing presence; compact order in-place
+and zero the unused entry. Preserve static trace masks so absent union cells are
+still traced; never mutate an escaped old union cell. Required checked fields and
+array length throw before mutation. Reuse exact ArrayStringHasOwn parsing before
+numeric deletion; reject object/Symbol key coercion. Keep v29 frozen and retain all
+budgets. Rebuild the companion for 33 profiles; no ABI/value/schema bump is needed.
+
+V30 Object.entries caches the source and evaluates ignored arguments before any
+snapshot. Reuse enumerate_value for keys/values in the same own-key order, then
+build fresh dense pairs. ArrayPush takes an array of items, so wrap each pair in
+one outer singleton; passing the pair directly corrupts the outer element type.
+Root source, both snapshots and output across all allocations. Pair elements use
+an admitted String/value union, not positional tuple typing. Preserve shared
+children, skip holes/absent fields, keep explicit undefined, and throw on nullish
+inputs. Number/Boolean/BigInt wrappers produce empty arrays. String inputs enumerate UTF16 units under v30;
+mixed aggregate shapes remain unsupported. Do not extend v29 admission or raise
+production budgets; capacity/GC fixtures explicitly declare test-only fuel.
+
+V30 own-key enumeration accepts String and all-primitive unions. Dispatch Strings
+with IsUnionMember before unboxing; reject nullish inputs after ignored-argument
+execution. Numeric/Boolean/BigInt wrappers yield empty arrays. Keys/values accept
+missing/ignored arguments only under v30. For String, guard UTF16 length <=1024,
+then build a dense String[] of empty placeholders (keys) or one-unit slices
+(values). Existing ArrayKeys generates decimal keys without native call pressure.
+Keep partial outputs and the original source rooted. Preserve lone surrogates;
+never iterate Unicode scalar values. Overcapacity throws recoverable RangeError;
+capacity/collection fixtures may raise test-only fuel, not production limits.
+
+V30 Object.is implements SameValue with cached operands and per-member union
+dispatch. Do not use strict numeric equality: NaNs must compare equal and signed
+zeros must differ. NumberSameValue IR accepts only cached numeric locals/unboxes;
+emit both-NaN OR equal raw bits. Preserve argument order, missing Undefined,
+void-to-Undefined normalization and ignored-argument effects before dispatch.
+Compare Strings by guest UTF16 contents, BigInts with existing exact comparison,
+and all reference kinds by handle identity without joining incompatible shapes.
+Root both cached operands across later and ignored arguments. Native result pairs
+need explicit fields; keep historical admission and ABI/resource bounds frozen.
+
+V30 Object.assign caches all arguments before target nullish checks, then copies
+sources in sequence. Skip nullish and non-enumerating primitive/function/Error
+sources. Dispatch record/array target/source unions without joining incompatible
+shapes. Snapshot record keys per source and read each field at its visit; never
+require one union across unrelated nested field shapes. Arrays copy present
+indices at a per-source length snapshot; String sources use existing UTF16 guest
+enumeration. Preserve target identity, copied child identities and previous writes
+when a checked field/array-length operation throws. Reuse normal store/root guards.
+A plain fresh record literal may reserve record-source fields before its original
+allocation: make added fields optional with canonical absent payloads, widen
+existing literal field storage to an admitted union, and update only its hidden
+local type. Never migrate an escaped target or change its reference mask in-place.
+Scope only newly declared scratch slots; redeclaring a prepared source array in
+an inner Scope would clear its live handle. Keep record/array limits and v29 frozen.
+Primitive target boxing, arbitrary properties, descriptors and Symbol remain gaps.
+
+Use common function ClosureView/EnvironmentView/BindingView only for bounded
+physical envelope inspection. They intentionally leave capture payloads opaque;
+never treat a binding type_id as a ValueKind or infer module code membership from
+budget bounds. Match compiler binding type/width/root metadata before typed use.
+Keep one/two-slot native result captures, shared cells and recursive function
+payloads legal. These views do not admit function values into v30 aggregates;
+future structured transport needs explicit versioning and typed boundary proofs.
+
+V30 closure modules emit optional varta.functions metadata from binding_types and
+function_targets; keep those logical code/signature/capture IDs synchronized.
+Never obtain a trusted capture schema from mutable guest memory. Typed inspection
+checks private IDs, widths, reference masks, status domains, exact record slots,
+array elements and union members. Memoize recursive functions only after catalog
+code/signature checks, and retain work/node/depth budgets. Type DAG height checks
+must work for bottom-up tables too. Catalogs do not grant call authority or admit
+function values into public value13 aggregates. Reject malformed/duplicate or
+wrong-profile catalogs; accept older v30 artifacts where the optional section is
+absent. Future native function transport must retain the checked call boundary.
+
+Value14 recognizes Function tag12 with reference tracing; never reinterpret this
+tag in v13. Function cells need owner catalogs, not context-free ReferenceBox
+reads. V14 catalogs may include function fields/arrays/reference unions, while
+v13 permits only existing private function captures. The Rust graph encoder maps
+validated functions to JSON omission/null/Undefined and decrements a shared work
+allowance. Preserve legal private capture cycles; malformed functions must fail
+even when serialization would omit them. Reject callable toJSON until guest-side
+hooks are implemented. Schema14 cannot fabricate functions. This codec does not
+change the 33 admitted profiles; new host imports and source gating are pending.

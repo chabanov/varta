@@ -1,0 +1,1 @@
+export function main():void{const a:(number|undefined)[]=[1,2];const source:(number|undefined)[]=[,undefined,4];Object.assign(a,source);console.log(JSON.stringify(a));console.log(Object.hasOwn(a,0));console.log(Object.hasOwn(a,1));Object.assign(a,{'5':9,length:2});console.log(JSON.stringify(a));const text:string[]=[];Object.assign(text,'😀');console.log(JSON.stringify(text));}

@@ -226,6 +226,10 @@ fn expression(
             }
         }
         E::FunctionCheck { value, .. } => expression(value, functions, visited, effects),
+        E::RecordDelete { object, absent, .. } => {
+            expression(object, functions, visited, effects);
+            expression(absent, functions, visited, effects);
+        }
         E::FunctionCall {
             callee,
             ignored_receiver,
@@ -337,6 +341,7 @@ fn expression(
         | E::ArrayStringHasOwn(a, b)
         | E::ArrayPush(a, b)
         | E::MaybeIndex(a, b)
+        | E::NumberSameValue(a, b)
         | E::Binary(_, a, b)
         | E::Index(a, b)
         | E::Sequence(a, b) => {

@@ -5895,3 +5895,138 @@ Scalar Number/String comparisons, same-kind Boolean equality, known-nullish
 checks and existing BigInt paths retain fast execution, avoiding new native call
 ceilings for ordinary loops. Older profiles and object/reference handling retain
 their prior contracts. Full object/Symbol ToPrimitive remains unfinished.
+
+### Closed property deletion profile v30
+
+V30 reuses v29 host/value/schema/exception selectors. RecordDelete evaluates the
+cached object and canonical absent value before writes, overwrites the field,
+compacts the live order trailer with bounded scratch locals, zeros its unused
+entry and clears presence. The descriptor's static reference mask stays intact:
+absent union fields still own canonical undefined cells, while escaped old cells
+are immutable and remain independently rooted. Repeated absent deletes skip cell
+allocation. Required checked fields throw TypeError; this preserves closed-layout
+invariants without claiming configurable/dynamic object support. Array primitive
+keys become strings, length is guarded, exact ArrayStringHasOwn selects a present
+canonical index and only then numeric deletion runs. Receivers/key effects occur
+once, resource ceilings and old profiles stay unchanged, and protocol2 advertises
+33 profiles. Full descriptor/prototype/Symbol semantics remain separate work.
+
+### Object.entries profile v30
+
+Lowering caches the receiver and evaluates ignored arguments before snapshots.
+It shares record/array key and value enumeration, with no user callbacks between
+snapshots. Each dense pair contains the widened key and value; a singleton outer
+array is passed to ArrayPush. The pair element type is an admitted String/value
+union, and the result is an invariant array of pair arrays. Roots retain source,
+key/value snapshots and the output across allocations and collection. Pairs are
+fresh; child identities remain shared. Own-key order and absence follow the same
+rules as keys/values. Nullish inputs throw after argument evaluation; Number,
+Boolean and BigInt wrappers yield empty arrays. String enumeration and primitive-union dispatch use the guest path described
+below. Mixed aggregate shapes, Symbol and generic object coercion remain
+unfinished CORE-02/07 work. V29 source
+admission stays frozen, with unchanged ABI/layouts and production budgets.
+
+### String own-property enumeration (v30)
+
+For String and nullable String, lowering roots the original value, checks nullish
+absence, snapshots UTF16 length and raises RangeError above 1024 units. It builds
+a rooted dense String array using one-unit guest slices for values, or empty
+placeholders followed by the existing ArrayKeys helper for decimal key names.
+No per-unit host conversion occurs. Object.entries shares this key/value path.
+Primitive unions test the String member before unboxing; other non-nullish
+primitive kinds produce empty arrays. Nullish dispatch throws after ignored
+argument effects. V30 keys/values adopt missing/ignored argument semantics;
+older profiles retain their exact call admission. Mixed aggregate types,
+Symbol and general object conversion remain pending. No ABI or budget changed.
+
+### Object.is and SameValue (v30)
+
+Lowering roots both arguments before evaluating ignored extras, normalizes void
+calls/missing arguments to Undefined, and dispatches union members without
+coercion or joining incompatible aggregate shapes. NumberSameValue uses cached
+numeric expressions only: both-NaN OR equal raw binary64 bits. This treats NaN
+payload/sign differences as equal while distinguishing signed zeros. String
+comparison uses the existing guest UTF16 helper; BigInt comparison reuses the
+metered exact path. Managed references compare packed identity handles across
+admitted reference kinds. Native result pairs require field selection rather
+than pretending their physical status/value pair is a JavaScript object. No host
+ABI/layout/grant or production budget changes. V29 admission remains unchanged.
+
+### Checked Object.assign (v30)
+
+Cache arguments in lexical roots before validating the target; dispatch supported
+record/array target unions, then process sources sequentially. Nullish sources
+skip, as do non-String primitive wrappers and checked functions/Errors without
+enumerable own fields. Records snapshot ordered keys and select individual live
+field reads through the existing UTF16 lookup tree. This avoids imposing one
+all-values union on unrelated nested shapes. Each source snapshot occurs after
+prior writes, preserving source/target aliases. Arrays copy live present indices
+under a captured length; String values use guest UTF16 enumeration. No user
+getters/setters/proxies are admitted along these paths.
+
+Stores reuse checked record guards, extending array writes and Number length
+validation. Earlier writes persist after semantic exceptions; resource ceilings
+retain fatal behavior. Return the target identity through rooted union widening.
+For a plain fresh record literal with statically known record sources, enrich
+its descriptor before its original allocation: added fields are optional with
+canonical Undefined cells; existing literal fields widen only to an admitted
+union. Rewrite initializer slot mapping in original evaluation order and update
+only the hidden target local type. Static reference masks are exact from allocation;
+no escaped record migrates or changes layout. Unknown indexed record keys retain
+existing checked-write guards. Primitive target boxing, descriptors, Symbol and
+general property creation remain future CORE-02 work. ABI/layout versions and
+all production limits remain unchanged.
+
+### Managed closure envelope views (transport preparation)
+
+Common function views independently validate the existing v12+ closure cell,
+its optional environment and each captured binding envelope without allocating
+or invoking guest code. Count/mask validation is bounded by MAX_CAPTURES; payload
+bits stay opaque, preserving legitimate recursive captures and scalar bits that
+resemble pointers. Binding type IDs are private per-module metadata. Native
+result pairs retain their two-slot physical shape and a root bit only for their
+first slot. Legacy v11 cells and public structured value tags remain distinct.
+
+This is envelope validation, not proof of module code membership or typed captured
+payload validity. A future public function-value transport must supply those
+proofs and version its tags, schemas and native operations before source admission.
+Current v30 value13 cannot represent function-valued properties, arrays or unions.
+
+### Typed private capture catalog
+
+Optional v30 `varta.functions` metadata describes private binding IDs, result
+widths, value schema DAGs and code/signature capture layouts. The compiler builds
+it from its binding and checked dispatch tables. Preflight validates catalog
+version/profile, bounded references/counts, acyclic type depths and uniqueness;
+missing optional metadata remains compatible with earlier v30 artifacts.
+
+A typed inspector consumes immutable catalog data plus a borrowed guest memory
+snapshot. It validates exact binding masks/types/widths/status, primitive payloads,
+canonical BigInt/Error objects and typed aggregate/union children. Record fields
+must match their compiler slot identities as well as names/kinds/optionality;
+serialized descriptor entry order may vary. Sparse arrays preserve holes and
+validate their exact element type. Code/signature catalog membership is checked
+before function memoization so aliases cannot bypass a type mismatch. Recursive
+closures are legal and work/node/depth allowances remain bounded. Actual callable
+invocation still uses the guest's checked dispatch; this API supplies no call
+permission and does not invoke code. A public function tag and versioned native
+transport remain a separate required step.
+
+### Function tag12 in value14
+
+Value14 reuses the existing physical closure but makes Function tag12 an explicit
+reference kind. Legacy tag support stays exact. Reference-cell function reads
+require a module-owned catalog; header-only envelope inspection is separate from
+payload validation. V14 catalog schemas can describe function-valued record fields,
+array elements and a single signature in a reference union. Data validation keeps
+recursive private closure graphs bounded and checks signature membership before
+memoization. A Rust codec entry point supplies immutable catalog data and a shared
+function work allowance; it cannot invoke guest code.
+
+JSON resolution validates each function before mapping it to Undefined, allowing
+existing object omission, array-null and top-level-Undefined rules to apply. This
+mapping does not expose private capture cycles as JSON cycles. Callable toJSON
+properties fail explicitly until invocation can happen in guest code. Schema14
+inherits JSON input types/layout generation without a callable JSON constructor.
+Host-operation registration and source admission remain future versioned work;
+current v30 modules still use value13/ABI28.

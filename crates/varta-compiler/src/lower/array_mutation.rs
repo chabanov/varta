@@ -41,6 +41,9 @@ impl Lower<'_> {
             return Err(unsupported("delete of a non-array property reference"));
         };
         let array = self.write_member_base(member)?;
+        if self.types.profile.property_deletion() {
+            return self.property_delete(member, array, span);
+        }
         if !matches!(array.ty, Type::Array(_)) {
             return Err(type_error("delete requires a narrowed array receiver"));
         }

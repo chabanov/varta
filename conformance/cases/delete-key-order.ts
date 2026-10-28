@@ -1,0 +1,1 @@
+export function main():void{let r:{x?:number}={x:1};const original=r;const base=():{x?:number}=>{console.log('base');return r;};const key=():string=>{console.log('key');r={x:9};return 'x';};console.log(delete base()[key()]);console.log(Object.hasOwn(original,'x'));console.log(r.x);}

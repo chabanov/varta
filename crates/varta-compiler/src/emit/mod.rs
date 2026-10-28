@@ -7,6 +7,7 @@ mod errors;
 mod exceptions;
 mod expr;
 mod finally;
+mod function_catalog;
 mod functions;
 mod labels;
 mod math;
@@ -658,6 +659,12 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         .map_err(|e| CompilerError::Invalid(e.to_string()))?
         .into(),
     });
+    if program.types.profile.property_deletion() && !program.types.functions.is_empty() {
+        module.section(&wasm_encoder::CustomSection {
+            name: varta_common::function::CATALOG_SECTION.into(),
+            data: function_catalog::build(program, &binding_types, &function_targets)?.into(),
+        });
+    }
     if !program.tools.is_empty() {
         let catalog = varta_common::ToolCatalog::new(
             program.tools.iter().map(|(_, tool)| tool.clone()).collect(),

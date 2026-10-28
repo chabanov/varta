@@ -1,0 +1,1 @@
+export function main():void{console.log(Object.is(NaN,NaN));console.log(Object.is(-0,0));console.log(Object.is(-0,-0));console.log(Object.is(1n,1));console.log(Object.is(9007199254740993n,BigInt('9007199254740993')));console.log(Object.is(null,undefined));console.log(Object.is('x'.repeat(2),'xx'));console.log(Object.is());console.log(Object.is(console.log('void'),undefined));}

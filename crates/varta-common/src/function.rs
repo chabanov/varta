@@ -22,3 +22,17 @@ pub const MAX_BINDING_PATTERN_NODES: usize = 1024;
 /// Parameter lists retain their existing limits.
 pub const MAX_PARAMETER_PATTERN_DEPTH: usize = MAX_BINDING_PATTERN_DEPTH;
 pub const MAX_PARAMETER_PATTERN_NODES: usize = MAX_BINDING_PATTERN_NODES;
+
+mod view;
+pub use view::{BindingView, ClosureView, EnvironmentView};
+mod catalog;
+#[cfg(test)]
+mod view_tests;
+pub use catalog::{
+    CATALOG_SECTION, CATALOG_VERSION, CaptureBinding, CaptureField, CaptureFunction, CaptureType,
+    FunctionCatalog, MAX_CAPTURE_TYPES,
+};
+mod validate;
+pub use validate::CaptureValidation;
+#[cfg(test)]
+mod catalog_tests;

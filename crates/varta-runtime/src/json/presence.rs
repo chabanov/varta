@@ -87,6 +87,23 @@ impl Encoder<'_, '_> {
                 return Err(error("optional field must admit undefined"));
             }
             let [lo, hi] = self.words::<2>(ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES)?;
+            if self.version == FUNCTION_VALUE_VERSION
+                && name == "toJSON"
+                && present & (1u32 << slot) != 0
+            {
+                let payload = ((hi as u64) << i32::BITS) | lo as u64;
+                let callable = if tag == ValueKind::ReferenceUnion {
+                    ReferenceBox::read_envelope(self.data, payload, self.version)
+                        .map_err(wasmtime::Error::new)?
+                        .kind
+                        == ValueKind::Function
+                } else {
+                    tag == ValueKind::Function
+                };
+                if callable {
+                    return Err(error("toJSON hooks require guest call dispatch"));
+                }
+            }
             let (kind, value) = self.resolve(kind, ((hi as u64) << i32::BITS) | lo as u64)?;
             if present & (1u32 << slot) == 0
                 && (!optional || kind != ValueKind::Undefined as u32 || value != 0)

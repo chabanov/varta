@@ -142,6 +142,19 @@ pub(super) fn render_reference(
     Encoder::with_version(data, version).encode(kind, payload)
 }
 
+pub(super) fn render_with_functions(
+    data: &[u8],
+    kind: u32,
+    payload: u64,
+    catalog: &varta_common::function::FunctionCatalog,
+    work: &mut u64,
+) -> Result<Option<Vec<u8>>, wasmtime::Error> {
+    let mut encoder = Encoder::with_version(data, catalog.value_version);
+    encoder.function_catalog = Some(catalog);
+    encoder.function_work = Some(work);
+    encoder.encode_optional(kind, payload)
+}
+
 pub(super) fn render_diagnostic(
     data: &[u8],
     kind: u32,
@@ -169,6 +182,9 @@ impl Write for Output {
 }
 struct Encoder<'a, 'b> {
     bigint_seen: bool,
+    function_catalog: Option<&'a varta_common::function::FunctionCatalog>,
+    function_work: Option<&'b mut u64>,
+    functions: BTreeSet<u64>,
     diagnostic_budget: Option<&'b mut varta_bigint::Budget>,
     version: u32,
     data: &'a [u8],
@@ -183,6 +199,9 @@ impl<'a, 'b> Encoder<'a, 'b> {
     fn with_version(data: &'a [u8], version: u32) -> Self {
         Self {
             bigint_seen: false,
+            function_catalog: None,
+            function_work: None,
+            functions: BTreeSet::new(),
             diagnostic_budget: None,
             version,
             data,
@@ -217,7 +236,11 @@ impl<'a, 'b> Encoder<'a, 'b> {
         }
         self.encode(kind, value).map(Some)
     }
-    fn resolve(&self, kind: u32, value: u64) -> Result<(u32, u64), wasmtime::Error> {
+    fn resolve(&mut self, kind: u32, value: u64) -> Result<(u32, u64), wasmtime::Error> {
+        if kind == ValueKind::Function as u32 {
+            self.function(value)?;
+            return Ok((ValueKind::Undefined as u32, 0));
+        }
         if kind == ValueKind::ReferenceUnion as u32 {
             if !matches!(
                 self.version,
@@ -227,12 +250,17 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | ERROR_FAMILY_VALUE_VERSION
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
+                    | FUNCTION_VALUE_VERSION
             ) {
                 return Err(error("incompatible reference union"));
             }
-            let cell = ReferenceBox::read_with_version(self.data, value, self.version)
-                .map_err(wasmtime::Error::new)?;
-            return Ok((cell.kind as u32, cell.payload));
+            let cell = if self.version == FUNCTION_VALUE_VERSION {
+                ReferenceBox::read_envelope(self.data, value, self.version)
+            } else {
+                ReferenceBox::read_with_version(self.data, value, self.version)
+            }
+            .map_err(wasmtime::Error::new)?;
+            return self.resolve(cell.kind as u32, cell.payload);
         }
         if kind != ValueKind::PrimitiveUnion as u32 {
             return Ok((kind, value));
@@ -247,11 +275,37 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
         ) {
             return Err(error("incompatible primitive union"));
         }
         let cell = PrimitiveBox::read(self.data, value).map_err(wasmtime::Error::new)?;
         Ok((cell.kind as u32, cell.payload))
+    }
+    fn function(&mut self, handle: u64) -> Result<(), wasmtime::Error> {
+        if self.version != FUNCTION_VALUE_VERSION {
+            return Err(error("incompatible function value"));
+        }
+        if !self.functions.insert(handle) {
+            return Ok(());
+        }
+        let catalog = self
+            .function_catalog
+            .ok_or_else(|| error("function value requires owner catalog"))?;
+        if catalog.value_version != FUNCTION_VALUE_VERSION {
+            return Err(error("function catalog version mismatch"));
+        }
+        let remaining = self
+            .function_work
+            .as_deref_mut()
+            .ok_or_else(|| error("function work budget missing"))?;
+        let proof = catalog
+            .validate_closure(self.data, handle, *remaining)
+            .map_err(wasmtime::Error::new)?;
+        *remaining = remaining
+            .checked_sub(proof.work)
+            .ok_or_else(|| error("function work budget exceeded"))?;
+        Ok(())
     }
     fn visit(&mut self, depth: usize) -> Result<(), wasmtime::Error> {
         self.nodes += 1;
@@ -360,7 +414,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 self.write(b"{}")
             }
             ValueKind::Record => {
-                if self.version == BIGINT_VALUE_VERSION {
+                if matches!(self.version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION) {
                     validate_aggregate(self.data, ValueKind::Record, packed, self.version)
                         .map_err(wasmtime::Error::new)?;
                 }
@@ -392,6 +446,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
         ) {
             HEAP_ERROR_FLAG as u32
         } else {
@@ -405,6 +460,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | ERROR_FAMILY_VALUE_VERSION
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
+                    | FUNCTION_VALUE_VERSION
             ) {
                 HEAP_VECTOR_FLAG as u32
             } else {
@@ -419,6 +475,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | ERROR_FAMILY_VALUE_VERSION
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
+                    | FUNCTION_VALUE_VERSION
             ) {
                 HEAP_UNION_FLAG as u32
             } else {
@@ -445,6 +502,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
         ) {
             return self.vector(packed, depth);
         }
@@ -518,6 +576,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
         ) {
             return self.record_present(packed, depth);
         }

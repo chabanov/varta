@@ -1,0 +1,1 @@
+export function main():void{const r:{a?:number;b?:number}={a:1,b:2};console.log(delete r.a);console.log(Object.hasOwn(r,'a'));r.a=3;console.log(JSON.stringify(Object.keys(r)));console.log(JSON.stringify(r));console.log(delete r.a);console.log(delete r.a);}

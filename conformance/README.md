@@ -1,6 +1,6 @@
 # Checked core compatibility inventory
 
-This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v29** profile
+This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v30** profile
 and the **checked-ts-main-v1** source model. Its original cases are checked
 TypeScript programs with a Varta `main` entry point and observable runtime output.
 Feature rows identify their CORE work streams and either an ECMAScript section or
@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 38 feature rows and 66 cases:
-55 pass, 11 are known unsupported, and 7 feature rows have no case. These counts
+executable cases. The current inventory has 40 feature rows and 78 cases:
+67 pass, 11 are known unsupported, and 7 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -124,3 +124,35 @@ The completed primitive comparison block adds equality, relational and source-or
 cases. Runtime tests separately pin a Node.js v24.20.0 matrix of 2048 results
 across eight operators, including all six admitted primitive kinds. These cases
 do not cover object/Symbol ToPrimitive or unrestricted JS storage.
+
+The v30 deletion increment adds three cases with reviewed Node.js output. Required
+closed fields, descriptors, object/Symbol keys and arbitrary dynamic properties
+remain outside this checked increment; the CORE ledger stays Partial.
+
+The v30 object-operation increment adds optional-record deletion, primitive delete
+keys and Object.entries snapshots for closed records and typed arrays. Five new
+pinned cases cover key order, side effects, sparse presence and shared child
+identity and match Node.js v24.20.0. Required checked-field deletion, descriptors
+and general object coercion remain outside this increment. The String enumeration increment adds two further cases
+for UTF16 units and primitive-union dispatch.
+Both reviewed reports agree at 78 cases / 67 passes / 11 known gaps, with no
+unexpected support, regressions or infrastructure failures and seven untested
+feature rows. Strict mode continues to fail for declared incomplete coverage.
+
+The String enumeration increment pins UTF16 surrogate behavior and six-primitive
+union dispatch in two more original cases. Both match Node.js v24.20.0; production
+capacity and instruction limits remain enforced, rather than raising corpus
+budgets to turn capacity stress fixtures into compatibility passes.
+
+The v30 SameValue increment adds an explicit SameValue feature row and two
+original cases for Object.is primitives, identity and source-order effects. Their
+outputs match Node.js v24.20.0. A separate runtime fixture pins all 324 pairs of
+18 primitive values, including signed zeros and NaNs of different signs. These
+checks do not establish Symbol, unrestricted objects or whole-edition readiness.
+
+The checked Object.assign increment adds one feature row and three original
+cases: record copies/fresh literal shapes, sparse array/String copies, source
+ordering/aliases and partial mutation before a standard array-length error.
+All match Node.js v24.20.0. Separate runtime tests exercise checked storage guards
+and declared layout restrictions; these are not promoted to claims of arbitrary
+JavaScript property creation or generic Object.assign support.

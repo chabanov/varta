@@ -1,6 +1,114 @@
 use super::*;
 use varta_common::value as values;
 impl Emitter<'_> {
+    pub(super) fn record_delete(
+        &mut self,
+        object: &Expr,
+        absent: &Expr,
+        slot: u32,
+        scan: u32,
+        write: u32,
+        count: u32,
+    ) -> Result<()> {
+        let Type::Record(shape) = object.ty else {
+            return Err(CompilerError::Internal(
+                "missing delete record shape".into(),
+            ));
+        };
+        let presence = wasm_encoder::MemArg {
+            offset: values::presence_offset(self.records[shape as usize].fields.len()) as u64,
+            ..strings::WORD
+        };
+        let order = presence.offset + 4;
+        let scan = self.local_slots[scan as usize];
+        let write = self.local_slots[write as usize];
+        let count = self.local_slots[count as usize];
+        self.expr(object)?;
+        self.expr(absent)?;
+        self.pack_slot(absent.ty);
+        self.code.extend([
+            I::LocalSet(self.string_temporary),
+            I::I32WrapI64,
+            I::LocalSet(self.temporary),
+            I::LocalGet(self.temporary),
+            I::LocalGet(self.string_temporary),
+            I::I64Store(records::field(slot)),
+            I::LocalGet(self.temporary),
+            I::I32Load(presence),
+            I::I32Popcnt,
+            I::LocalSet(count),
+            I::I32Const(0),
+            I::LocalSet(scan),
+            I::I32Const(0),
+            I::LocalSet(write),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(scan),
+            I::LocalGet(count),
+            I::I32GeU,
+            I::BrIf(1),
+            I::LocalGet(self.temporary),
+            I::LocalGet(scan),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            I::I32Load(wasm_encoder::MemArg {
+                offset: order,
+                ..strings::WORD
+            }),
+            I::I32Const(slot as i32),
+            I::I32Ne,
+            I::If(BlockType::Empty),
+            I::LocalGet(self.temporary),
+            I::LocalGet(write),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            I::LocalGet(self.temporary),
+            I::LocalGet(scan),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            I::I32Load(wasm_encoder::MemArg {
+                offset: order,
+                ..strings::WORD
+            }),
+            I::I32Store(wasm_encoder::MemArg {
+                offset: order,
+                ..strings::WORD
+            }),
+            I::LocalGet(write),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(write),
+            I::End,
+            I::LocalGet(scan),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(scan),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::LocalGet(self.temporary),
+            I::LocalGet(write),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            I::I32Const(0),
+            I::I32Store(wasm_encoder::MemArg {
+                offset: order,
+                ..strings::WORD
+            }),
+            I::LocalGet(self.temporary),
+            I::LocalGet(self.temporary),
+            I::I32Load(presence),
+            I::I32Const(!(1u32 << slot) as i32),
+            I::I32And,
+            I::I32Store(presence),
+            I::I32Const(1),
+        ]);
+        Ok(())
+    }
     pub(super) fn has_own(&mut self, value: &Expr, slot: Option<u32>) -> Result<()> {
         self.expr(value)?;
         if let Some(slot) = slot {

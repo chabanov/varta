@@ -358,6 +358,8 @@ pub(crate) enum Expression {
     String(Vec<u8>),
     Local(u32),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
+    /// Cached numeric operands: SameValue distinguishes signed zero and joins NaNs.
+    NumberSameValue(Box<Expr>, Box<Expr>),
     Negative(Box<Expr>),
     Math(MathIntrinsic, Vec<Expr>),
     NumberPredicate(NumberPredicate, Vec<Expr>),
@@ -382,6 +384,14 @@ pub(crate) enum Expression {
         body: Vec<Statement>,
     },
     HasOwn(Box<Expr>, Option<u32>),
+    RecordDelete {
+        object: Box<Expr>,
+        absent: Box<Expr>,
+        slot: u32,
+        scan: u32,
+        write: u32,
+        count: u32,
+    },
     MaybeIndex(Box<Expr>, Box<Expr>),
     Field(Box<Expr>, u32),
     Json(Box<Expr>, Option<u32>),

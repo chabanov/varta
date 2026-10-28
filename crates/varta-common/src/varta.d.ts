@@ -822,3 +822,43 @@ declare const varta: {
 // V29 equality/ordering supports all six admitted primitives, exact BigInt
 // comparison, UTF16 order, NaN/unordered and nullish/Boolean coercion rules.
 // Object and Symbol semantics remain pending.
+
+// V30 adds optional closed-record deletion and primitive record/array delete keys.
+// Required checked fields and array length are protected. Layouts stay v29-compatible.
+
+// V30 Object.entries accepts a closed record or typed array (optionally nullish),
+// returns fresh dense arrays of [key,value] pairs, and keeps nested identities.
+// Pair elements use the admitted String/value union; tuples are not inferred.
+// Skip absent fields/holes, retain explicit Undefined, snapshot own-key order.
+// Evaluate source and ignored arguments once before enumeration. Nullish/missing
+// inputs throw TypeError; Number/Boolean/BigInt inputs produce an empty array.
+// V30 String inputs enumerate UTF16 units; primitive unions dispatch by kind.
+// Symbol, object coercion and mixed aggregate shapes remain pending.
+// V29 admission, ABI28/value13/schema13 and all production budgets stay unchanged.
+
+// V30 Object.keys/values/entries enumerate String UTF16 code units (not Unicode
+// scalars), preserving lone surrogates, and dispatch all-primitive unions by kind.
+// Numeric/Boolean/BigInt wrappers yield empty arrays; nullish/missing values throw.
+// Keys/values now evaluate ignored arguments before enumeration, like entries.
+// Above 1024 String code units, throw recoverable RangeError. Guest-only helpers
+// preserve existing ABI/layouts, fuel/memory ceilings and historical call rules.
+
+// V30 Object.is implements SameValue: NaNs compare equal; +0 and -0 differ.
+// Compare Strings by UTF16 contents, BigInts exactly, and references by identity.
+// Different primitive kinds are unequal. Dispatch admitted unions without coercion.
+// Arguments run once in order; missing/void inputs are Undefined. Ignored extras
+// execute before comparison. Root operands across all later argument allocations.
+// Number comparisons are guest-only. Native result pairs require explicit fields;
+// Symbol and unimplemented value kinds remain pending. No ABI or budget change.
+
+// V30 checked Object.assign copies enumerable own record/array/String properties,
+// preserving target and child identity, source/key order, holes and explicit Udf.
+// Evaluate all args before target validation; snapshot each source after prior copies.
+// Plain fresh record literals reserve known record-source fields before allocation;
+// added fields are optional and original literal storage may widen to an admitted union.
+// Existing targets keep declared layouts, field guards and array element invariance.
+// Nullish sources skip; nullish/missing targets throw. Function/Error/non-String
+// primitive sources have no enumerable fields. Array length requires Number;
+// failure preserves earlier writes. Unknown indexed keys retain checked write guards.
+// Primitive target boxing, arbitrary new properties, descriptors and Symbol remain
+// pending. No ABI/layout/ceiling change, and historical source admission stays frozen.

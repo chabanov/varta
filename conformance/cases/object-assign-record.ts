@@ -1,0 +1,1 @@
+export function main():void{const target:{a?:number;b?:number}={};const source:{a?:number;b?:number}={b:2,a:1};delete source.b;source.b=3;const result=Object.assign(target,source,{a:9});console.log(Object.is(result,target));console.log(JSON.stringify(Object.keys(target)));console.log(JSON.stringify(target));console.log(JSON.stringify(Object.assign({seed:'x'},source)));}

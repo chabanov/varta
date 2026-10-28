@@ -3351,10 +3351,10 @@ See the [reverse-fold contract](docs/architecture.md#reverse-array-fold-profile-
 
 ## Checked compatibility inventory
 
-The [checked core suite](conformance/README.md) pins ECMAScript 2025, profile v29
+The [checked core suite](conformance/README.md) pins ECMAScript 2025, profile v30
 and explicit source hashes. It reports successful cases, known unsupported cases,
 regressions, infrastructure failures and feature rows without executable cases.
-Its current 66 cases yield 55 passes and 11 known gaps; 7 feature rows remain
+Its current 78 cases yield 67 passes and 11 known gaps; 7 feature rows remain
 untested. The inventory covers checked TypeScript `main` programs and does not
 establish full ECMAScript/Test262 or production readiness.
 
@@ -3506,3 +3506,92 @@ Operands run once in source order; native boundaries validate canonical values
 and meter work. Scalar numeric loops retain guest comparisons. The pinned oracle
 covers 2048 primitive comparisons. Object conversion, Symbol and unrestricted
 value storage remain pending; older profiles keep their previous admission.
+
+## Property deletion (opt-in v30)
+
+`checked-f64-utf16-v30` reuses ABI28/value13/schema13 and adds deletion of optional
+closed-record fields. Primitive computed keys are accepted for records/arrays.
+Receivers and keys run once; deleted fields disappear from hasOwn/keys/values/JSON,
+and later writes restore presence and insertion order. Unknown/absent own keys
+return true. Required checked fields and array length throw TypeError; dynamic
+properties, descriptors, object/Symbol keys and general JS deletion remain pending.
+The runtime companion must advertise the new 33-profile list. Older profiles keep
+their previous admission. Focused API, artifact, order and GC tests cover this step.
+
+## Object.entries (opt-in v30)
+
+`Object.entries(record)` and `Object.entries(array)` return fresh dense arrays of
+mutable `[key, value]` arrays. Keys follow Object.keys order; absent optional fields
+and array holes are omitted, while explicit undefined remains present. Nested
+values retain identity. Later changes to source properties leave the snapshot
+unchanged, while mutations to shared child objects remain visible.
+
+The inferred pair element type is the admitted union of String and source values;
+this checked compiler does not yet infer tuple positions separately. Nullable
+single-record/array sources throw TypeError when absent. Missing, null and undefined
+arguments also throw; Number/Boolean/BigInt inputs return empty arrays. Ignored
+arguments run in source order before enumeration. String inputs enumerate UTF16
+code units, including lone surrogates. Primitive unions dispatch by kind. Object coercion, Symbol, mixed aggregate source shapes
+and property descriptors remain pending.
+The existing 1024-element, memory and instruction budgets apply. Large capacity
+and collection tests use an explicitly increased test-only instruction budget.
+
+## String own-property enumeration (v30)
+
+Object.keys, Object.values and Object.entries accept Strings and unions of the
+six admitted primitive kinds. String keys are decimal indices in ascending order;
+values are individual UTF16 code units. A supplementary character therefore
+contributes two entries, and lone surrogates remain intact. Empty Strings and
+Number/Boolean/BigInt wrappers yield empty results; nullish values throw TypeError.
+Missing arguments also throw, after evaluating any provided ignored arguments.
+V30 keys/values now evaluate ignored arguments before taking their snapshots.
+
+Strings above 1024 code units throw a recoverable RangeError because enumeration
+must fit the existing checked array capacity. Fuel/memory limits still apply.
+The implementation uses guest string slicing and array helpers, with no per-unit
+native calls or new host ABI. Earlier profiles keep their previous call rules.
+
+## Object.is / SameValue (v30)
+
+`Object.is(a, b)` compares values without coercion. NaN equals NaN, while +0 and
+-0 differ. Strings compare UTF16 contents and BigInts compare exact mathematical
+values. Different primitive kinds are unequal. Records, arrays, functions and
+errors compare by identity, including aliases across compatible error types and
+values selected from admitted unions. Distinct objects remain unequal even when
+their contents match.
+
+Arguments run once in source order. Missing arguments become undefined, void
+calls produce undefined and ignored arguments still execute before comparison.
+Numeric comparisons stay inside Wasm; no new ABI, grants or limits are needed.
+Native result pairs require explicit fields; Symbol and other unimplemented
+value kinds remain outside the checked source model. V29 admission stays frozen.
+
+## Checked Object.assign (v30)
+
+`Object.assign(target, ...sources)` copies enumerable own properties into checked
+record/array storage and returns the original target identity. Arguments run once
+in source order before target validation; sources then copy left-to-right. Each
+source gets a fresh own-key snapshot after earlier copies, so later aliases see
+prior writes. Record insertion/numeric-key order and array holes are preserved.
+Explicit undefined is copied; nested values keep their shared identities.
+
+A fresh plain record literal reserves statically known record-source fields in
+its original allocation, so `Object.assign({}, source)` can create a copy. These
+new fields have optional checked storage; existing literal fields can widen to
+an admitted union before allocation. Existing object aliases keep their declared
+layouts. Record sources read fields individually, permitting unrelated nested
+shapes without an erased all-values union. Array/String sources also copy to
+existing declared numeric record fields; Strings enumerate UTF16 units.
+
+Nullish sources are skipped. Number/Boolean/BigInt wrappers and admitted function/
+Error objects contribute no enumerable own fields. Nullish/missing targets throw
+TypeError after argument evaluation. Array length requires a Number source field;
+invalid lengths throw RangeError after retaining earlier copies. Checked field
+value guards likewise retain earlier writes on TypeError. Array element types
+remain invariant and all capacity/memory/fuel limits remain active.
+
+Primitive target boxing, descriptors/getters/setters, Symbol keys, arbitrary new
+properties on existing objects and general shape-changing storage remain pending.
+New target fields are inferred only for plain fresh record literals and statically
+known record sources; indexed sources require declared storage. Unknown checked
+keys retain existing write guards. V29 admission and ABI/layouts are unchanged.

@@ -13454,3 +13454,62 @@ fn bigint_values_run_modules_and_source_free_artifacts_with_v13_metadata() {
         );
     }
 }
+
+#[test]
+fn property_deletion_v30_runs_modules_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {make,clear,text,reader} from './values.ts';export function main():void{const r=make();console.log(clear(r,'n'));console.log(r.n);console.log(clear(r,'big'));r.n=7;console.log(JSON.stringify(r));console.log(clear(r,'s'));console.log(JSON.stringify(r));console.log(JSON.stringify(Object.entries(r)));console.log(JSON.stringify(Object.entries(text())));console.log(Object.is(r,r));console.log(Object.is(NaN,NaN));console.log(Object.is(-0,0));console.log(Object.is(Object.assign(r,{n:8}),r));console.log(JSON.stringify(Object.assign({},{n:9,s:text()})));const read=reader(5);console.log(read());}",
+        serde_json::json!({}),
+    );
+    fs::write(project.0.join("src/values.ts"),"export function make():{n?:number;s?:string;big?:bigint|undefined}{return {n:1,s:'x',big:3n};}export function clear(v:{n?:number;s?:string;big?:bigint|undefined},key:string):boolean{return delete v[key];}export function text():string{return '😀';}export function reader(n:number):()=>number{return ()=>n;}").unwrap();
+    project.language_profile("checked-f64-utf16-v30");
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(info["abiVersion"], 28);
+    assert_eq!(info["valueAbiVersion"], 13);
+    assert_eq!(info["language"]["profile"], "checked-f64-utf16-v30");
+    let mut dev = varta();
+    dev.arg("dev");
+    let mut commands = vec![dev];
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for (index, mut command) in commands.into_iter().enumerate() {
+        if index == 1 {
+            fs::remove_dir_all(project.0.join("src")).unwrap();
+            fs::remove_file(project.0.join("varta.config.json")).unwrap();
+        }
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .filter(|s| s.starts_with("varta log:"))
+                .collect::<Vec<_>>(),
+            [
+                "varta log: 1",
+                "varta log: undefined",
+                "varta log: 1",
+                "varta log: {\"s\":\"x\",\"n\":7}",
+                "varta log: 1",
+                "varta log: {\"n\":7}",
+                "varta log: [[\"n\",7]]",
+                "varta log: [[\"0\",\"\\ud83d\"],[\"1\",\"\\ude00\"]]",
+                "varta log: 1",
+                "varta log: 1",
+                "varta log: 0",
+                "varta log: 1",
+                "varta log: {\"n\":9,\"s\":\"😀\"}",
+                "varta log: 5"
+            ]
+        );
+    }
+}

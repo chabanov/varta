@@ -1,0 +1,1 @@
+export function main():void{const s='A😀\ud800';console.log(JSON.stringify(Object.keys(s)));console.log(JSON.stringify(Object.values(s)));console.log(JSON.stringify(Object.entries(s)));console.log(JSON.stringify(Object.entries('')));}

@@ -261,6 +261,14 @@ impl Emitter<'_> {
                 index,
                 error,
             } => self.array_delete(array, index.as_deref(), error.as_deref())?,
+            E::RecordDelete {
+                object,
+                absent,
+                slot,
+                scan,
+                write,
+                count,
+            } => self.record_delete(object, absent, *slot, *scan, *write, *count)?,
             E::Index(array, index) => {
                 self.expr(array)?;
                 self.index(index)?;
@@ -464,6 +472,20 @@ impl Emitter<'_> {
                     self.code.push(I::GlobalGet(self.result_len));
                     self.string_helper(strings::Helper::Snapshot)?;
                 }
+            }
+            E::NumberSameValue(left, right) => {
+                // Lowering supplies only cached locals or unboxed cached locals.
+                // NaNs compare equal regardless of payload, while raw bits split +/-0.
+                self.expr(left)?;
+                self.expr(left)?;
+                self.code.push(I::F64Ne);
+                self.expr(right)?;
+                self.expr(right)?;
+                self.code.extend([I::F64Ne, I::I32And]);
+                self.expr(left)?;
+                self.code.push(I::I64ReinterpretF64);
+                self.expr(right)?;
+                self.code.extend([I::I64ReinterpretF64, I::I64Eq, I::I32Or]);
             }
             E::Binary(op, left, right)
                 if matches!(

@@ -679,6 +679,15 @@ impl Lower<'_> {
         if name == "Array.isArray" && self.types.profile.reference_unions() {
             return self.array_is_array(call);
         }
+        if name == "Object.assign" && self.types.profile.property_deletion() {
+            return self.object_assign(call);
+        }
+        if name == "Object.is" && self.types.profile.property_deletion() {
+            return self.object_is(call);
+        }
+        if name == "Object.entries" && self.types.profile.property_deletion() {
+            return self.object_entries(call);
+        }
         if name == "Object.keys" {
             return self.object_enumeration(call, object_enumeration::Kind::Keys);
         }

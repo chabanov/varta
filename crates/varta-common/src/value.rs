@@ -18,6 +18,8 @@ pub const ERROR_VALUE_VERSION: u32 = 10;
 pub const ERROR_FAMILY_VALUE_VERSION: u32 = 11;
 pub const SPARSE_VALUE_VERSION: u32 = 12;
 pub const BIGINT_VALUE_VERSION: u32 = 13;
+/// Callable values with module-owned capture metadata; older tags stay frozen.
+pub const FUNCTION_VALUE_VERSION: u32 = 14;
 pub const SPARSE_BITMAP_BYTES: usize = MAX_ARRAY_ELEMENTS / u8::BITS as usize;
 pub const HEAP_SPARSE_FLAG: i32 = 1024;
 pub const ERROR_CLASS_SHIFT: u32 = 1;
@@ -64,6 +66,7 @@ pub fn record_bytes(version: u32, count: usize) -> usize {
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
         ) {
             size_of::<u32>() * (count + 1)
         } else {
@@ -97,6 +100,7 @@ pub fn supported_version(version: u32) -> bool {
             | ERROR_FAMILY_VALUE_VERSION
             | SPARSE_VALUE_VERSION
             | BIGINT_VALUE_VERSION
+            | FUNCTION_VALUE_VERSION
     )
 }
 #[must_use]
@@ -146,13 +150,15 @@ pub enum ValueKind {
     ReferenceUnion = 9,
     Error = 10,
     BigInt = 11,
+    Function = 12,
 }
 impl ValueKind {
     #[must_use]
     pub fn is_reference(self) -> bool {
         matches!(
             self,
-            Self::BigInt
+            Self::Function
+                | Self::BigInt
                 | Self::Error
                 | Self::String
                 | Self::Record
@@ -176,6 +182,7 @@ impl ValueKind {
             9 => Self::ReferenceUnion,
             10 => Self::Error,
             11 => Self::BigInt,
+            12 => Self::Function,
             _ => return None,
         })
     }
@@ -183,7 +190,8 @@ impl ValueKind {
     pub fn supported_by(self, version: u32) -> bool {
         supported_version(version)
             && match self {
-                Self::BigInt => version == BIGINT_VALUE_VERSION,
+                Self::Function => version == FUNCTION_VALUE_VERSION,
+                Self::BigInt => matches!(version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION),
                 Self::Float64 => matches!(
                     version,
                     NUMBER_VALUE_VERSION
@@ -197,6 +205,7 @@ impl ValueKind {
                         | ERROR_FAMILY_VALUE_VERSION
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
+                        | FUNCTION_VALUE_VERSION
                 ),
                 Self::Undefined => matches!(
                     version,
@@ -210,6 +219,7 @@ impl ValueKind {
                         | ERROR_FAMILY_VALUE_VERSION
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
+                        | FUNCTION_VALUE_VERSION
                 ),
                 Self::PrimitiveUnion => {
                     matches!(
@@ -222,6 +232,7 @@ impl ValueKind {
                             | ERROR_FAMILY_VALUE_VERSION
                             | SPARSE_VALUE_VERSION
                             | BIGINT_VALUE_VERSION
+                            | FUNCTION_VALUE_VERSION
                     )
                 }
                 Self::ReferenceUnion => {
@@ -233,6 +244,7 @@ impl ValueKind {
                             | ERROR_FAMILY_VALUE_VERSION
                             | SPARSE_VALUE_VERSION
                             | BIGINT_VALUE_VERSION
+                            | FUNCTION_VALUE_VERSION
                     )
                 }
                 Self::Error => matches!(
@@ -241,6 +253,7 @@ impl ValueKind {
                         | ERROR_FAMILY_VALUE_VERSION
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
+                        | FUNCTION_VALUE_VERSION
                 ),
                 Self::I32 => matches!(version, LEGACY_VALUE_VERSION | VALUE_VERSION),
                 _ => true,

@@ -37,6 +37,7 @@ pub const SUPPORTED_PROFILES: &[LanguageProfile] = &[
     LanguageProfile::CheckedF64Utf16V27,
     LanguageProfile::CheckedF64Utf16V28,
     LanguageProfile::CheckedF64Utf16V29,
+    LanguageProfile::CheckedF64Utf16V30,
 ];
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,8 +107,14 @@ pub enum LanguageProfile {
     CheckedF64Utf16V28,
     #[serde(rename = "checked-f64-utf16-v29")]
     CheckedF64Utf16V29,
+    #[serde(rename = "checked-f64-utf16-v30")]
+    CheckedF64Utf16V30,
 }
 impl LanguageProfile {
+    #[must_use]
+    pub fn property_deletion(self) -> bool {
+        self == Self::CheckedF64Utf16V30
+    }
     #[must_use]
     pub fn host_abi(self) -> u32 {
         match self {
@@ -142,7 +149,9 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V26
             | Self::CheckedF64Utf16V27 => crate::abi::NUMBER_PARSE_VERSION,
             Self::CheckedF64Utf16V28 => crate::abi::BIGINT_VERSION,
-            Self::CheckedF64Utf16V29 => crate::abi::BIGINT_VALUES_VERSION,
+            Self::CheckedF64Utf16V29 | Self::CheckedF64Utf16V30 => {
+                crate::abi::BIGINT_VALUES_VERSION
+            }
         }
     }
     #[must_use]
@@ -183,6 +192,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -218,6 +228,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -252,6 +263,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -285,6 +297,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -317,6 +330,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -348,6 +362,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -378,6 +393,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -407,6 +423,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -435,6 +452,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -462,6 +480,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -488,6 +507,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -513,6 +533,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -537,6 +558,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -560,6 +582,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -582,6 +605,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -603,6 +627,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -624,6 +649,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -645,6 +671,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -666,6 +693,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -686,6 +714,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -705,6 +734,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -723,6 +753,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -740,6 +771,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -756,6 +788,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -771,6 +804,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -785,6 +819,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -798,6 +833,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -814,6 +850,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -825,6 +862,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -835,21 +873,28 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V27
                 | Self::CheckedF64Utf16V28
                 | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
     pub fn bigint_values(self) -> bool {
-        self == Self::CheckedF64Utf16V29
+        matches!(self, Self::CheckedF64Utf16V29 | Self::CheckedF64Utf16V30)
     }
     #[must_use]
     pub fn bigint(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V28 | Self::CheckedF64Utf16V29)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V28 | Self::CheckedF64Utf16V29 | Self::CheckedF64Utf16V30
+        )
     }
     #[must_use]
     pub fn array_inference(self) -> bool {
         matches!(
             self,
-            Self::CheckedF64Utf16V27 | Self::CheckedF64Utf16V28 | Self::CheckedF64Utf16V29
+            Self::CheckedF64Utf16V27
+                | Self::CheckedF64Utf16V28
+                | Self::CheckedF64Utf16V29
+                | Self::CheckedF64Utf16V30
         )
     }
     #[must_use]
@@ -1012,7 +1057,9 @@ impl LanguageProfile {
     #[must_use]
     pub fn value_abi(self) -> u32 {
         match self {
-            Self::CheckedF64Utf16V29 => crate::value::BIGINT_VALUE_VERSION,
+            Self::CheckedF64Utf16V29 | Self::CheckedF64Utf16V30 => {
+                crate::value::BIGINT_VALUE_VERSION
+            }
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1049,7 +1096,9 @@ impl LanguageProfile {
     #[must_use]
     pub fn json_stringify(self) -> crate::HostOperation {
         match self {
-            Self::CheckedF64Utf16V29 => crate::HostOperation::JsonStringifyV13,
+            Self::CheckedF64Utf16V29 | Self::CheckedF64Utf16V30 => {
+                crate::HostOperation::JsonStringifyV13
+            }
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1088,7 +1137,9 @@ impl LanguageProfile {
     #[must_use]
     pub fn json_parse(self) -> crate::HostOperation {
         match self {
-            Self::CheckedF64Utf16V29 => crate::HostOperation::JsonParseV15,
+            Self::CheckedF64Utf16V29 | Self::CheckedF64Utf16V30 => {
+                crate::HostOperation::JsonParseV15
+            }
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1184,6 +1235,29 @@ pub struct LanguageError(pub String);
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn property_deletion_v30_reuses_v29_layouts_and_freezes_older_admission() {
+        let new = LanguageProfile::CheckedF64Utf16V30;
+        let old = LanguageProfile::CheckedF64Utf16V29;
+        assert!(new.property_deletion());
+        for &profile in SUPPORTED_PROFILES {
+            assert_eq!(profile.property_deletion(), profile == new);
+        }
+        assert_eq!(new.host_abi(), old.host_abi());
+        assert_eq!(new.value_abi(), old.value_abi());
+        assert_eq!(new.exception_channel(), old.exception_channel());
+        assert_eq!(new.json_parse(), old.json_parse());
+        assert_eq!(new.json_stringify(), old.json_stringify());
+        assert_eq!(
+            serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v30\"").unwrap(),
+            new
+        );
+        assert!(serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v31\"").is_err());
+        assert_eq!(
+            LanguageProfile::default(),
+            LanguageProfile::CheckedI32Utf8V1
+        );
+    }
 
     #[test]
     fn bigint_values_v29_versions_tags_json_and_exception_channels() {
@@ -1211,7 +1285,10 @@ mod tests {
         assert_eq!(new.json_stringify(), H::JsonStringifyV13);
         assert_eq!(new.json_parse(), H::JsonParseV15);
         for &profile in SUPPORTED_PROFILES {
-            assert_eq!(profile.bigint_values(), profile == new);
+            assert_eq!(
+                profile.bigint_values(),
+                profile == new || profile == LanguageProfile::CheckedF64Utf16V30
+            );
         }
         for (host, args, results) in [
             (H::ValueLogV8, &[I64][..], &[][..]),
@@ -1331,6 +1408,7 @@ mod tests {
                         LanguageProfile::CheckedF64Utf16V27
                             | LanguageProfile::CheckedF64Utf16V28
                             | LanguageProfile::CheckedF64Utf16V29
+                            | LanguageProfile::CheckedF64Utf16V30
                     )
             );
         }
@@ -1378,6 +1456,7 @@ mod tests {
                         LanguageProfile::CheckedF64Utf16V27
                             | LanguageProfile::CheckedF64Utf16V28
                             | LanguageProfile::CheckedF64Utf16V29
+                            | LanguageProfile::CheckedF64Utf16V30
                     )
             );
         }
@@ -1426,6 +1505,7 @@ mod tests {
                         LanguageProfile::CheckedF64Utf16V27
                             | LanguageProfile::CheckedF64Utf16V28
                             | LanguageProfile::CheckedF64Utf16V29
+                            | LanguageProfile::CheckedF64Utf16V30
                     )
             );
             assert_eq!(
@@ -1438,6 +1518,7 @@ mod tests {
                         LanguageProfile::CheckedF64Utf16V27
                             | LanguageProfile::CheckedF64Utf16V28
                             | LanguageProfile::CheckedF64Utf16V29
+                            | LanguageProfile::CheckedF64Utf16V30
                     )
             );
         }
@@ -1484,6 +1565,7 @@ mod tests {
                         LanguageProfile::CheckedF64Utf16V27
                             | LanguageProfile::CheckedF64Utf16V28
                             | LanguageProfile::CheckedF64Utf16V29
+                            | LanguageProfile::CheckedF64Utf16V30
                     )
             );
         }

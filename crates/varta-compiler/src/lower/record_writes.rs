@@ -167,6 +167,34 @@ impl Lower<'_> {
             },
         })
     }
+    pub(super) fn assign_record_field(
+        &mut self,
+        span: swc_common::Span,
+        source: u32,
+        shape: u32,
+        name: &str,
+        value: Expr,
+    ) -> Result<S> {
+        let fields = &self.types.records[shape as usize].fields;
+        let (slot, field) = fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.name == name)
+            .ok_or_else(|| {
+                unsupported("Object.assign cannot add undeclared checked record fields")
+            })?;
+        let expected = field.ty;
+        let write = PreparedWrite {
+            span,
+            source,
+            input: self.hidden(value.ty),
+            record: Type::Record(shape),
+            value: value.ty,
+        };
+        let mut body = vec![S::Init(write.input, value)];
+        body.extend(self.record_write_leaf(&write, slot as u32, expected)?);
+        Ok(S::Scope(vec![write.input], body))
+    }
     fn record_write_leaf(
         &mut self,
         write: &PreparedWrite,

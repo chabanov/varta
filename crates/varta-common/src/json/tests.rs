@@ -534,3 +534,31 @@ fn bigint_schema_cannot_create_integers_from_json_tokens_or_reinterpret_old_sche
     };
     assert!(wrong_cell.validate().is_err());
 }
+#[test]
+fn function_schema14_maps_existing_json_types_without_inventing_callable_values() {
+    let schema = JsonSchema {
+        version: FUNCTION_SCHEMA_VERSION,
+        root: 0,
+        types: vec![JsonType::Float64],
+    };
+    schema.validate().unwrap();
+    assert_eq!(schema.value_version(), FUNCTION_VALUE_VERSION);
+    assert!(schema.parse_json_classified(b"7").is_ok());
+    for text in ["function(){}", "()=>1"] {
+        assert!(matches!(
+            schema.parse_json_classified(text.as_bytes()),
+            Err(JsonDecodeError::Syntax { .. })
+        ));
+    }
+    assert!(
+        JsonSchema::from_bytes(
+            br#"{"version":14,"root":0,"types":[{"kind":"function","signature":0}]}"#
+        )
+        .is_err()
+    );
+    let old = JsonSchema {
+        version: BIGINT_SCHEMA_VERSION,
+        ..schema
+    };
+    assert_eq!(old.value_version(), BIGINT_VALUE_VERSION);
+}

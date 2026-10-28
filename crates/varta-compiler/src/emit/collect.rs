@@ -225,6 +225,10 @@ impl<'a> Collected<'a> {
                     self.expression(error, source);
                 }
             }
+            E::RecordDelete { object, absent, .. } => {
+                self.expression(object, source);
+                self.expression(absent, source);
+            }
             E::ArrayStringHasOwn(base, key) => {
                 self.arrays = true;
                 self.helpers.insert(strings::Helper::ArrayStringHasOwn);
@@ -322,6 +326,10 @@ impl<'a> Collected<'a> {
                 for arg in args {
                     self.expression(arg, source);
                 }
+            }
+            E::NumberSameValue(a, b) => {
+                self.expression(a, source);
+                self.expression(b, source);
             }
             E::Binary(op, a, b) => {
                 if a.ty == Type::Float64 && *op == BinaryOp::Mod {

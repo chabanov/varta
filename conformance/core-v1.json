@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v29",
+  "profile": "checked-f64-utf16-v30",
   "features": [
     {
       "id": "binary64",
@@ -355,6 +355,25 @@
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-array-initializer"
+    },
+    {
+      "id": "same-value",
+      "title": "SameValue and Object.is",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-samevalue"
+    },
+    {
+      "id": "object-assign",
+      "title": "Ordered own-property assignment",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.assign"
     }
   ],
   "cases": [
@@ -1302,6 +1321,217 @@
         "varta log: left",
         "varta log: right",
         "varta log: 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "record-property-deletion",
+      "feature": "record-properties",
+      "path": "cases/record-property-deletion.ts",
+      "sha256": "3d784b7f9c295c0e3424d7319587f7ad686ef1547b0c2059b580679bf8f1bee1",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: [\"b\",\"a\"]",
+        "varta log: {\"b\":2,\"a\":3}",
+        "varta log: 1",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "delete-primitive-keys",
+      "feature": "record-properties",
+      "path": "cases/delete-primitive-keys.ts",
+      "sha256": "4ebc94db11746a2e80d066616fb595d089fff7baadeda5f59e6df94dd4095842",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: {}",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "delete-key-order",
+      "feature": "record-properties",
+      "path": "cases/delete-key-order.ts",
+      "sha256": "819a817743e151dfb8b68f4eef0fc7242e2fcdb3e9c2fab30b687cf94dc2c455",
+      "stdout": [
+        "varta log: base",
+        "varta log: key",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 9"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-entries-record",
+      "feature": "record-properties",
+      "path": "cases/object-entries-record.ts",
+      "sha256": "f33170fa63f36d2cfe09e72f11e071f7872d8faed6e776bcd0a90fbdc6048df8",
+      "stdout": [
+        "varta log: [[\"1\",1],[\"2\",2],[\"b\",4],[\"empty\",null],[\"a\",5]]",
+        "varta log: 7",
+        "varta log: [[\"child\",{\"n\":7}]]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-entries-array-order",
+      "feature": "record-properties",
+      "path": "cases/object-entries-array-order.ts",
+      "sha256": "dde0944a5233ceec2b3964dff45cd2fe1c91bbe674b6f3a0da38c9e4bc210b1b",
+      "stdout": [
+        "varta log: source",
+        "varta log: extra",
+        "varta log: [[\"2\",null],[\"3\",9]]",
+        "varta log: 1",
+        "varta log: []"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-string-enumeration",
+      "feature": "record-properties",
+      "path": "cases/object-string-enumeration.ts",
+      "sha256": "7670d90e46669f202de4431ccaf4686dad1c712bdc2d471979139da44399f393",
+      "stdout": [
+        "varta log: [\"0\",\"1\",\"2\",\"3\"]",
+        "varta log: [\"A\",\"\\ud83d\",\"\\ude00\",\"\\ud800\"]",
+        "varta log: [[\"0\",\"A\"],[\"1\",\"\\ud83d\"],[\"2\",\"\\ude00\"],[\"3\",\"\\ud800\"]]",
+        "varta log: []"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-primitive-enumeration",
+      "feature": "record-properties",
+      "path": "cases/object-primitive-enumeration.ts",
+      "sha256": "129201af91b2f2ab8ebaa3db17799561b43876bb943ad39a5a81c96551ecdb41",
+      "stdout": [
+        "varta log: [[\"0\",\"x\"],[\"1\",\"y\"]]",
+        "varta log: []",
+        "varta log: []",
+        "varta log: []",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "same-value-primitives",
+      "feature": "same-value",
+      "path": "cases/same-value-primitives.ts",
+      "sha256": "5e553dc3e72e0f5bf0007dfd1ec1a32aae6ddbb9b2db235264e29d86a02239bf",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: void",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "same-value-identity",
+      "feature": "same-value",
+      "path": "cases/same-value-identity.ts",
+      "sha256": "a1fafdcadf1b20c500f3cd78ad62ca697f6b80765db0ba613ae22fdf9e2c267e",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: left",
+        "varta log: right",
+        "varta log: extra",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-assign-record",
+      "feature": "object-assign",
+      "path": "cases/object-assign-record.ts",
+      "sha256": "24aad1728655e234c53c0dbbbfdf5924a56fc12a11db1349e2cc23c56930f734",
+      "stdout": [
+        "varta log: 1",
+        "varta log: [\"a\",\"b\"]",
+        "varta log: {\"a\":9,\"b\":3}",
+        "varta log: {\"seed\":\"x\",\"a\":1,\"b\":3}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-assign-array-string",
+      "feature": "object-assign",
+      "path": "cases/object-assign-array-string.ts",
+      "sha256": "611acda804d9368cd2d67b676698073b10c46a143752a28099b4c579f9e95463",
+      "stdout": [
+        "varta log: [1,null,4]",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: [1,null]",
+        "varta log: [\"\\ud83d\",\"\\ude00\"]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "object-assign-order-error",
+      "feature": "object-assign",
+      "path": "cases/object-assign-order-error.ts",
+      "sha256": "d631bdaf9714d2f3025648422e4d4cc665809d21a039dd5bf1a6ba7db3999ab9",
+      "stdout": [
+        "varta log: target",
+        "varta log: first",
+        "varta log: last",
+        "varta log: {\"a\":2}",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: [7,2]"
       ],
       "baseline": {
         "status": "supported"

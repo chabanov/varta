@@ -88,6 +88,7 @@ fn preflight(bytes: &[u8]) -> Result<varta_common::language::LanguageInspection,
     }
     let language = crate::language::inspect(bytes)?;
     let mut values = 0;
+    let mut function_catalog = false;
     let mut union_imports = false;
     let mut json_imports = std::collections::BTreeSet::new();
     let mut http = false;
@@ -208,6 +209,25 @@ fn preflight(bytes: &[u8]) -> Result<varta_common::language::LanguageInspection,
                 if body.range().len() > abi::MAX_WASM_FUNCTION_BODY_BYTES {
                     return Err(error("function body exceeds compilation budget"));
                 }
+            }
+            Payload::CustomSection(section)
+                if section.name() == varta_common::function::CATALOG_SECTION =>
+            {
+                if function_catalog
+                    || language
+                        .profile
+                        .is_none_or(|profile| !profile.property_deletion())
+                {
+                    return Err(error("unsupported or duplicate function capture catalog"));
+                }
+                let catalog = varta_common::function::FunctionCatalog::from_bytes(section.data())
+                    .map_err(|e| error(&e.to_string()))?;
+                if Some(catalog.value_version)
+                    != language.profile.map(|profile| profile.value_abi())
+                {
+                    return Err(error("function capture catalog value version mismatch"));
+                }
+                function_catalog = true;
             }
             Payload::CustomSection(section)
                 if section.name() == varta_common::value::VALUE_SECTION =>

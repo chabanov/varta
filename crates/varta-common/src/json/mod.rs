@@ -18,6 +18,8 @@ pub const ERROR_SCHEMA_VERSION: u32 = 10;
 pub const ERROR_FAMILY_SCHEMA_VERSION: u32 = 11;
 pub const SPARSE_SCHEMA_VERSION: u32 = 12;
 pub const BIGINT_SCHEMA_VERSION: u32 = 13;
+/// Existing JSON types materialize value14 layouts; JSON cannot fabricate callables.
+pub const FUNCTION_SCHEMA_VERSION: u32 = 14;
 pub const MAX_SCHEMA_BYTES: usize = crate::abi::RESULT_BASE;
 pub const LEGACY_MAX_SCHEMA_TYPES: usize =
     4 + crate::value::MAX_RECORD_SHAPES + crate::value::MAX_ARRAY_TYPES;

@@ -21,13 +21,16 @@ Completed since baseline commit `526f9ab`:
 | Array literal inference (v27) | One admitted element union, rooted once-only initializers, typed peer empties and unchanged mutable-array invariance |
 | BigInt scalars (v28) | Canonical managed leaves, exact arithmetic/conversions/comparisons, recoverable semantic errors and typed width/radix methods; aggregate/union/throw/JSON integration pending |
 | BigInt graphs (v29) | Value/schema13, exact reference masks, primitive-union arithmetic, native JSON TypeError and owned BigInt exceptions; BigInt compound assignments and numeric updates; primitive width/radix, update, compound and ordinary arithmetic/unary coercion and six-kind comparison/equality; object ToPrimitive pending |
-| Checked compatibility inventory | Pinned v29/ECMAScript 2025 sources, isolated executor, explicit supported/gap/untested counts and reviewed-baseline CI gate |
+| Object operations (v30) | Optional-record deletion and dense Object.entries snapshots for closed records/typed arrays; String/primitive own-index enumeration, Object.is/SameValue and checked Object.assign with fresh-record shape preparation; descriptors and general objects remain pending |
+| Function codec groundwork | Common value14 tag12, catalog-required function cells, typed graph checks and JSON omission/null rules; source profile and versioned host operations remain pending |
+| Checked compatibility inventory | Pinned v30/ECMAScript 2025 sources, isolated executor, explicit supported/gap/untested counts and reviewed-baseline CI gate |
 
 Earlier additive operations require v12+; sparse/mutation rules remain profile-specific.
 The default remains `checked-i32-utf8-v1`. The latest opt-in profile is
-`checked-f64-utf16-v29`, using host ABI v28 with value ABI v13 and schema v13.
-It adds BigInt graphs/primitive unions, JSON TypeError and BigInt exceptions to
-v28 checked BigInt scalars and inherits v27 uncontextual array element-union
+`checked-f64-utf16-v30`, using host ABI v28 with value ABI v13 and schema v13.
+It adds optional-record deletion and Object.entries for closed records/typed arrays,
+inheriting v29 BigInt graphs/primitive unions, JSON TypeError and BigInt exceptions,
+v28 checked BigInt scalars and v27 uncontextual array element-union
 inference, inheriting v26 Array.reduceRight and v25 Array.findIndex/findLast/findLastIndex and v24
 truth-based local narrowing, post-store/targeted-exit joins, proven call effects
 and stable callback-input specialization,
@@ -80,7 +83,7 @@ checkpoint, then seven focused comparison tests after preserving scalar-nullish
 fast paths and the UTF16 iterator cleanup, plus a strengthened direct-operand GC
 case. Common/compiler suites pass (55/36 tests). Strict common/compiler/runtime
 Clippy, the cross-module API, rebuilt runtime companion and source-free CLI/native
-cases pass. Current conformance reports 66 cases: 55 supported, 11 known gaps,
+cases pass. Current conformance reports 78 cases: 67 supported, 11 known gaps,
 seven untested feature rows, with no regressions or infrastructure failures.
 The full pre-commit gate is run once for this completed code batch; a local pass
 does not prove cross-platform or complete ECMAScript readiness.
@@ -341,8 +344,8 @@ existing reduce admission stays unchanged. See the
 [reverse-fold contract](architecture.md#reverse-array-fold-profile-v26-with-shared-host-abi-v26).
 
 Completed: **initial checked compatibility inventory and isolated runner**.
-The pinned ECMAScript 2025/v29 corpus has 38 feature rows and 66 original checked
-programs: 55 supported, 11 known unsupported, with 7 feature rows untested. Source
+The pinned ECMAScript 2025/v30 corpus has 40 feature rows and 78 original checked
+programs: 67 supported, 11 known unsupported, with 7 feature rows untested. Source
 SHA-256 checks, complete corpus listing, strict metadata, default runtime budgets,
 empty authority and per-process deadline/output bounds preserve explicit results.
 Baseline CI distinguishes expected gaps from conformance passes; strict mode
@@ -962,7 +965,8 @@ property slots and array elements must preserve the same value distinctions.
 
 Strict equality must return false for different value types and NaN, and treat
 the signed zeroes as equal. Object equality uses identity. `Object.is`/SameValue
-and SameValueZero need their own semantics. Loose equality, relational operations,
+(v30) equates NaNs and distinguishes signed zeros; SameValueZero keeps NaNs
+equal while joining signed zeros. Loose equality, relational operations,
 truthiness and string/number conversion must follow the specified conversion order,
 including short-circuit operand values and observable left-to-right effects.
 Accepted mixed-type expressions must not reuse today's same-type comparisons.
@@ -2163,3 +2167,244 @@ precision/infinity/UTF16 edge cases, source order, direct-operand GC, scalar-loo
 imports and malformed/fuel failures bypassing handlers. Three pinned corpus cases
 also match Node.js. V28 admission remains frozen; objects, Symbol and broader
 mutable storage remain explicit unfinished CORE-01/02/03 work.
+
+### Closed property deletion (v30)
+
+V30 inherits v29 ABI28/value13/schema13/channel4 and adds optional-record deletion
+and primitive computed delete keys for records/arrays. Base/key run once before
+mutation. Deletion installs canonical undefined, compacts live order entries,
+zeros the unused trailer and preserves static trace masks. Reinsertion appends
+new string-key order; numeric enumeration stays numeric-first. Escaped values
+retain identity through GC while deleted edges can be reclaimed. Absent/unknown
+own keys return true; required checked record fields and array length throw
+TypeError before mutation. Object/Symbol ToPropertyKey, arbitrary properties,
+descriptors and general required-field deletion remain unfinished CORE-02 work.
+V29 and older source admission remains frozen; native launcher protocol2 now
+advertises 33 profiles. No ABI/layout/resource ceiling was raised.
+
+Verification: seven focused runtime tests, 55 existing common tests plus one new
+profile test, 36 compiler tests, strict common/compiler/runtime all-target Clippy,
+one cross-module public API test and one CLI development/source-free Wasm/native
+test pass. The runtime companion rebuild passes. Tests cover field31, order,
+primitive keys, aliases and repeated large allocations/deletions beyond heap
+capacity. Three new pinned cases match Node.js v24.20.0. Current inventory is
+v30 with 78 cases: 67 supported, 11 known gaps, zero regressions/infrastructure
+errors and seven untested feature rows. The previous full workspace gate (1678
+tests, commit 040756c) is historical evidence, not a full pass for this increment.
+
+### Object.entries snapshots (v30)
+
+Closed records and typed arrays now produce dense mutable key/value pair arrays
+in own-key order. Absent fields and holes are skipped; explicit undefined remains.
+Pairs are fresh and nested objects retain identity. Source/ignored arguments run
+once before snapshots; nullish/missing sources throw TypeError and primitive
+Number/Boolean/BigInt wrappers return empty arrays. Pair types use the existing
+String/value union; positional tuple typing, generic objects, Symbol and mixed aggregate source
+shapes remain unfinished CORE-02/07 work. The String enumeration increment below
+extends this operation to String inputs and primitive unions.
+Seven focused runtime tests pass, including a 1024-element snapshot and collection
+beyond heap capacity with explicitly increased test-only instruction budgets.
+The cross-module public API and CLI development/source-free Wasm/native fixtures
+pass with deletion followed by enumeration. Strict common/compiler/runtime
+all-target Clippy passes. Two new pinned cases match Node.js v24.20.0. Baseline
+and strict corpus reports agree: 78 total, 67 passes, 11 known gaps, no unexpected
+support, regressions or infrastructure failures; seven feature rows remain
+untested. Strict mode exits 1 for these declared gaps. Full workspace verification
+remains pending for this uncommitted batch; the CORE work streams remain Partial.
+
+### String own-property enumeration (v30)
+
+Object.keys/values/entries now accept String, nullable String and unions of the
+six admitted primitive kinds. String properties enumerate UTF16 units, retaining
+surrogate pairs as two values and preserving lone surrogates. Primitive wrappers
+without own enumerable properties produce empty arrays; nullish/missing inputs
+throw TypeError. V30 keys/values evaluate ignored arguments before snapshots.
+Guest-only slicing/array helpers avoid native calls per unit. More than 1024
+units raises recoverable RangeError; ABI/layouts and production budgets remain
+unchanged. Older-profile call rules and String rejection stay frozen.
+
+Seven new targeted tests cover UTF16, primitive unions, ignored-argument order,
+nullable errors, capacity and repeated collection. Capacity and collection stress
+fixtures explicitly increase test-only fuel. Two pinned cases match Node.js
+v24.20.0. The combined object-operation filter passes 53 runtime tests, and the
+cross-module public API and CLI development/source-free Wasm/native fixture pass.
+Strict common/compiler/runtime all-target Clippy and formatting checks pass.
+The reviewed corpus reports 78 total, 67 passes and 11 known gaps, with no
+unexpected support, regressions or infrastructure failures; seven feature rows
+remain untested. Strict mode reports the same counts and exits 1 for declared
+incomplete coverage. Seven property-deletion regression tests also pass after
+the enumeration changes. General object conversion, mixed aggregate sources,
+Symbol, descriptors and positional tuple inference remain unfinished. CORE-02/07
+remain Partial; no full workspace or production readiness claim is made.
+
+### Object.is / SameValue (v30)
+
+Object.is now compares admitted primitives and reference identities without
+coercion, including union dispatch across different checked aggregate shapes.
+NaNs are equal, signed zeros distinct; Strings compare UTF16 contents and BigInts
+retain exact mathematical equality. Argument expressions run once left-to-right,
+missing/void arguments become Undefined, and ignored extras execute before the
+comparison. Cached operands remain rooted across later allocations/collection.
+Numeric comparisons are guest-only and no ABI/resource ceiling changes.
+
+Seven focused tests pass, including a pinned Node.js v24.20.0 matrix of 324
+primitive pairs, reference/error aliases, distinct shapes, ignored arguments,
+collection stress and a 1500-iteration numeric loop at default budgets. The
+collection-only fixture explicitly increases test fuel without changing memory
+limits. Two original corpus cases match Node.js. Symbol, unimplemented kinds,
+first-class intrinsic values and native result-pair object identity remain
+unfinished; native results require explicit fields. CORE-01/02/03 remain Partial.
+
+Object.is integration verification: cross-module public API, CLI development,
+source-free Wasm/native execution, strict common/compiler/runtime all-target
+Clippy and formatting checks pass. The reviewed corpus contains 40 feature rows
+and 78 cases: 67 pass, 11 remain known unsupported, zero unexpected support,
+regressions or infrastructure failures; seven feature rows remain untested.
+This is scoped evidence for the increment, not a full workspace or readiness gate.
+
+### Checked Object.assign (v30)
+
+Record/array targets copy own enumerable record, array and UTF16 String properties
+in source/key order, preserving target identity and shared children. All argument
+effects precede target validation; per-source snapshots follow earlier copies so
+later aliases observe prior writes. Holes are skipped, explicit Undefined copied,
+and nullish sources ignored. Primitive/function/Error sources without enumerable
+own fields are inert. Missing/nullish targets throw TypeError. Array length uses
+Number validation; semantic failures retain earlier writes and checked field
+storage remains sound. Numeric array copies require no per-index native call.
+
+Plain fresh record literal targets reserve known record-source fields in their
+initial descriptor; new fields are optional and existing literal field types may
+widen to an admitted union. No escaped target changes layout or reference mask.
+Record sources read fields separately, admitting unrelated nested shapes without
+erased unions. General property creation, primitive target boxing, descriptors,
+getters/setters, Symbol and unrestricted shape-changing storage remain unfinished
+CORE-02/03/06 work. Indexed sources require declared target fields; unknown keys
+retain existing checked-write guards. This is an explicit checked increment,
+not general JavaScript Object.assign completion.
+
+Fifteen focused tests pass, covering own order/presence, fresh shapes, nested
+identity, record/array/source unions, argument order, partial errors and aliases.
+A 1024-element array copy fits default production budgets. The collection stress
+fixture alone raises test fuel and keeps the production memory limit. Three new
+pinned cases match Node.js v24.20.0. ABI/layouts, the 33-profile list and all
+production ceilings remain unchanged; CORE-02/03/06/07 remain Partial.
+
+Checked Object.assign integration verification passes: cross-module public API,
+CLI development and source-free Wasm/native execution, strict common/compiler/
+runtime all-target Clippy, formatting and whitespace checks. The reviewed corpus
+contains 40 feature rows and 78 cases: 67 passes, 11 known unsupported, no
+unexpected support, regressions or infrastructure failures; seven feature rows
+remain untested. This increment has scoped verification; the full workspace
+pre-commit gate and wider readiness criteria remain outstanding.
+
+### Managed function transport foundation (in progress)
+
+Function-valued records/arrays/unions still require a versioned public value tag,
+updated schema/native transport and receiver-preserving property calls. Current
+v30 source admission and value13 stay frozen. The existing closure representation
+has a distinct opaque heap flag, signature/code slots and an optional environment;
+its binding type IDs are compiler-private and are not public ValueKind tags.
+
+New allocation-free common views validate physical closure/environment/binding
+envelopes before future structured-value admission. They check handle extents,
+alignment, allocated heap flags, reserved words, signature/code budget ceilings,
+exact trace masks, capture counts up to 32 and one/two-slot binding widths.
+Duplicate captured cells and recursive function payloads remain legal; opaque
+binding payloads are not recursively interpreted. Matching a binding envelope to
+compiler-provided type ID/width/root metadata is explicit. These checks do not
+prove code/signature membership in a module or validate a captured value's type;
+those remain required at the future typed transport boundary.
+
+Five malformed/boundary common tests pass. Two runtime tests compare these views
+with real compiler-emitted mutable captures, String captures, capture-free
+closures and captured native result pairs, and retain v30 rejection of function
+aggregates. No public function value tag, new profile, host import, ABI/layout,
+resource limit or language admission has changed. Function-valued properties,
+method calls, JSON function rules and descriptors remain unfinished CORE-02/03/07
+work; this foundation does not close any readiness stream.
+
+Envelope-foundation verification also passes strict common/compiler/runtime
+all-target Clippy, formatting and whitespace checks. Corpus inventory remains
+78 cases / 67 supported / 11 known gaps with seven untested feature rows; no
+source behavior changed and no new compatibility pass is claimed for this step.
+
+### Typed private capture catalog (transport preparation)
+
+V30 modules with function signatures now optionally carry a versioned
+`varta.functions` catalog outside mutable guest memory. It maps private binding
+IDs to exact value schemas/result widths and maps closure code/signature IDs to
+capture layouts. The compiler derives it from the same IR tables used by checked
+dispatch and closure prologues. Older V30 artifacts without the optional catalog
+remain accepted; earlier profiles do not admit the new metadata. Preflight rejects
+duplicate, malformed or incompatible catalog sections before execution.
+
+Typed closure inspection validates captured primitive bits, String extents,
+BigInt leaves, Error classes, records, sparse arrays and union member selection.
+Record checks include field names, types, optionality and exact compiler slot
+identity, not merely a structurally valid descriptor. Result pairs retain exact
+width/root metadata and bounded status values. Private function captures check
+catalog code/signature membership; shared bindings and recursive closures remain
+legal through memoization. A work allowance plus existing 4096-node/64-depth
+bounds prevents unbounded traversal. Catalog type DAGs enforce their depth bound
+even when serialized bottom-up. No helper invokes guest code or grants authority;
+Wasm checked dispatch remains responsible for actual invocation.
+
+Ten common function/catalog tests and the 51-test runtime function filter pass.
+After strengthening record slot checks, four focused runtime integration/security
+tests and ten common tests pass again. These cover real emitted closures, nested
+structured captures, native result pairs, recursive function payloads, corrupted
+Boolean values/descriptors, and preflight metadata rejection. The public
+cross-module and artifact fixtures now include an escaped numeric closure.
+
+Value ABI13, schema13, host ABI28 and the 33-profile list are unchanged. A public
+function value tag, native transport integration, function-valued aggregate source
+admission and receiver-preserving property calls remain outstanding. The catalog
+is preparation for that versioned increment, not a claim that function-valued
+properties or accessor descriptors are complete. CORE-02/03/07 remain Partial.
+
+Typed-catalog batch verification: strict common/compiler/runtime all-target
+Clippy, cross-module public API, rebuilt runtime companion and CLI development /
+source-free Wasm/native fixture pass. Formatting/whitespace checks pass. The
+reviewed corpus still reports 78 cases: 67 supported, 11 known unsupported,
+zero unexpected support/regressions/infrastructure failures, seven untested
+feature rows. No new language compatibility pass or full workspace readiness
+claim is made; public function-value admission remains the next required stage.
+
+### Function value14 codec (not yet source-admitted)
+
+Common value ABI14 adds Function tag12 with an exact reference mask. V13 and
+older reject this tag. Record/presence, sparse-vector, Error and BigInt layouts
+inherit their prior physical forms under the new explicit version. Function
+reference cells require an immutable owner catalog and bounded typed closure
+validation; context-free function reads fail. Catalogs allow function fields,
+array elements and one function signature per reference union only under v14.
+Private function captures in v13 catalogs retain their existing behavior.
+
+The runtime exposes a Rust value14 graph encoder without granting invocation
+rights. Ordinary function properties are omitted, array function values become
+null, and a top-level function produces Undefined. Validation occurs before
+omission and shares a caller-owned function work budget. Private capture cycles
+through records or arrays remain legal and do not become observable JSON cycles.
+Callable toJSON hooks are explicitly rejected until guest-side dispatch exists;
+this encoder never silently treats such a hook as an ordinary omitted property.
+Schema14 maps existing JSON input types to value14 layouts, but JSON tokens and
+schemas cannot fabricate callable values. Existing schema/resource ceilings stay.
+
+Five initial v14 data-level tests pass; final tests also cover toJSON rejection
+and the public Rust codec on a real emitted scalar-closure snapshot after explicit
+owner-side transcoding. All 67 common tests and 85 runtime JSON-filter tests pass.
+The whole workspace compiles. This is codec groundwork, not new TS admission:
+all 33 source profiles retain their current contracts (latest v30/value13/ABI28).
+A new source profile, versioned host imports/context wiring, member invocation,
+function-valued aggregates and their end-to-end source/artifact/conformance checks
+remain outstanding. No additional language compatibility pass is claimed, and
+CORE-02/03/07 remain Partial.
+
+Final value14 codec verification: seven focused data/Rust-API tests and four
+legacy typed-closure/catalog tests pass. Strict common/compiler/runtime all-target
+Clippy passes, followed by final runtime all-target Clippy after the public API
+fixture; formatting and whitespace checks pass. Node.js independently matches
+ordinary function omission/null/Undefined and both private-cycle JSON outcomes.
+No source/artifact/conformance pass is claimed for value14 host operations, which
+are not registered yet; current language admission stays unchanged.

@@ -10,6 +10,36 @@ pub struct ReferenceBox {
     pub payload: u64,
 }
 impl ReferenceBox {
+    /// Header-only inspection for a typed walker that validates the selected payload.
+    pub fn read_envelope(data: &[u8], handle: u64, version: u32) -> Result<Self, ValueAbiError> {
+        let cell = PrimitiveBox::raw(data, handle)?;
+        if !cell.kind.supported_by(version)
+            || matches!(
+                cell.kind,
+                ValueKind::I32 | ValueKind::PrimitiveUnion | ValueKind::ReferenceUnion
+            )
+        {
+            return Err(invalid());
+        }
+        Ok(Self {
+            kind: cell.kind,
+            payload: cell.payload,
+        })
+    }
+    /// Function cells require an immutable owner catalog, not metadata from the heap.
+    pub fn read_with_catalog(
+        data: &[u8],
+        handle: u64,
+        catalog: &crate::function::FunctionCatalog,
+        work_budget: u64,
+    ) -> Result<Self, ValueAbiError> {
+        let cell = Self::read_envelope(data, handle, catalog.value_version)?;
+        if cell.kind == ValueKind::Function {
+            catalog.validate_closure(data, cell.payload, work_budget)?;
+            return Ok(cell);
+        }
+        Self::read_with_version(data, handle, catalog.value_version)
+    }
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
         Self::read_with_version(data, handle, REFERENCE_VALUE_VERSION)
     }
@@ -26,12 +56,13 @@ impl ReferenceBox {
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
         ) {
             return Err(invalid());
         }
         let cell = PrimitiveBox::raw(data, handle)?;
         if cell.kind == ValueKind::BigInt {
-            if version != BIGINT_VALUE_VERSION {
+            if !matches!(version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION) {
                 return Err(invalid());
             }
             crate::bigint::BigIntView::read(data, cell.payload)?;
@@ -42,6 +73,7 @@ impl ReferenceBox {
                     | ERROR_FAMILY_VALUE_VERSION
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
+                    | FUNCTION_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
@@ -89,6 +121,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
         )
     {
         Vector::read_with_version(data, cell.payload, version)?;

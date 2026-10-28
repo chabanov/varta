@@ -9,11 +9,35 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Value14 codec groundwork adds catalog-checked Function tag12 and a Rust JSON
+  graph encoder with function omission/null rules and bounded capture validation.
+  Schema14 retains existing JSON input types; current source profiles/host imports
+  stay unchanged pending function-aggregate integration.
+
+- Allocation-free managed closure/environment/binding envelope views prepare
+  versioned function-value transport, independently checked against emitted heap
+  objects. Optional v30 capture catalogs add typed value/GC-mask validation,
+  result-pair checks and bounded recursive closure inspection. Function-valued
+  aggregate admission remains pending.
+
+- Opt-in v30 adds optional-record deletion, primitive delete keys and array key
+  handling, preserving canonical absence, order, aliases/GC and checked required
+  fields. Object.entries returns fresh dense key/value pairs for closed records
+  and typed arrays, preserving sparse presence and shared child identities. It
+  reuses v29 layouts and advertises 33 source profiles. Object.keys/values/entries
+  also enumerate String UTF16 units and primitive unions with guest-only helpers;
+  keys/values evaluate ignored arguments before snapshots under v30. Object.is
+  adds SameValue comparison, retaining NaN, signed-zero and reference identity
+  semantics through rooted once-only argument evaluation. Checked Object.assign
+  adds ordered record/array/String copies, shared identities, partial-write errors
+  and preallocated field inference for fresh record literals. Existing objects
+  retain declared storage; general dynamic properties and descriptors remain gaps.
+
 - Opt-in v29 adds BigInt graphs, sparse arrays, optional records, primitive-union
   arithmetic/conversions, compound assignments and numeric updates, owned BigInt exceptions and recoverable JSON TypeError.
   ABI28/value13/schema13/channel4 preserve old profiles and exact roots; array
   searches use BigInt value equality and malformed graphs/resources stay fatal.
-  The reviewed inventory pins v29 with 66 cases (55 supported, 11 known gaps),
+  The current reviewed inventory pins v30 with 78 cases (67 supported, 11 known gaps),
   after promoting the unchanged coercive-width gap; primitive width/radix
   coercions preserve ToIndex/ToBigInt order and recoverable error classes.
   Primitive update ToNumeric preserves converted postfix values, NaN/presence
