@@ -79,6 +79,7 @@ pub(crate) fn lower(
     let scopes = link_bindings(graph, &definitions)?;
     let mut functions = Vec::new();
     let mut generated = BTreeMap::new();
+    let mut call_effects = BTreeMap::new();
     for path in &graph.order {
         let unit = &graph.units[path];
         for declaration in declarations::collect(&unit.ast, &unit.source)? {
@@ -90,7 +91,7 @@ pub(crate) fn lower(
                 &unit.source,
                 main,
                 &mut types,
-                (&mut generated, &mut next),
+                (&mut generated, &mut next, &mut call_effects),
             )?);
         }
     }
@@ -185,9 +186,13 @@ fn body(
     source: &Source,
     entry: usize,
     types: &mut ir::ValueTypes,
-    synthesized: (&mut BTreeMap<usize, ir::Function>, &mut usize),
+    synthesized: (
+        &mut BTreeMap<usize, ir::Function>,
+        &mut usize,
+        &mut BTreeMap<usize, flow_calls::Impact>,
+    ),
 ) -> Result<ir::Function> {
-    let (generated, next_function) = synthesized;
+    let (generated, next_function, call_effects) = synthesized;
     let mut lower = Lower {
         source,
         types,
@@ -196,6 +201,19 @@ fn body(
         next: 0,
         local_types: BTreeMap::new(),
         refinements: BTreeMap::new(),
+        writes: Default::default(),
+        call_writes: Default::default(),
+        call_unknown: false,
+        direct_writes: Default::default(),
+        call_parameters: Default::default(),
+        parameter_values: Default::default(),
+        parameter_roots: Default::default(),
+        known_calls: Default::default(),
+        call_effects,
+        reachable: true,
+        control: Default::default(),
+        guard_blocked: Default::default(),
+        outer_narrows: Default::default(),
         result: signature.result,
         infer_returns: false,
         entry,
@@ -215,6 +233,7 @@ fn body(
     };
     if let Some(ty) = signature.receiver {
         lower.declare("this", Some(ty), true, false)?;
+        lower.flow_parameter_binding(&lower.binding("this")?, 0);
     }
     let patterns: Vec<_> = declaration
         .function

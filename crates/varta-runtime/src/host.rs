@@ -112,6 +112,13 @@ pub(super) fn result_bytes(
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     crate::number::register(linker)?;
+    crate::native_math::register(linker)?;
+    crate::random::register(linker)?;
+    crate::primitive_string::register(linker)?;
+    crate::primitive_number::register(linker)?;
+    crate::number_radix::register(linker)?;
+    crate::number_format::register(linker)?;
+    crate::number_parse::register(linker)?;
     crate::utf16::register(linker)?;
     crate::unions::register(linker)?;
     crate::references::register(linker)?;

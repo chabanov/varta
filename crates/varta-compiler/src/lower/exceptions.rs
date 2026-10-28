@@ -34,17 +34,40 @@ impl Lower<'_> {
         if !self.types.profile.exceptions() {
             return Err(unsupported("try/catch requires checked-f64-utf16-v7"));
         }
+        let entry = self.flow_snapshot();
+        let exits = self.flow_exit_mark();
         let mut body = self.block(&statement.block.stmts, true)?;
+        let mut paths = vec![];
+        if completion::normal(&body) {
+            paths.push(self.flow_snapshot());
+        }
         if let Some(catch) = &statement.handler {
+            if self.types.profile.refinement_writes() {
+                // A throw can precede any store in the try body. The handler
+                // starts with entry facts minus every potentially changed slot.
+                self.flow_alternate(&entry);
+                self.flow_block_effects(&statement.block);
+            }
             body = vec![self.catch_statement(body, catch)?];
+            // Treat handler completion conservatively; its checked facts are
+            // still valid whenever it reaches the following statement.
+            paths.push(self.flow_snapshot());
         }
         if let Some(finalizer) = &statement.finalizer {
+            let pending = self.flow_exit_mark();
+            if self.types.profile.refinement_writes() {
+                self.flow_alternate(&entry);
+                self.flow_try_prefix(statement);
+            }
             let marker = self.hidden(Type::Number);
             let completion = self.hidden(Type::Number);
             let ty = self.exception_type()?;
             let exception = self.hidden(ty);
             let result = (self.result != Type::Void).then(|| self.hidden(self.result));
+            let before = self.flow_snapshot();
             let finalizer = self.block(&finalizer.stmts, true)?;
+            let paths = self.flow_finally(exits, pending, &before, paths);
+            self.flow_join(&entry, &paths)?;
             let mut roots = vec![exception];
             roots.extend(result);
             Ok(S::Scope(
@@ -59,6 +82,7 @@ impl Lower<'_> {
                 }],
             ))
         } else if statement.handler.is_some() {
+            self.flow_join(&entry, &paths)?;
             Ok(S::Block(body))
         } else {
             Err(unsupported("try without catch or finally"))

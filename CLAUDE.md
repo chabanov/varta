@@ -91,7 +91,7 @@ The primitive-union profile `checked-f64-utf16-v2` uses host ABI v5/value ABI v6
 schema v5. Immutable 16-byte cells hold a primitive tag/count/payload; only String
 members set the child-reference mask. Keep cell roots across calls/allocations,
 never trace numeric bits, and validate canonical cells at every new host boundary.
-Direct-local guards refine branch reads; reject writes under refinement so loops
+Direct-local guards refine branch reads; earlier profiles reject writes under refinement so loops
 cannot retain stale assumptions. Preserve source order, true short-circuit operand
 values, strict Number/string equality and nullish-only loose equality. JSON v6
 validates cells even when omitting undefined fields, counts logical values and
@@ -828,13 +828,14 @@ rules and negative finite/nonintegral domain before abs(base).powf(exponent).
 Restore negative signs only for odd integral powers. Preserve signed underflow,
 NaN**0=1, 1**NaN=NaN and (±1)**(±Infinity)=NaN. Finite ordinary power is platform
 implementation-approximated, not cross-platform bit-identical. Do not add BigInt,
-ToNumber coercion, Math.pow, or custom exponent loops proportional to exponent.
+ToNumber coercion or custom exponent loops proportional to exponent.
 Charge one existing host operation, check host/deadline before and after native
 math without a second charge, preserve status/permissions and fatal budgets.
 Shared registry names/signatures/minimum ABI must drive compiler/runtime/artifact
 validation. New language/ABI18 metadata is mandatory even without an active power
 import; downgrade/profile/signature/unknown-import mismatches fail before effects.
-Launcher protocol v2 advertises maximum18/value12 and the v15 profile; packaging
+V15 originally negotiated maximum18/value12; current protocol v2 also advertises
+v16/v17/v18/v19/v20/v21/v22/v23/v24/v25 with maximum26/value12. Packaging
 requires a matching rebuilt trusted companion. Keep old artifact execution and
 value/schema/container layouts. Host-free JSON allocation/retain helper validation
 still rejects any reachable math host call. Test special-case bits/parity/subnormals,
@@ -843,21 +844,352 @@ prepared effects/GC/pairs/finalizers, inherited sparse/JSON/closure behavior,
 hostile metadata, source ranges, modules/artifacts, grants/status and fatal limits.
 
 V15 also admits direct unshadowed Math.abs/floor/ceil/trunc/round/sqrt with exactly
-one narrowed Number argument, via typed unary IR and guest instructions. Recurse
+one narrowed Number argument, via typed Math IR and guest instructions. Recurse
 through arguments in collection/effect visitors; preserve effects/exceptions,
 earlier roots/pairs and saved returns through GC/finalizers. Reject old profiles,
 coercion/unnarrowed unions, missing/extra/spread/generic args, shadowing including
-captures/imports/TDZ, computed calls, aliases/constants and other methods.
+captures/imports/TDZ, computed calls, aliases and other methods.
 Use f64 abs/floor/ceil/trunc/sqrt; preserve nonfinite/signed-zero rules. Round uses
 cached x and nearest(x), adding one only for x-nearest(x)==0.5; this fixes lower-even
 ties toward +Infinity without floor(x+.5) errors. Scratch is used after argument
 completion so nested calls cannot corrupt it. No new host import, allowance,
 permission, helper export, dependency, ABI/layout/container version or limit.
+Math.pow takes two narrowed Numbers and uses the existing FloatPower import and
+its special-case/approximation/status/one-call/deadline rules. Collection must
+register that operation when traversing MathIntrinsic::Pow; host-free JSON helper
+validation must reject it. No new import name/profile/ABI/capability is added.
+Typed Math IR now holds a mode and argument vector. Sign/fround/clz32 take one
+narrowed Number, imul exactly two and min/max zero or more. Sign preserves NaN/±0;
+fround uses f64->f32->f64 ties-to-even; clz32 reuses exact ToUint32 then i32.clz.
+Imul evaluates both inputs before scratch use, converts to Uint32, multiplies i32
+and converts the signed result to f64; never multiply f64 first. Min/max fold from
++Infinity/-Infinity using Wasm min/max, propagate NaN and choose -0/+0 for ties.
+Keep the accumulator on the Wasm stack across argument calls/GC, evaluate every
+argument after NaN, and preserve abrupt completion. No new host calls or budgets.
 Pure JSON helper trees may use these guest operations; argument host effects must
 still fail helper validation. Existing tool/HTTP binary64 adapter gates persist.
 Test exact finite bits, all exponents/representative mantissas, half neighbors,
 special values, nesting/narrowing, roots/pairs/finalizers, argument permissions/
 status/fatal limits, source ranges, modules and source-free Wasm/native artifacts.
+
+V15 Math.f16round is a guest-only unary Number intrinsic. Round f64 directly to
+binary16 ties-to-even, not through f32. Cache the fully evaluated argument; for
+abs(x)<2^-14 emit nearest(x*2^24)*2^-24, otherwise for abs(x)<65520 extract exponent
+e and emit nearest(x*2^(10-e))*2^(e-10). Construct scale powers exactly from bounded
+exponent bits. The other branch x*Infinity propagates NaN and gives signed overflow/
+infinity. Preserve signed-zero underflow. No host/helper/ABI/limit/local-type change.
+Test independent integer rounding over every binary16 encoding/midpoint/neighbor,
+all f64 exponents, double-rounding counterexamples, nesting/GC/pairs, pure helpers,
+type/arity/old-profile gates and source-free/permission/error paths.
+
+V15 Math.hypot takes zero or more narrowed Numbers, cached once as absolute values
+in hidden f64 locals before any special-value selection. Infinity wins over NaN;
+otherwise NaN propagates and empty/all-zero calls return +0. Lower to existing
+ValueBlock statements and unique scalar work slots, preserving temporary floors,
+earlier pairs/roots and exception/finalizer behavior. Internal BinadeScale Math IR
+clears significand bits and clamps to MIN_NORMAL; never expose it as a source API.
+Scale by that exact power of two, use Dekker split square errors and compensated
+summation, refine the root with its squared-product residual, and rescale. Do not
+square original inputs or use max*sqrt(sum) rounding near overflow. No host, heap
+array, helper export, dependency, ABI or limit change. Keep finite approximation
+explicit. Verify exponents/representative bits, exact scaled triples/subnormals,
+compensated small terms, high-precision overflow goldens (native libm can be wrong),
+all-argument effects after Inf/NaN, pure helpers, GC/pairs and artifact/grant paths.
+
+V15 Number.isFinite/isNaN/isInteger/isSafeInteger accept any admitted value and
+unnarrowed unions without coercion. Missing/non-Number first arguments return
+false; all ignored extra arguments still evaluate once in source order. Preserve
+their exceptions, grants/status, pair widths, GC and fatal limits. Check union
+Float64 tags before loading payload bits. Finite is abs(x)<Infinity; NaN is x!=x;
+integer adds trunc(x)==x, safe integer uses abs(x)<=9007199254740991 and integrality.
+Compute the immutable first Number/type result before ignored args and keep its
+canonical Boolean on the Wasm stack; later scratch/binding changes cannot corrupt
+it. No local type refinement. Traverse every typed NumberPredicate IR argument.
+Reject old profiles, shadowing, computed/borrowed/generic/spread calls and other
+Number methods. No host/import/helper/ABI/layout/permission/budget change.
+Test all exponents, safe bounds, non-Number/union tags, missing/extras/throwing
+arguments, pairs/GC/finalizers, helper purity, source-free modules/artifacts and
+permission/status/fatal boundaries; keep existing tool/HTTP adapter restrictions.
+
+V15 also admits eight Math and eight Number numeric constant properties through
+unshadowed namespace identifiers (parentheses allowed), dot or literal String-key
+reads (parentheses allowed). Use exact f64 values; Number.MIN_VALUE is bits 1,
+safe bounds ±9007199254740991. Fold to existing Float64 IR, never host calls or
+allocations. Lexical records/captures/functions/TDZ named Math/Number take precedence
+and retain ordinary property behavior. All write/update/delete/pattern paths use
+the shared member-base check for a read-only type diagnostic at the member span.
+Reject old-profile built-ins, dynamic namespace keys, aliases/values/descriptors
+and unknown properties; preserve real shadowed reads/writes in all profiles.
+Test exact finite bits/special values, both syntaxes, shadow/TDZ, every write path,
+host-free helpers/budgets/status, dependency ranges and source-free/public APIs.
+Existing numeric logging text is retained; JSON uses the pinned ECMAScript formatter.
+
+V24 closure summaries now include symbolic callback inputs (owner/index) as well
+as writes/unknown. Register Function ABI slots before initialization and remap them
+to source bindings after extended parameter prologues; explicit Function this is
+physical input0. Const parameter copies inherit origins through captures. Validate
+called inputs against committed direct writes and nested captured writes across
+the completed lexical body; a replacement anywhere falls back to unknown. Merely
+capturing a parameter is not a store. This relies on closed binding cells/no dynamic
+eval or external environment mutation; revisit that proof as facilities expand.
+Keep direct_writes separate from writes revisions: symbolic calls invalidate facts
+locally but do not invent captured writes in a summary. Propagate call_parameters
+through known callee summaries, binding own positions to actual arguments and
+retaining external lexical origins until their defining invocation. Unproved or
+higher-order callback arguments remain conservative. Module declarations still
+bound all supplied callbacks; no declaration-order-dependent summary lookup.
+Borrowed AST effects use corresponding .call/receiver positions and inline callback
+effects; share64 proof depth through nested traversal, never reset that budget.
+Keep source complexity rejection, mutable/returned/self fallback, argument ordering,
+physical slots/cells, exact roots, GC, status/permissions and fatal limits intact.
+See stable-callback-parameter architecture contract. Precise higher-order argument
+binding, point-sensitive mutable provenance and property/alias effects remain open.
+
+V24 now tracks compiler-only call provenance/effects. call_effects stores a lifted
+closure's external binding writes, symbolic inputs and unknown-reentry flag; call_writes propagates
+transitive effects even when the intermediary captures only a function. Exclude
+callee-local writes from caller summaries. known_calls uses immutable binding
+identities for const FunctionRefs/aliases/conditional choices and inherits them in
+children; mutable/returned/self functions and unproved parameter inputs stay unknown.
+Module declarations have no caller environment in the admitted model, so caller
+cell effects come only from supplied function values. Classify actual bound arguments;
+opaque callbacks use unknown, not an empty effect. Function-valued aggregates remain
+unsupported. Revisit this proof when mutable globals, prototypes/hooks, dynamic
+coercion, callback retention/reentry or suspension enter the model.
+Apply effects after arguments, never resurrect argument-invalidated facts. Use the
+same summaries for borrowed AST loop/test effects where lexical identity is known;
+shadows remain conservative. .call and stable spread targets share provenance.
+Native Number/String/Error and callback-free array member intrinsics do not reenter
+binding cells; array/record contents may mutate and need separate future property
+invalidation. Memoize visited callback-reachability types; existing64 proof depth
+falls back to unknown. No new dependency or physical IR/ABI/cell representation.
+Preserve exact roots, cached callee/args, status/pending, GC and fatal budgets.
+See proven-call-effects architecture contract. Higher-order callback-argument binding, returned/mutable-function provenance
+and property/alias tracking remain unfinished.
+
+V24 now supports guarded writes using per-slot writes revisions and flow snapshots.
+Increment revisions for committed stores (all assignment families/pattern heads)
+and conservative loop/call effect invalidation, not reference preparation. Evaluate RHS under current facts, retain the observed type
+before widening, and replace target facts with a strict subset of its declared
+union. Physical slots/captures keep declared types. flow_alternate restores
+mutually exclusive branch input; flow_join unions normal-path facts using the
+reachability/target analysis. Missing facts mean the full declared upper bound.
+flow_restore filters saved facts by unchanged revisions for optional RHS/defaults.
+Never resurrect a written slot. Logical targets take the selected result type;
+other RHS/default effects remain conditional. Switch tests lower before bodies;
+direct entries join fallthrough. Track reachable break/continue snapshots by loop/switch/label target, joining
+normal fallthrough, false tests and matching exits. Literal true/omitted for tests
+have no false edge; literal false bodies have no backedge. For initializers run
+once before repeated-only effect analysis. Do not let their facts leak into a
+second test after mutation. For-of caches its RHS before repeated head/body effects
+and retains an empty/exhausted edge. Finally transforms only its own pending exit
+region by actual writes plus guaranteed normal facts; no normal completion cancels
+old exits but keeps new overriding branches. Nested finalizers transform in unwind
+order. Never consume an outer named continue in an inner loop/switch. Unreachable
+source is still checked but contributes no exits. Handler/finalizer prefix input,
+loop fixed points/first-iteration splitting, initializer and call/property inference
+remain unfinished. See completion-targeted architecture contract.
+flow_effects scans borrowed AST parts for potential writes/calls with lexical
+shadows before repeated code; literal truth analysis is bounded at64;
+for body lowers before update in24, old profiles retain prior order. Guard tests
+block their own effect targets. Proven calls invalidate matching identities;
+unknown calls invalidate mutable cells. The native whitelist is valid only for
+current non-reentrant checked APIs, revisit when callbacks/hooks
+expand. Mutable captures use full declared types/fresh checks; immutable const proofs
+propagate via binding identities/outer_narrows and existing cells, including transitive
+captures. No physical layout change. Keep old23-and-earlier readonly guards. The
+compiler-only pinned swc_ecma_visit29.0.0 handles AST traversal with64 depth/fact-drop
+fallback and no runtime dependency/limit change. Preserve saved args/returns/pairs,
+roots/status/pending/fatal budgets. Next improve exception/call/property precision.
+See write-aware refinement/capture architecture contract.
+
+The truth-guard profile checked-f64-utf16-v24 inherits v23 with shared ABI26/
+value12/schema12. Add no host registry/ABI constant; launcher current maximum26
+retains a new supported profile entry. Rebuild/verify both companions; unknown profiles
+and missing language/mismatched ABI fail, while compatible26/profile23 bytecode
+cannot prove source provenance. Direct local Guard::Truth(yes) matches potential
+truth classes, not a complemented filter: true excludes Null/Undefined, false
+excludes always-true refs; keep Number/String/Boolean in both. Nullish guard matches
+Null/Undefined. Parens/! recurse; && true combines both true guards, || false both
+false; opposite compound outcomes stay conservative. RHS && uses true left, ||
+false left, ?? nullish left; restore refinement map after lowering even on error.
+While/for bodies use true test facts; body/continue effects filter update facts.
+Normal if/ternary joins combine facts; loops join false tests/matching breaks and
+continue-to-update/test inputs. Optional RHS exits filter changed incoming facts. Do-while
+first body unguarded. Skip redundant/empty filters without new capture marks in24.
+Write/capture invalidation now prevents stale assumptions; v23 truth mutation
+admission stays unchanged. Refine exit/call/property effect precision next. Keep exact roots, boxed member checks,
+pairs/status/pending/saved returns, fatal budgets and source-free contracts. See
+truth-guard/shared-ABI26 architecture section.
+
+V23 control flow now uses truth()->ToBoolean for every ordinary value; unary !,
+loops/ternaries, logical assignments and existing array predicates share it. Reject
+opaque pairs without fields. guest_logical intercepts &&/||/?? before legacy union
+handling: cache left once in rooted ValueBlock, pure ToBoolean or IsNullish test,
+selected branch only. Remove impossible saved-left members (OR/nullish exclude
+Null/Undefined, AND excludes always-true refs), narrow payload inside selected
+branch, join RHS only if types differ. Known literal or uniform type outcomes preserve left
+effects while choosing branch; selected Fn values avoid unsupported Fn unions.
+Keep full Number bits/ref identity and roots/input/output/pairs/saved returns through
+GC/finalizers. Selected boxing may allocate; tests themselves no host/allocation.
+Old profiles/artifact imports unchanged, no ABI26/value12/schema12 change. Source
+both operands still checked; shape/Fn-union/opaque constraints remain. JSON helpers
+allow guest control flow, reject reachable RHS hosts. V24 adds direct truth guards and RHS
+type narrowing; v25 adds checked Array.findIndex/findLast/findLastIndex.
+See guest truth/control-flow architecture contract.
+
+V23 also admits direct Boolean/isFinite/isNaN via primitive_builtins flag, with
+unchanged ABI26/value12/schema12, no registry or launcher change. Normal global
+bindings/closures/TDZ win. ValueBlock caches first input before all ignored effects,
+including full pairs. Boolean accepts ordinary admitted values/unions, rejects
+opaque pairs without explicit fields. Missing/Undefined/Null/false/zero/NaN/empty
+String false; all references true without ToPrimitive. Typed ToBoolean IR emits
+canonical guest i32: F64abs>0, packed String length, direct refs1, union actual
+Float/String/Bool payloads or nullish/ref tags. No host/allocation/allowance; keep
+collect/tools visitors recursive. V23 condition/logical/unary integration now shares guest ToBoolean. Global numeric predicates require primitive-only first types, convert
+non-F64 via existing PrimitiveNumber (1host), then NumberPredicate; numeric/missing
+guest-only, missingNaN. Root cached refs/cells across extras, retain pairs/status/
+pending/saved returns/finalizers and fatal guest/host limits. JSON helpers allow
+pure Boolean, reject native coercion. No wrappers/borrowed/computed/generic/spread
+built-ins. See Boolean/global predicate architecture contract.
+
+The numeric-prefix profile checked-f64-utf16-v23 selects ABI26/value12/schema12,
+inheriting v22. Direct parseInt/parseFloat and Number static forms cache admitted
+primitive inputs/radix before all extras. Global normal bindings/TDZ win; Number
+requires unshadowed namespace spelling. Host NumberParseInt(i64,i64)->f64 and
+NumberParseFloat(i64)->f64 require26, no cap/result globals/buffer. PrimitiveBox
+validates cells; input ToString before radix ToNumber/Int32. String borrowed exact
+UTF16, Number canonical (-0 ->0), primitive words. Missing input guestNaN/no import,
+missing integer radix boxedUndefined ->0. Int32 truncate/mod2^32, nonfinite0.
+Leading exact whitespace only. Integer radix0/default10/optional0x, explicit16
+optional0x, other2..36 plain digits; longest prefix/no digits or invalidbaseNaN.
+Exact BigUint nearest/even, <=1024 value bits then early infinity; scratch<=1030bits.
+Float signed Infinity or decimal longest prefix, incomplete exponent rollback,
+grammar checked before Rust parse, scratch<=half1MiB. Preserve -0 from text,
+status/pending/buffers/roots/pairs/saved returns/finalizers and fatal limits. Tick1,
+post-check, host-free JSON helpers reject imports. No wrapper/object ToPrimitive,
+first-class built-ins/computed/spread/generic forms. Mandatory26/profile23 metadata;
+protocol2 maximum26/value12 includes v23, rebuild both companions. See parser contract.
+
+The Number-precision profile checked-f64-utf16-v22 selects ABI25/value12/schema12,
+inheriting v21. Direct narrowed Number toFixed/toExponential/toPrecision cache
+receiver and precision before all ignored effects, then primitive Number conversion
+and truncate/NaN0. Undefined/missing fixed0, exponential/precision shortest.
+Fixed/exponential0..100, precision1..100; Fixed validates BEFORE nonfinite receiver,
+others convert then return nonfinite BEFORE range checking. Box/widen RangeError
+through exception_type. New NumberToFixed/Exponential/Precision registry imports
+(f64,f64)->i32 require25, no cap, existing result globals+owned Snapshot. Raw host
+precision canonical integer/Inf, -1 shortest sentinel only for Exp/Precision;
+NaN/fraction fatal. Fixed pinned ryu-js, significant digits exact bounded BigUint
+ratio decimal rounding ties upward, carry then notation. Bound324 normalizations,
+<2500-bit scratch/123ASCII bytes. Tick once, check after; preserve status/pending,
+roots/pairs/saved returns/finalizers and fatal limits; JSON helpers reject calls.
+valueOf guest-only cached Number identity with all ignored effects, exact -0 and
+zero host charges. No wrapper/general prototype/borrowed/computed/generic/spread
+calls. Mandatory matching25 metadata even unused; protocol2 maximum26/value12
+includes v22/v23, rebuild both companions. See Number precision architecture contract.
+
+The Number-radix profile checked-f64-utf16-v21 selects ABI24/value12/schema12,
+inheriting v20. NumberToString / number_to_string (f64,f64)->i32, minimum24,
+no capability, returns_string/needs_result_globals true. Direct narrowed Number
+receivers enter number_to_string via existing toString dispatch; Error path stays.
+ValueBlock caches receiver/radix before ignored extras; Undefined default10,
+other primitives Number-convert then truncate/NaN0. Outside2..36 throw RangeError
+BEFORE zero/nonfinite special cases; box Error via exception_type before S::Throw.
+Preserve receiver/arg throws, roots/GC, pairs/status and saved returns/finalizers.
+Native decimal uses canonical_display; other bases exact BigUint midpoint bounds
+scaled by2^1075, even endpoints closed/odd open, shortest precision/nearest-even.
+BigUint0.4.8 was locked via compiler, now direct runtime dependency. Bound1074
+normalizations/55precision steps/<2500-bit scratch/1077text bytes; no new limits.
+Tick once, post-transfer check, existing UTF16 result buffer+owned Snapshot; radix
+coercion may add existing Number host call. Raw invalid host radix/limits fatal,
+language RangeError catchable. Status/pending preserved, JSON helpers reject calls.
+No wrappers/general prototypes/borrowing/computed/spread/generic calls or other
+Number methods. Mandatory ABI24 even unused; protocol2 maximum26/value12 includes
+v21 and requires both rebuilt companions. See Number radix architecture contract.
+
+The primitive-Number profile checked-f64-utf16-v20 selects ABI23/value12/schema12,
+inheriting v19. PrimitiveNumber / primitive_to_number (i64)->f64, minimum23, no
+capability/results/buffer. PrimitiveBox validates cells; Number inputs retain
+values/zero sign, Null0, Boolean0/1, UndefinedNaN, no args guest+0/no import. Shared
+primitive_conversion Lower prepares/caches first before ignored extras, then calls
+String/Number host as selected; retain all roots/effects/pairs/finalizers/TDZ.
+Numeric String parser trims exact ECMAScript whitespace, checks entire ASCII
+syntax before Rust decimal conversion and supports unsigned 0x/0b/0o prefixes.
+Power-of-two prefixes retain 53 bits+guard/sticky and round once nearest/even;
+scan invalid suffixes even after overflow. No arbitrary-precision dependency or
+partial parse. Strings stay at1MiB encoded, temporary ASCII<=half that bound.
+Tick once, pre/post budget/deadline, invalid strings normal NaN; invalid cells/
+limits fatal. Preserve result globals/buffers/status/pending channels. Host-free
+helpers reject reachability. New Number/wrappers/object coercion and Number's
+text/radix method remain pending. Mandatory ABI23/profile even unused; protocol2
+maximum26/value12 includes v20 and requires both rebuilt native binaries. No
+layout/container/helper/dependency/resource-limit change. See primitive Number contract.
+
+The primitive-String profile checked-f64-utf16-v19 selects ABI22/value12/schema12,
+inheriting v18. PrimitiveString / primitive_to_string (i64)->i32, minimum22, no
+capability, returns_string/needs_result_globals true. Direct String calls follow
+ordinary local/declaration dispatch before builtin recognition. First args admit
+only primitive members; no args returns guest empty String. Present args use a
+ValueBlock: cache first, evaluate/discard all extras, widen through one shared
+five-primitive union, invoke host, Snapshot owned result. Keep roots/hidden slots,
+argument throws, earlier operands/pairs/saved returns/finalizers and old TDZ rules.
+Host uses PrimitiveBox::read (existing cell format), canonical number display,
+true/false/null/undefined text or exact copied UTF-16 bytes. Copy before result
+buffer transfer; no lossy Unicode/NUL conversion. Tick once, post-transfer check,
+retain status/pending channels; invalid cells/limits stay fatal. No new limits,
+helpers/dependency/layout/capability. Host-free JSON helpers reject reachability.
+Mandatory profile/ABI22 even unused; protocol2 maximum26/value12 includes v19 and
+both native companions must be rebuilt. Objects/reference unions, wrappers,
+Number.prototype.toString/radices/general coercion remain pending, not silently emulated.
+
+The Number-output profile checked-f64-utf16-v18 uses ABI21/value12/schema12 and
+inherits v17. HostOperation LogFloatV2 / log_f64_v2 (f64)->() and ValueLogV7 /
+value_log_v7 (i64)->() have minimum21, no capability/result globals/buffer. Profile
+host_operation remaps only float and union/reference log names; v18 rejects old log
+imports, earlier profiles reject the new ones. Other selectors/JSON stay unchanged.
+number::canonical_display uses existing pinned ryu-js1.0.3 with both zeroes "0",
+NaN/Infinity names, shortest finite decimal and ECMAScript scientific thresholds.
+references::register_log retains old cells/kinds/diagnostic JSON; only V7 Float64
+uses canonical text. Old imports retain number::display and historical text.
+One host charge, bounded<=25-byte numeric text, unchanged output/deadline/status/
+result-buffer/pending/GC/pair/finalizer contracts; JSON helpers still reject logs.
+This increment adds no String()/Number.prototype.toString, radix/coercion/wrappers
+or new dependency/layout/limits.
+Mandatory ABI21/profile metadata even unused; launcher maximum26/value12/protocol2
+includes v18/v19/v20/v21/v22/v23/v24/v25, rebuild both binaries. See the architecture Number output contract.
+
+The random profile checked-f64-utf16-v17 uses ABI20/value12/schema12 and inherits
+v16. Shared MathRandom / number_random has ()->f64, minimum20, no capability/result
+globals. RandomSource reads one fresh getrandom0.3.4 OS word per call; high53 bits
+scale exactly by2^-53, giving +0 through1-2^-53. No production seed/PRNG/cache or
+public override exists; test source injection is cfg(test), store-local only.
+Math IR Random collects/resolves this host index and discards all ignored args'
+full physical widths after once/in-order evaluation. Preserve earlier roots,
+argument throws, saved returns, pairs/status and fatal exit/limits. Host ticks once
+before entropy and checks budget/deadline after; entropy failure is fatal with no
+fallback or status/result-buffer mutation. JSON helpers still reject any host
+reachability. Profile/ABI20 metadata is mandatory even unused; launcher maximum24,
+value12/protocol2 includes v17/v18/v19/v20/v21/v22/v23/v24/v25. No limits/layout/container/tool-adapter changes.
+See docs/architecture.md#random-profile-and-host-abi-v20 for lifecycle and tests.
+
+The native-Math profile checked-f64-utf16-v16 selects ABI19 with unchanged
+value/schema12 and inherits every v15 feature/JSON/value selector. Default i32 and
+old profiles stay frozen. The common NativeMath inventory maps nineteen unary
+methods plus atan2 to typed number_<name> imports, minimum ABI19, with no capability
+or result globals/buffer. Keep names/signatures/minimum ABI in the shared registry;
+collector registers Native Math IR operations and emitter resolves their indices.
+Explicit required signed-zero/NaN/infinity/domain/quadrant cases precede finite
+platform f64 math, whose ordinary results remain approximated. atan2 args are y,x.
+Tick once before math and check budget/deadline after, preserve status, and retain
+fatal traps/exit. Host-free JSON helpers reject reachable native imports regardless
+of purity. V16 has no Math.random, coercion, spread/generics/computed/borrowed calls or
+unnarrowed unions. V16/ABI19 metadata is mandatory without any active import;
+launcher maximum26/value12 and v16/v17/v18/v19/v20/v21/v22/v23/v24/v25 negotiation must accompany both rebuilt binaries.
+No new heap/helper/layout/container/dependency/capability/limit. Test every operation,
+special bits/domains/atan2 quadrants, finite known values/exponent invariants,
+one-call accounting, hostile ABI/signature/profile/name data, helper purity, roots/
+pairs/returns/finalizers, argument source ranges and source-free/public APIs.
 
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail
@@ -1030,3 +1362,18 @@ business routes, authentication policy or example payloads belong in runtime.
 - Debug prints left in host functions.
 - New host imports missing from `validate`, the `.d.ts` template, or the denial tests.
 - `String`-typed errors in new public APIs.
+
+## Predicate search profile v25
+
+Inherit all v24 rules under checked-f64-utf16-v25; share ABI26/value12/schema12.
+Only v25 admits findIndex/findLast/findLastIndex. Both rebuilt native companions
+must advertise the exact profile (28 supported profiles under protocol2).
+Use existing rooted iteration/call IR, live MaybeIndex reads for holes, reverse
+indices for last searches, cached matched values and -1/Undefined sentinels.
+Preserve callback-before-thisArg lowering and cache effective operands before
+ignored trailing effects; wrapper length snapshot follows all operand effects.
+Callbacks accept element|Undefined and ordinary guest truth; typed receiver and
+Function/shape limits persist. Corrupt Fn metadata is fatal even for empty arrays.
+Do not raise production fuel/array/source limits for tests. Generic array-like
+objects and prototype/borrowed methods remain separate CORE-02 work.
+See architecture predicate-search contract and predicate_search regression suites.

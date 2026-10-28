@@ -1,3 +1,12 @@
+// checked-f64-utf16-v25 inherits v24, adding direct checked-array findIndex,
+// findLast and findLastIndex. Index methods return Number (-1 on no match);
+// findLast returns element|undefined. Callbacks accept element|undefined,
+// optional index/array, with declared function thisArg or lexical arrow receivers.
+// Sparse/deleted positions are visited; reverse methods traverse descending indices.
+// Effective operands are cached before ignored trailing argument effects;
+// snapshot length is captured afterwards. Existing profiles reject these methods.
+// Shared ABI26/value12/schema12 and limits persist. Rebuild both native companions
+// for protocol2's exact 28-profile list. Generic array-like/prototype calls remain pending.
 // Select languageProfile in project configuration. checked-f64-utf8-v1 uses
 // binary64 numbers, host ABI v2 and aggregate/JSON value ABI v3. Tool/HTTP
 // adapters, UTF-16 and undefined remain pending for that profile.
@@ -438,11 +447,11 @@
 // number_power(f64,f64)->f64 is a pure minimum-ABI18 import with no capability or
 // result buffer/status reset. Number NaN/zero/infinity/odd-integer/domain rules
 // precede platform-approximated finite power; preserve signed zero/underflow and
-// NaN**0=1, 1**NaN=NaN, (±1)**(±Infinity)=NaN. No BigInt/coercion/Math.pow.
+// NaN**0=1, 1**NaN=NaN, (±1)**(±Infinity)=NaN. No BigInt/coercion.
 // Each power charges one existing host call and checks the deadline before/after
 // native math. Exhaustion/exit stay fatal; host-free JSON helpers cannot call it.
-// Profile/ABI/signature negotiation is mandatory; launcher maxima18/value12 with
-// v15 support. No value/schema/container/limit change; rebuild both binaries.
+// Profile/ABI/signature negotiation is mandatory; v15 needs ABI18/value12, while
+// the current launcher advertises maxima26/value12 with v16/v17/v18/v19/v20/v21/v22/v23/v24/v25 support. No value/schema/container/limit change; rebuild both binaries.
 // V15 also admits direct unshadowed Math.abs/floor/ceil/trunc/round/sqrt(value),
 // with exactly one narrowed Number argument. These are guest-only intrinsics:
 // no host import/allowance/status change, new permission/helper export or ABI.
@@ -450,8 +459,216 @@
 // sqrt preserves -0 and yields NaN for negative nonzero inputs. Evaluate the
 // argument once, preserving its effects, exceptions, roots and fatal limits.
 // Reject omitted/extra/spread/generic args, coercion, unnarrowed unions, shadowed
-// Math, computed calls, aliases, constants and other Math methods. Older profiles
-// reject all six. No global Math declaration: the editor uses standard TS lib types.
+// Math, computed calls, aliases and other Math methods. Older profiles
+// reject all methods. No global Math declaration: the editor uses standard TS lib types.
+// Additional V15 Math methods: sign/fround/clz32 need one Number, imul two,
+// min/max zero or more. Every argument must be narrowed Number; all evaluate
+// once in order, including after NaN in min/max. Wrong arity/spread/coercion fail.
+// Empty min/max return +Infinity/-Infinity; zero ties select -0/+0 respectively.
+// Sign preserves NaN/±0; fround rounds through binary32 ties-to-even. Clz32 uses
+// exact ToUint32 then counts leading zeroes; imul returns signed product low bits
+// after exact ToUint32 conversions. All use guest instructions, unchanged status,
+// fuel and host-free helper validation; no imports/ABI/layout/helper/limit change.
+// V15 Number.isFinite/isNaN/isInteger/isSafeInteger are direct unshadowed,
+// non-coercing predicates over any admitted value, including unnarrowed unions.
+// Non-Numbers/missing first arguments return false. Extra arguments execute once
+// in order and are ignored; preserve errors/fatal limits and full result pairs.
+// Finite excludes NaN/Infinity; integer also needs trunc(x)==x; safe integer adds
+// abs(x)<=9007199254740991. Both zeroes pass all except isNaN. No type refinement.
+// Reject old profiles, shadowing, computed/borrowed/generic/spread calls and other
+// Number methods. Guest-only operations retain status, permissions,
+// roots/GC, helper validation and ABI18/value12/schema12 without new host budgets.
+// checked-f64-utf16-v24 adds direct-local truth guards, sharing ABI26/value12/schema12.
+// True excludes Null/Undefined; false excludes true refs, retains Number/String/Bool
+// (zero/NaN/empty/false possible). Parens/! recurse; true && combines true guards,
+// false || combines false; other compound outcomes conservative. RHS &&/|| sees
+// true/false left; RHS ?? sees nullish left. Existing typeof/Array/Error compose.
+// Scope facts to branches/while/for body+update/RHS; normal branch joins retain
+// shared facts; optional/loop exits filter changed inputs and restore on errors.
+// Do-while first body unguarded. No property/call-result/Boolean-call guard inference.
+// V24 stores replace old facts with assigned types inside declared union storage.
+// If/ternary joins combine normal paths; return/throw/jump paths do not contribute.
+// Optional RHS/defaults retain unchanged inputs; logical targets use selected types.
+// Loop/switch/label exits join reachable matching breaks and false-test edges;
+// update/do-while test entries join normal body fallthrough and matching continues.
+// Finally transforms/cancels pending exit facts; earlier sibling exits stay distinct.
+// Analyze repeated for parts after the one-time initializer to prevent stale tests.
+// For-of keeps empty/exhausted edges. Loop fixed points, precise exceptional/call/
+// property and initializer inference remain incomplete. Track all stores and loop/callback effects.
+// V24 immutable function provenance and transitive summaries preserve unrelated
+// cell facts across known calls. Module callers account for supplied callbacks;
+// callee-local writes do not affect caller cells. Mutable/returned/self/parameter
+// targets without proof retain reentry fallback. Stable callback parameters now
+// propagate symbolic input effects through forwarding, const aliases and captures;
+// direct/nested replacement of a parameter remains unknown. Map default/rest/this
+// physical inputs before source initialization. Local invalidation is separate from
+// committed stores. Guard/loop literal analysis shares the existing64 proof budget. No property/heap immutability is
+// inferred; function-valued aggregates remain unsupported. Callback type reachability
+// memoizes nodes, bounded64 proof exhaustion is conservative. Checked member
+// intrinsics without callbacks preserve cell facts (arrays may still mutate).
+// Mutable captures use full cell types and fresh checks after unknown calls;
+// const captures inherit stable proofs through nested environments. No new layout.
+// Skip unchanged filters without capture marks. V23's prior admission preserved.
+// Compiler-only swc_ecma_visit29.0.0 performs bounded AST effect traversal; no runtime
+// dependency/native op/ABI constant/permission/layout/limit change. Existing roots,
+// payload checks/status/pairs/saved returns/fatal limits persist. Protocol2 supported
+// profiles must include24 even with unchanged maximum26/value12; rebuild companions.
+// V23 also admits direct Boolean/isFinite/isNaN with unchanged ABI26/value12/schema12.
+// Boolean reads ordinary values/unions: Undefined/Null/false/zero/NaN/empty String
+// false, other values including refs true. Opaque result pairs require fields.
+// New guest ToBoolean IR, actual tags/payloads/UTF16 lengths, no host/allocation.
+// Global numeric predicates convert primitive-only inputs/unions to Number first;
+// narrowed F64/missing stay guest-only, others reuse PrimitiveNumber (1host).
+// Missing yields Boolean false / isFinite false / isNaN true. Cache first input
+// before all ignored effects/full pairs. Normal bindings/closures/TDZ win; preserve
+// roots/status/pending/pairs/saved returns and fatal fuel/deadline/host budgets.
+// No wrappers/borrowed/computed/generic/spread calls or version/helper/limit changes.
+// V23 conditions/loops/ternaries/! now share guest ToBoolean; old profiles frozen.
+// &&/||/?? cache original left and execute only selected RHS; ToBoolean/IsNullish
+// tests are guest-only. Selected operands retain Number bits and reference identity.
+// Narrow selected left members (OR/?? remove Null/Undefined, AND removes true refs)
+// before joining RHS; known type outcomes avoid unnecessary unions/Fn members.
+// Root input/output through selected boxing/GC/pairs/saved returns/finalizers.
+// Preserve status/pending/buffers and fatal fuel/deadline/host limits. No new ABI,
+// helper export/dependency/limit change. Opaque pairs need fields; dynamic unions
+// retain shape/Fn bounds. Opt-in v24 adds scoped truth guards/RHS refinements.
+// checked-f64-utf16-v23 adds direct global/Number.parseInt/parseFloat calls.
+// ABI26/value12/schema12 inherits v22. Primitive/union input ToString, optional
+// parseInt radix ToNumber then Int32 truncate/mod2^32 (nonfinite0). Cache all args
+// before conversion, ignore extras with effects/full pairs. Missing input guestNaN.
+// Exact leading whitespace; longest valid integer or decimal/Infinity prefix.
+// Radix0/default10/optional0x, explicit16 optional0x, other2..36 plain; bad/no digits
+// NaN preserves status. Incomplete float exponent rolls back; signed zero retained.
+// number_parse_int(i64,i64)->f64 / number_parse_float(i64)->f64 minimum26, capNone,
+// checked primitive cells, no result globals/buffer, one host tick and post-check.
+// String input borrowed UTF16, Number canonical; integer exact nearest/even bounded
+// <=1030-bit scratch, float ASCII scratch<=half1MiB. Preserve roots/pairs/status/
+// pending/saved returns and fatal budgets; JSON helpers reject imports. Global
+// ordinary bindings/TDZ win, Number requires unshadowed spelling. No wrappers/
+// object coercion/borrowed/computed/spread/generic built-ins. Rebuild both native
+// companions for mandatory profile23/ABI26, protocol2 maximum26/value12.
+// checked-f64-utf16-v22 adds direct narrowed Number decimal precision and valueOf.
+// ABI25/value12/schema12 inherits v21. toFixed/toExponential0..100 fraction digits,
+// toPrecision1..100 significant digits, primitive ToNumber+truncate/NaN0. Cache
+// receiver/all args first; missing/Undefined fixed0, others shortest. Fixed checks
+// range BEFORE nonfinite; others convert then return nonfinite BEFORE range check.
+// Catchable RangeError boxed/widened. number_to_fixed/exponential/precision each
+// (f64,f64)->i32 minimum25, no cap, existing UTF16 globals -> owned Snapshot.
+// Raw integer/Inf precision, -1 shortest sentinel for exp/precision; NaN/fraction
+// fatal. Exact bounded rounding ties up, pinned fixed formatter, <=123ASCII bytes.
+// Tick1/check after; preserve status/pending/roots/pairs/saved returns/finalizers.
+// Primitive precision coercion may add existing Number call; budgets fatal.
+// valueOf guest-only original Number incl -0 after ignored effects, no host charge.
+// No wrappers/general prototype/borrowed/computed/spread/generic/locale methods.
+// Mandatory profile22/ABI25 even unused; rebuilt launcher maximum26/value12.
+// checked-f64-utf16-v21 adds direct narrowed Number.toString(radix?,...ignored).
+// ABI24/value12/schema12, inherited v20. number_to_string (f64,f64)->i32 minimum24,
+// no permission; UTF16 result buffer -> owned Snapshot. Cache receiver/all args
+// before radix coercion. Missing/Undefined10, other primitives ToNumber then
+// truncate/NaN0; outside2..36 throws boxed/rooted RangeError BEFORE nonfinite cases.
+// Numeric/default radix needs one formatting host call; primitive coercion may add
+// its existing Number call. Decimal canonical; other bases shortest lowercase fixed
+// text via exact even/odd midpoint intervals. BigUint0.4.8 now direct runtime use,
+// already locked via compiler. Bound1074normalizations/55precision/<2500-bit scratch/
+// 1077ASCII bytes. No guest limit/layout change. Preserve roots/pairs/status/buffers/
+// pending/saved returns/finalizers and fatal budgets; JSON helpers reject calls.
+// Old Error.toString unchanged. No wrappers/general prototype objects/borrowed/
+// computed/spread/generic calls or other Number methods. Mandatory ABI24/profile
+// even unused; rebuilt protocol2 launcher maxima26/value12 includes v21.
+// checked-f64-utf16-v20 adds direct Number(...) on primitives/admitted unions.
+// ABI23/value12/schema12, inherited v19. primitive_to_number (i64)->f64, minimum23,
+// no permission/result globals/buffer. No args guest+0; UndefinedNaN, Null0,
+// Boolean0/1, Number identity including zero sign. Strings trim exact ECMAScript
+// whitespace, then require whole decimal/exponent/Infinity or unsigned0x/0b/0o
+// grammar. Empty ->+0; invalid ->NaN without status error. Nearest/even parsing,
+// signed underflow/overflow. Prefixes scan all digits, keep53+guard/sticky bits;
+// no floating accumulation/arbitrary-precision dependency/partial parse.
+// Cache first before ignored extras; preserve all effects/throws/roots/pairs/
+// saved returns/TDZ. Tick once, pre/post deadline; bad cells/limits remain fatal.
+// Keep status/buffers/pending channels, 1MiB encoded inputs and all other limits.
+// Host-free helpers reject calls. No new Number/wrappers/object coercion, generic/
+// spread/borrowed calls or Number.prototype.toString yet. Mandatory ABI23/profile
+// even unused; rebuilt protocol2 launcher maxima26/value12 includes v20. No
+// dependency/helper export/layout/container/permission change.
+// checked-f64-utf16-v19 adds direct String(...) on primitives/admitted unions.
+// ABI22/value12/schema12, inherited v18. primitive_to_string (i64)->i32, minimum22,
+// no permission; returns UTF-16 via existing ptr/length globals and owned Snapshot.
+// No args -> empty literal/no import; Undefined -> "undefined", Null -> "null",
+// Boolean -> "true"/"false", Number -> canonical v18 text, String -> exact units.
+// Cache first before ignored extras; all extras execute once/in order before
+// conversion. Preserve throws, roots/GC, earlier operands/pairs, saved returns,
+// buffers/status/pending channels. One host charge/present arg and pre/post checks;
+// unchanged 1 MiB encoded strings, source/type/frame/memory/fuel/deadline limits.
+// Host copies input before buffer write; Snapshot owns output before buffer reuse.
+// Local/declaration functions named String retain ordinary dispatch and TDZ.
+// No object/reference-union conversion, wrappers, generic/spread/borrowed calls,
+// Number.prototype.toString or radix support here. Host-free helpers reject calls.
+// Mandatory profile/ABI22 even unused; rebuilt protocol2 launcher maxima26/value12
+// includes v19/v20/v21/v22/v23/v24/v25. No dependency/helper export/layout/container/permission change.
+// checked-f64-utf16-v18 adds canonical decimal Number output in console.log/log,
+// including narrowed/union Numbers. ABI21/value12/schema12, inherited v17 values:
+// log_f64_v2 (f64)->(), value_log_v7 (i64)->(), minimum21, no permission/results.
+// Both zeroes print 0; NaN and signed infinities use their standard names. Shortest
+// finite text uses fixed notation at [1e-6,1e21), scientific outside with e/sign/no
+// exponent padding. Existing ryu-js1.0.3; bounded<=25 numeric ASCII bytes. No locale.
+// Other union kinds, Boolean0/1 logging, aggregates and JSON remain unchanged.
+// Old profiles/imports keep historical text; v18 rejects old log imports. One
+// host charge, unchanged deadlines/output/status/buffers/roots/pairs/finalizers;
+// host-free helpers reject reachable logs. Mandatory profile/ABI21 metadata even
+// unused; rebuilt launcher maxima26/value12 includes v18/v19/v20/v21/v22/v23/v24/v25. No layout/limit/dependency
+// change. V19 adds primitive String(); Number.prototype.toString/radices and object coercion remain separate work.
+// checked-f64-utf16-v17 adds direct Math.random, inheriting v16/Number/values.
+// Host ABI20/value12/schema12: number_random ()->f64, minimum20, no permission or
+// result globals. All ignored admitted arguments execute once/in order, without
+// coercion; throws skip later args and entropy. No spread/generics/computed/borrowed
+// calls or shadowing. Fresh getrandom0.3.4 OS word per call; high53 bits scale
+// exactly by2^-53 into [+0,1), never 1/negative/NaN/Infinity. No production seed,
+// shared PRNG, cache or replay promise. Math has no cryptographic guarantee.
+// One host charge, pre/post entropy deadline checks, fatal failure without fallback;
+// preserve status, buffers, pairs, GC/earlier roots, saved returns and fatal exit.
+// JSON helpers reject host reachability. ABI20/profile metadata is mandatory even
+// unused; native launcher maxima26/value12 includes v17/v18/v19/v20/v21/v22/v23/v24/v25. No layout/container/limit
+// change. Test-only entropy injection is store-local and absent from production.
+// checked-f64-utf16-v16 adds native Math acos/acosh/asin/asinh/atan/atanh/cbrt/
+// cos/cosh/exp/expm1/log/log1p/log10/log2/sin/sinh/tan/tanh (one Number) and atan2
+// (two Numbers, y then x), inheriting v15 with host ABI19/value12/schema12. Direct
+// unshadowed dot calls only; no coercion/unnarrowed unions/spread/generics/borrowing.
+// Distinct number_<name> imports have typed f64 signatures, minimum ABI19 and no
+// capability/result buffer/status reset. Exact NaN/zero/infinity/domain boundaries
+// and atan2 quadrants precede platform-approximated finite results. Each call uses
+// one host allowance and before/after deadline checks. Fatal budgets/exit persist;
+// host-free JSON helpers reject all reachable native math. Math.random is absent.
+// V16/ABI19 metadata and rebuilt launcher support are mandatory, even without an
+// active native import. Old profiles/import contracts/defaults remain unchanged;
+// launcher maxima26/value12 includes v17/v18/v19/v20/v21/v22/v23/v24/v25. No layout/container/dependency/resource-limit change.
+// V15 Math.hypot(...numbers) admits zero or more narrowed Numbers (no spread).
+// All arguments execute once before selection: ±Infinity wins over NaN, otherwise
+// NaN propagates and empty/all-zero calls return +0. Hidden f64 snapshots and an
+// exact power-of-two scale, compensated square/product errors and root refinement
+// avoid naive squaring overflow/underflow. Finite results are approximated; no
+// universal correct rounding promise. Existing ValueBlock roots protect earlier
+// operands/pairs across argument effects/GC. No host import, guest array/helper,
+// ABI/dependency/permission/limit change; usual type/profile/source gates remain.
+// V15 Math.f16round(value) takes one narrowed Number and rounds directly from
+// binary64 to binary16 ties-to-even, returning Number. Never route through f32:
+// halfway neighbors may double-round. Preserve NaN/±Infinity/±0; subnormals use
+// exact scaling by 2^24 and nearest, normals use exponent-selected exact powers
+// of two, and abs(x)>=65520 overflows to signed Infinity. No host import, helper,
+// allocation, ABI/layout/dependency/permission/limit change. Ordinary argument
+// effects, roots/pairs/finalizers, profile/type/arity gates and helper purity apply.
+// V15 Math.pow(base,exponent) takes two narrowed Numbers and shares the existing
+// number_power import with **: identical special-case bits, finite approximation,
+// one host allowance/deadline/status rules. It is rejected in host-free JSON
+// helpers, including through nested argument functions. No new ABI/import name.
+// V15 Math constants: E/LN10/LN2/LOG10E/LOG2E/PI/SQRT1_2/SQRT2. Number constants:
+// EPSILON/MAX_SAFE_INTEGER/MIN_SAFE_INTEGER/MAX_VALUE/MIN_VALUE/NaN/
+// NEGATIVE_INFINITY/POSITIVE_INFINITY. Dot or literal String-key reads fold to
+// exact f64 values; MIN_VALUE is bits 1, safe bounds are ±9007199254740991.
+// Lexical shadows/captures/TDZ keep ordinary member rules, including mutable own
+// fields of local Math/Number records. Intrinsic writes/updates/delete/pattern
+// targets fail with a read-only type diagnostic. Dynamic keys/namespace values/
+// descriptors remain unsupported. Old profiles reject built-in reads. No new
+// imports, allocations, helper exports, ABI/layout versions, permissions or limits.
 // V12+ Object.keys(record) returns a fresh dense string[] of present own keys:
 // canonical array indices first numerically, other strings by insertion order.
 // Explicit Undefined is present; absent optional fields are omitted. Input is

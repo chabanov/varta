@@ -40,3 +40,7 @@ pub const HOST_DECLARATIONS: &str = include_str!("varta.d.ts");
 
 /// Opaque, capture-free function object layout for the checked function profile.
 pub mod function;
+
+pub mod native_math;
+
+pub mod number_format;

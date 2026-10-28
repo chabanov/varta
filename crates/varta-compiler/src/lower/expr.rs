@@ -28,7 +28,13 @@ impl Lower<'_> {
         let result = match expression {
             ast::Expr::Arrow(arrow) => self.arrow(arrow, expected),
             ast::Expr::Fn(function) => self.function_expression(function, expected),
-            ast::Expr::Call(call) => self.call(call, expected),
+            ast::Expr::Call(call) => {
+                let value = self.call(call, expected);
+                if let Ok(value) = &value {
+                    self.flow_call(call, value);
+                }
+                value
+            }
             ast::Expr::Assign(assign) if matches!(assign.left, ast::AssignTarget::Pat(_)) => {
                 let ast::AssignTarget::Pat(target) = &assign.left else {
                     return Err(invalid("missing assignment pattern"));
@@ -187,6 +193,10 @@ impl Lower<'_> {
                             ),
                         });
                     }
+                    ast::UnaryOp::Bang if self.types.profile.primitive_builtins() => {
+                        let value = self.truth(value)?;
+                        (Type::Boolean, E::Not(Box::new(value)))
+                    }
                     ast::UnaryOp::Bang
                         if self.types.profile.unions()
                             && matches!(
@@ -255,6 +265,28 @@ impl Lower<'_> {
             }
             ast::Expr::Bin(binary) => {
                 let left = self.expr(&binary.left)?;
+                if self.types.profile.primitive_builtins()
+                    && matches!(
+                        binary.op,
+                        ast::BinaryOp::LogicalAnd
+                            | ast::BinaryOp::LogicalOr
+                            | ast::BinaryOp::NullishCoalescing
+                    )
+                {
+                    let saved = self.flow_snapshot();
+                    let right = (|| {
+                        if self.types.profile.truth_guards() {
+                            match binary.op {
+                                ast::BinaryOp::LogicalAnd => self.guard(&binary.left, true)?,
+                                ast::BinaryOp::LogicalOr => self.guard(&binary.left, false)?,
+                                _ => self.nullish_guard(&binary.left)?,
+                            }
+                        }
+                        self.expr(&binary.right)
+                    })();
+                    self.flow_restore(&saved);
+                    return self.guest_logical(binary.op, left, right?, expression.span());
+                }
                 let right = self.expr(&binary.right)?;
                 if binary.op == ast::BinaryOp::Exp {
                     return self.number_power(left, right, expression.span());
@@ -368,6 +400,11 @@ impl Lower<'_> {
             return Err(unsupported("callee"));
         };
         if let ast::Expr::Member(member) = &**callee
+            && matches!(&*member.obj, ast::Expr::Ident(id) if id.sym == "Number")
+        {
+            return self.number_predicate_call(call, member);
+        }
+        if let ast::Expr::Member(member) = &**callee
             && matches!(&*member.obj, ast::Expr::Ident(id) if id.sym == "Math")
         {
             return self.math_call(call, member);
@@ -399,6 +436,20 @@ impl Lower<'_> {
             && matches!(&member.prop, ast::MemberProp::Ident(id) if id.sym=="call")
         {
             return self.function_call_method(call, member);
+        }
+        if let ast::Expr::Member(member) = &**callee
+            && matches!(&member.prop, ast::MemberProp::Ident(method) if method.sym == "valueOf")
+        {
+            let value = self.expr(&member.obj)?;
+            return self.number_value_of(call, value);
+        }
+        if let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && let Some(mode) =
+                varta_common::number_format::NumberFormat::from_name(method.sym.as_ref())
+        {
+            let value = self.expr(&member.obj)?;
+            return self.number_format(call, value, mode);
         }
         if let ast::Expr::Member(member) = &**callee
             && let ast::MemberProp::Ident(method) = &member.prop
@@ -472,6 +523,9 @@ impl Lower<'_> {
                     | "filter"
                     | "forEach"
                     | "find"
+                    | "findIndex"
+                    | "findLast"
+                    | "findLastIndex"
                     | "reduce"
                     | "some"
                     | "every"
@@ -612,6 +666,15 @@ impl Lower<'_> {
                 kind: E::Call(signature.index, args),
             });
         }
+        if matches!(name.as_str(), "Boolean" | "isFinite" | "isNaN") {
+            return self.primitive_builtin(call, &name);
+        }
+        if name == "parseInt" || name == "parseFloat" {
+            return self.number_parse(call, name == "parseInt");
+        }
+        if name == "String" || name == "Number" {
+            return self.primitive_conversion(call, name == "Number");
+        }
         if name == "varta.result.status" {
             if !call.args.is_empty() {
                 return Err(invalid("varta.result.status expects no arguments"));
@@ -694,7 +757,7 @@ impl Lower<'_> {
     }
 }
 
-fn callee_name(expr: &ast::Expr) -> Option<String> {
+pub(super) fn callee_name(expr: &ast::Expr) -> Option<String> {
     match expr {
         ast::Expr::Ident(name) => Some(name.sym.to_string()),
         ast::Expr::Member(member) => {

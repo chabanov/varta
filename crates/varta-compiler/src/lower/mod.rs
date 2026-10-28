@@ -47,6 +47,19 @@ struct Lower<'a> {
     next: u32,
     local_types: BTreeMap<u32, Type>,
     refinements: BTreeMap<u32, Type>,
+    writes: BTreeMap<u32, u64>,
+    call_writes: std::collections::BTreeSet<(usize, u32)>,
+    call_unknown: bool,
+    direct_writes: std::collections::BTreeSet<u32>,
+    call_parameters: std::collections::BTreeSet<(usize, u32)>,
+    parameter_values: BTreeMap<(usize, u32), (usize, u32)>,
+    parameter_roots: BTreeMap<u32, (u32, bool)>,
+    known_calls: BTreeMap<(usize, u32), std::collections::BTreeSet<usize>>,
+    call_effects: &'a mut BTreeMap<usize, flow_calls::Impact>,
+    reachable: bool,
+    control: flow_control::Control,
+    guard_blocked: std::collections::BTreeSet<u32>,
+    outer_narrows: BTreeMap<(usize, u32), Type>,
     result: Type,
     infer_returns: bool,
     entry: usize,
@@ -214,21 +227,36 @@ mod declarations;
 mod errors;
 mod exceptions;
 mod expr;
+mod flow;
+mod flow_call_ast;
+mod flow_calls;
+mod flow_control;
+mod flow_loops;
+mod flow_parameters;
 mod for_of;
 mod function_expressions;
 mod functions;
+mod guest_logical;
 mod http;
 mod json;
 mod labels;
 mod link;
 mod logical_assignments;
 mod math;
+mod math_hypot;
 mod missing;
+mod number_format;
+mod number_parse;
+mod number_predicates;
+mod number_radix;
+mod numeric_constants;
 mod object_enumeration;
 mod own_keys;
 mod parameters;
 mod patterns;
 mod power;
+mod primitive_builtins;
+mod primitive_string;
 mod record_reads;
 mod record_writes;
 mod records;

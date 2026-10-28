@@ -115,6 +115,7 @@ impl Lower<'_> {
                 ));
             }
             self.update(name, value.ty)?;
+            self.flow_known_binding(&old, &value);
             output.push(S::Init(old.slot, value));
         }
         Ok(output)

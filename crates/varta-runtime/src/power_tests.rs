@@ -15,19 +15,21 @@ fn lines(values: &[&str]) -> Vec<String> {
 fn exported_power() -> Vec<u8> {
     use crate::contract_tests::{export_index, rewrite};
     let bytes = compile(
-        "function power(base:number,exponent:number):number{return base**exponent;}export function main():void{}",
+        "function power(base:number,exponent:number):number{return base**exponent;}function math_power(base:number,exponent:number):number{return Math.pow(base,exponent);}export function main():void{}",
     );
-    let index = export_index(&bytes, "_start") - 1;
+    let index = export_index(&bytes, "_start") - 2;
     let name = "fixture.power";
     rewrite(&bytes, |id, data| {
         let mut data = data.to_vec();
         if id == 7 {
-            assert!(data[0] < 127);
-            data[0] += 1;
-            data.push(name.len() as u8);
-            data.extend_from_slice(name.as_bytes());
-            data.push(0);
-            data.push(index);
+            assert!(data[0] < 126);
+            data[0] += 2;
+            for (offset, name) in [name, "fixture.math_power"].iter().enumerate() {
+                data.push(name.len() as u8);
+                data.extend_from_slice(name.as_bytes());
+                data.push(0);
+                data.push(index + offset as u8);
+            }
         }
         vec![data]
     })
@@ -373,7 +375,7 @@ fn power_profile_abi_downgrades_and_wrong_import_signatures_fail_before_executio
 #[test]
 fn power_math_import_is_not_allowed_in_host_free_json_helpers() {
     use crate::contract_tests::{export_index, rewrite};
-    for expression in ["2**3", "local**=3"] {
+    for expression in ["2**3", "local**=3", "Math.pow(2,3)"] {
         let bytes = compile(&format!(
             "function fake(value:boolean):boolean{{let local=2;const result=({expression});return value;}}export function main():void{{varta.json.parse<number>('1');}}"
         ));
@@ -438,5 +440,80 @@ fn power_host_fuel_deadline_and_store_limits_remain_fatal_without_catch_finally(
                 .is_err()
         );
         assert!(execution.store.data().output.lines.is_empty());
+    }
+}
+
+#[test]
+fn math_pow_matches_exponentiation_bits_and_one_call_accounting() {
+    let values = [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        -0.5,
+        3.0,
+        -3.0,
+        9007199254740991.0,
+        9007199254740992.0,
+        f64::MAX,
+        f64::MIN_POSITIVE,
+        f64::from_bits(1),
+    ];
+    let pairs = values
+        .into_iter()
+        .flat_map(|a| values.into_iter().map(move |b| (a, b)))
+        .collect::<Vec<_>>();
+    let runtime = VartaRuntime::new();
+    let module = runtime.validate_module(&exported_power()).unwrap();
+    for batch in pairs.chunks(128) {
+        let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+        let instance = execution.instantiate(&module).unwrap();
+        let operator = instance
+            .get_typed_func::<(f64, f64), f64>(&mut execution.store, "fixture.power")
+            .unwrap();
+        let method = instance
+            .get_typed_func::<(f64, f64), f64>(&mut execution.store, "fixture.math_power")
+            .unwrap();
+        for &(a, b) in batch {
+            let expected = operator.call(&mut execution.store, (a, b)).unwrap();
+            let actual = method.call(&mut execution.store, (a, b)).unwrap();
+            if expected.is_nan() {
+                assert!(actual.is_nan());
+            } else {
+                assert_eq!(actual.to_bits(), expected.to_bits(), "Math.pow({a},{b})");
+            }
+        }
+        assert_eq!(execution.store.data().host_calls, batch.len() as u32 * 2);
+    }
+}
+
+#[test]
+fn math_pow_argument_order_exceptions_narrowing_and_profile_gates() {
+    let out = run(
+        "function left():number{console.log('left');return -2;}function right():number{console.log('right');return 3;}function fail():number{console.log('fail');throw TypeError('argument');}export function main():void{console.log(Math.pow(left(),right()));try{Math.pow(fail(),right());}catch({message}){console.log(message);}finally{console.log('final');}const n:number|undefined=2;if(n!==undefined){console.log(Math.pow(n,3));}} ",
+    );
+    assert_eq!(
+        out.lines,
+        lines(&["left", "right", "-8", "fail", "argument", "final", "8"])
+    );
+    for profile in varta_common::language::SUPPORTED_PROFILES
+        .iter()
+        .copied()
+        .filter(|p| !p.number_power())
+    {
+        assert!(
+            varta_compiler::compile_typescript_with_profile(
+                "export function main():void{Math.pow(2,3);}",
+                profile
+            )
+            .is_err(),
+            "{profile:?}"
+        );
     }
 }

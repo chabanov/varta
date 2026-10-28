@@ -302,6 +302,11 @@ fn expression(
                 expression(value, functions, visited, effects);
             }
         }
+        E::Math(_, args) | E::NumberPredicate(_, args) => {
+            for arg in args {
+                expression(arg, functions, visited, effects);
+            }
+        }
         E::Host(host, args) => {
             if let Some(id) = host.capability() {
                 effects.insert(id.into());
@@ -341,8 +346,8 @@ fn expression(
         E::ArrayPop(a)
         | E::HasOwn(a, _)
         | E::Negative(a)
-        | E::MathUnary(_, a)
         | E::Undefined(a)
+        | E::ToBoolean(a)
         | E::Not(a)
         | E::Capture(a)
         | E::ResultField(_, a)

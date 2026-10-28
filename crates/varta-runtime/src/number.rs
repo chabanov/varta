@@ -60,6 +60,13 @@ pub(super) fn display(value: f64) -> String {
         value.to_string()
     }
 }
+pub(super) fn canonical_display(value: f64) -> String {
+    if value == 0.0 {
+        "0".into()
+    } else {
+        ryu_js::Buffer::new().format(value).to_owned()
+    }
+}
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
         "varta",
@@ -86,15 +93,21 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             caller.data_mut().emit("varta log: undefined".into())
         },
     )?;
-    linker.func_wrap(
-        "varta",
-        Host::LogFloat.name(),
-        |mut caller: Caller<'_, RuntimeContext>, value: f64| {
-            caller.data_mut().tick()?;
-            let value = display(value);
-            caller.data_mut().emit(format!("varta log: {value}"))
-        },
-    )?;
+    for operation in [Host::LogFloat, Host::LogFloatV2] {
+        linker.func_wrap(
+            "varta",
+            operation.name(),
+            move |mut caller: Caller<'_, RuntimeContext>, value: f64| {
+                caller.data_mut().tick()?;
+                let value = if operation == Host::LogFloatV2 {
+                    canonical_display(value)
+                } else {
+                    display(value)
+                };
+                caller.data_mut().emit(format!("varta log: {value}"))
+            },
+        )?;
+    }
     linker.func_wrap(
         "varta",
         Host::FloatRemainder.name(),

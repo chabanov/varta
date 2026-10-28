@@ -28,6 +28,70 @@ fn text(bytes: &[u8], value: ReferenceBox) -> &[u8] {
     &bytes[value.payload as u32 as usize
         ..value.payload as u32 as usize + (value.payload >> i32::BITS) as usize]
 }
+fn register_log(
+    linker: &mut Linker<RuntimeContext>,
+    version: u32,
+    log: Host,
+) -> Result<(), wasmtime::Error> {
+    linker.func_wrap(
+        "varta",
+        log.name(),
+        move |mut caller: Caller<'_, RuntimeContext>, value: i64| {
+            caller.data_mut().tick()?;
+            let value = read(&mut caller, value, version)?;
+            let display = match value.kind {
+                Kind::Null => "null".into(),
+                Kind::Undefined => "undefined".into(),
+                Kind::Boolean => value.payload.to_string(),
+                Kind::Float64 => {
+                    let value = f64::from_bits(value.payload);
+                    if log == Host::ValueLogV7 {
+                        number::canonical_display(value)
+                    } else {
+                        number::display(value)
+                    }
+                }
+                Kind::String => String::from_utf16_lossy(
+                    &varta_common::text::units(text(data(&mut caller)?, value))
+                        .map_err(wasmtime::Error::new)?,
+                ),
+                Kind::Error => {
+                    let object = varta_common::value::ErrorObject::read_with_version(
+                        data(&mut caller)?,
+                        value.payload,
+                        version,
+                    )
+                    .map_err(wasmtime::Error::new)?;
+                    let message = String::from_utf16_lossy(
+                        &varta_common::text::units(text(
+                            data(&mut caller)?,
+                            ReferenceBox {
+                                kind: Kind::String,
+                                payload: object.message,
+                            },
+                        ))
+                        .map_err(wasmtime::Error::new)?,
+                    );
+                    if message.is_empty() {
+                        object.class.name().into()
+                    } else {
+                        format!("{}: {message}", object.class.name())
+                    }
+                }
+                Kind::Record | Kind::Array => String::from_utf8(crate::json::render_reference(
+                    data(&mut caller)?,
+                    value.kind as u32,
+                    value.payload,
+                    version,
+                )?)
+                .map_err(wasmtime::Error::new)?,
+                _ => return Err(wasmtime::Error::msg("invalid value kind")),
+            };
+            caller.data_mut().emit(format!("varta log: {display}"))
+        },
+    )?;
+    Ok(())
+}
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     for (version, log, type_of, truthy, is_nullish, is_array, strict_equal, nullish_equal) in [
         (
@@ -81,56 +145,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             Host::ValueNullishEqualV6,
         ),
     ] {
-        linker.func_wrap(
-            "varta",
-            log.name(),
-            move |mut caller: Caller<'_, RuntimeContext>, value: i64| {
-                caller.data_mut().tick()?;
-                let value = read(&mut caller, value, version)?;
-                let display = match value.kind {
-                    Kind::Null => "null".into(),
-                    Kind::Undefined => "undefined".into(),
-                    Kind::Boolean => value.payload.to_string(),
-                    Kind::Float64 => number::display(f64::from_bits(value.payload)),
-                    Kind::String => String::from_utf16_lossy(
-                        &varta_common::text::units(text(data(&mut caller)?, value))
-                            .map_err(wasmtime::Error::new)?,
-                    ),
-                    Kind::Error => {
-                        let object = varta_common::value::ErrorObject::read_with_version(
-                            data(&mut caller)?,
-                            value.payload,
-                            version,
-                        )
-                        .map_err(wasmtime::Error::new)?;
-                        let message = String::from_utf16_lossy(
-                            &varta_common::text::units(text(
-                                data(&mut caller)?,
-                                ReferenceBox {
-                                    kind: Kind::String,
-                                    payload: object.message,
-                                },
-                            ))
-                            .map_err(wasmtime::Error::new)?,
-                        );
-                        if message.is_empty() {
-                            object.class.name().into()
-                        } else {
-                            format!("{}: {message}", object.class.name())
-                        }
-                    }
-                    Kind::Record | Kind::Array => String::from_utf8(crate::json::render_reference(
-                        data(&mut caller)?,
-                        value.kind as u32,
-                        value.payload,
-                        version,
-                    )?)
-                    .map_err(wasmtime::Error::new)?,
-                    _ => return Err(wasmtime::Error::msg("invalid value kind")),
-                };
-                caller.data_mut().emit(format!("varta log: {display}"))
-            },
-        )?;
+        register_log(linker, version, log)?;
         linker.func_wrap(
             "varta",
             type_of.name(),
@@ -246,5 +261,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
+    register_log(
+        linker,
+        varta_common::value::SPARSE_VALUE_VERSION,
+        Host::ValueLogV7,
+    )?;
     Ok(())
 }

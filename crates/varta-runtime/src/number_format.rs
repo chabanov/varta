@@ -1,0 +1,2029 @@
+//! Decimal formatting: fixed uses pinned Ryū; exact ratios round significant digits.
+use crate::{RuntimeContext, host, number};
+use num_bigint::BigUint;
+use varta_common::number_format::NumberFormat;
+use wasmtime::{Caller, Linker};
+const MAX_TEXT_BYTES: usize = 123;
+fn significant(value: f64, precision: u32) -> (String, i32) {
+    if value == 0.0 {
+        return ("0".repeat(precision as usize), 0);
+    }
+    let mut numerator = crate::number_radix::scaled(value.abs().to_bits());
+    let mut denominator = BigUint::from(1_u8) << 1075_usize;
+    let mut exponent = 0;
+    while numerator < denominator {
+        numerator *= 10_u8;
+        exponent -= 1;
+    }
+    while numerator >= &denominator * 10_u8 {
+        denominator *= 10_u8;
+        exponent += 1;
+    }
+    numerator *= BigUint::from(10_u8).pow(precision - 1);
+    let mut rounded = &numerator / &denominator;
+    if (&numerator % &denominator) << 1_usize >= denominator {
+        rounded += 1_u8;
+    }
+    if rounded >= BigUint::from(10_u8).pow(precision) {
+        rounded /= 10_u8;
+        exponent += 1;
+    }
+    (rounded.to_str_radix(10), exponent)
+}
+fn exponential(digits: &str, exponent: i32, negative: bool) -> String {
+    let mut text = String::new();
+    if negative {
+        text.push('-');
+    }
+    text.push_str(&digits[..1]);
+    if digits.len() > 1 {
+        text.push('.');
+        text.push_str(&digits[1..]);
+    }
+    text.push('e');
+    if exponent >= 0 {
+        text.push('+');
+    }
+    text.push_str(&exponent.to_string());
+    text
+}
+fn shortest_exponential(value: f64) -> String {
+    if value == 0.0 {
+        return "0e+0".into();
+    }
+    let text = number::canonical_display(value.abs());
+    let (mantissa, exponent) = text.split_once('e').map_or((text.as_str(), 0), |(m, e)| {
+        (m, e.parse::<i32>().expect("canonical decimal exponent"))
+    });
+    let point = mantissa.find('.').unwrap_or(mantissa.len());
+    let all = mantissa.replace('.', "");
+    let digits = all.trim_start_matches('0');
+    let exponent = exponent + point as i32 - 1 - (all.len() - digits.len()) as i32;
+    exponential(digits.trim_end_matches('0'), exponent, value < 0.0)
+}
+fn precision_text(value: f64, precision: u32) -> String {
+    let (digits, exponent) = significant(value, precision);
+    if exponent < -6 || exponent >= precision as i32 {
+        return exponential(&digits, exponent, value < 0.0);
+    }
+    let mut text = String::new();
+    if value < 0.0 {
+        text.push('-');
+    }
+    let point = exponent + 1;
+    if point <= 0 {
+        text.push_str("0.");
+        text.extend(std::iter::repeat_n('0', (-point) as usize));
+        text.push_str(&digits);
+    } else {
+        let point = point as usize;
+        text.push_str(&digits[..point]);
+        if point < digits.len() {
+            text.push('.');
+            text.push_str(&digits[point..]);
+        }
+    }
+    text
+}
+fn format(mode: NumberFormat, value: f64, digits: f64) -> Result<String, wasmtime::Error> {
+    if digits.is_nan() || (digits.is_finite() && digits.fract() != 0.0) {
+        return Err(wasmtime::Error::msg("noncanonical decimal precision"));
+    }
+    let text = if mode == NumberFormat::Fixed {
+        if !(0.0..=100.0).contains(&digits) {
+            return Err(wasmtime::Error::msg("invalid fixed precision"));
+        }
+        ryu_js::Buffer::new()
+            .format_to_fixed(value, digits as u8)
+            .to_owned()
+    } else if !value.is_finite() {
+        number::canonical_display(value)
+    } else if digits == -1.0 {
+        if mode == NumberFormat::Precision {
+            number::canonical_display(value)
+        } else {
+            shortest_exponential(value)
+        }
+    } else {
+        let minimum = if mode == NumberFormat::Precision {
+            1.0
+        } else {
+            0.0
+        };
+        if !(minimum..=100.0).contains(&digits) {
+            return Err(wasmtime::Error::msg("invalid decimal precision"));
+        }
+        if mode == NumberFormat::Precision {
+            precision_text(value, digits as u32)
+        } else {
+            let (text, exponent) = significant(value, digits as u32 + 1);
+            exponential(&text, exponent, value < 0.0)
+        }
+    };
+    if text.len() > MAX_TEXT_BYTES {
+        return Err(wasmtime::Error::msg("decimal text bound exceeded"));
+    }
+    Ok(text)
+}
+pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
+    for &mode in NumberFormat::ALL {
+        linker.func_wrap(
+            "varta",
+            mode.host().name(),
+            move |mut caller: Caller<'_, RuntimeContext>,
+                  value: f64,
+                  digits: f64|
+                  -> Result<i32, wasmtime::Error> {
+                caller.data_mut().tick()?;
+                let text = format(mode, value, digits)?;
+                let pointer = host::result16(&mut caller, text.as_bytes())
+                    .map_err(|_| wasmtime::Error::msg("decimal result transfer"))?;
+                caller.data().check_budget()?;
+                Ok(pointer)
+            },
+        )?;
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn number_format_known_rounding_defaults_and_negative_zero() {
+        use NumberFormat::*;
+        for (mode, x, p, text) in [
+            (Fixed, 1.005, 2.0, "1.00"),
+            (Fixed, 2.55, 1.0, "2.5"),
+            (Fixed, 2.35, 1.0, "2.4"),
+            (Fixed, -2.5, 0.0, "-3"),
+            (Fixed, -0.0, 2.0, "0.00"),
+            (Fixed, -0.001, 2.0, "-0.00"),
+            (Fixed, 1e21, 2.0, "1e+21"),
+            (Fixed, 1000000000000000128.0, 0.0, "1000000000000000128"),
+            (Exponential, 123.45, 2.0, "1.23e+2"),
+            (Exponential, 9.99, 1.0, "1.0e+1"),
+            (Exponential, 1.25, 1.0, "1.3e+0"),
+            (Exponential, -2.5, 0.0, "-3e+0"),
+            (Exponential, -0.0, 2.0, "0.00e+0"),
+            (Exponential, 0.1, -1.0, "1e-1"),
+            (Exponential, f64::from_bits(1), -1.0, "5e-324"),
+            (Exponential, 1e20, -1.0, "1e+20"),
+            (Precision, 123.45, 4.0, "123.5"),
+            (Precision, 123.45, 2.0, "1.2e+2"),
+            (Precision, 1e-6, 3.0, "0.00000100"),
+            (Precision, 1e-7, 3.0, "1.00e-7"),
+            (Precision, -0.0, 3.0, "0.00"),
+            (Precision, 1.25, 2.0, "1.3"),
+            (Precision, 999.0, 2.0, "1.0e+3"),
+            (Precision, 99.95, 3.0, "100"),
+            (Precision, 1e21, -1.0, "1e+21"),
+        ] {
+            assert_eq!(format(mode, x, p).unwrap(), text, "{mode:?}/{x}/{p}");
+        }
+    }
+    #[test]
+    fn number_format_native_parameter_canonicality_and_nonfinite_range_order() {
+        use NumberFormat::*;
+        for &mode in NumberFormat::ALL {
+            for bad in [f64::NAN, 2.5, -0.5] {
+                assert!(format(mode, 1.0, bad).is_err());
+                assert!(format(mode, f64::INFINITY, bad).is_err());
+            }
+        }
+        for bad in [-1.0, 101.0, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(format(Fixed, f64::INFINITY, bad).is_err());
+        }
+        for mode in [Exponential, Precision] {
+            for digits in [-99.0, 0.0, 101.0, f64::INFINITY, f64::NEG_INFINITY] {
+                assert_eq!(format(mode, f64::INFINITY, digits).unwrap(), "Infinity");
+                assert_eq!(format(mode, f64::NAN, digits).unwrap(), "NaN");
+            }
+        }
+        for mode in [Exponential, Precision] {
+            assert!(format(mode, 1.0, 101.0).is_err());
+            assert!(format(mode, 1.0, f64::INFINITY).is_err());
+        }
+        assert!(format(Precision, 1.0, 0.0).is_err());
+    }
+    #[test]
+    fn number_format_all_exponents_bound_output_and_preserve_high_precision_values() {
+        use NumberFormat::*;
+        for exponent in 0..=2047_u64 {
+            for fraction in [0, 1, 0xf_ffff_ffff_ffff] {
+                let x = f64::from_bits((exponent << 52) | fraction);
+                for x in [x, -x] {
+                    for mode in [Fixed, Exponential, Precision] {
+                        for digits in [1.0, 17.0, 100.0] {
+                            let text = format(mode, x, digits).unwrap();
+                            assert!(text.len() <= MAX_TEXT_BYTES);
+                            if x.is_finite()
+                                && ((mode == Fixed && (x.abs() >= 1e21 || x == 0.0))
+                                    || (mode != Fixed && digits >= 17.0))
+                            {
+                                let back = text.parse::<f64>().unwrap();
+                                if x == 0.0 {
+                                    assert_eq!(back, 0.0);
+                                } else {
+                                    assert_eq!(
+                                        back.to_bits(),
+                                        x.to_bits(),
+                                        "{mode:?}/{digits}: {text}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let x = -f64::from_bits(1e21_f64.to_bits() - 1);
+        assert_eq!(format(Fixed, x, 100.0).unwrap().len(), 123);
+    }
+    #[test]
+    fn number_format_matches_independent_python_decimal_half_up_goldens() {
+        // Decimal.from_float with precision2000 and ROUND_HALF_UP; no formatter reuse.
+        for (mode, bits, digits, text) in [
+            (NumberFormat::Fixed, 0x0000000000000000_u64, 0.0, "0"),
+            (NumberFormat::Fixed, 0x0000000000000000_u64, 1.0, "0.0"),
+            (NumberFormat::Fixed, 0x0000000000000000_u64, 2.0, "0.00"),
+            (
+                NumberFormat::Fixed,
+                0x0000000000000000_u64,
+                16.0,
+                "0.0000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x0000000000000000_u64,
+                20.0,
+                "0.00000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x0000000000000000_u64,
+                99.0,
+                "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x0000000000000000_u64,
+                100.0,
+                "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000000_u64,
+                0.0,
+                "0e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000000_u64,
+                1.0,
+                "0.0e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000000_u64,
+                2.0,
+                "0.00e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000000_u64,
+                16.0,
+                "0.0000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000000_u64,
+                20.0,
+                "0.00000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000000_u64,
+                99.0,
+                "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000000_u64,
+                100.0,
+                "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (NumberFormat::Precision, 0x0000000000000000_u64, 1.0, "0"),
+            (NumberFormat::Precision, 0x0000000000000000_u64, 2.0, "0.0"),
+            (NumberFormat::Precision, 0x0000000000000000_u64, 3.0, "0.00"),
+            (
+                NumberFormat::Precision,
+                0x0000000000000000_u64,
+                17.0,
+                "0.0000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x0000000000000000_u64,
+                99.0,
+                "0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x0000000000000000_u64,
+                100.0,
+                "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x8000000000000000_u64, 0.0, "0"),
+            (NumberFormat::Fixed, 0x8000000000000000_u64, 1.0, "0.0"),
+            (NumberFormat::Fixed, 0x8000000000000000_u64, 2.0, "0.00"),
+            (
+                NumberFormat::Fixed,
+                0x8000000000000000_u64,
+                16.0,
+                "0.0000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x8000000000000000_u64,
+                20.0,
+                "0.00000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x8000000000000000_u64,
+                99.0,
+                "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x8000000000000000_u64,
+                100.0,
+                "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x8000000000000000_u64,
+                0.0,
+                "0e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x8000000000000000_u64,
+                1.0,
+                "0.0e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x8000000000000000_u64,
+                2.0,
+                "0.00e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x8000000000000000_u64,
+                16.0,
+                "0.0000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x8000000000000000_u64,
+                20.0,
+                "0.00000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x8000000000000000_u64,
+                99.0,
+                "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x8000000000000000_u64,
+                100.0,
+                "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (NumberFormat::Precision, 0x8000000000000000_u64, 1.0, "0"),
+            (NumberFormat::Precision, 0x8000000000000000_u64, 2.0, "0.0"),
+            (NumberFormat::Precision, 0x8000000000000000_u64, 3.0, "0.00"),
+            (
+                NumberFormat::Precision,
+                0x8000000000000000_u64,
+                17.0,
+                "0.0000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x8000000000000000_u64,
+                99.0,
+                "0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x8000000000000000_u64,
+                100.0,
+                "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x3fb999999999999a_u64, 0.0, "0"),
+            (NumberFormat::Fixed, 0x3fb999999999999a_u64, 1.0, "0.1"),
+            (NumberFormat::Fixed, 0x3fb999999999999a_u64, 2.0, "0.10"),
+            (
+                NumberFormat::Fixed,
+                0x3fb999999999999a_u64,
+                16.0,
+                "0.1000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3fb999999999999a_u64,
+                20.0,
+                "0.10000000000000000555",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3fb999999999999a_u64,
+                99.0,
+                "0.100000000000000005551115123125782702118158340454101562500000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3fb999999999999a_u64,
+                100.0,
+                "0.1000000000000000055511151231257827021181583404541015625000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3fb999999999999a_u64,
+                0.0,
+                "1e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3fb999999999999a_u64,
+                1.0,
+                "1.0e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3fb999999999999a_u64,
+                2.0,
+                "1.00e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3fb999999999999a_u64,
+                16.0,
+                "1.0000000000000001e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3fb999999999999a_u64,
+                20.0,
+                "1.00000000000000005551e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3fb999999999999a_u64,
+                99.0,
+                "1.000000000000000055511151231257827021181583404541015625000000000000000000000000000000000000000000000e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3fb999999999999a_u64,
+                100.0,
+                "1.0000000000000000555111512312578270211815834045410156250000000000000000000000000000000000000000000000e-1",
+            ),
+            (NumberFormat::Precision, 0x3fb999999999999a_u64, 1.0, "0.1"),
+            (NumberFormat::Precision, 0x3fb999999999999a_u64, 2.0, "0.10"),
+            (
+                NumberFormat::Precision,
+                0x3fb999999999999a_u64,
+                3.0,
+                "0.100",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3fb999999999999a_u64,
+                17.0,
+                "0.10000000000000001",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3fb999999999999a_u64,
+                99.0,
+                "0.100000000000000005551115123125782702118158340454101562500000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3fb999999999999a_u64,
+                100.0,
+                "0.1000000000000000055511151231257827021181583404541015625000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0xbfb999999999999a_u64, 0.0, "-0"),
+            (NumberFormat::Fixed, 0xbfb999999999999a_u64, 1.0, "-0.1"),
+            (NumberFormat::Fixed, 0xbfb999999999999a_u64, 2.0, "-0.10"),
+            (
+                NumberFormat::Fixed,
+                0xbfb999999999999a_u64,
+                16.0,
+                "-0.1000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0xbfb999999999999a_u64,
+                20.0,
+                "-0.10000000000000000555",
+            ),
+            (
+                NumberFormat::Fixed,
+                0xbfb999999999999a_u64,
+                99.0,
+                "-0.100000000000000005551115123125782702118158340454101562500000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0xbfb999999999999a_u64,
+                100.0,
+                "-0.1000000000000000055511151231257827021181583404541015625000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xbfb999999999999a_u64,
+                0.0,
+                "-1e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xbfb999999999999a_u64,
+                1.0,
+                "-1.0e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xbfb999999999999a_u64,
+                2.0,
+                "-1.00e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xbfb999999999999a_u64,
+                16.0,
+                "-1.0000000000000001e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xbfb999999999999a_u64,
+                20.0,
+                "-1.00000000000000005551e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xbfb999999999999a_u64,
+                99.0,
+                "-1.000000000000000055511151231257827021181583404541015625000000000000000000000000000000000000000000000e-1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xbfb999999999999a_u64,
+                100.0,
+                "-1.0000000000000000555111512312578270211815834045410156250000000000000000000000000000000000000000000000e-1",
+            ),
+            (NumberFormat::Precision, 0xbfb999999999999a_u64, 1.0, "-0.1"),
+            (
+                NumberFormat::Precision,
+                0xbfb999999999999a_u64,
+                2.0,
+                "-0.10",
+            ),
+            (
+                NumberFormat::Precision,
+                0xbfb999999999999a_u64,
+                3.0,
+                "-0.100",
+            ),
+            (
+                NumberFormat::Precision,
+                0xbfb999999999999a_u64,
+                17.0,
+                "-0.10000000000000001",
+            ),
+            (
+                NumberFormat::Precision,
+                0xbfb999999999999a_u64,
+                99.0,
+                "-0.100000000000000005551115123125782702118158340454101562500000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0xbfb999999999999a_u64,
+                100.0,
+                "-0.1000000000000000055511151231257827021181583404541015625000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x3ff0147ae147ae14_u64, 0.0, "1"),
+            (NumberFormat::Fixed, 0x3ff0147ae147ae14_u64, 1.0, "1.0"),
+            (NumberFormat::Fixed, 0x3ff0147ae147ae14_u64, 2.0, "1.00"),
+            (
+                NumberFormat::Fixed,
+                0x3ff0147ae147ae14_u64,
+                16.0,
+                "1.0049999999999999",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3ff0147ae147ae14_u64,
+                20.0,
+                "1.00499999999999989342",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3ff0147ae147ae14_u64,
+                99.0,
+                "1.004999999999999893418589635984972119331359863281250000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3ff0147ae147ae14_u64,
+                100.0,
+                "1.0049999999999998934185896359849721193313598632812500000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff0147ae147ae14_u64,
+                0.0,
+                "1e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff0147ae147ae14_u64,
+                1.0,
+                "1.0e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff0147ae147ae14_u64,
+                2.0,
+                "1.00e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff0147ae147ae14_u64,
+                16.0,
+                "1.0049999999999999e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff0147ae147ae14_u64,
+                20.0,
+                "1.00499999999999989342e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff0147ae147ae14_u64,
+                99.0,
+                "1.004999999999999893418589635984972119331359863281250000000000000000000000000000000000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff0147ae147ae14_u64,
+                100.0,
+                "1.0049999999999998934185896359849721193313598632812500000000000000000000000000000000000000000000000000e+0",
+            ),
+            (NumberFormat::Precision, 0x3ff0147ae147ae14_u64, 1.0, "1"),
+            (NumberFormat::Precision, 0x3ff0147ae147ae14_u64, 2.0, "1.0"),
+            (NumberFormat::Precision, 0x3ff0147ae147ae14_u64, 3.0, "1.00"),
+            (
+                NumberFormat::Precision,
+                0x3ff0147ae147ae14_u64,
+                17.0,
+                "1.0049999999999999",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3ff0147ae147ae14_u64,
+                99.0,
+                "1.00499999999999989341858963598497211933135986328125000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3ff0147ae147ae14_u64,
+                100.0,
+                "1.004999999999999893418589635984972119331359863281250000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x4004666666666666_u64, 0.0, "3"),
+            (NumberFormat::Fixed, 0x4004666666666666_u64, 1.0, "2.5"),
+            (NumberFormat::Fixed, 0x4004666666666666_u64, 2.0, "2.55"),
+            (
+                NumberFormat::Fixed,
+                0x4004666666666666_u64,
+                16.0,
+                "2.5499999999999998",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4004666666666666_u64,
+                20.0,
+                "2.54999999999999982236",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4004666666666666_u64,
+                99.0,
+                "2.549999999999999822364316059974953532218933105468750000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4004666666666666_u64,
+                100.0,
+                "2.5499999999999998223643160599749535322189331054687500000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4004666666666666_u64,
+                0.0,
+                "3e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4004666666666666_u64,
+                1.0,
+                "2.5e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4004666666666666_u64,
+                2.0,
+                "2.55e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4004666666666666_u64,
+                16.0,
+                "2.5499999999999998e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4004666666666666_u64,
+                20.0,
+                "2.54999999999999982236e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4004666666666666_u64,
+                99.0,
+                "2.549999999999999822364316059974953532218933105468750000000000000000000000000000000000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4004666666666666_u64,
+                100.0,
+                "2.5499999999999998223643160599749535322189331054687500000000000000000000000000000000000000000000000000e+0",
+            ),
+            (NumberFormat::Precision, 0x4004666666666666_u64, 1.0, "3"),
+            (NumberFormat::Precision, 0x4004666666666666_u64, 2.0, "2.5"),
+            (NumberFormat::Precision, 0x4004666666666666_u64, 3.0, "2.55"),
+            (
+                NumberFormat::Precision,
+                0x4004666666666666_u64,
+                17.0,
+                "2.5499999999999998",
+            ),
+            (
+                NumberFormat::Precision,
+                0x4004666666666666_u64,
+                99.0,
+                "2.54999999999999982236431605997495353221893310546875000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x4004666666666666_u64,
+                100.0,
+                "2.549999999999999822364316059974953532218933105468750000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x3ff4000000000000_u64, 0.0, "1"),
+            (NumberFormat::Fixed, 0x3ff4000000000000_u64, 1.0, "1.3"),
+            (NumberFormat::Fixed, 0x3ff4000000000000_u64, 2.0, "1.25"),
+            (
+                NumberFormat::Fixed,
+                0x3ff4000000000000_u64,
+                16.0,
+                "1.2500000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3ff4000000000000_u64,
+                20.0,
+                "1.25000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3ff4000000000000_u64,
+                99.0,
+                "1.250000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3ff4000000000000_u64,
+                100.0,
+                "1.2500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff4000000000000_u64,
+                0.0,
+                "1e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff4000000000000_u64,
+                1.0,
+                "1.3e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff4000000000000_u64,
+                2.0,
+                "1.25e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff4000000000000_u64,
+                16.0,
+                "1.2500000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff4000000000000_u64,
+                20.0,
+                "1.25000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff4000000000000_u64,
+                99.0,
+                "1.250000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3ff4000000000000_u64,
+                100.0,
+                "1.2500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (NumberFormat::Precision, 0x3ff4000000000000_u64, 1.0, "1"),
+            (NumberFormat::Precision, 0x3ff4000000000000_u64, 2.0, "1.3"),
+            (NumberFormat::Precision, 0x3ff4000000000000_u64, 3.0, "1.25"),
+            (
+                NumberFormat::Precision,
+                0x3ff4000000000000_u64,
+                17.0,
+                "1.2500000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3ff4000000000000_u64,
+                99.0,
+                "1.25000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3ff4000000000000_u64,
+                100.0,
+                "1.250000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0xc004000000000000_u64, 0.0, "-3"),
+            (NumberFormat::Fixed, 0xc004000000000000_u64, 1.0, "-2.5"),
+            (NumberFormat::Fixed, 0xc004000000000000_u64, 2.0, "-2.50"),
+            (
+                NumberFormat::Fixed,
+                0xc004000000000000_u64,
+                16.0,
+                "-2.5000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0xc004000000000000_u64,
+                20.0,
+                "-2.50000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0xc004000000000000_u64,
+                99.0,
+                "-2.500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0xc004000000000000_u64,
+                100.0,
+                "-2.5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xc004000000000000_u64,
+                0.0,
+                "-3e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xc004000000000000_u64,
+                1.0,
+                "-2.5e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xc004000000000000_u64,
+                2.0,
+                "-2.50e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xc004000000000000_u64,
+                16.0,
+                "-2.5000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xc004000000000000_u64,
+                20.0,
+                "-2.50000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xc004000000000000_u64,
+                99.0,
+                "-2.500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0xc004000000000000_u64,
+                100.0,
+                "-2.5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (NumberFormat::Precision, 0xc004000000000000_u64, 1.0, "-3"),
+            (NumberFormat::Precision, 0xc004000000000000_u64, 2.0, "-2.5"),
+            (
+                NumberFormat::Precision,
+                0xc004000000000000_u64,
+                3.0,
+                "-2.50",
+            ),
+            (
+                NumberFormat::Precision,
+                0xc004000000000000_u64,
+                17.0,
+                "-2.5000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0xc004000000000000_u64,
+                99.0,
+                "-2.50000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0xc004000000000000_u64,
+                100.0,
+                "-2.500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x4023fae147ae147b_u64, 0.0, "10"),
+            (NumberFormat::Fixed, 0x4023fae147ae147b_u64, 1.0, "10.0"),
+            (NumberFormat::Fixed, 0x4023fae147ae147b_u64, 2.0, "9.99"),
+            (
+                NumberFormat::Fixed,
+                0x4023fae147ae147b_u64,
+                16.0,
+                "9.9900000000000002",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4023fae147ae147b_u64,
+                20.0,
+                "9.99000000000000021316",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4023fae147ae147b_u64,
+                99.0,
+                "9.990000000000000213162820728030055761337280273437500000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4023fae147ae147b_u64,
+                100.0,
+                "9.9900000000000002131628207280300557613372802734375000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4023fae147ae147b_u64,
+                0.0,
+                "1e+1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4023fae147ae147b_u64,
+                1.0,
+                "1.0e+1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4023fae147ae147b_u64,
+                2.0,
+                "9.99e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4023fae147ae147b_u64,
+                16.0,
+                "9.9900000000000002e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4023fae147ae147b_u64,
+                20.0,
+                "9.99000000000000021316e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4023fae147ae147b_u64,
+                99.0,
+                "9.990000000000000213162820728030055761337280273437500000000000000000000000000000000000000000000000000e+0",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4023fae147ae147b_u64,
+                100.0,
+                "9.9900000000000002131628207280300557613372802734375000000000000000000000000000000000000000000000000000e+0",
+            ),
+            (NumberFormat::Precision, 0x4023fae147ae147b_u64, 1.0, "1e+1"),
+            (NumberFormat::Precision, 0x4023fae147ae147b_u64, 2.0, "10"),
+            (NumberFormat::Precision, 0x4023fae147ae147b_u64, 3.0, "9.99"),
+            (
+                NumberFormat::Precision,
+                0x4023fae147ae147b_u64,
+                17.0,
+                "9.9900000000000002",
+            ),
+            (
+                NumberFormat::Precision,
+                0x4023fae147ae147b_u64,
+                99.0,
+                "9.99000000000000021316282072803005576133728027343750000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x4023fae147ae147b_u64,
+                100.0,
+                "9.990000000000000213162820728030055761337280273437500000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x4058fccccccccccd_u64, 0.0, "100"),
+            (NumberFormat::Fixed, 0x4058fccccccccccd_u64, 1.0, "100.0"),
+            (NumberFormat::Fixed, 0x4058fccccccccccd_u64, 2.0, "99.95"),
+            (
+                NumberFormat::Fixed,
+                0x4058fccccccccccd_u64,
+                16.0,
+                "99.9500000000000028",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4058fccccccccccd_u64,
+                20.0,
+                "99.95000000000000284217",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4058fccccccccccd_u64,
+                99.0,
+                "99.950000000000002842170943040400743484497070312500000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x4058fccccccccccd_u64,
+                100.0,
+                "99.9500000000000028421709430404007434844970703125000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4058fccccccccccd_u64,
+                0.0,
+                "1e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4058fccccccccccd_u64,
+                1.0,
+                "1.0e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4058fccccccccccd_u64,
+                2.0,
+                "1.00e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4058fccccccccccd_u64,
+                16.0,
+                "9.9950000000000003e+1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4058fccccccccccd_u64,
+                20.0,
+                "9.99500000000000028422e+1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4058fccccccccccd_u64,
+                99.0,
+                "9.995000000000000284217094304040074348449707031250000000000000000000000000000000000000000000000000000e+1",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x4058fccccccccccd_u64,
+                100.0,
+                "9.9950000000000002842170943040400743484497070312500000000000000000000000000000000000000000000000000000e+1",
+            ),
+            (NumberFormat::Precision, 0x4058fccccccccccd_u64, 1.0, "1e+2"),
+            (
+                NumberFormat::Precision,
+                0x4058fccccccccccd_u64,
+                2.0,
+                "1.0e+2",
+            ),
+            (NumberFormat::Precision, 0x4058fccccccccccd_u64, 3.0, "100"),
+            (
+                NumberFormat::Precision,
+                0x4058fccccccccccd_u64,
+                17.0,
+                "99.950000000000003",
+            ),
+            (
+                NumberFormat::Precision,
+                0x4058fccccccccccd_u64,
+                99.0,
+                "99.9500000000000028421709430404007434844970703125000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x4058fccccccccccd_u64,
+                100.0,
+                "99.95000000000000284217094304040074348449707031250000000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x405edccccccccccd_u64, 0.0, "123"),
+            (NumberFormat::Fixed, 0x405edccccccccccd_u64, 1.0, "123.5"),
+            (NumberFormat::Fixed, 0x405edccccccccccd_u64, 2.0, "123.45"),
+            (
+                NumberFormat::Fixed,
+                0x405edccccccccccd_u64,
+                16.0,
+                "123.4500000000000028",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x405edccccccccccd_u64,
+                20.0,
+                "123.45000000000000284217",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x405edccccccccccd_u64,
+                99.0,
+                "123.450000000000002842170943040400743484497070312500000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x405edccccccccccd_u64,
+                100.0,
+                "123.4500000000000028421709430404007434844970703125000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x405edccccccccccd_u64,
+                0.0,
+                "1e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x405edccccccccccd_u64,
+                1.0,
+                "1.2e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x405edccccccccccd_u64,
+                2.0,
+                "1.23e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x405edccccccccccd_u64,
+                16.0,
+                "1.2345000000000000e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x405edccccccccccd_u64,
+                20.0,
+                "1.23450000000000002842e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x405edccccccccccd_u64,
+                99.0,
+                "1.234500000000000028421709430404007434844970703125000000000000000000000000000000000000000000000000000e+2",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x405edccccccccccd_u64,
+                100.0,
+                "1.2345000000000000284217094304040074348449707031250000000000000000000000000000000000000000000000000000e+2",
+            ),
+            (NumberFormat::Precision, 0x405edccccccccccd_u64, 1.0, "1e+2"),
+            (
+                NumberFormat::Precision,
+                0x405edccccccccccd_u64,
+                2.0,
+                "1.2e+2",
+            ),
+            (NumberFormat::Precision, 0x405edccccccccccd_u64, 3.0, "123"),
+            (
+                NumberFormat::Precision,
+                0x405edccccccccccd_u64,
+                17.0,
+                "123.45000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x405edccccccccccd_u64,
+                99.0,
+                "123.450000000000002842170943040400743484497070312500000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x405edccccccccccd_u64,
+                100.0,
+                "123.4500000000000028421709430404007434844970703125000000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x3eb0c6f7a0b5ed8d_u64, 0.0, "0"),
+            (NumberFormat::Fixed, 0x3eb0c6f7a0b5ed8d_u64, 1.0, "0.0"),
+            (NumberFormat::Fixed, 0x3eb0c6f7a0b5ed8d_u64, 2.0, "0.00"),
+            (
+                NumberFormat::Fixed,
+                0x3eb0c6f7a0b5ed8d_u64,
+                16.0,
+                "0.0000010000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3eb0c6f7a0b5ed8d_u64,
+                20.0,
+                "0.00000100000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3eb0c6f7a0b5ed8d_u64,
+                99.0,
+                "0.000000999999999999999954748111825886258685613938723690807819366455078125000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3eb0c6f7a0b5ed8d_u64,
+                100.0,
+                "0.0000009999999999999999547481118258862586856139387236908078193664550781250000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3eb0c6f7a0b5ed8d_u64,
+                0.0,
+                "1e-6",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3eb0c6f7a0b5ed8d_u64,
+                1.0,
+                "1.0e-6",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3eb0c6f7a0b5ed8d_u64,
+                2.0,
+                "1.00e-6",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3eb0c6f7a0b5ed8d_u64,
+                16.0,
+                "9.9999999999999995e-7",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3eb0c6f7a0b5ed8d_u64,
+                20.0,
+                "9.99999999999999954748e-7",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3eb0c6f7a0b5ed8d_u64,
+                99.0,
+                "9.999999999999999547481118258862586856139387236908078193664550781250000000000000000000000000000000000e-7",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3eb0c6f7a0b5ed8d_u64,
+                100.0,
+                "9.9999999999999995474811182588625868561393872369080781936645507812500000000000000000000000000000000000e-7",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3eb0c6f7a0b5ed8d_u64,
+                1.0,
+                "0.000001",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3eb0c6f7a0b5ed8d_u64,
+                2.0,
+                "0.0000010",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3eb0c6f7a0b5ed8d_u64,
+                3.0,
+                "0.00000100",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3eb0c6f7a0b5ed8d_u64,
+                17.0,
+                "9.9999999999999995e-7",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3eb0c6f7a0b5ed8d_u64,
+                99.0,
+                "9.99999999999999954748111825886258685613938723690807819366455078125000000000000000000000000000000000e-7",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3eb0c6f7a0b5ed8d_u64,
+                100.0,
+                "9.999999999999999547481118258862586856139387236908078193664550781250000000000000000000000000000000000e-7",
+            ),
+            (NumberFormat::Fixed, 0x3e7ad7f29abcaf48_u64, 0.0, "0"),
+            (NumberFormat::Fixed, 0x3e7ad7f29abcaf48_u64, 1.0, "0.0"),
+            (NumberFormat::Fixed, 0x3e7ad7f29abcaf48_u64, 2.0, "0.00"),
+            (
+                NumberFormat::Fixed,
+                0x3e7ad7f29abcaf48_u64,
+                16.0,
+                "0.0000001000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3e7ad7f29abcaf48_u64,
+                20.0,
+                "0.00000010000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3e7ad7f29abcaf48_u64,
+                99.0,
+                "0.000000099999999999999995474811182588625868561393872369080781936645507812500000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x3e7ad7f29abcaf48_u64,
+                100.0,
+                "0.0000000999999999999999954748111825886258685613938723690807819366455078125000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3e7ad7f29abcaf48_u64,
+                0.0,
+                "1e-7",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3e7ad7f29abcaf48_u64,
+                1.0,
+                "1.0e-7",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3e7ad7f29abcaf48_u64,
+                2.0,
+                "1.00e-7",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3e7ad7f29abcaf48_u64,
+                16.0,
+                "9.9999999999999995e-8",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3e7ad7f29abcaf48_u64,
+                20.0,
+                "9.99999999999999954748e-8",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3e7ad7f29abcaf48_u64,
+                99.0,
+                "9.999999999999999547481118258862586856139387236908078193664550781250000000000000000000000000000000000e-8",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x3e7ad7f29abcaf48_u64,
+                100.0,
+                "9.9999999999999995474811182588625868561393872369080781936645507812500000000000000000000000000000000000e-8",
+            ),
+            (NumberFormat::Precision, 0x3e7ad7f29abcaf48_u64, 1.0, "1e-7"),
+            (
+                NumberFormat::Precision,
+                0x3e7ad7f29abcaf48_u64,
+                2.0,
+                "1.0e-7",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3e7ad7f29abcaf48_u64,
+                3.0,
+                "1.00e-7",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3e7ad7f29abcaf48_u64,
+                17.0,
+                "9.9999999999999995e-8",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3e7ad7f29abcaf48_u64,
+                99.0,
+                "9.99999999999999954748111825886258685613938723690807819366455078125000000000000000000000000000000000e-8",
+            ),
+            (
+                NumberFormat::Precision,
+                0x3e7ad7f29abcaf48_u64,
+                100.0,
+                "9.999999999999999547481118258862586856139387236908078193664550781250000000000000000000000000000000000e-8",
+            ),
+            (NumberFormat::Fixed, 0x0000000000000001_u64, 0.0, "0"),
+            (NumberFormat::Fixed, 0x0000000000000001_u64, 1.0, "0.0"),
+            (NumberFormat::Fixed, 0x0000000000000001_u64, 2.0, "0.00"),
+            (
+                NumberFormat::Fixed,
+                0x0000000000000001_u64,
+                16.0,
+                "0.0000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x0000000000000001_u64,
+                20.0,
+                "0.00000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x0000000000000001_u64,
+                99.0,
+                "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x0000000000000001_u64,
+                100.0,
+                "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000001_u64,
+                0.0,
+                "5e-324",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000001_u64,
+                1.0,
+                "4.9e-324",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000001_u64,
+                2.0,
+                "4.94e-324",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000001_u64,
+                16.0,
+                "4.9406564584124654e-324",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000001_u64,
+                20.0,
+                "4.94065645841246544177e-324",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000001_u64,
+                99.0,
+                "4.940656458412465441765687928682213723650598026143247644255856825006755072702087518652998363616359924e-324",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x0000000000000001_u64,
+                100.0,
+                "4.9406564584124654417656879286822137236505980261432476442558568250067550727020875186529983636163599238e-324",
+            ),
+            (
+                NumberFormat::Precision,
+                0x0000000000000001_u64,
+                1.0,
+                "5e-324",
+            ),
+            (
+                NumberFormat::Precision,
+                0x0000000000000001_u64,
+                2.0,
+                "4.9e-324",
+            ),
+            (
+                NumberFormat::Precision,
+                0x0000000000000001_u64,
+                3.0,
+                "4.94e-324",
+            ),
+            (
+                NumberFormat::Precision,
+                0x0000000000000001_u64,
+                17.0,
+                "4.9406564584124654e-324",
+            ),
+            (
+                NumberFormat::Precision,
+                0x0000000000000001_u64,
+                99.0,
+                "4.94065645841246544176568792868221372365059802614324764425585682500675507270208751865299836361635992e-324",
+            ),
+            (
+                NumberFormat::Precision,
+                0x0000000000000001_u64,
+                100.0,
+                "4.940656458412465441765687928682213723650598026143247644255856825006755072702087518652998363616359924e-324",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x7fefffffffffffff_u64,
+                0.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x7fefffffffffffff_u64,
+                1.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x7fefffffffffffff_u64,
+                2.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x7fefffffffffffff_u64,
+                16.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x7fefffffffffffff_u64,
+                20.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x7fefffffffffffff_u64,
+                99.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x7fefffffffffffff_u64,
+                100.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x7fefffffffffffff_u64,
+                0.0,
+                "2e+308",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x7fefffffffffffff_u64,
+                1.0,
+                "1.8e+308",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x7fefffffffffffff_u64,
+                2.0,
+                "1.80e+308",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x7fefffffffffffff_u64,
+                16.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x7fefffffffffffff_u64,
+                20.0,
+                "1.79769313486231570815e+308",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x7fefffffffffffff_u64,
+                99.0,
+                "1.797693134862315708145274237317043567980705675258449965989174768031572607800285387605895586327668782e+308",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x7fefffffffffffff_u64,
+                100.0,
+                "1.7976931348623157081452742373170435679807056752584499659891747680315726078002853876058955863276687817e+308",
+            ),
+            (
+                NumberFormat::Precision,
+                0x7fefffffffffffff_u64,
+                1.0,
+                "2e+308",
+            ),
+            (
+                NumberFormat::Precision,
+                0x7fefffffffffffff_u64,
+                2.0,
+                "1.8e+308",
+            ),
+            (
+                NumberFormat::Precision,
+                0x7fefffffffffffff_u64,
+                3.0,
+                "1.80e+308",
+            ),
+            (
+                NumberFormat::Precision,
+                0x7fefffffffffffff_u64,
+                17.0,
+                "1.7976931348623157e+308",
+            ),
+            (
+                NumberFormat::Precision,
+                0x7fefffffffffffff_u64,
+                99.0,
+                "1.79769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878e+308",
+            ),
+            (
+                NumberFormat::Precision,
+                0x7fefffffffffffff_u64,
+                100.0,
+                "1.797693134862315708145274237317043567980705675258449965989174768031572607800285387605895586327668782e+308",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x43abc16d674ec801_u64,
+                0.0,
+                "1000000000000000128",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x43abc16d674ec801_u64,
+                1.0,
+                "1000000000000000128.0",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x43abc16d674ec801_u64,
+                2.0,
+                "1000000000000000128.00",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x43abc16d674ec801_u64,
+                16.0,
+                "1000000000000000128.0000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x43abc16d674ec801_u64,
+                20.0,
+                "1000000000000000128.00000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x43abc16d674ec801_u64,
+                99.0,
+                "1000000000000000128.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x43abc16d674ec801_u64,
+                100.0,
+                "1000000000000000128.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x43abc16d674ec801_u64,
+                0.0,
+                "1e+18",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x43abc16d674ec801_u64,
+                1.0,
+                "1.0e+18",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x43abc16d674ec801_u64,
+                2.0,
+                "1.00e+18",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x43abc16d674ec801_u64,
+                16.0,
+                "1.0000000000000001e+18",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x43abc16d674ec801_u64,
+                20.0,
+                "1.00000000000000012800e+18",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x43abc16d674ec801_u64,
+                99.0,
+                "1.000000000000000128000000000000000000000000000000000000000000000000000000000000000000000000000000000e+18",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x43abc16d674ec801_u64,
+                100.0,
+                "1.0000000000000001280000000000000000000000000000000000000000000000000000000000000000000000000000000000e+18",
+            ),
+            (
+                NumberFormat::Precision,
+                0x43abc16d674ec801_u64,
+                1.0,
+                "1e+18",
+            ),
+            (
+                NumberFormat::Precision,
+                0x43abc16d674ec801_u64,
+                2.0,
+                "1.0e+18",
+            ),
+            (
+                NumberFormat::Precision,
+                0x43abc16d674ec801_u64,
+                3.0,
+                "1.00e+18",
+            ),
+            (
+                NumberFormat::Precision,
+                0x43abc16d674ec801_u64,
+                17.0,
+                "1.0000000000000001e+18",
+            ),
+            (
+                NumberFormat::Precision,
+                0x43abc16d674ec801_u64,
+                99.0,
+                "1000000000000000128.00000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x43abc16d674ec801_u64,
+                100.0,
+                "1000000000000000128.000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (NumberFormat::Fixed, 0x444b1ae4d6e2ef50_u64, 0.0, "1e+21"),
+            (NumberFormat::Fixed, 0x444b1ae4d6e2ef50_u64, 1.0, "1e+21"),
+            (NumberFormat::Fixed, 0x444b1ae4d6e2ef50_u64, 2.0, "1e+21"),
+            (NumberFormat::Fixed, 0x444b1ae4d6e2ef50_u64, 16.0, "1e+21"),
+            (NumberFormat::Fixed, 0x444b1ae4d6e2ef50_u64, 20.0, "1e+21"),
+            (NumberFormat::Fixed, 0x444b1ae4d6e2ef50_u64, 99.0, "1e+21"),
+            (NumberFormat::Fixed, 0x444b1ae4d6e2ef50_u64, 100.0, "1e+21"),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef50_u64,
+                0.0,
+                "1e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef50_u64,
+                1.0,
+                "1.0e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef50_u64,
+                2.0,
+                "1.00e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef50_u64,
+                16.0,
+                "1.0000000000000000e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef50_u64,
+                20.0,
+                "1.00000000000000000000e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef50_u64,
+                99.0,
+                "1.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef50_u64,
+                100.0,
+                "1.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e+21",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef50_u64,
+                1.0,
+                "1e+21",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef50_u64,
+                2.0,
+                "1.0e+21",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef50_u64,
+                3.0,
+                "1.00e+21",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef50_u64,
+                17.0,
+                "1.0000000000000000e+21",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef50_u64,
+                99.0,
+                "1000000000000000000000.00000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef50_u64,
+                100.0,
+                "1000000000000000000000.000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x444b1ae4d6e2ef4f_u64,
+                0.0,
+                "999999999999999868928",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x444b1ae4d6e2ef4f_u64,
+                1.0,
+                "999999999999999868928.0",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x444b1ae4d6e2ef4f_u64,
+                2.0,
+                "999999999999999868928.00",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x444b1ae4d6e2ef4f_u64,
+                16.0,
+                "999999999999999868928.0000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x444b1ae4d6e2ef4f_u64,
+                20.0,
+                "999999999999999868928.00000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x444b1ae4d6e2ef4f_u64,
+                99.0,
+                "999999999999999868928.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Fixed,
+                0x444b1ae4d6e2ef4f_u64,
+                100.0,
+                "999999999999999868928.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef4f_u64,
+                0.0,
+                "1e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef4f_u64,
+                1.0,
+                "1.0e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef4f_u64,
+                2.0,
+                "1.00e+21",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef4f_u64,
+                16.0,
+                "9.9999999999999987e+20",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef4f_u64,
+                20.0,
+                "9.99999999999999868928e+20",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef4f_u64,
+                99.0,
+                "9.999999999999998689280000000000000000000000000000000000000000000000000000000000000000000000000000000e+20",
+            ),
+            (
+                NumberFormat::Exponential,
+                0x444b1ae4d6e2ef4f_u64,
+                100.0,
+                "9.9999999999999986892800000000000000000000000000000000000000000000000000000000000000000000000000000000e+20",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef4f_u64,
+                1.0,
+                "1e+21",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef4f_u64,
+                2.0,
+                "1.0e+21",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef4f_u64,
+                3.0,
+                "1.00e+21",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef4f_u64,
+                17.0,
+                "9.9999999999999987e+20",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef4f_u64,
+                99.0,
+                "999999999999999868928.000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                NumberFormat::Precision,
+                0x444b1ae4d6e2ef4f_u64,
+                100.0,
+                "999999999999999868928.0000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        ] {
+            assert_eq!(
+                format(mode, f64::from_bits(bits), digits).unwrap(),
+                text,
+                "{mode:?}/{bits:x}/{digits}"
+            );
+        }
+    }
+}

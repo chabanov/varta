@@ -8,7 +8,7 @@ native executable containing portable Wasm and its runtime.
 Status: MVP / active development. The [architecture contract](docs/architecture.md)
 describes the implemented language, trust boundaries, ABI and limits. The
 [development plan](docs/development-plan.md) tracks audit fixes and next milestones.
-The [2026-10-27 checkpoint](docs/development-plan.md#development-checkpoint--2026-10-27)
+The [2026-10-28 checkpoint](docs/development-plan.md#development-checkpoint--2026-10-28)
 records completed core increments, verified test counts, remaining limits and the
 next steps for checked record access.
 
@@ -92,7 +92,30 @@ plus map/filter/forEach/find/reduce/some/every as additive compiler operations.
 `checked-f64-utf16-v13` adds sparse array presence and hole-preserving map results.
 `checked-f64-utf16-v14` adds bounded indexed extension, delete and writable length.
 `checked-f64-utf16-v15` adds checked Number exponentiation (`**`, `**=`), using
-host ABI v18 with the existing value/schema v12 layouts.
+host ABI v18 with the existing value/schema v12 layouts. It also admits the
+documented direct Math intrinsics and non-coercing Number predicates below.
+`checked-f64-utf16-v16` adds the twenty deterministic native Math operations
+described below, with host ABI v19 and the same value/schema v12 layouts.
+`checked-f64-utf16-v17` adds Math.random through host ABI v20, inheriting v16
+without changing the value/schema v12 layouts.
+`checked-f64-utf16-v18` adds ECMAScript decimal Number formatting in scalar and
+union logging through host ABI v21, retaining value/schema v12.
+`checked-f64-utf16-v19` adds primitive String(...) conversion through ABI v22
+with the same value/schema v12 layouts.
+`checked-f64-utf16-v20` adds primitive Number(...) conversion and checked numeric
+String parsing through ABI v23, retaining value/schema v12.
+`checked-f64-utf16-v21` adds checked direct Number.toString calls in bases 2–36
+through ABI v24 with value/schema v12.
+`checked-f64-utf16-v22` adds direct Number.toFixed/toExponential/toPrecision
+and guest-only Number.valueOf through ABI v25 with value/schema v12.
+`checked-f64-utf16-v23` adds global and Number.parseInt/parseFloat calls through
+ABI v26, retaining value/schema v12. It also admits direct Boolean(...) and
+coercing global isFinite/isNaN as described below.
+`checked-f64-utf16-v24` adds truth-based local guards and short-circuit RHS
+refinement, sharing host ABI26 / value/schema12 with v23.
+`checked-f64-utf16-v25` adds checked Array.findIndex/findLast/findLastIndex,
+sharing host ABI26 / value/schema12 and inheriting v24. Rebuild both native
+companions for the expanded protocol2 profile list.
 General dynamic objects and external adapters remain pending. The
 [migration contract](docs/development-plan.md#k4--ecmascript-value-profile-and-language-expansion)
 preserves the existing artifact and tool semantics.
@@ -564,7 +587,8 @@ Managed tracing also reclaims unreachable cycles involving closures and bindings
 
 This increment captures bindings initialized before arrow creation. Captures
 before initialization (including self-initialization), mutable captured union
-narrowing and captures under an active guard refinement are explicitly rejected.
+narrowing and captures under an active guard refinement are explicitly rejected. These older-profile restrictions are relaxed by v24
+write-aware refinement/capture analysis.
 Function expressions, private self names and typed this are now available below.
 Outer-binding recursive initialization, function-valued aggregates/JSON and async
 remain pending. The profile uses host ABI v15, unchanged value/schema v11,
@@ -1650,7 +1674,7 @@ NaN/zero/Infinity rules follow Number exponentiation, including odd-integer sign
 for negative zero/infinity, NaN for finite negative bases with non-integral powers,
 and NaN for either ±1 raised to an infinite power. Finite ordinary results use
 the platform's implementation-approximated binary64 power; exact last bits may
-differ across platforms. BigInt, coercive operands and `Math.pow` are not added.
+differ across platforms. BigInt and coercive operands are not added.
 Unary bases need parentheses, as in `(-2) ** 3`.
 
 The versioned pure `number_power(f64,f64)->f64` import requires no permission and
@@ -1664,9 +1688,15 @@ See the [contract](docs/architecture.md#number-power-profile-and-host-abi-v18).
 ## Basic Math functions (opt-in v15)
 
 Set `languageProfile` to `checked-f64-utf16-v15` in `varta.config.json` for
-direct `Math.abs`, `Math.floor`, `Math.ceil`, `Math.trunc`, `Math.round` and
-`Math.sqrt` calls. Each accepts exactly one narrowed Number argument and returns
-a Number. These are compiler intrinsics using guest instructions.
+direct calls to the following Math functions. Arguments must be narrowed Numbers;
+results are Numbers. Most compile to guest instructions; `pow` uses the existing
+pure Number-power host operation shared with `**`.
+
+| Functions | Admitted arguments |
+| --- | --- |
+| `abs`, `floor`, `ceil`, `trunc`, `round`, `sqrt`, `sign`, `fround`, `f16round`, `clz32` | Exactly one Number |
+| `imul`, `pow` | Exactly two Numbers |
+| `min`, `max`, `hypot` | Zero or more Numbers |
 
 ```ts
 export function main(): void {
@@ -1677,6 +1707,18 @@ export function main(): void {
   console.log(Math.round(-2.5));           // -2
   console.log(Math.round(0.49999999999999994)); // 0
   console.log(1 / Math.round(-0.5));       // -Infinity (negative zero result)
+  console.log(Math.min());                // Infinity
+  console.log(Math.max(2, -1, 7));         // 7
+  console.log(1 / Math.min(0, -0));        // -Infinity
+  console.log(1 / Math.sign(-0));          // -Infinity
+  console.log(Math.fround(16777217));      // 16777216
+  console.log(Math.clz32(1));              // 31
+  console.log(Math.imul(4294967295, 5));    // -5
+  console.log(Math.pow(2, 3));             // 8
+  console.log(Math.f16round(1.0004882812500002)); // 1.0009765625
+  console.log(Math.f16round(Math.fround(1.0004882812500002))); // 1
+  console.log(Math.hypot(3, 4, 12));       // 13
+  console.log(Math.hypot(NaN, Infinity));  // Infinity
 }
 ```
 
@@ -1684,12 +1726,613 @@ export function main(): void {
 zero. `sqrt` preserves negative zero and produces NaN for negative nonzero inputs.
 NaN and infinities follow each function's Number rules. Arguments run once before
 the operation; their errors and permissions retain their existing behavior.
+`min/max` evaluate all arguments in order, including arguments following NaN.
+`min()` returns Infinity and `max()` returns -Infinity; negative zero wins a
+minimum tie and positive zero wins a maximum tie. `sign` preserves NaN and both
+zeroes. `fround` rounds through binary32 using ties to even. `clz32` counts leading
+zeroes after Number-to-Uint32 conversion; `imul` returns the signed low 32 bits of
+the product, without losing bits through a floating-point multiplication.
+`pow` shares the Number rules, implementation-approximated finite results and
+one-call/deadline budgets of `**`; it needs no permission and preserves host status.
+`f16round` rounds directly from binary64 to binary16 using ties to even and returns
+the rounded value as an ordinary Number. It preserves NaN, infinities and signed
+zero, including underflow to -0. The smallest positive result is 2^-24; values with
+magnitude at least 65520 overflow to signed infinity. No binary32 intermediate is
+used: it would double-round values such as the example above.
+`hypot` computes the square root of the sum of squares with power-of-two scaling
+and compensated arithmetic, avoiding the premature overflow/underflow of directly
+squaring the original inputs. All arguments execute once before special-value
+selection: any infinity wins over NaN, NaN otherwise propagates, and an empty or
+all-zero call returns +0. Finite results are implementation-approximated. This
+operation uses guest instructions, allocates no argument array and preserves status.
 
-Only direct calls on unshadowed `Math` are supported. Omitted/extra/spread
+Only direct calls on unshadowed `Math` are supported. Wrong arity, spread
 arguments, coercion, unnarrowed unions, computed names, borrowed functions,
-constants and other Math methods remain unsupported. Older profiles reject this
-subset. It adds no host import, permission, helper export or version/limit change
+other Math properties and methods remain unsupported. Older profiles reject this
+subset. It adds no new registered import, permission, helper export or version/limit change
 within v15/ABI18. See the [contract](docs/architecture.md#checked-math-intrinsic-subset).
+
+## Write-aware refinements and captures (v24)
+
+V24 permits writes to guard-refined locals while tracking which type facts remain
+valid. Stores validate against the declared type and replace the old fact with
+the assigned value's type. Physical storage retains the full declared union.
+Mutually exclusive branches have their own facts; their join combines types from
+paths that complete normally, excluding branches that return, throw or jump.
+For example, assigning a record in both branches makes its fields available
+after the `if`; `if (!value) return` preserves the remaining truth guard.
+
+```ts
+export function main(): void {
+  let value: {n: number} | undefined = {n: 7};
+  const clear = (): void => { value = undefined; };
+  if (value) {
+    const saved = value.n;
+    clear();
+    console.log(saved); // 7: evaluated before the mutation
+    if (value) { console.log(value.n); }
+    else { console.log("cleared"); }
+  }
+  const fixed: {n: number} | undefined = {n: 9};
+  if (fixed) {
+    const read = (): number => fixed.n;
+    console.log(read()); // 9: const capture keeps its proven type
+  }
+}
+```
+
+Calls with unknown effects invalidate facts for mutable captured locals. V24
+uses known closure summaries and immutable function aliases to invalidate only
+matching captured cells. Module calls account for function arguments; calls without
+a reachable caller closure preserve local binding facts.
+Their closures see the full declared cell type and can perform their own guards.
+Proven types of const bindings transfer through nested captures because those
+bindings cannot be reassigned. Known non-reentrant native calls keep local facts.
+Summaries propagate through functions that capture only other functions; callee-local
+writes do not invalidate caller bindings. Mutable/returned function identities and
+unknown self/opaque callback calls retain the conservative fallback. Stable
+callback parameters are now bound to actual input effects, including forwarding,
+const copies and read-only captures. Reassigned inputs or nested stores to those
+parameters remain conservative. Default/rest prologues and Function receivers
+retain their original argument positions. See the
+[callback-input contract](docs/architecture.md#stable-callback-parameter-effects-v24). This does not infer
+unchanged record properties or heap aliases. See the
+[call-effects contract](docs/architecture.md#proven-call-effects-for-local-cells-v24).
+
+Loop analysis accounts for assignments, updates, patterns, assignment heads and
+possible callback mutations before lowering repeated code. Body writes invalidate
+update/test facts; `continue` may bypass a later store. Matching continue states
+join normal body fallthrough before the update/test, and matching breaks join
+false-test exits. Literal-true loops have no false edge; for initializers run once
+before repeated-part mutation analysis. Lexical shadows and
+parameters are distinct bindings. Tests with writes/callbacks do not create stale
+branch guards. Short-circuit/default RHS facts stay conditional; logical assignment
+targets receive the selected result type. Switch direct entries/fallthrough, label
+breaks and exception prefixes cannot inherit a skipped store. Loop/label/switch
+exits now join their actual completion targets. Finalizers transform or cancel
+pending exit facts before those joins. Handler/finalizer entry, repeated-body
+invalidation and switch selection remain conservative; loop fixed points, more
+precise exceptional/call effects and property/alias tracking remain work in progress. Initializers do not introduce
+assignment facts. Invalid stale reads require a new guard.
+
+This adds compiler-only `swc_ecma_visit` 29.0.0 for bounded AST effect traversal,
+aligned with the existing SWC tree. Runtime distribution has no compiler visitor
+dependency. ABI26/value12/schema12, permissions, resource limits and older-profile
+rules are unchanged. Roots retain saved arguments, pairs, results and escaping
+closure environments across mutation and GC. See the
+[write-flow contract](docs/architecture.md#write-aware-refinements-and-captures-v24).
+
+## Truth-based local guards (opt-in v24)
+
+Select `"languageProfile":"checked-f64-utf16-v24"` for direct-local truth guards
+and RHS type refinement. V24 inherits v23 and shares ABI26/value12/schema12;
+rebuild both native companions so protocol2 advertises v24 in its supported list.
+
+```ts
+function get(value: {n: number} | undefined): number | undefined {
+  return value && value.n;
+}
+function fallback(value: {n: number} | undefined): number {
+  return (value || {n: 8}).n;
+}
+export function main(): void {
+  console.log(get({n: 7}));     // 7
+  console.log(get(undefined));  // undefined
+  console.log(fallback(undefined)); // 8
+}
+```
+
+Truthy branches remove Null/Undefined. Falsy branches remove always-true object,
+array and Error members but retain Number/String/Boolean: zero, NaN, empty String
+and false are still possible. Parentheses/! invert guards normally. A true && path
+combines both true guards; a false || path combines both false guards. Other
+compound outcomes remain conservative. RHS of && sees a truthy left, RHS of ||
+a falsy left, and RHS of ?? a nullish direct-local left. Existing typeof/Array/
+Error guards also propagate into these RHS branches.
+
+Guard information is scoped to if/ternary branches, while bodies, for bodies and
+updates, or the selected RHS. If/ternary joins retain facts shared by normally
+completing branches, including early-exit guards. Loop/label/switch exits use
+matching break/continue paths; optional RHS effects remain conservative. Guards do not precede the first do-while body. No property/global/
+call-result guard tracking is added.
+V24 uses write-aware invalidation and full declared types for mutable captures,
+as described above. Guards that remove no members add no capture restriction.
+This opt-in boundary preserves v23's existing truth-branch mutation behavior.
+
+Guards add no native operation, capability, dependency or resource limit. Cached
+operands, exact roots, status, exceptions, saved returns and source-free packaging
+retain their contracts. Unknown profiles, missing language declarations or
+mismatched ABI fail before effects. ABI26 intentionally supports both v23 and v24;
+metadata is not proof of source provenance. See the
+[guard contract](docs/architecture.md#truth-guard-profile-v24-with-shared-host-abi-v26).
+
+## Guest truth conversion and short circuiting (opt-in v23)
+
+V23 uses guest ToBoolean for conditions, ternaries, loops, unary `!`, logical
+assignment tests and existing array predicate callbacks. Ordinary references
+are true; primitives and unions follow the Boolean conversion rules below.
+Logical `&&`, `||` and `??` return selected operand values, preserving -0, NaN
+and reference identity, with the right operand evaluated only when required.
+
+```ts
+function choose(value: string | undefined): string {
+  return value || "fallback";
+}
+export function main(): void {
+  console.log(choose(""));             // fallback
+  console.log(choose("yes"));          // yes
+  if ({n: 0}) { console.log("object"); }
+  console.log(![1]);                   // 0
+  console.log(1 / (-0 && 7));          // -Infinity
+  console.log(0 ?? 5);                 // 0
+}
+```
+
+The selected left branch excludes impossible nullish/reference members, so
+`string | undefined || string` produces String. Known literal/type outcomes avoid
+unnecessary unions, including selected function values. Other mixed results use
+the existing closed union representation; multiple record/array shapes and
+function members in dynamic unions remain unsupported. Opaque result pairs need
+explicit fields. Static checking still applies to both source operands.
+
+Tests and operand caching use no native truth/nullish call. Selected-value boxing
+may allocate within the existing guest limits; roots retain cached operands,
+earlier pairs and saved returns across GC and finalizers. Native argument/RHS
+effects keep their grants, status and fatal host budgets. Guest fuel/deadlines,
+ABI26/value12/schema12 and old-profile behavior remain unchanged. Opt-in v24 adds direct-local truth guards and short-circuit RHS type refinement.
+See the [control-flow contract](docs/architecture.md#guest-truth-conversion-and-logical-operators-v23).
+
+## Boolean conversion and global numeric predicates (opt-in v23)
+
+Select `"languageProfile":"checked-f64-utf16-v23"` for direct `Boolean(...)`,
+`isFinite(...)` and `isNaN(...)` calls. This adds guest instructions and reuses
+primitive Number conversion; host ABI26 / value ABI12 / schema12 are unchanged.
+
+```ts
+export function main(): void {
+  console.log(Boolean(""));           // 0
+  console.log(Boolean("false"));      // 1
+  console.log(Boolean({n: 0}));        // 1
+  console.log(isFinite("12"));        // 1
+  console.log(Number.isFinite("12")); // 0
+  console.log(isNaN("bad"));          // 1
+  console.log(isNaN());               // 1
+}
+```
+
+Boolean returns false for missing/Undefined, Null, false, both numeric zeroes,
+NaN and empty strings; other admitted ordinary values are true, including records,
+arrays, functions and Error families. It reads exact String lengths and actual
+union tags/payloads without allocating or calling the host. Objects do not invoke
+numeric/String conversion. Opaque VartaResult pairs require explicit `.value` or
+other fields; ignored extras may include complete pairs.
+
+Global isFinite/isNaN convert admitted primitives/unions to Number before testing.
+Missing input behaves as NaN. This differs from non-coercing Number predicates.
+Narrow Number inputs and missing arguments remain guest-only; other admitted
+primitive types use one existing primitive_to_number host allowance. Reference
+inputs need narrowing until object ToPrimitive is implemented.
+
+All arguments evaluate once before conversion, including ignored extras. Cache
+original inputs across mutation, allocation and throws; preserve roots, status,
+pairs and saved returns through finalizers. Global normal bindings/closures/TDZ
+retain precedence. Guest fuel/deadlines and fatal host budgets remain enforced;
+new permissions, dependencies, helpers and version/limit changes are not added.
+Only direct calls are admitted: wrappers, borrowed/computed/generic/spread forms
+remain pending. Old profiles retain their admission rules. See the
+[conversion contract](docs/architecture.md#boolean-and-global-numeric-predicates-v23).
+
+## Numeric prefix parsing (opt-in v23)
+
+Select `"languageProfile":"checked-f64-utf16-v23"` for direct global `parseInt` /
+`parseFloat` and `Number.parseInt` / `Number.parseFloat` calls. V23 inherits v22
+with host ABI26 / value ABI12 / schema12.
+
+```ts
+export function main(): void {
+  console.log(parseInt("  -0xFtail"));             // -15
+  console.log(Number.parseInt("0x10", 10));       // 0
+  console.log(parseInt("10", 4294967312));        // 16 (radix wraps to 16)
+  console.log(Number.parseFloat("1.25e2tail"));   // 125
+  console.log(parseFloat("1e+tail"));             // 1
+  console.log(1 / parseInt("-0tail"));            // -Infinity
+}
+```
+
+Every argument evaluates once before conversion, including ignored extras.
+Input accepts admitted primitives/unions and converts to String: Number input
+uses canonical decimal text, so parseInt(1e21,10) returns 1. Missing input returns
+NaN. parseInt converts its second primitive argument to Number then signed Int32;
+zero/missing/Undefined selects base10 with optional hexadecimal prefix, while
+explicit base16 also strips that prefix. Other bases2–36 consume their longest
+valid digit prefix. Invalid bases/no digits return NaN, preserving system status;
+signed zero is retained. Decimal leading zeroes do not select octal.
+
+parseFloat accepts the longest decimal/fraction/exponent or signed Infinity
+prefix; an incomplete exponent rolls back to the mantissa. Both parsers skip
+exact ECMAScript leading whitespace and stop at nonmatching UTF-16 units,
+including NUL/surrogates. Their prefix behavior differs from whole-string Number
+conversion. Integer prefixes round nearest/even with bounded exact arithmetic;
+decimal prefixes use the checked Rust binary64 parser after grammar selection.
+
+Each present-input parse uses one capability-free host allowance. Checked
+primitive cells carry inputs/radix; no result globals or buffer writes are needed.
+Integer scratch uses at most 1030 bits and decimal ASCII scratch within half the
+1 MiB UTF-16 string ceiling. Roots, pairs, saved returns, status and fatal budgets
+retain their contracts. Global lexical functions/closures retain precedence;
+Number namespace calls require the unshadowed direct spelling. Wrappers, general
+object conversion, borrowing, computed/generic/spread calls remain pending.
+Rebuild both native companions for protocol2 v23 / maximum ABI26 / value12. See the
+[parsing contract](docs/architecture.md#numeric-prefix-profile-and-host-abi-v26).
+
+## Decimal precision and Number.valueOf (opt-in v22)
+
+Select `"languageProfile":"checked-f64-utf16-v22"` for direct calls on narrowed
+Number receivers. It inherits v21 and uses host ABI25 / value ABI12 / schema12.
+
+```ts
+export function main(): void {
+  console.log((1.25).toFixed(2));          // 1.25
+  console.log((1.25).toExponential(2));    // 1.25e+0
+  console.log((1.25).toPrecision(2));      // 1.3
+  console.log((1.25).toExponential());     // 1.25e+0
+  console.log((-0.001).toFixed(2));        // -0.00
+  console.log(1 / (-0).valueOf());         // -Infinity
+}
+```
+
+Fixed/exponential precision accepts 0–100 digits after the point; toPrecision
+accepts 1–100 significant digits. Primitive arguments convert to Number and
+truncate, with NaN becoming zero. Missing/Undefined means zero for toFixed and
+shortest text for toExponential/toPrecision. Exact halfway cases round the
+absolute decimal significand upward. Both zeroes format unsigned; negative
+nonzero values retain their sign even when rounded to zero. toFixed switches to
+canonical text at absolute values >=1e21; toPrecision switches to exponential
+notation when the rounded exponent is below -6 or at least the precision.
+
+RangeError ordering differs: toFixed checks precision before handling NaN and
+infinities; the other two handle nonfinite receivers after conversion but before
+range validation. Every receiver and argument evaluates once, including ignored
+extras, before conversion. valueOf returns the original Number, preserving -0,
+and evaluates ignored arguments without a host call.
+
+The three formatters use typed `(f64,f64)->i32` imports, no permission, one host
+allowance each and owned UTF-16 result snapshots. Primitive precision conversion
+can add the existing Number-conversion allowance. Text is bounded to 123 ASCII
+bytes using exact bounded arithmetic and the pinned formatter; resource limits,
+status and pending exceptions retain their contracts. Native packaging requires
+both rebuilt companions advertising v22 / maximum ABI26 / value12. Older profiles
+reject these methods. Wrappers, borrowing, computed/spread/generic calls and
+locale formatting remain pending. See the
+[precision contract](docs/architecture.md#number-precision-profile-and-host-abi-v25).
+
+## Number text in bases 2–36 (opt-in v21)
+
+Select `"languageProfile":"checked-f64-utf16-v21"` for direct `value.toString(...)`
+on narrowed Number values. V21 inherits v20's primitive Number/String conversions,
+Math, JSON, exceptions, closures and memory contracts.
+
+```ts
+export function main(): void {
+  console.log((255).toString(16));       // ff
+  console.log((35).toString(36));        // z
+  console.log((1.5).toString(2));        // 1.1
+  console.log((255).toString("0x10"));   // ff
+  console.log((-0).toString());         // 0
+  console.log(Number.MIN_VALUE.toString(2).length); // 1076
+  try { NaN.toString(1); }
+  catch (error) { console.log(error instanceof RangeError); } // 1
+}
+```
+
+Missing/Undefined radix defaults to 10. Other admitted primitives are converted
+to Number and truncated toward zero; NaN becomes zero. The resulting radix must
+be between 2 and 36, otherwise a catchable RangeError is thrown. This check applies
+even to zero, NaN and infinities. The receiver and every argument evaluate once
+before conversion/validation, including ignored extra arguments. Argument throws
+skip later arguments. General reference-containing radix unions need narrowing.
+
+Decimal text uses the canonical v18 formatter. Other bases use lowercase digits,
+fixed notation and a shortest significand that rounds back to the original
+binary64 value; nearest/even choices use exact rounding intervals. Both zeroes
+produce `0`; valid-radix nonfinite values use their usual names. Internal exact
+arithmetic uses num-bigint 0.4.8, already locked through the compiler and now a
+direct runtime dependency. It does not add a BigInt language value. Numeric text
+is bounded to 1077 ASCII bytes; no guest resource limit is increased.
+
+The typed `number_to_string: (f64,f64)->i32` import requires ABI24 and no permission.
+It transfers UTF-16 through existing result globals into owned guest strings,
+charges one host allowance and checks the deadline before/after formatting.
+Primitive radix coercion may add the existing Number-conversion call. Status,
+pairs, roots, saved returns and pending exceptions are retained. Budgets stay
+fatal; JSON allocation/retention helpers cannot reach the import. Older profiles
+reject this Number method; existing Error.toString is preserved. Only direct dot
+calls are added: wrappers, prototypes as ordinary objects, borrowing, computed/
+spread/generic calls and other Number methods remain separate work. Native
+packaging requires both rebuilt binaries, with protocol v2 advertising v21 /
+maximum ABI26 and unchanged value/schema12 and container formats. See the
+[radix contract](docs/architecture.md#number-radix-profile-and-host-abi-v24).
+
+## Primitive Number conversion (opt-in v20)
+
+Select `"languageProfile":"checked-f64-utf16-v20"` for direct `Number(...)` calls
+on Number, Boolean, String, Null, Undefined and their admitted unions. V20 inherits
+v19's primitive String conversion and all previous Math, JSON and memory features.
+
+```ts
+export function main(): void {
+  console.log(Number());           // 0
+  console.log(Number(undefined));  // NaN
+  console.log(Number(null));       // 0
+  console.log(Number(true));       // 1
+  console.log(Number(" +1.5e2 ")); // 150
+  console.log(Number("0x10"));     // 16
+  console.log(Number("0b101"));    // 5
+  console.log(Number("0o77"));     // 63
+  console.log(Number("invalid"));  // NaN
+  console.log(1 / Number("-0"));   // -Infinity
+}
+```
+
+No arguments produce +0. Present Numbers keep their value and zero sign; Null
+becomes +0, Booleans 0/1, and Undefined NaN. Strings trim exactly ECMAScript
+WhiteSpace/LineTerminator units, then require the entire numeric grammar. Empty
+trimmed strings yield +0. Decimal fractions/exponents, signed Infinity and unsigned
+0x/0b/0o prefixes are supported. Decimal and prefixed integers round to binary64
+with ties to even; overflow and signed underflow follow Number rules. Wrong digits,
+internal spaces, numeric separators, trailing junk, signed prefixed integers and
+unpaired surrogates yield NaN. This is whole-string conversion, with no partial parse.
+
+The first primitive is saved before ignored arguments run; extra admitted values
+evaluate once in order, then conversion runs. A throw skips remaining arguments
+and conversion. Local/imported functions called Number retain normal binding and
+TDZ behavior. The pure `primitive_to_number: (i64)->f64` import requires ABI23 and
+no capability or result globals. Present conversions use one host allowance and
+before/after deadline checks; absent arguments add no import. Existing status,
+result buffers and pending exceptions are unchanged, including on NaN results.
+The unchanged 1 MiB encoded-string ceiling and all memory/type/frame/fuel limits
+still apply. Host-free JSON helpers reject reachable conversions.
+
+Object/reference-containing unions need narrowing until object-to-primitive
+semantics are implemented. Wrappers, `new Number`, generic/spread/borrowed calls,
+Number.prototype.toString requires v21; wrappers and general object coercion remain separate work. Rebuild both
+binaries for native packaging: protocol v2 advertises v20/maximum ABI26 and
+value/schema12, with no dependency, helper export or layout/container changes.
+See the [primitive Number contract](docs/architecture.md#primitive-number-profile-and-host-abi-v23).
+
+## Primitive String conversion (opt-in v19)
+
+Select `"languageProfile":"checked-f64-utf16-v19"` for direct `String(...)` calls
+on Number, Boolean, String, Null, Undefined and their admitted unions. V19 inherits
+v18's language, Math/random, Number output, JSON and memory contracts.
+
+```ts
+export function main(): void {
+  console.log(String().length);  // 0
+  console.log(String(undefined)); // undefined
+  console.log(String(true));     // true
+  console.log(String(-0));       // 0
+  console.log(String(1e21));     // 1e+21
+  const value: number | string = Number.MIN_VALUE;
+  console.log(String(value));    // 5e-324
+}
+```
+
+No arguments produce an empty string; explicit Undefined produces `"undefined"`.
+Booleans become `"true"`/`"false"`, Null becomes `"null"`, and Numbers use v18's
+canonical decimal/scientific text. Strings preserve every UTF-16 code unit,
+including NUL and unpaired surrogates. The first value is saved before extra
+arguments run. Extra admitted values evaluate once in order and are ignored;
+conversion follows all arguments. A throw skips later arguments and conversion.
+Local/imported functions called String retain normal binding and TDZ rules.
+
+The `primitive_to_string: (i64)->i32` import requires ABI22 and no permission. It
+validates a primitive cell, copies UTF-16 through the existing result buffer, and
+returns a string retained in guest-owned memory before buffer reuse. Present
+arguments cost one host allowance; the no-argument empty literal adds no import.
+Status and pending exceptions are preserved. Deadlines, output/root/heap limits
+and the 1 MiB encoded-string ceiling remain unchanged; failures stay fatal.
+The helper cannot be reached from host-free JSON allocation/retention exports.
+
+Only direct global calls are added. Object/array/Error/function conversion needs
+the remaining object-to-primitive work; mixed reference unions must be narrowed.
+`new String`, borrowed/generic/spread calls, Number.prototype.toString/radix formatting require v21. Native packaging requires both rebuilt binaries,
+with launcher protocol v2 advertising v19/v20/v21/v22/v23/v24/v25/maximum ABI26 and value/schema12.
+No dependency, helper export or container/value layout change. See the
+[primitive String contract](docs/architecture.md#primitive-string-profile-and-host-abi-v22).
+
+## ECMAScript Number output (opt-in v18)
+
+Select `"languageProfile":"checked-f64-utf16-v18"` for canonical decimal Number
+text in `console.log` and `log`, including Number values inside admitted unions.
+V18 inherits v17's language, Math, random, JSON and memory contracts.
+
+```ts
+export function main(): void {
+  console.log(-0);               // 0
+  console.log(1e-7);             // 1e-7
+  console.log(1e-6);             // 0.000001
+  console.log(1e20);             // 100000000000000000000
+  console.log(1e21);             // 1e+21
+  const value: number | string = Number.MIN_VALUE;
+  console.log(value);            // 5e-324
+}
+```
+
+Finite values use the shortest round-tripping decimal representation, with fixed
+notation for magnitudes from 1e-6 inclusive to 1e21 exclusive, and scientific
+notation outside that range. Scientific exponents use lowercase `e`, an explicit
+sign and no leading zeroes. Both zeroes print `0`; special values print `NaN`,
+`Infinity` or `-Infinity`. This reuses pinned ryu-js 1.0.3, already used for JSON.
+JSON output and non-Number union values retain their existing contracts, including
+Boolean logging as `0`/`1`. Older profiles and their imports keep their old output.
+
+Scalar `log_f64_v2: (f64)->()` and union `value_log_v7: (i64)->()` require ABI21,
+with unchanged value/schema12. They consume one existing host allowance per log,
+retain output/deadline limits, and preserve status and result buffers. Host-free
+JSON helpers cannot call them. Rebuild both binaries for native packaging; launcher
+protocol v2 advertises v18/v19/v20/v21/v22/v23/v24/v25 and maximum ABI26. No dependency, permission, value/
+container layout or resource limit is added. Primitive `String(...)` is available
+in v19; Number method calls, radix formatting and object coercion remain separate work. See the
+[Number output contract](docs/architecture.md#number-output-profile-and-host-abi-v21).
+
+## Random numbers (opt-in v17)
+
+Select `"languageProfile":"checked-f64-utf16-v17"` for direct `Math.random` calls.
+V17 inherits v16's Math, Number, JSON, closure and sparse-array contracts.
+
+```ts
+export function main(): void {
+  const value = Math.random();
+  console.log(value >= 0 && value < 1); // 1
+  const other = Math.random("ignored", {label: "also ignored"});
+  console.log(Number.isFinite(other)); // 1
+}
+```
+
+Each call obtains one fresh 64-bit OS random word through pinned `getrandom` 0.3.4,
+then converts its high 53 bits to an exact nonnegative multiple of 2^-53 below 1.
+There is no shared PRNG, saved seed, entropy cache, guest seed control or replay
+promise. Distinct executions consume fresh entropy; packaging stores no seed.
+The Math API makes no cryptographic guarantee. Missing arguments need no conversion;
+extra admitted arguments evaluate once in order and are ignored without coercion.
+An argument exception skips later arguments and the random sample.
+
+The typed `number_random: () -> f64` import requires ABI20 and no capability. It
+uses one existing host allowance, checks the deadline before/after entropy access,
+and preserves status and result buffers. Entropy failure and exhausted budgets
+are fatal through catch/finally, with no fallback to timestamps or a fixed seed.
+Direct unshadowed dot calls are admitted; spread, generics, borrowing and computed
+calls remain unsupported. Host-free JSON helpers cannot reach this operation.
+Rebuild both binaries for native packaging: the companion negotiates v17/ABI20
+with value/schema12 and unchanged container formats and resource limits. See the
+[random contract](docs/architecture.md#random-profile-and-host-abi-v20).
+
+## Trigonometry, logarithms and exponentials (opt-in v16)
+
+Select `"languageProfile":"checked-f64-utf16-v16"` for these additional direct
+Math calls. V16 inherits v15's guest Math operations, constants, Number predicates,
+JSON, closures and sparse-array mutation behavior.
+
+| Functions | Arguments |
+| --- | --- |
+| `acos`, `acosh`, `asin`, `asinh`, `atan`, `atanh`, `cbrt`, `cos`, `cosh`, `exp`, `expm1`, `log`, `log1p`, `log10`, `log2`, `sin`, `sinh`, `tan`, `tanh` | Exactly one narrowed Number |
+| `atan2(y, x)` | Exactly two narrowed Numbers |
+
+```ts
+export function main(): void {
+  console.log(Math.sin(0));              // 0
+  console.log(Math.exp(0));              // 1
+  console.log(Math.log(0));              // -Infinity
+  console.log(Math.atan2(-0, -1));        // -3.141592653589793
+  console.log(1 / Math.asin(-0));         // -Infinity
+  console.log(Math.tanh(Infinity));      // 1
+  console.log(Number.isNaN(Math.acos(2))); // 1
+}
+```
+
+Domain errors produce NaN; the specified zero, infinity and boundary cases are
+handled explicitly. `atan2` preserves signed-zero and quadrant rules. Ordinary
+finite results use the platform's implementation-approximated math and can differ
+in their last bits across platforms. No coercion, generic/spread/computed calls or
+borrowed methods are added; `Math.random` requires v17.
+
+Each operation uses one pure typed host call, with no permission or result buffer,
+and preserves system status. The runtime checks the existing call/deadline budget
+before and after native math without a second charge. Budget exhaustion and exit
+remain fatal. Host-free JSON allocation/retention helpers cannot reach these calls.
+V16 requires ABI19 even if no native Math call is used; older profiles reject the
+new methods and older runtimes reject the new ABI. Rebuild `varta` and
+`varta-runtime` together for native packaging. Value/schema/container versions and
+resource limits remain unchanged. See the
+[contract](docs/architecture.md#native-math-profile-and-host-abi-v19).
+
+## Number predicates (opt-in v15)
+
+Direct `Number.isFinite`, `Number.isNaN`, `Number.isInteger` and
+`Number.isSafeInteger` calls return booleans without converting their arguments.
+Select `checked-f64-utf16-v15` in `languageProfile`.
+
+```ts
+export function main(): void {
+  console.log(Number.isFinite(2));                   // 1
+  console.log(Number.isFinite("2"));                 // 0
+  console.log(Number.isNaN(NaN));                    // 1
+  console.log(Number.isNaN("NaN"));                  // 0
+  console.log(Number.isInteger(-0));                 // 1
+  console.log(Number.isInteger(Infinity));           // 0
+  console.log(Number.isSafeInteger(9007199254740991)); // 1
+  console.log(Number.isSafeInteger(9007199254740992)); // 0
+  console.log(Number.isFinite());                    // 0
+  const value: number | string = 2;
+  console.log(Number.isInteger(value));              // 1
+}
+```
+
+The first argument may have any supported type, including an unnarrowed union.
+Non-Numbers return false. An omitted first argument returns false; additional
+arguments execute once in order and are ignored. Errors and fatal exits in those
+arguments still propagate. These predicates do not narrow local types.
+
+Only direct unshadowed dot calls are supported; computed names, borrowed methods,
+generic calls, spread and other Number methods remain unsupported.
+The operations use guest instructions and preserve host status, permissions and
+resource limits. Earlier profiles reject them; v15 keeps ABI18/value12/schema12.
+See the [contract](docs/architecture.md#number-predicate-intrinsics).
+
+## Numeric constants (opt-in v15)
+
+The following properties are available as exact binary64 Numbers:
+
+| Namespace | Constants |
+| --- | --- |
+| `Math` | `E`, `LN10`, `LN2`, `LOG10E`, `LOG2E`, `PI`, `SQRT1_2`, `SQRT2` |
+| `Number` | `EPSILON`, `MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `MAX_VALUE`, `MIN_VALUE`, `NaN`, `NEGATIVE_INFINITY`, `POSITIVE_INFINITY` |
+
+```ts
+export function main(): void {
+  console.log(Math.PI);                              // 3.141592653589793
+  console.log(Math["PI"] === Math.PI);               // 1
+  console.log(1 + Number.EPSILON > 1);               // 1
+  console.log(JSON.stringify(Number.MIN_VALUE));     // 5e-324
+  console.log(Number.isSafeInteger(Number.MAX_SAFE_INTEGER)); // 1
+  console.log(Number.isFinite(Number.MAX_VALUE));    // 1
+  console.log(Number.isNaN(Number.NaN));             // 1
+}
+```
+
+`Number.MIN_VALUE` is the smallest positive subnormal, distinct from the smallest
+normal number. Dot reads and computed literal String keys are supported, including
+parenthesized names/keys. Dynamic namespace keys, namespace aliases and property
+descriptors remain unsupported. Writes, updates, deletion and destructuring targets
+for these built-in constants produce a compile-time read-only type diagnostic.
+Actual local bindings named Math/Number retain their ordinary record/array,
+capture and initialization rules. Older profiles retain their existing behavior
+and reject unshadowed built-in constant reads.
+
+Constants use guest `f64.const` with no import, allocation or host allowance.
+V15 keeps ABI18/value12/schema12 and all current limits. See the
+[contract](docs/architecture.md#numeric-constant-properties).
 
 ## Object.keys for closed records (v12 and later)
 
@@ -2632,3 +3275,29 @@ cargo build --workspace --all-targets --locked
 cargo test --workspace --locked
 cargo test -p varta --test smoke --locked
 ```
+
+## Predicate array searches (opt-in v25)
+
+Select `"languageProfile":"checked-f64-utf16-v25"` for three more methods on
+checked typed arrays:
+
+```ts
+const values = [1, 2, 3, 2];
+console.log(values.findIndex(v => v === 2));     // 1
+console.log(values.findLastIndex(v => v === 2)); // 3
+console.log(values.findLast(v => v === 2));      // 2
+```
+
+Index searches return -1 when no predicate matches; findLast returns Undefined.
+Callbacks must accept the element type plus Undefined, since holes and deleted
+positions are visited. The callback can also receive index/array and an explicit
+thisArg for functions with a declared receiver. Arrow receivers stay lexical.
+Arguments execute in source order, including ignored trailing arguments, before
+the traversal length is captured. Callbacks can mutate arrays within existing
+bounds; matched values remain rooted across mutation and collection.
+
+This is a checked typed-array API; generic array-like objects, borrowed prototype
+methods and general dynamic callback coercion remain pending. V24 and earlier
+reject these three methods. ABI26/value12/schema12, production limits and the
+default i32 profile remain unchanged. Both native companions must advertise v25;
+see the [detailed contract](docs/architecture.md#predicate-array-search-profile-v25-with-shared-host-abi-v26).

@@ -15,7 +15,7 @@ impl Lower<'_> {
                 span,
             ));
         }
-        if self.refinements.contains_key(&binding.slot) {
+        if self.refinements.contains_key(&binding.slot) && !self.types.profile.refinement_writes() {
             return Err(self.source.locate(
                 unsupported("assignment to a guard-refined union binding"),
                 span,

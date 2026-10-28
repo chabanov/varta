@@ -42,8 +42,16 @@ impl Lower<'_> {
         Ok(vec![self.statement(statement)?])
     }
     fn statement(&mut self, statement: &ast::Stmt) -> Result<S> {
-        self.statement_inner(statement)
-            .map_err(|e| self.source.locate(e, statement.span()))
+        let result = self
+            .statement_inner(statement)
+            .map_err(|e| self.source.locate(e, statement.span()));
+        if self.types.profile.refinement_writes()
+            && let Ok(statement) = &result
+            && !completion::normal(std::slice::from_ref(statement))
+        {
+            self.reachable = false;
+        }
+        result
     }
     fn statement_inner(&mut self, statement: &ast::Stmt) -> Result<S> {
         Ok(match statement {
@@ -115,39 +123,68 @@ impl Lower<'_> {
             }
             ast::Stmt::If(branch) => {
                 let test = self.condition(&branch.test)?;
-                let saved = self.refinements.clone();
+                let saved = self.flow_snapshot();
                 self.guard(&branch.test, true)?;
+                self.flow_edge(flow_control::truth(&branch.test) != Some(false));
                 let yes = self.single(&branch.cons)?;
-                self.refinements = saved.clone();
+                let yes_state = self.flow_snapshot();
+                self.flow_alternate(&saved);
                 self.guard(&branch.test, false)?;
+                self.flow_edge(flow_control::truth(&branch.test) != Some(true));
                 let no = branch
                     .alt
                     .as_ref()
                     .map(|s| self.single(s))
                     .transpose()?
                     .unwrap_or_default();
-                self.refinements = saved;
+                let mut paths = vec![];
+                if completion::normal(&yes) {
+                    paths.push(yes_state);
+                }
+                if completion::normal(&no) {
+                    paths.push(self.flow_snapshot());
+                }
+                self.flow_join(&saved, &paths)?;
                 S::If(test, yes, no)
             }
             ast::Stmt::DoWhile(statement) => {
+                if self.types.profile.refinement_writes() {
+                    return self.flow_do_while(statement);
+                }
                 if !self.types.profile.closures() {
                     return Err(unsupported("do-while requires checked-f64-utf16-v12"));
                 }
+                let saved = self.flow_snapshot();
                 self.loops += 1;
                 let body = self.single(&statement.body)?;
                 self.loops -= 1;
+                if self.types.profile.refinement_writes() {
+                    // Continue can skip a later body store on the way to test.
+                    self.flow_restore(&saved);
+                }
                 let test = self.condition(&statement.test)?;
                 S::DoWhile(test, body)
             }
             ast::Stmt::While(statement) => {
+                if self.types.profile.refinement_writes() {
+                    return self.flow_while(statement);
+                }
                 let test = self.condition(&statement.test)?;
+                let saved = self.flow_snapshot();
+                if self.types.profile.truth_guards() {
+                    self.guard(&statement.test, true)?;
+                }
                 self.loops += 1;
                 let body = self.single(&statement.body)?;
                 self.loops -= 1;
+                self.flow_restore(&saved);
                 S::While(test, body)
             }
             ast::Stmt::ForOf(statement) => self.for_of(statement)?,
             ast::Stmt::For(statement) => {
+                if self.types.profile.refinement_writes() {
+                    return self.flow_for(statement);
+                }
                 self.scopes.push(BTreeMap::new());
                 let mut init = match &statement.init {
                     Some(ast::VarDeclOrExpr::VarDecl(var)) => {
@@ -163,6 +200,12 @@ impl Lower<'_> {
                     .as_deref()
                     .map(|e| self.condition(e))
                     .transpose()?;
+                let saved = self.flow_snapshot();
+                if self.types.profile.truth_guards()
+                    && let Some(test) = &statement.test
+                {
+                    self.guard(test, true)?;
+                }
                 let mut update = statement
                     .update
                     .as_deref()
@@ -172,6 +215,7 @@ impl Lower<'_> {
                 self.loops += 1;
                 let body = self.single(&statement.body)?;
                 self.loops -= 1;
+                self.flow_restore(&saved);
                 if self.types.profile.closures()
                     && matches!(&statement.init, Some(ast::VarDeclOrExpr::VarDecl(var)) if var.kind == ast::VarDeclKind::Let)
                 {
@@ -205,9 +249,30 @@ impl Lower<'_> {
                 self.next += 2;
                 let mut cases = Vec::new();
                 let mut default = false;
+                let saved = self.flow_snapshot();
+                let flow = self.types.profile.refinement_writes();
+                let mut tests = Vec::new();
+                if flow {
+                    // Selection tests run before any body and may themselves
+                    // be skipped. No body fact may influence a later test.
+                    for case in &statement.cases {
+                        tests.push(case.test.as_deref().map(|e| self.expr(e)).transpose()?);
+                        self.flow_restore(&saved);
+                    }
+                }
+                let direct = self.flow_snapshot();
+                let mut previous = None;
+                let target = self.flow_target(flow_control::Kind::Switch);
                 self.switches += 1;
-                for case in &statement.cases {
-                    let test = case.test.as_deref().map(|e| self.expr(e)).transpose()?;
+                for (index, case) in statement.cases.iter().enumerate() {
+                    let test = if flow {
+                        let mut paths = vec![direct.clone()];
+                        paths.extend(previous.take());
+                        self.flow_join(&direct, &paths)?;
+                        tests[index].take()
+                    } else {
+                        case.test.as_deref().map(|e| self.expr(e)).transpose()?
+                    };
                     if test.as_ref().is_some_and(|e| e.ty != value.ty) {
                         return Err(self
                             .source
@@ -224,9 +289,21 @@ impl Lower<'_> {
                     if case.cons.iter().any(|s| matches!(s, ast::Stmt::Decl(_))) {
                         return Err(unsupported("case declaration without a block"));
                     }
-                    cases.push((test, self.block(&case.cons, true)?));
+                    let body = self.block(&case.cons, true)?;
+                    if flow && self.reachable {
+                        previous = Some(self.flow_snapshot());
+                    }
+                    cases.push((test, body));
                 }
                 self.switches -= 1;
+                if flow {
+                    let mut paths = self.flow_end(target);
+                    paths.extend(previous);
+                    if !default {
+                        paths.push(direct);
+                    }
+                    self.flow_join(&saved, &paths)?;
+                }
                 S::Switch {
                     value,
                     discriminant,
@@ -241,6 +318,7 @@ impl Lower<'_> {
                 if self.loops + self.switches == 0 {
                     return Err(unsupported("break target"));
                 }
+                self.flow_branch(None, false)?;
                 S::Break
             }
             ast::Stmt::Continue(statement) => {
@@ -250,12 +328,13 @@ impl Lower<'_> {
                 if self.loops == 0 {
                     return Err(unsupported("continue target"));
                 }
+                self.flow_branch(None, true)?;
                 S::Continue
             }
             _ => return Err(unsupported("statement")),
         })
     }
-    fn expression_statement(&mut self, expression: &ast::Expr) -> Result<Vec<S>> {
+    pub(super) fn expression_statement(&mut self, expression: &ast::Expr) -> Result<Vec<S>> {
         Ok(vec![
             if let ast::Expr::Assign(assign) = unparen(expression) {
                 self.assignment(assign)?
@@ -276,7 +355,7 @@ impl Lower<'_> {
             return self.destructuring_assignment(assign, pattern);
         }
         if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left {
-            let base = self.expr(&member.obj)?;
+            let base = self.write_member_base(member)?;
             if self.types.profile.closures()
                 && let Type::Record(shape) = base.ty
                 && let ast::MemberProp::Computed(key) = &member.prop
@@ -356,11 +435,23 @@ impl Lower<'_> {
         if !binding.mutable || !binding.initialized {
             return Err(invalid("assignment to constant or uninitialized binding"));
         }
-        if self.refinements.contains_key(&binding.slot) {
+        if self.refinements.contains_key(&binding.slot) && !self.types.profile.refinement_writes() {
             return Err(unsupported("assignment to a guard-refined union binding"));
         }
-        let value = self.expr_expected(&assign.right, binding.ty)?;
-        if Some(value.ty) != binding.ty {
+        let expected = binding
+            .ty
+            .ok_or_else(|| invalid("missing assignment target type"))?;
+        let flow = self.types.profile.refinement_writes();
+        let value = if flow {
+            self.assignment_rhs_value(expected, &assign.right)?
+        } else {
+            self.expr_expected(&assign.right, Some(expected))?
+        };
+        if if flow {
+            !arguments::accepts(expected, value.ty, self.types)
+        } else {
+            value.ty != expected
+        } {
             return Err(self.source.locate(
                 type_error(format!(
                     "assignment type mismatch: expected {}, found {}",
@@ -370,6 +461,10 @@ impl Lower<'_> {
                 value.span,
             ));
         }
-        Ok(S::Set(binding.slot, value))
+        self.flow_assigned(binding.slot, value.ty)?;
+        Ok(S::Set(
+            binding.slot,
+            unions::widen(value, Some(expected), self.types)?,
+        ))
     }
 }

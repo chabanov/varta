@@ -24,6 +24,12 @@ mod bitwise_compound_tests;
 #[cfg(test)]
 mod bitwise_tests;
 #[cfg(test)]
+mod call_flow_tests;
+#[cfg(test)]
+mod exit_flow_tests;
+#[cfg(test)]
+mod guest_truth_tests;
+#[cfg(test)]
 mod invocation_tests;
 mod invoke;
 mod json;
@@ -38,19 +44,62 @@ mod language_tests;
 #[cfg(test)]
 mod logical_assignment_tests;
 #[cfg(test)]
+mod math_f16_tests;
+#[cfg(test)]
+mod math_hypot_tests;
+#[cfg(test)]
 mod math_tests;
+#[cfg(test)]
+mod mutable_flow_tests;
+mod native_math;
+#[cfg(test)]
+mod native_math_tests;
 mod number;
+mod number_format;
+#[cfg(test)]
+mod number_format_tests;
+mod number_parse;
+#[cfg(test)]
+mod number_parse_tests;
+#[cfg(test)]
+mod number_predicate_tests;
+mod number_radix;
+#[cfg(test)]
+mod number_radix_tests;
 #[cfg(test)]
 mod number_tests;
 #[cfg(test)]
+mod number_text_tests;
+#[cfg(test)]
 mod number_value_tests;
+#[cfg(test)]
+mod numeric_constant_tests;
+#[cfg(test)]
+mod parameter_flow_tests;
 mod policy;
 #[cfg(test)]
+mod post_write_tests;
+#[cfg(test)]
 mod power_tests;
+#[cfg(test)]
+mod predicate_search_tests;
+#[cfg(test)]
+mod primitive_builtin_tests;
+mod primitive_number;
+#[cfg(test)]
+mod primitive_number_tests;
+mod primitive_string;
+#[cfg(test)]
+mod primitive_string_tests;
+mod random;
+#[cfg(test)]
+mod random_tests;
 #[cfg(test)]
 mod record_compound_tests;
 #[cfg(test)]
 mod record_tests;
+#[cfg(test)]
+mod truth_guard_tests;
 #[cfg(test)]
 mod undefined_tests;
 #[cfg(test)]
@@ -96,6 +145,7 @@ pub(crate) struct RuntimeContext {
     host_calls: u32,
     deadline: Instant,
     http_control: Option<(String, HttpShutdown)>,
+    random: random::RandomSource,
 }
 
 impl RuntimeContext {

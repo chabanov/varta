@@ -75,7 +75,7 @@ impl Lower<'_> {
                 .prepare_pattern_target(&ast::Pat::Ident(name.clone()))?
                 .ok_or_else(|| invalid("missing compound assignment binding"))?,
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) => {
-                let base = self.expr(&member.obj)?;
+                let base = self.write_member_base(member)?;
                 if let Type::Record(shape) = base.ty
                     && let ast::MemberProp::Computed(key) = &member.prop
                     && !matches!(

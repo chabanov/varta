@@ -55,6 +55,11 @@ impl Lower<'_> {
         // Lexical head names shadow outer names while evaluating the RHS and
         // remain in TDZ; assignment heads do not introduce bindings.
         let value = self.expr(&statement.right)?;
+        if self.types.profile.refinement_writes() {
+            self.flow_for_of_effects(statement);
+        }
+        let entry = self.flow_snapshot();
+        let target = self.flow_iteration();
         let (source, array, mut roots, mut init) = self.for_of_source(value)?;
         let Type::Array(id) = array else {
             return Err(invalid("missing for-of array type"));
@@ -97,6 +102,12 @@ impl Lower<'_> {
         self.loops += 1;
         body.extend(self.single(&statement.body)?);
         self.loops -= 1;
+        if self.types.profile.refinement_writes() {
+            self.flow_take(target, true);
+            let mut paths = self.flow_end(target);
+            paths.push(entry.clone()); // An empty input can skip every body store.
+            self.flow_join(&entry, &paths)?;
+        }
         let slots = self
             .scopes
             .pop()

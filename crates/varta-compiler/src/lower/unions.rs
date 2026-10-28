@@ -109,6 +109,16 @@ impl Lower<'_> {
         ))
     }
     pub(super) fn truth(&mut self, value: Expr) -> Result<Expr> {
+        if self.types.profile.primitive_builtins() {
+            if value.ty.result_value().is_some() || value.ty == Type::Void {
+                return Err(self.source.locate(type_error("truth conversion requires an ordinary value; opaque result pairs need explicit fields"), value.span));
+            }
+            return Ok(Expr {
+                span: value.span,
+                ty: Type::Boolean,
+                kind: E::ToBoolean(Box::new(value)),
+            });
+        }
         if matches!(value.ty, Type::Function(_)) {
             return Ok(Expr {
                 span: value.span,
@@ -206,12 +216,34 @@ impl Lower<'_> {
     }
     /// A guard refines only a direct local. Writes under its refinement are
     /// rejected, so loops cannot reuse stale assumptions after a back edge.
+    pub(super) fn nullish_guard(&mut self, test: &ast::Expr) -> Result<()> {
+        match test {
+            ast::Expr::Paren(p) => self.nullish_guard(&p.expr),
+            ast::Expr::Ident(id) => self.refine(id.sym.as_ref(), Guard::Nullish, true),
+            _ => Ok(()),
+        }
+    }
     pub(super) fn guard(&mut self, test: &ast::Expr, yes: bool) -> Result<()> {
+        self.flow_guard(test, yes)
+    }
+    pub(super) fn guard_inner(&mut self, test: &ast::Expr, yes: bool) -> Result<()> {
         if !self.types.profile.unions() {
             return Ok(());
         }
         if let ast::Expr::Paren(p) = test {
             return self.guard(&p.expr, yes);
+        }
+        if self.types.profile.truth_guards() {
+            if let ast::Expr::Ident(id) = test {
+                return self.refine(id.sym.as_ref(), Guard::Truth(yes), true);
+            }
+            if let ast::Expr::Bin(binary) = test
+                && ((binary.op == ast::BinaryOp::LogicalAnd && yes)
+                    || (binary.op == ast::BinaryOp::LogicalOr && !yes))
+            {
+                self.guard(&binary.left, yes)?;
+                return self.guard(&binary.right, yes);
+            }
         }
         if self.types.profile.reference_unions()
             && let ast::Expr::Unary(unary) = test

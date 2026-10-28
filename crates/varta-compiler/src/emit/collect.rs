@@ -294,7 +294,21 @@ impl<'a> Collected<'a> {
                     self.expression(arg, source);
                 }
             }
-            E::Call(_, args) => {
+            E::Math(mode, args) => {
+                if *mode == ir::MathIntrinsic::Random {
+                    self.hosts.insert(Host::MathRandom);
+                }
+                if *mode == ir::MathIntrinsic::Pow {
+                    self.hosts.insert(Host::FloatPower);
+                }
+                if let ir::MathIntrinsic::Native(operation) = mode {
+                    self.hosts.insert(operation.host());
+                }
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
+            E::Call(_, args) | E::NumberPredicate(_, args) => {
                 for arg in args {
                     self.expression(arg, source);
                 }
@@ -326,8 +340,8 @@ impl<'a> Collected<'a> {
             | E::IsUndefined(a)
             | E::UnboxUnion(a)
             | E::Negative(a)
-            | E::MathUnary(_, a)
             | E::Undefined(a)
+            | E::ToBoolean(a)
             | E::Not(a)
             | E::Capture(a)
             | E::ResultField(_, a)

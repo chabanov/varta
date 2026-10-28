@@ -33,7 +33,14 @@ impl Lower<'_> {
             .ok_or_else(|| invalid("too many statement labels"))?;
         let iteration = iteration(&statement.body);
         self.labels.push((name, id, iteration));
+        let target = self.flow_target(flow_control::Kind::Label(id, iteration));
+        let saved = self.flow_snapshot();
         let body = self.single(&statement.body)?;
+        if self.types.profile.refinement_writes() {
+            let mut paths = self.flow_end(target);
+            paths.push(self.flow_snapshot());
+            self.flow_join(&saved, &paths)?;
+        }
         self.labels.pop();
         self.depth -= 1;
         Ok(S::Label {
@@ -42,7 +49,7 @@ impl Lower<'_> {
             body,
         })
     }
-    pub(super) fn named_branch(&self, label: &ast::Ident, continuing: bool) -> Result<S> {
+    pub(super) fn named_branch(&mut self, label: &ast::Ident, continuing: bool) -> Result<S> {
         let (_, id, iteration) = self
             .labels
             .iter()
@@ -61,10 +68,12 @@ impl Lower<'_> {
                 label.span,
             ));
         }
+        let id = *id;
+        self.flow_branch(Some(id), continuing)?;
         Ok(if continuing {
-            S::ContinueLabel(*id)
+            S::ContinueLabel(id)
         } else {
-            S::BreakLabel(*id)
+            S::BreakLabel(id)
         })
     }
 }

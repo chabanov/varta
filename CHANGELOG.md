@@ -4,11 +4,140 @@
 
 The workspace currently uses package version `0.1.0`. These entries describe the
 development snapshot; they do not announce a published release.
-The [2026-10-27 checkpoint](docs/development-plan.md#development-checkpoint--2026-10-27)
+The [2026-10-28 checkpoint](docs/development-plan.md#development-checkpoint--2026-10-28)
 records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Opt-in v25 adds checked Array.findIndex/findLast/findLastIndex with live sparse
+  reads, forward/reverse snapshot traversal, cached matched values, receiver and
+  ignored-argument evaluation, rooted callbacks and unchanged capability/fatal
+  boundaries. Existing profiles reject these methods. The callback-before-thisArg
+  lowering fix also prevents stale refinement reads in existing callback methods.
+  Shared ABI26/value12/schema12 and production budgets remain unchanged; rebuild
+  both native companions for exact v25 profile negotiation.
+
+- V24 specializes stable callback parameters at proven calls, propagating symbolic
+  inputs through forwarding, const aliases and captures. Direct/nested parameter
+  replacements retain unknown reentry. Default/rest/receiver argument mapping,
+  borrowed guard/loop effects and shared proof-depth limits preserve existing
+  call/root/status contracts without ABI/layout/production-budget changes.
+
+- V24 bounds local-cell effects using immutable function provenance and transitive
+  closure summaries. Known calls preserve unrelated captured facts; module calls
+  account for supplied callback proofs. Argument effects, unknown/self/parameter
+  calls and mutable/returned functions retain conservative invalidation. Checked
+  non-reentrant member intrinsics preserve binding facts without promising
+  unchanged heap contents. No ABI/layout/production-budget or runtime dependency change.
+
+- V24 tracks reachable break/continue facts by loop, switch and label target.
+  Updates/do-while tests join their actual inputs; normal loop/switch/label exits
+  combine false tests and matching breaks. Finally writes transform pending exits,
+  and overriding returns/throws/branches cancel old completions. Repeated-part
+  analysis after one-time for initializers fixes stale second-test assumptions.
+  Physical control routing, ABI26/value12/schema12 and production limits stay intact.
+
+- V24 infers local union types after successful stores, including destructuring,
+  compound/update and logical assignments. Normal if/ternary branches join their
+  resulting types; early return/throw paths do not erase surviving facts. Skipped
+  defaults/RHS, switch entries/fallthrough, labels, loop continues and exceptional
+  prefixes cannot leak a later store's fact. Declared storage, prior profiles,
+  ABI26/value12/schema12 and execution budgets are unchanged.
+
+- V24 allows guarded writes through per-binding revision tracking, branch joins,
+  loop effect analysis and conservative invalidation after possible user calls.
+  Mutable captures retain declared cell types; const captures inherit stable
+  narrowed types through nested closures. Compiler-only swc_ecma_visit29.0.0 adds
+  bounded AST traversal. Runtime distribution, ABI26/value12/schema12, capabilities
+  and production limits remain unchanged; older profiles keep readonly guards.
+
+- Opt-in `checked-f64-utf16-v24` adds truth-based direct-local narrowing, compound
+  guards and &&/||/?? RHS refinement, including while/for bodies and for updates.
+  False branches retain potentially false Number/String/Boolean members. Scoped
+  refinements use the write/capture analysis above; v23 keeps
+  its earlier source admission. ABI26/value12/schema12, imports and limits are
+  shared unchanged; native negotiation adds v24 to the supported profile list.
+
+- V23 integrates guest ToBoolean into conditions, loops, ternaries, !, logical
+  assignment tests and existing predicate callbacks. Operand-valued &&/||/?? cache
+  the original left value, narrow selected branch types and preserve identity,
+  signed zero and short-circuit effects without native truth/nullish imports.
+  Guest roots, fatal limits and older profiles retain their contracts; no ABI,
+  dependency or resource-limit change.
+
+- V23 adds direct Boolean conversion over admitted ordinary values and coercing
+  global isFinite/isNaN over primitives/unions. Exact guest ToBoolean uses no host
+  call or allocation; numeric predicates reuse existing Number conversion only
+  for non-Number arguments. Cached effects/roots, ordinary binding precedence,
+  status and fatal limits are retained, with no ABI/dependency/resource changes.
+
+- Opt-in `checked-f64-utf16-v23` / ABI26 adds direct global and Number.parseInt /
+  parseFloat calls on primitives/unions. Longest-prefix grammar, exact leading
+  whitespace, signed Int32 radix conversion, hexadecimal detection, signed zero
+  and bounded nearest/even integer rounding preserve effects, roots/status and
+  fatal budgets. Each present input uses one capability-free host call; no result
+  buffer, dependency, value/schema12 or resource/container limit changes.
+
+- Opt-in `checked-f64-utf16-v22` / ABI25 adds direct Number.toFixed,
+  toExponential and toPrecision with bounded exact rounding, primitive precision
+  conversion, method-specific RangeError order and owned UTF-16 results. Direct
+  Number.valueOf preserves the original bits and ignored effects without a host
+  call. Value/schema12, status, resource limits and container formats are retained.
+
+- Opt-in `checked-f64-utf16-v21` / ABI24 adds direct Number.toString for bases2–36,
+  cached primitive radix arguments and catchable RangeError in the specified order.
+  Bounded exact intervals choose shortest nondecimal text using direct runtime
+  num-bigint0.4.8 (already locked via the compiler); decimal text reuses ryu-js.
+  Owned results, roots/status, fatal budgets and source-free packaging retain
+  value/schema12 and existing resource/container boundaries.
+- Opt-in `checked-f64-utf16-v20` / ABI23 adds primitive Number(...) conversion
+  and whole numeric String parsing: exact whitespace/grammar, decimal/exponent and
+  binary/octal/hexadecimal prefixes, nearest/even rounding, signed zero and NaN/
+  infinity rules. Cached effects/roots, status/buffers, fatal limits and source-free
+  packaging are retained, with unchanged value/schema12 and no dependency change.
+- Opt-in `checked-f64-utf16-v19` / ABI22 adds primitive String(...) conversion,
+  including admitted unions, absent/ignored argument rules, canonical Number text
+  and exact UTF-16. Checked cells transfer through the existing result buffer into
+  owned strings; status, roots, fatal limits and lexical bindings are retained.
+  Source-free packaging negotiates v19/22; value/schema12 and limits are unchanged.
+- Opt-in `checked-f64-utf16-v18` / ABI21 adds canonical ECMAScript Number output
+  for scalar and union logs: shortest decimal/scientific notation, zero and
+  nonfinite rules. Existing ryu-js1.0.3 formats numbers; old profiles retain their
+  text. Exact registry/signature gates, budgets/status, roots and source-free
+  native packaging are covered, with unchanged JSON/value/schema/limits.
+- Opt-in `checked-f64-utf16-v17` / ABI20 adds direct Math.random with fresh OS
+  entropy, exact 53-bit samples in [0,1), ignored argument effects and fatal
+  entropy/budget failures. Runtime-only pinned getrandom 0.3.4 supplies portable
+  entropy; no seed/cache is persisted. Value/schema/container versions and limits
+  stay unchanged; native packaging negotiates v17/20.
+- Opt-in `checked-f64-utf16-v16` / ABI19 adds nineteen unary native Math methods
+  and atan2 through a shared typed pure registry. Required zero/NaN/infinity/domain
+  rules precede platform-approximated finite math; one-call/deadline accounting,
+  status, helper purity and old-profile contracts are preserved. Value/schema12,
+  container formats and limits are unchanged; native packaging negotiates v16/19.
+- Checked variadic v15 `Math.hypot` uses exact power-of-two scaling, compensated
+  squares/sums and root refinement in guest code. All arguments execute before
+  Infinity/NaN selection; extreme values, subnormals, near-overflow high-precision
+  goldens, GC/pairs and artifact/permission paths are tested without new ABI/budgets.
+- Checked v15 `Math.f16round` rounds binary64 directly to binary16 ties-to-even
+  using guest instructions. Signed zero, subnormals, overflow and halfway neighbors
+  are verified against an independent bit oracle without binary32 double rounding,
+  new imports, ABI versions, dependencies or increased execution limits.
+- Checked v15 `Math.pow(base, exponent)` shares the existing exponentiation
+  import, Number edge cases, finite approximation and one-call/deadline budgets.
+  Argument order, host-free-helper rejection and operator/method agreement are tested.
+- All eight Math numeric constants and eight Number constants in v15, with exact
+  binary64 values and dot/literal-key reads. Lexical shadows retain ordinary
+  properties; built-in writes have a read-only diagnostic. Guest constants add
+  no host imports, allocation, ABI changes or limits.
+- Direct v15 `Number.isFinite/isNaN/isInteger/isSafeInteger` predicates accept
+  admitted values and unnarrowed unions without coercion. Non-Numbers/missing
+  arguments return false; ignored extra arguments retain all effects and errors.
+  Guest-only execution preserves status, pairs/roots and existing ABI/budgets.
+- Checked `Math.min/max`, `sign`, `fround`, `clz32` and `imul` in v15. Variadic
+  extrema preserve argument order and NaN/signed-zero rules; binary32 rounding
+  and exact modulo-32-bit conversions/products use guest instructions. No new
+  host import, capability, ABI version or runtime budget.
 - Direct checked `Math.abs`, `floor`, `ceil`, `trunc`, `round` and `sqrt` calls
   in v15, each with one narrowed Number argument. Guest instructions preserve
   signed-zero/nonfinite rules and rounding toward positive infinity on ties,

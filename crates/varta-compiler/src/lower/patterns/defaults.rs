@@ -31,7 +31,11 @@ impl Lower<'_> {
             Some(unions::intern(present, self.types)?)
         };
         let context = expected.or_else(|| self.context(default, present_ty));
+        let saved = self.flow_snapshot();
         let fallback = self.expr_expected(default, context)?;
+        if present_ty.is_some() {
+            self.flow_restore(&saved);
+        }
         value_type(fallback.ty).map_err(|e| self.source.locate(e, fallback.span))?;
         if expected.is_some_and(|ty| ty != fallback.ty) {
             return Err(self.source.locate(

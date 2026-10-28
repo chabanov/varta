@@ -18,6 +18,14 @@ pub const CLOSURE_VERSION: u32 = 15;
 pub const SPARSE_VERSION: u32 = 16;
 pub const ARRAY_MUTATION_VERSION: u32 = 17;
 pub const NUMBER_POWER_VERSION: u32 = 18;
+pub const NATIVE_MATH_VERSION: u32 = 19;
+pub const RANDOM_VERSION: u32 = 20;
+pub const NUMBER_TEXT_VERSION: u32 = 21;
+pub const PRIMITIVE_STRING_VERSION: u32 = 22;
+pub const PRIMITIVE_NUMBER_VERSION: u32 = 23;
+pub const NUMBER_RADIX_VERSION: u32 = 24;
+pub const NUMBER_FORMAT_VERSION: u32 = 25;
+pub const NUMBER_PARSE_VERSION: u32 = 26;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -40,6 +48,14 @@ pub fn supported(version: u32) -> bool {
             | SPARSE_VERSION
             | ARRAY_MUTATION_VERSION
             | NUMBER_POWER_VERSION
+            | NATIVE_MATH_VERSION
+            | RANDOM_VERSION
+            | NUMBER_TEXT_VERSION
+            | PRIMITIVE_STRING_VERSION
+            | PRIMITIVE_NUMBER_VERSION
+            | NUMBER_RADIX_VERSION
+            | NUMBER_FORMAT_VERSION
+            | NUMBER_PARSE_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";

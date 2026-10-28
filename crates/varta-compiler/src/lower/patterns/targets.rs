@@ -101,7 +101,11 @@ impl Lower<'_> {
         let value = self.assignment_rhs_value(target.ty, rhs)?;
         self.finish_prepared_value(target, value, span)
     }
-    fn assignment_rhs_value(&mut self, ty: Type, rhs: &ast::Expr) -> Result<Expr> {
+    pub(in crate::lower) fn assignment_rhs_value(
+        &mut self,
+        ty: Type,
+        rhs: &ast::Expr,
+    ) -> Result<Expr> {
         // Non-union context can infer arrows and aggregate literals without
         // widening a scalar result. Union context may select one aggregate
         // literal member, but never pre-widens the original RHS to the target.
@@ -134,6 +138,7 @@ impl Lower<'_> {
         span: swc_common::Span,
     ) -> Result<Expr> {
         let old = self.read_prepared_target(&target)?;
+        let saved = self.flow_snapshot();
         let value = self.assignment_rhs_value(target.ty, rhs)?;
         // The outer block owns receiver/key evaluation and lifetime. This
         // branch contains only RHS evaluation and the checked store.
@@ -149,7 +154,13 @@ impl Lower<'_> {
             span,
         )?;
         let value = self.logical_assignment_operation(old, store, op, span)?;
+        self.flow_restore(&saved);
         let ty = value.ty;
+        if let Place::Local(slot) = target.kind {
+            // On normal completion the selected old/new value is also the
+            // target's value. RHS effects remain conditional for other slots.
+            self.flow_fact(slot, ty)?;
+        }
         let output = self.hidden(ty);
         let marker = self.hidden(Type::Number);
         target.roots.push(output);
@@ -168,7 +179,24 @@ impl Lower<'_> {
     fn read_prepared_target(&mut self, target: &Target) -> Result<Expr> {
         let span = target.span;
         Ok(match target.kind {
-            Place::Local(slot) => local(span, slot, target.ty),
+            Place::Local(slot) => {
+                let value = local(span, slot, target.ty);
+                if self.types.profile.refinement_writes()
+                    && let Some(&ty) = self.refinements.get(&slot)
+                {
+                    if ty.is_union() {
+                        Expr { ty, ..value }
+                    } else {
+                        Expr {
+                            span,
+                            ty,
+                            kind: E::UnboxUnion(Box::new(value)),
+                        }
+                    }
+                } else {
+                    value
+                }
+            }
             Place::Field { base, ty, index } => Expr {
                 span,
                 ty: target.ty,
@@ -248,6 +276,7 @@ impl Lower<'_> {
         let store = self.store_pattern_target(
             &target,
             unions::widen(local(span, input, ty), Some(target.ty), self.types)?,
+            ty,
         )?;
         target.body.push(store);
         target.roots.push(input);
@@ -285,9 +314,11 @@ impl Lower<'_> {
     fn assign_prepared_target(&mut self, target: &Target, value: Expr) -> Result<Vec<S>> {
         let expected = target.ty;
         if arguments::accepts(expected, value.ty, self.types) {
+            let observed = value.ty;
             return Ok(vec![self.store_pattern_target(
                 target,
                 unions::widen(value, Some(expected), self.types)?,
+                observed,
             )?]);
         }
         let members = unions::members(value.ty, self.types);
@@ -324,6 +355,7 @@ impl Lower<'_> {
                 let store = self.store_pattern_target(
                     target,
                     unions::widen(present, Some(expected), self.types)?,
+                    ty,
                 )?;
                 return Ok(vec![S::Scope(
                     vec![input],
@@ -342,10 +374,13 @@ impl Lower<'_> {
             target.span,
         ))
     }
-    fn store_pattern_target(&mut self, target: &Target, value: Expr) -> Result<S> {
+    fn store_pattern_target(&mut self, target: &Target, value: Expr, observed: Type) -> Result<S> {
         let span = target.span;
         Ok(match target.kind {
-            Place::Local(slot) => S::Set(slot, value),
+            Place::Local(slot) => {
+                self.flow_assigned(slot, observed)?;
+                S::Set(slot, value)
+            }
             Place::Field { base, ty, index } => S::SetField(local(span, base, ty), index, value),
             Place::Index { base, ty, key } => S::SetIndex {
                 array: local(span, base, ty),

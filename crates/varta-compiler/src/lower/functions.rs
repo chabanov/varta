@@ -316,6 +316,7 @@ impl Lower<'_> {
             }
             _ => Type::Void,
         };
+        let outer_narrows = self.capture_narrows();
         let mut child = Lower {
             source: self.source,
             types: self.types,
@@ -324,6 +325,19 @@ impl Lower<'_> {
             next: 0,
             local_types: BTreeMap::new(),
             refinements: BTreeMap::new(),
+            writes: Default::default(),
+            call_writes: Default::default(),
+            call_unknown: false,
+            direct_writes: Default::default(),
+            call_parameters: Default::default(),
+            parameter_values: self.parameter_values.clone(),
+            parameter_roots: Default::default(),
+            known_calls: self.known_calls.clone(),
+            call_effects: self.call_effects,
+            reachable: true,
+            control: Default::default(),
+            guard_blocked: Default::default(),
+            outer_narrows,
             result: if infer_returns {
                 Type::Void
             } else {
@@ -347,6 +361,7 @@ impl Lower<'_> {
         };
         if let Some(ty) = receiver {
             child.declare("this", Some(ty), true, false)?;
+            child.flow_parameter_binding(&child.binding("this")?, 0);
         }
         child.reserve_parameters(&plans)?;
         let self_slot = if let Some(name) = self_name {
@@ -411,6 +426,8 @@ impl Lower<'_> {
             ));
         }
         let captured: Vec<_> = child.captures.values().cloned().collect();
+        let effects = child.flow_summary();
+        child.call_effects.insert(index, effects);
         let function = ir::Function {
             shape,
             self_slot,
@@ -483,13 +500,22 @@ impl Lower<'_> {
             );
             slot
         };
-        if binding.mutable && self.guarded.contains(&slot) {
+        if binding.mutable
+            && self.guarded.contains(&slot)
+            && !self.types.profile.refinement_writes()
+        {
             return Err(unsupported("capture of a mutable guard-refined binding"));
         }
-        if self.refinements.contains_key(&slot) {
+        if self.refinements.contains_key(&slot) && !self.types.profile.refinement_writes() {
             return Err(unsupported("capture of a guard-refined binding"));
         }
         self.cells.insert(slot);
+        if self.types.profile.refinement_writes()
+            && !binding.mutable
+            && let Some(&ty) = self.outer_narrows.get(&binding.identity)
+        {
+            self.refinements.insert(slot, ty);
+        }
         Ok(slot)
     }
     pub(super) fn resolve_binding(&mut self, name: &str) -> Result<Binding> {

@@ -36,6 +36,7 @@ impl Execution {
                 output_bytes: 0,
                 host_calls: 0,
                 http_control: None,
+                random: crate::random::RandomSource::default(),
                 deadline: Instant::now() + Duration::from_secs(abi::DEADLINE_SECONDS),
             },
         );

@@ -268,6 +268,7 @@ fn check_exports(module: &Module) -> Result<(), RuntimeError> {
             import.name(),
             "log_i32"
                 | "log_f64"
+                | "log_f64_v2"
                 | "log_undefined"
                 | "number_remainder"
                 | "process_exit_f64"

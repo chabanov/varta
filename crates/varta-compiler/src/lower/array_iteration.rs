@@ -138,7 +138,7 @@ impl Lower<'_> {
         let read = Expr {
             span,
             ty: item,
-            kind: if method == Method::Find {
+            kind: if method.visits_holes() {
                 E::MaybeIndex(
                     Box::new(local(span, source, array)),
                     Box::new(local(span, index, Type::Float64)),
@@ -174,14 +174,21 @@ impl Lower<'_> {
         let mut step = vec![S::Init(current, read)];
         match method {
             Method::ForEach => step.push(S::Expr(invocation)),
-            Method::Find | Method::Some | Method::Every => {
+            Method::Find
+            | Method::FindIndex
+            | Method::FindLast
+            | Method::FindLastIndex
+            | Method::Some
+            | Method::Every => {
                 let test = self.array_predicate(invocation)?;
                 step.push(S::If(
                     test,
                     if method == Method::Every {
                         vec![]
                     } else {
-                        vec![S::Return(Some(if method == Method::Find {
+                        vec![S::Return(Some(if method.index_result() {
+                            local(span, index, Type::Float64)
+                        } else if method.visits_holes() {
                             local(span, current, item)
                         } else {
                             Expr {
@@ -287,7 +294,7 @@ impl Lower<'_> {
             }
         }
         let step = vec![S::Scope(vec![current], step)];
-        let step = if self.types.profile.sparse_arrays() && method != Method::Find {
+        let step = if self.types.profile.sparse_arrays() && !method.visits_holes() {
             let absent = vec![];
             vec![S::If(
                 Expr {
@@ -320,19 +327,44 @@ impl Lower<'_> {
             step
         };
         body.push(S::For(
-            vec![S::Init(index, number(span, 0.0))],
+            vec![S::Init(
+                index,
+                if method.reverse() {
+                    binary(
+                        span,
+                        ast::BinaryOp::Sub,
+                        local(span, limit, Type::Float64),
+                        number(span, 1.0),
+                        Type::Float64,
+                    )
+                } else {
+                    number(span, 0.0)
+                },
+            )],
             Some(binary(
                 span,
-                ast::BinaryOp::Lt,
+                if method.reverse() {
+                    ast::BinaryOp::GtEq
+                } else {
+                    ast::BinaryOp::Lt
+                },
                 local(span, index, Type::Float64),
-                local(span, limit, Type::Float64),
+                if method.reverse() {
+                    number(span, 0.0)
+                } else {
+                    local(span, limit, Type::Float64)
+                },
                 Type::Boolean,
             )),
             vec![S::Set(
                 index,
                 binary(
                     span,
-                    ast::BinaryOp::Add,
+                    if method.reverse() {
+                        ast::BinaryOp::Sub
+                    } else {
+                        ast::BinaryOp::Add
+                    },
                     local(span, index, Type::Float64),
                     number(span, 1.0),
                     Type::Float64,
@@ -359,7 +391,10 @@ impl Lower<'_> {
                 output.ok_or_else(|| invalid("missing callback output"))?,
                 self.result,
             )),
-            Method::Find => Some(unions::widen(undefined(span), Some(item), self.types)?),
+            Method::Find | Method::FindLast => {
+                Some(unions::widen(undefined(span), Some(item), self.types)?)
+            }
+            Method::FindIndex | Method::FindLastIndex => Some(number(span, -1.0)),
             Method::ForEach => None,
             Method::Some | Method::Every => Some(Expr {
                 span,

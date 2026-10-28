@@ -4,7 +4,7 @@ This document describes the implemented MVP. Future work is tracked separately i
 [development-plan.md](development-plan.md). Varta compiles a deliberately small
 TypeScript subset to portable WebAssembly and executes it in a capability-checked
 Wasmtime host. It does not provide general JavaScript, Node or npm compatibility.
-The [2026-10-27 development checkpoint](development-plan.md#development-checkpoint--2026-10-27)
+The [2026-10-28 development checkpoint](development-plan.md#development-checkpoint--2026-10-28)
 records the current delivery state and local verification; the contracts below
 remain the source of truth for individual features and profile boundaries.
 
@@ -182,10 +182,20 @@ report the supported profile and its origin:
 | Explicit sparse-array profile + ABI v16 | `profile:"checked-f64-utf16-v13", origin:"declared"` |
 | Explicit array-mutation profile + ABI v17 | `profile:"checked-f64-utf16-v14", origin:"declared"` |
 | Explicit Number-power profile + ABI v18 | `profile:"checked-f64-utf16-v15", origin:"declared"` |
+| Explicit native-Math profile + ABI v19 | `profile:"checked-f64-utf16-v16", origin:"declared"` |
+| Explicit random profile + ABI v20 | `profile:"checked-f64-utf16-v17", origin:"declared"` |
+| Explicit Number-output profile + ABI v21 | `profile:"checked-f64-utf16-v18", origin:"declared"` |
+| Explicit primitive-String profile + ABI v22 | `profile:"checked-f64-utf16-v19", origin:"declared"` |
+| Explicit primitive-Number profile + ABI v23 | `profile:"checked-f64-utf16-v20", origin:"declared"` |
+| Explicit Number-radix profile + ABI v24 | `profile:"checked-f64-utf16-v21", origin:"declared"` |
+| Explicit Number-precision profile + ABI v25 | `profile:"checked-f64-utf16-v22", origin:"declared"` |
+| Explicit numeric-prefix profile + ABI v26 | `profile:"checked-f64-utf16-v23", origin:"declared"` |
+| Explicit truth-guard profile + shared ABI v26 | `profile:"checked-f64-utf16-v24", origin:"declared"` |
+| Explicit predicate-search profile + shared ABI v26 | `profile:"checked-f64-utf16-v25", origin:"declared"` |
 | ABI v1 without a language section (older Varta output) | Same profile, `origin:"legacyHostAbi"`; existing behavior is preserved |
 | Neither section (generic portable Wasm) | `profile:null, origin:"unspecified"`; no claim about source-language semantics |
 | Unknown/invalid/duplicate profile or ABI | Reject; no fallback to the current profile |
-| ABI v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18 without an explicit matching profile | Reject; only ABI v1 has a legacy fallback |
+| ABI v2–v26 without an explicit matching profile | Reject; only ABI v1 has a legacy fallback |
 
 The default i32 profile describes the existing checked subset, not full JavaScript. Arithmetic
 wraps/truncates/traps as documented above. `-0` becomes integer zero. Floating-point
@@ -1022,6 +1032,849 @@ catch/finally. Tests cover this boundary, maximum strings with explicit test fue
 UTF-16 unit alignment, effects/throws, GC/pairs/saved results, array/legacy rules,
 virtual modules and source-free artifacts with grants/ceilings and diagnostics.
 
+### Stable callback-parameter effects (v24)
+
+Lifted-closure summaries can retain symbolic callback-input origins: defining
+function plus physical argument position. At a proven invocation, substitute the
+actual callback's known cell effects. Forwarding through known functions and const
+aliases preserves those origins, including nested closures that capture only another
+function. Unused callback inputs do not become invoked inputs merely because they
+were supplied. Module declarations retain the conservative supplied-callback bound
+from the contract below; no order-dependent whole-module fixed point is introduced.
+
+Register original ABI inputs before source parameter initialization, then map them
+to the initialized source binding. This preserves positions with default/rest prologues
+and explicit Function receivers. Default expressions may invoke an earlier initialized
+callback. Ignored .call receivers do not shift callback positions inside the actual
+callee signature; an explicit Function receiver is a real callback input at position0.
+
+A symbolic input denotes the original function only if no source store replaces its
+binding. Validate direct stores and captured stores from nested lifted functions,
+including an escaping mutator that could be invoked through another callback. A
+read-only capture is allowed; a possible replacement anywhere in the function keeps
+the unknown-reentry fallback. Const copies propagate their input origin, but this
+is deliberately not a general point-sensitive mutable-function provenance analysis.
+The proof relies on closed lexical binding cells and the absence of dynamic eval/
+external environment-cell mutation; revisit it when those facilities expand.
+
+Separate committed source writes from flow invalidation revisions. A symbolic call
+still invalidates mutable captured facts while checking its own function body, since
+the callback is unknown there. That conservative invalidation is not invented as a
+direct write in the exported summary. Summaries retain actual captured writes,
+transitive writes and symbolic inputs; callers bind them without restoring facts
+lost during earlier argument evaluation. Unknown self/returned/mutable targets and
+unbound higher-order callback arguments continue to use the broad fallback.
+
+Borrowed AST guards/loops bind known and inline callback effects with the same
+receiver/argument positions. Literal-function traversal shares the existing64 proof
+depth budget across nested analysis instead of resetting it. The enclosing effect visitor visits literal bodies once;
+normal-call fallback expands a literal only when there is no enclosing traversal.
+Exhaustion is unknown;
+source complexity/expression limits remain unchanged. Literal callback effects
+respect parameter/block/self-name shadows and can conservatively include uncalled
+nested bodies. Synthesized array/spread callback paths and opaque argument values
+may still lose precision. Function-valued aggregates are not added.
+
+This changes compiler analysis only: ABI26/value12/schema12, physical parameter/
+closure layout, call evaluation order, permissions/status, exact roots and production
+budgets are unchanged. Tests cover reads/writes, forwarding/captures, replacement,
+prologues/receivers, guards/loops, argument effects, depth, GC and source-free/public
+module execution. Higher-order argument binding, mutable/returned function analysis,
+property/alias effects, initializer inference and readiness criteria remain open.
+
+### Proven call effects for local cells (v24)
+
+V24 tracks compiler-only function provenance for direct FunctionRefs and immutable
+local function bindings, including const aliases and conditional target sets. Known
+proofs transfer through immutable captures by binding identity. Mutable function
+variables, opaque returned functions and unproved values keep the reentry fallback.
+No instance/environment alias identity or whole-program recursive fixed point is
+inferred.
+
+Each lifted closure records writes to captured binding identities plus symbolic stable callback inputs and an unknown-
+reentry flag. Known calls propagate their target summaries, including effects through
+a closure that captures only another function. Writes to the callee activation's own
+locals do not become writes to caller bindings. Unknown self/callee calls propagate the fallback flag even when the externally
+affected cell is not directly captured by the intermediary function. Stable callback
+inputs propagate symbolically as specified above; unproved inputs remain unknown. Only matching visible mutable caller slots
+lose their type facts; unknown reentry still invalidates all mutable captured cells.
+
+Module declarations have no lexical caller environment under the current admitted
+module model (no mutable module globals, prototype hooks or retained host callbacks).
+They can reach caller cells only through supplied function values. Primitive or
+callback-free structured arguments cannot supply those cells. For function arguments,
+known closure/module proofs bound reachable effects; opaque function arguments keep
+the fallback. Function-valued aggregates remain unsupported, and future opaque
+containers must be treated as potential reentry. This rule concerns binding cells:
+record/array mutation is not a promise of unchanged properties or alias graphs.
+
+Analyze invocation effects after lowering arguments; do not restore facts invalidated
+by argument effects. The callee is evaluated/cached before arguments under the existing
+IR rules. Immutable proof identity cannot be reassigned during later argument work.
+Direct calls, const aliases, .call and stable spread targets share the analysis;
+synthesized/unknown callback paths stay conservative. Borrowed AST loop/test analysis
+uses known target identities where available and respects lexical shadows, rather
+than invalidating every cell for every user call.
+
+Checked non-reentrant Number/String/Error methods and array operations without
+callbacks preserve binding facts; array methods may still mutate heap contents.
+Existing global native operations retain their status/capability contracts. Revisit
+these classifications whenever globals, prototypes, getters/coercion, callback APIs,
+await/yield or host reentry expand. Graph reachability memoizes visited types and
+uses the existing64 depth bound; exhausted function/type proofs fall back to unknown.
+
+Summaries/provenance live only in the compiler. Physical captures, emitted operation
+registry, ABI26/value12/schema12, native distribution, capabilities and production
+budgets are unchanged. Tests cover transitive/selected targets, module callbacks,
+argument writes, shadowing, recursion/fallbacks, loops/guards, GC, denial status and
+source-free/public-module execution. Precise higher-order callback-argument binding, returned/mutable function
+provenance, property/alias effects, initializer inference
+and production/conformance criteria remain open work.
+
+### Completion-targeted local flow (v24)
+
+V24 snapshots also track whether a path can reach the next statement. If/ternary
+joins ignore unreachable paths; unreachable source still undergoes syntax/type
+checking. Literal truth (including successful void expressions) can rule out an
+edge without skipping operand evaluation. This does not infer arbitrary constants
+or introduce a Never value/physical type. Literal analysis uses the existing64
+depth bound; effect traversal borrows the AST instead of cloning unchecked trees.
+
+A function-local stack distinguishes loops, switches and named labels. Break and
+continue capture facts at their own target. Only directly wrapping iteration labels
+bind named continues to a loop; nested loops cannot consume an outer continue.
+Label exits join normal fallthrough with matching named breaks. Switch exits join
+matching breaks, final fallthrough and a possible no-match edge when there is no
+default. Case selection/fallthrough input remains conservative as specified below.
+Dead writes/breaks do not add executable exit paths.
+
+While/for exits combine their false-test guard with matching breaks. Literal-true
+or omitted for tests have no false edge. Do-while test and for update input joins
+normal body fallthrough with continues targeting that loop; break/return paths do
+not contribute. For-of retains a possible empty/exhausted-input edge. Literal-false
+tests need no repeated-body invalidation. Other repeated code still conservatively
+invalidates potential mutations before lowering; no general loop fixed point or
+first-iteration path splitting is claimed.
+
+For initializers execute once, before repeated-part analysis. Analyze only the
+body/update/test afterward: an initializer assignment must not preserve a type
+across a later mutation and the next test. For-of evaluates/caches its source once,
+then analyzes the repeated head/body. Existing fresh let cells, rebind positions,
+checked presence errors, exact roots and cached source identity are preserved.
+
+Finally transforms pending break/continue snapshots created inside its try/catch
+region, leaving earlier sibling exits untouched. Discard facts for slots potentially
+changed during the finalizer and overlay facts guaranteed on normal finalizer
+completion. Apply nested finalizers in unwind order. A finalizer with no normal
+completion cancels those pending exits; its own breaks/continues remain separate.
+Normal try continuation requires both a normal body/handler path and normal
+finalizer completion. Handler/finalizer entry still uses conservative prefix facts;
+unproved calls invalidate mutable captured cells; proven effects above can target
+only the cells actually reachable through the known callee.
+
+This is compile-time analysis over existing IR/guest control routing. No native
+operation, runtime dependency, ABI26/value12/schema12, capability or production
+budget changes. Prior profiles retain their source rules. Regression coverage
+includes safe/unsafe joins, repeated tests, named/switch exits, finalizer writes/
+overrides/throws, captures, GC and source-free/public-module execution. More precise
+call/property/initializer inference, loop fixed points, exceptional edges and
+compiler scaling measurements remain open work.
+
+### Write-aware refinements and captures (v24)
+
+V24 extends guard admission with compile-time write revisions. Existing profiles
+through v23 retain readonly guard/capture rules; the same ABI26/value12/schema12,
+heap/cell layouts, helper exports and native operation registry are used. No
+permission, runtime dependency or production budget is added or raised.
+
+Each binding slot has a compile-time revision. A committed simple, pattern,
+compound, logical, update or existing-head for-of store increments it and removes
+that slot's refinement. Prepare references and evaluate RHS before invalidating
+the target, preserving reads such as value=read(value) and cached old operands.
+Stores still validate/widen to the declared type. Preserve the observed value
+type before widening; a strict subset of the declared union becomes the new fact
+after a successful store. Simple/pattern/compound/update stores participate;
+logical assignment targets receive the selected old/new result type. Prepared
+reads use current facts while caching the old value before RHS effects. Initializer
+inference is not added, and no physical cell/storage type changes.
+
+Snapshots contain both facts and revisions. Alternative if/ternary branches start
+with the same facts. Join types from normally completing paths using the existing
+reachability/target analysis above; absent facts mean the full declared upper bound. Return,
+throw and jump paths do not contribute to a normal join. Joined subunions remain
+inside the same bounded type arena. Optional RHS/default execution retains saved
+facts only for slots not written by any potentially executed path. Loop/label/
+switch exits use the completion-targeted joins above.
+Repeated writes must change revisions even when a slot was already written before
+the snapshot. Catch/finalizer lowering retains conservative invalidation from any
+potentially executed prefix. A handler starts from try-entry facts minus possible
+body mutations, not the type at the end of the body. Normal try/catch paths join;
+finalizers start from facts safe at every body/handler prefix. A finalizer's own
+committed stores can establish new normal-exit facts. No stale outer fact is
+restored after an inner write. Switch selection tests lower before case bodies;
+case entry joins direct selection with normal fallthrough. Completion-targeted
+switch/label exits now use the matching break snapshots as described above.
+
+A bounded SWC AST visitor records potential assignment/update/pattern/for-head
+writes and user-code calls before lowering repeated code. Binding patterns,
+parameters, block/loop/catch scopes and named functions account for lexical
+shadows. Nested function bodies are conservatively included. For code lowered in
+v24, for bodies precede updates so update reads see body invalidations. Do-while
+tests and for updates join normal fallthrough with their matching continues,
+which may bypass a later store. Loop facts
+are cleared for potential back-edge mutations before the first lowered read;
+condition guards can re-establish them on each iteration. Analysis depth follows
+the existing64 nesting budget; exhaustion drops facts conservatively rather than
+traversing unbounded input or raising a runtime limit. Type syntax has no runtime
+effects and is skipped.
+
+Guard inference blocks slots potentially written during the test. Calls without a closed effect proof
+block/invalidate mutable captured cells, including captures
+materialized by inline callbacks. Known function summaries and current non-reentrant native operations preserve
+unaffected cells; unknown member/function calls stay conservative. This classification
+must be revisited when object coercion/hooks, callbacks, await/yield or host reentry expand.
+Uncaptured locals cannot be mutated by a callee under the admitted lexical model.
+Fresh guards after a call can narrow its new current value.
+
+Captures retain the full declared cell type and binding identity. Mutable closures
+do not inherit a creation-site refinement; their own body must check the current
+value. Const bindings may inherit stable proven types through transitive captures,
+using the existing checked unboxing and environment roots. No refined physical
+cell representation is invented. Original operands/arguments evaluated before a
+mutation and saved returns own their earlier values independently of the rewritten
+binding; GC tests include mutation and collection during later arguments.
+
+The compiler adds pinned
+[swc_ecma_visit29.0.0](https://crates.io/crates/swc_ecma_visit/29.0.0), compatible
+with the existing AST29/Common26 stack; its transitive packages were already
+locked. The runtime companion's normal dependency graph remains free of compiler/
+visitor dependencies. Loop fixed points/first-iteration splitting, more precise
+exceptional edges, initializer inference, call effects and property/alias refinements
+remain unfinished analysis work. All previous root,
+status/pending/buffer, fatal fuel/deadline/host, ABI and source-free boundaries
+remain enforced. Regression tests cover assignment families, repeated revisions,
+branch joins, test effects, lexical shadowing, loop back edges, callback reentry,
+const/mutable captures, exception/finalizer paths, GC and diagnostics/public APIs.
+
+### Truth-guard profile v24 with shared host ABI v26
+
+`checked-f64-utf16-v24` inherits v23 and **shares host ABI26 / value ABI12 /
+schema12**. Source semantics and physical ABI are versioned separately: no new
+host operation/import, value/schema/container layout, runtime dependency, capability or
+resource limit is added. Both native companions must advertise v24 in protocol2's
+supported profile list even though the host maximum remains26/value12. An older
+same-ABI companion without v24 fails negotiation. Unknown profiles, missing
+language metadata or ABI mismatches fail before effects. Relabelling compatible
+Wasm as another supported ABI26 profile cannot prove source provenance; metadata
+is a declaration, as before.
+
+Only direct local identifiers gain truth guards. Positive branches remove Null/
+Undefined; negative branches remove always-true Record/Array/Error members. Both
+outcomes retain potentially true/false Number, String and Boolean classes. Negative
+truth is therefore not the complement of a class-level positive filter. Existing
+parentheses/! handling and typeof/Array/Error guards compose normally. On a true
+&& path, combine both true guards; on a false || path, combine both false guards.
+Do not assume either fact for the other compound outcome. Impossible filters stay
+conservative rather than inventing a Never value kind.
+
+Before lowering the selected RHS, temporarily apply the left's positive truth for
+&&, negative truth for ||, or Null|Undefined membership for ??. Parenthesized locals
+are supported. Restore the previous refinement map after RHS lowering, including
+errors; runtime still caches the original left and evaluates only selected effects.
+Selected-operand result typing and rooted ValueBlock behavior remain v23's contract.
+The RHS can read narrowed record/array/String/Error members or pass a narrowed value
+to a typed callee. Guards on properties, arbitrary call results or aliases are not
+inferred. No truth-based inference through Boolean(...) calls is added.
+
+If/ternary guards scope to their selected branch; normal joins combine their
+resulting facts as described above. While and for guards scope to the body;
+for updates retain true-test facts only where body/continue effects allow them.
+Join false-test and matching break facts outside the loop. Do-while's first body is unguarded because its test has not run yet.
+Write revisions now invalidate changed slots and possible mutable-capture effects,
+as specified above; const capture proofs remain stable. If filtering changes no
+members, add no refinement/capture mark. V23's previous source admission remains
+unchanged. Initializer, abrupt-exit/call/property precision and richer dataflow
+remain required work.
+
+Refinement affects compile-time types and existing checked guest unboxing only;
+ToBoolean/IsNullish remain host-free. Preserve full numeric bits, actual reference
+children and roots across RHS calls/allocations, prior pairs, saved returns and
+finalizers. Status, pending exceptions, buffer ownership, fatal host limits and
+Wasm fuel/deadline enforcement are unchanged. Tests cover both truth outcomes,
+compound/RHS/loop scopes, mutation/capture invalidation, redundant guards, all numeric
+exponents, metadata negotiation, GC/status, dependency ranges and source-free/
+public API execution. No conformance/platform/security completion claim follows.
+
+### Guest truth conversion and logical operators (v23)
+
+V23 conditions, ternaries, loops and unary ! now lower ordinary values through
+ToBoolean IR. Logical assignment tests and existing filter/find/some/every
+predicate callbacks share that conversion path. References are true; exact
+primitive and actual-union-tag rules are as specified below. No native truth
+allowance or conversion allocation is needed. Older profiles retain their source
+admission and versioned native truth imports; old compiled artifacts retain their
+physical behavior. Host ABI26/value12/schema12 and launcher negotiation are unchanged.
+
+Logical &&/||/?? use a rooted ValueBlock: evaluate/cache original left once, test
+its actual value, then execute only the selected branch. &&/|| test ToBoolean;
+?? uses the existing pure IsNullish tag operation, so zero/NaN/empty strings remain
+nonnullish. Return the selected operand with its complete Number bits or reference
+identity. No shared emitter scratch holds the cached value across RHS execution.
+The existing [ECMAScript 2025 logical semantics](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-binary-logical-operators)
+are the target, within the explicit checked value/type representation.
+
+Selected-left types remove members that cannot reach that branch: || and ??
+exclude Null/Undefined, while && excludes always-true reference members. Narrow
+an actual union member only inside the tested branch, then join with RHS type.
+Thus String|Undefined || String and String|Null|Undefined ?? String return String.
+Known literals and statically uniform type outcomes choose a branch while preserving left evaluation,
+without inventing a union; selected function values remain ordinary function values.
+Otherwise use the existing checked union layout and selected-branch boxing. This
+retains single-record-shape/single-array-element-type and no-function-union bounds.
+Opaque VartaResult pairs require explicit fields. Both source operands still need
+valid syntax/types even when one is statically unselected.
+
+Root cached input and output through selected allocations, previous operands/pairs,
+saved returns and exceptions/finalizers. Root floors restore exactly at ValueBlock
+exit; neither numeric payloads nor stale operands become reference edges. Pure
+tests preserve system status, pending exceptions and result buffers. RHS effects
+retain normal grants and fatal host limits; skipped effects consume nothing.
+All guest work remains fuel/deadline metered under unchanged limits. JSON helper
+validation allows host-free control flow and still rejects reachable RHS host
+calls, including calls in a runtime-conditional branch. Independent exponent/sign
+checks use fresh bounded stores and no raised production limits; explicit GC stress
+uses test fuel only. Source-free/public APIs, old profiles, diagnostics and helper
+purity have regression coverage.
+
+Opt-in v24 adds direct-local truth refinement and RHS guard propagation. This runtime integration does not add general object coercion,
+new value kinds, arbitrary shapes, wrappers or the remaining array built-ins.
+Opt-in v25 separately adds checked Array.findIndex/findLast/findLastIndex;
+these methods remain unavailable in v24 and earlier profiles.
+
+### Boolean and global numeric predicates (v23)
+
+The opt-in v23 profile additionally admits direct Boolean/isFinite/isNaN calls,
+with unchanged host ABI26/value ABI12/schema12. Other profiles and existing
+artifact interpretation remain unchanged. No new operation, capability, helper
+export, dependency or launcher maximum is introduced; package matching remains26.
+
+Semantics follow ECMAScript 2025
+[Boolean](https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-boolean-constructor),
+[ToBoolean](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-toboolean),
+[isFinite](https://tc39.es/ecma262/2025/multipage/global-object.html#sec-isfinite-number)
+and [isNaN](https://tc39.es/ecma262/2025/multipage/global-object.html#sec-isnan-number).
+Global declarations, locals, closures and TDZ use ordinary precedence before
+intrinsic dispatch. Only direct calls are admitted. Cache first input, evaluate
+all ignored arguments (any admitted type, complete result pairs included), then
+convert the cached original input. Argument throws skip later effects/conversion.
+
+Boolean accepts all ordinary checked values and their admitted unions: false for
+Undefined/Null, false, +/-0, NaN and zero-length String; true for other Number,
+String, Boolean and every object/array/function/Error value. Opaque VartaResult
+pairs require explicit fields and are not implicit ordinary objects. Missing input
+is false; void-call arguments retain effects before their Undefined conversion.
+No object ToPrimitive or user callbacks run during ToBoolean.
+
+New typed IR ToBoolean returns canonical i32 0/1 using guest instructions only.
+F64 abs(x)>0 handles numeric NaN/zero rules; String tests the packed UTF-16 byte
+length. Direct references discard their handle then return1. Union paths inspect
+actual immutable tags: Float64/String/Boolean read their proper payload; Null and
+Undefined are false; admitted reference members are true. No numeric bits are
+traced or dereferenced. The operation allocates nothing, imports nothing and does
+not consume host allowance, even for strings/unions. V23 control-flow/logical/unary lowering shares this guest operation; older
+profiles retain their contracts.
+
+Global numeric predicates admit primitives and primitive-only unions. After all
+argument effects, narrowed F64 values feed the existing guest NumberPredicate
+operation directly. Other primitives widen to a checked primitive cell and use
+the existing ABI23 PrimitiveNumber import, then apply the guest test. Missing input
+is guest NaN: isFinite false / isNaN true, with no import. Null/Boolean/String and
+Undefined thus have numeric conversion rather than Number.is* type-test semantics.
+Objects/reference-containing unions require narrowing until ToPrimitive exists.
+
+ValueBlock roots cache input handles/cells before ignored allocation, mutation and
+calls. Earlier pairs and saved Boolean returns retain exact roots/cleanup through
+exceptions/finalizers. Pure conversion preserves result buffers, status and pending
+channels. Numeric coercion consumes one existing host allowance and before/after
+deadline checks; budgets stay fatal through catch/finally. Guest-only paths retain
+Wasm fuel and deadline enforcement. Host-free JSON helpers admit pure Boolean
+conversion and reject reachable native numeric coercion. Tests cover all numeric
+exponents/signs, union/reference truth tables, raw guest host ceilings, effects/
+shadowing/TDZ/GC/status, helper purity and source-free/public API paths.
+
+### Numeric prefix profile and host ABI v26
+
+`checked-f64-utf16-v23` inherits v22 and requires matching **host ABI26 / value
+ABI12 / schema12** metadata even without parser calls. Unknown/downgraded or
+mismatched declarations fail before effects. Both native companions must be
+rebuilt; protocol2 advertises v23 and maximum26/value12. Other profiles, default
+i32 behavior, value/schema/container formats and resource limits are unchanged.
+
+The direct admitted forms are global parseInt/parseFloat and unshadowed
+Number.parseInt/parseFloat, following ECMAScript 2025
+[parseInt](https://tc39.es/ecma262/2025/multipage/global-object.html#sec-parseint-string-radix),
+[parseFloat](https://tc39.es/ecma262/2025/multipage/global-object.html#sec-parsefloat-string)
+and their [Number aliases](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.parsefloat).
+Global declaration/local/closure bindings and TDZ take ordinary precedence.
+Cache input, optional radix and all ignored extras before conversion. Input and
+integer radix admit the five primitives and their unions; references need narrowing
+until ToPrimitive exists. Ignored arguments may have any admitted type, including
+captured result pairs. Argument exceptions skip later operands and parsing.
+Missing input produces guest-known NaN and adds no host call.
+
+New shared operations `NumberParseInt` / `number_parse_int:(i64,i64)->f64` and
+`NumberParseFloat` / `number_parse_float:(i64)->f64` require ABI26, no capability,
+no result globals or buffer. Inputs are validated primitive cells. Input ToString
+precedes radix ToNumber: exact UTF-16 String data is borrowed during the call;
+Number uses canonical text (including -0 ->0), other primitives their literal
+spellings. Int32 radix uses exact binary64 significand/exponent truncation and
+modulo2^32, with NaN/infinities ->0. Missing radix uses a canonical Undefined cell.
+
+Parsers skip the exact ECMAScript leading WhiteSpace/LineTerminator set only.
+parseInt handles sign, then default radix10 / optional0x or explicit16 prefix;
+other bases2–36 retain their ordinary digits. Consume the longest valid prefix;
+invalid base/no digits returns NaN, zero retains the sign. NUL, lone surrogates,
+whitespace and other nonmatching units terminate a prefix rather than invalidate
+an earlier one. No implicit octal/binary prefix is recognized. Exact bounded
+BigUint accumulation rounds nearest/even to binary64; above 1024 value bits an
+already overflowing prefix determines infinity regardless of suffix. A final
+multiplication needs at most 1030 bits, including overflow detection. No approximation
+option is used for general radices or long decimal integers.
+
+parseFloat recognizes signed Infinity prefixes or decimal digits/fraction with an
+optional complete exponent. Missing exponent digits roll back to the mantissa.
+Select grammar before Rust binary64 parsing; Rust-specific inf/NaN spellings,
+separators and hexadecimal floating syntax are not admitted. ASCII scratch is at
+most half the existing 1 MiB UTF-16 ceiling. Primitive ToString scratch is bounded
+to 25 ASCII Number bytes or fixed words. Native work is bounded by input size and
+IEEE integer width; before/after deadlines do not imply native-call preemption.
+
+Each present-input operation ticks exactly one host allowance and rechecks budgets
+before returning, preserving result buffers, system status and pending exceptions.
+Parsing failure is ordinary NaN, never a recoverable host status. Host failures,
+malformed cells, deadlines and limits are fatal through catch/finally. ValueBlock
+roots retain cached inputs, radices, earlier pairs and saved returns through GC;
+JSON allocation/retention helper validation rejects reachable parser imports.
+Wrappers, general object coercion, first-class aliases and computed/spread/generic
+calls are not added. Tests cover independent CPython integer rounding goldens,
+all bases/exponents, Unicode units, maximum strings, malformed cells, metadata/
+signature/helper checks, roots/status/budgets and source-free/public API paths.
+
+### Number precision profile and host ABI v25
+
+`checked-f64-utf16-v22` inherits v21 with mandatory **host ABI25 / value ABI12 /
+schema12** metadata. Launcher protocol2 advertises maximum26/value12 and v22;
+both native companions require rebuilding. Default/older profiles retain their
+contracts; value, schema, container, permission and resource layouts are unchanged.
+
+Semantics follow ECMAScript 2025
+[toFixed](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.prototype.tofixed),
+[toExponential](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.prototype.toexponential),
+[toPrecision](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.prototype.toprecision)
+and [valueOf](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.prototype.valueof).
+
+Direct narrowed Number receivers admit toFixed, toExponential, toPrecision and
+valueOf. Receiver and all arguments are cached/evaluated before conversion;
+ignored extras retain effects, exceptions and complete result-pair disposal.
+Precision admits primitive members only; reference-containing unions need narrowing.
+Number conversion precedes truncation (NaN ->0). Missing/Undefined selects fixed
+zero digits or shortest exponential/precision text. Fixed/exponential accept
+0–100 fraction digits; precision accepts 1–100 significant digits. Fixed throws
+boxed/rooted RangeError before receiver nonfinite handling; exponential/precision
+convert first but return canonical NaN/infinity before checking the range.
+
+`NumberToFixed`, `NumberToExponential`, `NumberToPrecision` register
+`number_to_fixed`, `number_to_exponential`, `number_to_precision`, each
+`(f64,f64)->i32`, minimum ABI25, capability None, owned UTF-16 result globals.
+Physical precision is a canonical integer or infinity; raw NaN/fractions fail
+fatally. Exponential/precision reserve -1 for shortest/default formatting; source
+explicit -1 still throws on finite receivers. Fixed requires [0,100] even for
+nonfinite receivers. The other imports accept canonical out-of-range precisions
+only when the receiver is nonfinite. Compiler validation owns catchable errors.
+
+Fixed uses pinned ryu-js1.0.3 (canonical notation at absolute value >=1e21).
+Requested significant digits use exact BigUint ratios scaled by 2^1075, decimal
+normalization and nearest rounding, with ties increasing the absolute significand.
+Carry adjusts the exponent before notation selection. Precision uses exponential
+notation for exponent <-6 or >=precision. Defaults reuse canonical shortest text;
+exponential normalizes it to one leading digit and a signed exponent. Both zeroes
+format unsigned; negative nonzero values keep their sign when rounded to zero.
+IEEE-754 bounds limit normalization to 324 steps, scratch integers below 2500 bits
+and text to 123 ASCII bytes (246 UTF-16 bytes), including sign/point/exponent.
+No package or guest limit is added. Before/after native budget checks do not imply
+preemption within a bounded formatting call.
+
+Each formatter consumes one host allowance, checks deadline before/after transfer
+and preserves system status/pending exceptions. Primitive precision conversion may
+add its existing Number-conversion call. Snapshot owns results before buffer reuse;
+ValueBlock roots retain cached arguments, pairs and saved returns across GC and
+finalizers. Host failures/budgets remain fatal through catch/finally. Host-free
+JSON helper validation rejects reachable formatter imports.
+
+valueOf uses a guest ValueBlock returning the cached Number unchanged after all
+ignored argument effects. It adds no import or host allowance; guest fuel/deadline
+checks still apply. NaN remains NaN and -0 retains its sign. Wrappers, ordinary
+prototype objects, borrowing, computed/generic/spread calls and locale formatting
+are not admitted. Tests cover independent Python Decimal rounding goldens, all
+exponent classes, output bounds, raw imports, metadata/helper rejection,
+roots/status/budgets, diagnostics and source-free/public API paths.
+
+### Number radix profile and host ABI v24
+
+`checked-f64-utf16-v21` selects **host ABI24 / value ABI12 / JSON schema12** and
+inherits v20. Matching language/ABI24 metadata is mandatory even without a radix
+call; unknown/mismatched/downgraded declarations fail before effects. Old/default
+profiles retain their contracts. Launcher protocol v2 advertises maximum26/value12
+and v21; both trusted native companions must be rebuilt. Container/manifest/value
+layouts, helper exports and resource limits remain unchanged.
+
+The new shared operation is `NumberToString`,
+`varta.number_to_string : (f64,f64)->i32`, minimum ABI24, no capability. It returns
+UTF-16 through existing result-length/status exports and the owned Snapshot path;
+status is preserved. The physical radix is an already checked integer Number in
+[2,36]; noncanonical raw host arguments fail fatally. Compiler collection resolves
+its index normally. Existing primitive conversion and log/JSON selectors are unchanged.
+
+The admitted semantics follow
+[ECMAScript 2025 Number.prototype.toString](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.prototype.tostring).
+Only direct dot calls on narrowed Number receivers are added. Cache receiver first,
+then the first radix, evaluate/discard all ignored arguments, and only then coerce
+and validate the cached radix. Missing/Undefined selects 10. Other admitted
+primitive members use existing Number conversion (already numeric values need no
+extra host call), then ToIntegerOrInfinity: truncate, with NaN mapped to zero.
+Outside [2,36], throw a boxed, rooted RangeError through the existing exception
+channel before checking receiver zero/NaN/infinity cases. Argument exceptions skip
+later arguments and formatting; a receiver exception skips every argument.
+Reference-containing radix unions need narrowing until ToPrimitive exists.
+
+Decimal output reuses pinned ryu-js1.0.3. Other bases use lowercase digits and
+fixed notation. Exact positive binary64 values and neighbor midpoints are integers
+scaled by 2^1075; the largest finite value uses the virtual next value 2^1024.
+Even significands include midpoint endpoints and odd ones exclude them. Normalize
+against radix powers, then find the shortest precision with an integer inside the
+rounding interval; choose the nearest integer, ties to even, inside that interval.
+Strip insignificant trailing zeroes and place the point/leading/trailing zeroes.
+No intermediate floating accumulation or approximate logarithm chooses digits.
+Both zeroes print 0; valid-radix NaN/infinities use canonical names.
+
+Native exact arithmetic adds direct runtime use of num-bigint0.4.8, already pinned
+in the lockfile via the compiler; no new package version is introduced and BigInt
+is not added to the language. IEEE-754 bounds limit normalization to 1074 steps,
+precision search to 55 digits, scratch integers to below 2500 bits and text to at
+most 1077 ASCII bytes (negative least-subnormal binary output). The native output
+is UTF-16 encoded before transfer. Existing 1 MiB string/memory/fuel/frame/type and
+host/deadline limits are unchanged. Before/after deadline checks do not promise
+preemption during a bounded native call.
+
+Each formatting import ticks one host allowance and rechecks budget/deadline after
+transfer. Primitive String/Boolean/Null radix coercion can consume its existing
+additional Number-conversion allowance. Numeric/default/Undefined radices do not.
+Host failures and budgets remain fatal through catch/finally; language RangeError
+is catchable. Result buffers are reused only after Snapshot owns output; system
+status and pending channels are not reset. ValueBlock roots retain cached radices,
+earlier operands/pairs and saved returns through GC/finalizers. Host-free JSON
+allocation/retention helpers reject reachable formatter imports.
+
+The checked surface does not add Number wrappers, general prototypes/descriptors,
+borrowed/computed/spread/generic calls, String/Boolean.toString or other Number
+methods. Existing Error.toString admission is unchanged. Tests cover every radix,
+all exponent classes in representative even/odd bases, exact special/edge goldens,
+1077-byte extremes and independent rational parsing back to binary64. Shorter
+significand candidates fail to reconstruct the value. Actual Wasm calls test typed
+linking, one-call accounting and owned text. Argument/coercion/RangeError order,
+GC/pairs/status/returns, fatal budgets, old profiles, hostile metadata/signatures,
+helper purity, dependency ranges, virtual modules and source-free portable/native
+packaging have regression coverage.
+
+### Primitive Number profile and host ABI v23
+
+`checked-f64-utf16-v20` selects **host ABI23 / value ABI12 / JSON schema12**,
+inheriting all v19 features. Matching language/ABI23 metadata is mandatory even
+without a host conversion call. Invalid/mismatched/downgraded declarations fail
+before effects. Default/earlier profiles retain their contracts. Launcher protocol
+v2 advertises maximum26/value12 and v20; native packaging requires matching rebuilt
+companions. Dependencies, helper exports, container/value/manifest layouts and all
+resource limits remain unchanged.
+
+The new shared operation is `PrimitiveNumber`,
+`varta.primitive_to_number : (i64)->f64`, minimum ABI23, no capability, result buffer
+or result globals. It reads the existing checked immutable primitive cell layout
+with PrimitiveBox validation. The same cached-argument ValueBlock used for String
+conversion prepares inputs, using one shared five-primitive union and existing
+locals/root budgets. The first value is saved before all ignored arguments run;
+conversion follows their complete, ordered evaluation. Throws skip later arguments
+and conversion. Ordinary local/declaration/imported functions named Number retain
+normal dispatch and TDZ behavior.
+
+The admitted semantics follow the primitive part of
+[ECMAScript 2025 Number(value)](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number-constructor-number-value)
+and [StringToNumber](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-tonumber-applied-to-the-string-type).
+No argument yields guest +0 without an import; present Undefined yields NaN, Null
++0, Boolean 0/1. Number inputs retain finite/nonfinite values and signed-zero bits;
+NaN payloads are unspecified. No object-to-primitive protocol, wrapper, BigInt or
+Symbol value support is added here. Reference-containing unions need narrowing.
+new Number and generic/spread/borrowed calls remain unsupported. This conversion
+supplies the numeric foundation for radix arguments in the v21 method; it does not
+itself add that method or general implicit coercion.
+
+UTF-16 strings trim only the pinned ECMAScript WhiteSpace/LineTerminator set,
+including FEFF and excluding 0085/180E/200B. Empty trimmed strings yield +0; remaining
+non-ASCII units, including lone surrogates, make numeric syntax invalid. The whole
+remaining input must match decimal integer/fraction/exponent syntax, signed exact
+Infinity, or unsigned 0x/0b/0o integer syntax. Internal whitespace, separators,
+partial parses, signed nondecimal prefixes and wrong/trailing digits yield NaN.
+Grammar is checked before Rust decimal parsing, preventing extra host spellings
+such as inf from becoming valid. Decimal parsing uses locale-independent binary64
+nearest/even conversion, retaining overflow and signed underflow.
+
+Prefixed power-of-two integers scan every digit, retain the leading 53 bits plus
+guard/sticky information, and round once to nearest/even. Exponent packing handles
+carry and overflow without intermediate floating accumulation, u128 truncation or
+an arbitrary-precision dependency. Even a value already certain to overflow must
+check its remaining digits: invalid trailing text yields NaN, never Infinity.
+Input stays under the existing 1 MiB encoded limit; the temporary ASCII buffer
+holds at most half that many bytes. Work is linear in string length, with constant
+numeric state; the decimal conversion uses Rust's bounded input parser.
+
+The host ticks one existing allowance before validation/parsing and checks the
+same deadline/budget afterward without another charge. Bad cells and exhausted
+limits stay fatal through catch/finally; syntactically invalid numeric strings
+instead return NaN normally. Status, result buffers/length and pending exceptions
+are never reset or mutated. Guest roots retain strings, cells, earlier operands,
+pairs and saved returns through argument GC/finalizers. Host-free JSON helpers
+reject all reachable conversion imports. Removing result-global exports from an
+otherwise valid Number-only fixture does not prevent execution.
+
+Tests cover all primitive/union cases, absent/Undefined distinctions, grammar and
+all UTF-16 whitespace units, decimal halfway/underflow/overflow goldens, exhaustive
+small prefixes and independent u128 casts, CPython >128-bit integer goldens,
+binary64 exponent/threshold round trips and numeric identity including -0. Exact
+maximum strings, invalid suffixes after overflow, effects/status/buffer/pair/GC
+lifetimes, old bindings/profiles, hostile metadata/signatures, helper purity,
+virtual modules and source-free portable/native paths are covered.
+
+### Primitive String profile and host ABI v22
+
+`checked-f64-utf16-v19` selects **host ABI22 / value ABI12 / JSON schema12** and
+inherits every v18 feature. Default/older profiles retain their contracts. Matching
+language and ABI22 declarations are mandatory even for no-argument String() or an
+unused conversion surface. Unknown/mismatched/downgraded declarations fail before
+execution. Launcher protocol v2 advertises maximum26/value12 and v19; native
+packaging requires matching rebuilt companions. Container/manifest formats, value
+layouts, helper exports, dependencies and all resource limits remain unchanged.
+
+The new shared registry operation is `PrimitiveString`,
+`varta.primitive_to_string : (i64)->i32`, minimum ABI22, no capability, returning
+UTF-16 through the existing pointer/result-length globals and owned Snapshot path.
+Result globals are required, but system status is not reset. The physical input
+is a checked immutable primitive-union cell using the existing value12 layout;
+PrimitiveBox validation rejects invalid sizes, heap/trace flags, tags, payloads,
+string lengths and ranges before reading text. Reference/object cells are rejected.
+The compiler collects/resolves this host index without literal import numbers.
+
+The admitted behavior follows the primitive part of
+[ECMAScript 2025 String(value)](https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string-constructor-string-value)
+and [ToString](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-tostring).
+A missing argument produces an empty String literal with no host call; present
+Undefined produces "undefined", Null "null", Boolean "true"/"false". Numbers reuse
+the canonical v18 formatter, including zero/nonfinite/scientific rules. String
+values preserve all UTF-16 units, without lossy Unicode scalar conversion or NUL
+termination. No Symbol/BigInt value type, wrapper constructor, object-to-primitive
+protocol, Number.prototype.toString method or radix conversion is added here.
+
+Only direct global String calls are added. Ordinary lexical/imported functions
+named String retain normal dispatch/TDZ behavior. Generics, spread, borrowing and
+new String are unsupported. The first argument must have only admitted primitive
+members; a reference-containing union needs narrowing. Extra arguments may be any
+otherwise admitted values, including physical result pairs, objects and functions.
+All arguments evaluate once in order before conversion. A hidden local caches the
+original first value; ignored argument effects/throws never change that snapshot.
+The compiler uses one shared five-member primitive union plus existing hidden
+locals/root accounting, with no raised type/frame/source/fuel limits.
+
+A ValueBlock retains the first value and final String across ignored-argument GC,
+outer operands, calls, result pairs and saved-return/finalizer lifetimes. Each
+present conversion ticks one existing allowance before decoding and checks the
+budget/deadline again after transfer. Number text is bounded; Strings are copied
+at most the unchanged 1 MiB encoded ceiling. The host copies input before writing
+the reusable result area, and guest Snapshot retains output before another host
+call. Empty strings and overlapping input/result areas are safe. Status and pending
+exception channels remain unchanged. Bad cells/transfers and exhausted limits stay
+fatal through catch/finally. Host-free JSON helpers reject reachable conversion
+imports despite their lack of a capability.
+
+Tests cover all primitive/union results, absent versus Undefined/empty input,
+canonical Number text, all 65536 UTF-16 units, invalid cells, the exact maximum
+string, result-buffer reuse, saved first-value ordering, ignored pair/effect/throw
+paths, lexical/TDZ and old-profile boundaries. GC/earlier roots/saved returns,
+fatal budgets, metadata/signatures/helper purity, dependency ranges, virtual
+modules and source-free portable/native paths retain regression coverage.
+
+### Number output profile and host ABI v21
+
+`checked-f64-utf16-v18` selects **host ABI21 / value ABI12 / JSON schema12**,
+inheriting v17's admitted language, Math/random, JSON, heap, closure, exception and
+sparse-mutation features. The default remains i32. Matching language and ABI21
+metadata is mandatory even without a log call. Unknown/mismatched/downgraded
+metadata fails before execution. Launcher protocol v2 advertises maximum26/value12
+and v18; native packaging requires the matching rebuilt companion. Container and
+manifest formats, value layouts, helper exports and resource limits are unchanged.
+
+The two new shared registry imports are `LogFloatV2`, `varta.log_f64_v2 : (f64)->()`,
+and `ValueLogV7`, `varta.value_log_v7 : (i64)->()`, minimum ABI21 with no capability
+or result globals. V18 remaps scalar LogFloat and every older union/reference log
+to these exact names. Non-log operations and JSON/value selectors are unchanged.
+Older profiles keep their registered log contracts; their raw Number text is not
+silently changed by a newer runtime. V18 rejects the older log names, and earlier
+profiles reject the new imports. Scalar logging needs no guest result buffer;
+union logging reads a checked value ABI12 cell. No string result is allocated in
+the guest and the compiler resolves ordinary collected host indices.
+
+Canonical Number text follows the radix-10 portion of
+[ECMAScript 2025 Number::toString](https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-tostring).
+Both zeroes produce `0`; NaN and infinities use `NaN`, `Infinity`, `-Infinity`.
+Finite nonzero values use the shortest decimal significand that rounds back to the
+same binary64 value, with nearest/even tie selection. Fixed notation applies for
+magnitudes [1e-6,1e21); otherwise scientific notation uses lowercase e, explicit
+exponent sign and no exponent leading zeroes. Pinned ryu-js1.0.3 supplies this
+formatting, already used in checked JSON serialization; no dependency is added.
+A scalar Number's text needs at most 25 ASCII bytes, including a negative sign.
+There is no locale influence or platform libm dependence in this conversion.
+
+The new union log changes only its Float64 case. Other primitive, String, Error,
+record and array observations retain existing validation and rendering, including
+Boolean logs as 0/1. Diagnostic aggregate JSON retains its previous canonical
+numbers and nonfinite/null rules. JSON.stringify is unchanged. This increment
+does not itself introduce String() (added for primitives in v19), Number.prototype.toString, arbitrary-radix conversion,
+coercion, Number wrappers or first-class method borrowing.
+
+Each log ticks one existing host allowance and retains existing deadline/output
+limits. Canonical formatting is bounded; no system status reset, result buffer
+reuse or pending-exception mutation occurs. Argument effects run before logging;
+throws skip the log. Budgets and authorized exit stay fatal through catch/finally.
+Earlier arguments, result pairs, roots and saved returns remain valid through GC.
+Host-free JSON allocation/retention helpers reject every reachable log import.
+
+Tests cover exact special cases and threshold/shortest-digit goldens, all binary64
+exponents and decimal-power neighbors, bit-preserving parsing, independent shorter
+significand rejection and the 25-byte bound. Actual scalar/union Wasm calls traverse
+all exponent classes in fresh bounded stores and charge exactly one call each.
+Earlier profiles preserve scalar/union text. Non-Number values, JSON, buffers/status,
+GC/pairs/finalizers, source ranges, hostile imports/signatures/metadata, helper
+purity, virtual modules and source-free portable/native paths are covered.
+
+### Random profile and host ABI v20
+
+`checked-f64-utf16-v17` selects **host ABI20 / value ABI12 / JSON schema12** and
+inherits every v16 source/value/heap/exception/closure/sparse-mutation feature.
+Default i32 and old profiles retain their contracts. Matching language and ABI20
+metadata is mandatory even when the source uses no random call. Unknown/mismatched,
+downgraded and missing declarations fail before execution. Launcher protocol v2
+advertises maximum26/value12 and includes v17/v18/v19/v20/v21/v22/v23/v24/v25; both trusted native build companions must be
+rebuilt together. Container/manifest formats and resource limits are unchanged.
+
+The one new shared registry operation is `MathRandom`, import
+`varta.number_random : () -> f64`, minimum ABI20, no capability or result globals.
+Randomness is intrinsic runtime entropy, with no guest-directed file, environment
+or network access. No Tool/HTTP binary64 adapter or permission is introduced.
+The compiler resolves this operation's collected index, with no literal import
+indices. Only direct unshadowed Math.random dot calls are admitted; spread,
+generics, borrowing and computed calls remain unsupported. There are no required
+arguments or conversions. All extra admitted arguments evaluate once in order,
+then their complete physical values are discarded. Failure skips later effects
+and the entropy call. Existing roots retain earlier operands/pairs/returns through
+argument GC and finalizers.
+
+The strategy follows the numeric range/distribution requirement in
+[ECMAScript 2025 Math.random](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-math.random).
+Each successful call reads one fresh 64-bit OS word through runtime-only pinned
+[getrandom 0.3.4](https://docs.rs/getrandom/0.3.4/getrandom/), discards its low eleven
+bits and exactly scales the remaining integer by 2^-53. Results are positive-sign
+finite multiples of 2^-53 in [0,1); zero is +0, and the largest value is 1-2^-53.
+Uniform input words give equal probability to each lattice point, without a
+rounded division that could produce 1. The public Math API promises neither
+cryptographic use nor deterministic replay.
+
+There is no production PRNG state, cached entropy, seed setter or persisted seed.
+Every Execution uses the OS provider; module/runtime reuse, HTTP execution and
+native packaging cannot copy a guest seed or resume an entropy cache. Independent
+executions consume fresh words from the OS, with no same-seed restart strategy.
+The locked dependency supplies platform entropy implementations rather than a
+handwritten syscall/ambient-file fallback. It does not broaden the tested platform
+matrix. Test scripts/fault injection live only in each test store and are absent
+from production builds; no environment variable or public engine option overrides
+entropy.
+
+Before reading entropy the host ticks one existing allowance and checks the
+execution deadline; after reading it checks the same budget/deadline without a
+second charge. OS failure is a fatal runtime error, never a fixed/time-based seed,
+recoverable script exception or successful sample. Limits/authorized exit remain
+fatal through catch/finally. No system status reset, result buffer reuse or pending
+exception mutation occurs. As with all host operations, before/after checks do not
+promise preemption inside an OS call. Host-free JSON allocation/retention helpers
+reject every reachable random import.
+
+Tests check exact endpoints and the 53-bit mapping, fresh OS sample ranges,
+store-local scripted sequence isolation, exact one-call accounting and exhaustion,
+pre/post entropy deadline checks, injected entropy failures with no fallback, ignored
+argument kinds/effects/throws, pairs/GC/saved returns, profile/ABI/signature/helper
+rejection, virtual modules and source-free portable/native paths. Statistical
+thresholds and sequence-inequality assertions are not used as correctness gates.
+
+### Native Math profile and host ABI v19
+
+`checked-f64-utf16-v16` selects **host ABI19 / value ABI12 / JSON schema12**.
+It inherits v15's language/heap/exception/closure/sparse-mutation contracts and
+keeps the existing JSON/value import selectors. Default i32 semantics and every
+older profile remain unchanged. Matching language/ABI19 metadata is mandatory
+even without a native Math import. Runtime/artifact validation rejects unknown,
+downgraded, mismatched or duplicate declarations before guest effects. Launcher
+protocol v2 now advertises maximum26/value12 and includes v16/v17/v18/v19/v20/v21/v22/v23/v24/v25; packaging requires
+the matching rebuilt trusted companion. Container/manifest formats and all resource
+limits remain unchanged; no binary64 tool/HTTP adapter is introduced.
+
+The common NativeMath inventory owns nineteen unary operations plus atan2:
+acos/acosh/asin/asinh/atan/atanh/cbrt/cos/cosh/exp/expm1/log/log1p/log10/log2/
+sin/sinh/tan/tanh and atan2. Each maps to a distinct typed `varta.number_<name>`
+import, minimum ABI19. Unary signatures are `(f64)->f64`; atan2 is `(f64,f64)->f64`
+with y then x. No capability or result globals/buffer are required. Shared registry
+names, scalar signatures and minimum ABI drive compilation, runtime linking and
+artifact checks. Compiler Math IR collection registers the exact operation; emission
+uses its resolved index, never a literal function/import number.
+
+Only direct unshadowed dot calls with exactly one/two narrowed Numbers are admitted.
+Arguments evaluate once in order; exceptions skip later arguments and the native
+call. Older profiles reject all twenty new methods. Generic/spread/computed calls,
+borrowing, coercion and unnarrowed unions remain unsupported. Native math introduces
+no new value type, allocation, guest helper export or dependency. Math.random is
+separate v17/ABI20 entropy operation; its name is not in the deterministic registry.
+
+Semantics follow the admitted numeric part of the
+[ECMAScript Math algorithms](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-function-properties-of-the-math-object).
+NaN, signed zero, infinities and domain boundaries use explicit required results;
+NaN payload/sign are unspecified. Inverse trig domain errors yield NaN; acosh(1)
+and log/log2/log10(1) give +0; atanh(±1) gives signed infinity; logs of both zeroes
+give -Infinity and log1p(-1) gives -Infinity. Zero-preserving methods return the
+original zero; cos/cosh/exp of zero give 1. atan2 handles signed axes, both infinite
+arguments and quadrant constants before finite native atan2. Ordinary finite math
+uses the platform f64 library and remains implementation-approximated; universal
+correct rounding or cross-platform last-bit equality is not claimed.
+
+Each call ticks one existing host allowance and checks the same budget/deadline
+after math without another increment. Status is not reset and no host result buffer
+is reused. Authorized exit or budget exhaustion stays fatal through catch/finally.
+Purity is not permission to call from guest JSON allocation/retention helpers:
+every reachable host call there is rejected, including nested native Math. Compiler
+collection/effect walks retain every argument effect, earlier roots/pairs, nested
+calls and saved returns through GC/finalizers.
+
+Tests cover all operation names/signatures/ABI gates, exact special-value bits,
+atan2 quadrants, domain boundaries, tiny-input accuracy, known finite values and
+binary64 exponent-wide domain/range invariants with fresh bounded stores. Host-call
+accounting, before/after deadlines, old-profile rejection/inheritance, hostile
+metadata/signatures/import names, helper purity, GC/pairs, source ranges, virtual
+modules and source-free CLI/runtime/native execution have regression coverage.
+
 ### Number power profile and host ABI v18
 
 `checked-f64-utf16-v15` selects **host ABI v18 / value ABI v12 / JSON schema v12**.
@@ -1064,8 +1917,8 @@ only for an odd integral exponent. Parity checks operate on finite binary64 valu
 without narrowing integer casts, including the 2^53 odd/even boundary. Preserve
 signed zero on underflow and signed infinities on overflow. Finite ordinary results
 are platform implementation-approximated; cross-platform last-bit identity or
-universal correct rounding is not promised. No BigInt, ToNumber coercion, Math.pow
-source API or exponent-sized guest loop is added.
+universal correct rounding is not promised. No BigInt, ToNumber coercion
+or exponent-sized guest loop is added.
 
 The runtime charges one existing host-operation unit before math and rechecks
 the same budget/deadline afterward without a second increment. Native scalar math
@@ -1081,7 +1934,8 @@ body visitors see both operands and compound read/check/store branches. Existing
 temporary floors/root transfer preserve original graphs, earlier physical pairs,
 captured cells, callback results and saved returns through GC/calls/finalizers.
 No new helper export or Wasm EH mechanism is introduced. Launcher protocol v2
-advertises host maximum18, value maximum12 and the v15 profile. Native packaging
+advertises v15 with ABI18/value12; its current maximum26/value12 also includes v16/v17/v18/v19/v20/v21/v22/v23/v24/v25.
+Native packaging
 requires a matching rebuilt trusted companion and probes the private snapshot;
 portable and fixed-footer native container formats stay unchanged.
 
@@ -1095,10 +1949,12 @@ grants, host ceilings, status and fatal exits/budgets.
 ### Checked Math intrinsic subset
 
 The v15 compiler also admits direct unshadowed `Math.abs`, `Math.floor`,
-`Math.ceil`, `Math.trunc`, `Math.round` and `Math.sqrt` calls with exactly one
-narrowed Number argument. The result is Number. This additive source subset
+`Math.ceil`, `Math.trunc`, `Math.round`, `Math.sqrt`, `Math.sign`, `Math.fround`, `Math.f16round`
+and `Math.clz32` calls with exactly one narrowed Number argument, `Math.imul`
+and `Math.pow` with exactly two, and `Math.min/max/hypot` with zero or more. The result is Number.
+This additive source subset
 retains v15/host18/value12/schema12 and all artifact/container negotiation.
-Older profiles reject all six. No host import, helper export, capability,
+Older profiles reject all fifteen. No new registered host import, helper export, capability,
 dependency, layout or runtime budget is added.
 
 The numeric semantics follow the admitted Number part of
@@ -1117,22 +1973,183 @@ nearest result. Do not use `floor(x + 0.5)`: addition rounding changes some non-
 and loses negative zero. Scratch locals are used only after all argument effects
 finish; nested intrinsics cannot overwrite an outer unfinished computation.
 
+Sign preserves NaN and both zeroes; otherwise return one with the argument's
+sign using Wasm copysign. Fround demotes f64 to f32 with ties to even, then promotes
+back to f64, retaining signed overflow/underflow and binary32 subnormals. Clz32
+uses the existing exact full-range ToUint32 lowering followed by i32.clz and
+unsigned f64 conversion. Imul evaluates both arguments before scratch use,
+converts each with the same ToUint32 lowering, multiplies modulo 2^32 and converts
+the signed i32 result to Number. Do not multiply the f64 arguments first: that
+loses product bits above the binary64 exact-integer range.
+
+Min/max start with +Infinity/-Infinity and fold each completed argument using
+Wasm f64.min/max. These instructions propagate NaN and choose -0/+0 on zero ties.
+The accumulator stays on the Wasm stack across later argument calls and GC; no
+scratch slot or argument buffer is retained. Every argument still evaluates once
+in source order after NaN; thrown arguments skip later arguments and propagate
+normally. The empty call returns its initial infinity; single -0 remains -0.
+Folding keeps operand-stack usage independent of argument count; source and
+execution budgets continue to bound the call without a new resource limit.
+
 Only a direct dot call is admitted. Reject shadowing (including parameters,
 captures, imports and TDZ bindings), computed names, aliases/borrowed methods,
-constants, other methods, generic calls and omitted/extra/spread arguments.
+non-callable properties as callees, other methods, generic calls, spread arguments
+and incorrect fixed arity.
 Non-Number and unnarrowed-union arguments produce a type diagnostic at the argument.
 Arguments evaluate once, retain their host effects and exception channel, and
 preserve earlier roots/pairs and saved returns through allocation/finalizers.
-Compiler collection/effect visitors recurse through the new typed unary IR.
+Compiler collection/effect visitors recurse through every argument in typed Math IR.
 
-The operations allocate no values, preserve system status and consume guest fuel
-without consuming a host-call allowance. Host-free JSON helper validation admits
-pure argument trees but still rejects reachable host effects within arguments.
-Existing tool/HTTP binary64 adapter restrictions remain. Tests execute all six
+The fourteen guest-only operations allocate no values, preserve system status and
+consume guest fuel without consuming a host-call allowance. Math.pow instead
+collects/emits the existing FloatPower/number_power host operation (minimum ABI18),
+with exactly the special-case bits, finite approximation, one-call/deadline budgets
+and status behavior of **. Math.pow evaluates its two arguments once left to right;
+no new operation registry entry, permission, helper export or profile is required.
+Host-free JSON helper validation admits pure guest-only argument trees but rejects
+Math.pow, including nested aliases through user functions, and all reachable host
+effects within arguments. Operator/method differential tests cover special input
+pairs and verify one host allowance per Math.pow call.
+Existing tool/HTTP binary64 adapter restrictions remain. Tests execute the operations
 over signed zero, subnormals, infinities, NaN, half-integer neighbors and every
 binary64 exponent with representative significands, with fresh bounded stores;
 they also cover types/shadowing/profile gates, roots/pairs/finalizers, argument
 effects, fatal fuel/exit, source ranges, modules and source-free artifacts.
+Binary32 halfway/subnormal/overflow boundaries, all-exponent integer conversions,
+signed low-bit products and variadic NaN/exception ordering have dedicated checks.
+
+### Scaled variadic Math.hypot
+
+V15 `Math.hypot` admits zero or more narrowed Numbers and follows the admitted
+numeric part of [ECMAScript hypot](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-math.hypot).
+Evaluate every argument once in order before selecting a result. Any ±Infinity
+returns +Infinity even if another input is NaN; otherwise NaN propagates. Empty
+or all-zero calls return +0. Finite results remain implementation-approximated;
+universal correct rounding or bit identity with native libraries is not promised.
+
+Lower through existing ValueBlock/statement IR. Cache absolute input values in
+hidden f64 locals; these immutable Number snapshots survive later argument calls,
+scratch use and GC. After all inputs finish, find the maximum and track NaN, then
+select Infinity/NaN/zero before numeric accumulation. For the finite positive case,
+the internal BinadeScale Math mode clears significand bits to obtain a power of
+two, clamped to MIN_NORMAL for subnormal maxima. It is not a source Math method.
+Divide inputs by this exact scale rather than by the maximum magnitude: that
+avoids ratio rounding for relevant inputs and final non-power-of-two multiplication
+rounding near overflow. Squared ratios stay bounded; tiny irrelevant terms may
+underflow under the documented finite-approximation contract.
+
+Dekker splitting with 2^27+1 tracks each scaled square's product error. Compensated
+summation includes those errors, then a square-root residual correction accounts
+for the rounded root square and remaining sum correction. Rescale the corrected
+root by the power of two. Hidden working locals are unique per lowered call;
+the shared ValueBlock root floor protects earlier outer operands/pairs while
+arguments allocate, throw or run finalizers. No new IR value representation,
+host import/export, heap allocation, helper export, dependency, ABI version,
+permission or resource limit is added. Source/frame/fuel budgets bound variadic
+work; source Math type/shadowing/spread/generic/borrowing gates remain unchanged.
+
+Tests check all binary64 exponents and representative significands against an
+independent native implementation (sampled finite error bounded to 3 ULPs), exact
+scaled 3/4/5 triples through subnormals, compensated sub-ULP sums and special cases.
+Near-overflow goldens are independently generated at 200 and 400 decimal digits:
+native libm itself can spuriously overflow there, so those cases use the stronger
+oracle instead of assuming libm is exact. Argument effects after Infinity/NaN,
+exceptions, pairs/GC/finalizers, helper purity, old profiles, source-free/public APIs
+and operation-specific grants/host ceilings/fatal exit are covered.
+
+### Direct binary16 rounding
+
+V15's `Math.f16round` takes one narrowed Number, following the admitted numeric
+part of [ECMAScript f16round](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-math.f16round).
+Round binary64 directly to binary16 using ties to even, then return the exact
+rounded value as binary64. NaN payload/sign are unspecified; infinities and both
+zeroes retain their values/signs. Non-Number/unnarrowed-union inputs, incorrect
+arity, spread, generics, borrowing/computed calls and shadowed Math are rejected
+under the existing checked Math admission rules.
+
+Emission caches the completed argument once, then uses only MVP guest instructions.
+If abs(x)<2^-14, compute nearest(x*2^24)*2^-24. These power-of-two rescalings are
+exact, including binary64 subnormal inputs, and retain negative-zero underflow.
+Otherwise, for finite abs(x)<65520, extract the binary64 exponent e, compute
+nearest(x*2^(10-e))*2^(e-10), and return the exact rounded half value. Both scale
+factors are constructed from bounded exponent bits. This rounds the half's
+11-bit significand without binary32 conversion or an intermediate inexact addition.
+At/above the overflow midpoint 65520, multiply x by Infinity to produce signed
+infinity; NaN also takes that branch and propagates. No host math, helper export,
+allocation, new local type, ABI/value/layout change, permission or limit is added.
+
+Scratch is used only after all argument effects finish; nested calls, exceptions,
+GC roots, result pairs and finalizers retain the ordinary expression behavior.
+Pure JSON helpers can use the operation, but reachable argument host effects
+still fail validation. Tests use an independent integer-significand oracle over
+all 65,536 binary16 encodings, every finite adjacent-half midpoint and its two
+binary64 neighbors (both signs), overflow neighbors, all binary64 exponents and
+representative significands, and the binary32 double-rounding counterexample.
+Fresh bounded stores keep production fuel unchanged. CLI/public-API tests cover
+modules, source-free Wasm/native artifacts, argument ranges, grants and fatal exit.
+
+### Number predicate intrinsics
+
+V15 admits direct unshadowed `Number.isFinite`, `Number.isNaN`, `Number.isInteger`
+and `Number.isSafeInteger` with Boolean results. They implement the non-coercing
+[ECMAScript Number predicates](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.isfinite)
+over all admitted input types. Missing first arguments and non-Numbers return
+false. Additional arguments evaluate once in source order and are ignored, with
+their effects/errors/fatal limits preserved. Spread, generics, computed names,
+borrowed methods, other Number methods and shadowed Number bindings are rejected.
+Older profiles reject the operations; v15/ABI18/value12/schema12 remains unchanged.
+
+Numeric inputs use f64 checks: finite means abs(x)<Infinity; NaN means x!=x;
+integer additionally requires trunc(x)==x, excluding infinities. Safe integers
+must be integral with abs(x)<=9007199254740991. Both zeroes are finite/integral/safe.
+Unnarrowed union cells are checked for the Float64 tag before loading their payload
+bits; other tags return false. Non-Number values are discarded using their full
+physical width, including both slots of captured result pairs. No coercion, trap
+on non-Numbers or direct-local type refinement is introduced.
+
+The predicate depends only on the immutable first Number/type, so its canonical
+i32 Boolean can be computed after the first argument and kept on the Wasm stack
+while ignored arguments execute. This preserves the original first value through
+later binding changes, nested scratch use, allocations and pair-returning calls.
+An exception in an ignored argument discards the saved Boolean normally; no result
+escapes before all arguments finish. Collection/effect visitors traverse every
+argument in the typed NumberPredicate IR, and JSON helper validation rejects any
+reachable host call in first or ignored argument trees.
+
+No host import, helper export, capability, dependency, ABI/layout version or budget
+is added. Predicates preserve status and use guest fuel without host allowance.
+Tests validate and execute all binary64 exponents/representative significands,
+safe-integer boundaries, all admitted non-Number/union types, missing/ignored
+arguments, exceptions, pairs/GC/finalizers, host-free helpers, shadowing/old profiles,
+modules/source-free artifacts and exact grants/host ceilings/fatal exit/fuel.
+
+### Numeric constant properties
+
+V15 admits all eight Math numeric constants (`E`, `LN10`, `LN2`, `LOG10E`,
+`LOG2E`, `PI`, `SQRT1_2`, `SQRT2`) and eight Number constants (`EPSILON`,
+`MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `MAX_VALUE`, `MIN_VALUE`, `NaN`,
+`NEGATIVE_INFINITY`, `POSITIVE_INFINITY`). They follow the Number values in the
+[ECMAScript Math/Number contracts](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-value-properties-of-the-math-object).
+MIN_VALUE is binary64 bits 1, not MIN_POSITIVE (the smallest normal); safe-integer
+bounds are ±9007199254740991. NaN payload/sign are unspecified. Exact finite bit
+patterns, both static property syntaxes and special values have execution tests.
+
+Only an unshadowed Math/Number identifier (optionally parenthesized), followed by
+a dot name or computed literal String key (optionally parenthesized), is intrinsic.
+Lexical bindings, including outer captures, function declarations and TDZ bindings,
+take precedence and follow ordinary member rules. In particular, a local record
+named Math with its own PI can be read/written normally; it is never folded to π.
+Dynamic keys, namespace values/aliases, descriptors and unknown properties remain
+unsupported. Older profiles reject intrinsic reads but keep their own lexical
+record behavior. Unsupported builtin writes/updates/deletion and destructuring
+targets have a read-only type diagnostic at the complete member range; the compiler
+does not silently store into constants or claim general property-descriptor support.
+
+Reads lower to existing Float64 literal IR and f64.const, with no host imports,
+allocations or helper exports. All write paths share a member-base check before
+ordinary reference preparation. ABI18/value12/schema12, grants/status, runtime
+budgets, old artifacts and launcher negotiation remain unchanged. Source-free
+module/native/public-API tests and dependency-file diagnostic ranges cover the path.
 
 ### Array mutation profile and host ABI v17
 
@@ -1914,7 +2931,7 @@ Keep const/let mutability on each predeclared leaf: const rejects rebinding in t
 owner or a captured closure; property/element mutation through an aggregate still
 uses ordinary checked setters. Let retains invariant assignment types, shared
 capture cells and existing guard safety. Const union guards remain stable through
-captures; mutable captured union narrowing is rejected, even when capture appears
+captures; earlier profiles reject mutable captured union narrowing, even when capture appears
 after the guard. Separate lexical activations/shadowed blocks own distinct cells,
 and escaping aliases retain their live graphs after scope roots clear. Hidden
 input/default/rest scopes release only their temporary roots after binding transfer;
@@ -3481,7 +4498,7 @@ guest result. Tests cover high-bit Number returns, formatting boundaries, aliase
 mutations, parsed allocation, collection beyond 32 array entries, invalid indices,
 mixed versions, hidden host calls in helpers and source-free native artifacts.
 
-Launcher protocol v2 advertises supported host/value ABI maxima (currently 17/12);
+Launcher protocol v2 advertises supported host/value ABI maxima (currently 24/12);
 its profile list and actual offline payload probe determine compatibility. Update
 CLI and companion together. Container/manifest formats and existing i32 programs
 retain their meaning; old scalar-only runtimes reject v3 metadata/new imports.
@@ -4515,3 +5532,46 @@ policy review, requiring a declaration for every privileged import; this does no
 mean that false or empty declarations grant access. Missing declarations are safe
 to execute because the runtime denies those calls. Inspection includes full grant
 scopes, enablement, versions, imports and exports.
+
+### Predicate array search profile v25 with shared host ABI v26
+
+`checked-f64-utf16-v25` inherits v24 and adds direct Array.findIndex,
+Array.findLast and Array.findLastIndex for narrowed checked arrays. The source
+feature has its own profile; physical host ABI26/value12/schema12 are shared.
+Protocol2 now advertises 28 exact supported profiles. Rebuild both native
+companions; a shared physical ABI does not replace profile negotiation or prove
+source provenance. Default compilation still selects checked-i32-utf8-v1.
+
+The algorithms follow ECMAScript 2025
+[FindViaPredicate](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-findviapredicate):
+findIndex traverses ascending indices, while findLast/findLastIndex traverse
+in reverse. The range is captured once before predicate invocation; indexed
+values are read live, including holes/deleted entries as Undefined. Each call
+receives value/index/original array and uses guest ToBoolean on its result.
+The first match returns its cached value or index; failure yields Undefined or -1.
+Later appended indices are outside the captured range. Writes, deletion and
+truncation inside that range remain visible on later reads.
+
+The compiler reuses ordinary typed function calls and rooted iteration frames.
+Find-family callbacks accept element|Undefined; omitted/mistyped predicates or
+incompatible receivers are compile errors. Corrupted function metadata remains
+a fatal validation failure, including on empty arrays. Explicit thisArg binds a
+declared function receiver; arrows retain lexical receivers. Callback expression
+lowering precedes thisArg lowering so captured-cell changes invalidate later
+argument facts. This order fix also applies to existing callback methods.
+
+New methods evaluate extra source arguments for effects. A rooted value block
+caches the array, callback and supplied thisArg before those effects; the generated
+wrapper snapshots length afterwards. Extra values, including captured result
+pairs, are discarded without changing physical callback arity. Original matched
+references stay rooted when callbacks delete slots or trigger collection.
+No new IR operations, host imports, dependencies, permissions, helper exports,
+container formats or production resource limits are required.
+
+Regression coverage includes dense/sparse arrays, mutation, empty searches,
+callback defaults/arity/receiver/truth, maximum independent bounded traversals,
+exact Number bits, forced collection, denied operations, system-status retention,
+fatal fuel exhaustion and host-effect rejection in managed helpers. Public engine,
+module/source diagnostics and source-free CLI/companion/container paths exercise
+the integration. Generic array-like/borrowed prototype methods, prototype lookup,
+dynamic callable values and unsupported Function unions remain separate work.

@@ -384,7 +384,9 @@ impl Emitter<'_> {
                     self.code.push(I::I32Sub);
                 }
             }
-            E::MathUnary(mode, value) => self.math_unary(*mode, value)?,
+            E::Math(mode, args) => self.math_intrinsic(*mode, args)?,
+            E::NumberPredicate(mode, args) => self.number_predicate(*mode, args)?,
+            E::ToBoolean(e) => self.boolean_conversion(e)?,
             E::Not(e) => {
                 self.expr(e)?;
                 self.truthy(e.ty);

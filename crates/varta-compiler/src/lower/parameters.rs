@@ -240,6 +240,7 @@ impl Lower<'_> {
     /// Reserve all ABI slots before source bindings/private self. Extended source
     /// bindings stay uninitialized until the prologue reaches their position.
     pub(super) fn reserve_parameters(&mut self, plans: &[Parameter]) -> Result<()> {
+        let first = self.next;
         if needs_initialization(plans) {
             for plan in plans {
                 self.hidden(plan.incoming);
@@ -256,6 +257,9 @@ impl Lower<'_> {
                 )
                 .map_err(|e| self.source.locate(e, plan.span))?;
             }
+        }
+        for (index, plan) in plans.iter().enumerate() {
+            self.flow_parameter_slot(first + index as u32, plan.incoming);
         }
         Ok(())
     }
@@ -288,6 +292,13 @@ impl Lower<'_> {
                 plan.default.as_deref(),
                 Some(plan.body),
             )?);
+            // A future optional/default Function may replace an Undefined
+            // input; only a definite incoming Function keeps argument identity.
+            if matches!(plan.incoming, Type::Function(_))
+                && let Some(name) = &plan.name
+            {
+                self.flow_parameter_binding(&self.binding(name)?, (first + index) as u32);
+            }
         }
         Ok(vec![S::Scope(
             (first..first + plans.len()).map(|s| s as u32).collect(),

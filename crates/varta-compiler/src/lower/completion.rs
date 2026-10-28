@@ -34,6 +34,9 @@ impl Flow {
         self
     }
 }
+pub(super) fn normal(body: &[S]) -> bool {
+    completions(body).kinds & NORMAL != 0
+}
 pub(super) fn exits_function(body: &[S]) -> bool {
     let flow = completions(body);
     flow.kinds & (NORMAL | BREAK | CONTINUE) == 0 && flow.branches.is_empty()

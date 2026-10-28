@@ -5,6 +5,8 @@ pub(super) enum Guard {
     Error(varta_common::value::ErrorClass),
     Object,
     Array,
+    Truth(bool),
+    Nullish,
 }
 impl Guard {
     pub fn matches(self, ty: Type) -> bool {
@@ -20,6 +22,16 @@ impl Guard {
                 Type::Error | Type::NativeError(_) | Type::Null | Type::Record(_) | Type::Array(_)
             ),
             Self::Array => matches!(ty, Type::Array(_)),
+            Self::Nullish => matches!(ty, Type::Null | Type::Undefined),
+            Self::Truth(true) => !matches!(ty, Type::Null | Type::Undefined),
+            Self::Truth(false) => !matches!(
+                ty,
+                Type::Record(_)
+                    | Type::Array(_)
+                    | Type::Function(_)
+                    | Type::Error
+                    | Type::NativeError(_)
+            ),
         }
     }
 }
@@ -46,13 +58,16 @@ impl Lower<'_> {
         expected: Option<Type>,
     ) -> Result<Expr> {
         let test = self.condition(&branch.test)?;
-        let saved = self.refinements.clone();
+        let saved = self.flow_snapshot();
         self.guard(&branch.test, true)?;
+        self.flow_edge(flow_control::truth(&branch.test) != Some(false));
         let yes = self.expr_expected(&branch.cons, expected)?;
-        self.refinements = saved.clone();
+        let yes_state = self.flow_snapshot();
+        self.flow_alternate(&saved);
         self.guard(&branch.test, false)?;
+        self.flow_edge(flow_control::truth(&branch.test) != Some(true));
         let no = self.expr_expected(&branch.alt, expected)?;
-        self.refinements = saved;
+        self.flow_join(&saved, &[yes_state, self.flow_snapshot()])?;
         let (ty, yes, no) = if yes.ty == no.ty {
             (yes.ty, yes, no)
         } else {
@@ -101,27 +116,38 @@ impl Lower<'_> {
         })
     }
     pub(super) fn refine(&mut self, name: &str, matched: Guard, positive: bool) -> Result<()> {
-        let Ok(binding) = self.binding(name) else {
+        let Ok(binding) = self.binding(name).or_else(|_| self.resolve_binding(name)) else {
             return Ok(());
         };
+        if self.guard_blocked.contains(&binding.slot) {
+            return Ok(());
+        }
         let Some(ty) = self.refinements.get(&binding.slot).copied().or(binding.ty) else {
             return Ok(());
         };
         if !ty.is_union() {
             return Ok(());
         }
-        if binding.mutable {
-            self.guarded.insert(binding.slot);
-        }
-        if binding.mutable && self.cells.contains(&binding.slot) {
-            return Err(unsupported(
-                "guard refinement of a mutable captured binding",
-            ));
-        }
         let remaining: Vec<_> = unions::members(ty, self.types)
             .into_iter()
             .filter(|ty| matched.matches(*ty) == positive)
             .collect();
+        if self.types.profile.truth_guards()
+            && (remaining.is_empty() || remaining == unions::members(ty, self.types))
+        {
+            return Ok(());
+        }
+        if binding.mutable {
+            self.guarded.insert(binding.slot);
+        }
+        if binding.mutable
+            && self.cells.contains(&binding.slot)
+            && !self.types.profile.refinement_writes()
+        {
+            return Err(unsupported(
+                "guard refinement of a mutable captured binding",
+            ));
+        }
         if !remaining.is_empty() {
             let ty = unions::intern(remaining, self.types)?;
             self.refinements.insert(binding.slot, ty);

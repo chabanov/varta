@@ -126,7 +126,16 @@ impl Lower<'_> {
     ) -> Result<Expr> {
         if matches!(
             method,
-            "map" | "filter" | "forEach" | "find" | "reduce" | "some" | "every"
+            "map"
+                | "filter"
+                | "forEach"
+                | "find"
+                | "findIndex"
+                | "findLast"
+                | "findLastIndex"
+                | "reduce"
+                | "some"
+                | "every"
         ) {
             return self.array_callback(call, member, method, expected);
         }

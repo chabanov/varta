@@ -195,7 +195,7 @@ impl Lower<'_> {
         })
     }
     pub(super) fn place(&mut self, member: &ast::MemberExpr) -> Result<Expr> {
-        let value = self.expr(&member.obj)?;
+        let value = self.write_member_base(member)?;
         self.place_value(member, value)
     }
     pub(super) fn place_value(&mut self, member: &ast::MemberExpr, value: Expr) -> Result<Expr> {

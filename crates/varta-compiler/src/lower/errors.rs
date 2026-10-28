@@ -170,6 +170,15 @@ impl Lower<'_> {
         member: &ast::MemberExpr,
     ) -> Result<Expr> {
         let value = self.expr(&member.obj)?;
+        if value.ty == Type::Float64 {
+            return self.number_to_string(call, value);
+        }
+        if self.types.profile.number_radix() && !self.error_value(value.ty) {
+            return Err(self.source.locate(
+                type_error("toString requires a narrowed Number or Error receiver"),
+                value.span,
+            ));
+        }
         if !self.error_value(value.ty) || !call.args.is_empty() {
             return Err(unsupported(
                 "toString requires Error receiver and no arguments",

@@ -41,7 +41,7 @@ impl Lower<'_> {
                 }))?
                 .ok_or_else(|| invalid("missing update binding"))?,
             ast::Expr::Member(member) => {
-                let base = self.expr(&member.obj)?;
+                let base = self.write_member_base(member)?;
                 if let Type::Record(shape) = base.ty
                     && let ast::MemberProp::Computed(key) = &member.prop
                     && !matches!(

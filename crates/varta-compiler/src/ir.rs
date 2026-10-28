@@ -262,13 +262,33 @@ pub(crate) enum StringTrimMode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MathUnary {
+pub(crate) enum MathIntrinsic {
     Abs,
     Floor,
     Ceil,
     Trunc,
     Round,
     Sqrt,
+    Sign,
+    Fround,
+    F16round,
+    Clz32,
+    Imul,
+    Min,
+    Max,
+    Pow,
+    Native(varta_common::native_math::NativeMath),
+    Random,
+    /// Internal finite positive power-of-two scale for stable hypot lowering.
+    BinadeScale,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NumberPredicate {
+    Finite,
+    Nan,
+    Integer,
+    SafeInteger,
 }
 
 pub(crate) enum Expression {
@@ -336,7 +356,9 @@ pub(crate) enum Expression {
     Local(u32),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Negative(Box<Expr>),
-    MathUnary(MathUnary, Box<Expr>),
+    Math(MathIntrinsic, Vec<Expr>),
+    NumberPredicate(NumberPredicate, Vec<Expr>),
+    ToBoolean(Box<Expr>),
     Not(Box<Expr>),
     Call(usize, Vec<Expr>),
     Host(Host, Vec<Expr>),

@@ -1,6 +1,6 @@
 # Varta development plan
 
-## Development checkpoint — 2026-10-27
+## Development checkpoint — 2026-10-28
 
 Stage: experimental compiler/runtime core, with K1–K3 implemented in their initial
 checked profiles and K4 language/value work in progress. This is a development
@@ -16,18 +16,35 @@ Completed since baseline commit `526f9ab`:
 | Catch object bindings | Static name/message keys, aliases/defaults, TDZ, fresh captures and cleanup through outer handlers/finalizers |
 | String.slice/substring | Optional Number/Undefined bounds, exact UTF-16 units, owned result strings and unchanged Array.slice |
 | String.includes/startsWith/endsWith | Required String needle, bounded optional positions, allocation-free unit comparison and unchanged Array.includes |
+| Array.findIndex/findLast/findLastIndex (v25) | Typed forward/reverse predicate search, live sparse reads, snapshot bounds and rooted cached matched values |
 
 Earlier additive operations require v12+; sparse/mutation rules remain profile-specific.
 The default remains `checked-i32-utf8-v1`. The latest opt-in profile is
-`checked-f64-utf16-v15`, with host ABI v18, value ABI v12 and schema v12. Number
-exponentiation adds one pure typed math import, with no new permission/helper
-export/value/schema/container version or resource-limit change.
-The six basic Math intrinsics execute as guest instructions in the same profile,
+`checked-f64-utf16-v25`, sharing host ABI v26, value ABI v12 and schema v12. It adds
+Array.findIndex/findLast/findLastIndex, inheriting v24
+truth-based local narrowing, post-store/targeted-exit joins, proven call effects
+and stable callback-input specialization,
+write/capture-aware invalidation and short-circuit
+RHS guards, inheriting v23
+global and Number.parseInt/parseFloat prefix parsers, Boolean conversion and
+coercing global isFinite/isNaN, guest truth conversion/control flow and
+operand-valued logical operators, inheriting v22
+Number.toFixed/toExponential/toPrecision and guest-only valueOf, plus
+v21 checked Number.toString in bases2–36 and v20 primitive Number/numeric
+String parsing, v19 String conversion and v18 canonical Number output,
+v17 OS-backed Math.random, twenty
+v16 native Math imports and
+v15 Number exponentiation, with no new permission/helper export/value/schema/
+container version or limit change.
+Fourteen checked Math intrinsics execute as guest instructions in the same profile,
 with strict Number arguments and no additional host imports or version change.
+Math.pow shares the existing versioned power host operation and its budgets.
+Number predicates accept admitted values/unnarrowed unions without coercion,
+retaining missing/ignored-argument semantics and the same guest-only boundary.
 The source/artifact paths and public engine API are covered by regression tests.
 
-Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1109 workspace
-tests passed**, followed by **203 CLI tests passed** in a separate repeat run.
+Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1491 workspace
+tests passed**, followed by **262 CLI tests passed** in a separate repeat run.
 Formatting, the core-only library check, runtime-companion build, workspace/all-target
 build and Clippy with warnings denied also passed. This records local verification;
 it does not claim a new cross-platform CI or release qualification.
@@ -127,9 +144,148 @@ narrowed Number argument, exact rounding/signed-zero rules and guest-only bounde
 execution. All-exponent numeric checks, argument effects/roots, profile/type/
 shadowing gates and source-free artifact paths are covered without an ABI change.
 
-Next: expand the checked Math subset with **min/max, sign, fround, clz32 and imul**,
-specifying arity, Number conversions, NaN/zero ordering and bounded execution.
-Broader generalized record reads/writes/coercion, constructors and prototypes,
+Completed: **Math.min/max, sign, fround, clz32 and imul** in v15, with explicit
+arity, exact integer conversions/products, binary32 rounding and NaN/zero rules.
+Variadic argument order, exceptions, roots and pure guest execution are covered.
+
+Completed: **Number.isFinite/isNaN/isInteger/isSafeInteger** in v15, accepting
+admitted values and unnarrowed unions without coercion. Missing/non-Numbers return
+false; ignored extra arguments retain effects/errors. Exact numeric boundaries,
+union tags, pairs/roots/finalizers and artifact/permission paths are covered.
+
+Completed: **all Math and Number numeric constants** in v15: exact binary64 values,
+dot/literal-key reads, ordinary lexical shadowing and read-only write diagnostics,
+with no import/allocation/ABI change. Source-free and public-API paths are covered.
+
+Completed: **Math.pow** in v15 as a two-Number intrinsic over the existing power
+host operation, with operator/method edge-case bits, one-call accounting, argument
+order and helper-purity checks.
+
+Completed: **Math.f16round** in v15, with direct binary64-to-binary16 ties-to-even
+rounding through exact guest rescaling. Every binary16 encoding and finite midpoint
+neighborhood, both signs, all f64 exponents and a binary32 double-rounding example
+are checked against an independent integer-significand oracle. No new host/ABI/limits.
+
+Completed: **Math.hypot** in v15, with all-argument Number snapshots, exact
+power-of-two scaling, compensated products/sums and root refinement in guest code.
+Infinity wins over NaN after all argument effects; empty/all-zero calls return +0.
+Exponent-wide comparisons, exact scaled triples/subnormals, high-precision overflow
+goldens, compensation, roots/pairs/finalizers and source-free/grant paths are covered.
+Finite results remain implementation-approximated; no new ABI/import/budget.
+
+Completed: **nineteen unary native Math methods and atan2** in v16/ABI19,
+with shared typed registry names/signatures, exact required edge cases and bounded
+platform-approximated finite math. One-call/deadline/status rules, inherited values,
+helper purity, hostile metadata/signatures, GC/pairs and source-free/public APIs are
+covered. Value/schema12, default/older profiles and resource limits remain unchanged.
+
+Completed: **Math.random** in v17/ABI20, using a fresh OS word per call and exact
+53-bit sampling in [0,1). No shared PRNG/seed/cache is persisted; ignored argument
+effects, entropy failures, limits, status, roots and source-free artifacts are
+covered. The function remains separate from the deterministic native registry.
+
+Completed: **ECMAScript decimal Number output** in v18/ABI21 for scalar and union
+logging. Shortest decimal/scientific text and zero/nonfinite rules use the existing
+pinned formatter; old profiles retain their text. Exponent/threshold/minimality,
+registry/budget/GC/status and source-free paths are covered.
+
+Completed: **primitive String(...) conversion** in v19/ABI22 for all admitted
+primitives/unions, absent/ignored-argument rules, exact UTF-16 and owned results.
+Status, roots, buffers, limits and old bindings/profiles retain their contracts.
+
+Completed: **primitive Number(...) conversion** in v20/ABI23, providing the numeric
+argument foundation for Number.prototype.toString. Strict numeric String grammar,
+exact whitespace, decimal/prefixed rounding, signed zero/nonfinite/empty rules and
+ignored effects/roots/status/budgets are covered without new limits or dependencies.
+
+Completed: **checked direct Number.prototype.toString** in v21/ABI24, bases2–36,
+primitive radix/default/ignored argument rules and catchable RangeError before
+nonfinite cases. Exact midpoint intervals select shortest native text; decimal
+uses the existing formatter. Bounds, independent rational checks, roots/status/
+limits and source-free paths are covered; num-bigint0.4.8 gains direct runtime use.
+
+Completed: **Number.toFixed/toExponential/toPrecision and valueOf** in v22/ABI25.
+Exact bounded decimal rounding, missing/Undefined arguments, method-specific
+RangeError ordering, guest-only identity and ignored effects are covered alongside
+roots/status/budgets, independent Decimal goldens and source-free/public paths.
+
+Completed: **Number.parseInt/parseFloat and their global forms** in v23/ABI26.
+Primitive String/radix conversion, exact longest-prefix grammar/whitespace, Int32
+radix wrapping and bounded nearest/even integer rounding preserve status/buffers,
+roots/pairs and fatal budgets. Independent integer goldens and source-free/public
+paths cover this boundary.
+
+Completed: **Boolean conversion and coercing global isFinite/isNaN** in v23,
+without an ABI change. Guest-only Boolean accepts ordinary values/unions including
+references; numeric predicates reuse primitive Number conversion after cached
+argument effects. Numeric exponent, roots/pairs/status/budget, helper-purity and
+source-free/public paths are covered.
+
+Completed: **guest ToBoolean across conditions, loops, ternaries, ! and existing
+predicate callbacks**, plus operand-valued &&/||/?? and logical assignment tests.
+Cached operands, selected-branch type narrowing, numeric bits/reference identity,
+roots/pairs/status/limits and source-free/public paths are covered without ABI changes.
+
+Completed: **truth-based direct-local narrowing and RHS guards** in opt-in v24,
+sharing ABI26/value12/schema12 with v23. False primitive possibilities, scoped
+compound/loop facts, write/capture invalidation and redundant guards
+have regression coverage alongside metadata, roots/status and source-free paths.
+V23 keeps its earlier truth-branch mutation admission.
+
+Completed: **write-aware refinement invalidation and capture dataflow** in v24.
+Per-binding revisions preserve alternative branch input and discard written facts
+at joins; loop/test/callback effects prevent stale narrowed reads. Mutable captures
+retain declared cell types and const proofs propagate through nested closures.
+Compiler-only swc_ecma_visit29.0.0 adds bounded effect traversal; runtime dependency,
+ABI, capability and limit boundaries are unchanged. Assignment/loop/capture/GC/
+status/diagnostic and source-free/public paths have regression coverage.
+
+Completed: **post-store local type inference and normal branch joins** in v24.
+Stores preserve observed types before widening into declared storage; if/ternary
+joins combine normally completing paths, including subunions and surviving early
+return/throw guards. Logical targets use selected result types. Skipped RHS/default
+stores, loop continues, switch direct entries/fallthrough, named breaks and
+exception prefixes cannot leak facts. No ABI/layout/production budget changes.
+
+Completed: **completion-targeted loop/switch/label flow** in v24. Reachable breaks
+and continues carry types to their actual targets; updates/do-while tests join
+normal/continue inputs, and loop exits combine false tests with matching breaks.
+Finalizers transform or cancel pending exit facts in unwind order. One-time for
+initializers precede repeated-only mutation analysis, fixing stale second-test
+assumptions. GC, nested targets, overrides, diagnostics and source-free/public
+execution have regression coverage with unchanged ABI/layout/runtime budgets.
+
+Completed: **proven call effects for local cells** in v24. Immutable function
+provenance and transitive closure summaries preserve unaffected captured facts;
+module calls account for supplied callback proofs. Unknown/mutable/returned/self/
+parameter targets stay conservative. Argument writes, guards/loops, shadowing, GC,
+denial status and source-free/public paths are covered without runtime/ABI changes.
+This does not admit function-valued aggregates or prove property immutability.
+
+Completed: **stable callback-input specialization** in v24 closure summaries.
+Symbolic callback positions bind actual arguments through forwarding, const copies,
+read-only captures and default/rest/receiver prologues. Direct/nested parameter
+replacement retains unknown reentry. Separate committed writes from local flow
+invalidation; shared-depth AST guard/loop effects, GC, diagnostics and source-free/
+public paths preserve ABI/layout/resource contracts. Higher-order opaque inputs
+and point-sensitive mutable/returned provenance remain conservative.
+
+Completed: **Array.findIndex/findLast/findLastIndex** in opt-in v25, sharing
+ABI26/value12/schema12. Typed callbacks receive live values (including Undefined
+for holes), indices and the original array. Reverse searches, snapshot bounds,
+mutation/deletion/truncation, cached matched values, thisArg and ignored argument
+effects preserve roots, capabilities, system status and fatal limits. Existing
+profiles reject the new methods. Generic array-like/prototype calls and other
+array APIs remain unfinished. See the [predicate-search contract](architecture.md#predicate-array-search-profile-v25-with-shared-host-abi-v26).
+
+Next: **higher-order callback-argument binding, property/exception effects, initializer
+inference and loop fixed points**, then
+the broader object/prototype and conversion foundation. Remaining
+array APIs remain tracked under CORE-02; existing filter/find/some/every
+callbacks use the new truth path. General
+object-to-primitive String/Number conversion follows the object/prototype foundation.
+General Math namespace objects, coercion and borrowed methods remain separate language work.
+Remaining work also includes generalized record reads/writes/coercion, constructors and prototypes,
 aggregate exception design, scheduler/promise jobs, standard/system API expansion
 and package compatibility. Wider dynamic values remain explicit profile work.
 Shared application state, MCP, signing and external adapters remain later
@@ -196,6 +352,72 @@ Primary references: [ECMAScript language values](https://tc39.es/ecma262/multipa
 [Deno HTTP server](https://docs.deno.com/runtime/fundamentals/http_server/) and
 [Bun HTTP server](https://bun.sh/docs/runtime/http/server). These define semantic
 and developer-experience references, not a claim of current Varta support.
+
+### Core completion ledger
+
+Completion is measured against the full core target above, not the number of
+commits, regression tests or implemented checked profiles. The entries below are
+work streams, not equally weighted percentage points. A work stream can close only
+when its explicit feature inventory, executable positive/negative cases and
+documented compatibility bounds pass. A global 100% claim additionally requires
+the conformance, platform and independent security acceptance work; it cannot be
+inferred from the current regression suite.
+
+| ID | Work stream | Current state | Remaining acceptance work |
+| --- | --- | --- | --- |
+| CORE-01 | Number, String and primitive semantics | Partial | BigInt/Symbol, complete conversion/equality operations, locale formatting and general object coercion (canonical logging v18; primitive conversions v19/v20; checked toString/radices v21; precision/valueOf v22; prefix parsers, Boolean/global predicates and guest truth/control flow v23; scoped truth guards v24), remaining operators and primitive built-ins against the pinned ECMAScript target |
+| CORE-02 | Objects, arrays and value graphs | Partial | Dynamic properties, property descriptors, prototypes, constructors/classes and their tracing/identity semantics |
+| CORE-03 | Functions and control flow | Partial | Complete call/receiver/binding behavior, remaining iteration and generator semantics; retain existing closure/exception guarantees |
+| CORE-04 | Exceptions | Partial | General thrown values and complete error families/propagation, with explicit roots and unwinding rules |
+| CORE-05 | Standard collections and binary values | Planned | Map/Set, typed arrays, ArrayBuffer/DataView and other target built-ins with ownership/resource contracts |
+| CORE-06 | Math and remaining language built-ins | Partial | Finish the explicit Math inventory; cover Date, RegExp and remaining selected standard objects |
+| CORE-07 | Garbage collection and resource lifecycle | Partial | Extend exact tracing to every admitted value kind; verify retained roots, cancellation and leak-free long-lived lifetimes |
+| CORE-08 | Event loop and promise jobs | Planned | Specify and implement bounded task/microtask queues, Promise resolution/rejection and ordering |
+| CORE-09 | Async language and cancellation | Planned | Async/await, timers, cancellation/abort and owned shutdown, integrated with scheduling and roots |
+| CORE-10 | JSON and Web APIs | Partial | General JSON parsing plus the target URL/encoding/Request/Response/Headers/stream APIs |
+| CORE-11 | System APIs | Partial | Complete the declared filesystem/process/network surface with exact permissions, portable errors and bounded I/O |
+| CORE-12 | ES modules and packages | Partial | Module initialization/linking/loading semantics, explicit package-resolution policy and tested package targets |
+| CORE-13 | ABI and capability enforcement | Implemented for current profiles | Retain fail-closed version/signature/resource checks for every newly admitted boundary |
+| CORE-14 | Distribution | Partial | Supported target matrix, Windows/cross-target validation, release delivery and package authenticity |
+| CORE-15 | Conformance | Planned | Maintain a pinned feature inventory and conformance-suite runner; track expected failures rather than counting unsupported syntax as passing |
+| CORE-16 | Performance and production readiness | Partial | Reproducible startup/memory/throughput/leak measurements, sustained workloads, fuzzing and independent security review |
+
+The immediate implementation order remains CORE-01/02/03/06 foundation work,
+followed by CORE-07/08/09 scheduling and lifetime integration and CORE-10/11/12 API
+and package expansion. CORE-13/15/16 verification accompanies every increment.
+Application state, MCP and domain adapters remain separate deferred work streams;
+they do not substitute for missing engine semantics.
+
+CORE-06's Math inventory is pinned to the
+[ECMAScript 2025 Math object](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-math-object):
+
+| Math surface | Current state |
+| --- | --- |
+| abs, ceil, clz32, floor, fround, f16round, hypot, imul, max, min, pow, round, sign, sqrt, trunc | Checked direct Number calls implemented in v15 |
+| acos, acosh, asin, asinh, atan, atanh, atan2, cbrt, cos, cosh, exp, expm1, log, log1p, log10, log2, sin, sinh, tan, tanh | Checked direct Number calls implemented in v16/ABI19 |
+| random | Fresh OS entropy and exact [0,1) samples implemented in v17/ABI20; ignored arguments preserve effects |
+| E, LN10, LN2, LOG10E, LOG2E, PI, SQRT1_2, SQRT2 | Exact v15 numeric reads; descriptors/general namespace objects remain planned |
+| General argument conversion/arity, spread, first-class methods and ordinary Math object properties | Planned beyond the current direct-call admission rules |
+
+Counting method names does not establish complete Math semantics. Every remaining
+entry needs its edge cases, argument/exception behavior, resource contract and
+source-free runtime tests before CORE-06 can close.
+
+CORE-01's Number surface is pinned to ECMAScript 2025:
+
+| Number surface | Current state |
+| --- | --- |
+| Number(...) | Primitive/union conversion in v20; wrappers and object ToPrimitive pending |
+| Boolean(...) and global isFinite/isNaN | V23 ordinary-value ToBoolean and primitive numeric coercion; wrappers/object ToPrimitive pending |
+| Eight numeric constants; isFinite/isNaN/isInteger/isSafeInteger | Checked v15 reads/predicates |
+| Number.prototype.toString | Narrowed direct calls, bases2–36 and primitive radix semantics in v21 |
+| toFixed, toExponential, toPrecision, valueOf | Direct narrowed Number calls in v22, primitive precision conversion, exact rounding and owned results; valueOf guest-only |
+| parseInt/parseFloat and global aliases | Direct primitive/union calls in v23, prefix grammar, Int32 radices and bounded exact integer rounding |
+| toLocaleString | Planned with an explicit locale/Intl contract |
+| Wrappers, ordinary prototype objects/descriptors, first-class methods | Planned under object/function foundation work |
+
+These checked methods do not close CORE-01 or establish general Number-object
+compatibility; all remaining rows and full conversion/equality/value targets still apply.
 
 ### Architecture commitments
 
@@ -1321,7 +1543,7 @@ Number exponentiation is implemented in **checked-f64-utf16-v15 / host ABI18 /
 value and schema12** under the [power contract](architecture.md#number-power-profile-and-host-abi-v18).
 The pure typed import preserves system status and uses one host-operation budget
 unit with deadline checks before/after native math. Explicit Number edge cases
-precede platform-approximated finite pow; Math.pow/BigInt/coercion remain deferred.
+precede platform-approximated finite pow; BigInt/coercion remain deferred.
 Tests cover exact special-case bits/parity, independent sqrt accuracy, budgets,
 prepared compounds/GC/pairs/finalizers, inherited sparse/JSON/closure contracts,
 old-profile and hostile metadata/signature rejection, virtual modules, source-free
@@ -1336,7 +1558,118 @@ numeric checks and source-free artifacts cover this subset; shadowed/computed/
 borrowed/coercive calls and older profiles are rejected. No ABI/import/permission/
 helper-export/layout/limit change.
 
-Next expand Math with checked min/max, sign, fround, clz32 and imul. Generalized
+Math.min/max, sign, fround, clz32 and imul are also implemented in v15, including
+empty/variadic extrema, exact Uint32 conversion, signed low-bit products and
+binary32 ties-to-even rounding. Tests cover all-exponent conversions, binary32
+halfway/overflow/subnormal boundaries and all-argument NaN/exception order.
+
+Number.isFinite/isNaN/isInteger/isSafeInteger are implemented in v15 under the
+[predicate contract](architecture.md#number-predicate-intrinsics): all admitted
+types/unnarrowed unions, non-coercing false for non-Numbers/missing input, and
+effectful ignored arguments. Guest-only Boolean results preserve ABI/budgets,
+roots/pairs/finalizers and artifact/capability boundaries.
+
+All sixteen Math/Number numeric constants are implemented in v15 under the
+[constant contract](architecture.md#numeric-constant-properties), with exact bits,
+dot/literal-key reads, lexical precedence and complete read-only write-path checks.
+Namespace objects/aliases and descriptors remain future work; existing Number
+logging text is retained while JSON uses the pinned ECMAScript formatter.
+
+Math.pow is implemented in the same profile through the existing FloatPower
+operation, preserving exact special-case behavior, finite approximation, source
+order, host budgets/status and helper-purity rejection.
+
+Math.f16round is implemented under the [direct binary16 contract](architecture.md#direct-binary16-rounding).
+Exact power-of-two rescaling avoids f32 double rounding, preserves special values
+and covers all half encodings/midpoint neighborhoods with an independent bit oracle.
+
+Math.hypot is implemented under the [scaled norm contract](architecture.md#scaled-variadic-mathhypot).
+Power-of-two normalization and compensated products/sums/root refinement avoid
+premature magnitude loss without new host calls or raised limits. Sampled native
+comparisons and independent decimal overflow goldens cover numerical behavior;
+all-argument effects, roots and source-free/public APIs retain their contracts.
+
+The twenty deterministic native Math operations are implemented under the
+[native Math contract](architecture.md#native-math-profile-and-host-abi-v19), with
+explicit edge cases, platform approximation, typed ABI19 and inherited value/schema12.
+Registry/metadata, budgets/status, helper purity, all exponents/domain invariants,
+argument lifetimes, public modules and source-free packaging have regression coverage.
+
+Math.random is implemented under the [random contract](architecture.md#random-profile-and-host-abi-v20),
+with fresh OS entropy, exact 53-bit sampling, fatal failure/limit behavior and
+ignored-argument/root/status guarantees. No seed or shared PRNG is persisted.
+Profile/registry/signature checks, injected fault/edge tests, independent stores
+and source-free portable/native/public engine paths cover this boundary.
+
+ECMAScript decimal Number output is implemented under the
+[Number output contract](architecture.md#number-output-profile-and-host-abi-v21),
+with versioned scalar/union logs, shortest canonical decimal/scientific formatting,
+old-profile compatibility and unchanged value/schema12. Edge/exponent/minimality,
+hostile-import/helper checks, budgets/status/GC and source-free/public APIs are covered.
+
+Primitive String conversion is implemented under the
+[primitive String contract](architecture.md#primitive-string-profile-and-host-abi-v22),
+with cached first values, ignored argument effects, exact UTF-16 and owned results
+through existing value12 cells/result buffers. Profile/registry/hostile-cell/helper
+checks, maximum-string/GC/status tests and source-free/public paths cover it.
+
+Primitive Number conversion and numeric String parsing are implemented under the
+[primitive Number contract](architecture.md#primitive-number-profile-and-host-abi-v23).
+Checked cells, exact grammar/whitespace/rounding and whole-string NaN rules preserve
+effects, signed zero, roots/pairs, status/buffers and fatal limits. Independent
+integer goldens, exponent-wide checks, maximum strings and source-free/public API
+paths cover the foundation needed for radix argument conversion.
+
+Checked Number.toString is implemented under the
+[radix contract](architecture.md#number-radix-profile-and-host-abi-v24), with all
+bases2–36, cached/coerced primitive radix arguments, correct RangeError order and
+owned UTF-16. Exact bounded intervals choose shortest text; independent rational
+round-trip/minimality tests, runtime budgets/roots/status and source-free/public
+paths cover this method. Wrappers and ordinary prototype objects are still pending.
+
+Number precision and valueOf are implemented under the
+[precision contract](architecture.md#number-precision-profile-and-host-abi-v25),
+with bounded exact rounding, conversion/default/range ordering, owned results and
+guest-only identity. Independent Decimal goldens, exponent-wide bounds, raw ABI/
+helper checks, lifetimes/status/budgets and source-free/public paths cover them.
+
+Numeric prefix parsers are implemented under the
+[parsing contract](architecture.md#numeric-prefix-profile-and-host-abi-v26),
+with primitive inputs/radices, prefix grammar, exact integer rounding, Int32 wrapping
+and ordinary NaN failures. Independent integer goldens, exponent/Unicode/bounds,
+malformed cells, helpers and source-free/public paths cover the boundary.
+
+Boolean and global numeric predicates are implemented under the
+[conversion contract](architecture.md#boolean-and-global-numeric-predicates-v23).
+Ordinary-value ToBoolean is guest-only, numeric coercion reuses existing imports;
+root/status/budget, exponent, helper and source-free/public checks cover it.
+
+Guest truth/control flow and logical operators are implemented under the
+[control-flow contract](architecture.md#guest-truth-conversion-and-logical-operators-v23).
+Exact tests, operand-valued short circuiting, selected-branch type narrowing,
+roots/status/budgets and source-free/public paths have regression coverage.
+
+Truth-based local/RHS guards are implemented under the
+[v24 contract](architecture.md#truth-guard-profile-v24-with-shared-host-abi-v26),
+sharing ABI26 and existing values while versioning stricter source refinement rules.
+Tests cover scoped branches/loops, false primitive classes, mutation/capture safety,
+metadata, numeric bits/roots/status and source-free/public API execution.
+
+Write-aware invalidation/captures are implemented under the
+[write-flow contract](architecture.md#write-aware-refinements-and-captures-v24).
+Per-binding revisions, bounded AST loop/test effects and typed captured cells retain
+root/status/limit/legacy boundaries; conservative inference remains explicit.
+
+Post-store inference and normal/targeted-exit joins are implemented under the
+[completion-flow contract](architecture.md#completion-targeted-local-flow-v24).
+Optional effects, repeated-body invalidation and exceptional entry remain conservative.
+Known call effects are implemented under the
+[call-flow contract](architecture.md#proven-call-effects-for-local-cells-v24).
+Stable callback inputs are implemented under the
+[parameter-flow contract](architecture.md#stable-callback-parameter-effects-v24).
+Next implement higher-order callback-argument binding, property/exception effects, initializer inference,
+loop fixed points and the
+remaining inventory. Generalized
 coercion, aggregate exception design and constructors/prototypes
 remain language work. Scheduler/promise jobs follow retained-root, cancellation,
 queue and handle lifetime design.

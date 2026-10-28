@@ -1,8 +1,17 @@
 //! Canonical operation names and Wasm signatures shared by compiler and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostOperation {
+    NumberParseInt,
+    NumberParseFloat,
     JsonParseV14,
     JsonParseV13,
+    NumberToFixed,
+    NumberToExponential,
+    NumberToPrecision,
+    NumberToString,
+    PrimitiveNumber,
+    PrimitiveString,
+    ValueLogV7,
     ValueLogV6,
     ValueLogV5,
     ValueTypeOfV6,
@@ -75,9 +84,32 @@ pub enum HostOperation {
     JsonParseV5,
     StringCharAt16,
     StringCharCodeAt16,
+    LogFloatV2,
     LogFloat,
     FloatRemainder,
     FloatPower,
+    MathRandom,
+    MathAcos,
+    MathAcosh,
+    MathAsin,
+    MathAsinh,
+    MathAtan,
+    MathAtanh,
+    MathAtan2,
+    MathCbrt,
+    MathCos,
+    MathCosh,
+    MathExp,
+    MathExpm1,
+    MathLog,
+    MathLog1p,
+    MathLog10,
+    MathLog2,
+    MathSin,
+    MathSinh,
+    MathTan,
+    MathTanh,
+
     ExitFloat,
     LogInt,
     LogString,
@@ -105,7 +137,12 @@ impl HostOperation {
     pub fn returns_string(self) -> bool {
         matches!(
             self,
-            Self::ValueTypeOfV6
+            Self::NumberToFixed
+                | Self::NumberToExponential
+                | Self::NumberToPrecision
+                | Self::NumberToString
+                | Self::PrimitiveString
+                | Self::ValueTypeOfV6
                 | Self::ValueTypeOfV5
                 | Self::ValueTypeOfV4
                 | Self::ValueTypeOfV3
@@ -153,6 +190,15 @@ impl HostOperation {
     }
     pub fn name(self) -> &'static str {
         match self {
+            Self::NumberParseInt => "number_parse_int",
+            Self::NumberParseFloat => "number_parse_float",
+            Self::NumberToFixed => "number_to_fixed",
+            Self::NumberToExponential => "number_to_exponential",
+            Self::NumberToPrecision => "number_to_precision",
+            Self::NumberToString => "number_to_string",
+            Self::PrimitiveNumber => "primitive_to_number",
+            Self::PrimitiveString => "primitive_to_string",
+            Self::ValueLogV7 => "value_log_v7",
             Self::ValueLogV6 => "value_log_v6",
             Self::ValueLogV5 => "value_log_v5",
             Self::ValueLogV4 => "value_log_v4",
@@ -225,9 +271,32 @@ impl HostOperation {
             Self::JsonParseV5 => "json_parse_v5",
             Self::StringCharAt16 => "string_char_at16",
             Self::StringCharCodeAt16 => "string_char_code_at16",
+            Self::LogFloatV2 => "log_f64_v2",
             Self::LogFloat => "log_f64",
             Self::FloatRemainder => "number_remainder",
             Self::FloatPower => "number_power",
+            Self::MathRandom => "number_random",
+            Self::MathAcos => "number_acos",
+            Self::MathAcosh => "number_acosh",
+            Self::MathAsin => "number_asin",
+            Self::MathAsinh => "number_asinh",
+            Self::MathAtan => "number_atan",
+            Self::MathAtanh => "number_atanh",
+            Self::MathAtan2 => "number_atan2",
+            Self::MathCbrt => "number_cbrt",
+            Self::MathCos => "number_cos",
+            Self::MathCosh => "number_cosh",
+            Self::MathExp => "number_exp",
+            Self::MathExpm1 => "number_expm1",
+            Self::MathLog => "number_log",
+            Self::MathLog1p => "number_log1p",
+            Self::MathLog10 => "number_log10",
+            Self::MathLog2 => "number_log2",
+            Self::MathSin => "number_sin",
+            Self::MathSinh => "number_sinh",
+            Self::MathTan => "number_tan",
+            Self::MathTanh => "number_tanh",
+
             Self::ExitFloat => "process_exit_f64",
             Self::LogInt => "log_i32",
             Self::LogString => "log_string",
@@ -257,6 +326,33 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if matches!(self, Self::NumberParseInt | Self::NumberParseFloat) {
+            return crate::abi::NUMBER_PARSE_VERSION;
+        }
+        if matches!(
+            self,
+            Self::NumberToFixed | Self::NumberToExponential | Self::NumberToPrecision
+        ) {
+            return crate::abi::NUMBER_FORMAT_VERSION;
+        }
+        if self == Self::NumberToString {
+            return crate::abi::NUMBER_RADIX_VERSION;
+        }
+        if self == Self::PrimitiveNumber {
+            return crate::abi::PRIMITIVE_NUMBER_VERSION;
+        }
+        if self == Self::PrimitiveString {
+            return crate::abi::PRIMITIVE_STRING_VERSION;
+        }
+        if matches!(self, Self::LogFloatV2 | Self::ValueLogV7) {
+            return crate::abi::NUMBER_TEXT_VERSION;
+        }
+        if self == Self::MathRandom {
+            return crate::abi::RANDOM_VERSION;
+        }
+        if crate::native_math::NativeMath::from_host(self).is_some() {
+            return crate::abi::NATIVE_MATH_VERSION;
+        }
         if self == Self::FloatPower {
             return crate::abi::NUMBER_POWER_VERSION;
         }
@@ -456,13 +552,15 @@ impl HostOperation {
         use HostScalar::{F64, I32, I64};
         match self {
             Self::ValueIsErrorClassV2 | Self::ValueIsErrorClass => (&[I64, I32], &[I32]),
-            Self::ValueLogV6
+            Self::ValueLogV7
+            | Self::ValueLogV6
             | Self::ValueLogV5
             | Self::ValueLogV4
             | Self::ValueLogV3
             | Self::ValueLog
             | Self::UnionLog => (&[I64], &[]),
-            Self::ValueTypeOfV6
+            Self::PrimitiveString
+            | Self::ValueTypeOfV6
             | Self::ValueTypeOfV5
             | Self::ValueTypeOfV4
             | Self::ValueTypeOfV3
@@ -498,8 +596,34 @@ impl HostOperation {
             | Self::ValueNullishEqual
             | Self::UnionStrictEqual
             | Self::UnionNullishEqual => (&[I64, I64], &[I32]),
-            Self::LogFloat | Self::ExitFloat => (&[F64], &[]),
-            Self::FloatRemainder | Self::FloatPower => (&[F64, F64], &[F64]),
+            Self::LogFloat | Self::LogFloatV2 | Self::ExitFloat => (&[F64], &[]),
+            Self::MathRandom => (&[], &[F64]),
+            Self::NumberToFixed
+            | Self::NumberToExponential
+            | Self::NumberToPrecision
+            | Self::NumberToString => (&[F64, F64], &[I32]),
+            Self::NumberParseInt => (&[I64, I64], &[F64]),
+            Self::NumberParseFloat | Self::PrimitiveNumber => (&[I64], &[F64]),
+            Self::FloatRemainder | Self::FloatPower | Self::MathAtan2 => (&[F64, F64], &[F64]),
+            Self::MathAcos
+            | Self::MathAcosh
+            | Self::MathAsin
+            | Self::MathAsinh
+            | Self::MathAtan
+            | Self::MathAtanh
+            | Self::MathCbrt
+            | Self::MathCos
+            | Self::MathCosh
+            | Self::MathExp
+            | Self::MathExpm1
+            | Self::MathLog
+            | Self::MathLog1p
+            | Self::MathLog10
+            | Self::MathLog2
+            | Self::MathSin
+            | Self::MathSinh
+            | Self::MathTan
+            | Self::MathTanh => (&[F64], &[F64]),
             Self::LogInt | Self::Exit | Self::LogUndefined => (&[I32], &[]),
             Self::LogString16
             | Self::EnvPrint16
@@ -569,6 +693,15 @@ impl HostOperation {
             "value_is_array_v4" => Self::ValueIsArrayV4,
             "value_is_error_class_v2" => Self::ValueIsErrorClassV2,
             "value_is_error_class" => Self::ValueIsErrorClass,
+            "number_parse_int" => Self::NumberParseInt,
+            "number_parse_float" => Self::NumberParseFloat,
+            "number_to_fixed" => Self::NumberToFixed,
+            "number_to_exponential" => Self::NumberToExponential,
+            "number_to_precision" => Self::NumberToPrecision,
+            "number_to_string" => Self::NumberToString,
+            "primitive_to_number" => Self::PrimitiveNumber,
+            "primitive_to_string" => Self::PrimitiveString,
+            "value_log_v7" => Self::ValueLogV7,
             "value_log_v6" => Self::ValueLogV6,
             "value_log_v5" => Self::ValueLogV5,
             "value_typeof_v6" => Self::ValueTypeOfV6,
@@ -632,9 +765,32 @@ impl HostOperation {
             "json_parse_v5" => Self::JsonParseV5,
             "string_char_at16" => Self::StringCharAt16,
             "string_char_code_at16" => Self::StringCharCodeAt16,
+            "log_f64_v2" => Self::LogFloatV2,
             "log_f64" => Self::LogFloat,
             "number_remainder" => Self::FloatRemainder,
             "number_power" => Self::FloatPower,
+            "number_random" => Self::MathRandom,
+            "number_acos" => Self::MathAcos,
+            "number_acosh" => Self::MathAcosh,
+            "number_asin" => Self::MathAsin,
+            "number_asinh" => Self::MathAsinh,
+            "number_atan" => Self::MathAtan,
+            "number_atanh" => Self::MathAtanh,
+            "number_atan2" => Self::MathAtan2,
+            "number_cbrt" => Self::MathCbrt,
+            "number_cos" => Self::MathCos,
+            "number_cosh" => Self::MathCosh,
+            "number_exp" => Self::MathExp,
+            "number_expm1" => Self::MathExpm1,
+            "number_log" => Self::MathLog,
+            "number_log1p" => Self::MathLog1p,
+            "number_log10" => Self::MathLog10,
+            "number_log2" => Self::MathLog2,
+            "number_sin" => Self::MathSin,
+            "number_sinh" => Self::MathSinh,
+            "number_tan" => Self::MathTan,
+            "number_tanh" => Self::MathTanh,
+
             "process_exit_f64" => Self::ExitFloat,
             "log_i32" => Self::LogInt,
             "log_string" => Self::LogString,
@@ -662,8 +818,17 @@ impl HostOperation {
     #[must_use]
     pub fn capability(self) -> Option<&'static str> {
         Some(match self {
-            Self::ValueIsErrorClassV2
+            Self::NumberParseInt
+            | Self::NumberParseFloat
+            | Self::ValueIsErrorClassV2
             | Self::ValueIsErrorClass
+            | Self::NumberToFixed
+            | Self::NumberToExponential
+            | Self::NumberToPrecision
+            | Self::NumberToString
+            | Self::PrimitiveNumber
+            | Self::PrimitiveString
+            | Self::ValueLogV7
             | Self::ValueLogV6
             | Self::ValueLogV5
             | Self::ValueLogV4
@@ -728,9 +893,31 @@ impl HostOperation {
             | Self::StringCharAt16
             | Self::StringCharCodeAt16
             | Self::LogInt
+            | Self::LogFloatV2
             | Self::LogFloat
             | Self::FloatRemainder
             | Self::FloatPower
+            | Self::MathRandom
+            | Self::MathAcos
+            | Self::MathAcosh
+            | Self::MathAsin
+            | Self::MathAsinh
+            | Self::MathAtan
+            | Self::MathAtanh
+            | Self::MathAtan2
+            | Self::MathCbrt
+            | Self::MathCos
+            | Self::MathCosh
+            | Self::MathExp
+            | Self::MathExpm1
+            | Self::MathLog
+            | Self::MathLog1p
+            | Self::MathLog10
+            | Self::MathLog2
+            | Self::MathSin
+            | Self::MathSinh
+            | Self::MathTan
+            | Self::MathTanh
             | Self::LogString
             | Self::JsonStringify
             | Self::JsonParse

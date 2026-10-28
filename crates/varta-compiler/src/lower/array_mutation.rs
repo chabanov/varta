@@ -40,7 +40,7 @@ impl Lower<'_> {
         let ast::Expr::Member(member) = operand else {
             return Err(unsupported("delete of a non-array property reference"));
         };
-        let array = self.expr(&member.obj)?;
+        let array = self.write_member_base(member)?;
         if !matches!(array.ty, Type::Array(_)) {
             return Err(type_error("delete requires a narrowed array receiver"));
         }

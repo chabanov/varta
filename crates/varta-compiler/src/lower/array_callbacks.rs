@@ -6,17 +6,35 @@ pub(super) enum Method {
     Filter,
     ForEach,
     Find,
+    FindIndex,
+    FindLast,
+    FindLastIndex,
     Some,
     Every,
     Reduce,
 }
 impl Method {
+    pub(super) fn visits_holes(self) -> bool {
+        matches!(
+            self,
+            Self::Find | Self::FindIndex | Self::FindLast | Self::FindLastIndex
+        )
+    }
+    pub(super) fn reverse(self) -> bool {
+        matches!(self, Self::FindLast | Self::FindLastIndex)
+    }
+    pub(super) fn index_result(self) -> bool {
+        matches!(self, Self::FindIndex | Self::FindLastIndex)
+    }
     fn parse(name: &str) -> Result<Self> {
         Ok(match name {
             "map" => Self::Map,
             "filter" => Self::Filter,
             "forEach" => Self::ForEach,
             "find" => Self::Find,
+            "findIndex" => Self::FindIndex,
+            "findLast" => Self::FindLast,
+            "findLastIndex" => Self::FindLastIndex,
             "some" => Self::Some,
             "every" => Self::Every,
             "reduce" => Self::Reduce,
@@ -45,12 +63,18 @@ impl Lower<'_> {
             return Err(unsupported("array callbacks require checked-f64-utf16-v12"));
         }
         let method = Method::parse(name)?;
+        let extended = method.visits_holes() && method != Method::Find;
+        if extended && !self.types.profile.predicate_searches() {
+            return Err(unsupported(
+                "array predicate search requires checked-f64-utf16-v25",
+            ));
+        }
         if method == Method::Reduce && !(1..=2).contains(&call.args.len()) {
             return Err(unsupported(
                 "array.reduce requires a callback and optional initial value",
             ));
         }
-        if method != Method::Reduce && !(1..=2).contains(&call.args.len()) {
+        if method != Method::Reduce && (call.args.is_empty() || !extended && call.args.len() > 2) {
             return Err(unsupported(
                 "array callback method requires a callback and optional thisArg",
             ));
@@ -62,7 +86,7 @@ impl Lower<'_> {
             ));
         };
         let element = self.types.arrays[id as usize];
-        let item = if method == Method::Find {
+        let item = if method.visits_holes() {
             unions::intern(vec![element, Type::Undefined], self.types)?
         } else {
             element
@@ -71,14 +95,6 @@ impl Lower<'_> {
             self.reduce_seed(&call.args[0].expr, &call.args[1].expr, expected)?
         } else {
             (None, None)
-        };
-        let this_arg = if method != Method::Reduce {
-            call.args
-                .get(1)
-                .map(|arg| self.expr(&arg.expr))
-                .transpose()?
-        } else {
-            None
         };
         let accumulator = initial.as_ref().map_or(element, |value| value.ty);
         let params = if method == Method::Reduce {
@@ -91,6 +107,20 @@ impl Lower<'_> {
         } else {
             self.array_callback_value(&call.args[0].expr, &params, method, accumulator)?
         };
+        let this_arg = if method != Method::Reduce {
+            call.args
+                .get(1)
+                .map(|arg| self.expr(&arg.expr))
+                .transpose()?
+        } else {
+            None
+        };
+        let mut ignored = Vec::new();
+        if extended {
+            for arg in call.args.iter().skip(2) {
+                ignored.push(self.expr(&arg.expr)?);
+            }
+        }
         let Type::Function(signature) = callback.ty else {
             return Err(self.source.locate(
                 type_error("array callback must be a typed function"),
@@ -133,7 +163,8 @@ impl Lower<'_> {
             )?,
             Method::Filter => base.ty,
             Method::ForEach => Type::Void,
-            Method::Find => item,
+            Method::Find | Method::FindLast => item,
+            Method::FindIndex | Method::FindLastIndex => Type::Float64,
             Method::Some | Method::Every => Type::Boolean,
             Method::Reduce => {
                 if signature.result != accumulator {
@@ -172,6 +203,19 @@ impl Lower<'_> {
             next: 0,
             local_types: BTreeMap::new(),
             refinements: BTreeMap::new(),
+            writes: Default::default(),
+            call_writes: Default::default(),
+            call_unknown: false,
+            direct_writes: Default::default(),
+            call_parameters: Default::default(),
+            parameter_values: self.parameter_values.clone(),
+            parameter_roots: Default::default(),
+            known_calls: self.known_calls.clone(),
+            call_effects: self.call_effects,
+            reachable: true,
+            control: Default::default(),
+            guard_blocked: Default::default(),
+            outer_narrows: Default::default(),
             result,
             infer_returns: false,
             entry: self.entry,
@@ -210,10 +254,49 @@ impl Lower<'_> {
             environment: false,
         };
         child.generated.insert(index, function);
+        if ignored.is_empty() {
+            return Ok(Expr {
+                span: call.span,
+                ty: result,
+                kind: E::Call(index, operands),
+            });
+        }
+        // Cache the three effective operands before ignored expressions. They
+        // may reassign the source/this/callback or collect temporary graphs.
+        let mut roots = Vec::new();
+        let mut body = Vec::new();
+        let mut cached = Vec::new();
+        for value in operands {
+            let slot = self.hidden(value.ty);
+            roots.push(slot);
+            cached.push(Expr {
+                span: value.span,
+                ty: value.ty,
+                kind: E::Local(slot),
+            });
+            body.push(S::Init(slot, value));
+        }
+        body.extend(ignored.into_iter().map(S::Expr));
+        let output = self.hidden(result);
+        let marker = self.hidden(Type::Number);
+        roots.push(output);
+        body.push(S::Init(
+            output,
+            Expr {
+                span: call.span,
+                ty: result,
+                kind: E::Call(index, cached),
+            },
+        ));
         Ok(Expr {
             span: call.span,
             ty: result,
-            kind: E::Call(index, operands),
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots,
+                body,
+            },
         })
     }
     fn array_callback_value(

@@ -49,7 +49,7 @@ impl Emitter<'_> {
             I::I64Or,
         ]);
     }
-    fn number_to_uint32(&mut self) {
+    pub(super) fn number_to_uint32(&mut self) {
         self.code.extend([
             I::I64ReinterpretF64,
             I::LocalTee(self.string_temporary),
