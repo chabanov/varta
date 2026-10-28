@@ -9,6 +9,18 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Dynamic record `+=`, `-=`, `*=`, `/=` and `%=` in v12+, retaining the original
+  receiver/key and old value across RHS effects, with checked computed results,
+  exact selected-field stores and existing read-union/absence/prototype boundaries.
+- Checked `+=`, `-=`, `*=`, `/=` and `%=` in v12+ for locals, static fields
+  and numeric array references, with cached old values, matching Number/String
+  guards, computed results, rooted nested effects and existing v14 length checks.
+- Simple local, dot-field and numeric-array assignment expressions in v12+, with
+  shared prepared references, original RHS types/values, full result/function
+  ownership and v14 length-expression checks.
+- Computed record assignment expressions/chains in v12+, returning the original
+  RHS type/value with prepared references, static literal checks, rooted temporary
+  floors and preserved inner writes on outer failure.
 - Typed computed String assignment statements on closed records in v12+, with
   prepared receiver/key roots, exact selected-field checks, Error family guards,
   optional presence/order and catchable failures after RHS effects.

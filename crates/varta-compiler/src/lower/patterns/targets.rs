@@ -1,6 +1,6 @@
 //! Prepared references retain receiver/key before reads, defaults and rest copying.
 use super::*;
-pub(super) struct Target {
+pub(in crate::lower) struct Target {
     ty: Type,
     span: swc_common::Span,
     kind: Place,
@@ -14,7 +14,10 @@ enum Place {
     Length { base: u32, ty: Type },
 }
 impl Lower<'_> {
-    pub(super) fn prepare_pattern_target(&mut self, pattern: &ast::Pat) -> Result<Option<Target>> {
+    pub(in crate::lower) fn prepare_pattern_target(
+        &mut self,
+        pattern: &ast::Pat,
+    ) -> Result<Option<Target>> {
         let pattern = if let ast::Pat::Assign(assign) = pattern {
             &*assign.left
         } else {
@@ -44,6 +47,13 @@ impl Lower<'_> {
         let field = self
             .place(member)
             .map_err(|e| self.source.locate(e, span))?;
+        Ok(Some(self.prepare_member_reference(field, span)?))
+    }
+    pub(in crate::lower) fn prepare_member_reference(
+        &mut self,
+        field: Expr,
+        span: swc_common::Span,
+    ) -> Result<Target> {
         let mut roots = Vec::new();
         let mut body = Vec::new();
         let mut save = |this: &mut Lower<'_>, value: Expr| {
@@ -70,16 +80,104 @@ impl Lower<'_> {
             _ => {
                 return Err(self
                     .source
-                    .locate(unsupported("immutable destructuring member target"), span));
+                    .locate(unsupported("immutable assignment member target"), span));
             }
         };
-        Ok(Some(Target {
+        Ok(Target {
             ty: field.ty,
             span,
             kind,
             roots,
             body,
-        }))
+        })
+    }
+    pub(in crate::lower) fn prepared_assignment_value(
+        &mut self,
+        target: Target,
+        rhs: &ast::Expr,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        // Non-union context can infer arrows and aggregate literals without
+        // widening a scalar result. Union context may select one aggregate
+        // literal member, but never pre-widens the original RHS to the target.
+        let expression = stmt::unparen(rhs);
+        let context = if !target.ty.is_union() {
+            Some(target.ty)
+        } else if matches!(expression, ast::Expr::Object(_) | ast::Expr::Array(_)) {
+            self.context(expression, Some(target.ty))
+        } else {
+            None
+        };
+        let value = self.expr_expected(rhs, context)?;
+        self.finish_prepared_value(target, value, span)
+    }
+    pub(in crate::lower) fn prepared_compound_value(
+        &mut self,
+        target: Target,
+        rhs: &ast::Expr,
+        op: ast::BinaryOp,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        let read_span = target.span;
+        let read = match target.kind {
+            Place::Local(slot) => local(read_span, slot, target.ty),
+            Place::Field { base, ty, index } => Expr {
+                span: read_span,
+                ty: target.ty,
+                kind: E::Field(Box::new(local(span, base, ty)), index),
+            },
+            Place::Index { base, ty, key } => Expr {
+                span: read_span,
+                ty: unions::intern(vec![target.ty, Type::Undefined], self.types)?,
+                kind: E::MaybeIndex(
+                    Box::new(local(span, base, ty)),
+                    Box::new(local(span, key, Type::Float64)),
+                ),
+            },
+            Place::Length { base, ty } => Expr {
+                span: read_span,
+                ty: self.types.number(),
+                kind: E::Length(Box::new(local(span, base, ty))),
+            },
+        };
+        let value = self.compound_operation(read, rhs, op, span)?;
+        self.finish_prepared_value(target, value, span)
+    }
+    fn finish_prepared_value(
+        &mut self,
+        mut target: Target,
+        value: Expr,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        if !arguments::accepts(target.ty, value.ty, self.types) {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "assignment type mismatch: expected {}, found {}",
+                    target.ty, value.ty
+                )),
+                value.span,
+            ));
+        }
+        let ty = value.ty;
+        let input = self.hidden(ty);
+        let marker = self.hidden(Type::Number);
+        target.body.push(S::Init(input, value));
+        let store = self.store_pattern_target(
+            &target,
+            unions::widen(local(span, input, ty), Some(target.ty), self.types)?,
+        )?;
+        target.body.push(store);
+        target.roots.push(input);
+        Ok(Expr {
+            span,
+            ty,
+            kind: E::ValueBlock {
+                output: input,
+                marker,
+                roots: target.roots,
+                body: target.body,
+            },
+        })
     }
     pub(super) fn finish_pattern_target(
         &mut self,

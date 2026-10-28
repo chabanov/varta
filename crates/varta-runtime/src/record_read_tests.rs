@@ -209,7 +209,7 @@ fn computed_record_reads_reject_coercion_invalid_writes_unrepresentable_unions_a
         "export function main():void{const key:string|undefined='n';({n:1})[key];}",
         "export function main():void{const source:{n:number}|null={n:1};const key='n';source[key];}",
         "export function main():void{const key='n';const value={n:1};value[key]='wrong';}",
-        "export function main():void{const key='n';const value={n:1};value[key]+=2;}",
+        "export function main():void{const key='n';const value={n:1};value[key]**=2;}",
         "export function main():void{const key='n';const value={n:1};[value[key]]=[2];}",
         "export function main():void{const key='n';const value={n:1};delete value[key];}",
         "export function main():void{const key='a';({a:{n:1},b:{s:'x'}})[key];}",

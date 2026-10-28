@@ -1246,12 +1246,189 @@ aggregate literal receives context only if one corresponding shape/array type is
 available; ambiguous empty literals require an explicitly typed value.
 
 Standalone/parenthesized statements and ordinary for initializer/update positions
-are supported. Assignment expressions/chains, compound assignments, increment,
+are supported. Computed assignment expressions/chains are specified below.
+Compound assignments, increment,
 destructuring targets, dynamic deletion, non-String keys and unnarrowed nullable
 receivers remain unsupported. Literal accesses/writes and earlier profiles retain
 their rules. All bounds, exact roots, exception/finalizer cleanup and grants/status
 remain active, with no host operation, helper export or ABI/layout change. See the
 [contract](docs/architecture.md#computed-record-write-contract).
+
+## Computed record assignment values (v12 and later)
+
+Computed record assignment can also be used as an expression. It returns the
+original RHS value and type after the store succeeds:
+
+```ts
+export function main(): void {
+  const left: {score?: number} = {};
+  const right: {score?: number} = {};
+  const key = "score";
+  const result: number = (left[key] = right["score"] = 2.5);
+  console.log(result + 1); // 3.5
+  console.log(JSON.stringify(left));  // {"score":2.5}
+  console.log(JSON.stringify(right)); // {"score":2.5}
+}
+```
+
+Optional/union field storage does not widen the expression's original scalar,
+record, array or Error result. Number bits and reference identity are retained.
+A union RHS keeps its original union type; selecting a field at runtime does not
+provide a static narrowing of the result. Context for aggregate literals follows
+the existing target-field rules.
+
+In a chain, receiver/key pairs evaluate once from left to right before the final
+RHS; stores run from the innermost assignment outward. A failed inner write skips
+outer stores and later arguments. A failed outer write keeps successful inner
+stores and earlier effects. Reassigning source/key variables in an RHS cannot
+redirect the prepared reference. Catch/finally and fatal-limit behavior remain
+unchanged.
+
+Supported expression positions include initializers, arguments, returns,
+operators/conditional branches, callbacks, receivers/keys and for conditions.
+Computed literal String/Number keys keep static field/type checks; unknown literal
+keys remain compile errors. Dynamic String keys keep their runtime checks.
+Local-variable, dot-property and array assignment values are specified below.
+Error mutation and increment remain unsupported. Dynamic compounds are specified
+below. Existing assignment statements and destructuring expressions keep their rules and may
+consume these new RHS values.
+
+The compiler reuses rooted value blocks with a saved temporary floor to preserve
+earlier operands, physical pairs and saved returns through nested assignments and
+GC. No new host operation/import, helper export or ABI/layout change. See the
+[contract](docs/architecture.md#computed-record-assignment-value-contract).
+
+## Simple assignment values (v12 and later)
+
+Local variables, declared record fields and numeric array elements also support
+simple assignment expressions and mixed chains:
+
+```ts
+export function main(): void {
+  let local: number | string = 0;
+  const record: {score?: number} = {};
+  const values: (number | undefined)[] = [undefined];
+  const result: number = (local = record.score = values[0] = 2.5);
+  console.log(result + 1); // 3.5
+  console.log(JSON.stringify(record)); // {"score":2.5}
+  console.log(JSON.stringify(values)); // [2.5]
+}
+```
+
+The result keeps the original RHS type, bits and reference identity. Only the
+stored copy is widened to an optional/union target. Local function values receive
+their existing contextual signatures; local captured-result assignments preserve
+both physical value/status slots. Constants, uninitialized bindings, writes under
+guard refinement and incompatible record/array/function/result types remain
+compile errors.
+
+Receiver and numeric index run once before RHS effects. The store uses that
+original receiver/index and its current backing after RHS success, even if the
+RHS reassigns source variables or resizes the array. Numeric-domain checks and
+bounds run after RHS in these expression paths. Indices must be finite integral
+Numbers in 0..1023; invalid indices remain fatal. V12/v13 require a current in-range
+element. V14 can extend arrays with intervening holes, retaining sparse presence,
+the 1024-element ceiling and reference ownership.
+
+V14 also admits `array.length = rhs` and literal `["length"]` expressions. Invalid
+uint32 lengths raise RangeError; valid lengths above 1024 remain fatal. Shrink/
+growth preserve existing clearing/hole rules. The expression returns the original
+Number, including -0 when stored length becomes zero.
+
+Prepared references and RHS values use the shared destructuring setters and rooted
+value blocks. Mixed chains retain inner stores when an outer write fails, and
+failures skip later stores/arguments. Earlier operands, saved returns, captured
+cells, functions and result pairs survive nested calls, GC and finalizers. Error
+objects/result fields remain immutable; coercive/String array indices, new record
+properties, update operators and earlier-profile assignment expressions remain
+unsupported. Arithmetic compound operators are specified below. No host operation/import, helper export or ABI/layout change.
+See the [contract](docs/architecture.md#simple-assignment-value-contract).
+
+## Arithmetic compound assignments (v12 and later)
+
+Locals, declared static record fields and numeric array elements support `+=`,
+`-=`, `*=`, `/=` and `%=` in statements and expressions. V14 also admits array
+length. The expression returns the computed value stored in the target:
+
+```ts
+export function main(): void {
+  let total = 1;
+  const record = {count: 2};
+  const values = [4];
+  console.log(total += record.count *= values[0] += 3); // 15
+  console.log(record.count); // 14
+  console.log(values[0]); // 7
+  let label = "Varta";
+  console.log(label += "!"); // Varta!
+}
+```
+
+Each receiver/index evaluates once. Its old value is read immediately, before RHS
+effects; changing the same target in the RHS does not replace that saved value.
+The computed result is stored through the prepared original reference and current
+array backing. Nested compounds retain each outer old value while inner writes
+complete. Earlier writes and RHS effects remain when a later operation fails.
+
+Number/Number operands use existing binary64 arithmetic, including NaN/infinities,
+signed zero and remainder. Only `+=` admits String/String concatenation, preserving
+exact UTF-16 units and normal string limits. No coercion is added. Closed unions
+and optional fields/array reads are checked after RHS success: matching Number
+operands, or matching Strings for `+=`, are required. Incompatible kinds, absent
+fields, explicit Undefined, holes and missing/noncanonical numeric reads raise
+TypeError without the requested store. A statically impossible operand pair is a
+compile error. Ordinary binary union expressions keep their narrowing rules.
+
+Array reads follow the existing missing-value semantics before RHS evaluation.
+After a successful arithmetic result, existing write checks use current storage:
+v12/v13 writes beyond current length remain fatal; v14 may recreate/extend valid
+indices with holes. V14 length stores retain RangeError for invalid uint32 results
+and fatal results above 1024. Resource exhaustion remains fatal, including string
+overflow, and skips catch/finally rather than becoming an operand error.
+
+Constants, TDZ/guard-refined targets, String array indices,
+Error/result mutation, exponent/bitwise/logical assignments and increment/decrement
+remain unsupported. Original operand/result roots, earlier arguments/result pairs,
+callbacks and saved returns survive GC/finalizers. The operation reuses binary
+helpers, pure remainder, checked setters and value blocks; no ABI/layout, new host
+operation or helper export is introduced. See the
+[contract](docs/architecture.md#arithmetic-compound-assignment-contract).
+
+## Dynamic record compound assignments (v12 and later)
+
+Closed records also admit the five arithmetic compound operators with a narrowed
+String key, in statements and expressions:
+
+```ts
+export function main(): void {
+  const record = {count: 2, label: "Varta"};
+  let key = "count";
+  console.log(record[key] *= 3); // 6
+  key = "label";
+  console.log(record[key] += "!"); // Varta!
+}
+```
+
+The receiver and exact UTF-16 key evaluate once, then the selected old value is
+read before RHS effects. Reassigning the receiver/key or changing the same field
+in the RHS cannot redirect the final write or replace that snapshot. Nested
+assignments preserve completed inner writes if an outer operation fails.
+
+This combines the existing computed-read and checked-write contracts. All field
+types must fit the admitted read union: at most one record shape and one invariant
+array element type, with no functions/result pairs. The RHS determines possible
+Number/String arithmetic results; statically impossible cases fail compilation.
+Runtime incompatible kinds, absent optional fields and unknown ordinary keys
+raise TypeError after RHS effects without the requested write or property creation.
+Unsupported inherited names fail during the old-value read, before RHS evaluation;
+declared own fields with those names work normally. No coercion or prototype access
+is added. Literal keys retain their exact static diagnostics and field types.
+
+Computed results preserve Number bits and exact UTF-16 strings. The final store
+checks the selected field's full declared type and keeps presence/insertion order.
+Prepared references, old values and earlier operands/result pairs survive calls,
+GC and finalizers. Existing permissions, status and fatal budgets are unchanged;
+no ABI/import/helper export is added. See the
+[contract](docs/architecture.md#dynamic-record-compound-assignment-contract).
 
 ## Object.keys for closed records (v12 and later)
 

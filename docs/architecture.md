@@ -2199,7 +2199,7 @@ name table keeps static rejection and dynamic checks aligned. Literal String/Num
 access paths, including static inherited-key rejection, retain their earlier rules.
 
 Reject dynamic non-String/union keys, unchecked/nullish sources without narrowing,
-compound assignments/destructuring targets/deletion, symbols,
+dynamic compound assignments/destructuring targets/deletion, symbols,
 assertions, index signatures and older profiles. This increment does not add
 computed object initializers, destructuring keys, Array/Error computed reads or
 general dynamic objects. Array numeric reads retain their own dispatch.
@@ -2236,9 +2236,10 @@ throws, bit 31, maximum keys, helper purity, repeated GC and finalizer/root clea
 V12+ admits `record[key] = rhs` as a simple assignment statement, including outer
 parentheses and ordinary for initializer/update positions. Require a narrowed
 closed-record receiver and narrowed String key. Literal String/Number paths and
-earlier-profile behavior remain unchanged. Reject compound assignments, ordinary
-assignment expressions/chains, increment, destructuring member targets, computed
-initializers, dynamic deletion/property creation, index signatures, non-String/
+earlier-profile behavior remain unchanged. The value-producing extension is below.
+Dynamic-key arithmetic compounds are specified below. Reject increment,
+destructuring member targets, computed initializers, dynamic deletion/property
+creation, index signatures, non-String/
 unnarrowed union keys and unchecked/nullish receivers without narrowing. Array
 numeric mutation and Error immutability keep their separate dispatch/contracts.
 
@@ -2286,7 +2287,7 @@ graphs through checks, allocation and GC, and clear lexical roots on every exit.
 No managed shape/array/union metadata, schema or ABI version changes.
 
 IsUnionMember allocates/calls nothing and returns a canonical Boolean; its operand
-must remain visible in layout/effect visitors. The full Scope/Init/lookup/store/
+must remain visible in layout/effect visitors. The full value-block/Init/lookup/store/
 throw body is traversed for actual effects and helper purity. Preserve exact grants,
 host ceilings and system status, with no new host operation/import/helper export.
 Static-data/type/source/body/frame/root/string/memory/fuel/deadline limits remain
@@ -2296,6 +2297,235 @@ invariant shapes/arrays, Error families, optional ordering/bit 31, source/key/RH
 effects and throws, GC/partial cleanup/saved returns and pairs, helper purity and
 fatal limits/authorized exits. This is a checked assignment boundary, not general
 ECMAScript object mutation or prototype support.
+
+### Computed record assignment value contract
+
+V12+ extends computed closed-record assignment to expression positions. Return the
+original RHS value and resolved type only after a successful store, following the
+admitted [assignment evaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-assignment-operators-runtime-semantics-evaluation)
+and its returned RHS value. Dynamic String keys retain the preceding write contract.
+Computed literal String/Number keys retain static field lookup, known-field type
+checks and unknown/inherited-key compile errors. Require narrowed closed-record
+receivers; reject non-String dynamic keys, unnarrowed unions/nullish receivers and
+increment. Dynamic-key arithmetic compounds and local/dot/array values are
+specified below. Error mutation remains unsupported. Existing statements and destructuring
+expressions can consume supported computed-record RHS expressions.
+
+Use existing ValueBlock IR for both dynamic statements and expressions, with the
+cached original RHS as output. Literal computed expressions prepare/root the
+receiver, evaluate the RHS once, then widen a separate local read for SetField.
+Do not pre-widen the cached RHS to the selected field type: a Number stored in an
+optional/union field still yields Number; an exact Error retains its family, and
+record/array results retain their complete type and identity. Dynamic checks may
+unbox/retype only the copy used for storage. An original union result keeps its
+original static members even when a runtime store proves a narrower subset. Outer
+context may widen the completed result normally, but does not change the selected
+field's contract or provide arbitrary RHS narrowing/shape erasure. Aggregate literal
+context follows existing unambiguous target rules, including typed empty literals.
+
+Register input roots and save the temporary floor before evaluating any operand.
+Evaluate receiver then key then RHS once, with the prepared receiver/key retained
+across RHS effects and nested assignments. Chaining evaluates outer references
+before inner references and the final RHS, then stores from inner to outer.
+An inner failure skips outer stores, remaining arguments and enclosing work;
+an outer failure preserves completed inner stores and earlier effects. Do not
+roll back partial chains or publish a success result after a throw. Existing
+catch/finally routes clean partial inputs and preserve saved results/exceptions.
+
+Every internal statement may release only temporaries above the saved floor,
+preserving earlier caller operands/arguments and both slots of physical pairs.
+Nested value blocks save/restore the prior floor. Load the original result before
+clearing hidden roots, with no intervening allocation; the enclosing expression
+wrapper retains a reference result immediately. Keep prepared source/key/RHS child
+graphs and escaped results alive through collection, later arguments and finalizers.
+Statements discard the full returned value through the normal expression path.
+
+Admit ordinary initializer/argument/return/member/key/operator/conditional/callback/
+for-condition positions supported by the corresponding result type. Internal
+bodies contain no source returns/finalizers, so callback inference uses the resolved
+original RHS type. Existing layout/effect visitors traverse the entire value block,
+including operands, nested stores and failures. Preserve all field compatibility,
+presence/order/bit-31, literal/legacy, exact grants/status/host-ceiling and fatal
+resource/authorized-exit rules. No emitter helper, host operation/import, helper
+export, schema or ABI/layout change is introduced. Tests execute Wasm, virtual
+modules and source-free portable/native artifacts and cover exact types/bits/
+identity, chain order/partial failure, earlier operands/pairs/GC/finalizers, repeated
+cleanup, callbacks, profile gates, dependency ranges and actual capability effects.
+
+### Simple assignment value contract
+
+V12+ extends simple `=` expressions to mutable initialized local/parameter bindings,
+static declared record fields (dot or literal computed form) and narrowed arrays
+with numeric indices. Dynamic record keys retain the preceding checked contract.
+Allow ordinary enclosing expression positions and mixed chains with computed
+record/destructuring assignment values. Preserve the admitted assignment order
+and returned RHS under [assignment evaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-assignment-operators-runtime-semantics-evaluation).
+The arithmetic compound extension is below. Reject update operators, const/TDZ targets, writes under guard refinement,
+nullish/union receivers without narrowing, incompatible types, unknown record
+fields, coercive/String array indices, immutable Error/result fields and older
+profiles. Existing statements retain their profile contracts.
+
+Share prepared Target references and storage with destructuring: resolve a local
+binding/capture once, or evaluate/root the member receiver and raw numeric index
+once before the RHS. Preparation never caches an interior array backing pointer.
+After RHS success, perform the store against the prepared original reference and
+current storage. Receiver/key-variable reassignment cannot redirect the store;
+RHS mutations/resizing remain observable. An RHS failure performs no requested
+outer store. Chains preserve completed inner writes on outer failure and skip
+remaining outer stores/arguments. Existing catch/finally routes handle partial
+roots and retain saved returns, pending exceptions and fatal exits.
+
+Cache the exact resolved RHS type and full physical value in a ValueBlock output;
+do not pre-widen it to the target union or narrow it from a runtime field choice.
+Use normal non-union context for typed aggregate/function inference. For a union
+target, supply only an admitted aggregate-literal member context; other RHS values
+resolve independently. Require complete invariant compatibility, then widen only
+the storage copy through Set/SetField/SetIndex/ArrayLength. Preserve scalar bits,
+Undefined/null distinctions, Error families and actual aggregate/function identity.
+Local function values keep existing signatures/captures; local VartaResult values
+retain both physical slots and exact String roots. Aggregate slots continue to
+reject function/result kinds through their existing type definitions.
+
+Numeric array expressions validate after RHS evaluation, before address conversion
+or mutation. Require finite integral 0 <= index < 1024; -0 selects zero. Invalid
+domains and out-of-range accesses remain fatal and bypass catch/finally. V12/v13
+require index below the current length, including when RHS push/pop changed it.
+V14 resolves current cell/backing/length after RHS, may extend up to index 1023,
+creates intervening holes and publishes exactly the assigned element's presence.
+Keep element invariance, payload bits/child masks and cleared spare slots. Growth/
+collection cannot release prepared receivers or detached RHS children.
+
+V14 length/literal-["length"] expressions reuse ArrayLength: non-uint32 values
+(negative, fractional, NaN, infinite or above u32::MAX) raise owned RangeError;
+valid lengths above 1024 remain fatal. Validate after RHS effects, then resize
+with existing truncation clearing/holes rules. Return the original Number without
+normalizing its -0 bits. V12/v13 retain rejection of writable length.
+
+Register prepared source/key/output roots and save the temporary floor before
+operand evaluation. Share the existing value-block result transfer, cleanup and
+full-width discard with computed record values. Keep earlier caller operands,
+physical pairs, escaped functions/cells/child graphs and original outputs alive
+through nested statements/calls/GC and finalizers. Internal bodies contain no
+source returns; callback inference sees the original RHS type. Layout/effect
+visitors traverse full preparation, RHS, storage and failure bodies. No new host
+operation/import, emitter helper, helper export, schema or ABI/layout is introduced;
+status/grants/host ceilings and all source/type/frame/root/memory/fuel/deadline
+bounds remain active. Tests cover native/portable source-free artifacts, virtual
+modules, source ranges, profile/type/mutability boundaries, original values, mixed
+chains, capture/result-pair widths, sparse/current-backing behavior, fatal domains,
+length errors, helper purity and repeated GC/finalizer/root cleanup.
+
+### Arithmetic compound assignment contract
+
+V12+ admits +=, -=, *=, /= and %= for mutable initialized local/parameter bindings,
+static declared record fields (dot or literal computed names) and numeric array
+references. V14 also admits length/literal-["length"] targets. Support statements,
+for init/update and existing enclosing expression positions, returning the computed
+assigned result. Reject const/TDZ/guard-refined targets, unchecked receivers,
+String/coercive array keys, Error/result mutation,
+destructuring targets, exponent/bitwise/logical assignments, updates and older
+profiles. Ordinary simple assignment and binary-expression contracts remain intact.
+
+Follow admitted [compound evaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-assignment-operators-runtime-semantics-evaluation):
+prepare receiver/index once, read/cache its old value, evaluate/cache RHS once,
+validate operands, compute and store. A key's effects precede the old-value read;
+RHS writes/resizes/reassignments cannot alter that snapshot or redirect the
+prepared reference. Nested compounds cache outer old values before evaluating
+inner references/RHS and preserve completed inner stores if an outer operation
+fails. An RHS throw skips validation/store and retains its original exception;
+no requested compound store occurs after any failure. Keep prior mutations and
+system effects, and skip later arguments/enclosing work on exceptions or fatal exit.
+
+Prepared targets share existing local/capture checks and setters. Field reads use
+their typed slot, including canonical Undefined placeholders for absent optional
+fields. Array old-value reads use MaybeIndex with the element|Undefined type and
+current presence: holes, explicit Undefined, out-of-range/noncanonical Number keys
+produce Undefined without an invalid payload load. Cache complete old union cells
+and reference graphs, even for a member that may later fail an operand check.
+Length reads capture the current numeric length before RHS effects.
+
+Number/Number is admitted for every listed operator; String/String is admitted
+only for +=. Static member intersection determines possible successful result
+types. If the target has no admitted kind or RHS has no matching admitted member,
+reject at the target/RHS source span. Otherwise read and evaluate both operands
+before pure IsUnionMember checks select exact matching Number/String tags.
+Reject incompatible runtime kinds with owned TypeError `Invalid compound arithmetic
+operands`; do not coerce Boolean/null/Undefined, mixed String/Number or references.
+Only validated branches may unbox and apply existing Binary IR. Union arithmetic
+in ordinary binary expressions still requires the existing source narrowing.
+
+Return the computed Number/String or closed Number|String result, not the original
+RHS or widened storage cell. Preserve full numeric bits, NaN/infinity/-0 and exact
+UTF-16 concatenation. A captured old String remains immutable across RHS mutation
+and collection. Store a separate compatible/widened copy through existing target
+storage; failed operand checks do not alter payloads/presence/order. Missing reads
+fail after RHS without attempting a write, so they do not become property creation
+or budget-limit conversions. A valid result still faces the ordinary current-store
+checks: v12/v13 post-RHS array bounds remain fatal, v14 may recreate/extend an index,
+and length results reuse RangeError/non-uint32 and fatal >1024 checks. String/
+memory/fuel/deadline exhaustion and authorized exits remain fatal.
+
+Nested ValueBlocks root prepared references, cached old value, RHS and result,
+saving/restoring temporary floors to preserve earlier operands and physical pairs.
+Register roots before effects and load results before cleanup without allocation.
+Type-error paths clear all partial inputs through existing catch/finally routes;
+saved returns and escaped/captured graphs survive finalizers. Internal branches
+contain no source returns, so callback inference uses the computed result type.
+Full layout/effect visitors see old reads, RHS, nested arithmetic, storage and
+failure branches. Existing FloatRemainder is pure/status-preserving and String
+concatenation uses its existing owned guest helper. No new host operation/helper
+export, emitter helper, schema or ABI/layout version is introduced. All current
+source/type/frame/root/value/resource limits remain active. Tests execute Wasm,
+virtual modules and source-free portable/native artifacts, covering arithmetic/
+UTF-16 edges, old-value order, partial chains, sparse/current backing, union/absence
+errors, bounds/length limits, GC/pairs/returns, helper purity, source ranges and
+operation-specific permissions/host ceilings/status/fatal exits.
+
+### Dynamic record compound assignment contract
+
+V12+ admits the same five arithmetic compound operators for a narrowed closed
+record receiver and narrowed String computed key. Literal String/Number keys keep
+the exact static path; dynamic keys never coerce or add properties. Reuse existing
+computed-read union admission: every declared field plus Undefined must fit one
+closed value union, with at most one record shape and one invariant array element
+type, and no function/result members. Reject impossible arithmetic at the member
+or RHS span; ordinary binary union expressions retain their narrowing rules.
+
+Evaluate/root receiver, then key, once. Read/cache the selected old value with the
+existing presence-aware exact UTF-16 lookup before RHS evaluation. Key effects may
+change the selected field before the read. RHS effects cannot change that snapshot
+or redirect the prepared receiver/key, even if their source bindings are reassigned
+or their original storage becomes detached. Cache complete old reference-union
+graphs, including values that may later fail operand validation.
+
+Unknown ordinary names and absent optional fields read Undefined. Evaluate RHS
+before rejecting these operands with the existing owned arithmetic TypeError;
+retain RHS mutations, presence/order changes and its original exception on failure.
+An undeclared inherited name raises the existing unsupported-inherited TypeError
+during the read, before RHS effects. Declared own inherited-looking names use their
+typed slot and presence. No prototype access, coercion or property creation is added.
+
+After successful RHS evaluation, reuse matching Number/Number arithmetic or
+String/String += guards, computation and computed result typing. Store through the
+same saved reference using the ordinary dynamic-write leaf checks on full declared
+types; widen only the storage copy and publish payload/presence/order only after
+success. Do not re-read the old field after RHS. Return the computed Number/String
+or Number|String value, including exact numeric bits and UTF-16 ownership. Outer
+chains save their reference/old value before inner work; inner failure skips outer
+stores, while outer failure retains completed inner stores.
+
+Nested ValueBlocks register source/key/old/RHS/result roots, preserve earlier
+temporary floors/physical pairs, and transfer results before cleanup without
+allocation. GC, callbacks, saved returns and finalizers retain original graphs.
+Complete body visitors include read failures, operands, arithmetic and checked
+store branches; helper validation must reject host effects in any source/key/RHS
+position. Existing status/grants/host ceilings and all compilation/value/memory/
+fuel/deadline limits remain active. Fatal exhaustion and authorized exit bypass
+guest handlers. No host operation/import, emitter helper, helper export or ABI/
+schema/layout version is introduced. Tests cover profiles, exact keys/all field
+bits, inherited/missing timing, source/key snapshots, partial chains, strict kinds,
+GC/pairs/finalizers, source diagnostics, virtual modules and source-free Wasm/native
+artifacts with allowed/denied operations and host ceilings.
 
 ### Object.keys contract
 
@@ -2444,8 +2674,10 @@ only targets, while user-authored mutations observe normal reference identity.
 Admit results in local initializers, arguments/receivers, returns, member reads,
 callbacks, supported conditional/operator positions and nested pattern assignment
 chains. Standalone and for init/update statements lower through the same value
-path and discard the result. Ordinary non-pattern assignment expressions remain
-outside this increment, as do dynamic record keys in patterns, catch and for-in.
+path and discard the result. Computed record and ordinary simple assignment values
+are specified above, along with the checked arithmetic compound subset;
+other compound/update expressions remain outside this increment,
+as do dynamic record keys in patterns, catch and for-in.
 
 Resolve target syntax/bounds/mutability as before, then propagate available result
 context to the RHS; absent context retains homogeneous target inference. Evaluate
@@ -3133,7 +3365,8 @@ are copied into one heap allocation, with length overflow, per-value size,
 heap and memory-growth checks before publishing the new slice. Existing aliases,
 captured results and source operands retain their original content. There is no
 implicit conversion: `"count=" + 1` is a type error. Use `s = s + suffix` for
-reassignment; `+=` remains outside the supported compound-assignment subset.
+reassignment in these UTF-8 profiles. V12+ UTF-16 profiles add the checked arithmetic
+compound contract above, including String/String +=.
 
 `==`, `===`, `!=` and `!==` compare string content, not pointers. Both operands
 must be strings, so loose and strict equality have the same behavior within this

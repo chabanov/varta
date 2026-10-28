@@ -168,7 +168,7 @@ fn new_properties_length_coercion_and_old_profiles_are_not_silently_admitted() {
         "export function main():void{const a=[1];a.length=undefined;}",
         "export function main():void{const a=[1];const key='0';delete a[key];}",
         "export function main():void{const a={n:1};delete a.n;}",
-        "export function main():void{const a=[1];a.length+=1;}",
+        "export function main():void{const a=[1];a.length**=2;}",
     ] {
         assert!(
             varta_compiler::compile_typescript_with_profile(
@@ -181,6 +181,7 @@ fn new_properties_length_coercion_and_old_profiles_are_not_silently_admitted() {
     }
     for source in [
         "export function main():void{const a=[1];a.length=2;}",
+        "export function main():void{const a=[1];a.length+=1;}",
         "export function main():void{const a=[1];delete a[0];}",
     ] {
         assert!(

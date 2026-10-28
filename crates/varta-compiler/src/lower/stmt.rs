@@ -270,7 +270,7 @@ impl Lower<'_> {
     }
     fn assignment_inner(&mut self, assign: &ast::AssignExpr) -> Result<S> {
         if assign.op != ast::AssignOp::Assign {
-            return Err(unsupported("compound assignment"));
+            return Ok(S::Expr(self.compound_assignment_value(assign)?));
         }
         if let ast::AssignTarget::Pat(pattern) = &assign.left {
             return self.destructuring_assignment(assign, pattern);
@@ -285,7 +285,9 @@ impl Lower<'_> {
                     ast::Expr::Lit(ast::Lit::Str(_) | ast::Lit::Num(_))
                 )
             {
-                return self.dynamic_record_write(assign, base, &key.expr, shape);
+                return Ok(S::Expr(
+                    self.dynamic_record_write_value(assign, base, &key.expr, shape)?,
+                ));
             }
             let field = self.place_value(member, base)?;
             if self.types.profile.array_mutations()

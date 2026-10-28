@@ -322,8 +322,55 @@
 // IsUnionMember checks tags and exact Error class bits without host calls or
 // allocation. Preserve operand effects, GC/roots/child graphs/returns/pairs/finalizers,
 // status/grants and fatal bounds. No dynamic property creation, coercion/prototypes,
-// expression/chained/compound writes, increment, pattern targets or deletion.
+// increment, pattern targets or deletion. Values and arithmetic compounds below.
 // Literal/legacy rules and ABI/import/helper exports remain unchanged.
+// V12+ computed record assignment expressions/chains return the original RHS value
+// and type after successful stores. Keep literal String/Number static checks and
+// dynamic String checks. Widen only storage copies, preserving result unions,
+// exact numeric bits/Error families/aggregate identity. Prepare outer receivers/
+// keys before inner references and RHS; store inner to outer. Inner failure skips
+// outer work; outer failure keeps inner stores/effects. Root original outputs and
+// inputs/child graphs; save/restore temporary floors before operands to preserve
+// earlier caller values/pairs through statements, GC and finalizers. Existing
+// value-block visitors/callback inference use original RHS types/effects. Ordinary
+// local/dot/array values and arithmetic compounds are below; Error mutation/updates
+// remain unsupported. Keep all bounds/status/grants and ABI/import/helper exports.
+// V12+ simple assignment expressions support mutable initialized locals/parameters,
+// declared record fields and numeric array elements, sharing prepared references/
+// setters with destructuring. Root/cache receiver and raw index before RHS; use
+// current backing after success. Reject const/TDZ/guard-refined targets and type
+// mismatches. Cache original RHS types/values; widen storage copies only. Preserve
+// local function signatures/captures and both physical VartaResult slots/roots.
+// Numeric indices validate after RHS: finite integral 0..1023, -0 selects zero.
+// V12/v13 require current in-range writes; v14 extends with holes and preserves
+// current presence/backing. V14 length/literal length expressions retain RangeError
+// for non-uint32 lengths and fatal >1024 limits, returning original Number/-0.
+// Shared value-block floors/roots preserve operands/pairs, mixed partial chains,
+// cells/functions/results, GC and finalizers. Keep all bounds/status/grants and
+// ABI/import/helper exports. Arithmetic compounds are below; updates stay unsupported.
+// V12+ +=, -=, *=, /= and %= support mutable locals/static fields/numeric arrays;
+// v14 adds length. Prepare receiver/key once, then snapshot the old value before
+// RHS effects. Array MaybeIndex snapshots missing/invalid reads as Undefined.
+// Evaluate RHS, then admit Number/Number, or String/String only for +=, using
+// pure union-tag checks without coercion. Impossible static pairs fail at their
+// source span; incompatible runtime values throw TypeError after RHS without a
+// requested store. Return computed results and widen storage copies only. Keep
+// old numeric bits/String ownership and current backing/presence/write limits.
+// Missing-value errors do not attempt writes or convert budgets into catchable
+// failures. Preserve roots/floors/graphs/pairs/partial chains/GC/finalizers/status/
+// grants. Dynamic record keys are below. Reject exponent/bitwise/logical assignments, updates,
+// immutable/guard-refined targets and older profiles. No ABI/import/helper export.
+// V12+ dynamic record arithmetic compounds require narrowed record/String inputs
+// and the existing computed-read union admission: all fields plus Undefined, at
+// most one record shape/array element type, no functions/results. Cache receiver/
+// exact UTF-16 key once and snapshot the old selected value before RHS. RHS cannot
+// redirect the prepared reference or replace its old value. Unknown/absent reads
+// fail arithmetic after RHS; undeclared inherited names fail before RHS, with own
+// declared names preserved. Keep original exceptions/effects, strict arithmetic
+// kinds, computed result types and full selected-field storage checks. No property
+// creation/coercion/prototypes. Root original graphs/operands/pairs/returns across
+// GC/partial chains/calls/finalizers; visit every effect. Status/grants/ceilings and
+// compilation/value/fatal bounds persist. No ABI/import/helper export change.
 // V12+ Object.keys(record) returns a fresh dense string[] of present own keys:
 // canonical array indices first numerically, other strings by insertion order.
 // Explicit Undefined is present; absent optional fields are omitted. Input is
@@ -369,8 +416,9 @@
 // remain fatal resource violations. Shrink clears payloads/bits; growth creates
 // holes without resurrecting references. Array-only numeric/literal delete keeps
 // length, returns true for absence, and raises TypeError for deleting length.
-// Arbitrary/coercive own properties and compound/assignment expressions remain
-// unsupported. Old profiles retain their mutation contracts. No new host import,
+// Arbitrary/coercive own properties and other compound/update expressions remain
+// unsupported; simple/arithmetic assignment values are above. Old profiles retain
+// their mutation contracts. No new host import,
 // capability or fatal-to-catch budget conversion is introduced.
 // ABI-only log_f64/number_remainder/process_exit_f64 are compiler/runtime details,
 // not additional source APIs. Binary64 remainder and logging preserve host status.

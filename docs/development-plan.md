@@ -23,8 +23,8 @@ remains `checked-i32-utf8-v1`. The latest opt-in profile remains
 checkpoint adds no host operation, capability, helper export or ABI/layout version.
 The source/artifact paths and public engine API are covered by regression tests.
 
-Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **935 workspace
-tests passed**, followed by **173 CLI tests passed** in a separate repeat run.
+Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1004 workspace
+tests passed**, followed by **185 CLI tests passed** in a separate repeat run.
 Formatting, the core-only library check, runtime-companion build, workspace/all-target
 build and Clippy with warnings denied also passed. This records local verification;
 it does not claim a new cross-platform CI or release qualification.
@@ -71,8 +71,31 @@ types before storing. Preserve shapes, invariant arrays, Error families, optiona
 presence/order and root/exception/GC lifetimes. Unknown keys and mismatched values
 throw TypeError after RHS success; no new properties, coercion or ABI change.
 
-Next: specify **computed record assignment expressions**, retaining prepared inputs,
-the original RHS result type/value and correct ownership across chained writes.
+Completed: **computed record assignment expressions** in v12+, with original RHS
+types/values, static computed-literal checks and prepared references through chains.
+Saved temporary floors retain earlier operands/pairs and original results through
+GC, calls and finalizers. Inner failure skips outer stores; outer failure retains
+successful inner writes. No ABI/import/helper/layout change.
+
+Completed: **ordinary local, dot-property and array assignment expressions** in
+v12+, sharing prepared references/storage with destructuring. Preserve original
+RHS types, local function/capture identity, full result pairs and mixed chains.
+Numeric expressions validate after RHS against current backing/presence; v14 adds
+checked length expressions, while earlier profile/mutability/type/budget rules persist.
+
+Completed: **checked compound arithmetic assignments** (`+=`, `-=`, `*=`, `/=`, `%=`) in v12+
+for locals, static record fields and numeric arrays, plus length in v14. Prepared
+references cache old values before RHS, then validate matching Number/String
+operands, compute and store with existing type/bounds/ownership rules. Preserve
+RHS effects, checked absence errors, partial chains, GC/pairs and fatal limits.
+
+Completed: **dynamic record compound references** in v12+, retaining receiver/key
+identity and old-value snapshots across RHS effects. Reuse read-union admission,
+strict arithmetic kinds and full selected-field checks, with explicit inherited/
+missing timing, partial chains and rooted GC/finalizer lifetimes.
+
+Next: specify **short-circuit assignment operators** (`&&=`, `||=`, `??=`), retaining
+prepared references and evaluating/storing RHS only in the selected branch.
 Broader generalized record reads/writes/coercion, constructors and prototypes,
 aggregate exception design, scheduler/promise jobs, standard/system API expansion
 and package compatibility. Wider dynamic values remain explicit profile work.
@@ -1198,8 +1221,40 @@ cover modules/source-free artifacts, diagnostics, effects/grants/status, failure
 order, invariant types, all slots, GC/saved pairs/finalizers and fatal budgets.
 No ABI/import/helper-export/layout change.
 
-Next specify computed record assignment expressions with original RHS results,
-prepared inputs and chained ownership. Generalized coercion, aggregate exception
+Computed record assignment values/chains are implemented in v12+ under the
+[assignment value contract](architecture.md#computed-record-assignment-value-contract).
+Both static computed literals and dynamic String keys preserve field rules and
+original RHS types/identity, with value-block floors/roots across nested effects,
+GC and finalizers. Tests cover all slots, callbacks/destructuring composition,
+partial chains, source-free artifacts, diagnostics and permissions/fatal exits.
+No ABI/import/helper-export/layout change.
+
+Ordinary simple assignment values are implemented in v12+ under the
+[simple value contract](architecture.md#simple-assignment-value-contract). Shared
+prepared references/setters retain original RHS types/results, local functions and
+physical pairs, current array storage/sparse rules and v14 checked length values.
+Regressions cover effects/partial chains, invariance, fatal indices/length bounds,
+capture/GC/finalizer cleanup, modules/artifacts, source ranges and grants/status.
+No ABI/import/helper-export/layout change.
+
+Checked arithmetic compound values/statements are implemented under the
+[compound contract](architecture.md#arithmetic-compound-assignment-contract).
+Regressions cover old-value ordering, matching Number/String union cases, absence/
+RHS exceptions, current sparse storage/length bounds, original result bits, GC/
+saved pairs/returns, artifacts/modules, source diagnostics and permission/status
+boundaries. No ABI/import/helper-export/layout change.
+
+Dynamic record arithmetic compounds are implemented under the
+[dynamic compound contract](architecture.md#dynamic-record-compound-assignment-contract).
+Regressions cover retained receiver/key/old-value identity, inherited versus missing
+read timing, strict union cases, complete field types, exact UTF-16 names/all field
+bits, partial chains, callbacks/GC/pairs/returns/finalizers, source diagnostics,
+virtual modules and source-free artifacts with operation/host-policy boundaries.
+Computed reads retain their existing union restrictions and all compilation/value/
+fatal budgets; no ABI/import/helper-export/layout change.
+
+Next specify short-circuit assignment operators with prepared references and
+branch-only RHS effects/stores. Generalized coercion, aggregate exception
 design and constructors/prototypes
 remain language work. Scheduler/promise jobs follow retained-root, cancellation,
 queue and handle lifetime design.

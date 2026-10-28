@@ -2055,3 +2055,190 @@ fn public_engine_runs_computed_record_writes_across_virtual_modules() {
         );
     }
 }
+
+#[test]
+fn public_engine_runs_record_assignment_values_across_virtual_modules() {
+    struct AssignmentSources;
+    impl ModuleLoader for AssignmentSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./assign.ts" {
+                Ok("assign.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function assign(target:{n?:number},key:string,item:number):number{return target[key]=item;}export function chain(a:{n?:number},b:{n?:number},key:string,item:number):number{return a[key]=b['n']=item;}export function setChild(target:{child?:{text:string}},key:string,item:{text:string}):{text:string}{return target[key]=item;}".into())
+        }
+    }
+    let source = "import {assign,chain,setChild} from './assign.ts';export function main():void{const a:{n?:number}={};const b:{n?:number}={};const result:number=chain(a,b,'n',3);console.log(result+1);console.log(JSON.stringify(a));console.log(JSON.stringify(b));const holder:{child?:{text:string}}={};const child={text:'owned'+'!'};console.log(setChild(holder,'child',child)===child);const exact:number=assign(a,'n',4.5);console.log(exact);console.log(JSON.stringify(holder));try{chain(a,b,'missing',8);}catch(error){console.log(error instanceof TypeError);}console.log(a.n);console.log(b.n);}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &AssignmentSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "varta log: 4",
+                "varta log: {\"n\":3}",
+                "varta log: {\"n\":3}",
+                "varta log: 1",
+                "varta log: 4.5",
+                "varta log: {\"child\":{\"text\":\"owned!\"}}",
+                "varta log: 1",
+                "varta log: 4.5",
+                "varta log: 8"
+            ]
+        );
+    }
+}
+
+#[test]
+fn public_engine_runs_simple_assignment_values_across_virtual_modules() {
+    struct AssignmentSources;
+    impl ModuleLoader for AssignmentSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./simple.ts" {
+                Ok("simple.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function assign(target:{n?:number},values:(number|undefined)[],item:number):number{let local:number|string=0;return local=target.n=values[0]=item;}export function setFunction():()=>string{let fn:()=>string=()=>'';const text='owned'+'!';return fn=()=>text;}".into())
+        }
+    }
+    let source = "import {assign,setFunction} from './simple.ts';export function main():void{const target:{n?:number}={};const values:(number|undefined)[]=[undefined];console.log(assign(target,values,3)+1);console.log(JSON.stringify(target));console.log(JSON.stringify(values));const selected=setFunction();console.log(selected());let number=0;console.log(number=target.n=values[0]=4.5);try{console.log(target['missing'+ '']=number=values[0]=8);}catch(error){console.log(error instanceof TypeError);}console.log(number);console.log(target.n);console.log(JSON.stringify(values));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &AssignmentSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "varta log: 4",
+                "varta log: {\"n\":3}",
+                "varta log: [3]",
+                "varta log: owned!",
+                "varta log: 4.5",
+                "varta log: 1",
+                "varta log: 8",
+                "varta log: 4.5",
+                "varta log: [8]"
+            ]
+        );
+    }
+}
+
+#[test]
+fn public_engine_runs_compound_assignments_across_virtual_modules() {
+    struct CompoundSources;
+    impl ModuleLoader for CompoundSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./compound.ts" {
+                Ok("compound.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function numeric(record:{n?:number},values:number[],amount:number):number{let local=1;return local+=record.n*=values[0]+=amount;}export function append(record:{s:string},suffix:string):string{return record.s+=suffix;}".into())
+        }
+    }
+    let source = "import {numeric,append} from './compound.ts';export function main():void{const record:{n?:number}={n:2};const values=[4];console.log(numeric(record,values,3));console.log(JSON.stringify(record));console.log(JSON.stringify(values));const text={s:'old'};console.log(append(text,'new'));console.log(record.n%=5);const missing:{n?:number}={};try{numeric(missing,values,1);}catch(error){console.log(error instanceof TypeError);}console.log(Object.hasOwn(missing,'n'));console.log(JSON.stringify(values));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &CompoundSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "varta log: 15",
+                "varta log: {\"n\":14}",
+                "varta log: [7]",
+                "varta log: oldnew",
+                "varta log: 4",
+                "varta log: 1",
+                "varta log: 0",
+                "varta log: [8]"
+            ]
+        );
+    }
+}
+
+#[test]
+fn public_engine_runs_record_compounds_across_virtual_modules() {
+    struct ComputedCompoundSources;
+    impl ModuleLoader for ComputedCompoundSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./computed.ts" {
+                Ok("computed.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function numeric(record:{n?:number},key:string,values:number[],amount:number):number{return record[key]*=values[0]+=amount;}export function append(record:{s:string},key:string,suffix:string):string{return record[key]+=suffix;}".into())
+        }
+    }
+    let source = "import {numeric,append} from './computed.ts';export function main():void{let local=1;const record:{n?:number}={n:2};const values=[4];console.log(local+=numeric(record,'n',values,3));console.log(JSON.stringify(record));console.log(JSON.stringify(values));const text={s:'old'};console.log(append(text,'s','new'));console.log(record['n'+'']%=5);const missing:{n?:number}={};try{numeric(missing,'n',values,1);}catch(error){console.log(error instanceof TypeError);}console.log(Object.hasOwn(missing,'n'));console.log(JSON.stringify(values));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &ComputedCompoundSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            ["15", "{\"n\":14}", "[7]", "oldnew", "4", "1", "0", "[8]"]
+                .map(|s| format!("varta log: {s}")),
+            "{profile:?}"
+        );
+    }
+}

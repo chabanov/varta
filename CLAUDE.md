@@ -635,10 +635,87 @@ values throw TypeError after RHS effects, with no requested payload/presence/ord
 mutation. Keep own inherited-looking fields, optional Undefined presence/order,
 all 32 bits and literal/legacy/Array rules. Scope roots retain all inputs/child
 graphs through GC, exceptions, saved returns/pairs and finalizers; visitors traverse
-member-check operands and the full statement body. Simple statements/for headers
-only: reject expression/chained/compound assignments, increment, dynamic pattern
-targets/deletion/property creation/coercion/prototypes. Preserve status/grants and
+member-check operands and the full statement body. Computed expression values are
+specified below, as are dynamic-key arithmetic compounds. Reject increment,
+dynamic pattern targets/deletion/property creation/coercion/prototypes. Preserve status/grants and
 all fatal bounds; no host operation/import/helper export or ABI/schema/layout change.
+
+V12+ computed record assignment expressions reuse ValueBlock for dynamic keys and
+literal String/Number keys, returning the cached original RHS only after success.
+Keep literal static field/type/unknown-key errors and dynamic field checks; require
+narrowed records/String keys. Contextualize aggregates through target rules, never
+pre-widen the cached RHS or narrow its result from a runtime field choice. Widen/
+unbox only the storage copy; preserve original union members, exact scalar bits,
+Error families and aggregate identity/types. Prepare outer source/key before inner
+references and final RHS; store inner to outer. Inner failure skips outer work;
+outer failure keeps inner stores. Save/restore temporary floors before operands so
+internal statements cannot clear earlier caller operands/pairs. Root all prepared
+inputs/children and original outputs through nested GC/calls/returns/finalizers;
+load results before cleanup without allocation. Statements use the same dynamic
+value path and discard normally. Internal bodies contain no source returns, and
+existing value-block visitors/inference must see complete effects/layouts and the
+original result type. Support standard enclosing expression positions, including
+receivers/keys and chains with destructuring expressions. Ordinary simple values
+and dynamic-key arithmetic compounds are specified below; Error mutation, updates
+and older profiles stay rejected.
+Keep presence/order/literal/legacy rules, status/grants and fatal bounds; no host
+operation/import/helper export, emitter helper or ABI/schema/layout change.
+
+V12+ simple assignment values share prepared references/setters with destructuring
+for mutable initialized local/parameter bindings, static record fields and numeric
+array elements. Resolve locals/captures once; cache/root receiver/raw index before
+RHS, never an interior backing pointer. After RHS success validate/store against
+the original reference/current backing. Keep const/TDZ/guard-refinement and complete
+invariant type checks. Cache original RHS values/types in ValueBlock; use non-union
+context for normal aggregate/arrow inference and only aggregate-literal context
+for target unions. Widen storage copies only. Preserve raw bits/identity, local
+function signatures/cells and both slots of VartaResult (including String roots).
+Indices validate after RHS: finite integral 0..1023, -0 -> zero; bad indices stay
+fatal. V12/v13 require current in-range indices, v14 may extend with holes/current
+bitmap/backing. V14 length/literal length expressions retain owned RangeError for
+invalid uint32 and fatal >1024 limits, returning original Number/-0. Older profiles
+keep their length rules. Shared floors/root transfer and cleanup preserve earlier
+operands/pairs, mixed partial chains, GC/escaped functions, callbacks and finalizers.
+All layout/effect visitors must traverse prepared bodies. Error/result fields,
+unknown record fields, coercive/String array indices and updates remain unsupported.
+Arithmetic compounds are specified below. Keep status/grants/fatal bounds and ABI/import/helper exports.
+
+V12+ +=, -=, *=, /= and %= reuse prepared local/static-field/numeric-array references;
+v14 also admits length; dynamic record keys are specified next. Reject compound destructuring,
+exponent/bitwise/logical assignments, updates, Error/result mutation and old
+profiles. Read/cache the old value after receiver/key effects but before RHS.
+Do not re-read after RHS changes the same target/backing; use current storage only
+for the final store. MaybeIndex snapshots sparse/missing/invalid numeric reads as
+Undefined. Evaluate RHS before operand validation, so missing/invalid old values
+retain RHS effects or its original exception. Static successful cases are
+Number/Number for all five ops and String/String for +=; reject statically
+impossible pairs, otherwise check exact union tags with pure IsUnionMember before
+unboxing/Binary computation. No coercion or ordinary binary-union rule change.
+Cache/return computed results, widening storage copies only. Operand TypeError
+must not store, create fields or convert resource traps into catchable errors.
+Valid results retain current array-write and length checks, numeric bits/UTF-16
+String ownership, status/grants and all fatal bounds. Nested value-block roots and
+floors retain prepared sources/keys, old/RHS/result graphs, earlier pairs and saved
+returns through GC/partial chains/calls/finalizers. Visit every operand/storage/
+failure branch for effects/layouts; callback inference uses computed result types.
+Reuse existing remainder/concat/setters; no new host operation, emitter helper,
+helper export or ABI/schema/layout change.
+
+V12+ dynamic record arithmetic compounds require narrowed record/String operands
+and the existing computed-read union admission (all fields plus Undefined, at most
+one record shape/array element type; no functions/results). Keep literal static
+checks. Root/cache receiver and exact UTF-16 key once, then read/cache the selected
+old value before RHS. Key effects precede the read; RHS cannot redirect the saved
+reference or replace its old value. Unknown ordinary keys/absent fields read
+Undefined and fail arithmetic after RHS effects; undeclared inherited names fail
+during the read before RHS, while declared own names work. Preserve original RHS
+exceptions and mutations, never create a property or coerce. Reuse arithmetic
+guards/result typing and full selected-field write checks, widening only storage
+copies after success. Nested blocks/floors retain original receiver/key/old/RHS/
+result graphs, earlier pairs and saved returns through GC/calls/finalizers/partial
+chains. Visitors must see all read, operand and storage branches, including host
+effects in source/key/RHS. Preserve status/grants/ceilings and all existing
+compilation/value/fatal bounds. No host/import/helper export or ABI/layout change.
 
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail

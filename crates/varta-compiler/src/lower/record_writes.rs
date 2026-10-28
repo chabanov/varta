@@ -69,13 +69,13 @@ fn member_test(write: &PreparedWrite, allowed: Vec<Type>) -> Expr {
         })
 }
 impl Lower<'_> {
-    pub(super) fn dynamic_record_write(
+    pub(super) fn dynamic_record_write_value(
         &mut self,
         assign: &ast::AssignExpr,
         base: Expr,
         key: &ast::Expr,
         shape: u32,
-    ) -> Result<S> {
+    ) -> Result<Expr> {
         let key = self.expr(key)?;
         if key.ty != Type::String {
             return Err(self.source.locate(
@@ -90,6 +90,17 @@ impl Lower<'_> {
             &assign.right,
             literal_context(&assign.right, &fields, self.types),
         )?;
+        self.checked_record_write_value(assign.span, base, key, value, shape)
+    }
+    pub(super) fn checked_record_write_value(
+        &mut self,
+        span: swc_common::Span,
+        base: Expr,
+        key: Expr,
+        value: Expr,
+        shape: u32,
+    ) -> Result<Expr> {
+        let fields = self.types.records[shape as usize].fields.clone();
         let actual = unions::members(value.ty, self.types);
         if actual.iter().any(|ty| ty.value_kind().is_none()) {
             return Err(self
@@ -107,7 +118,6 @@ impl Lower<'_> {
                 value.span,
             ));
         }
-        let span = assign.span;
         let write = PreparedWrite {
             span,
             source: self.hidden(Type::Record(shape)),
@@ -117,6 +127,7 @@ impl Lower<'_> {
         };
         let name = self.hidden(Type::String);
         let matched = self.hidden(Type::Boolean);
+        let marker = self.hidden(Type::Number);
         let mut entries = Vec::new();
         for (slot, field) in fields.iter().enumerate() {
             let mut body = self.record_write_leaf(&write, slot as u32, field.ty)?;
@@ -144,10 +155,16 @@ impl Lower<'_> {
             vec![S::Throw(self.record_write_error(UNKNOWN_WRITE_KEY, span)?)],
             vec![],
         ));
-        Ok(S::Scope(
-            vec![write.source, name, write.input, matched],
-            body,
-        ))
+        Ok(Expr {
+            span,
+            ty: write.value,
+            kind: E::ValueBlock {
+                output: write.input,
+                marker,
+                roots: vec![write.source, name, write.input, matched],
+                body,
+            },
+        })
     }
     fn record_write_leaf(
         &mut self,

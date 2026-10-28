@@ -38,6 +38,8 @@ mod number_tests;
 mod number_value_tests;
 mod policy;
 #[cfg(test)]
+mod record_compound_tests;
+#[cfg(test)]
 mod record_tests;
 #[cfg(test)]
 mod undefined_tests;
@@ -401,8 +403,14 @@ mod string_range_tests;
 mod string_search_tests;
 
 #[cfg(test)]
+mod compound_assignment_tests;
+#[cfg(test)]
 mod own_key_tests;
+#[cfg(test)]
+mod record_assignment_tests;
 #[cfg(test)]
 mod record_read_tests;
 #[cfg(test)]
 mod record_write_tests;
+#[cfg(test)]
+mod simple_assignment_tests;
