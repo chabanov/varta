@@ -1247,8 +1247,8 @@ available; ambiguous empty literals require an explicitly typed value.
 
 Standalone/parenthesized statements and ordinary for initializer/update positions
 are supported. Computed assignment expressions/chains are specified below.
-Compound assignments, increment,
-destructuring targets, dynamic deletion, non-String keys and unnarrowed nullable
+Arithmetic/logical assignments and numeric updates are specified below.
+Destructuring targets, dynamic deletion, non-String keys and unnarrowed nullable
 receivers remain unsupported. Literal accesses/writes and earlier profiles retain
 their rules. All bounds, exact roots, exception/finalizer cleanup and grants/status
 remain active, with no host operation, helper export or ABI/layout change. See the
@@ -1289,9 +1289,9 @@ operators/conditional branches, callbacks, receivers/keys and for conditions.
 Computed literal String/Number keys keep static field/type checks; unknown literal
 keys remain compile errors. Dynamic String keys keep their runtime checks.
 Local-variable, dot-property and array assignment values are specified below.
-Error mutation and increment remain unsupported. Dynamic compounds are specified
-below. Existing assignment statements and destructuring expressions keep their rules and may
-consume these new RHS values.
+Error mutation remains unsupported. Dynamic compounds and numeric updates are
+specified below. Existing assignment statements and destructuring expressions
+keep their rules and may consume these new RHS values.
 
 The compiler reuses rooted value blocks with a saved temporary floor to preserve
 earlier operands, physical pairs and saved returns through nested assignments and
@@ -1386,7 +1386,7 @@ and fatal results above 1024. Resource exhaustion remains fatal, including strin
 overflow, and skips catch/finally rather than becoming an operand error.
 
 Constants, TDZ/guard-refined targets, String array indices,
-Error/result mutation, exponent/bitwise/logical assignments and increment/decrement
+Error/result mutation and exponent/bitwise assignments
 remain unsupported. Original operand/result roots, earlier arguments/result pairs,
 callbacks and saved returns survive GC/finalizers. The operation reuses binary
 helpers, pure remainder, checked setters and value blocks; no ABI/layout, new host
@@ -1429,6 +1429,113 @@ Prepared references, old values and earlier operands/result pairs survive calls,
 GC and finalizers. Existing permissions, status and fatal budgets are unchanged;
 no ABI/import/helper export is added. See the
 [contract](docs/architecture.md#dynamic-record-compound-assignment-contract).
+
+## Logical assignments (v12 and later)
+
+`&&=`, `||=` and `??=` support mutable initialized variables, declared record fields,
+dynamic String record keys and numeric array indices. V14 also admits array length.
+Each operator reads the old value once and runs the RHS and checked store only in
+its selected branch:
+
+| Operator | Run RHS and store when |
+| --- | --- |
+| `&&=` | The old value is truthy |
+| `||=` | The old value is falsy |
+| `??=` | The old value is Null or Undefined |
+
+```ts
+export function main(): void {
+  let count: number | undefined = undefined;
+  console.log(count ??= 5); // 5
+  console.log(count ||= 9); // 5; RHS and store skipped
+  console.log(count &&= 2); // 2
+  const record: {n?: number} = {};
+  console.log(record["n" + ""] &&= 3); // undefined
+  console.log(Object.hasOwn(record, "n")); // 0; still absent
+  console.log(record["n" + ""] ??= 7); // 7
+}
+```
+
+Zero, negative zero, NaN, false, empty String, Null and Undefined are falsy;
+records, arrays, functions and Errors are truthy. `??=` keeps zero, false and empty
+String. No value coercion is added. The expression returns the original old value
+on a skip, or the original RHS after a successful store. Result types combine
+possible skipped members with the RHS, excluding only statically impossible
+skipped kinds. A dynamic `&&=` read may therefore return Undefined even when all
+declared fields are required.
+
+Receiver and key/index effects run once before the read. The skipped branch runs
+no RHS effects, write validation, payload changes or presence/order publication.
+On the selected branch, RHS changes cannot redirect the saved reference; the
+final array store uses current storage. V12/v13 retain current-length bounds;
+v14 can recreate/extend valid numeric indices and keeps checked length errors.
+Missing or invalid numeric reads can skip `&&=` without a write trap. Selected
+invalid writes, resource limits and authorized exit retain their fatal behavior.
+
+Static targets require a compatible RHS even when runtime would skip it. Dynamic
+record keys retain read-union restrictions; selected stores check the complete
+field type after RHS effects. Unknown ordinary keys can skip `&&=` as Undefined;
+selected writes to them throw TypeError after RHS without creating a property.
+Undeclared inherited names fail during the read before RHS. Prior effects and
+successful inner writes survive a later failure. Exact roots/floors retain old/
+new values, references, earlier operands/result pairs and saved returns through
+GC, callbacks and finalizers.
+
+Function bindings preserve signatures, arrow context and capture identity.
+Constants, TDZ/guard-refined targets, result-pair targets, String array indices,
+Error/result field mutation, destructuring logical targets and earlier
+profiles remain unsupported. Existing truth/nullish tests, value blocks and checked
+setters supply this feature; no new host operation, ABI/layout or helper export is
+added. See the [contract](docs/architecture.md#logical-assignment-contract).
+
+## Increment and decrement (v12 and later)
+
+Prefix/postfix `++` and `--` support mutable initialized variables, declared record
+fields, narrowed String record keys and numeric array indices. V14 also admits
+array length. Both forms evaluate the reference and read its old value once:
+
+```ts
+export function main(): void {
+  let count = 1;
+  console.log(count++); // 1; count becomes 2
+  console.log(++count); // 3; count becomes 3
+  const record = {n: 4};
+  const key = "n";
+  console.log(record[key]--); // 4; record.n becomes 3
+  const array = [5];
+  console.log(--array[0]); // 4
+  for (let i = 0; i < 2; i++) {
+    console.log(i); // 0, then 1
+  }
+}
+```
+
+The old value must be Number. Static types with no Number member fail at the
+target's source range; closed unions check the actual kind at runtime. Strings
+(including `"1"`), Boolean, Null, Undefined, references and Errors are not coerced.
+Invalid or missing operands raise TypeError without the requested write. Dynamic
+record keys retain their bounded read-union/UTF-16 rules; inherited non-own names
+fail during the read, and no update creates a property. Optional absence/explicit
+Undefined remain distinct and unchanged by a failed update.
+
+Compute old ± 1 using existing binary64 arithmetic, including NaN/infinities,
+fractional values and large-number rounding. Store the new Number through the
+prepared original reference using existing type/presence/bounds checks. Only after
+success, prefix returns the new Number and postfix the original old Number,
+including its negative-zero bits. A failed store returns neither result, skips
+later operands, and preserves earlier side effects and completed updates.
+
+Array holes, missing/out-of-range/noncanonical numeric reads are Undefined and
+fail the Number check without extension or a write attempt. V14 length growth/
+shrink keeps sparse storage rules, owned RangeError for invalid uint32 lengths
+and fatal results above 1024. Resource exhaustion and authorized exit remain fatal.
+Captured bindings, fresh for-iteration cells, callback inference, earlier arguments/
+result pairs and saved returns retain their existing GC/finalizer ownership.
+
+Const/TDZ/guard-refined targets, functions/result pairs, Error/result field mutation,
+coercive keys and earlier profiles stay rejected. Parenthesized simple targets
+work. No new host operation, helper export or ABI/layout is introduced. See the
+[contract](docs/architecture.md#number-update-contract).
 
 ## Object.keys for closed records (v12 and later)
 

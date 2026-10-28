@@ -31,6 +31,8 @@ mod json_parse_tests;
 mod language;
 #[cfg(test)]
 mod language_tests;
+#[cfg(test)]
+mod logical_assignment_tests;
 mod number;
 #[cfg(test)]
 mod number_tests;
@@ -43,6 +45,8 @@ mod record_compound_tests;
 mod record_tests;
 #[cfg(test)]
 mod undefined_tests;
+#[cfg(test)]
+mod update_tests;
 mod validate;
 
 use std::time::Instant;

@@ -2242,3 +2242,105 @@ fn public_engine_runs_record_compounds_across_virtual_modules() {
         );
     }
 }
+
+#[test]
+fn public_engine_runs_logical_assignments_across_virtual_modules() {
+    struct LogicalSources;
+    impl ModuleLoader for LogicalSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./logical.ts" {
+                Ok("logical.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function fallback(record:{n?:number},key:string,values:number[],amount:number):number{return record[key]??=values[0]||=amount;}export function keep(record:{s?:string},key:string,text:string):string{return record[key]||=text;}".into())
+        }
+    }
+    let source = "import {fallback,keep} from './logical.ts';export function main():void{const record:{n?:number}={};const values=[0];console.log(fallback(record,'n',values,5));console.log(JSON.stringify(record));console.log(JSON.stringify(values));console.log(fallback(record,'n',values,7));console.log(JSON.stringify(values));const text:{s?:string}={s:''};console.log(keep(text,'s','owned'));console.log(record['n'+'']&&=3);console.log(record['missing'+'']&&=9);console.log(Object.hasOwn(record,'missing'));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &LogicalSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "5",
+                "{\"n\":5}",
+                "[5]",
+                "5",
+                "[5]",
+                "owned",
+                "3",
+                "undefined",
+                "0"
+            ]
+            .map(|s| format!("varta log: {s}")),
+            "{profile:?}"
+        );
+    }
+}
+
+#[test]
+fn public_engine_runs_updates_across_virtual_modules() {
+    struct UpdateSources;
+    impl ModuleLoader for UpdateSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./updates.ts" {
+                Ok("updates.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function post(record:{n?:number},key:string,values:number[]):number{return record[key]++ + ++values[0];}export function pre(record:{n?:number},key:string):number{return ++record[key];}".into())
+        }
+    }
+    let source = "import {post,pre} from './updates.ts';export function main():void{const record:{n?:number}={n:2};const values=[4];console.log(post(record,'n',values));console.log(JSON.stringify(record));console.log(JSON.stringify(values));console.log(pre(record,'n'));console.log(record['n'+'']--);console.log(JSON.stringify(record));const missing:{n?:number}={};try{post(missing,'n',values);}catch(error){console.log(error instanceof TypeError);}console.log(Object.hasOwn(missing,'n'));console.log(JSON.stringify(values));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &UpdateSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "7",
+                "{\"n\":3}",
+                "[5]",
+                "4",
+                "4",
+                "{\"n\":3}",
+                "1",
+                "0",
+                "[5]"
+            ]
+            .map(|s| format!("varta log: {s}")),
+            "{profile:?}"
+        );
+    }
+}

@@ -36,6 +36,7 @@ impl Lower<'_> {
                 self.destructuring_assignment_value(assign, target, expected)
             }
             ast::Expr::Assign(assign) => self.simple_assignment_value(assign),
+            ast::Expr::Update(update) => self.update_value(update),
             ast::Expr::Cond(branch) if self.types.profile.reference_unions() => {
                 self.conditional(branch, expected)
             }

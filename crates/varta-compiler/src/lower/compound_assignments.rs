@@ -33,6 +33,12 @@ fn scalar(span: swc_common::Span, slot: u32, ty: Type, member: Type) -> Expr {
 
 impl Lower<'_> {
     pub(super) fn compound_assignment_value(&mut self, assign: &ast::AssignExpr) -> Result<Expr> {
+        if matches!(
+            assign.op,
+            ast::AssignOp::AndAssign | ast::AssignOp::OrAssign | ast::AssignOp::NullishAssign
+        ) {
+            return self.logical_assignment_value(assign);
+        }
         let op = match assign.op {
             ast::AssignOp::AddAssign => ast::BinaryOp::Add,
             ast::AssignOp::SubAssign => ast::BinaryOp::Sub,
@@ -41,7 +47,7 @@ impl Lower<'_> {
             ast::AssignOp::ModAssign => ast::BinaryOp::Mod,
             _ => {
                 return Err(unsupported(
-                    "compound assignment operator other than +=, -=, *=, /= or %=",
+                    "compound assignment operator other than arithmetic or logical assignment",
                 ));
             }
         };

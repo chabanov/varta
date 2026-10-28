@@ -7,6 +7,7 @@ pub(in crate::lower) struct Target {
     roots: Vec<u32>,
     body: Vec<S>,
 }
+#[derive(Clone, Copy)]
 enum Place {
     Local(u32),
     Field { base: u32, ty: Type, index: u32 },
@@ -97,19 +98,22 @@ impl Lower<'_> {
         rhs: &ast::Expr,
         span: swc_common::Span,
     ) -> Result<Expr> {
+        let value = self.assignment_rhs_value(target.ty, rhs)?;
+        self.finish_prepared_value(target, value, span)
+    }
+    fn assignment_rhs_value(&mut self, ty: Type, rhs: &ast::Expr) -> Result<Expr> {
         // Non-union context can infer arrows and aggregate literals without
         // widening a scalar result. Union context may select one aggregate
         // literal member, but never pre-widens the original RHS to the target.
         let expression = stmt::unparen(rhs);
-        let context = if !target.ty.is_union() {
-            Some(target.ty)
+        let context = if !ty.is_union() {
+            Some(ty)
         } else if matches!(expression, ast::Expr::Object(_) | ast::Expr::Array(_)) {
-            self.context(expression, Some(target.ty))
+            self.context(expression, Some(ty))
         } else {
             None
         };
-        let value = self.expr_expected(rhs, context)?;
-        self.finish_prepared_value(target, value, span)
+        self.expr_expected(rhs, context)
     }
     pub(in crate::lower) fn prepared_compound_value(
         &mut self,
@@ -118,16 +122,60 @@ impl Lower<'_> {
         op: ast::BinaryOp,
         span: swc_common::Span,
     ) -> Result<Expr> {
-        let read_span = target.span;
-        let read = match target.kind {
-            Place::Local(slot) => local(read_span, slot, target.ty),
+        let read = self.read_prepared_target(&target)?;
+        let value = self.compound_operation(read, rhs, op, span)?;
+        self.finish_prepared_value(target, value, span)
+    }
+    pub(in crate::lower) fn prepared_logical_value(
+        &mut self,
+        mut target: Target,
+        rhs: &ast::Expr,
+        op: ast::AssignOp,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        let old = self.read_prepared_target(&target)?;
+        let value = self.assignment_rhs_value(target.ty, rhs)?;
+        // The outer block owns receiver/key evaluation and lifetime. This
+        // branch contains only RHS evaluation and the checked store.
+        let store = self.finish_prepared_value(
+            Target {
+                ty: target.ty,
+                span: target.span,
+                kind: target.kind,
+                roots: vec![],
+                body: vec![],
+            },
+            value,
+            span,
+        )?;
+        let value = self.logical_assignment_operation(old, store, op, span)?;
+        let ty = value.ty;
+        let output = self.hidden(ty);
+        let marker = self.hidden(Type::Number);
+        target.roots.push(output);
+        target.body.push(S::Init(output, value));
+        Ok(Expr {
+            span,
+            ty,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: target.roots,
+                body: target.body,
+            },
+        })
+    }
+    fn read_prepared_target(&mut self, target: &Target) -> Result<Expr> {
+        let span = target.span;
+        Ok(match target.kind {
+            Place::Local(slot) => local(span, slot, target.ty),
             Place::Field { base, ty, index } => Expr {
-                span: read_span,
+                span,
                 ty: target.ty,
                 kind: E::Field(Box::new(local(span, base, ty)), index),
             },
             Place::Index { base, ty, key } => Expr {
-                span: read_span,
+                span,
                 ty: unions::intern(vec![target.ty, Type::Undefined], self.types)?,
                 kind: E::MaybeIndex(
                     Box::new(local(span, base, ty)),
@@ -135,13 +183,48 @@ impl Lower<'_> {
                 ),
             },
             Place::Length { base, ty } => Expr {
-                span: read_span,
+                span,
                 ty: self.types.number(),
                 kind: E::Length(Box::new(local(span, base, ty))),
             },
-        };
-        let value = self.compound_operation(read, rhs, op, span)?;
-        self.finish_prepared_value(target, value, span)
+        })
+    }
+    pub(in crate::lower) fn prepared_update_value(
+        &mut self,
+        mut target: Target,
+        update: &ast::UpdateExpr,
+    ) -> Result<Expr> {
+        let span = update.span;
+        let read = self.read_prepared_target(&target)?;
+        let old = self.checked_update_number(read)?;
+        let input = self.hidden(Type::Float64);
+        let output = self.hidden(Type::Float64);
+        let marker = self.hidden(Type::Number);
+        let store = self.finish_prepared_value(
+            Target {
+                ty: target.ty,
+                span: target.span,
+                kind: target.kind,
+                roots: vec![],
+                body: vec![],
+            },
+            updates::next(span, input, update.op),
+            span,
+        )?;
+        target
+            .body
+            .extend([S::Init(input, old), S::Init(output, store)]);
+        target.roots.extend([input, output]);
+        Ok(Expr {
+            span,
+            ty: Type::Float64,
+            kind: E::ValueBlock {
+                output: if update.prefix { output } else { input },
+                marker,
+                roots: target.roots,
+                body: target.body,
+            },
+        })
     }
     fn finish_prepared_value(
         &mut self,

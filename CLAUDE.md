@@ -636,7 +636,7 @@ mutation. Keep own inherited-looking fields, optional Undefined presence/order,
 all 32 bits and literal/legacy/Array rules. Scope roots retain all inputs/child
 graphs through GC, exceptions, saved returns/pairs and finalizers; visitors traverse
 member-check operands and the full statement body. Computed expression values are
-specified below, as are dynamic-key arithmetic compounds. Reject increment,
+specified below, as are dynamic-key arithmetic compounds and Number updates. Reject
 dynamic pattern targets/deletion/property creation/coercion/prototypes. Preserve status/grants and
 all fatal bounds; no host operation/import/helper export or ABI/schema/layout change.
 
@@ -656,8 +656,8 @@ value path and discard normally. Internal bodies contain no source returns, and
 existing value-block visitors/inference must see complete effects/layouts and the
 original result type. Support standard enclosing expression positions, including
 receivers/keys and chains with destructuring expressions. Ordinary simple values
-and dynamic-key arithmetic compounds are specified below; Error mutation, updates
-and older profiles stay rejected.
+and dynamic-key arithmetic compounds/Number updates are specified below; Error
+mutation and older profiles stay rejected.
 Keep presence/order/literal/legacy rules, status/grants and fatal bounds; no host
 operation/import/helper export, emitter helper or ABI/schema/layout change.
 
@@ -677,12 +677,12 @@ invalid uint32 and fatal >1024 limits, returning original Number/-0. Older profi
 keep their length rules. Shared floors/root transfer and cleanup preserve earlier
 operands/pairs, mixed partial chains, GC/escaped functions, callbacks and finalizers.
 All layout/effect visitors must traverse prepared bodies. Error/result fields,
-unknown record fields, coercive/String array indices and updates remain unsupported.
+unknown record fields and coercive/String array indices remain unsupported.
 Arithmetic compounds are specified below. Keep status/grants/fatal bounds and ABI/import/helper exports.
 
 V12+ +=, -=, *=, /= and %= reuse prepared local/static-field/numeric-array references;
 v14 also admits length; dynamic record keys are specified next. Reject compound destructuring,
-exponent/bitwise/logical assignments, updates, Error/result mutation and old
+exponent/bitwise assignments, Error/result mutation and old
 profiles. Read/cache the old value after receiver/key effects but before RHS.
 Do not re-read after RHS changes the same target/backing; use current storage only
 for the final store. MaybeIndex snapshots sparse/missing/invalid numeric reads as
@@ -716,6 +716,59 @@ result graphs, earlier pairs and saved returns through GC/calls/finalizers/parti
 chains. Visitors must see all read, operand and storage branches, including host
 effects in source/key/RHS. Preserve status/grants/ceilings and all existing
 compilation/value/fatal bounds. No host/import/helper export or ABI/layout change.
+
+V12+ &&=, ||= and ??= share prepared references for mutable initialized locals/
+parameters, static/dynamic record fields and numeric arrays; v14 admits length.
+Cache receiver/key and old value once before the branch. &&= selects truthy, ||=
+selects falsy and ??= selects only Null/Undefined. Records/arrays/functions/Errors
+are truthy; primitive/union truth follows the existing exact checked rules.
+Evaluate RHS and perform the checked store only in the selected branch. A skip
+returns the old value without write validation or payload/presence/order changes;
+selected success returns the original RHS, widening only storage copies. Result
+types join RHS with possible skipped members: &&= excludes always-truthy kinds,
+||=/??= exclude Null/Undefined. Never narrow partially truthy scalar kinds or RHS
+types from runtime choices. Static targets require full RHS compatibility even
+when skipped; dynamic record leaves retain complete checked field types and read
+union restrictions. Unknown ordinary keys skip &&= as Undefined but selected
+writes fail after RHS; inherited non-own names fail at the read before RHS.
+Array MaybeIndex captures missing/invalid reads; skip writes entirely, otherwise
+validate against current post-RHS backing/presence/length with existing profile/
+fatal rules. Length setters keep RangeError/budget behavior. Prepared reference
+identity, old values and original RHS bits/UTF-16/graphs/functions survive nested
+chains, GC/calls/callbacks/returns/finalizers through existing blocks/floors/roots.
+Keep original exceptions/effects and completed inner stores. Const/TDZ/guarded
+writes, result-pair targets, Error/result fields, coercive keys, logical patterns
+and older profiles stay rejected. Function bindings retain signature/arrow
+context/capture identity. All body visitors must include the selected RHS/store
+even if runtime skips; helper validation must see every source/key/RHS host effect.
+Use existing pure truth/nullish tests and checked setters; preserve status/grants/
+ceilings and compilation/value/fatal bounds. No new host operation/import, emitter
+helper, helper export or ABI/schema/layout version.
+
+V12+ prefix/postfix ++/-- require an actual Number in mutable initialized locals/
+parameters, static/dynamic record fields or numeric array elements; v14 adds length.
+Parenthesized simple targets work. Prepare/root receiver/key once, read once,
+validate Number before unboxing/computation/storage, and compute old +/- 1 with
+existing binary64 Binary IR. Static types without Number fail at the target span;
+union/non-Number or missing values throw owned TypeError without a requested store.
+Never coerce String/Boolean/null/Undefined/references/Errors or turn resource traps
+into catchable operand failures. Dynamic keys retain read-union/UTF-16 rules and
+full checked field stores; inherited non-own names fail at read and no properties
+are created. Array MaybeIndex absence/holes/invalid numbers fail before any write
+attempt, including in v14; no indexed extension from an update. Final storage uses
+the prepared original reference/current storage and existing presence/length/fatal
+checks. Only after success, prefix returns the new Number and postfix the cached
+old Number, preserving -0/NaN/infinity/large-number bits. Failed stores expose
+neither result and skip later work, retaining original exceptions/earlier effects
+and completed updates. Const/TDZ/guarded bindings, nonnumeric/function/result-pair
+targets, Error/result mutation, coercive keys and old profiles stay rejected.
+Captured bindings/fresh loop cells and callback result inference keep existing
+rules. Nested blocks/floors/root transfer retain inputs/old union graphs/earlier
+operands/pairs/saved returns through GC/calls/finalizers. Effect/layout visitors see
+all source/key/read/check/store branches; pure helper controls must pass while
+host effects in either source/key fail validation. Preserve status/grants/ceilings
+and all compilation/value/fatal bounds. No new host operation/import, emitter
+helper, helper export or ABI/schema/layout version.
 
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail

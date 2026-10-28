@@ -2237,7 +2237,7 @@ V12+ admits `record[key] = rhs` as a simple assignment statement, including oute
 parentheses and ordinary for initializer/update positions. Require a narrowed
 closed-record receiver and narrowed String key. Literal String/Number paths and
 earlier-profile behavior remain unchanged. The value-producing extension is below.
-Dynamic-key arithmetic compounds are specified below. Reject increment,
+Dynamic-key arithmetic compounds and Number updates are specified below. Reject
 destructuring member targets, computed initializers, dynamic deletion/property
 creation, index signatures, non-String/
 unnarrowed union keys and unchecked/nullish receivers without narrowing. Array
@@ -2306,8 +2306,8 @@ admitted [assignment evaluation](https://tc39.es/ecma262/2025/multipage/ecmascri
 and its returned RHS value. Dynamic String keys retain the preceding write contract.
 Computed literal String/Number keys retain static field lookup, known-field type
 checks and unknown/inherited-key compile errors. Require narrowed closed-record
-receivers; reject non-String dynamic keys, unnarrowed unions/nullish receivers and
-increment. Dynamic-key arithmetic compounds and local/dot/array values are
+receivers; reject non-String dynamic keys and unnarrowed unions/nullish receivers.
+Dynamic-key arithmetic compounds, Number updates and local/dot/array values are
 specified below. Error mutation remains unsupported. Existing statements and destructuring
 expressions can consume supported computed-record RHS expressions.
 
@@ -2423,7 +2423,7 @@ references. V14 also admits length/literal-["length"] targets. Support statement
 for init/update and existing enclosing expression positions, returning the computed
 assigned result. Reject const/TDZ/guard-refined targets, unchecked receivers,
 String/coercive array keys, Error/result mutation,
-destructuring targets, exponent/bitwise/logical assignments, updates and older
+destructuring targets, exponent/bitwise assignments and older
 profiles. Ordinary simple assignment and binary-expression contracts remain intact.
 
 Follow admitted [compound evaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-assignment-operators-runtime-semantics-evaluation):
@@ -2526,6 +2526,126 @@ schema/layout version is introduced. Tests cover profiles, exact keys/all field
 bits, inherited/missing timing, source/key snapshots, partial chains, strict kinds,
 GC/pairs/finalizers, source diagnostics, virtual modules and source-free Wasm/native
 artifacts with allowed/denied operations and host ceilings.
+
+### Logical assignment contract
+
+V12+ admits &&=, ||= and ??= for mutable initialized local/parameter bindings,
+static declared record fields, dynamic narrowed String record keys and numeric
+array elements. V14 also admits checked length. Preserve existing literal-key
+diagnostics, full static type compatibility, const/TDZ/guard-refinement checks,
+dynamic-read union admission and selected-field type checks. RHS types are checked
+even when a runtime branch would skip. Reject result-pair targets, Error/result
+field mutation, String/coercive array keys, logical patterns and earlier
+profiles. Function bindings keep signature/arrow context and closure identity.
+
+Prepare/root receiver and key/index once, then read/cache the old value once.
+Select the RHS/store branch for truthy old values with &&=, falsy values with ||=,
+or only Null/Undefined with ??=. Existing checked truth rules treat zero/-0/NaN,
+false, empty String and Null/Undefined as falsy; records/arrays/functions/Errors are
+truthy. No coercion or source-local guard refinement is introduced. Reuse existing
+pure truth/nullish operations, including exact union tags and UTF-16 lengths.
+
+The skipped branch returns the original old value and performs no RHS effects,
+write checks, payload changes or optional/sparse presence/order publication.
+The selected branch evaluates RHS once, then stores a compatible/widened copy
+through the saved reference and returns the original RHS type/value only after
+success. RHS rebinding or target mutation cannot redirect the reference. Exceptions
+retain their original values/effects and skip the requested store/later operands;
+outer failures retain completed inner writes. A skipped outer assignment evaluates
+no inner receiver/key/RHS at all. Fatal RHS resource limits and authorized exit
+run only if selected, then retain their fatal behavior through catch/finally.
+
+Result types join the RHS with possible skipped old members. &&= excludes
+always-truthy reference/function/Error members from its skipped type; ||=/??=
+exclude Null/Undefined. Keep Number/Boolean/String members that may be partially
+truthy, and never narrow RHS from runtime field or tag choices. Unbox/retype old
+union cells only in a proven skipped branch. Same-type function results stay
+function handles without inventing unsupported function unions. Preserve exact
+Number bits, UTF-16 strings, reference identity and complete original graphs.
+
+Optional/dynamic reads retain their existing missing semantics. Unknown ordinary
+record keys and absent fields can skip &&= as Undefined; selected dynamic writes
+validate the complete selected type after RHS and unknown names raise TypeError
+without property creation. Undeclared inherited names fail during the old-value
+read, before RHS, while declared own names remain supported. Dynamic keys retain
+the bounded all-fields-plus-Undefined union and exact UTF-16 lookup.
+
+Numeric arrays use MaybeIndex for their old read, so missing/noncanonical reads
+can skip &&= without attempting a fatal write. Selected writes validate raw indices
+after RHS against the current backing/length/presence: v12/v13 require current
+in-range indices, v14 can extend/recreate valid indices with holes. Invalid writes
+stay fatal. V14 selected length stores keep RangeError/non-uint32 and fatal >1024
+checks; skipped length writes do not evaluate or validate an invalid RHS value.
+Keep all compilation, source/type/frame/root/value/memory/fuel/deadline budgets.
+
+Nested ValueBlocks root prepared inputs, old values and branch results, preserving
+earlier temporary floors/physical pairs and transferring results before cleanup
+without allocation. Saved returns, callbacks and captured graphs survive GC and
+finalizers. Layout/effect visitors traverse all branch bodies, including RHS/store
+effects in runtime-skipped branches; helper validation must detect host effects in
+each source/key/RHS position. No new host operation/import, emitter helper, helper
+export or ABI/schema/layout version. Existing status/grants/host ceilings persist.
+Regressions cover truth/nullish edges, result-type pruning, optional/sparse presence,
+prepared identity, selected field checks, function context, partial chains, GC/pairs/
+finalizers, fatal skips and failures, source ranges, virtual modules and source-free
+Wasm/native artifacts with branch-specific operation permissions/host ceilings.
+
+### Number update contract
+
+V12+ admits prefix/postfix ++ and -- for mutable initialized locals/parameters,
+declared static record fields, dynamic narrowed String record keys and numeric
+array elements; v14 also admits checked length. Parenthesized simple references
+work. Reject const/TDZ/guard-refined writes, targets with no Number member,
+function/result-pair targets, Error/result fields, coercive keys and older
+profiles. Dynamic reads keep their all-fields-plus-Undefined union restrictions;
+literal fields retain exact static types and diagnostics.
+
+Prepare/root receiver and key/index once, in order, then read the old value once.
+Key effects may change the field/element before that read or rebind its source
+variable, but cannot redirect the saved reference. A static target without Number
+fails at its own source span. Otherwise pure IsUnionMember validates the actual
+Number tag before unboxing; a non-Number raises owned TypeError `Invalid update
+operand` without a requested write. Strings (including numeric text), Boolean,
+Null/Undefined, references and Errors are never coerced. Inherited non-own names
+retain their read-time TypeError; unknown ordinary names/absent fields read
+Undefined and fail Number validation. Do not create properties or publish missing
+optional presence/order on a failed update.
+
+Cache the checked old binary64 Number, compute old + 1 or old - 1 through existing
+Binary IR, and store a compatible/widened copy using the original prepared
+reference and existing checked setters. Keep separate old/new Number slots.
+Only after a successful store does prefix return the new value or postfix return
+the original old value; both have exact Number result types even for optional or
+union targets. Postfix preserves the old Number bits, including negative zero.
+Arithmetic keeps existing NaN/infinity/fraction/large-number rounding behavior.
+A failed store exposes neither expression result, skips later operands/enclosing
+work and retains prior effects and completed updates. Mixed assignment/logical/
+update chains retain normal evaluation order and skipped logical branches run no
+inner update effects. Original source/key exceptions survive catch/finally.
+
+Array old reads use MaybeIndex: holes, explicit Undefined, out-of-range and
+noncanonical Number indices fail the Number check before any write attempt.
+This neither extends a v14 array nor turns a write budget trap into a catchable
+error. Successful stores retain current backing/presence/length checks. V14
+length growth/shrink preserves holes and backing invariants; a decrement from
+zero raises RangeError without publishing either a store or postfix old result,
+while growth above 1024 remains fatal. Fuel/memory/deadline/source/type/frame/root/
+value budgets and authorized exits retain their fatal behavior.
+
+Use nested ValueBlocks and existing temporary floors/root transfer for prepared
+receivers/keys, full old union graphs, earlier arguments/physical result pairs and
+saved returns through allocation, calls, callbacks, GC and finalizers. Captured
+bindings update their original cells; for updates operate on the existing fresh
+iteration cell sequence, preserving earlier closure captures and continue paths.
+All layout/effect visitors traverse source/key/read/tag-check/store/failure bodies.
+Host-free helper controls using prefix/postfix must validate; a host effect in
+either source or key must remain detectable. Numeric updates introduce no host
+arithmetic, operation/import, emitter helper, helper export or ABI/schema/layout
+version. Preserve system status, operation grants and host ceilings. Regressions
+cover binary64 edges, prefix/postfix results, profile/type boundaries, optional/
+sparse absence, exact keys/all field bits, nested order/partial effects, captures/
+fresh loop cells, roots/pairs/saved returns, source ranges, fatal limits and
+virtual/source-free Wasm/native execution with allowed/denied operations.
 
 ### Object.keys contract
 
@@ -2675,9 +2795,9 @@ Admit results in local initializers, arguments/receivers, returns, member reads,
 callbacks, supported conditional/operator positions and nested pattern assignment
 chains. Standalone and for init/update statements lower through the same value
 path and discard the result. Computed record and ordinary simple assignment values
-are specified above, along with the checked arithmetic compound subset;
-other compound/update expressions remain outside this increment,
-as do dynamic record keys in patterns, catch and for-in.
+are specified above, along with the checked arithmetic/logical compound subset and
+Number updates. Dynamic record keys in patterns, catch and for-in remain outside
+this increment.
 
 Resolve target syntax/bounds/mutability as before, then propagate available result
 context to the RHS; absent context retains homogeneous target inference. Evaluate

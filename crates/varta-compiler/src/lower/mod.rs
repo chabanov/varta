@@ -220,6 +220,7 @@ mod http;
 mod json;
 mod labels;
 mod link;
+mod logical_assignments;
 mod missing;
 mod object_enumeration;
 mod own_keys;
@@ -238,6 +239,7 @@ mod strings;
 mod tools;
 mod undefined;
 mod unions;
+mod updates;
 
 impl Lower<'_> {
     fn declare(

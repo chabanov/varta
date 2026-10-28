@@ -9,6 +9,14 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Checked prefix/postfix `++` and `--` in v12+ for mutable variables, static/dynamic
+  record fields and numeric arrays, plus length in v14. Require an actual Number,
+  store through one prepared reference, then return the exact old/new value;
+  preserve partial effects, captured loop cells, roots and fatal boundaries.
+- Checked `&&=`, `||=` and `??=` in v12+ for mutable variables, static/dynamic
+  record fields and numeric arrays, plus length in v14. RHS evaluation and checked
+  stores run only in the selected branch, retaining original values/references,
+  presence, result types and rooted partial-chain/GC/finalizer behavior.
 - Dynamic record `+=`, `-=`, `*=`, `/=` and `%=` in v12+, retaining the original
   receiver/key and old value across RHS effects, with checked computed results,
   exact selected-field stores and existing read-union/absence/prototype boundaries.

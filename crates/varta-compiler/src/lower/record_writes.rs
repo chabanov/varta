@@ -85,12 +85,13 @@ impl Lower<'_> {
                 key.span,
             ));
         }
-        let fields = self.types.records[shape as usize].fields.clone();
-        let value = self.expr_expected(
-            &assign.right,
-            literal_context(&assign.right, &fields, self.types),
-        )?;
+        let value = self.record_assignment_rhs(&assign.right, shape)?;
         self.checked_record_write_value(assign.span, base, key, value, shape)
+    }
+    pub(super) fn record_assignment_rhs(&mut self, rhs: &ast::Expr, shape: u32) -> Result<Expr> {
+        let fields = &self.types.records[shape as usize].fields;
+        let context = literal_context(rhs, fields, self.types);
+        self.expr_expected(rhs, context)
     }
     pub(super) fn checked_record_write_value(
         &mut self,

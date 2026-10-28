@@ -23,8 +23,8 @@ remains `checked-i32-utf8-v1`. The latest opt-in profile remains
 checkpoint adds no host operation, capability, helper export or ABI/layout version.
 The source/artifact paths and public engine API are covered by regression tests.
 
-Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1004 workspace
-tests passed**, followed by **185 CLI tests passed** in a separate repeat run.
+Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1040 workspace
+tests passed**, followed by **191 CLI tests passed** in a separate repeat run.
 Formatting, the core-only library check, runtime-companion build, workspace/all-target
 build and Clippy with warnings denied also passed. This records local verification;
 it does not claim a new cross-platform CI or release qualification.
@@ -94,8 +94,18 @@ identity and old-value snapshots across RHS effects. Reuse read-union admission,
 strict arithmetic kinds and full selected-field checks, with explicit inherited/
 missing timing, partial chains and rooted GC/finalizer lifetimes.
 
-Next: specify **short-circuit assignment operators** (`&&=`, `||=`, `??=`), retaining
-prepared references and evaluating/storing RHS only in the selected branch.
+Completed: **short-circuit assignment operators** (`&&=`, `||=`, `??=`) in v12+,
+retaining prepared references and evaluating/storing RHS only in the selected
+branch. Preserve skipped values/presence, original RHS types/results, current
+storage/profile rules, function captures, partial chains and rooted GC/finalizers.
+
+Completed: **checked prefix/postfix increment and decrement** in v12+, preserving
+prepared references and actual Number checks, then returning old/new values only
+after successful stores. Captured/fresh loop cells, partial effects, exact numeric
+bits, optional/sparse absence, length errors and rooted GC/finalizers are covered.
+
+Next: specify **checked Number bitwise and shift operations**, with explicit
+ToInt32/ToUint32 conversions and preserved profile/type/resource boundaries.
 Broader generalized record reads/writes/coercion, constructors and prototypes,
 aggregate exception design, scheduler/promise jobs, standard/system API expansion
 and package compatibility. Wider dynamic values remain explicit profile work.
@@ -1253,8 +1263,24 @@ virtual modules and source-free artifacts with operation/host-policy boundaries.
 Computed reads retain their existing union restrictions and all compilation/value/
 fatal budgets; no ABI/import/helper-export/layout change.
 
-Next specify short-circuit assignment operators with prepared references and
-branch-only RHS effects/stores. Generalized coercion, aggregate exception
+Logical assignments are implemented under the
+[logical contract](architecture.md#logical-assignment-contract). Regressions cover
+truth/nullish edges, branch-only RHS/store effects, precise skipped-member result
+types, optional presence/order, prepared identity, dynamic field failures, sparse/
+current storage/length rules, function context/identity, GC/pairs/returns/finalizers,
+fatal skips and exhaustion, module/artifact execution and permission boundaries.
+No ABI/import/helper-export/layout change; existing limits remain active.
+
+Number updates are implemented under the
+[update contract](architecture.md#number-update-contract). Regressions cover
+prefix/postfix Number results, -0/NaN/infinity/rounding, source/key order, optional/
+sparse/missing/inherited failures, length checks, partial chains, captured/fresh
+loop cells, GC/pairs/returns/finalizers, helper purity, precise source ranges,
+module/artifact execution, status/grants/host ceilings and fatal exhaustion/exit.
+No ABI/import/helper-export/layout or resource-limit change.
+
+Next specify checked Number bitwise and shift operations with explicit
+ToInt32/ToUint32 rules. Generalized coercion, aggregate exception
 design and constructors/prototypes
 remain language work. Scheduler/promise jobs follow retained-root, cancellation,
 queue and handle lifetime design.

@@ -322,7 +322,7 @@
 // IsUnionMember checks tags and exact Error class bits without host calls or
 // allocation. Preserve operand effects, GC/roots/child graphs/returns/pairs/finalizers,
 // status/grants and fatal bounds. No dynamic property creation, coercion/prototypes,
-// increment, pattern targets or deletion. Values and arithmetic compounds below.
+// pattern targets or deletion. Values, arithmetic compounds and updates below.
 // Literal/legacy rules and ABI/import/helper exports remain unchanged.
 // V12+ computed record assignment expressions/chains return the original RHS value
 // and type after successful stores. Keep literal String/Number static checks and
@@ -333,7 +333,7 @@
 // inputs/child graphs; save/restore temporary floors before operands to preserve
 // earlier caller values/pairs through statements, GC and finalizers. Existing
 // value-block visitors/callback inference use original RHS types/effects. Ordinary
-// local/dot/array values and arithmetic compounds are below; Error mutation/updates
+// local/dot/array values, arithmetic compounds and updates are below; Error mutation
 // remain unsupported. Keep all bounds/status/grants and ABI/import/helper exports.
 // V12+ simple assignment expressions support mutable initialized locals/parameters,
 // declared record fields and numeric array elements, sharing prepared references/
@@ -347,7 +347,7 @@
 // for non-uint32 lengths and fatal >1024 limits, returning original Number/-0.
 // Shared value-block floors/roots preserve operands/pairs, mixed partial chains,
 // cells/functions/results, GC and finalizers. Keep all bounds/status/grants and
-// ABI/import/helper exports. Arithmetic compounds are below; updates stay unsupported.
+// ABI/import/helper exports. Arithmetic compounds and Number updates are below.
 // V12+ +=, -=, *=, /= and %= support mutable locals/static fields/numeric arrays;
 // v14 adds length. Prepare receiver/key once, then snapshot the old value before
 // RHS effects. Array MaybeIndex snapshots missing/invalid reads as Undefined.
@@ -358,7 +358,7 @@
 // old numeric bits/String ownership and current backing/presence/write limits.
 // Missing-value errors do not attempt writes or convert budgets into catchable
 // failures. Preserve roots/floors/graphs/pairs/partial chains/GC/finalizers/status/
-// grants. Dynamic record keys are below. Reject exponent/bitwise/logical assignments, updates,
+// grants. Dynamic record keys/logical assignments/Number updates are below. Reject exponent/bitwise assignments,
 // immutable/guard-refined targets and older profiles. No ABI/import/helper export.
 // V12+ dynamic record arithmetic compounds require narrowed record/String inputs
 // and the existing computed-read union admission: all fields plus Undefined, at
@@ -371,6 +371,39 @@
 // creation/coercion/prototypes. Root original graphs/operands/pairs/returns across
 // GC/partial chains/calls/finalizers; visit every effect. Status/grants/ceilings and
 // compilation/value/fatal bounds persist. No ABI/import/helper export change.
+// V12+ &&=, ||= and ??= read prepared mutable local/parameter/static or dynamic
+// record/numeric-array targets once; v14 admits length. Run RHS and checked store
+// only for truthy/falsy/nullish old values respectively. Skip returns the exact
+// old value without write validation or payload/presence/order changes; successful
+// store returns the original RHS, widening only its storage copy. Join RHS with
+// possible skipped kinds, excluding always-truthy kinds for &&= and Null/Undefined
+// for ||=/??=. Static RHS types must be fully compatible even when skipped;
+// dynamic leaves retain full field checks and existing read-union restrictions.
+// Unknown ordinary keys skip &&= as Undefined, selected writes fail after RHS;
+// inherited non-own names fail before RHS. Array missing/invalid reads may skip,
+// selected stores retain current storage/length/profile/fatal rules. Preserve
+// exact bits/UTF-16/reference/function identity, arrow context, earlier pairs and
+// prepared graphs through partial chains/callbacks/GC/returns/finalizers. Reject
+// const/TDZ/guard-refined/result-pair targets, Error/result fields, coercive keys,
+// logical patterns and older profiles. Visit every source/key/RHS/store
+// effect including runtime-skipped branches. Use existing truth/nullish tests,
+// blocks/setters/status/grants/bounds; no new ABI/import/helper export.
+// V12+ prefix/postfix ++/-- require an actual Number in mutable initialized local/
+// parameter/static or dynamic record/numeric-array targets; v14 admits length.
+// Prepare receiver/key and read once, validate Number, compute old +/- 1, then
+// checked store. Prefix returns the new Number; postfix the exact old Number only
+// after store success, including -0/NaN/infinity/large-number bits. Statically
+// impossible targets fail at their span; runtime non-Number/missing values throw
+// TypeError before writes. No coercion or property creation. Keep dynamic-read
+// union/UTF-16/inherited rules and full checked field types. Array holes/invalid/
+// missing numeric reads fail without extension; length keeps RangeError/budget
+// rules. Preserve prior effects/completed updates and skip later work on failure.
+// Const/TDZ/guard-refined/function/result-pair targets, Error/result fields,
+// coercive keys and older profiles stay rejected. Parenthesized simple targets,
+// captured/fresh loop cells and callback Number inference use existing rules.
+// Root/floor transfer retains graphs/earlier pairs/returns through GC/finalizers;
+// visitors see source/key/read/check/store effects, pure helper controls pass and
+// host effects fail. Status/grants/ceilings/bounds and ABI/import/helper exports persist.
 // V12+ Object.keys(record) returns a fresh dense string[] of present own keys:
 // canonical array indices first numerically, other strings by insertion order.
 // Explicit Undefined is present; absent optional fields are omitted. Input is
@@ -416,8 +449,8 @@
 // remain fatal resource violations. Shrink clears payloads/bits; growth creates
 // holes without resurrecting references. Array-only numeric/literal delete keeps
 // length, returns true for absence, and raises TypeError for deleting length.
-// Arbitrary/coercive own properties and other compound/update expressions remain
-// unsupported; simple/arithmetic assignment values are above. Old profiles retain
+// Arbitrary/coercive own properties remain unsupported. Simple/arithmetic/logical
+// assignments and Number updates are specified above. Old profiles retain
 // their mutation contracts. No new host import,
 // capability or fatal-to-catch budget conversion is introduced.
 // ABI-only log_f64/number_remainder/process_exit_f64 are compiler/runtime details,
