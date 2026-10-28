@@ -1,6 +1,14 @@
 //! Simple assignment expressions share rooted prepared references with patterns.
 use super::*;
 
+fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
+    Expr {
+        span,
+        ty,
+        kind: E::Local(slot),
+    }
+}
+
 impl Lower<'_> {
     pub(super) fn simple_assignment_value(&mut self, assign: &ast::AssignExpr) -> Result<Expr> {
         if assign.op != ast::AssignOp::Assign {
@@ -32,5 +40,71 @@ impl Lower<'_> {
             _ => return Err(unsupported("assignment expression target")),
         };
         self.prepared_assignment_value(target, &assign.right, assign.span)
+    }
+    /// Preserve declared storage invariants after computing an assignment result.
+    /// A union's incompatible member throws before any write is published.
+    pub(super) fn checked_assignment_result(
+        &mut self,
+        value: Expr,
+        expected: Type,
+    ) -> Result<Expr> {
+        if !self.types.profile.bigint_values() || arguments::accepts(expected, value.ty, self.types)
+        {
+            return Ok(value);
+        }
+        let members = unions::members(value.ty, self.types);
+        let allowed: Vec<_> = members
+            .into_iter()
+            .filter(|ty| arguments::accepts(expected, *ty, self.types))
+            .collect();
+        if allowed.is_empty() {
+            return Err(self.source.locate(
+                type_error("assignment result matches no declared target type"),
+                value.span,
+            ));
+        }
+        let span = value.span;
+        let input_ty = value.ty;
+        let ty = unions::intern(allowed.clone(), self.types)?;
+        let input = self.hidden(input_ty);
+        let output = self.hidden(ty);
+        let marker = self.hidden(Type::Number);
+        let error = self.array_error(
+            varta_common::value::ErrorClass::TypeError,
+            "Invalid assignment result for target type",
+            span,
+        )?;
+        let mut branch = vec![S::Throw(error)];
+        for member in allowed.into_iter().rev() {
+            let scalar = Expr {
+                span,
+                ty: member,
+                kind: E::UnboxUnion(Box::new(local(span, input, input_ty))),
+            };
+            branch = vec![S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsUnionMember(Box::new(local(span, input, input_ty)), member),
+                },
+                vec![S::Init(
+                    output,
+                    unions::widen(scalar, Some(ty), self.types)?,
+                )],
+                branch,
+            )];
+        }
+        let mut body = vec![S::Init(input, value)];
+        body.extend(branch);
+        Ok(Expr {
+            span,
+            ty,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![input, output],
+                body,
+            },
+        })
     }
 }

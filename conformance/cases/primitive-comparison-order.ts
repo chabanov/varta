@@ -1,0 +1,1 @@
+function left():number|string|boolean|null|undefined|bigint{console.log('left');return '1';}function right():number|string|boolean|null|undefined|bigint{console.log('right');return 1n;}export function main():void{console.log(left()==right());console.log(left()<right());}

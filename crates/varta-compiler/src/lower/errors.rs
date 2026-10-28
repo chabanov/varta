@@ -107,7 +107,9 @@ impl Lower<'_> {
                 unsupported("instanceof requires an unshadowed supported error class")
             })?;
         let value = self.expr(&binary.left)?;
-        if value.ty.value_kind().is_none() {
+        if value.ty.value_kind().is_none()
+            || value.ty == Type::BigInt && !self.types.profile.bigint_values()
+        {
             return Err(unsupported("instanceof operand type"));
         }
         let kind = if value.ty.is_union() {
@@ -170,6 +172,9 @@ impl Lower<'_> {
         member: &ast::MemberExpr,
     ) -> Result<Expr> {
         let value = self.expr(&member.obj)?;
+        if value.ty == Type::BigInt {
+            return self.bigint_method(call, value, false);
+        }
         if value.ty == Type::Float64 {
             return self.number_to_string(call, value);
         }

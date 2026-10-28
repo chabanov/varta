@@ -25,22 +25,29 @@ See the [README](README.md) for project creation and execution.
 
 ## Before submitting changes
 
-Run the same checks as [CI](.github/workflows/varta.yml), from the workspace root:
+Use Python 3 and Cargo from the workspace root. During development, check the
+changed component and selected behavior; complete related work as one coherent
+batch before running the full gate.
 
 ```sh
-cargo fmt --all -- --check
-cargo check -p varta-common -p varta-compiler -p varta-runtime -p varta-artifact --lib --locked
-cargo build -p varta-launcher --bin varta-runtime --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo build --workspace --all-targets --locked
-cargo test --workspace --locked
-cargo test -p varta --test smoke --locked
+python3 scripts/verify.py local varta-bigint
+python3 scripts/verify.py local varta-runtime --filter array_inference
+python3 scripts/verify.py feature array_inference
+python3 scripts/verify.py full
 ```
 
-Build the runtime companion before running CLI tests separately. Preserve the
-checked-in lockfile; update dependencies deliberately. On machines where parallel
-tests contend for CPU, set `RUST_TEST_THREADS=4` for test commands. Do not increase
-guest fuel, deadlines or memory limits to make a failing regression pass.
+The [verification map](docs/verification.md) explains which scope to use, broad
+boundary checks and how to record evidence. Full verification matches
+[CI](.github/workflows/varta.yml); workspace tests include the CLI suite once.
+A separate CLI repeat is required for launcher/packaging changes or when
+investigating unstable tests, rather than for every engine increment.
+Documentation-only changes need document/command checks; verification-tooling
+changes need focused checks of the tooling itself. Do not rerun unchanged engine
+suites solely for those changes or claim old results verify new engine code.
+
+Preserve the checked-in lockfile; update dependencies deliberately. The helper
+uses RUST_TEST_THREADS=4 unless explicitly set. Do not increase guest fuel,
+deadlines or memory limits to make a failing regression pass.
 
 ## Guidelines
 

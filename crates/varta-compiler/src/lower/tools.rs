@@ -307,7 +307,7 @@ fn expression(
                 expression(arg, functions, visited, effects);
             }
         }
-        E::Host(host, args) => {
+        E::CheckedBigIntHost { host, args, .. } | E::Host(host, args) => {
             if let Some(id) = host.capability() {
                 effects.insert(id.into());
             }
@@ -352,7 +352,7 @@ fn expression(
         | E::Capture(a)
         | E::ResultField(_, a)
         | E::Field(a, _)
-        | E::Json(a)
+        | E::Json(a, _)
         | E::ParseJson(a)
         | E::Length(a) => expression(a, functions, visited, effects),
         _ => {}

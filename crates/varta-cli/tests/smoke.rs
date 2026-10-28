@@ -13340,3 +13340,117 @@ fn array_inference_initializers_preserve_grants_status_host_ceilings_and_fatal_e
         }
     }
 }
+#[test]
+fn bigint_runs_modules_and_source_free_artifacts_with_abi27() {
+    let project = RegressionProject::new(
+        "import {add} from './integer.ts';export function main():void{console.log(add(9007199254740993n,2n));try{console.log(1n/0n);}catch(e){console.log(e instanceof RangeError);}console.log(BigInt.asIntN(8,255n));}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/integer.ts"),
+        "export function add(a:bigint,b:bigint):bigint{return a+b;}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v28");
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(info["abiVersion"], 27);
+    assert_eq!(info["valueAbiVersion"], 12);
+    assert_eq!(info["language"]["profile"], "checked-f64-utf16-v28");
+    let mut dev = varta();
+    dev.arg("dev");
+    let mut commands = vec![dev];
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for (index, mut command) in commands.into_iter().enumerate() {
+        if index == 1 {
+            fs::remove_dir_all(project.0.join("src")).unwrap();
+            fs::remove_file(project.0.join("varta.config.json")).unwrap();
+        }
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("varta log:"))
+                .collect::<Vec<_>>(),
+            [
+                "varta log: 9007199254740995",
+                "varta log: 1",
+                "varta log: -1"
+            ]
+        );
+    }
+}
+#[test]
+fn bigint_values_run_modules_and_source_free_artifacts_with_v13_metadata() {
+    let project = RegressionProject::new(
+        "import {make,fail,post,multiply,ordinary,unary,equal,less} from './values.ts';export function main():void{const values=make();console.log(values[0]+values[1]);console.log(values[0]+=2n);console.log(values[1]++);console.log(++values[1]);console.log(BigInt.asIntN('8','255'));console.log((255n).toString('16'));console.log(post('2'));console.log(multiply('2'));let text='x';console.log(text+=1n);console.log(ordinary('2'));console.log(equal(1n));console.log(less(1));console.log(less(1n));console.log(1==='1');console.log(unary('2'));try{console.log(unary(1n));}catch(e){console.log(e instanceof TypeError);}const numbers:number[]=[];console.log(numbers[0]++);try{console.log(JSON.stringify(values));}catch(e){console.log(e instanceof TypeError);}try{fail();}catch(e){if(typeof e==='bigint'){console.log(e+1n);}}}",
+        serde_json::json!({}),
+    );
+    fs::write(project.0.join("src/values.ts"),"export function make():bigint[]{return [9007199254740993n,2n];}export function fail():void{throw 7n;}export function post(n:number|string):number{return n++;}export function multiply(n:number|string):number{return n*='3';}export function ordinary(n:number|string):number{return n*'3'+true;}export function unary(n:number|string|bigint):number{return +n;}export function equal(n:number|string|bigint):boolean{return n=='1';}export function less(n:number|string|bigint):boolean{return n<'1.5';}").unwrap();
+    project.language_profile("checked-f64-utf16-v29");
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(info["abiVersion"], 28);
+    assert_eq!(info["valueAbiVersion"], 13);
+    assert_eq!(info["language"]["profile"], "checked-f64-utf16-v29");
+    let mut dev = varta();
+    dev.arg("dev");
+    let mut commands = vec![dev];
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for (index, mut command) in commands.into_iter().enumerate() {
+        if index == 1 {
+            fs::remove_dir_all(project.0.join("src")).unwrap();
+            fs::remove_file(project.0.join("varta.config.json")).unwrap();
+        }
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .filter(|s| s.starts_with("varta log:"))
+                .collect::<Vec<_>>(),
+            [
+                "varta log: 9007199254740995",
+                "varta log: 9007199254740995",
+                "varta log: 2",
+                "varta log: 4",
+                "varta log: -1",
+                "varta log: ff",
+                "varta log: 2",
+                "varta log: 6",
+                "varta log: x1",
+                "varta log: 7",
+                "varta log: 1",
+                "varta log: 1",
+                "varta log: 0",
+                "varta log: 0",
+                "varta log: 2",
+                "varta log: 1",
+                "varta log: NaN",
+                "varta log: 1",
+                "varta log: 8"
+            ]
+        );
+    }
+}

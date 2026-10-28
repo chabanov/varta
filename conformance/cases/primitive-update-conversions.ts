@@ -1,0 +1,1 @@
+function post(n:number|string|boolean|null|undefined|bigint):number|bigint{return n++;}export function main():void{console.log(post('2'));console.log(post(true));console.log(post(null));console.log(post(undefined));console.log(post(''));console.log(post('0x10'));console.log(1/post('-0'));console.log(post(9007199254740993n));console.log(typeof post(1n));}

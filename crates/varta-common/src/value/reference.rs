@@ -25,14 +25,23 @@ impl ReferenceBox {
                 | ERROR_VALUE_VERSION
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
+                | BIGINT_VALUE_VERSION
         ) {
             return Err(invalid());
         }
         let cell = PrimitiveBox::raw(data, handle)?;
-        if cell.kind == ValueKind::Error {
+        if cell.kind == ValueKind::BigInt {
+            if version != BIGINT_VALUE_VERSION {
+                return Err(invalid());
+            }
+            crate::bigint::BigIntView::read(data, cell.payload)?;
+        } else if cell.kind == ValueKind::Error {
             if !matches!(
                 version,
-                ERROR_VALUE_VERSION | ERROR_FAMILY_VALUE_VERSION | SPARSE_VALUE_VERSION
+                ERROR_VALUE_VERSION
+                    | ERROR_FAMILY_VALUE_VERSION
+                    | SPARSE_VALUE_VERSION
+                    | BIGINT_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
@@ -58,6 +67,19 @@ fn word(data: &[u8], at: usize) -> Result<u32, ValueAbiError> {
         .map(u32::from_le_bytes)
         .ok_or_else(invalid)
 }
+/// Validate an aggregate handle without manufacturing a temporary union cell.
+/// This is shallow: traversing consumers must still validate child payloads.
+pub fn validate_aggregate(
+    data: &[u8],
+    kind: ValueKind,
+    payload: u64,
+    version: u32,
+) -> Result<(), ValueAbiError> {
+    if !matches!(kind, ValueKind::Record | ValueKind::Array) || !kind.supported_by(version) {
+        return Err(invalid());
+    }
+    aggregate(data, PrimitiveBox { kind, payload }, version)
+}
 fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueAbiError> {
     if cell.kind == ValueKind::Array
         && matches!(
@@ -66,6 +88,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
                 | ERROR_VALUE_VERSION
                 | ERROR_FAMILY_VALUE_VERSION
                 | SPARSE_VALUE_VERSION
+                | BIGINT_VALUE_VERSION
         )
     {
         Vector::read_with_version(data, cell.payload, version)?;
@@ -205,4 +228,73 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
         return Err(invalid());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod bigint_tests {
+    use super::*;
+    #[test]
+    fn bigint_reference_cells_require_v13_canonical_leaf_and_exact_trace_mask() {
+        let header = abi::OWNED_STRING_BASE;
+        let leaf = header + abi::STRING_HEADER_BYTES;
+        let cell_header = header + 32;
+        let cell = cell_header + abi::STRING_HEADER_BYTES;
+        let leaf_handle = (12u64 << 32) | leaf as u64;
+        let handle = (UNION_BYTES as u64) << 32 | cell as u64;
+        let mut data = vec![0; cell_header + 32];
+        for (offset, words) in [
+            (
+                header,
+                vec![
+                    32,
+                    HEAP_ALLOCATED_FLAG | crate::bigint::HEAP_FLAG,
+                    0,
+                    0,
+                    1,
+                    1,
+                    7,
+                    0,
+                ],
+            ),
+            (
+                cell_header,
+                vec![
+                    32,
+                    HEAP_ALLOCATED_FLAG | HEAP_UNION_FLAG as u32,
+                    1,
+                    0,
+                    ValueKind::BigInt as u32,
+                    1,
+                    leaf_handle as u32,
+                    (leaf_handle >> 32) as u32,
+                ],
+            ),
+        ] {
+            for (index, word) in words.into_iter().enumerate() {
+                data[offset + index * 4..offset + index * 4 + 4]
+                    .copy_from_slice(&word.to_le_bytes());
+            }
+        }
+        let value = ReferenceBox::read_with_version(&data, handle, BIGINT_VALUE_VERSION).unwrap();
+        assert_eq!(value.kind, ValueKind::BigInt);
+        assert_eq!(value.payload, leaf_handle);
+        assert!(PrimitiveBox::read(&data, handle).is_err());
+        for version in REFERENCE_VALUE_VERSION..=SPARSE_VALUE_VERSION {
+            assert!(ReferenceBox::read_with_version(&data, handle, version).is_err());
+        }
+        for (offset, word) in [
+            (cell_header + HEAP_LINK_OFFSET, 0u32),
+            (header + HEAP_LINK_OFFSET, 1),
+            (leaf + 8, 0),
+            (leaf + 4, 2),
+            (leaf, 0),
+        ] {
+            let mut bad = data.clone();
+            bad[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+            assert!(
+                ReferenceBox::read_with_version(&bad, handle, BIGINT_VALUE_VERSION).is_err(),
+                "{offset}"
+            );
+        }
+    }
 }

@@ -1,0 +1,1 @@
+export function main():void{console.log(true+2);console.log(null+false);console.log(undefined+1);console.log('x'+1n);console.log('6'-true);console.log('6'*'2');console.log('7'%'4');console.log('2'**'3');console.log('13'&'7');console.log('-1'>>>undefined);}

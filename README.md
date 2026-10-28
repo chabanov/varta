@@ -25,7 +25,7 @@ TS/JS projects built on the engine's public APIs.
 
 | Directory | Responsibility |
 | --- | --- |
-| `crates/varta-bigint` | Budgeted integer arithmetic foundation; guest BigInt integration remains pending |
+| `crates/varta-bigint` | Budgeted integer arithmetic and canonical binary transport for checked BigInt scalars |
 | `crates/varta-common` | Engine contracts, ABI, permissions, diagnostics and shared values |
 | `crates/varta-compiler` | Checked TS subset and portable Wasm generation |
 | `crates/varta-runtime` | Validation, inspection, bounded execution and JSON tool invocation |
@@ -1378,6 +1378,9 @@ See the [contract](docs/architecture.md#simple-assignment-value-contract).
 
 ## Arithmetic compound assignments (v12 and later)
 
+The noncoercive operand rules below describe v12–v28. V29 extends primitive
+conversion as described in [primitive compound assignment coercion](#primitive-compound-assignment-coercion-v29), while retaining checked storage.
+
 Locals, declared static record fields and numeric array elements support `+=`,
 `-=`, `*=`, `/=` and `%=` in statements and expressions. V14 also admits array
 length. The expression returns the computed value stored in the target:
@@ -1426,6 +1429,9 @@ operation or helper export is introduced. See the
 [contract](docs/architecture.md#arithmetic-compound-assignment-contract).
 
 ## Dynamic record compound assignments (v12 and later)
+
+The noncoercive operand rules below describe v12–v28. V29 extends primitive
+conversion as described in [primitive compound assignment coercion](#primitive-compound-assignment-coercion-v29), while retaining checked storage.
 
 Closed records also admit the five arithmetic compound operators with a narrowed
 String key, in statements and expressions:
@@ -1606,6 +1612,9 @@ system status and permissions remain active. See the
 [contract](docs/architecture.md#number-bitwise-contract).
 
 ## Bitwise compound assignments (v12 and later)
+
+The noncoercive operand rules below describe v12–v28. V29 extends primitive
+conversion as described in [primitive compound assignment coercion](#primitive-compound-assignment-coercion-v29), while retaining checked storage.
 
 `&=`, `|=`, `^=`, `<<=`, `>>=` and `>>>=` support mutable initialized variables,
 declared static/dynamic record fields and numeric array indices. V14 also admits
@@ -1988,7 +1997,7 @@ Integer scratch uses at most 1030 bits and decimal ASCII scratch within half the
 retain their contracts. Global lexical functions/closures retain precedence;
 Number namespace calls require the unshadowed direct spelling. Wrappers, general
 object conversion, borrowing, computed/generic/spread calls remain pending.
-Rebuild both native companions for protocol2 v23 / maximum ABI26 / value12. See the
+Rebuild both native companions for protocol2 v23 / maximum ABI28 / value12. See the
 [parsing contract](docs/architecture.md#numeric-prefix-profile-and-host-abi-v26).
 
 ## Decimal precision and Number.valueOf (opt-in v22)
@@ -2027,7 +2036,7 @@ allowance each and owned UTF-16 result snapshots. Primitive precision conversion
 can add the existing Number-conversion allowance. Text is bounded to 123 ASCII
 bytes using exact bounded arithmetic and the pinned formatter; resource limits,
 status and pending exceptions retain their contracts. Native packaging requires
-both rebuilt companions advertising v22 / maximum ABI26 / value12. Older profiles
+both rebuilt companions advertising v22 / maximum ABI28 / value12. Older profiles
 reject these methods. Wrappers, borrowing, computed/spread/generic calls and
 locale formatting remain pending. See the
 [precision contract](docs/architecture.md#number-precision-profile-and-host-abi-v25).
@@ -2076,7 +2085,7 @@ reject this Number method; existing Error.toString is preserved. Only direct dot
 calls are added: wrappers, prototypes as ordinary objects, borrowing, computed/
 spread/generic calls and other Number methods remain separate work. Native
 packaging requires both rebuilt binaries, with protocol v2 advertising v21 /
-maximum ABI26 and unchanged value/schema12 and container formats. See the
+maximum ABI28 and unchanged value/schema12 and container formats. See the
 [radix contract](docs/architecture.md#number-radix-profile-and-host-abi-v24).
 
 ## Primitive Number conversion (opt-in v20)
@@ -2122,7 +2131,7 @@ still apply. Host-free JSON helpers reject reachable conversions.
 Object/reference-containing unions need narrowing until object-to-primitive
 semantics are implemented. Wrappers, `new Number`, generic/spread/borrowed calls,
 Number.prototype.toString requires v21; wrappers and general object coercion remain separate work. Rebuild both
-binaries for native packaging: protocol v2 advertises v20/maximum ABI26 and
+binaries for native packaging: protocol v2 advertises v20/maximum ABI28 and
 value/schema12, with no dependency, helper export or layout/container changes.
 See the [primitive Number contract](docs/architecture.md#primitive-number-profile-and-host-abi-v23).
 
@@ -2163,7 +2172,7 @@ The helper cannot be reached from host-free JSON allocation/retention exports.
 Only direct global calls are added. Object/array/Error/function conversion needs
 the remaining object-to-primitive work; mixed reference unions must be narrowed.
 `new String`, borrowed/generic/spread calls, Number.prototype.toString/radix formatting require v21. Native packaging requires both rebuilt binaries,
-with launcher protocol v2 advertising v19/v20/v21/v22/v23/v24/v25/v26/v27/maximum ABI26 and value/schema12.
+with launcher protocol v2 advertising v19/v20/v21/v22/v23/v24/v25/v26/v27/v28/v29/maximum ABI28 and value/schema12.
 No dependency, helper export or container/value layout change. See the
 [primitive String contract](docs/architecture.md#primitive-string-profile-and-host-abi-v22).
 
@@ -2197,7 +2206,7 @@ Scalar `log_f64_v2: (f64)->()` and union `value_log_v7: (i64)->()` require ABI21
 with unchanged value/schema12. They consume one existing host allowance per log,
 retain output/deadline limits, and preserve status and result buffers. Host-free
 JSON helpers cannot call them. Rebuild both binaries for native packaging; launcher
-protocol v2 advertises v18/v19/v20/v21/v22/v23/v24/v25/v26/v27 and maximum ABI26. No dependency, permission, value/
+protocol v2 advertises v18/v19/v20/v21/v22/v23/v24/v25/v26/v27/v28/v29 and maximum ABI28. No dependency, permission, value/
 container layout or resource limit is added. Primitive `String(...)` is available
 in v19; Number method calls, radix formatting and object coercion remain separate work. See the
 [Number output contract](docs/architecture.md#number-output-profile-and-host-abi-v21).
@@ -3270,17 +3279,18 @@ accepting untrusted machine code through Wasmtime deserialization.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, scope and contribution guidelines.
 
 The workspace separates common schemas/ABI, compiler, runtime, artifact I/O,
-runtime launcher, project services and CLI. Workspace code forbids unsafe. Run:
+runtime launcher, project services and CLI. Workspace code forbids unsafe. Use scoped checks during development and one
+full verification for the completed code batch:
 
 ```sh
-cargo fmt --all -- --check
-cargo check -p varta-common -p varta-compiler -p varta-runtime -p varta-artifact --lib --locked
-cargo build -p varta-launcher --bin varta-runtime --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo build --workspace --all-targets --locked
-cargo test --workspace --locked
-cargo test -p varta --test smoke --locked
+python3 scripts/verify.py local varta-bigint
+python3 scripts/verify.py local varta-runtime --filter array_inference
+python3 scripts/verify.py feature array_inference
+python3 scripts/verify.py full
 ```
+
+See the [verification map](docs/verification.md) for scope selection, boundary
+coverage and evidence. The full workspace run already includes CLI tests.
 
 ## Predicate array searches (opt-in v25)
 
@@ -3341,10 +3351,10 @@ See the [reverse-fold contract](docs/architecture.md#reverse-array-fold-profile-
 
 ## Checked compatibility inventory
 
-The [checked core suite](conformance/README.md) pins ECMAScript 2025, profile v27
+The [checked core suite](conformance/README.md) pins ECMAScript 2025, profile v29
 and explicit source hashes. It reports successful cases, known unsupported cases,
 regressions, infrastructure failures and feature rows without executable cases.
-Its current 40 cases yield 28 passes and 12 known gaps; 7 feature rows remain
+Its current 66 cases yield 55 passes and 11 known gaps; 7 feature rows remain
 untested. The inventory covers checked TypeScript `main` programs and does not
 establish full ECMAScript/Test262 or production readiness.
 
@@ -3387,3 +3397,112 @@ earlier require the previous homogeneous/annotated-literal rules. Rebuild both
 companions for the exact 30-profile list; host ABI26/value12/schema12 and default
 budgets remain unchanged. Very wide boxed literals can still exceed the 64 KiB
 function-body budget. See the [inference contract](docs/architecture.md#array-literal-inference-profile-v27-with-shared-host-abi-v26).
+
+## BigInt scalars (opt-in v28)
+
+`checked-f64-utf16-v28` adds exact BigInt literals/annotations, local and function
+values, closures, arithmetic/bitwise/shifts, primitive comparison, BigInt(),
+String/Number/Boolean conversion and typeof. Native semantic errors are catchable;
+capacity, fuel, deadlines and malformed transport remain fatal. Typed methods
+include toString(Number/Undefined radix), valueOf, and asIntN/asUintN with explicit
+Number width and BigInt value. Arguments and ignored trailing effects run once
+before conversion. The existing 1 MiB payload and VM budgets stay in force.
+
+The representation is an immutable managed binary leaf, not a Number or String.
+Host ABI27 negotiates pure typed operations and charges native work against guest
+fuel; value/schema12 remain frozen. Rebuild both companions for the exact
+31-profile negotiation list. BigInt arrays/records/unions/throws, JSON behavior,
+compound assignments/updates and complete coercive built-ins remain pending.
+The checked corpus promotes scalar addition and adds five positive cases plus a
+known unsupported BigInt-array case; it does not claim complete BigInt or JS support.
+
+## BigInt graphs and exceptions (opt-in v29)
+
+`checked-f64-utf16-v29` adds BigInt in closed objects, optional fields, sparse
+arrays and primitive/reference unions. Arithmetic dispatches primitive union
+values once, so ordinary BigInt array reads can participate in arithmetic; mixed
+BigInt/Number pairs throw TypeError. Array searches compare BigInt numeric values,
+not handles. String/Number/Boolean/BigInt conversion and typeof work on admitted
+primitive unions. Existing array callbacks, destructuring, roots and limits persist.
+
+JSON.stringify throws recoverable TypeError for BigInt, including nested values.
+Malformed graph metadata, cycles and resource limits remain fatal. Typed JSON
+parsing cannot turn a JSON number into BigInt; a Number|BigInt target selects
+Number. BigInt can be thrown/caught, retained across finally and copied into an
+owned uncaught-exception payload with bounded hexadecimal diagnostics. Aggregate
+diagnostic logs display BigInt with an n suffix; JSON serialization stays strict.
+
+V29 selects host ABI28, value/schema13 and exception channel4; tag11 is BigInt and
+its managed binary leaf has a real tracing edge from every containing cell/slot.
+V28 retains scalar-only ABI27/value12. Rebuild both companions for the exact
+32-profile list. Primitive width/radix/update coercion is supported in v29 within
+checked storage types; object coercion and the broader CORE ledger remain incomplete.
+
+V29 BigInt compound assignments reuse the checked arithmetic and bitwise operators
+for locals, record fields and array elements. Receivers, indices and old values
+are evaluated before the RHS, each once, and a failed operation preserves storage.
+Admitted unions dispatch on their actual numeric members; mixed numeric operands
+throw TypeError. Earlier profiles keep their original compound-assignment rules.
+
+V29 also supports prefix/postfix BigInt increment/decrement, including
+Number|BigInt unions. The numeric kind is preserved and the expression returns
+its old/new numeric value only after a successful store. Primitive update coercion
+also converts String/Boolean/Null/Undefined to Number. Number-capable missing fields
+and array holes become NaN; incompatible BigInt-only stores throw TypeError without
+mutation. Object ToPrimitive and general inferred storage widening remain pending.
+
+V29 BigInt.asIntN/asUintN accept primitive widths through ToIndex and primitive
+values through ToBigInt. String/Boolean values work; Number values throw TypeError
+(the BigInt() constructor separately accepts integral Numbers). BigInt.toString
+accepts primitive radix values, defaulting undefined to 10 and rejecting BigInt
+radix with TypeError. Arguments run once before conversions, and width errors
+precede value conversion errors. Object/Symbol coercion remains pending.
+
+For example, in v29 `let value: number | string = "2"; value++` returns Number 2
+and stores Number 3. Prefix returns the new numeric value; postfix returns the
+converted old value. Source receivers and keys run once, with existing bounds and
+root budgets. Older profiles keep their noncoercive update behavior.
+
+## Primitive compound assignment coercion (v29)
+
+V29 arithmetic/bitwise compound assignments convert cached primitive operands.
+For +=, an actual String operand selects concatenation; otherwise Number/BigInt
+numeric rules apply. Other compound operators use numeric conversion, including
+String/Boolean/Null/Undefined to Number. Mixed Number/BigInt arithmetic throws
+TypeError after source effects and before storing. For example, a Number|String
+local initially holding "2" can *= "3" to store Number 6, and a String local can
++= 1n to concatenate decimal BigInt text without an n suffix.
+
+Computed results must fit declared mutable storage. Compatible Number-array
+holes can become NaN; incompatible actual results throw without changing the
+target, while earlier RHS effects remain. Source receivers, keys and old values
+are cached once. V12–v28 keep their earlier operand rules. Object ToPrimitive,
+comparison/equality semantics and general inferred storage widening remain pending.
+
+## Ordinary primitive arithmetic and unary conversion (v29)
+
+V29 applies primitive conversion to ordinary arithmetic, exponentiation and
+bitwise/shift expressions as well as their compound forms. Actual String
+operands select concatenation for +; numeric paths retain exact BigInt and reject
+mixed Number/BigInt arithmetic with TypeError. Primitive +, - and ~ convert
+Boolean/Null/Undefined/String values to Number. Minus/not preserve BigInt; unary
+plus throws TypeError for BigInt while retaining native payload validation.
+
+For example, true + 2 is 3, "6" * "2" is 12, and +"0x10" is 16. Cached operands
+run once in source order; ordinary sparse reads do not create properties. V28 and
+older profiles keep their previous admission. Object ToPrimitive, full primitive
+comparison/equality and broader mutable storage inference remain unfinished.
+
+## Primitive comparison and equality (v29)
+
+V29 supports ==, !=, ===, !==, <, <=, > and >= across the six admitted primitive
+kinds. Abstract equality converts Boolean/String/Number as required, equates null
+with undefined and compares BigInt exactly. Strict equality keeps type distinctions.
+NaN is unequal and unordered; signed zeros compare equal. Two Strings order by
+UTF16 code units. A BigInt compared with a String uses integer-string grammar,
+so 1n < "1.5" is false, while 1n < 1.5 is true.
+
+Operands run once in source order; native boundaries validate canonical values
+and meter work. Scalar numeric loops retain guest comparisons. The pinned oracle
+covers 2048 primitive comparisons. Object conversion, Symbol and unrestricted
+value storage remain pending; older profiles keep their previous admission.

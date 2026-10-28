@@ -70,7 +70,9 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     if fields.windows(2).any(|p| p[0].name == p[1].name) {
         return Err(unsupported("duplicate object key"));
     }
-    if fields.iter().any(|f| f.ty.value_kind().is_none()) {
+    if fields.iter().any(|f| {
+        f.ty.value_kind().is_none() || f.ty == Type::BigInt && !types.profile.bigint_values()
+    }) {
         return Err(unsupported("object field value type"));
     }
     let shape = RecordShape { fields };

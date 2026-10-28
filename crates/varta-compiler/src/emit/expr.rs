@@ -301,7 +301,7 @@ impl Emitter<'_> {
                     .extend([I::I32WrapI64, I::I64Load(records::field(*index))]);
                 self.unpack_slot(expr.ty);
             }
-            E::Json(value) => self.json(value, expr.ty)?,
+            E::Json(value, status) => self.json(value, expr.ty, *status)?,
             E::ParseJson(text) => {
                 self.expr(text)?;
                 let (ptr, len) = self.schemas[&expr.ty];
@@ -337,7 +337,16 @@ impl Emitter<'_> {
             E::Local(slot) => self.read_binding(*slot, expr.ty),
             E::String(s) => {
                 let packed = ((s.len() as u64) << strings::LENGTH_SHIFT) | self.strings[s] as u64;
-                self.code.push(I::I64Const(packed as i64));
+                if expr.ty == Type::BigInt {
+                    self.code.extend([
+                        I::I32Const(self.strings[s] as i32),
+                        I::I32Const(s.len() as i32),
+                    ]);
+                    self.string_helper(strings::Helper::Snapshot)?;
+                    self.bigint_leaf();
+                } else {
+                    self.code.push(I::I64Const(packed as i64));
+                }
             }
             E::Status => {
                 self.code.push(I::GlobalGet(self.result_status));
@@ -399,6 +408,38 @@ impl Emitter<'_> {
                 self.code
                     .push(I::Call(self.functions_begin + *index as u32));
                 self.check_exception()?;
+            }
+            E::CheckedBigIntHost { host, args, status } => {
+                for arg in args {
+                    self.expr(arg)?;
+                    if arg.ty == Type::String {
+                        self.code.extend([
+                            I::LocalTee(self.string_temporary),
+                            I::I32WrapI64,
+                            I::LocalGet(self.string_temporary),
+                            I::I64Const(strings::LENGTH_SHIFT as i64),
+                            I::I64ShrU,
+                            I::I32WrapI64,
+                        ]);
+                    }
+                }
+                self.code.push(I::Call(self.hosts[host]));
+                self.code.extend([
+                    I::LocalSet(self.local_slots[*status as usize]),
+                    I::LocalSet(self.temporary),
+                ]);
+                self.code.extend([
+                    I::LocalGet(self.local_slots[*status as usize]),
+                    I::I32Eqz,
+                    I::If(BlockType::Result(wasm_encoder::ValType::I64)),
+                    I::LocalGet(self.temporary),
+                    I::GlobalGet(self.result_len),
+                ]);
+                self.string_helper(strings::Helper::Snapshot)?;
+                if expr.ty == Type::BigInt {
+                    self.bigint_leaf();
+                }
+                self.code.extend([I::Else, I::I64Const(0), I::End]);
             }
             E::Host(host, args) => {
                 for arg in args {
@@ -591,5 +632,27 @@ impl Emitter<'_> {
         self.scopes.pop();
         self.temporary_floor = prior;
         Ok(())
+    }
+}
+
+impl Emitter<'_> {
+    fn bigint_leaf(&mut self) {
+        self.code.extend([
+            I::LocalTee(self.string_temporary),
+            I::I32WrapI64,
+            I::I32Const(varta_common::abi::STRING_HEADER_BYTES as i32),
+            I::I32Sub,
+            I::I32Const(
+                (varta_common::value::HEAP_ALLOCATED_FLAG | varta_common::bigint::HEAP_FLAG) as i32,
+            ),
+            I::I32Store(strings::FLAG),
+            I::LocalGet(self.string_temporary),
+            I::I32WrapI64,
+            I::I32Const(size_of::<u32>() as i32),
+            I::I32Sub,
+            I::I32Const(0),
+            I::I32Store(strings::WORD),
+            I::LocalGet(self.string_temporary),
+        ]);
     }
 }

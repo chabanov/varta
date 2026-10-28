@@ -2,7 +2,7 @@ use super::*;
 use varta_common::value::{MAX_ARRAY_ELEMENTS, MAX_ARRAY_TYPES};
 
 pub(super) fn intern(element: Type, types: &mut ir::ValueTypes) -> Result<Type> {
-    if element.value_kind().is_none() {
+    if element.value_kind().is_none() || element == Type::BigInt && !types.profile.bigint_values() {
         return Err(unsupported("array element type"));
     }
     if let Some(index) = types.arrays.iter().position(|ty| *ty == element) {
@@ -174,7 +174,9 @@ impl Lower<'_> {
                     kind: E::Integer(0),
                 }
             };
-            if needle.ty.value_kind().is_none() {
+            if needle.ty.value_kind().is_none()
+                || needle.ty == Type::BigInt && !self.types.profile.bigint_values()
+            {
                 return Err(self.source.locate(
                     unsupported("array search value other than a checked value"),
                     needle.span,

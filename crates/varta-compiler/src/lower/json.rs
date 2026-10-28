@@ -15,6 +15,7 @@ impl Lower<'_> {
             keyword_type(target, self.types).map_err(|e| self.source.locate(e, target.span()))?;
         fn json_type(ty: Type, types: &ir::ValueTypes, optional: bool) -> bool {
             match ty {
+                Type::BigInt => types.profile.bigint_values(),
                 Type::Error | Type::NativeError(_) => false,
                 Type::Undefined => types.profile.checked_json() && optional,
                 Type::Union(id) | Type::ReferenceUnion(id) => {

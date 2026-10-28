@@ -18,6 +18,7 @@ pub(super) fn build(
                 return Ok(*index);
             }
             let node = match ty {
+                Type::BigInt => JsonType::BigInt,
                 Type::Null => JsonType::Null,
                 Type::Undefined => JsonType::Undefined,
                 Type::Union(id) | Type::ReferenceUnion(id) => {
@@ -72,7 +73,9 @@ pub(super) fn build(
     };
     let root = builder.node(root)?;
     JsonSchema {
-        version: if types.profile.sparse_arrays() {
+        version: if types.profile.bigint_values() {
+            varta_common::json::BIGINT_SCHEMA_VERSION
+        } else if types.profile.sparse_arrays() {
             varta_common::json::SPARSE_SCHEMA_VERSION
         } else if types.profile.error_families() {
             varta_common::json::ERROR_FAMILY_SCHEMA_VERSION

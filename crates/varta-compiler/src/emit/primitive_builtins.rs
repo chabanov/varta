@@ -11,7 +11,11 @@ impl Emitter<'_> {
         if value.ty.is_union() {
             self.code
                 .extend([I::I32WrapI64, I::LocalSet(self.temporary)]);
-            for tag in [ValueKind::Float64, ValueKind::String, ValueKind::Boolean] {
+            let mut tags = vec![ValueKind::Float64, ValueKind::String, ValueKind::Boolean];
+            if self.profile.bigint_values() {
+                tags.push(ValueKind::BigInt);
+            }
+            for &tag in &tags {
                 self.code.extend([
                     I::LocalGet(self.temporary),
                     I::I32Load(strings::WORD),
@@ -26,6 +30,12 @@ impl Emitter<'_> {
                         self.code.push(I::F64ReinterpretI64);
                         self.truthy(Type::Float64);
                     }
+                    ValueKind::BigInt => self.code.extend([
+                        I::I32WrapI64,
+                        I::I32Load(strings::WORD),
+                        I::I32Eqz,
+                        I::I32Eqz,
+                    ]),
                     ValueKind::String => self.boolean_string(),
                     ValueKind::Boolean => self.code.extend([I::I32WrapI64, I::I32Eqz, I::I32Eqz]),
                     _ => unreachable!(),
@@ -40,10 +50,17 @@ impl Emitter<'_> {
                     I::I32Ne,
                 ]);
             }
-            self.code.extend([I::I32And, I::End, I::End, I::End]);
+            self.code.push(I::I32And);
+            self.code.extend(std::iter::repeat_n(I::End, tags.len()));
         } else {
             match value.ty {
                 Type::Float64 => self.truthy(value.ty),
+                Type::BigInt => self.code.extend([
+                    I::I32WrapI64,
+                    I::I32Load(strings::WORD),
+                    I::I32Eqz,
+                    I::I32Eqz,
+                ]),
                 Type::Boolean | Type::Number => self.code.extend([I::I32Eqz, I::I32Eqz]),
                 Type::String => self.boolean_string(),
                 Type::Null | Type::Undefined => self.code.extend([I::Drop, I::I32Const(0)]),

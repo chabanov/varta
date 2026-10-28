@@ -162,6 +162,7 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
         ast::TsKeywordTypeKind::TsNumberKeyword => types.number(),
         ast::TsKeywordTypeKind::TsBooleanKeyword => Type::Boolean,
         ast::TsKeywordTypeKind::TsStringKeyword => Type::String,
+        ast::TsKeywordTypeKind::TsBigIntKeyword if types.profile.bigint() => Type::BigInt,
         ast::TsKeywordTypeKind::TsVoidKeyword => Type::Void,
         ast::TsKeywordTypeKind::TsNullKeyword => Type::Null,
         ast::TsKeywordTypeKind::TsUndefinedKeyword if types.profile.has_undefined() => {
@@ -219,6 +220,8 @@ mod array_mutation;
 mod arrays;
 mod assignment_patterns;
 mod assignment_values;
+mod bigint;
+mod bigint_values;
 mod bindings;
 mod bitwise;
 mod callback_inference;
@@ -256,8 +259,11 @@ mod own_keys;
 mod parameters;
 mod patterns;
 mod power;
+mod primitive_arithmetic;
 mod primitive_builtins;
+mod primitive_comparison;
 mod primitive_string;
+mod primitive_unary;
 mod record_reads;
 mod record_writes;
 mod records;

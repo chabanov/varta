@@ -400,11 +400,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                 mutable: false,
                 shared: false,
             },
-            &wasm_encoder::ConstExpr::i32_const(if program.types.profile.error_families() {
-                varta_common::exceptions::FAMILY_CHANNEL_VERSION
-            } else {
-                varta_common::exceptions::ERROR_CHANNEL_VERSION
-            }),
+            &wasm_encoder::ConstExpr::i32_const(program.types.profile.exception_channel().1),
         );
         Some(index)
     } else {
@@ -425,11 +421,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     let mut exports = wasm_encoder::ExportSection::new();
     if let Some(index) = error_channel_version {
         exports.export(
-            if program.types.profile.error_families() {
-                varta_common::exceptions::FAMILY_VERSION
-            } else {
-                varta_common::exceptions::VERSION
-            },
+            program.types.profile.exception_channel().0,
             wasm_encoder::ExportKind::Global,
             index,
         );
@@ -724,7 +716,8 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
     } else {
         match ty {
             Type::Float64 => vec![ValType::F64],
-            Type::Function(_)
+            Type::BigInt
+            | Type::Function(_)
             | Type::Error
             | Type::NativeError(_)
             | Type::String

@@ -9,10 +9,39 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Opt-in v29 adds BigInt graphs, sparse arrays, optional records, primitive-union
+  arithmetic/conversions, compound assignments and numeric updates, owned BigInt exceptions and recoverable JSON TypeError.
+  ABI28/value13/schema13/channel4 preserve old profiles and exact roots; array
+  searches use BigInt value equality and malformed graphs/resources stay fatal.
+  The reviewed inventory pins v29 with 66 cases (55 supported, 11 known gaps),
+  after promoting the unchanged coercive-width gap; primitive width/radix
+  coercions preserve ToIndex/ToBigInt order and recoverable error classes.
+  Primitive update ToNumeric preserves converted postfix values, NaN/presence
+  semantics and checked numeric stores without widening mutable storage types.
+  Primitive compound conversion handles String concatenation and numeric rules,
+  bounded wide-union dispatch, correct mixed-numeric failure types and metered
+  conversions, preserving once-only reads/RHS effects and checked stores.
+  Ordinary primitive arithmetic, exponentiation, shifts and unary +/−/~ reuse
+  conversion with scalar fast paths; unary plus retains native validation and
+  a Number result domain while rejecting BigInt with TypeError.
+  All eight primitive equality/ordering operators preserve exact BigInt, UTF16
+  order, nullish/Boolean conversion and NaN semantics; native transport/fuel
+  checks and scalar fast paths are covered by a 2048-comparison Node oracle.
+
+- Opt-in v28 connects BigInt scalars to rooted binary leaves and pure ABI27
+  arithmetic/conversion/comparison/width operations with guest fuel accounting,
+  recoverable semantic errors and fatal malformed/resource errors. Value/schema12
+  stay frozen; BigInt aggregate/union/throw/JSON and broader coercive built-ins
+  remain pending. The reviewed corpus pins v28 with 46 cases (34 supported,
+  12 known unsupported), including an explicit BigInt-array gap.
+
 - Internal `varta-bigint` mathematical foundation provides immutable integers,
   parsing, arithmetic, shifts, bitwise operations, Number/radix conversions and
-  signed/unsigned widths with caller-supplied bit/work budgets. It is not yet
-  connected to guest values; source BigInt remains unsupported.
+  signed/unsigned widths with caller-supplied bit/work budgets. It is now
+  consumed by the v28 scalar profile. The
+  binary leaf transport has canonical block/payload validation, budgeted
+  import/export and a generated-GC fixture. Large shifts charge destination work;
+  malformed binary transport never maps to a recoverable SyntaxError.
 
 - Opt-in v27 infers one admitted union for uncontextual array elements, flattening
   existing unions and preserving source-order effects, exact Number bits, shallow

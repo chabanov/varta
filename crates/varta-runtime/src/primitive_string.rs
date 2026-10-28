@@ -5,7 +5,7 @@ use varta_common::{
     value::{PrimitiveBox, ValueKind},
 };
 use wasmtime::{Caller, Extern, Linker};
-fn convert(bytes: &[u8], cell: i64) -> Result<Vec<u8>, wasmtime::Error> {
+pub(super) fn convert(bytes: &[u8], cell: i64) -> Result<Vec<u8>, wasmtime::Error> {
     let value = PrimitiveBox::read(bytes, cell as u64).map_err(wasmtime::Error::new)?;
     let text = match value.kind {
         ValueKind::Float64 => number::canonical_display(f64::from_bits(value.payload)),

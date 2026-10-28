@@ -177,12 +177,18 @@ impl Helper {
             Self::Allocate => allocate::function(globals, helpers[&Self::Collect]),
             Self::Collect => collect::function(globals, trace_values, profile.closures()),
             Self::RootPush => roots::function(globals.roots),
-            Self::ArraySearch => {
-                array_search::function(helpers[&Self::Compare], profile.sparse_arrays(), false)
-            }
-            Self::ArrayLastIndex => {
-                array_search::function(helpers[&Self::Compare], profile.sparse_arrays(), true)
-            }
+            Self::ArraySearch => array_search::function(
+                helpers[&Self::Compare],
+                profile.sparse_arrays(),
+                false,
+                profile.bigint_values(),
+            ),
+            Self::ArrayLastIndex => array_search::function(
+                helpers[&Self::Compare],
+                profile.sparse_arrays(),
+                true,
+                profile.bigint_values(),
+            ),
             Self::StringIncludes => string_search::function(crate::ir::StringSearch::Includes),
             Self::StringStartsWith => string_search::function(crate::ir::StringSearch::StartsWith),
             Self::StringEndsWith => string_search::function(crate::ir::StringSearch::EndsWith),

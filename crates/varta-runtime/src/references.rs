@@ -40,12 +40,19 @@ fn register_log(
             caller.data_mut().tick()?;
             let value = read(&mut caller, value, version)?;
             let display = match value.kind {
+                Kind::BigInt => crate::bigint::native_work(&mut caller, |data, budget| {
+                    let text = crate::bigint::integer(data, value.payload as i64, budget)?
+                        .to_string_radix(10, budget)?;
+                    budget.consume_work(text.len() as u64)?;
+                    Ok(text)
+                })?
+                .map_err(wasmtime::Error::new)?,
                 Kind::Null => "null".into(),
                 Kind::Undefined => "undefined".into(),
                 Kind::Boolean => value.payload.to_string(),
                 Kind::Float64 => {
                     let value = f64::from_bits(value.payload);
-                    if log == Host::ValueLogV7 {
+                    if matches!(log, Host::ValueLogV7 | Host::ValueLogV8) {
                         number::canonical_display(value)
                     } else {
                         number::display(value)
@@ -78,13 +85,36 @@ fn register_log(
                         format!("{}: {message}", object.class.name())
                     }
                 }
-                Kind::Record | Kind::Array => String::from_utf8(crate::json::render_reference(
-                    data(&mut caller)?,
-                    value.kind as u32,
-                    value.payload,
-                    version,
-                )?)
-                .map_err(wasmtime::Error::new)?,
+                Kind::Record | Kind::Array => {
+                    if version == varta_common::value::BIGINT_VALUE_VERSION {
+                        caller.data().check_budget()?;
+                        let fuel = caller.get_fuel()?;
+                        let mut budget = varta_bigint::Budget::new(
+                            ((varta_common::bigint::MAX_PAYLOAD_BYTES
+                                - varta_common::bigint::META_BYTES)
+                                * 8) as u64,
+                            fuel,
+                        );
+                        let result = crate::json::render_diagnostic(
+                            data(&mut caller)?,
+                            value.kind as u32,
+                            value.payload,
+                            version,
+                            &mut budget,
+                        );
+                        caller.set_fuel(budget.remaining_work())?;
+                        caller.data().check_budget()?;
+                        String::from_utf8(result?).map_err(wasmtime::Error::new)?
+                    } else {
+                        String::from_utf8(crate::json::render_reference(
+                            data(&mut caller)?,
+                            value.kind as u32,
+                            value.payload,
+                            version,
+                        )?)
+                        .map_err(wasmtime::Error::new)?
+                    }
+                }
                 _ => return Err(wasmtime::Error::msg("invalid value kind")),
             };
             caller.data_mut().emit(format!("varta log: {display}"))
@@ -144,6 +174,16 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             Host::ValueStrictEqualV6,
             Host::ValueNullishEqualV6,
         ),
+        (
+            varta_common::value::BIGINT_VALUE_VERSION,
+            Host::ValueLogV8,
+            Host::ValueTypeOfV7,
+            Host::ValueTruthyV7,
+            Host::ValueNullishV7,
+            Host::ValueIsArrayV7,
+            Host::ValueStrictEqualV7,
+            Host::ValueNullishEqualV7,
+        ),
     ] {
         register_log(linker, version, log)?;
         linker.func_wrap(
@@ -158,6 +198,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     Kind::String => "string",
                     Kind::Float64 => "number",
                     Kind::Boolean => "boolean",
+                    Kind::BigInt => "bigint",
                     _ => return Err(wasmtime::Error::msg("invalid value kind")),
                 };
                 host::result16(&mut caller, name.as_bytes())
@@ -179,6 +220,12 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                         match value.kind {
                             Kind::Null | Kind::Undefined => false,
                             Kind::Error | Kind::Record | Kind::Array => true,
+                            Kind::BigInt => !varta_common::bigint::BigIntView::read(
+                                data(&mut caller)?,
+                                value.payload,
+                            )
+                            .map_err(wasmtime::Error::new)?
+                            .is_zero(),
                             Kind::Boolean => value.payload != 0,
                             Kind::String => value.payload >> i32::BITS != 0,
                             Kind::Float64 => {
@@ -206,6 +253,16 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                         false
                     } else {
                         match a.kind {
+                            Kind::BigInt => {
+                                crate::bigint::native_work(&mut caller, |data, budget| {
+                                    let left =
+                                        crate::bigint::integer(data, a.payload as i64, budget)?;
+                                    let right =
+                                        crate::bigint::integer(data, b.payload as i64, budget)?;
+                                    Ok(left.compare(&right, budget)? == std::cmp::Ordering::Equal)
+                                })?
+                                .map_err(wasmtime::Error::new)?
+                            }
                             Kind::Float64 => f64::from_bits(a.payload) == f64::from_bits(b.payload),
                             Kind::String => {
                                 let bytes = data(&mut caller)?;
@@ -236,6 +293,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (
             Host::ValueIsErrorClassV2,
             varta_common::value::SPARSE_VALUE_VERSION,
+        ),
+        (
+            Host::ValueIsErrorClassV3,
+            varta_common::value::BIGINT_VALUE_VERSION,
         ),
     ] {
         linker.func_wrap(

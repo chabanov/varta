@@ -24,19 +24,17 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --all -- --check
       - name: Core libraries without project tooling or CLI
         run: cargo check -p varta-common -p varta-compiler -p varta-runtime -p varta-artifact --lib --locked
       - name: Independent execution runtime without source tooling
         run: cargo build -p varta-launcher --bin varta-runtime --locked
-      - name: Format check
-        run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build
         run: cargo build --workspace --all-targets --locked
-      - name: Tests
+      - name: Workspace tests (includes CLI security and packaging regressions)
         run: cargo test --workspace --locked
-      - name: CLI security and packaging regressions
-        run: cargo test -p varta --test smoke --locked
       - name: Checked core compatibility baseline (known gaps remain separate)
         run: cargo run -p varta-conformance --locked -- --json

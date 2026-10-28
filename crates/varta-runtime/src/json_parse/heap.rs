@@ -129,9 +129,13 @@ impl Writer {
                         | ERROR_VALUE_VERSION
                         | ERROR_FAMILY_VALUE_VERSION
                         | SPARSE_VALUE_VERSION
+                        | BIGINT_VALUE_VERSION
                 ) {
                     let bitmap = ARRAY_META_BYTES + array_capacity(values.len()) * ARRAY_SLOT_BYTES;
-                    let sparse = schema.value_version() == SPARSE_VALUE_VERSION;
+                    let sparse = matches!(
+                        schema.value_version(),
+                        SPARSE_VALUE_VERSION | BIGINT_VALUE_VERSION
+                    );
                     data.resize(bitmap + if sparse { SPARSE_BITMAP_BYTES } else { 0 }, 0);
                     if sparse {
                         for index in 0..values.len() {
@@ -143,7 +147,10 @@ impl Writer {
                         caller,
                         &data,
                         HEAP_ARRAY_FLAG
-                            | if schema.value_version() == SPARSE_VALUE_VERSION {
+                            | if matches!(
+                                schema.value_version(),
+                                SPARSE_VALUE_VERSION | BIGINT_VALUE_VERSION
+                            ) {
                                 HEAP_SPARSE_FLAG
                             } else {
                                 0
@@ -160,7 +167,10 @@ impl Writer {
                         caller,
                         &data,
                         HEAP_ARRAY_FLAG
-                            | if schema.value_version() == SPARSE_VALUE_VERSION {
+                            | if matches!(
+                                schema.value_version(),
+                                SPARSE_VALUE_VERSION | BIGINT_VALUE_VERSION
+                            ) {
                                 HEAP_SPARSE_FLAG
                             } else {
                                 0
@@ -195,6 +205,7 @@ impl Writer {
                         | ERROR_VALUE_VERSION
                         | ERROR_FAMILY_VALUE_VERSION
                         | SPARSE_VALUE_VERSION
+                        | BIGINT_VALUE_VERSION
                 ) {
                     let absent = |slot: usize| {
                         fields[slot].optional

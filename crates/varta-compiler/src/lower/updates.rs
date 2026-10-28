@@ -1,4 +1,4 @@
-//! Checked Number updates return old/new values only after a successful store.
+//! Checked numeric updates return old/new values only after a successful store.
 use super::*;
 
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
@@ -8,7 +8,7 @@ fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
         kind: E::Local(slot),
     }
 }
-pub(super) fn next(span: swc_common::Span, input: u32, op: ast::UpdateOp) -> Expr {
+fn next(span: swc_common::Span, input: Expr, op: ast::UpdateOp) -> Expr {
     Expr {
         span,
         ty: Type::Float64,
@@ -17,7 +17,7 @@ pub(super) fn next(span: swc_common::Span, input: u32, op: ast::UpdateOp) -> Exp
                 ast::UpdateOp::PlusPlus => ast::BinaryOp::Add,
                 ast::UpdateOp::MinusMinus => ast::BinaryOp::Sub,
             },
-            Box::new(local(span, input, Type::Float64)),
+            Box::new(input),
             Box::new(Expr {
                 span,
                 ty: Type::Float64,
@@ -84,75 +84,292 @@ impl Lower<'_> {
             local(span, name, Type::String),
             shape,
         )?;
-        let old = self.checked_update_number(read)?;
-        let input = self.hidden(Type::Float64);
-        let output = self.hidden(Type::Float64);
+        let old = self.checked_update_numeric(read)?;
+        let input_ty = old.ty;
+        let input = self.hidden(input_ty);
+        let next = self.update_next(span, input, input_ty, update.op)?;
+        let expected = if self.types.profile.bigint_values() {
+            let fields = &self.types.records[shape as usize].fields;
+            let numeric: Vec<_> = [Type::Float64, Type::BigInt]
+                .into_iter()
+                .filter(|ty| {
+                    fields
+                        .iter()
+                        .any(|field| arguments::accepts(field.ty, *ty, self.types))
+                })
+                .collect();
+            if numeric.is_empty() {
+                return Err(self.source.locate(
+                    type_error("numeric update result matches no declared record field type"),
+                    span,
+                ));
+            }
+            unions::intern(numeric, self.types)?
+        } else {
+            next.ty
+        };
+        let next = self.checked_assignment_result(next, expected)?;
+        let ty = next.ty;
+        let output = self.hidden(ty);
         let marker = self.hidden(Type::Number);
         let store = self.checked_record_write_value(
             span,
             local(span, source, record),
             local(span, name, Type::String),
-            next(span, input, update.op),
+            next,
             shape,
         )?;
+        let mut body = vec![
+            S::Init(source, base),
+            S::Init(name, key),
+            S::Init(input, old),
+            S::Init(output, store),
+        ];
+        if !update.prefix && input_ty != ty {
+            body.push(S::Set(
+                output,
+                Expr {
+                    span,
+                    ty,
+                    kind: E::UnboxUnion(Box::new(local(span, input, input_ty))),
+                },
+            ));
+        }
         Ok(Expr {
             span,
-            ty: Type::Float64,
+            ty,
             kind: E::ValueBlock {
-                output: if update.prefix { output } else { input },
+                output: if update.prefix || input_ty != ty {
+                    output
+                } else {
+                    input
+                },
                 marker,
                 roots: vec![source, name, input, output],
-                body: vec![
-                    S::Init(source, base),
-                    S::Init(name, key),
-                    S::Init(input, old),
-                    S::Init(output, store),
-                ],
+                body,
             },
         })
     }
-    pub(super) fn checked_update_number(&mut self, value: Expr) -> Result<Expr> {
-        if !unions::members(value.ty, self.types).contains(&Type::Float64) {
+    pub(super) fn checked_update_numeric(&mut self, value: Expr) -> Result<Expr> {
+        if self.types.profile.bigint_values() {
+            return self.primitive_update_numeric(value);
+        }
+        let members = unions::members(value.ty, self.types);
+        let candidates: Vec<_> = [Type::Float64]
+            .into_iter()
+            .filter(|ty| members.contains(ty))
+            .collect();
+        if candidates.is_empty() {
             return Err(self.source.locate(
                 type_error("increment/decrement require a Number target; coercion is unsupported"),
                 value.span,
             ));
         }
-        if value.ty == Type::Float64 {
+        if candidates.contains(&value.ty) {
             return Ok(value);
         }
         let span = value.span;
         let ty = value.ty;
+        let result_ty = unions::intern(candidates.clone(), self.types)?;
         let input = self.hidden(ty);
-        let output = self.hidden(Type::Float64);
+        let output = self.hidden(result_ty);
         let marker = self.hidden(Type::Number);
-        let number = Expr {
-            span,
-            ty: Type::Float64,
-            kind: E::UnboxUnion(Box::new(local(span, input, ty))),
-        };
-        let test = Expr {
-            span,
-            ty: Type::Boolean,
-            kind: E::IsUnionMember(Box::new(local(span, input, ty)), Type::Float64),
-        };
         let error = self.array_error(
             varta_common::value::ErrorClass::TypeError,
             "Invalid update operand",
             span,
         )?;
+        let mut branch = vec![S::Throw(error)];
+        for member in candidates.into_iter().rev() {
+            let number = Expr {
+                span,
+                ty: member,
+                kind: E::UnboxUnion(Box::new(local(span, input, ty))),
+            };
+            let test = Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::IsUnionMember(Box::new(local(span, input, ty)), member),
+            };
+            branch = vec![S::If(
+                test,
+                vec![S::Init(
+                    output,
+                    unions::widen(number, Some(result_ty), self.types)?,
+                )],
+                branch,
+            )];
+        }
+        let mut body = vec![S::Init(input, value)];
+        body.extend(branch);
         Ok(Expr {
             span,
-            ty: Type::Float64,
+            ty: result_ty,
             kind: E::ValueBlock {
                 output,
                 marker,
                 roots: vec![input, output],
-                body: vec![
-                    S::Init(input, value),
-                    S::If(test, vec![S::Init(output, number)], vec![S::Throw(error)]),
-                ],
+                body,
             },
+        })
+    }
+    fn primitive_update_numeric(&mut self, value: Expr) -> Result<Expr> {
+        if matches!(value.ty, Type::Float64 | Type::BigInt) {
+            return Ok(value);
+        }
+        let span = value.span;
+        if unions::primitive(value.ty) {
+            return self.update_number(value);
+        }
+        let members = unions::members(value.ty, self.types);
+        let admitted: Vec<_> = members
+            .into_iter()
+            .filter(|ty| unions::primitive(*ty) || *ty == Type::BigInt)
+            .collect();
+        if admitted.is_empty() {
+            return Err(self.source.locate(
+                unsupported("object ToPrimitive in increment/decrement"),
+                span,
+            ));
+        }
+        let mut numeric = Vec::new();
+        if admitted.contains(&Type::BigInt) {
+            numeric.push(Type::BigInt);
+        }
+        if admitted.iter().any(|ty| *ty != Type::BigInt) {
+            numeric.push(Type::Float64);
+        }
+        let result_ty = unions::intern(numeric, self.types)?;
+        let ty = value.ty;
+        let input = self.hidden(ty);
+        let output = self.hidden(result_ty);
+        let marker = self.hidden(Type::Number);
+        let error = self.array_error(
+            varta_common::value::ErrorClass::TypeError,
+            "Object ToPrimitive in increment/decrement is unsupported",
+            span,
+        )?;
+        let mut branch = vec![S::Throw(error)];
+        for member in admitted.into_iter().rev() {
+            let scalar = Expr {
+                span,
+                ty: member,
+                kind: E::UnboxUnion(Box::new(local(span, input, ty))),
+            };
+            let numeric = if member == Type::BigInt {
+                scalar
+            } else {
+                self.update_number(scalar)?
+            };
+            branch = vec![S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsUnionMember(Box::new(local(span, input, ty)), member),
+                },
+                vec![S::Init(
+                    output,
+                    unions::widen(numeric, Some(result_ty), self.types)?,
+                )],
+                branch,
+            )];
+        }
+        let mut body = vec![S::Init(input, value)];
+        body.extend(branch);
+        Ok(Expr {
+            span,
+            ty: result_ty,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![input, output],
+                body,
+            },
+        })
+    }
+    fn update_number(&mut self, value: Expr) -> Result<Expr> {
+        if value.ty == Type::Float64 {
+            return Ok(value);
+        }
+        let span = value.span;
+        let ty = unions::intern(
+            vec![
+                Type::Float64,
+                Type::String,
+                Type::Boolean,
+                Type::Null,
+                Type::Undefined,
+            ],
+            self.types,
+        )?;
+        Ok(Expr {
+            span,
+            ty: Type::Float64,
+            kind: E::Host(
+                Host::PrimitiveNumberV2,
+                vec![unions::widen(value, Some(ty), self.types)?],
+            ),
+        })
+    }
+    pub(super) fn update_next(
+        &mut self,
+        span: swc_common::Span,
+        input: u32,
+        ty: Type,
+        op: ast::UpdateOp,
+    ) -> Result<Expr> {
+        if ty == Type::Float64 {
+            return Ok(next(span, local(span, input, ty), op));
+        }
+        let mut budget = varta_bigint::Budget::new(u64::from(u32::BITS), varta_common::abi::FUEL);
+        let payload = varta_bigint::Integer::from_i64(1, &mut budget)
+            .and_then(|n| n.to_payload(&mut budget))
+            .map_err(|e| invalid(e.to_string()))?;
+        let bigint = if ty.is_union() {
+            Expr {
+                span,
+                ty: Type::BigInt,
+                kind: E::UnboxUnion(Box::new(local(span, input, ty))),
+            }
+        } else {
+            local(span, input, ty)
+        };
+        let incremented = self.bigint_binary(
+            match op {
+                ast::UpdateOp::PlusPlus => ast::BinaryOp::Add,
+                ast::UpdateOp::MinusMinus => ast::BinaryOp::Sub,
+            },
+            bigint,
+            Expr {
+                span,
+                ty: Type::BigInt,
+                kind: E::String(payload),
+            },
+            span,
+        )?;
+        if ty == Type::BigInt {
+            return Ok(incremented);
+        }
+        // Input is already cached and contains exactly Number|BigInt. Select
+        // the matching unit instead of mixing a Number 1 with a BigInt value.
+        let number = Expr {
+            span,
+            ty: Type::Float64,
+            kind: E::UnboxUnion(Box::new(local(span, input, ty))),
+        };
+        let number = next(span, number, op);
+        Ok(Expr {
+            span,
+            ty,
+            kind: E::Conditional(
+                Box::new(Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsUnionMember(Box::new(local(span, input, ty)), Type::BigInt),
+                }),
+                Box::new(unions::widen(incremented, Some(ty), self.types)?),
+                Box::new(unions::widen(number, Some(ty), self.types)?),
+            ),
         })
     }
 }

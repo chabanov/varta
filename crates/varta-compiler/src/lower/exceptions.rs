@@ -8,6 +8,9 @@ impl Lower<'_> {
             Type::Null,
             Type::Undefined,
         ];
+        if self.types.profile.bigint_values() {
+            members.push(Type::BigInt);
+        }
         if self.types.profile.errors() {
             members.extend(errors::classes(self.types.profile).map(Type::from_error_class));
         }
@@ -18,10 +21,11 @@ impl Lower<'_> {
             return Err(unsupported("throw requires checked-f64-utf16-v7"));
         }
         let value = self.expr(&statement.arg)?;
-        if unions::members(value.ty, self.types)
-            .iter()
-            .any(|ty| !unions::primitive(*ty) && !(self.types.profile.errors() && ty.is_error()))
-        {
+        if unions::members(value.ty, self.types).iter().any(|ty| {
+            (!unions::primitive(*ty)
+                && !(self.types.profile.bigint_values() && *ty == Type::BigInt))
+                && !(self.types.profile.errors() && ty.is_error())
+        }) {
             return Err(self.source.locate(
                 unsupported("exception value other than primitives or supported Error"),
                 value.span,

@@ -13,7 +13,9 @@ pub(super) fn receiver_type(
     } else {
         ty
     };
-    if ty.value_kind().is_none() && !matches!(ty, Type::Function(_)) {
+    if ty == Type::BigInt && !types.profile.bigint_values()
+        || ty.value_kind().is_none() && !matches!(ty, Type::Function(_))
+    {
         return Err(unsupported("this type other than a checked JS value"));
     }
     Ok(ty)

@@ -216,6 +216,7 @@ impl Lower<'_> {
         element: Type,
     ) -> Result<Expr> {
         if !unions::primitive(element)
+            && !(self.types.profile.bigint_values() && element == Type::BigInt)
             && !element.is_union()
             && !(self.types.profile.reference_unions()
                 && matches!(

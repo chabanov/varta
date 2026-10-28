@@ -1,6 +1,35 @@
 //! Canonical operation names and Wasm signatures shared by compiler and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostOperation {
+    PrimitiveCompare,
+    PrimitiveEqual,
+    BigIntWidthV2,
+    BigIntToStringV2,
+    BigIntFromValue,
+    ValueLogV8,
+    ValueTypeOfV7,
+    ValueTruthyV7,
+    ValueNullishV7,
+    ValueStrictEqualV7,
+    ValueNullishEqualV7,
+    ValueIsArrayV7,
+    ValueIsErrorClassV3,
+    JsonParseV15,
+    JsonStringifyV13,
+    PrimitiveStringV2,
+    PrimitiveNumberV2,
+
+    BigIntCompareString,
+    BigIntWidth,
+    BigIntBinary,
+    BigIntUnary,
+    BigIntFromNumber,
+    BigIntFromString,
+    BigIntToString,
+    BigIntToNumber,
+    BigIntCompare,
+    BigIntCompareNumber,
+
     NumberParseInt,
     NumberParseFloat,
     JsonParseV14,
@@ -135,6 +164,9 @@ pub enum HostOperation {
 impl HostOperation {
     #[must_use]
     pub fn returns_string(self) -> bool {
+        if matches!(self, Self::PrimitiveStringV2 | Self::ValueTypeOfV7) {
+            return true;
+        }
         matches!(
             self,
             Self::NumberToFixed
@@ -170,7 +202,27 @@ impl HostOperation {
     }
     #[must_use]
     pub fn needs_result_globals(self) -> bool {
-        self.returns_string()
+        if matches!(
+            self,
+            Self::BigIntWidthV2
+                | Self::BigIntToStringV2
+                | Self::BigIntFromValue
+                | Self::JsonParseV15
+                | Self::JsonStringifyV13
+                | Self::PrimitiveStringV2
+                | Self::ValueTypeOfV7
+        ) {
+            return true;
+        }
+        matches!(
+            self,
+            Self::BigIntBinary
+                | Self::BigIntUnary
+                | Self::BigIntFromNumber
+                | Self::BigIntFromString
+                | Self::BigIntToString
+                | Self::BigIntWidth
+        ) || self.returns_string()
             || matches!(
                 self,
                 Self::JsonParse
@@ -190,48 +242,73 @@ impl HostOperation {
     }
     pub fn name(self) -> &'static str {
         match self {
+            Self::BigIntCompareString => "bigint_compare_string",
+            Self::PrimitiveCompare => "primitive_compare",
+            Self::PrimitiveEqual => "primitive_equal",
+            Self::BigIntWidthV2 => "bigint_width_v2",
+            Self::BigIntToStringV2 => "bigint_to_string_v2",
+            Self::BigIntWidth => "bigint_width",
+            Self::BigIntBinary => "bigint_binary",
+            Self::BigIntUnary => "bigint_unary",
+            Self::BigIntFromNumber => "bigint_from_number",
+            Self::BigIntFromString => "bigint_from_string",
+            Self::BigIntToString => "bigint_to_string",
+            Self::BigIntToNumber => "bigint_to_number",
+            Self::BigIntCompare => "bigint_compare",
+            Self::BigIntCompareNumber => "bigint_compare_number",
             Self::NumberParseInt => "number_parse_int",
             Self::NumberParseFloat => "number_parse_float",
             Self::NumberToFixed => "number_to_fixed",
             Self::NumberToExponential => "number_to_exponential",
             Self::NumberToPrecision => "number_to_precision",
             Self::NumberToString => "number_to_string",
+            Self::PrimitiveNumberV2 => "primitive_to_number_v2",
             Self::PrimitiveNumber => "primitive_to_number",
+            Self::PrimitiveStringV2 => "primitive_to_string_v2",
             Self::PrimitiveString => "primitive_to_string",
+            Self::BigIntFromValue => "bigint_from_value",
+            Self::ValueLogV8 => "value_log_v8",
             Self::ValueLogV7 => "value_log_v7",
             Self::ValueLogV6 => "value_log_v6",
             Self::ValueLogV5 => "value_log_v5",
             Self::ValueLogV4 => "value_log_v4",
             Self::ValueLogV3 => "value_log_v3",
             Self::ValueLog => "value_log_v2",
+            Self::ValueTypeOfV7 => "value_typeof_v7",
             Self::ValueTypeOfV6 => "value_typeof_v6",
             Self::ValueTypeOfV5 => "value_typeof_v5",
             Self::ValueTypeOfV4 => "value_typeof_v4",
             Self::ValueTypeOfV3 => "value_typeof_v3",
             Self::ValueTypeOf => "value_typeof_v2",
+            Self::ValueTruthyV7 => "value_truthy_v7",
             Self::ValueTruthyV6 => "value_truthy_v6",
             Self::ValueTruthyV5 => "value_truthy_v5",
             Self::ValueTruthyV4 => "value_truthy_v4",
             Self::ValueTruthyV3 => "value_truthy_v3",
             Self::ValueTruthy => "value_truthy_v2",
+            Self::ValueNullishV7 => "value_nullish_v7",
             Self::ValueNullishV6 => "value_nullish_v6",
             Self::ValueNullishV5 => "value_nullish_v5",
             Self::ValueNullishV4 => "value_nullish_v4",
             Self::ValueNullishV3 => "value_nullish_v3",
             Self::ValueNullish => "value_nullish_v2",
+            Self::ValueStrictEqualV7 => "value_strict_equal_v7",
             Self::ValueStrictEqualV6 => "value_strict_equal_v6",
             Self::ValueStrictEqualV5 => "value_strict_equal_v5",
             Self::ValueStrictEqualV4 => "value_strict_equal_v4",
             Self::ValueStrictEqualV3 => "value_strict_equal_v3",
             Self::ValueStrictEqual => "value_strict_equal_v2",
+            Self::ValueNullishEqualV7 => "value_nullish_equal_v7",
             Self::ValueNullishEqualV6 => "value_nullish_equal_v6",
             Self::ValueNullishEqualV5 => "value_nullish_equal_v5",
             Self::ValueNullishEqualV4 => "value_nullish_equal_v4",
             Self::ValueNullishEqualV3 => "value_nullish_equal_v3",
             Self::ValueNullishEqual => "value_nullish_equal_v2",
+            Self::ValueIsErrorClassV3 => "value_is_error_class_v3",
             Self::ValueIsErrorClassV2 => "value_is_error_class_v2",
             Self::ValueIsErrorClass => "value_is_error_class",
             Self::ValueIsError => "value_is_error",
+            Self::ValueIsArrayV7 => "value_is_array_v7",
             Self::ValueIsArrayV6 => "value_is_array_v6",
             Self::ValueIsArrayV5 => "value_is_array_v5",
             Self::ValueIsArrayV4 => "value_is_array_v4",
@@ -239,11 +316,13 @@ impl HostOperation {
             Self::ValueIsArray => "value_is_array_v2",
             Self::JsonStringifyV8 => "json_stringify_v8",
             Self::JsonParseV8 => "json_parse_v8",
+            Self::JsonParseV15 => "json_parse_v15",
             Self::JsonParseV14 => "json_parse_v14",
             Self::JsonParseV13 => "json_parse_v13",
             Self::JsonParseV12 => "json_parse_v12",
             Self::JsonParseV11 => "json_parse_v11",
             Self::JsonParseV10 => "json_parse_v10",
+            Self::JsonStringifyV13 => "json_stringify_v13",
             Self::JsonStringifyV12 => "json_stringify_v12",
             Self::JsonStringifyV11 => "json_stringify_v11",
             Self::JsonStringifyV10 => "json_stringify_v10",
@@ -326,6 +405,43 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if matches!(
+            self,
+            Self::PrimitiveCompare
+                | Self::PrimitiveEqual
+                | Self::BigIntWidthV2
+                | Self::BigIntToStringV2
+                | Self::BigIntFromValue
+                | Self::ValueLogV8
+                | Self::ValueTypeOfV7
+                | Self::ValueTruthyV7
+                | Self::ValueNullishV7
+                | Self::ValueStrictEqualV7
+                | Self::ValueNullishEqualV7
+                | Self::ValueIsArrayV7
+                | Self::ValueIsErrorClassV3
+                | Self::JsonParseV15
+                | Self::JsonStringifyV13
+                | Self::PrimitiveStringV2
+                | Self::PrimitiveNumberV2
+        ) {
+            return crate::abi::BIGINT_VALUES_VERSION;
+        }
+        if matches!(
+            self,
+            Self::BigIntCompareString
+                | Self::BigIntWidth
+                | Self::BigIntBinary
+                | Self::BigIntUnary
+                | Self::BigIntFromNumber
+                | Self::BigIntFromString
+                | Self::BigIntToString
+                | Self::BigIntToNumber
+                | Self::BigIntCompare
+                | Self::BigIntCompareNumber
+        ) {
+            return crate::abi::BIGINT_VERSION;
+        }
         if matches!(self, Self::NumberParseInt | Self::NumberParseFloat) {
             return crate::abi::NUMBER_PARSE_VERSION;
         }
@@ -551,31 +667,45 @@ impl HostOperation {
     pub fn scalar_signature(self) -> (&'static [HostScalar], &'static [HostScalar]) {
         use HostScalar::{F64, I32, I64};
         match self {
-            Self::ValueIsErrorClassV2 | Self::ValueIsErrorClass => (&[I64, I32], &[I32]),
-            Self::ValueLogV7
+            Self::PrimitiveCompare => (&[I64, I64], &[F64]),
+            Self::PrimitiveEqual => (&[I32, I64, I64], &[I32]),
+            Self::BigIntWidthV2 => (&[I32, I64, I64], &[I32, I32]),
+            Self::BigIntToStringV2 => (&[I64, I64], &[I32, I32]),
+            Self::BigIntFromValue => (&[I64], &[I32, I32]),
+            Self::JsonStringifyV13 => (&[I32, I32, I32], &[I32, I32]),
+            Self::ValueIsErrorClassV3 | Self::ValueIsErrorClassV2 | Self::ValueIsErrorClass => {
+                (&[I64, I32], &[I32])
+            }
+            Self::ValueLogV8
+            | Self::ValueLogV7
             | Self::ValueLogV6
             | Self::ValueLogV5
             | Self::ValueLogV4
             | Self::ValueLogV3
             | Self::ValueLog
             | Self::UnionLog => (&[I64], &[]),
-            Self::PrimitiveString
+            Self::PrimitiveStringV2
+            | Self::PrimitiveString
+            | Self::ValueTypeOfV7
             | Self::ValueTypeOfV6
             | Self::ValueTypeOfV5
             | Self::ValueTypeOfV4
             | Self::ValueTypeOfV3
             | Self::ValueTypeOf
+            | Self::ValueTruthyV7
             | Self::ValueTruthyV6
             | Self::ValueTruthyV5
             | Self::ValueTruthyV4
             | Self::ValueTruthyV3
             | Self::ValueTruthy
+            | Self::ValueNullishV7
             | Self::ValueNullishV6
             | Self::ValueNullishV5
             | Self::ValueNullishV4
             | Self::ValueNullishV3
             | Self::ValueNullish
             | Self::ValueIsError
+            | Self::ValueIsArrayV7
             | Self::ValueIsArrayV6
             | Self::ValueIsArrayV5
             | Self::ValueIsArrayV4
@@ -584,11 +714,13 @@ impl HostOperation {
             | Self::UnionTypeOf
             | Self::UnionTruthy
             | Self::UnionNullish => (&[I64], &[I32]),
-            Self::ValueStrictEqualV6
+            Self::ValueStrictEqualV7
+            | Self::ValueStrictEqualV6
             | Self::ValueStrictEqualV5
             | Self::ValueStrictEqualV4
             | Self::ValueStrictEqualV3
             | Self::ValueStrictEqual
+            | Self::ValueNullishEqualV7
             | Self::ValueNullishEqualV6
             | Self::ValueNullishEqualV5
             | Self::ValueNullishEqualV4
@@ -602,8 +734,20 @@ impl HostOperation {
             | Self::NumberToExponential
             | Self::NumberToPrecision
             | Self::NumberToString => (&[F64, F64], &[I32]),
+            Self::BigIntWidth => (&[I32, I64, F64], &[I32, I32]),
+            Self::BigIntBinary => (&[I32, I64, I64], &[I32, I32]),
+            Self::BigIntUnary => (&[I32, I64], &[I32, I32]),
+            Self::BigIntFromNumber => (&[F64], &[I32, I32]),
+            Self::BigIntFromString => (&[I32, I32], &[I32, I32]),
+            Self::BigIntToString => (&[I64, F64], &[I32, I32]),
+            Self::BigIntToNumber => (&[I64], &[F64]),
+            Self::BigIntCompareString => (&[I64, I32, I32], &[F64]),
+            Self::BigIntCompare => (&[I64, I64], &[F64]),
+            Self::BigIntCompareNumber => (&[I64, F64], &[F64]),
             Self::NumberParseInt => (&[I64, I64], &[F64]),
-            Self::NumberParseFloat | Self::PrimitiveNumber => (&[I64], &[F64]),
+            Self::NumberParseFloat | Self::PrimitiveNumberV2 | Self::PrimitiveNumber => {
+                (&[I64], &[F64])
+            }
             Self::FloatRemainder | Self::FloatPower | Self::MathAtan2 => (&[F64, F64], &[F64]),
             Self::MathAcos
             | Self::MathAcosh
@@ -650,6 +794,7 @@ impl HostOperation {
             | Self::JsonParseV6
             | Self::JsonParseV7
             | Self::JsonParseV8
+            | Self::JsonParseV15
             | Self::JsonParseV14
             | Self::JsonParseV13
             | Self::JsonParseV12
@@ -684,6 +829,11 @@ impl HostOperation {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
+            "primitive_compare" => Self::PrimitiveCompare,
+            "primitive_equal" => Self::PrimitiveEqual,
+            "bigint_width_v2" => Self::BigIntWidthV2,
+            "bigint_to_string_v2" => Self::BigIntToStringV2,
+            "bigint_from_value" => Self::BigIntFromValue,
             "value_log_v4" => Self::ValueLogV4,
             "value_typeof_v4" => Self::ValueTypeOfV4,
             "value_truthy_v4" => Self::ValueTruthyV4,
@@ -691,33 +841,55 @@ impl HostOperation {
             "value_strict_equal_v4" => Self::ValueStrictEqualV4,
             "value_nullish_equal_v4" => Self::ValueNullishEqualV4,
             "value_is_array_v4" => Self::ValueIsArrayV4,
+            "value_is_error_class_v3" => Self::ValueIsErrorClassV3,
             "value_is_error_class_v2" => Self::ValueIsErrorClassV2,
             "value_is_error_class" => Self::ValueIsErrorClass,
+            "bigint_compare_string" => Self::BigIntCompareString,
+            "bigint_width" => Self::BigIntWidth,
+            "bigint_binary" => Self::BigIntBinary,
+            "bigint_unary" => Self::BigIntUnary,
+            "bigint_from_number" => Self::BigIntFromNumber,
+            "bigint_from_string" => Self::BigIntFromString,
+            "bigint_to_string" => Self::BigIntToString,
+            "bigint_to_number" => Self::BigIntToNumber,
+            "bigint_compare" => Self::BigIntCompare,
+            "bigint_compare_number" => Self::BigIntCompareNumber,
             "number_parse_int" => Self::NumberParseInt,
             "number_parse_float" => Self::NumberParseFloat,
             "number_to_fixed" => Self::NumberToFixed,
             "number_to_exponential" => Self::NumberToExponential,
             "number_to_precision" => Self::NumberToPrecision,
             "number_to_string" => Self::NumberToString,
+            "primitive_to_number_v2" => Self::PrimitiveNumberV2,
             "primitive_to_number" => Self::PrimitiveNumber,
+            "primitive_to_string_v2" => Self::PrimitiveStringV2,
             "primitive_to_string" => Self::PrimitiveString,
+            "value_log_v8" => Self::ValueLogV8,
             "value_log_v7" => Self::ValueLogV7,
             "value_log_v6" => Self::ValueLogV6,
             "value_log_v5" => Self::ValueLogV5,
+            "value_typeof_v7" => Self::ValueTypeOfV7,
             "value_typeof_v6" => Self::ValueTypeOfV6,
             "value_typeof_v5" => Self::ValueTypeOfV5,
+            "value_truthy_v7" => Self::ValueTruthyV7,
             "value_truthy_v6" => Self::ValueTruthyV6,
             "value_truthy_v5" => Self::ValueTruthyV5,
+            "value_nullish_v7" => Self::ValueNullishV7,
             "value_nullish_v6" => Self::ValueNullishV6,
             "value_nullish_v5" => Self::ValueNullishV5,
+            "value_strict_equal_v7" => Self::ValueStrictEqualV7,
             "value_strict_equal_v6" => Self::ValueStrictEqualV6,
             "value_strict_equal_v5" => Self::ValueStrictEqualV5,
+            "value_nullish_equal_v7" => Self::ValueNullishEqualV7,
             "value_nullish_equal_v6" => Self::ValueNullishEqualV6,
             "value_nullish_equal_v5" => Self::ValueNullishEqualV5,
+            "value_is_array_v7" => Self::ValueIsArrayV7,
             "value_is_array_v6" => Self::ValueIsArrayV6,
             "value_is_array_v5" => Self::ValueIsArrayV5,
+            "json_stringify_v13" => Self::JsonStringifyV13,
             "json_stringify_v12" => Self::JsonStringifyV12,
             "json_stringify_v11" => Self::JsonStringifyV11,
+            "json_parse_v15" => Self::JsonParseV15,
             "json_parse_v14" => Self::JsonParseV14,
             "json_parse_v13" => Self::JsonParseV13,
             "json_parse_v12" => Self::JsonParseV12,
@@ -818,59 +990,86 @@ impl HostOperation {
     #[must_use]
     pub fn capability(self) -> Option<&'static str> {
         Some(match self {
-            Self::NumberParseInt
+            Self::PrimitiveCompare
+            | Self::PrimitiveEqual
+            | Self::BigIntWidthV2
+            | Self::BigIntToStringV2
+            | Self::BigIntFromValue
+            | Self::BigIntCompareString
+            | Self::BigIntWidth
+            | Self::BigIntBinary
+            | Self::BigIntUnary
+            | Self::BigIntFromNumber
+            | Self::BigIntFromString
+            | Self::BigIntToString
+            | Self::BigIntToNumber
+            | Self::BigIntCompare
+            | Self::BigIntCompareNumber
+            | Self::NumberParseInt
             | Self::NumberParseFloat
+            | Self::ValueIsErrorClassV3
             | Self::ValueIsErrorClassV2
             | Self::ValueIsErrorClass
             | Self::NumberToFixed
             | Self::NumberToExponential
             | Self::NumberToPrecision
             | Self::NumberToString
+            | Self::PrimitiveNumberV2
             | Self::PrimitiveNumber
+            | Self::PrimitiveStringV2
             | Self::PrimitiveString
+            | Self::ValueLogV8
             | Self::ValueLogV7
             | Self::ValueLogV6
             | Self::ValueLogV5
             | Self::ValueLogV4
             | Self::ValueLogV3
             | Self::ValueLog
+            | Self::ValueTypeOfV7
             | Self::ValueTypeOfV6
             | Self::ValueTypeOfV5
             | Self::ValueTypeOfV4
             | Self::ValueTypeOfV3
             | Self::ValueTypeOf
+            | Self::ValueTruthyV7
             | Self::ValueTruthyV6
             | Self::ValueTruthyV5
             | Self::ValueTruthyV4
             | Self::ValueTruthyV3
             | Self::ValueTruthy
+            | Self::ValueNullishV7
             | Self::ValueNullishV6
             | Self::ValueNullishV5
             | Self::ValueNullishV4
             | Self::ValueNullishV3
             | Self::ValueNullish
+            | Self::ValueStrictEqualV7
             | Self::ValueStrictEqualV6
             | Self::ValueStrictEqualV5
             | Self::ValueStrictEqualV4
             | Self::ValueStrictEqualV3
             | Self::ValueStrictEqual
+            | Self::ValueNullishEqualV7
             | Self::ValueNullishEqualV6
             | Self::ValueNullishEqualV5
             | Self::ValueNullishEqualV4
             | Self::ValueNullishEqualV3
             | Self::ValueNullishEqual
             | Self::ValueIsError
+            | Self::ValueIsArrayV7
             | Self::ValueIsArrayV6
             | Self::ValueIsArrayV5
             | Self::ValueIsArrayV4
             | Self::ValueIsArrayV3
             | Self::ValueIsArray
+            | Self::JsonStringifyV13
             | Self::JsonStringifyV12
             | Self::JsonStringifyV11
             | Self::JsonStringifyV10
             | Self::JsonStringifyV9
             | Self::JsonStringifyV8
             | Self::JsonParseV8
+            | Self::JsonParseV15
             | Self::JsonParseV14
             | Self::JsonParseV13
             | Self::JsonParseV12

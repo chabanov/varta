@@ -31,10 +31,43 @@ impl Lower<'_> {
             });
         };
         let value = self.expr(&first.expr)?;
-        if unions::members(value.ty, self.types)
-            .iter()
-            .any(|ty| !unions::primitive(*ty))
-        {
+        if value.ty == Type::BigInt {
+            let input = self.hidden(Type::BigInt);
+            let mut body = vec![S::Init(input, value)];
+            for arg in rest {
+                body.push(S::Expr(self.expr(&arg.expr)?));
+            }
+            let input_value = Expr {
+                span,
+                ty: Type::BigInt,
+                kind: E::Local(input),
+            };
+            let converted = if number {
+                Expr {
+                    span,
+                    ty: Type::Float64,
+                    kind: E::Host(Host::BigIntToNumber, vec![input_value]),
+                }
+            } else {
+                self.bigint_text(input_value)?
+            };
+            let output = self.hidden(result_ty);
+            let marker = self.hidden(Type::Number);
+            body.push(S::Init(output, converted));
+            return Ok(Expr {
+                span,
+                ty: result_ty,
+                kind: E::ValueBlock {
+                    output,
+                    marker,
+                    roots: vec![input, output],
+                    body,
+                },
+            });
+        }
+        if unions::members(value.ty, self.types).iter().any(|ty| {
+            !unions::primitive(*ty) && !(self.types.profile.bigint_values() && *ty == Type::BigInt)
+        }) {
             return Err(self.source.locate(type_error(format!("{name} conversion requires primitives; object-to-primitive conversion is not yet supported")),value.span));
         }
         let input = self.hidden(value.ty);
@@ -43,16 +76,17 @@ impl Lower<'_> {
         for arg in rest {
             body.push(S::Expr(self.expr(&arg.expr)?));
         }
-        let union = unions::intern(
-            vec![
-                Type::Float64,
-                Type::Boolean,
-                Type::String,
-                Type::Null,
-                Type::Undefined,
-            ],
-            self.types,
-        )?;
+        let mut members = vec![
+            Type::Float64,
+            Type::Boolean,
+            Type::String,
+            Type::Null,
+            Type::Undefined,
+        ];
+        if self.types.profile.bigint_values() {
+            members.push(Type::BigInt);
+        }
+        let union = unions::intern(members, self.types)?;
         let value = unions::widen(
             Expr {
                 span,
@@ -70,7 +104,13 @@ impl Lower<'_> {
                 span,
                 ty: result_ty,
                 kind: E::Host(
-                    if number {
+                    if self.types.profile.bigint_values() {
+                        if number {
+                            Host::PrimitiveNumberV2
+                        } else {
+                            Host::PrimitiveStringV2
+                        }
+                    } else if number {
                         Host::PrimitiveNumber
                     } else {
                         Host::PrimitiveString

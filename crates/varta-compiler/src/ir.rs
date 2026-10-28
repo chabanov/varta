@@ -14,6 +14,7 @@ pub(crate) fn is_number_bitwise(op: BinaryOp) -> bool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Type {
+    BigInt,
     Function(u32),
     Number,
     Float64,
@@ -39,7 +40,8 @@ impl Type {
     pub(crate) fn is_handle(self) -> bool {
         matches!(
             self,
-            Self::Function(_)
+            Self::BigInt
+                | Self::Function(_)
                 | Self::Error
                 | Self::NativeError(_)
                 | Self::String
@@ -194,6 +196,7 @@ impl Type {
     pub(crate) fn value_kind(self) -> Option<varta_common::value::ValueKind> {
         use varta_common::value::ValueKind as V;
         Some(match self {
+            Self::BigInt => V::BigInt,
             Self::Error | Self::NativeError(_) => V::Error,
             Self::Null => V::Null,
             Self::Undefined => V::Undefined,
@@ -362,6 +365,11 @@ pub(crate) enum Expression {
     Not(Box<Expr>),
     Call(usize, Vec<Expr>),
     Host(Host, Vec<Expr>),
+    CheckedBigIntHost {
+        host: Host,
+        args: Vec<Expr>,
+        status: u32,
+    },
     Status,
     Capture(Box<Expr>),
     ResultField(ResultField, Box<Expr>),
@@ -376,7 +384,7 @@ pub(crate) enum Expression {
     HasOwn(Box<Expr>, Option<u32>),
     MaybeIndex(Box<Expr>, Box<Expr>),
     Field(Box<Expr>, u32),
-    Json(Box<Expr>),
+    Json(Box<Expr>, Option<u32>),
     ParseJson(Box<Expr>),
     Array(Vec<Option<Expr>>),
     ArrayEnumerate {
@@ -486,6 +494,7 @@ impl std::fmt::Display for Type {
         f.write_str(match self {
             Self::Function(_) => "function",
             Self::Number | Self::Float64 => "number",
+            Self::BigInt => "bigint",
             Self::Boolean => "boolean",
             Self::String => "string",
             Self::Void => "void",

@@ -1,0 +1,1 @@
+export function main():void{const value:{n:bigint;maybe?:bigint|undefined}={n:9007199254740993n};console.log(value.n+2n);console.log(Object.hasOwn(value,'maybe'));value.maybe=7n;console.log(value.maybe);}

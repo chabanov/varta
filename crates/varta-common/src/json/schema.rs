@@ -12,6 +12,7 @@ pub struct JsonSchema {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum JsonType {
+    BigInt,
     Null,
     Undefined,
     PrimitiveUnion {
@@ -44,6 +45,7 @@ impl JsonType {
     #[must_use]
     pub fn kind(&self) -> ValueKind {
         match self {
+            Self::BigInt => ValueKind::BigInt,
             Self::Null => ValueKind::Null,
             Self::Undefined => ValueKind::Undefined,
             Self::PrimitiveUnion { .. } => ValueKind::PrimitiveUnion,
@@ -94,6 +96,7 @@ impl JsonSchema {
                 | ERROR_SCHEMA_VERSION
                 | ERROR_FAMILY_SCHEMA_VERSION
                 | SPARSE_SCHEMA_VERSION
+                | BIGINT_SCHEMA_VERSION
         ) || self.types.is_empty()
             || self.types.len()
                 > if matches!(
@@ -103,6 +106,7 @@ impl JsonSchema {
                         | ERROR_SCHEMA_VERSION
                         | ERROR_FAMILY_SCHEMA_VERSION
                         | SPARSE_SCHEMA_VERSION
+                        | BIGINT_SCHEMA_VERSION
                 ) {
                     MAX_SCHEMA_TYPES
                 } else {
@@ -125,6 +129,7 @@ impl JsonSchema {
                     | ERROR_SCHEMA_VERSION
                     | ERROR_FAMILY_SCHEMA_VERSION
                     | SPARSE_SCHEMA_VERSION
+                    | BIGINT_SCHEMA_VERSION
             ) && matches!(
                 ty,
                 JsonType::Undefined
@@ -159,6 +164,7 @@ impl JsonSchema {
                                     | ERROR_SCHEMA_VERSION
                                     | ERROR_FAMILY_SCHEMA_VERSION
                                     | SPARSE_SCHEMA_VERSION
+                                    | BIGINT_SCHEMA_VERSION
                             ) || !self.admits_undefined(field.ty))
                         {
                             return Err(bad(
@@ -185,7 +191,10 @@ impl JsonSchema {
                         {
                             return Err(bad("nested or ambiguous union members"));
                         }
-                        references |= matches!(kind, ValueKind::Record | ValueKind::Array);
+                        references |= matches!(
+                            kind,
+                            ValueKind::BigInt | ValueKind::Record | ValueKind::Array
+                        );
                     }
                     if references != matches!(ty, JsonType::ReferenceUnion { .. }) {
                         return Err(bad("union cell kind"));
@@ -215,6 +224,9 @@ impl JsonSchema {
     }
     #[must_use]
     pub fn value_version(&self) -> u32 {
+        if self.version == BIGINT_SCHEMA_VERSION {
+            return BIGINT_VALUE_VERSION;
+        }
         if self.version == SPARSE_SCHEMA_VERSION {
             return SPARSE_VALUE_VERSION;
         }

@@ -1,6 +1,6 @@
 //! Value v7 records: fixed typed slots plus own-property presence/insertion order.
 use super::*;
-impl Encoder<'_> {
+impl Encoder<'_, '_> {
     pub(super) fn record_present(
         &mut self,
         packed: u64,

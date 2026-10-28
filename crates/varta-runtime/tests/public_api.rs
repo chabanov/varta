@@ -3192,3 +3192,86 @@ fn public_engine_array_inference_runs_across_virtual_modules() {
         ]
     );
 }
+#[test]
+fn public_engine_bigint_runs_across_virtual_modules_with_exact_profile_metadata() {
+    struct BigIntSources;
+    impl ModuleLoader for BigIntSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./integer.ts" {
+                Ok("integer.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function add(a:bigint,b:bigint):bigint{return a+b;}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {add} from './integer.ts';export function main():void{console.log(add(9007199254740993n,2n));try{console.log(add(1n,2n)/0n);}catch(e){console.log(e instanceof RangeError);}console.log(BigInt.asIntN(8,255n));}".into()},&BigIntSources,varta_common::language::LanguageProfile::CheckedF64Utf16V28).unwrap();
+    let runtime = VartaRuntime::new();
+    let inspected = runtime.inspect_module(&compilation.wasm).unwrap();
+    assert_eq!(
+        inspected.language.profile,
+        Some(varta_common::language::LanguageProfile::CheckedF64Utf16V28)
+    );
+    assert_eq!(inspected.value_abi_version, Some(12));
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 9007199254740995",
+            "varta log: 1",
+            "varta log: -1"
+        ]
+    );
+}
+#[test]
+fn public_engine_bigint_values_run_across_modules_with_v13_values_and_json_errors() {
+    struct IntegerValues;
+    impl ModuleLoader for IntegerValues {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./values.ts" {
+                Ok("values.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function make():bigint[]{return [9007199254740993n,2n];}export function fail():void{throw 7n;}export function post(n:number|string):number{return n++;}export function multiply(n:number|string):number{return n*='3';}export function ordinary(n:number|string):number{return n*'3'+true;}export function unary(n:number|string|bigint):number{return +n;}export function equal(n:number|string|bigint):boolean{return n=='1';}export function less(n:number|string|bigint):boolean{return n<'1.5';}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {make,fail,post,multiply,ordinary,unary,equal,less} from './values.ts';export function main():void{const values=make();console.log(values[0]+values[1]);console.log(values[0]+=2n);console.log(values[1]++);console.log(++values[1]);console.log(BigInt.asIntN('8','255'));console.log((255n).toString('16'));console.log(post('2'));console.log(multiply('2'));let text='x';console.log(text+=1n);console.log(ordinary('2'));console.log(equal(1n));console.log(less(1));console.log(less(1n));console.log(1==='1');console.log(unary('2'));try{console.log(unary(1n));}catch(e){console.log(e instanceof TypeError);}const numbers:number[]=[];console.log(numbers[0]++);try{console.log(JSON.stringify(values));}catch(e){console.log(e instanceof TypeError);}try{fail();}catch(e){if(typeof e==='bigint'){console.log(e+1n);}}console.log(varta.json.parse<number|bigint>('12'));}".into()},&IntegerValues,varta_common::language::LanguageProfile::CheckedF64Utf16V29).unwrap();
+    let runtime = VartaRuntime::new();
+    let info = runtime.inspect_module(&compilation.wasm).unwrap();
+    assert_eq!(info.value_abi_version, Some(13));
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 9007199254740995",
+            "varta log: 9007199254740995",
+            "varta log: 2",
+            "varta log: 4",
+            "varta log: -1",
+            "varta log: ff",
+            "varta log: 2",
+            "varta log: 6",
+            "varta log: x1",
+            "varta log: 7",
+            "varta log: 1",
+            "varta log: 1",
+            "varta log: 0",
+            "varta log: 0",
+            "varta log: 2",
+            "varta log: 1",
+            "varta log: NaN",
+            "varta log: 1",
+            "varta log: 8",
+            "varta log: 12"
+        ]
+    );
+}

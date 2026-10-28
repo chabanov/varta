@@ -128,7 +128,9 @@ impl Lower<'_> {
                 vec![value],
             )
         } else {
-            if value.ty.value_kind().is_none() {
+            if value.ty.value_kind().is_none()
+                || value.ty == Type::BigInt && !self.types.profile.bigint_values()
+            {
                 return Err(unsupported("Array.isArray argument type"));
             }
             let boolean = i32::from(matches!(value.ty, Type::Array(_)));

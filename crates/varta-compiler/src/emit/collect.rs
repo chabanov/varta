@@ -254,6 +254,9 @@ impl<'a> Collected<'a> {
                 self.expression(index, source);
             }
             E::String(s) => {
+                if expr.ty == Type::BigInt {
+                    self.helpers.insert(strings::Helper::Snapshot);
+                }
                 self.strings.entry(s.clone()).or_insert((expr.span, source));
             }
             E::Record(fields) | E::OptionalRecord(fields, _) => {
@@ -272,7 +275,7 @@ impl<'a> Collected<'a> {
                     self.expression(value, source);
                 }
             }
-            E::Json(value) => {
+            E::Json(value, _) => {
                 self.hosts.insert(self.types.profile.json_stringify());
                 if matches!(
                     expr.ty,
@@ -284,6 +287,13 @@ impl<'a> Collected<'a> {
                     self.helpers.insert(strings::Helper::Allocate);
                 }
                 self.expression(value, source);
+            }
+            E::CheckedBigIntHost { host, args, .. } => {
+                self.hosts.insert(*host);
+                self.helpers.insert(strings::Helper::Snapshot);
+                for arg in args {
+                    self.expression(arg, source);
+                }
             }
             E::Host(host, args) => {
                 self.hosts.insert(*host);

@@ -19,12 +19,16 @@ Completed since baseline commit `526f9ab`:
 | Array.findIndex/findLast/findLastIndex (v25) | Typed forward/reverse predicate search, live sparse reads, snapshot bounds and rooted cached matched values |
 | Array.reduceRight (v26) | Reverse folds with typed seeded/unseeded accumulators, live sparse presence and rooted values |
 | Array literal inference (v27) | One admitted element union, rooted once-only initializers, typed peer empties and unchanged mutable-array invariance |
-| Checked compatibility inventory | Pinned v27/ECMAScript 2025 sources, isolated executor, explicit supported/gap/untested counts and reviewed-baseline CI gate |
+| BigInt scalars (v28) | Canonical managed leaves, exact arithmetic/conversions/comparisons, recoverable semantic errors and typed width/radix methods; aggregate/union/throw/JSON integration pending |
+| BigInt graphs (v29) | Value/schema13, exact reference masks, primitive-union arithmetic, native JSON TypeError and owned BigInt exceptions; BigInt compound assignments and numeric updates; primitive width/radix, update, compound and ordinary arithmetic/unary coercion and six-kind comparison/equality; object ToPrimitive pending |
+| Checked compatibility inventory | Pinned v29/ECMAScript 2025 sources, isolated executor, explicit supported/gap/untested counts and reviewed-baseline CI gate |
 
 Earlier additive operations require v12+; sparse/mutation rules remain profile-specific.
 The default remains `checked-i32-utf8-v1`. The latest opt-in profile is
-`checked-f64-utf16-v27`, sharing host ABI v26, value ABI v12 and schema v12. It adds
-uncontextual array element-union inference, inheriting v26 Array.reduceRight and v25 Array.findIndex/findLast/findLastIndex and v24
+`checked-f64-utf16-v29`, using host ABI v28 with value ABI v13 and schema v13.
+It adds BigInt graphs/primitive unions, JSON TypeError and BigInt exceptions to
+v28 checked BigInt scalars and inherits v27 uncontextual array element-union
+inference, inheriting v26 Array.reduceRight and v25 Array.findIndex/findLast/findLastIndex and v24
 truth-based local narrowing, post-store/targeted-exit joins, proven call effects
 and stable callback-input specialization,
 write/capture-aware invalidation and short-circuit
@@ -46,11 +50,53 @@ Number predicates accept admitted values/unnarrowed unions without coercion,
 retaining missing/ignored-argument semantics and the same guest-only boundary.
 The source/artifact paths and public engine API are covered by regression tests.
 
-BigInt now has an internal budgeted mathematical foundation (`varta-bigint`),
-with guest representation, compiler admission and runtime integration still pending.
-It does not close the BigInt compatibility gap or change CORE-01 status.
+The v28 BigInt scalar increment uses host ABI27 with unchanged value/schema12.
+It connects parsed literals, rooted locals/parameters/returns/closures and exact
+arithmetic/bitwise/shift operations to the binary mathematical core. BigInt(),
+String/Number/Boolean/typeof, primitive comparisons, Number/Undefined-radix
+toString, valueOf and explicit Number-width/BigInt-value asIntN/asUintN are covered.
+Declared semantic errors are recoverable; malformed transport and resource limits
+stay fatal. Structured BigInt tags, arrays/records/unions/throws, JSON behavior,
+compound updates and complete coercive/method forms remain pending. CORE-01/07
+remain Partial; scalar execution does not close the BigInt work stream.
 
-Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1582 workspace
+The v29 increment admits BigInt tag11 only under value13. Managed records, sparse
+arrays and reference cells retain exact child masks, including mathematical zero.
+Primitive-union arithmetic dispatches cached values without replaying source
+expressions; mixed BigInt/Number pairs throw TypeError. Versioned observation and
+conversion imports validate complete BigInt blocks and account native work.
+JSON validates the bounded graph before a recoverable BigInt TypeError, keeping
+malformed metadata/cycles/resource failures fatal. JSON tokens never create a
+BigInt; checked unions select a compatible JSON-kind member. Exception channel4
+owns uncaught binary payloads and preserves BigInt through catch/finally/GC.
+V28 keeps its scalar-only ABI27/value12 boundary. Primitive width/radix coercion
+and primitive arithmetic/unary/update/compound coercion are supported in v29
+within checked source/storage types.
+Object ToPrimitive remains outstanding.
+All CORE work streams retain their previous completion state.
+
+The completed v29 comparison/equality block passed 1179 runtime tests at the broad
+checkpoint, then seven focused comparison tests after preserving scalar-nullish
+fast paths and the UTF16 iterator cleanup, plus a strengthened direct-operand GC
+case. Common/compiler suites pass (55/36 tests). Strict common/compiler/runtime
+Clippy, the cross-module API, rebuilt runtime companion and source-free CLI/native
+cases pass. Current conformance reports 66 cases: 55 supported, 11 known gaps,
+seven untested feature rows, with no regressions or infrastructure failures.
+The full pre-commit gate is run once for this completed code batch; a local pass
+does not prove cross-platform or complete ECMAScript readiness.
+
+V28 scoped verification includes **1117 runtime unit tests** at the broad
+checkpoint, followed by **15 targeted BigInt tests** after the final lexical
+shadowing test/fix; **99 compiler/common/numeric tests**, **24 conformance runner
+tests**, the dependency-boundary test, public virtual-module BigInt execution and
+the CLI/source-free Wasm/native artifact BigInt case passed. Workspace all-target
+Clippy and formatting passed. The v28 baseline and strict reports agree on
+**46 cases: 34 supported, 12 known unsupported, 7 untested feature rows**; strict
+exit 1 remains expected. This is scoped batch evidence, not a new full workspace,
+full CLI repeat, cross-platform run or BigInt-completeness claim.
+
+Last full checkpoint, before binary transport work, on macOS arm64 with Rust
+1.98.0 and locked dependencies: **1582 workspace
 tests passed**, followed by **268 CLI tests passed** in a separate repeat run.
 Formatting, the core-only library check, runtime-companion build, workspace/all-target
 build and Clippy with warnings denied also passed. This records local verification;
@@ -295,8 +341,8 @@ existing reduce admission stays unchanged. See the
 [reverse-fold contract](architecture.md#reverse-array-fold-profile-v26-with-shared-host-abi-v26).
 
 Completed: **initial checked compatibility inventory and isolated runner**.
-The pinned ECMAScript 2025/v27 corpus has 38 feature rows and 40 original checked
-programs: 28 passed, 12 known unsupported, with 7 feature rows untested. Source
+The pinned ECMAScript 2025/v29 corpus has 38 feature rows and 66 original checked
+programs: 55 supported, 11 known unsupported, with 7 feature rows untested. Source
 SHA-256 checks, complete corpus listing, strict metadata, default runtime budgets,
 empty authority and per-process deadline/output bounds preserve explicit results.
 Baseline CI distinguishes expected gaps from conformance passes; strict mode
@@ -404,7 +450,7 @@ inferred from the current regression suite.
 
 | ID | Work stream | Current state | Remaining acceptance work |
 | --- | --- | --- | --- |
-| CORE-01 | Number, String and primitive semantics | Partial | BigInt/Symbol, complete conversion/equality operations, locale formatting and general object coercion (canonical logging v18; primitive conversions v19/v20; checked toString/radices v21; precision/valueOf v22; prefix parsers, Boolean/global predicates and guest truth/control flow v23; scoped truth guards v24), remaining operators and primitive built-ins against the pinned ECMAScript target |
+| CORE-01 | Number, String and primitive semantics | Partial | Remaining BigInt/object ToPrimitive and inferred storage generality (v28 scalars; v29 graphs, primitive-union arithmetic, throws and JSON integration), Symbol, Symbol/object comparison and remaining conversion operations, locale formatting and general object coercion (canonical logging v18; primitive conversions v19/v20; checked toString/radices v21; precision/valueOf v22; prefix parsers, Boolean/global predicates and guest truth/control flow v23; scoped truth guards v24), remaining operators and primitive built-ins against the pinned ECMAScript target |
 | CORE-02 | Objects, arrays and value graphs | Partial | Dynamic properties, property descriptors, prototypes, constructors/classes and their tracing/identity semantics |
 | CORE-03 | Functions and control flow | Partial | Complete call/receiver/binding behavior, remaining iteration and generator semantics; retain existing closure/exception guarantees |
 | CORE-04 | Exceptions | Partial | General thrown values and complete error families/propagation, with explicit roots and unwinding rules |
@@ -572,15 +618,18 @@ workspace code forbids unsafe; operation/signature metadata has one owner;
 filesystem devices are not readable; proxies and redirects are disabled;
 unsupported compat and HTTPS configurations fail explicitly.
 
-Quality gates:
+Quality gates for a completed code batch (see the
+[scoped verification map](verification.md) for the development loop):
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo build --workspace --all-targets --locked
-cargo test --workspace --locked
-cargo test -p varta --test smoke --locked
+python3 scripts/verify.py full
 ```
+
+This runs formatting, isolated core/companion builds, strict workspace Clippy,
+all-target build, workspace tests (including CLI once) and the reviewed conformance
+baseline. Local and feature checks accompany intermediate implementation work;
+launcher/packaging changes additionally repeat the CLI suite. Documentation-only
+and verification-tooling changes use the checks specified in the verification map.
 
 The CI workflow runs the gates on Linux and macOS. Tests are hermetic and use
 synthetic sources, process-local environment values and temporary files; they do
@@ -1928,3 +1977,189 @@ and application core remain independent of transport/protocol revisions.
 - Production: fuzz schemas/containers/Wasm boundaries, expand platform coverage,
   isolate compilation and blocking host operations where hard OS-level resource
   isolation is required, and obtain an independent security review.
+
+### BigInt compound assignment increment (v29)
+
+BigInt targets and admitted primitive unions reuse checked scalar/union arithmetic
+for compound assignments. Prepared receivers, keys and old values precede RHS
+effects; failed operations do not store. Five new runtime cases cover all eleven
+signed arithmetic/bitwise operators, unsigned-shift TypeError, division RangeError,
+array-backing changes, sparse/optional fields, union dispatch and v28 rejection.
+The public API and source-free artifact cases also exercise an array compound store.
+At that checkpoint, full coercive built-ins and increment/decrement remained
+pending; the numeric-update increment below advances the latter. CORE-01 stays Partial.
+
+Scoped verification of this increment: 51 compound-assignment runtime tests and
+19 BigInt graph/ABI/GC tests pass (overlapping selections), plus one cross-module
+public API test and one CLI test covering development/module execution and
+source-free Wasm/native artifacts; the launcher build passes. Strict compiler/runtime
+all-target Clippy, formatting and diff checks pass. The reviewed conformance run reports 53/41/12 total/pass/known gaps,
+no unexpected support, regressions or infrastructure failures, and seven untested
+feature rows. These focused results do not replace the pre-commit full gate.
+
+### BigInt numeric updates (v29)
+
+Prefix/postfix increment and decrement preserve exact BigInt values and return
+the old/new numeric value after a successful checked store. Number|BigInt unions
+select the corresponding 1 or 1n unit after caching the input once. Prepared
+receivers/keys, sparse and optional presence, mutable backing resolution and
+rooted old/new results retain the existing update contract. V28 still rejects
+BigInt updates. At this checkpoint primitive ToNumeric coercion remained pending;
+the later primitive-update increment below adds it within checked storage types.
+CORE-01 remains Partial, with coercive built-ins and broader primitive semantics
+still outstanding.
+
+Scoped verification of numeric updates: 23 update-related runtime tests and 25
+BigInt graph/ABI/GC tests pass (overlapping selections), including six new numeric
+update cases. The cross-module public API case and CLI development/source-free
+Wasm/native case pass with both prefix and postfix array updates. Strict
+compiler/runtime all-target Clippy, formatting and diff checks pass. The reviewed
+corpus at that checkpoint had 54 cases: 42 supported, 12 known unsupported, zero
+regressions, unexpected support or infrastructure failures, and seven untested
+feature rows. Inventory and lock digests matched the files at that checkpoint.
+This is scoped evidence; the
+full pre-commit gate has not been repeated for this increment.
+
+### BigInt primitive width/radix coercion (v29)
+
+ABI28 adds pure bigint_width_v2 and bigint_to_string_v2 checked imports accepting
+canonical v13 primitive cells. Source arguments, including ignored extras, are
+evaluated once before conversions. Width methods apply ToIndex before ToBigInt:
+String/Boolean values are admitted, Number values throw TypeError even at width
+zero, malformed integer strings throw SyntaxError, and invalid widths throw
+RangeError first. Radix defaults only for undefined; other primitives undergo
+implicit ToNumber, so BigInt radix throws TypeError and out-of-range/NaN radix
+throws RangeError. Both transports are validated before a recoverable failure;
+malformed payloads/resources stay fatal, fuel is charged and pure status preserved.
+V28 retains its Number-width/BigInt-value and Number/Undefined-radix admission.
+At this checkpoint object coercion, Symbol and primitive update coercion remained
+pending; primitive updates are implemented in the later increment below.
+
+The unchanged coercive-width corpus gap was observed as unexpected support with
+exact expected output before promotion. A new radix/error case extends the
+inventory; broad ECMAScript compatibility and CORE-01 completion remain unproven.
+
+Verification of primitive BigInt methods: 1149 runtime unit tests, 55 common
+and 36 compiler tests pass, including five new source-coercion tests and the
+new malformed-transport ABI test (31 focused BigInt graph cases). Three primitive
+conversion/error scenarios also match normalized Node.js v24.20.0 output exactly.
+The cross-module API and CLI development/source-free Wasm/native cases pass with
+coercive widths and radices; the updated runtime companion builds. Strict
+common/compiler/runtime all-target Clippy, formatting and diff checks pass.
+Baseline and strict JSON reports are identical: 55 total, 44 supported, 11 known
+unsupported, zero unexpected support/regressions/infrastructure errors and seven
+untested feature rows. Strict mode exits 1 as expected; inventory and lock digests
+match the current files. No new full workspace or cross-platform gate is claimed.
+
+### Primitive update ToNumeric (v29)
+
+Increment/decrement now converts String/Boolean/Null/Undefined to Number and
+retains BigInt exactly, including the converted numeric old value for postfix
+expressions. Each source read occurs once; metered PrimitiveNumberV2 handles
+non-numeric primitives. Number-capable optional fields and sparse array entries
+can become NaN with successful stores publishing presence/order only afterward.
+Declared mutable storage types remain invariant: computed numeric union results
+are checked before storing, and postfix old values are narrowed only after a
+successful store proves their numeric kind. Missing BigInt-only entries still
+throw TypeError without mutation; explicit String-only storage cannot accept a
+Number update. Dynamic record guards preserve each selected field type.
+V28 and older profiles retain noncoercive updates. Object ToPrimitive and general
+inferred storage widening remain pending; CORE-01/02/03 stay Partial.
+
+Verification of primitive update ToNumeric: seven new runtime tests pass,
+covering all admitted primitive kinds, refined stores, sparse/present fields,
+dynamic record field invariants, BigInt-only storage and v28/object rejection,
+and fatal native parsing fuel exhaustion. The affected update selection passed
+34 tests before the additional one-test fuel run; 31 BigInt graph/ABI/GC tests
+and 36 compiler tests also pass. Cross-module public API and CLI source-free
+Wasm/native cases exercise primitive updates through the updated module helper.
+Strict compiler/runtime all-target Clippy, formatting and diff checks pass.
+Two pinned conformance cases match normalized Node.js v24.20.0 output. Baseline
+and strict reports match exactly: 57 total, 46 supported, 11 known unsupported,
+zero unexpected support/regressions/infrastructure failures, seven untested rows;
+strict exits 1 as expected and current inventory/lock hashes match. No new full
+workspace/runtime/CLI or cross-platform pass is claimed.
+
+### Primitive compound assignment coercion (v29)
+
+All arithmetic/bitwise compound assignments now cache the old value and RHS
+before primitive conversion. Addition chooses concatenation when an actual
+operand is String; other cases normalize to Number/BigInt, retaining exact BigInt
+and mixed-numeric TypeError. Six-member primitive operands normalize once before
+a maximum two-by-two numeric dispatch, preserving existing body/root limits.
+Both native String/Number conversions use the metered v2 imports. Always-throwing
+mixed pairs do not invent a BigInt result type, so Number targets can propagate
+the intended TypeError instead of failing static assignment admission.
+A shared checked result guard narrows only successful values compatible with
+declared storage. Dynamic record fields retain their individual types, and
+failed stores preserve RHS effects without publishing a new target value.
+Number-capable holes can become NaN, while a String RHS can concatenate an
+undefined sparse read into a valid String result. Typed array/field invariance,
+source order, UTF16/roots, resource ceilings and v28 rejection are preserved.
+Ordinary unary/binary coercion, object ToPrimitive, Symbol and general inferred
+storage widening remain outstanding; CORE-01/02/03 stay Partial.
+
+Verification of compound primitive coercion: all 1165 runtime unit tests and
+36 compiler tests pass, including nine new cases covering primitive operators,
+six-member operands, checked sparse/dynamic stores, mixed-numeric failures,
+GC across RHS replacement and fatal native conversion fuel exhaustion. The
+cross-module API and CLI development/source-free Wasm/native cases pass with
+coercive multiplication and String/BigInt concatenation. Strict compiler/runtime
+all-target Clippy, formatting and diff checks pass. Three new pinned corpus cases
+match normalized Node.js v24.20.0. Baseline and strict reports are identical:
+60 total, 49 supported, 11 known unsupported, no unexpected support/regressions/
+infrastructure errors, seven untested rows; strict exits 1 as expected. Current
+inventory and lock hashes match. This affected-runtime pass replaces the older
+1149-test runtime checkpoint for current lowering; full workspace/CLI repetition
+and cross-platform verification have not been performed for this increment.
+
+### Ordinary primitive arithmetic and unary operators (v29)
+
+Ordinary +, -, *, /, %, ** and bitwise/shift expressions share the cached
+primitive arithmetic engine with compound assignments. Addition chooses actual
+String concatenation; otherwise operands become Number/BigInt, with checked
+mixed-numeric TypeError and exact BigInt operations. Scalar Number and String
+paths avoid redundant native conversions. Six-member primitive unions normalize
+before bounded numeric dispatch, preserving source order and current limits.
+
+Unary +, - and ~ admit primitive conversion. Minus/not retain BigInt; unary plus
+uses the Number result domain and throws TypeError for BigInt. The native
+BigInt unary operation still validates canonical leaves and meters work before
+that recoverable error, so malformed/resource failures bypass guest handlers.
+GC, sparse reads, signed zero/NaN/Infinity and once-only source effects are covered.
+V28 and older source admission stays frozen. Comparison/equality semantics,
+object ToPrimitive, Symbol and general inferred storage widening remain pending;
+CORE-01/02/03 stay Partial.
+
+Verification of ordinary primitive arithmetic/unary: eight new runtime cases
+pass, including canonical BigInt unary-plus corruption bypassing catch/finally,
+wide unions, once-only effects and GC after RHS replacement. Affected selections
+pass 72 primitive-related, 50 BigInt-related and seven update-coercion tests
+(overlapping), plus 36 compiler tests. The cross-module API and CLI development/
+source-free Wasm/native cases cover arithmetic and unary conversion, including
+Number-domain BigInt TypeError. Strict compiler/runtime all-target Clippy,
+formatting and diff checks pass. Three new pinned cases match normalized
+Node.js v24.20.0. Baseline and strict JSON reports agree: 63 total, 52 supported,
+11 known unsupported, zero unexpected support/regressions/infrastructure errors,
+seven untested rows. Strict exits 1 as expected; current inventory and lock hashes
+match. The older 1165-test runtime pass remains historical evidence; no new
+full runtime/workspace/CLI repeat or cross-platform pass is claimed.
+
+### Primitive comparison/equality block (v29)
+
+All eight equality/ordering operators support the six admitted primitive kinds.
+Strict equality retains type distinctions, NaN inequality and signed-zero equality.
+Abstract equality implements nullish pairs, Boolean conversion, String/Number
+conversion and exact BigInt/String/Number rules. Ordering compares two Strings by
+UTF16 units, treats NaN/invalid BigInt strings as unordered and never rounds BigInt
+through Number. Source operands run once before canonical cells are boxed/rooted.
+ABI28 pure primitive_equal/primitive_compare imports validate both transports,
+charge native fuel and keep malformed/resource failures fatal. Scalar Number,
+String, Boolean equality, BigInt and nullish paths retain suitable guest/existing
+fast paths; a 1500-iteration numeric/nullish loop stays below host-call ceilings.
+
+Six new runtime cases include a pinned Node.js v24.20.0 oracle of 2048 comparisons,
+precision/infinity/UTF16 edge cases, source order, direct-operand GC, scalar-loop
+imports and malformed/fuel failures bypassing handlers. Three pinned corpus cases
+also match Node.js. V28 admission remains frozen; objects, Symbol and broader
+mutable storage remain explicit unfinished CORE-01/02/03 work.

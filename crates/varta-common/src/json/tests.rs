@@ -471,3 +471,66 @@ fn checked_union_schema_retains_array_node_depth_and_input_budgets() {
     }
     assert!(schema.validate().is_err());
 }
+#[test]
+fn bigint_schema_cannot_create_integers_from_json_tokens_or_reinterpret_old_schemas() {
+    let schema = JsonSchema {
+        version: BIGINT_SCHEMA_VERSION,
+        root: 0,
+        types: vec![JsonType::BigInt],
+    };
+    schema.validate().unwrap();
+    assert_eq!(schema.value_version(), BIGINT_VALUE_VERSION);
+    for input in ["1", "1.5", "\"1\"", "true", "null", "[]", "{}"] {
+        assert!(
+            matches!(
+                schema.parse_json_classified(input.as_bytes()),
+                Err(JsonDecodeError::Type)
+            ),
+            "{input}"
+        );
+    }
+    assert!(matches!(
+        schema.parse_json_classified(b"1n"),
+        Err(JsonDecodeError::Syntax { .. })
+    ));
+    for version in SCHEMA_VERSION..=SPARSE_SCHEMA_VERSION {
+        assert!(
+            JsonSchema {
+                version,
+                ..schema.clone()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+    let union = JsonSchema {
+        version: BIGINT_SCHEMA_VERSION,
+        root: 2,
+        types: vec![
+            JsonType::BigInt,
+            JsonType::Float64,
+            JsonType::ReferenceUnion {
+                members: vec![0, 1],
+            },
+        ],
+    };
+    union.validate().unwrap();
+    assert_eq!(
+        union.parse_json_classified(b"12").unwrap(),
+        JsonValue::Union {
+            ty: 2,
+            value: Box::new(JsonValue::Float64(12.0f64.to_bits()))
+        }
+    );
+    let wrong_cell = JsonSchema {
+        types: vec![
+            JsonType::BigInt,
+            JsonType::Float64,
+            JsonType::PrimitiveUnion {
+                members: vec![0, 1],
+            },
+        ],
+        ..union
+    };
+    assert!(wrong_cell.validate().is_err());
+}

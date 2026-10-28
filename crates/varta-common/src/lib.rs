@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 pub mod abi;
+pub mod bigint;
 mod capability;
 mod diagnostic;
 pub mod exceptions;

@@ -26,6 +26,8 @@ pub const PRIMITIVE_NUMBER_VERSION: u32 = 23;
 pub const NUMBER_RADIX_VERSION: u32 = 24;
 pub const NUMBER_FORMAT_VERSION: u32 = 25;
 pub const NUMBER_PARSE_VERSION: u32 = 26;
+pub const BIGINT_VERSION: u32 = 27;
+pub const BIGINT_VALUES_VERSION: u32 = 28;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -56,6 +58,8 @@ pub fn supported(version: u32) -> bool {
             | NUMBER_RADIX_VERSION
             | NUMBER_FORMAT_VERSION
             | NUMBER_PARSE_VERSION
+            | BIGINT_VERSION
+            | BIGINT_VALUES_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";

@@ -128,6 +128,7 @@ impl Lower<'_> {
     ) -> Result<Expr> {
         let read = self.read_prepared_target(&target)?;
         let value = self.compound_operation(read, rhs, op, span)?;
+        let value = self.checked_assignment_result(value, target.ty)?;
         self.finish_prepared_value(target, value, span)
     }
     pub(in crate::lower) fn prepared_logical_value(
@@ -224,9 +225,13 @@ impl Lower<'_> {
     ) -> Result<Expr> {
         let span = update.span;
         let read = self.read_prepared_target(&target)?;
-        let old = self.checked_update_number(read)?;
-        let input = self.hidden(Type::Float64);
-        let output = self.hidden(Type::Float64);
+        let old = self.checked_update_numeric(read)?;
+        let input_ty = old.ty;
+        let input = self.hidden(input_ty);
+        let next = self.update_next(span, input, input_ty, update.op)?;
+        let next = self.checked_assignment_result(next, target.ty)?;
+        let ty = next.ty;
+        let output = self.hidden(ty);
         let marker = self.hidden(Type::Number);
         let store = self.finish_prepared_value(
             Target {
@@ -236,18 +241,33 @@ impl Lower<'_> {
                 roots: vec![],
                 body: vec![],
             },
-            updates::next(span, input, update.op),
+            next,
             span,
         )?;
         target
             .body
             .extend([S::Init(input, old), S::Init(output, store)]);
+        if !update.prefix && input_ty != ty {
+            // A successful store proved the old/new numeric kind fits storage.
+            target.body.push(S::Set(
+                output,
+                Expr {
+                    span,
+                    ty,
+                    kind: E::UnboxUnion(Box::new(local(span, input, input_ty))),
+                },
+            ));
+        }
         target.roots.extend([input, output]);
         Ok(Expr {
             span,
-            ty: Type::Float64,
+            ty,
             kind: E::ValueBlock {
-                output: if update.prefix { output } else { input },
+                output: if update.prefix || input_ty != ty {
+                    output
+                } else {
+                    input
+                },
                 marker,
                 roots: target.roots,
                 body: target.body,

@@ -792,3 +792,33 @@ declare const varta: {
   process: { exit(code: number): void };
   net: { fetch(url: string): number; get(url: string): string };
 };
+
+// checked-f64-utf16-v28: opaque BigInt scalars, ABI27/value12/schema12.
+// Exact literals/operators, BigInt(), String/Number/Boolean/typeof, comparisons,
+// toString(Number/Undefined radix), valueOf, asIntN/asUintN(Number,BigInt).
+// Managed binary leaf flag2048; pure host work consumes guest fuel.
+// Structured BigInt/JSON/throw/compound/update and complete coercive forms pending.
+
+// checked-f64-utf16-v29: ABI28/value13/schema13/exception channel4.
+// BigInt tag11 in closed records/sparse arrays/reference unions; exact roots.
+// Primitive-union arithmetic, conversions and BigInt throw/catch are admitted.
+// JSON.stringify BigInt -> recoverable TypeError; JSON tokens never create BigInt.
+// Primitive width/radix coercion and numeric compound/update syntax are supported.
+// Primitive update ToNumeric converts nonnumeric primitives within checked storage.
+// Object ToPrimitive and general inferred storage widening remain pending.
+
+// V29 also supports BigInt compound/numeric updates and primitive width/radix
+// coercion. ToIndex precedes ToBigInt; Number values and BigInt radix throw
+// TypeError. Undefined radix defaults to 10. Object ToPrimitive remains pending.
+
+// V29 compound operators convert cached primitives, choosing String concatenation
+// for += when either actual operand is String, otherwise numeric Number/BigInt.
+// Mixed numeric kinds throw TypeError; checked storage and v28 rules remain.
+
+// V29 ordinary arithmetic, exponentiation, bitwise/shifts and unary +/−/~ admit
+// primitive conversion. Minus/not preserve BigInt; plus rejects BigInt after
+// canonical validation. Full comparison/equality and object coercion pending.
+
+// V29 equality/ordering supports all six admitted primitives, exact BigInt
+// comparison, UTF16 order, NaN/unordered and nullish/Boolean coercion rules.
+// Object and Symbol semantics remain pending.

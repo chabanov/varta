@@ -1,4 +1,4 @@
-//! Noncoercive arithmetic/bitwise operations read old values before RHS effects.
+//! Compound operations read old values before RHS effects and store only on success.
 use super::*;
 
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
@@ -122,6 +122,27 @@ impl Lower<'_> {
             shape,
         )?;
         let computed = self.compound_operation(old, &assign.right, op, span)?;
+        let computed = if self.types.profile.bigint_values() {
+            let allowed: Vec<_> = unions::members(computed.ty, self.types)
+                .into_iter()
+                .filter(|ty| {
+                    self.types.records[shape as usize]
+                        .fields
+                        .iter()
+                        .any(|field| arguments::accepts(field.ty, *ty, self.types))
+                })
+                .collect();
+            if allowed.is_empty() {
+                return Err(self.source.locate(
+                    type_error("compound result matches no declared record field type"),
+                    span,
+                ));
+            }
+            let expected = unions::intern(allowed, self.types)?;
+            self.checked_assignment_result(computed, expected)?
+        } else {
+            computed
+        };
         let value = self.checked_record_write_value(
             span,
             local(span, source, record),
@@ -154,12 +175,19 @@ impl Lower<'_> {
         op: ast::BinaryOp,
         span: swc_common::Span,
     ) -> Result<Expr> {
+        if self.types.profile.bigint_values() {
+            let value = self.expr(rhs)?;
+            return self.primitive_arithmetic(op, old, value, span);
+        }
         let bitwise = ir::is_number_bitwise(op);
         let power = op == ast::BinaryOp::Exp;
         let left = unions::members(old.ty, self.types);
         let candidates: Vec<_> = [Type::Float64, Type::String]
             .into_iter()
-            .filter(|ty| left.contains(ty) && (*ty == Type::Float64 || op == ast::BinaryOp::Add))
+            .filter(|ty| {
+                left.contains(ty)
+                    && (*ty == Type::Float64 || (*ty == Type::String && op == ast::BinaryOp::Add))
+            })
             .collect();
         if candidates.is_empty() {
             return Err(self.source.locate(

@@ -104,6 +104,7 @@ impl Lower<'_> {
                 }
                 (Type::Number, E::Integer(n.value as i32))
             }
+            ast::Expr::Lit(ast::Lit::BigInt(n)) => return self.bigint_literal(n),
             ast::Expr::Lit(ast::Lit::Bool(b)) => (Type::Boolean, E::Integer(i32::from(b.value))),
             ast::Expr::Lit(ast::Lit::Null(_)) => (Type::Null, E::Integer(0)),
             ast::Expr::Lit(ast::Lit::Str(s)) => {
@@ -194,6 +195,22 @@ impl Lower<'_> {
                     return self.array_delete(&unary.arg, unary.span);
                 }
                 let value = self.expr(&unary.arg)?;
+                if self.types.profile.bigint_values()
+                    && matches!(
+                        unary.op,
+                        ast::UnaryOp::Minus | ast::UnaryOp::Plus | ast::UnaryOp::Tilde
+                    )
+                {
+                    return self.primitive_unary(unary.op, value, expression.span());
+                }
+                if value.ty == Type::BigInt
+                    && matches!(
+                        unary.op,
+                        ast::UnaryOp::Minus | ast::UnaryOp::Plus | ast::UnaryOp::Tilde
+                    )
+                {
+                    return self.bigint_unary(unary.op, value, expression.span());
+                }
                 match unary.op {
                     ast::UnaryOp::TypeOf if value.ty.is_union() => {
                         return Ok(Expr {
@@ -237,6 +254,7 @@ impl Lower<'_> {
                             | Type::Record(_)
                             | Type::Array(_) => "object",
                             Type::Number | Type::Float64 => "number",
+                            Type::BigInt => "bigint",
                             Type::Boolean => "boolean",
                             Type::String => "string",
                             _ => return Err(unsupported("typeof an opaque result value")),
@@ -271,6 +289,12 @@ impl Lower<'_> {
                     _ => return Err(unsupported("unary operator")),
                 }
             }
+            ast::Expr::New(new)
+                if self.types.profile.bigint()
+                    && matches!(&*new.callee,ast::Expr::Ident(id) if id.sym=="BigInt" && self.binding("BigInt").is_err() && !self.outer.contains_key("BigInt") && !self.functions.contains_key("BigInt")) =>
+            {
+                return self.bigint_new(new);
+            }
             ast::Expr::New(new) => return self.new_error(new),
             ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::InstanceOf => {
                 return self.instance_of_error(binary);
@@ -300,6 +324,51 @@ impl Lower<'_> {
                     return self.guest_logical(binary.op, left, right?, expression.span());
                 }
                 let right = self.expr(&binary.right)?;
+                if self.types.profile.bigint_values()
+                    && matches!(
+                        binary.op,
+                        ast::BinaryOp::EqEq
+                            | ast::BinaryOp::EqEqEq
+                            | ast::BinaryOp::NotEq
+                            | ast::BinaryOp::NotEqEq
+                            | ast::BinaryOp::Lt
+                            | ast::BinaryOp::LtEq
+                            | ast::BinaryOp::Gt
+                            | ast::BinaryOp::GtEq
+                    )
+                    && [left.ty, right.ty].into_iter().all(|ty| {
+                        unions::members(ty, self.types)
+                            .into_iter()
+                            .all(|member| unions::primitive(member) || member == Type::BigInt)
+                    })
+                {
+                    return self.primitive_comparison(binary.op, left, right, expression.span());
+                }
+                if self.types.profile.bigint_values()
+                    && matches!(
+                        binary.op,
+                        ast::BinaryOp::Add
+                            | ast::BinaryOp::Sub
+                            | ast::BinaryOp::Mul
+                            | ast::BinaryOp::Div
+                            | ast::BinaryOp::Mod
+                            | ast::BinaryOp::Exp
+                            | ast::BinaryOp::BitAnd
+                            | ast::BinaryOp::BitOr
+                            | ast::BinaryOp::BitXor
+                            | ast::BinaryOp::LShift
+                            | ast::BinaryOp::RShift
+                            | ast::BinaryOp::ZeroFillRShift
+                    )
+                {
+                    return self.primitive_arithmetic(binary.op, left, right, expression.span());
+                }
+                if (left.ty == Type::BigInt || right.ty == Type::BigInt)
+                    && !left.ty.is_union()
+                    && !right.ty.is_union()
+                {
+                    return self.bigint_binary(binary.op, left, right, expression.span());
+                }
                 if binary.op == ast::BinaryOp::Exp {
                     return self.number_power(left, right, expression.span());
                 }
@@ -458,6 +527,9 @@ impl Lower<'_> {
             && matches!(&member.prop, ast::MemberProp::Ident(method) if method.sym == "valueOf")
         {
             let value = self.expr(&member.obj)?;
+            if value.ty == Type::BigInt {
+                return self.bigint_method(call, value, true);
+            }
             return self.number_value_of(call, value);
         }
         if let ast::Expr::Member(member) = &**callee
@@ -624,7 +696,9 @@ impl Lower<'_> {
                 return Err(invalid("JSON.stringify expects one value"));
             }
             let value = self.expr(&call.args[0].expr)?;
-            if value.ty.value_kind().is_none() {
+            if value.ty.value_kind().is_none()
+                || value.ty == Type::BigInt && !self.types.profile.bigint_values()
+            {
                 return Err(unsupported("JSON.stringify value type"));
             }
             let ty = if value.ty.is_union()
@@ -636,11 +710,21 @@ impl Lower<'_> {
             } else {
                 Type::String
             };
-            return Ok(Expr {
+            let status = self
+                .types
+                .profile
+                .bigint_values()
+                .then(|| self.hidden(Type::Number));
+            let result = Expr {
                 span: call.span,
                 ty,
-                kind: E::Json(Box::new(value)),
-            });
+                kind: E::Json(Box::new(value), status),
+            };
+            return if let Some(status) = status {
+                self.bigint_checked_result(result, status)
+            } else {
+                Ok(result)
+            };
         }
         if let Some(signature) = self.functions.get(&name).cloned() {
             if signature.index == self.entry {
@@ -690,6 +774,16 @@ impl Lower<'_> {
         if name == "parseInt" || name == "parseFloat" {
             return self.number_parse(call, name == "parseInt");
         }
+        if matches!(name.as_str(), "BigInt.asIntN" | "BigInt.asUintN")
+            && self.binding("BigInt").is_err()
+            && !self.outer.contains_key("BigInt")
+            && !self.functions.contains_key("BigInt")
+        {
+            return self.bigint_width(call, name == "BigInt.asIntN");
+        }
+        if name == "BigInt" {
+            return self.bigint_constructor(call);
+        }
         if name == "String" || name == "Number" {
             return self.primitive_conversion(call, name == "Number");
         }
@@ -709,6 +803,9 @@ impl Lower<'_> {
                     return Err(invalid("log expects one argument"));
                 }
                 let mut arg = self.expr(&call.args[0].expr)?;
+                if arg.ty == Type::BigInt {
+                    arg = self.bigint_text(arg)?;
+                }
                 if arg.ty.is_error() {
                     arg = Expr {
                         span: arg.span,

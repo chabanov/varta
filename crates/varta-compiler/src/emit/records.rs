@@ -58,6 +58,7 @@ pub(super) fn descriptor(
                         | abi::ERROR_VALUE_VERSION
                         | abi::ERROR_FAMILY_VALUE_VERSION
                         | abi::SPARSE_VALUE_VERSION
+                        | abi::BIGINT_VALUE_VERSION
                 ) && field.optional
                 {
                     abi::OPTIONAL_FIELD_FLAG
@@ -173,7 +174,7 @@ impl Emitter<'_> {
             I::I64Or,
         ]);
     }
-    pub(super) fn json(&mut self, value: &Expr, result: Type) -> Result<()> {
+    pub(super) fn json(&mut self, value: &Expr, result: Type, status: Option<u32>) -> Result<()> {
         let kind = value
             .ty
             .value_kind()
@@ -190,6 +191,33 @@ impl Emitter<'_> {
             I::I32WrapI64,
             I::Call(self.hosts[&self.profile.json_stringify()]),
         ]);
+        if let Some(status) = status {
+            self.code.extend([
+                I::LocalSet(self.local_slots[status as usize]),
+                I::LocalSet(self.temporary),
+                I::LocalGet(self.local_slots[status as usize]),
+                I::I32Eqz,
+                I::If(BlockType::Result(if result == Type::Undefined {
+                    ValType::I32
+                } else {
+                    ValType::I64
+                })),
+                I::LocalGet(self.temporary),
+            ]);
+            self.json_result(result)?;
+            self.code.push(I::Else);
+            self.code.push(if result == Type::Undefined {
+                I::I32Const(0)
+            } else {
+                I::I64Const(0)
+            });
+            self.code.push(I::End);
+            Ok(())
+        } else {
+            self.json_result(result)
+        }
+    }
+    fn json_result(&mut self, result: Type) -> Result<()> {
         if result.is_union() {
             self.code.extend([
                 I::LocalSet(self.temporary),

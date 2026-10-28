@@ -1,15 +1,18 @@
 #![forbid(unsafe_code)]
-//! Exact integer semantics for the pending guest BigInt integration.
+//! Exact integer semantics and canonical transport for checked guest BigInt.
 //! Resource policy is supplied by callers; this crate does not raise VM budgets.
 mod arithmetic;
 mod convert;
 mod parse;
-pub use arithmetic::{BinaryOp, UnaryOp};
+mod transport;
 use num_bigint::BigInt;
 use num_traits::Zero;
+pub use varta_common::bigint::{BinaryOp, UnaryOp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
+    #[error("noncanonical BigInt binary payload")]
+    InvalidPayload,
     #[error("invalid BigInt string")]
     Syntax,
     #[error("BigInt division by zero")]
@@ -31,6 +34,20 @@ pub enum Error {
 }
 /// A fatal resource error must stay distinct from recoverable JS errors.
 impl Error {
+    /// Only declared semantic errors can enter the guest exception channel.
+    pub fn recoverable_class(self) -> Option<varta_common::value::ErrorClass> {
+        use varta_common::value::ErrorClass;
+        Some(match self {
+            Self::Syntax => ErrorClass::SyntaxError,
+            Self::Type => ErrorClass::TypeError,
+            Self::DivisionByZero
+            | Self::NegativeExponent
+            | Self::NonIntegralNumber
+            | Self::InvalidRadix
+            | Self::InvalidWidth => ErrorClass::RangeError,
+            Self::InvalidPayload | Self::BitCapacity | Self::WorkBudget => return None,
+        })
+    }
     pub fn is_resource(self) -> bool {
         matches!(self, Self::BitCapacity | Self::WorkBudget)
     }
@@ -48,6 +65,10 @@ impl Budget {
             initial_work: work,
             remaining_work: work,
         }
+    }
+    /// Account for linear bridge work such as encoded result transfer.
+    pub fn consume_work(&mut self, units: u64) -> Result<(), Error> {
+        self.charge(units)
     }
     pub fn remaining_work(&self) -> u64 {
         self.remaining_work

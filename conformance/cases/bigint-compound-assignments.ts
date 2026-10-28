@@ -1,0 +1,1 @@
+export function main():void{let n=17n;console.log(n+=3n);console.log(n*=2n);const a:bigint[]=[4n];let calls=0;const index=():number=>{calls+=1;return 0;};const rhs=():bigint=>{calls+=10;a[0]=100n;return 3n;};console.log(a[index()]+=rhs());console.log(a[0]);console.log(calls);try{n/=0n;}catch(e){console.log(e instanceof RangeError);}console.log(n);}

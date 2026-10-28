@@ -1,6 +1,6 @@
 # Checked core compatibility inventory
 
-This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v27** profile
+This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v29** profile
 and the **checked-ts-main-v1** source model. Its original cases are checked
 TypeScript programs with a Varta `main` entry point and observable runtime output.
 Feature rows identify their CORE work streams and either an ECMAScript section or
@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 38 feature rows and 40 cases:
-28 pass, 12 are known unsupported, and 7 feature rows have no case. These counts
+executable cases. The current inventory has 38 feature rows and 66 cases:
+55 pass, 11 are known unsupported, and 7 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -86,3 +86,41 @@ executor does not rewrite upstream tests into functions or treat unsupported
 scripts as conformance passes. Expand that execution model, edition-wide feature
 coverage, historical-profile matrices and independent platform/security work
 before making broader compatibility claims.
+
+The v28 review observed the unchanged BigInt addition case as unexpected support
+before promoting it. Five further positive cases cover exact arithmetic, primitive
+conversions/comparison, recoverable native errors and typed widths/radices. A
+separate BigInt array case remains known unsupported: scalar execution does not
+close aggregate/union/throw/JSON integration or complete BigInt coercion/built-ins.
+
+The v29 review observed the original unchanged BigInt-array source as unexpected
+support before promoting it. Five further cases exercise BigInt graphs, optional
+fields, arithmetic through primitive unions, throwing/catching BigInt and JSON's
+BigInt rejection/type selection. At that checkpoint the separate coercive-width
+case remained a gap; the primitive-method increment below closes it.
+Value/schema13 and exception channel4 belong to v29; v28 stays scalar-only.
+
+The v29 primitive-method increment observed the unchanged coercive-width gap as
+unexpected support with its pinned source hash and expected output before review
+and promotion. A separate radix/error case covers primitive conversion and the
+Number-value TypeError distinction from BigInt(). Object ToPrimitive remains an explicit CORE-01 gap outside these passing cases.
+
+Two primitive-update cases cover converted postfix values, exact BigInt kind,
+Number-array holes and optional-field NaN/presence. Their normalized output also
+matches local Node.js v24.20.0. Passing these checked programs does not admit
+object ToPrimitive, arbitrary mutable storage widening or full JS compatibility.
+
+Three compound conversion cases cover primitive arithmetic/concatenation, sparse
+reads and RHS order, plus six-member operand unions and mixed numeric errors.
+Their output matches normalized local Node.js v24.20.0. Object coercion, full
+comparison/equality and broader mutable-storage inference remain separate gaps.
+
+Three ordinary arithmetic/unary/order cases cover primitive conversion, exact
+BigInt kind, mixed numeric errors and once-only source evaluation. Their output
+matches normalized Node.js v24.20.0. This does not establish full comparison,
+equality, object/Symbol semantics or unrestricted JS value storage.
+
+The completed primitive comparison block adds equality, relational and source-order
+cases. Runtime tests separately pin a Node.js v24.20.0 matrix of 2048 results
+across eight operators, including all six admitted primitive kinds. These cases
+do not cover object/Symbol ToPrimitive or unrestricted JS storage.

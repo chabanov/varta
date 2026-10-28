@@ -223,7 +223,7 @@ pub(super) fn collect(
                 let output = Expr {
                     span: call.span,
                     ty: Type::String,
-                    kind: E::Json(Box::new(response)),
+                    kind: E::Json(Box::new(response), None),
                 };
                 let index = functions.len();
                 functions.push(ir::Function {

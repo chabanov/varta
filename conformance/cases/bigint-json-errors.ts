@@ -1,0 +1,1 @@
+export function main():void{try{console.log(JSON.stringify(1n));}catch(e){console.log(e instanceof TypeError);}try{console.log(JSON.stringify([1n]));}catch(e){console.log(e instanceof TypeError);}try{console.log(JSON.stringify({n:1n}));}catch(e){console.log(e instanceof TypeError);}}

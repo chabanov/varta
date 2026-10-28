@@ -13,10 +13,12 @@ pub(super) fn deadline(caller: &Caller<'_, RuntimeContext>) -> Result<(), wasmti
     }
 }
 pub(super) fn ready(caller: &mut Caller<'_, RuntimeContext>) -> Result<(), wasmtime::Error> {
-    for (name, expected) in [
-        (channel::FAMILY_VERSION, channel::FAMILY_CHANNEL_VERSION),
-        (channel::PENDING, 0),
-    ] {
+    let selector = if caller.get_export(channel::BIGINT_VERSION).is_some() {
+        (channel::BIGINT_VERSION, channel::BIGINT_CHANNEL_VERSION)
+    } else {
+        (channel::FAMILY_VERSION, channel::FAMILY_CHANNEL_VERSION)
+    };
+    for (name, expected) in [selector, (channel::PENDING, 0)] {
         let Some(Extern::Global(global)) = caller.get_export(name) else {
             return Err(invalid());
         };
@@ -75,13 +77,13 @@ pub(super) fn publish(
     deadline(caller)?;
     descriptors(schema, memory.data(&*caller))?;
     let value =
-        ReferenceBox::read_with_version(memory.data(&*caller), cell, ERROR_FAMILY_VALUE_VERSION)
+        ReferenceBox::read_with_version(memory.data(&*caller), cell, schema.value_version())
             .map_err(wasmtime::Error::new)?;
     if value.kind != ValueKind::Error || value.payload != object {
         return Err(invalid());
     }
     let checked =
-        ErrorObject::read_with_version(memory.data(&*caller), object, ERROR_FAMILY_VALUE_VERSION)
+        ErrorObject::read_with_version(memory.data(&*caller), object, schema.value_version())
             .map_err(wasmtime::Error::new)?;
     if checked.class != class || !checked.has_message || checked.message != message {
         return Err(invalid());

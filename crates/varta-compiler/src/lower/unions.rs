@@ -27,10 +27,12 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     values.dedup();
     if values.is_empty()
         || values.iter().any(|ty| {
-            !primitive(*ty)
-                && !(types.profile.reference_unions()
-                    && matches!(ty, Type::Record(_) | Type::Array(_))
-                    || (types.profile.errors() && ty.is_error()))
+            *ty == Type::BigInt && !types.profile.bigint_values()
+                || !primitive(*ty)
+                    && !(types.profile.reference_unions()
+                        && matches!(ty, Type::Record(_) | Type::Array(_))
+                        || types.profile.bigint_values() && *ty == Type::BigInt
+                        || (types.profile.errors() && ty.is_error()))
         })
     {
         return Err(unsupported(
@@ -40,7 +42,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     let references = values.iter().any(|ty| {
         matches!(
             ty,
-            Type::Record(_) | Type::Array(_) | Type::Error | Type::NativeError(_)
+            Type::BigInt | Type::Record(_) | Type::Array(_) | Type::Error | Type::NativeError(_)
         )
     });
     if values
@@ -288,6 +290,7 @@ impl Lower<'_> {
                 && let ast::Expr::Lit(ast::Lit::Str(text)) = b
             {
                 let ty = match text.value.as_str()? {
+                    "bigint" if self.types.profile.bigint_values() => Type::BigInt,
                     "number" => Type::Float64,
                     "boolean" => Type::Boolean,
                     "string" => Type::String,

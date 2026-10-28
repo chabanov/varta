@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+varta-bigint = { path = "../varta-bigint" }
 varta-common = { path = "../varta-common" }
 thiserror.workspace = true
 wasm-encoder.workspace = true

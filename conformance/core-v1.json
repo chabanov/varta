@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v27",
+  "profile": "checked-f64-utf16-v29",
   "features": [
     {
       "id": "binary64",
@@ -663,9 +663,7 @@
         "varta log: 3"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "BigInt value kinds, operations and output are not implemented."
+        "status": "supported"
       }
     },
     {
@@ -879,6 +877,431 @@
       "stdout": [
         "varta log: [{\"items\":[7]},[1,2]]",
         "varta log: [{\"items\":[7]},{\"items\":[]}]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-exact-arithmetic",
+      "feature": "bigint",
+      "path": "cases/bigint-exact-arithmetic.ts",
+      "sha256": "7a50e114cb9ad6dc23a358eba397693f8d156dc299b2a44450d7aa35d3fb793b",
+      "stdout": [
+        "varta log: 9007199254740995",
+        "varta log: -2",
+        "varta log: 1267650600228229401496703205376"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-conversions",
+      "feature": "bigint",
+      "path": "cases/bigint-conversions.ts",
+      "sha256": "cb134970bfbf1442ebadb1ca750268d96e8cb23141d8ebe0cd5455738865fc64",
+      "stdout": [
+        "varta log: 255",
+        "varta log: 9007199254740992",
+        "varta log: bigint",
+        "varta log: 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-native-errors",
+      "feature": "bigint",
+      "path": "cases/bigint-native-errors.ts",
+      "sha256": "5c3812dd73cb37c1065df295a577d41a116c8f992246a013008f85526cb790c1",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-primitive-comparison",
+      "feature": "bigint",
+      "path": "cases/bigint-primitive-comparison.ts",
+      "sha256": "5d136b8b138fd8c0fb4dbcb7fb714356ea7ea7955134b40a47865433996198ce",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-width-and-radix",
+      "feature": "bigint",
+      "path": "cases/bigint-width-and-radix.ts",
+      "sha256": "1cd917a02a502bd78aa13b2b7fc4d7508a1c910e09b1ce80becf57c3cc610cdd",
+      "stdout": [
+        "varta log: -1",
+        "varta log: 255",
+        "varta log: -ff"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-array-values",
+      "feature": "bigint",
+      "path": "cases/bigint-array-values.ts",
+      "sha256": "b47a202f487275a1f08e386cda806807a512956eaf33b38a2e50b701909eaf5a",
+      "stdout": [
+        "varta log: 3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-json-errors",
+      "feature": "bigint",
+      "path": "cases/bigint-json-errors.ts",
+      "sha256": "ea672df3f26131929f84258451d79277c8930b865074e5a35a76d62d9d1cdfb3",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-optional-record",
+      "feature": "bigint",
+      "path": "cases/bigint-optional-record.ts",
+      "sha256": "98a0b3d00e1fc1eb674d201e5c386765e689b1096eda169769f67cc2ce962d94",
+      "stdout": [
+        "varta log: 9007199254740995",
+        "varta log: 0",
+        "varta log: 7"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-union-arithmetic",
+      "feature": "bigint",
+      "path": "cases/bigint-union-arithmetic.ts",
+      "sha256": "0367e68c06ddbe5d95b64a471794532fd87467bb606d4c600754e2a14b8f4cbb",
+      "stdout": [
+        "varta log: 3",
+        "varta log: NaN",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-throw-catch",
+      "feature": "bigint",
+      "path": "cases/bigint-throw-catch.ts",
+      "sha256": "7a1789f471220012da5a6ad6bc75ea6bb6c8bdf5a057e42ae10d636af762a1f3",
+      "stdout": [
+        "varta log: 8",
+        "varta log: finally"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-json-schema",
+      "feature": "bigint",
+      "path": "cases/bigint-json-schema.ts",
+      "sha256": "bc0bf4febe4b603eb0b9df6df0ab01782542e0e9f0c4d3e17ee765a1539f48b6",
+      "stdout": [
+        "varta log: 1",
+        "varta log: number",
+        "varta log: 123"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-coercive-width",
+      "feature": "bigint",
+      "path": "cases/bigint-coercive-width.ts",
+      "sha256": "affc11389803ddbc5090f2f696d0593cab1b02aafd12a75df37dd44d897eb69a",
+      "stdout": [
+        "varta log: -1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-compound-assignments",
+      "feature": "bigint",
+      "path": "cases/bigint-compound-assignments.ts",
+      "sha256": "7689fc4298ef92f5e1ff0672875877d08ac9b5b91523cf888826239e4cedba6d",
+      "stdout": [
+        "varta log: 20",
+        "varta log: 40",
+        "varta log: 7",
+        "varta log: 7",
+        "varta log: 11",
+        "varta log: 1",
+        "varta log: 40"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-updates",
+      "feature": "bigint",
+      "path": "cases/bigint-updates.ts",
+      "sha256": "cc91e87dc50c073bd3f88ae13f3570af4f929a4136b3c4e0f2cc242d27f2e53a",
+      "stdout": [
+        "varta log: 9007199254740993",
+        "varta log: 9007199254740995",
+        "varta log: 9007199254740995",
+        "varta log: 9007199254740993",
+        "varta log: 8",
+        "varta log: 8",
+        "varta log: bigint",
+        "varta log: number"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-coercive-radix",
+      "feature": "bigint",
+      "path": "cases/bigint-coercive-radix.ts",
+      "sha256": "ca604f10d51efadbb291b7f69c477937414ca26d2cd3ea45d1b77b0a3eea8596",
+      "stdout": [
+        "varta log: ff",
+        "varta log: 255",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "primitive-update-conversions",
+      "feature": "primitive-conversions",
+      "path": "cases/primitive-update-conversions.ts",
+      "sha256": "419d8fefd5027f52ba182fb471db15e5a70b662322a6aabfdcbfa019e55fc357",
+      "stdout": [
+        "varta log: 2",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: NaN",
+        "varta log: 0",
+        "varta log: 16",
+        "varta log: -Infinity",
+        "varta log: 9007199254740993",
+        "varta log: bigint"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "primitive-sparse-updates",
+      "feature": "primitive-conversions",
+      "path": "cases/primitive-sparse-updates.ts",
+      "sha256": "487e22e5eed94acc77bd1c525f5c44af7dd92cac3617d97e35198164b0652ac3",
+      "stdout": [
+        "varta log: NaN",
+        "varta log: 1",
+        "varta log: NaN",
+        "varta log: 4",
+        "varta log: 0",
+        "varta log: NaN",
+        "varta log: [\"first\",\"n\"]",
+        "varta log: {\"first\":1,\"n\":null}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "compound-primitive-conversions",
+      "feature": "primitive-conversions",
+      "path": "cases/compound-primitive-conversions.ts",
+      "sha256": "936213dbbf6be1cb634c3335d61b587482305c3041fc40ab6205c30710817e4e",
+      "stdout": [
+        "varta log: x1",
+        "varta log: x1true",
+        "varta log: x1true2",
+        "varta log: 6",
+        "varta log: 12",
+        "varta log: 12",
+        "varta log: Infinity",
+        "varta log: 1",
+        "varta log: 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "compound-sparse-order",
+      "feature": "primitive-conversions",
+      "path": "cases/compound-sparse-order.ts",
+      "sha256": "f8b84cb22242f7466425b7b638fbd57cf6075ec998f718cc9bb87ed6db9ebac1",
+      "stdout": [
+        "varta log: 6",
+        "varta log: 6",
+        "varta log: 11",
+        "varta log: NaN",
+        "varta log: 1",
+        "varta log: undefinedx"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "compound-wide-primitive-unions",
+      "feature": "primitive-conversions",
+      "path": "cases/compound-wide-primitive-unions.ts",
+      "sha256": "22847028620a9bff613c4e72470da7428878b519691abf852e23c80586f145bf",
+      "stdout": [
+        "varta log: atrue",
+        "varta log: 0",
+        "varta log: NaN",
+        "varta log: 5",
+        "varta log: 3",
+        "varta log: 6",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "primitive-arithmetic",
+      "feature": "primitive-conversions",
+      "path": "cases/primitive-arithmetic.ts",
+      "sha256": "adb3557b2349d93274832ed8ef7eace2d20232cb1a900184efe176387dd56e5e",
+      "stdout": [
+        "varta log: 3",
+        "varta log: 0",
+        "varta log: NaN",
+        "varta log: x1",
+        "varta log: 5",
+        "varta log: 12",
+        "varta log: 3",
+        "varta log: 8",
+        "varta log: 5",
+        "varta log: 4294967295"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "primitive-unary-coercion",
+      "feature": "primitive-conversions",
+      "path": "cases/primitive-unary-coercion.ts",
+      "sha256": "149d3e6604578d1e947694c15c3ff5bec64b95880744efd027a06d0d2fe67a75",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 16",
+        "varta log: -Infinity",
+        "varta log: -2",
+        "varta log: -9007199254740993",
+        "varta log: -1",
+        "varta log: -1",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "primitive-binary-order",
+      "feature": "primitive-conversions",
+      "path": "cases/primitive-binary-order.ts",
+      "sha256": "2eb541019748707689ef312c05f8a88508e090fe73b494207d0f5adda19d78e4",
+      "stdout": [
+        "varta log: left",
+        "varta log: right",
+        "varta log: 1",
+        "varta log: 2",
+        "varta log: -2",
+        "varta log: -3",
+        "varta log: 3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "primitive-equality",
+      "feature": "primitive-conversions",
+      "path": "cases/primitive-equality.ts",
+      "sha256": "13630954982e27501310b420ade97678eba8f645e76869f1b835fb3360520877",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 0",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "primitive-relational",
+      "feature": "primitive-conversions",
+      "path": "cases/primitive-relational.ts",
+      "sha256": "6e7d13b7a05dbf5ac1bba00cd02afdd571b6d48bcb19b954e6cefda9f54d7d39",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 0",
+        "varta log: 1",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "primitive-comparison-order",
+      "feature": "primitive-conversions",
+      "path": "cases/primitive-comparison-order.ts",
+      "sha256": "cdaa7172c0ed912fe0fae5a5aad43a4fae2c69ba736553ae48f1d83b8e2b7e0b",
+      "stdout": [
+        "varta log: left",
+        "varta log: right",
+        "varta log: 1",
+        "varta log: left",
+        "varta log: right",
+        "varta log: 0"
       ],
       "baseline": {
         "status": "supported"

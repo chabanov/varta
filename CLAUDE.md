@@ -835,7 +835,7 @@ Shared registry names/signatures/minimum ABI must drive compiler/runtime/artifac
 validation. New language/ABI18 metadata is mandatory even without an active power
 import; downgrade/profile/signature/unknown-import mismatches fail before effects.
 V15 originally negotiated maximum18/value12; current protocol v2 also advertises
-v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27 with maximum26/value12. Packaging
+v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27/v28/v29 with maximum28/value12. Packaging
 requires a matching rebuilt trusted companion. Keep old artifact execution and
 value/schema/container layouts. Host-free JSON allocation/retain helper validation
 still rejects any reachable math host call. Test special-case bits/parity/subnormals,
@@ -1004,7 +1004,7 @@ roots/status/pending/fatal budgets. Next improve exception/call/property precisi
 See write-aware refinement/capture architecture contract.
 
 The truth-guard profile checked-f64-utf16-v24 inherits v23 with shared ABI26/
-value12/schema12. Add no host registry/ABI constant; launcher current maximum26
+value12/schema12. Add no host registry/ABI constant; launcher current maximum28
 retains a new supported profile entry. Rebuild/verify both companions; unknown profiles
 and missing language/mismatched ABI fail, while compatible26/profile23 bytecode
 cannot prove source provenance. Direct local Guard::Truth(yes) matches potential
@@ -1069,7 +1069,7 @@ grammar checked before Rust parse, scratch<=half1MiB. Preserve -0 from text,
 status/pending/buffers/roots/pairs/saved returns/finalizers and fatal limits. Tick1,
 post-check, host-free JSON helpers reject imports. No wrapper/object ToPrimitive,
 first-class built-ins/computed/spread/generic forms. Mandatory26/profile23 metadata;
-protocol2 maximum26/value12 includes v23, rebuild both companions. See parser contract.
+protocol2 maximum28/value12 includes v23, rebuild both companions. See parser contract.
 
 The Number-precision profile checked-f64-utf16-v22 selects ABI25/value12/schema12,
 inheriting v21. Direct narrowed Number toFixed/toExponential/toPrecision cache
@@ -1086,7 +1086,7 @@ ratio decimal rounding ties upward, carry then notation. Bound324 normalizations
 roots/pairs/saved returns/finalizers and fatal limits; JSON helpers reject calls.
 valueOf guest-only cached Number identity with all ignored effects, exact -0 and
 zero host charges. No wrapper/general prototype/borrowed/computed/generic/spread
-calls. Mandatory matching25 metadata even unused; protocol2 maximum26/value12
+calls. Mandatory matching25 metadata even unused; protocol2 maximum28/value12
 includes v22/v23, rebuild both companions. See Number precision architecture contract.
 
 The Number-radix profile checked-f64-utf16-v21 selects ABI24/value12/schema12,
@@ -1105,7 +1105,7 @@ Tick once, post-transfer check, existing UTF16 result buffer+owned Snapshot; rad
 coercion may add existing Number host call. Raw invalid host radix/limits fatal,
 language RangeError catchable. Status/pending preserved, JSON helpers reject calls.
 No wrappers/general prototypes/borrowing/computed/spread/generic calls or other
-Number methods. Mandatory ABI24 even unused; protocol2 maximum26/value12 includes
+Number methods. Mandatory ABI24 even unused; protocol2 maximum28/value12 includes
 v21 and requires both rebuilt companions. See Number radix architecture contract.
 
 The primitive-Number profile checked-f64-utf16-v20 selects ABI23/value12/schema12,
@@ -1123,7 +1123,7 @@ Tick once, pre/post budget/deadline, invalid strings normal NaN; invalid cells/
 limits fatal. Preserve result globals/buffers/status/pending channels. Host-free
 helpers reject reachability. New Number/wrappers/object coercion and Number's
 text/radix method remain pending. Mandatory ABI23/profile even unused; protocol2
-maximum26/value12 includes v20 and requires both rebuilt native binaries. No
+maximum28/value12 includes v20 and requires both rebuilt native binaries. No
 layout/container/helper/dependency/resource-limit change. See primitive Number contract.
 
 The primitive-String profile checked-f64-utf16-v19 selects ABI22/value12/schema12,
@@ -1139,7 +1139,7 @@ true/false/null/undefined text or exact copied UTF-16 bytes. Copy before result
 buffer transfer; no lossy Unicode/NUL conversion. Tick once, post-transfer check,
 retain status/pending channels; invalid cells/limits stay fatal. No new limits,
 helpers/dependency/layout/capability. Host-free JSON helpers reject reachability.
-Mandatory profile/ABI22 even unused; protocol2 maximum26/value12 includes v19 and
+Mandatory profile/ABI22 even unused; protocol2 maximum28/value12 includes v19 and
 both native companions must be rebuilt. Objects/reference unions, wrappers,
 Number.prototype.toString/radices/general coercion remain pending, not silently emulated.
 
@@ -1156,8 +1156,8 @@ One host charge, bounded<=25-byte numeric text, unchanged output/deadline/status
 result-buffer/pending/GC/pair/finalizer contracts; JSON helpers still reject logs.
 This increment adds no String()/Number.prototype.toString, radix/coercion/wrappers
 or new dependency/layout/limits.
-Mandatory ABI21/profile metadata even unused; launcher maximum26/value12/protocol2
-includes v18/v19/v20/v21/v22/v23/v24/v25/v26/v27, rebuild both binaries. See the architecture Number output contract.
+Mandatory ABI21/profile metadata even unused; launcher maximum28/value12/protocol2
+includes v18/v19/v20/v21/v22/v23/v24/v25/v26/v27/v28/v29, rebuild both binaries. See the architecture Number output contract.
 
 The random profile checked-f64-utf16-v17 uses ABI20/value12/schema12 and inherits
 v16. Shared MathRandom / number_random has ()->f64, minimum20, no capability/result
@@ -1170,7 +1170,7 @@ argument throws, saved returns, pairs/status and fatal exit/limits. Host ticks o
 before entropy and checks budget/deadline after; entropy failure is fatal with no
 fallback or status/result-buffer mutation. JSON helpers still reject any host
 reachability. Profile/ABI20 metadata is mandatory even unused; launcher maximum24,
-value12/protocol2 includes v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27. No limits/layout/container/tool-adapter changes.
+value12/protocol2 includes v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27/v28/v29. No limits/layout/container/tool-adapter changes.
 See docs/architecture.md#random-profile-and-host-abi-v20 for lifecycle and tests.
 
 The native-Math profile checked-f64-utf16-v16 selects ABI19 with unchanged
@@ -1185,7 +1185,7 @@ Tick once before math and check budget/deadline after, preserve status, and reta
 fatal traps/exit. Host-free JSON helpers reject reachable native imports regardless
 of purity. V16 has no Math.random, coercion, spread/generics/computed/borrowed calls or
 unnarrowed unions. V16/ABI19 metadata is mandatory without any active import;
-launcher maximum26/value12 and v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27 negotiation must accompany both rebuilt binaries.
+launcher maximum28/value12 and v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27/v28/v29 negotiation must accompany both rebuilt binaries.
 No new heap/helper/layout/container/dependency/capability/limit. Test every operation,
 special bits/domains/atan2 quadrants, finite known values/exponent invariants,
 one-call accounting, hostile ABI/signature/profile/name data, helper purity, roots/
@@ -1264,29 +1264,49 @@ Placement rules:
 
 ## 3. Commands and quality gates
 
-The following gates must pass before every commit, and they are run frequently during work — not only at the end:
+Use scoped verification during development; do not run the full workspace after
+individual edits. Implement a coherent batch of related tasks, check changed
+behavior and its callers, then run the full gate once for the completed code batch
+before committing. See [the verification map](docs/verification.md).
+
+Keep a development batch open across related operator/builtin families rather
+than treating each syntax form as a separate delivery. During intermediate work,
+run only checks needed for the changed behavior or a concrete failure. Consolidate
+Clippy, public API, packaged execution, conformance reports and documentation at
+the completed batch boundary; repeat earlier only when a changed boundary or new
+failure justifies it. Do not repeatedly close and reverify adjacent increments.
 
 ```bash
-cargo fmt --all -- --check              # formatting; plain `cargo fmt --all` fixes
-cargo check -p varta-common -p varta-compiler -p varta-runtime -p varta-artifact --lib --locked
-cargo build -p varta-launcher --bin varta-runtime --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo build --workspace --all-targets --locked
-cargo test --workspace --locked
-cargo test -p varta --test smoke --locked # CLI end-to-end tests
-cargo run -p varta-conformance --locked -- --json # reviewed checked-case baseline; known gaps are not passes
+python3 scripts/verify.py local varta-bigint
+python3 scripts/verify.py local varta-runtime --filter array_inference
+python3 scripts/verify.py feature array_inference
+python3 scripts/verify.py full
 ```
 
-CI runs exactly this set. If clippy fails, fix the code, not the lint; `cargo clippy --fix --allow-dirty` may apply the mechanical part, but review the result as code. Report failures honestly with output; never claim tests pass without running them.
+Local runs check one crate and execute its selected tests. Feature runs cover the
+matching runtime unit, public engine API and CLI artifact tests; use direct Cargo
+commands when a feature uses different test names. A zero-test selection is not
+verification. Full runs formatting, isolated core check, companion build, strict
+workspace Clippy, all-target build, workspace tests and the conformance baseline.
+Workspace tests already contain CLI smoke tests: repeat those separately only for
+launcher/packaging changes or a specific flaky-test investigation. CI runs the full
+set on Linux and macOS without the redundant second CLI run.
 
-Useful during development:
+Changes to shared ABI/layouts, GC/roots, capability enforcement, dependencies or
+artifact/distribution contracts need broad affected-boundary tests before a batch
+is considered complete; a single feature filter cannot prove those invariants.
+Keep production budgets unchanged. On failure, fix and rerun the relevant tests;
+run the final full gate after the last code fix, not between every attempted fix.
 
-```bash
-cargo check                             # fast type-check, no codegen
-cargo run --bin varta -- <command>       # workspace also builds varta-runtime
-cargo test <name> -- --nocapture        # one test with stdout visible
-cargo test -- --test-threads=1          # when tests share state
-```
+Record actual scope and results. The helper writes logs and a source fingerprint
+under ignored target/verification; it does not skip checks or claim focused tests
+prove a workspace pass. Reuse completed checks only while their relevant inputs
+remain unchanged. After documentation-only edits, check links/commands/diffs; after
+verification-tooling edits, exercise its execution, failure and scope behavior.
+Neither requires repeating engine tests if engine/build inputs are unchanged.
+Never relabel a previous full pass as verification of newer code. Do not claim
+cross-platform success from a local pass. Fix Clippy findings rather than disabling
+lints. Cargo dependencies remain locked.
 
 ## 4. Rust conventions
 
@@ -1368,7 +1388,7 @@ business routes, authentication policy or example payloads belong in runtime.
 
 Inherit all v24 rules under checked-f64-utf16-v25; share ABI26/value12/schema12.
 V25+ admits findIndex/findLast/findLastIndex. Both rebuilt native companions
-must advertise the exact profile (30 supported profiles under protocol2 with v27).
+must advertise the exact profile (32 supported profiles under protocol2 with v29).
 Use existing rooted iteration/call IR, live MaybeIndex reads for holes, reverse
 indices for last searches, cached matched values and -1/Undefined sentinels.
 Preserve callback-before-thisArg lowering and cache effective operands before
@@ -1399,7 +1419,7 @@ explicit future work. See architecture reverse-fold contract and reduce_right te
 
 Classify varta-conformance as development tooling; dependencies point to common,
 compiler and runtime only. Never add it, sha2 or its CLI to runtime distribution.
-The corpus pins ECMAScript 2025/profile v27/checked-ts-main-v1. Keep source hashes,
+The corpus pins ECMAScript 2025/profile v29/checked-ts-main-v1. Keep source hashes,
 mandatory .ts manifest listing, strict schema/version/field/ID/path/core bounds and
 LF checkout bytes. Preserve original snapshots, fresh workers/stores, empty grants
 and environment, default guest limits and bounded stdin/stdout/stderr/deadlines.
@@ -1415,7 +1435,7 @@ review and matching documentation. See conformance/README.md and the CORE ledger
 ## Array initializer inference v27
 
 Inherit v26 under checked-f64-utf16-v27 with shared ABI26/value12/schema12;
-both rebuilt native companions advertise the exact 30-profile list. Only v27 adds
+both rebuilt native companions advertise the exact current profile list. V27 and successors add
 uncontextual array unions. Lower effectful elements once, retain source order,
 flatten admitted member evidence and intern the final union once. Preserve earlier
 aggregate contexts and explicit array typing. Keep context-only record/array
@@ -1435,7 +1455,105 @@ architecture inference contract, array_inference tests and conformance/README.md
 `varta-bigint` is an engine numeric foundation depending only on common engine
 contracts and pinned numeric libraries. Every allocating arithmetic/conversion
 operation takes an explicit caller bit/work budget. Keep fatal capacity/work
-failures distinct from recoverable semantic errors. It has no guest ABI, source
-admission, host imports or default production budget yet. BigInt integration must
-add versioned values, rooting, boundary validation and public source/runtime tests
-before promoting the known unsupported conformance case.
+failures distinct from recoverable semantic errors. V28 consumes it for opaque
+rooted scalars via ABI27; structured value tags remain unchanged. Never interpret
+that scalar increment as complete aggregate/union/throw/JSON BigInt support.
+
+The binary representation lives in `varta-common::bigint`; do not encode
+it as a String or reinterpret numeric digits as roots. Validate the full managed
+leaf and canonical sign/count/high digit before importing a magnitude. Keep the
+existing byte ceiling, charge large shift destination work before allocation, and
+use `Error::recoverable_class` so malformed transport never becomes SyntaxError.
+The internal memory fixture is supplemented by v28 source/public/artifact tests.
+
+## BigInt scalar source profile v28
+
+Use ABI27 typed pure BigInt imports and the shared binary selectors. BigInt is
+an opaque rooted i64 scalar in this increment: value/schema12 and historical
+structured tags remain frozen. Canonical binary literals must be snapshotted into
+managed flag2048 leaves; consume SWC's unsigned digits without a decimal roundtrip.
+Checked result pairs are pointer/error-class, not privileged status results. Cache
+status, snapshot only on success, zero the placeholder on failure, and emit rooted
+native Error construction/throw before any subsequent source effect. Pure helpers
+remain host-free; do not add capabilities or overwrite result_status. Charge all
+native integer/bridge work against remaining guest fuel and check deadlines.
+
+Preserve operand/receiver/ignored-argument ordering, native Type/Range/SyntaxError
+and fatal malformed/resource distinctions, shallow roots through closures and
+finally, exact Number comparisons and old-profile rejection. Aggregate/union/throw
+BigInt, JSON behavior, compound/update syntax and complete coercive method forms
+remain explicit follow-up work. The reviewed v28 corpus has 46 cases: 34 supported,
+12 known unsupported, 7 untested feature rows. Keep the BigInt-array gap visible.
+
+## BigInt graphs v29
+
+Select ABI28/value13/schema13 and exception channel4. Only v29 admits BigInt tag11
+in records, vectors and reference cells; primitive-cell imports/readers stay
+frozen. Canonical BigInt handles are reference edges, even for zero, while digit
+words never are. Keep versioned observation/conversion/equality hosts, numeric
+array search equality and inline union truth. Primitive-union arithmetic caches
+source operands once and specializes checked member pairs; never replay an AST
+expression. Preserve mixed-numeric TypeError and all body/root/metadata budgets.
+
+JSON stringify v13 returns pointer/error-class; snapshot only on success and
+construct/throw a rooted native error before later effects. Validate the whole
+bounded graph before returning semantic BigInt TypeError so malformed later slots,
+cycles and resources remain fatal. Diagnostic aggregate rendering is separate and
+meters BigInt decimal formatting. JSON parse v15/schema13 permits a BigInt type
+node but no JSON token constructs that type; empty typed arrays/absent optional
+fields and JSON-kind-selected unions retain canonical metadata. Keep parser
+helpers host-free and validate schema13 descriptors before publishing channel4
+errors. Owned uncaught BigInt payloads retain all bytes; diagnostics stay bounded.
+
+V28 and older source/value/exception selectors remain frozen. The v29 corpus has
+66 cases: 55 supported, 11 known unsupported, 7 untested feature rows. Its original
+BigInt-array gap was observed as unexpected support and reviewed before promotion;
+the unchanged coercive-width gap was later promoted after observed support.
+
+V29 compound assignments reuse checked scalar/union BigInt arithmetic. Cache the
+prepared receiver/key and old value before RHS effects; store only after success.
+Preserve v28 rejection, sparse/optional presence and current backing resolution.
+V29 numeric increment/decrement uses cached numeric members and matching 1/1n
+units, roots the old and new results, and publishes only after a successful store.
+V29 primitive update ToNumeric converts String/Boolean/Null/Undefined via metered
+PrimitiveNumberV2, preserving converted numeric postfix results. Check computed
+numeric union members against declared storage before writes; only after success
+may a postfix old value be narrowed to the stored numeric kind. Number-capable
+holes/optional fields become NaN; BigInt-only missing stores still throw without
+mutation. Preserve older noncoercive profiles and selected dynamic-record field
+types. Object ToPrimitive and general inferred storage widening remain pending.
+
+V29 primitive width/radix methods use ABI28 BigIntWidthV2/BigIntToStringV2.
+Cache receiver and all arguments before conversion, root every boxed argument
+before creating the next, and preserve ignored-argument effects. Validate canonical
+transports before semantic failures; apply ToIndex then ToBigInt for widths,
+reject Number values (unlike BigInt()), and treat only undefined radix as default.
+Implicit numeric conversion rejects BigInt. Charge parsing/encoding and preserve
+fatal malformed/resource errors and pure result_status. Old v28 imports stay frozen.
+
+V29 compound arithmetic/bitwise assignments cache old value and RHS before
+conversion. Addition branches on actual String kind, then uses metered
+PrimitiveStringV2; numeric paths reuse primitive ToNumeric once per operand and
+dispatch only Number/BigInt pairs. Exclude always-throwing mixed pairs from result
+type joins, with an unreachable left-compatible result when no pair succeeds.
+Reuse checked_assignment_result for update/compound results before stores,
+including dynamic-record aggregate result narrowing and per-field store guards.
+Retain RHS effects on failed storage, exact roots and old-profile diagnostics.
+Do not increase body, root, memory or fuel limits to admit wider dispatch.
+V29 ordinary arithmetic/bitwise/shift expressions share primitive_arithmetic
+with compounds. Preserve scalar Number and String fast paths; normalize wide
+primitive unions once before numeric dispatch. Primitive unary +, - and ~ use
+ToNumeric with a Number result domain for +; BigInt plus still calls the checked
+native unary host before throwing, retaining fatal malformed/resource behavior.
+Keep ordinary operands/read effects once, exact numeric kinds and older profiles.
+Object ToPrimitive and full comparison/equality semantics remain explicit gaps.
+
+V29 comparisons use pure ABI28 PrimitiveEqual(strict,left,right)->i32 and
+PrimitiveCompare(left,right)->f64 with canonical value13 primitive cells. Validate
+both cells before early strict mismatch; malformed/resources stay fatal. Preserve
+exact BigInt/Number comparison, integer-string grammar for BigInt/String and
+UTF16 lexical ordering for two Strings. NaN order yields false for all four
+relational operators. Cache both source operands before boxing/rooting arguments.
+Keep scalar Number/String/equality and known-nullish guest fast paths, so loops
+do not consume native call ceilings. The Node oracle fixture covers eight modes
+by 256 pairs. Object/Symbol coercion and unrestricted storage remain unfinished.

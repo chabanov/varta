@@ -6,6 +6,8 @@ pub const VERSION: &str = "varta.exception.version";
 pub const ERROR_CHANNEL_VERSION: i32 = 2;
 pub const FAMILY_VERSION: &str = "varta.exception.version_v3";
 pub const FAMILY_CHANNEL_VERSION: i32 = 3;
+pub const BIGINT_VERSION: &str = "varta.exception.version_v4";
+pub const BIGINT_CHANNEL_VERSION: i32 = 4;
 pub const VALUE: &str = "varta.exception.value";
 pub const ROOT: usize = abi::STRING_ROOT_BASE;
 pub const RESERVED_ROOT_BYTES: usize = abi::STRING_ROOT_SLOT_BYTES;
@@ -13,6 +15,8 @@ pub const MAX_DIAGNOSTIC_UNITS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThrownValue {
+    /// Owned canonical binary payload; diagnostics are bounded hexadecimal.
+    BigInt(Vec<u8>),
     /// Raw binary64 bits preserve NaN and signed zero without a heap reference.
     Number(u64),
     Boolean(bool),
@@ -37,6 +41,7 @@ pub struct UncaughtException {
 impl std::fmt::Display for ThrownValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::BigInt(payload) => crate::bigint::write_diagnostic(f, payload),
             Self::Number(bits) => {
                 let n = f64::from_bits(*bits);
                 if n == f64::INFINITY {

@@ -11,11 +11,7 @@ pub(crate) fn validate(
     profile: varta_common::language::LanguageProfile,
 ) -> Result<(), RuntimeError> {
     let enabled = profile.exceptions();
-    let version_name = if profile.error_families() {
-        abi::FAMILY_VERSION
-    } else {
-        abi::VERSION
-    };
+    let version_name = profile.exception_channel().0;
     for export in module
         .exports()
         .filter(|e| e.name().starts_with(abi::PREFIX))
@@ -74,6 +70,7 @@ pub(crate) fn initial(
     for (name, expected) in [
         (abi::VERSION, abi::ERROR_CHANNEL_VERSION),
         (abi::FAMILY_VERSION, abi::FAMILY_CHANNEL_VERSION),
+        (abi::BIGINT_VERSION, abi::BIGINT_CHANNEL_VERSION),
     ] {
         if let Some(version) = instance.get_global(&mut *store, name)
             && version.get(&mut *store).i32() != Some(expected)
@@ -124,11 +121,17 @@ pub(crate) fn finish(
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| invalid("missing exception memory"))?;
-    let families = instance
-        .get_global(&mut *store, abi::FAMILY_VERSION)
+    let bigints = instance
+        .get_global(&mut *store, abi::BIGINT_VERSION)
         .is_some();
+    let families = bigints
+        || instance
+            .get_global(&mut *store, abi::FAMILY_VERSION)
+            .is_some();
     let errors = families || instance.get_global(&mut *store, abi::VERSION).is_some();
-    let version = if families {
+    let version = if bigints {
+        BIGINT_VALUE_VERSION
+    } else if families {
         ERROR_FAMILY_VALUE_VERSION
     } else {
         ERROR_VALUE_VERSION
@@ -156,6 +159,12 @@ pub(crate) fn finish(
     };
     use varta_common::exceptions::ThrownValue as V;
     let value = match cell.kind {
+        ValueKind::BigInt => {
+            crate::bigint::validate_handle(data, cell.payload as i64)?;
+            let start = cell.payload as u32 as usize;
+            let len = (cell.payload >> 32) as usize;
+            V::BigInt(data[start..start + len].to_vec())
+        }
         ValueKind::Float64 => V::Number(cell.payload),
         ValueKind::Boolean => V::Boolean(cell.payload != 0),
         ValueKind::Null => V::Null,

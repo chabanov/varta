@@ -1,27 +1,6 @@
 use super::*;
 use num_bigint::Sign;
 use num_traits::{One, ToPrimitive};
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnaryOp {
-    Negate,
-    Not,
-    Plus,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinaryOp {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Remainder,
-    Power,
-    And,
-    Or,
-    Xor,
-    LeftShift,
-    RightShift,
-    UnsignedRightShift,
-}
 impl Integer {
     pub fn unary(&self, op: UnaryOp, budget: &mut Budget) -> Result<Self, Error> {
         budget.charge(words(self.bits()))?;
@@ -132,7 +111,11 @@ impl Integer {
         }
         let amount = amount.ok_or(Error::BitCapacity)?;
         if left {
-            budget.capacity(self.bits().checked_add(amount).ok_or(Error::BitCapacity)?)?;
+            let bits = self.bits().checked_add(amount).ok_or(Error::BitCapacity)?;
+            budget.capacity(bits)?;
+            // A tiny operand can grow into a large result. Charge that work
+            // before num-bigint allocates or initializes the destination digits.
+            budget.charge(words(bits))?;
         }
         let amount = usize::try_from(amount).map_err(|_| Error::BitCapacity)?;
         budget.finish(if left {

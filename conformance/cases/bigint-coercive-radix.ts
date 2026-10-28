@@ -1,0 +1,1 @@
+export function main():void{console.log((255n).toString('16'));console.log((255n).toString(undefined));try{(1n).toString(2n);}catch(e){console.log(e instanceof TypeError);}try{(1n).toString('bad');}catch(e){console.log(e instanceof RangeError);}try{BigInt.asIntN(0,1);}catch(e){console.log(e instanceof TypeError);}}

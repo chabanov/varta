@@ -32,8 +32,11 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             "varta-launcher",
             ["varta-common", "varta-artifact", "varta-runtime"].as_slice(),
         ),
-        ("varta-compiler", ["varta-common"].as_slice()),
-        ("varta-runtime", ["varta-common"].as_slice()),
+        (
+            "varta-compiler",
+            ["varta-common", "varta-bigint"].as_slice(),
+        ),
+        ("varta-runtime", ["varta-common", "varta-bigint"].as_slice()),
         (
             "varta-project",
             [

@@ -2,6 +2,17 @@
 //! Capability-checked Wasmtime execution. Only portable Wasm enters this API.
 #[cfg(test)]
 mod array_tests;
+mod bigint;
+#[cfg(test)]
+mod bigint_abi_tests;
+#[cfg(test)]
+mod bigint_memory_tests;
+#[cfg(test)]
+mod bigint_tests;
+#[cfg(test)]
+mod bigint_values_abi_tests;
+#[cfg(test)]
+mod bigint_values_tests;
 #[cfg(test)]
 mod contract_tests;
 mod contracts;
@@ -87,9 +98,15 @@ mod power_tests;
 mod predicate_search_tests;
 #[cfg(test)]
 mod primitive_builtin_tests;
+#[cfg(test)]
+mod primitive_comparison_tests;
+#[cfg(test)]
+mod primitive_compound_tests;
 mod primitive_number;
 #[cfg(test)]
 mod primitive_number_tests;
+#[cfg(test)]
+mod primitive_operator_tests;
 mod primitive_string;
 #[cfg(test)]
 mod primitive_string_tests;
@@ -106,6 +123,8 @@ mod reduce_right_tests;
 mod truth_guard_tests;
 #[cfg(test)]
 mod undefined_tests;
+#[cfg(test)]
+mod update_coercion_tests;
 #[cfg(test)]
 mod update_tests;
 mod validate;

@@ -1,0 +1,1 @@
+function post(n:bigint|number):bigint|number{return n++;}export function main():void{let n=9007199254740993n;console.log(n++);console.log(++n);console.log(n--);console.log(--n);const a:bigint[]=[8n];console.log(a[0]++);console.log(--a[0]);console.log(typeof post(2n));console.log(typeof post(2));}

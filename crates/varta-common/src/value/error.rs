@@ -35,7 +35,10 @@ impl ErrorObject {
         let class = ErrorClass::from_tag(flags >> ERROR_CLASS_SHIFT).ok_or_else(invalid)?;
         if !matches!(
             version,
-            ERROR_VALUE_VERSION | ERROR_FAMILY_VALUE_VERSION | SPARSE_VALUE_VERSION
+            ERROR_VALUE_VERSION
+                | ERROR_FAMILY_VALUE_VERSION
+                | SPARSE_VALUE_VERSION
+                | BIGINT_VALUE_VERSION
         ) || (version == ERROR_VALUE_VERSION && class != ErrorClass::Error)
         {
             return Err(invalid());

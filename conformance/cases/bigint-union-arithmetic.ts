@@ -1,0 +1,1 @@
+function value(n:bigint|number|undefined):bigint|number|undefined{return n;}export function main():void{console.log(value(1n)+value(2n));console.log(value(undefined)+value(undefined));try{console.log(value(1n)+value(2));}catch(e){console.log(e instanceof TypeError);}}

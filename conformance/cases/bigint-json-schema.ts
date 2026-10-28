@@ -1,0 +1,1 @@
+export function main():void{try{console.log(varta.json.parse<bigint>('123'));}catch(e){console.log(e instanceof TypeError);}const value=varta.json.parse<bigint|number>('123');console.log(typeof value);console.log(value);}

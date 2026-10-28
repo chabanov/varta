@@ -5719,13 +5719,179 @@ Earlier profiles retain their original literal admission rules. This closes the
 specific inference gap and does not close CORE-01/02/15 or establish general
 ECMAScript, dynamic object or Test262 support.
 
-### BigInt mathematical foundation (guest integration pending)
+### BigInt mathematical and binary foundation
 
 The internal `varta-bigint` crate supplies immutable mathematical integers with
 explicit caller-provided result-bit and work budgets. It implements string/UTF-16
 parsing, arithmetic, signed bitwise/shift operations, Number conversion and exact
 comparison, radix formatting and signed/unsigned width conversion. Resource errors
-remain distinct from recoverable semantic errors. Compiler/runtime guest values
-do not consume this crate yet: no BigInt tag, profile or host ABI is admitted.
-The next step requires versioned transport, roots, host validation and source-level
-regressions before updating the compatibility inventory.
+remain distinct from recoverable semantic errors. V28 consumes this crate for
+opaque scalar values; no structured BigInt tag is admitted yet.
+The binary transport is defined in `varta-common::bigint`: an eight-byte
+sign/count header followed by canonical little-endian base-2^32 digits. Sign 0
+requires no digits; signs 1/2 require a nonzero highest digit. Payload length is
+exact and bounded by the existing 1 MiB ceiling. Managed blocks reserve leaf flag
+2048, retain the existing 16-byte allocation header and have a zero child mask and
+reserved word. `BigIntView` validates payload/block ranges, allocation flags,
+alignment and canonicality before borrowing digits. `varta-bigint` imports and
+exports this format with explicit capacity/work checks and no decimal bridge.
+Large left shifts also charge destination work before allocating it. Only declared
+semantic failures map to native error classes: malformed binary transport and
+resource failures cannot enter the recoverable channel.
+
+An internal runtime fixture exercises this leaf with the actual generated
+allocator/retainer/collector: roots preserve it, digit bits do not retain another
+block, and dropping the root permits reclamation. This fixture does not admit
+BigInt in a source profile or change old value/host versions. V28 source emission,
+version negotiation and runtime arithmetic now consume that representation as
+specified below. Aggregate/exception/JSON integration remains future work.
+
+### BigInt scalar source profile v28 (host ABI27)
+
+V28 admits opaque scalar BigInt with exact binary leaves. It retains value/schema12
+and does not add a structured value tag. Parsed literals reuse SWC's unsigned
+base-2^32 digits and are copied into managed flag2048 leaves. Parameters, returns,
+locals and closure cells use rooted i64 handles, never f64 or untraced numeric bits.
+Ten shared pure host operations cover binary/unary arithmetic, Number/string
+construction, text/Number output, exact BigInt/Number/string comparisons and typed
+signed/unsigned widths. Unknown selectors or noncanonical managed inputs are fatal.
+
+Checked operations return (result pointer, native error class). The compiler
+stores both, snapshots the shared result buffer only on success, labels BigInt
+blocks as leaves and clears the allocation reserved word. Failure produces a zero
+placeholder and a rooted TypeError/RangeError/SyntaxError throw before later source
+effects. Privileged result_status is preserved. Every host call ticks the ordinary
+call/deadline limits; integer work uses remaining guest fuel and the existing
+payload capacity, then returns remaining fuel to the store. Formatting/UTF-16
+output work is charged as well. Capacity/work/deadline failures bypass catch/finally.
+
+Operands and ignored trailing arguments are evaluated once before conversion;
+comparison never rounds a BigInt to Number. Invalid string comparisons produce
+unordered results instead of throwing constructor SyntaxError. Methods currently
+require Number/Undefined radix or explicit Number width and BigInt value. BigInt
+aggregates, unions, thrown values, JSON semantics, compound/update syntax and full
+coercive built-ins remain pending; a conformance array gap records that boundary.
+The default and all historical profiles retain their prior admission and ABI.
+
+### BigInt graph profile v29 (host ABI28/value13/schema13)
+
+Tag11 denotes the canonical managed BigInt leaf from v28. It is a reference in
+record slots, vector backings and immutable reference cells, including zero; the
+leaf itself has no children. Old value versions reject tag11, old primitive cells
+remain primitive-only, and v28 source still rejects structured BigInt. V29 adds
+versioned value observation/conversion hosts and uses content equality for canonical
+BigInt payloads in array searches without importing a host into managed helpers.
+
+Primitive arithmetic involving BigInt unions first caches both source operands.
+A bounded conditional dispatch unboxes actual primitive kinds, preserves string
+addition and Number results, and throws native TypeError for mixed numeric kinds.
+Generated branches retain the existing 64 KiB body, depth and root budgets. No
+effectful source expression is evaluated again to infer or dispatch a type.
+
+Stringify v13 returns (pointer, error class); the compiler snapshots only successful
+results, including boxed String|Undefined roots. The encoder validates the bounded
+graph before reporting BigInt TypeError. V13 record headers, trace masks and
+metadata use the shared strict aggregate validator, including direct JSON roots.
+Valid BigInt marks a deferred semantic failure, while corrupt later children, cycles and budgets remain fatal. Diagnostic
+aggregate rendering instead emits metered decimal BigInt with n suffix. Parse
+v15/schema13 admits a BigInt node for type checking, but no JSON token decodes to
+it. Number|BigInt selects Number; absent optional fields and empty typed arrays
+still produce canonical metadata. Decoder helpers stay host-free.
+
+Exception channel4 selects reference-reader v13 and rejects old channel markers.
+It retains BigInt through pending exceptions, catches and finally, then copies the
+full canonical binary payload for uncaught errors before dropping guest memory.
+Bounded hexadecimal diagnostics avoid unbounded decimal conversion in error paths.
+The existing runtime ceilings and historical profile interpretations persist.
+
+### V29 primitive BigInt width/radix conversion
+
+Pure ABI28 bigint_width_v2 has (i32,i64,i64)->(i32,i32) for signed flag and
+canonical v13 width/value cells. bigint_to_string_v2 has
+(i64,i64)->(i32,i32) for the BigInt receiver and primitive radix cell. Both
+reuse checked pointer/error-class results, successful-only snapshots and rooted
+native exceptions; resource/malformed failures remain fatal and pure result_status
+is untouched. Validate all transported operands before returning semantic errors.
+The compiler caches receiver/arguments/extras before conversion and roots every
+boxed argument before allocating another. ToIndex width precedes ToBigInt value;
+Number values are TypeError while Boolean/String are converted. Radix defaults
+only on Undefined, then uses implicit ToNumber (BigInt is TypeError) and the
+existing bounded radix formatting. Parsing, binary import and UTF16 encoding
+consume guest fuel with deadlines checked. V28 typed imports and source admission
+remain frozen; this primitive path does not implement object/prototype/Symbol
+coercion. Primitive update ToNumeric is specified below.
+
+### V29 primitive update ToNumeric and checked stores
+
+After caching a prepared reference/read once, updates retain BigInt and convert
+other admitted primitive members through the existing metered PrimitiveNumberV2.
+Postfix returns the converted old numeric value, including signed zero/NaN.
+The increment/decrement unit matches Number or BigInt. Before writing, narrow
+computed numeric unions to members accepted by declared storage; incompatible
+actual members throw rooted TypeError. Only after that successful store can a
+postfix old union be unboxed to its proven numeric kind. Dynamic record writes
+still check each selected field and retain key/order/presence rules.
+Number-capable missing fields/array entries can store NaN and publish presence;
+BigInt-only storage rejects the Number result without mutation. String-only
+storage rejects a statically incompatible Number update. Arrays remain invariant.
+Old/new numeric results and source values stay rooted across boxing, native
+conversion and checked stores; all existing fuel/body/root/heap limits remain.
+V28 and older update contracts stay noncoercive. Object ToPrimitive and general
+inferred storage widening are separate unfinished language/value work.
+
+### V29 primitive compound assignment coercion
+
+Cache the prepared read and RHS once before conversions. Addition tests actual
+String tags, using PrimitiveStringV2 for concatenation. Numeric paths normalize
+primitive operands once with the update ToNumeric helper and then dispatch at
+most two-by-two Number/BigInt combinations, avoiding a six-by-six conversion
+expansion. The shared union helper meters String/Number conversions through v2
+imports and excludes mixed-numeric throwing pairs from result type joins. If
+all pairs throw, an unreachable result retains left-compatible physical types;
+no fake BigInt result can turn a Number-target TypeError into static rejection.
+
+checked_assignment_result is shared by updates and compounds. It caches the
+computed value, accepts only members compatible with declared storage and throws
+before an incompatible store. Dynamic records first narrow to successful field
+result types, then preserve selected-field guards. Earlier RHS mutations remain
+on failure; target presence/order changes only after a successful store.
+Root old values, converted strings and outputs across calls/boxing/GC; all ABI,
+value/schema versions and body/root/fuel/heap ceilings remain unchanged. V28 and
+older contracts remain frozen. Object ToPrimitive, inferred storage widening
+and full primitive comparison/equality remain separate work.
+
+### V29 ordinary arithmetic and unary conversion
+
+primitive_arithmetic serves ordinary and compound arithmetic/bitwise/shift
+expressions. Cache source operands before conversion, retain direct Number
+operations and existing String values, branch on actual String tags for addition
+and normalize remaining primitive unions before numeric-kind dispatch. Ordinary
+reads never perform the compound store step. All pure imports, ABI28/value13/
+schema13/channel4 selectors and resource ceilings remain unchanged.
+
+Primitive unary +, - and ~ first normalize numeric kinds. Minus/not retain BigInt.
+Unary plus has Number success type; its BigInt path evaluates the operand and
+uses checked BigIntUnary(Plus) before an unreachable Number result. Canonical
+leaf/work validation therefore precedes native TypeError, and malformed/resources
+remain fatal without catch/finally. Root cached union inputs and outputs across
+conversion/native snapshots, preserving signed zero and once-only effects.
+Historical profiles remain frozen. Object/Symbol ToPrimitive and complete
+comparison/equality remain unfinished independently of these arithmetic paths.
+
+### V29 primitive comparison and equality
+
+Pure ABI28 primitive_equal has (i32,i64,i64)->i32 for strict flag and canonical
+value13 cells; primitive_compare has (i64,i64)->f64 returning -1/0/1 or NaN.
+Both cells are validated before semantic short circuits, and all native scanning,
+parsing and integer work consumes guest fuel. Malformed/resources remain fatal
+without catch/finally. Abstract equality handles nullish pairs, Boolean numeric
+conversion, String/Number and exact BigInt/String/Number cases. BigInt/String
+ordering uses integer grammar; invalid strings yield unordered, while two Strings
+compare UTF16 units, including lone surrogates. Relational operators compare the
+order result directly against zero, preserving NaN false in <=/>=.
+
+Cache left/right source effects before boxing and root both cells across calls.
+Scalar Number/String comparisons, same-kind Boolean equality, known-nullish
+checks and existing BigInt paths retain fast execution, avoiding new native call
+ceilings for ordinary loops. Older profiles and object/reference handling retain
+their prior contracts. Full object/Symbol ToPrimitive remains unfinished.

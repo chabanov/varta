@@ -1,0 +1,1 @@
+export function main():void{let text='x';console.log(text+=1);console.log(text+=true);console.log(text+=2n);let n:number|string='2';console.log(n*='3');console.log(n<<=true);console.log(n+=null);console.log(n/=false);let number=2;try{number+=1n;}catch(e){console.log(e instanceof TypeError);}console.log(number);}

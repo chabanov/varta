@@ -1,0 +1,1 @@
+export function main():void{try{console.log(1n/0n);}catch(e){console.log(e instanceof RangeError);}try{console.log(BigInt('1.5'));}catch(e){console.log(e instanceof SyntaxError);}try{console.log(+1n);}catch(e){console.log(e instanceof TypeError);}}

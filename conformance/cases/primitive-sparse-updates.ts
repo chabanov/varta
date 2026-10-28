@@ -1,0 +1,1 @@
+export function main():void{const a:number[]=[1];delete a[0];console.log(a[0]++);console.log(Object.hasOwn(a,0));console.log(++a[3]);console.log(a.length);console.log(Object.hasOwn(a,1));const r:{first:number;n?:number|undefined}={first:1};console.log(r.n++);console.log(JSON.stringify(Object.keys(r)));console.log(JSON.stringify(r));}
