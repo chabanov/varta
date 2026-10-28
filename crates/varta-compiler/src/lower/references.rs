@@ -1,4 +1,35 @@
 use super::*;
+// Type hints supply aggregate layout context without constraining an inferred
+// element's final type or creating a synthetic union descriptor.
+#[derive(Clone, Copy, Default)]
+pub(super) struct AggregateHints {
+    pub(super) array: Option<Type>,
+    pub(super) record: Option<Type>,
+}
+impl AggregateHints {
+    pub(super) fn from_members(members: &[Type]) -> Self {
+        Self {
+            array: members
+                .iter()
+                .find(|ty| matches!(ty, Type::Array(_)))
+                .copied(),
+            record: members
+                .iter()
+                .find(|ty| matches!(ty, Type::Record(_)))
+                .copied(),
+        }
+    }
+    pub(super) fn select(self, mut expression: &ast::Expr) -> Option<Type> {
+        while let ast::Expr::Paren(paren) = expression {
+            expression = &paren.expr;
+        }
+        match expression {
+            ast::Expr::Array(_) => self.array,
+            ast::Expr::Object(_) => self.record,
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, Copy)]
 pub(super) enum Guard {
     Exact(Type),
@@ -56,17 +87,18 @@ impl Lower<'_> {
         &mut self,
         branch: &ast::CondExpr,
         expected: Option<Type>,
+        hints: Option<AggregateHints>,
     ) -> Result<Expr> {
         let test = self.condition(&branch.test)?;
         let saved = self.flow_snapshot();
         self.guard(&branch.test, true)?;
         self.flow_edge(flow_control::truth(&branch.test) != Some(false));
-        let yes = self.expr_expected(&branch.cons, expected)?;
+        let yes = self.expr_contextual(&branch.cons, expected, hints)?;
         let yes_state = self.flow_snapshot();
         self.flow_alternate(&saved);
         self.guard(&branch.test, false)?;
         self.flow_edge(flow_control::truth(&branch.test) != Some(true));
-        let no = self.expr_expected(&branch.alt, expected)?;
+        let no = self.expr_contextual(&branch.alt, expected, hints)?;
         self.flow_join(&saved, &[yes_state, self.flow_snapshot()])?;
         let (ty, yes, no) = if yes.ty == no.ty {
             (yes.ty, yes, no)

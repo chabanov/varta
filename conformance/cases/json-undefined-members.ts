@@ -1,0 +1,1 @@
+export function main():void{const a:{x:number;missing?:number}={x:1,missing:undefined};console.log(JSON.stringify(a));const values:(number|undefined)[]=[1,undefined];console.log(JSON.stringify(values));}

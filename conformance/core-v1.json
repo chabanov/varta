@@ -1,0 +1,888 @@
+{
+  "schemaVersion": 1,
+  "id": "checked-core-v1",
+  "edition": "ECMAScript 2025",
+  "sourceModel": "checked-ts-main-v1",
+  "profile": "checked-f64-utf16-v27",
+  "features": [
+    {
+      "id": "binary64",
+      "title": "Binary64 Number edges",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html#sec-ecmascript-language-types-number-type"
+    },
+    {
+      "id": "primitive-conversions",
+      "title": "Primitive String and Number conversions",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-type-conversion"
+    },
+    {
+      "id": "numeric-prefix-parsers",
+      "title": "Prefix numeric parsers",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/global-object.html#sec-parseint-string-radix"
+    },
+    {
+      "id": "number-formatting",
+      "title": "Decimal precision formatting",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-number.prototype.tofixed"
+    },
+    {
+      "id": "utf16",
+      "title": "UTF-16 code-unit strings",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.charcodeat"
+    },
+    {
+      "id": "truth-logical",
+      "title": "ToBoolean and operand-valued logical operators",
+      "core": [
+        "CORE-01",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-toboolean"
+    },
+    {
+      "id": "strict-equality",
+      "title": "Strict equality",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-isstrictlyequal"
+    },
+    {
+      "id": "record-properties",
+      "title": "Closed record presence and key ordering",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinaryownpropertykeys"
+    },
+    {
+      "id": "array-sparse-search",
+      "title": "Sparse array search and predicate traversal",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-findviapredicate"
+    },
+    {
+      "id": "array-reverse-fold",
+      "title": "Reverse seeded and unseeded folds",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.reduceright"
+    },
+    {
+      "id": "array-reverse",
+      "title": "Sparse reverse identity",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.reverse"
+    },
+    {
+      "id": "closures",
+      "title": "Lexical captured bindings",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-runtime-semantics-instantiateordinaryfunctionobject"
+    },
+    {
+      "id": "finally-completion",
+      "title": "Finally completion replacement",
+      "core": [
+        "CORE-03",
+        "CORE-04"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-try-statement-runtime-semantics-evaluation"
+    },
+    {
+      "id": "native-errors",
+      "title": "Recoverable standard error classes",
+      "core": [
+        "CORE-04"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.repeat"
+    },
+    {
+      "id": "math",
+      "title": "Checked Math algorithms",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-math.min"
+    },
+    {
+      "id": "json-stringify",
+      "title": "Checked JSON serialization",
+      "core": [
+        "CORE-10"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/structured-data.html#sec-json.stringify"
+    },
+    {
+      "id": "typed-json",
+      "title": "Strict typed JSON contract",
+      "core": [
+        "CORE-10",
+        "CORE-13"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "capability-denials",
+      "title": "Empty-grant host denial and retained system status",
+      "core": [
+        "CORE-11",
+        "CORE-13"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "bigint",
+      "title": "BigInt primitive arithmetic",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html#sec-ecmascript-language-types-bigint-type"
+    },
+    {
+      "id": "symbol",
+      "title": "Symbol primitives",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-symbol-constructor"
+    },
+    {
+      "id": "classes",
+      "title": "Class construction and properties",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-functions-and-classes.html#sec-class-definitions"
+    },
+    {
+      "id": "property-descriptors",
+      "title": "Dynamic property descriptors",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.defineproperty"
+    },
+    {
+      "id": "map",
+      "title": "Map collection",
+      "core": [
+        "CORE-05"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/keyed-collections.html#sec-map-objects"
+    },
+    {
+      "id": "set",
+      "title": "Set collection",
+      "core": [
+        "CORE-05"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/keyed-collections.html#sec-set-objects"
+    },
+    {
+      "id": "typed-arrays",
+      "title": "Typed arrays and binary buffers",
+      "core": [
+        "CORE-05"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-typedarray-objects"
+    },
+    {
+      "id": "promise-construction",
+      "title": "Promise construction",
+      "core": [
+        "CORE-08"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-promise-objects"
+    },
+    {
+      "id": "async-await",
+      "title": "Async functions and await",
+      "core": [
+        "CORE-09"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-async-function-objects"
+    },
+    {
+      "id": "date",
+      "title": "Date objects",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-date-objects"
+    },
+    {
+      "id": "regexp",
+      "title": "Regular expressions",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-regexp-regular-expression-objects"
+    },
+    {
+      "id": "generators",
+      "title": "Generator iteration",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-generatorfunction-objects"
+    },
+    {
+      "id": "script-realms",
+      "title": "Standalone scripts, realms and Test262 harness",
+      "core": [
+        "CORE-03",
+        "CORE-15"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-scripts"
+    },
+    {
+      "id": "module-initialization",
+      "title": "General module initialization and linking",
+      "core": [
+        "CORE-12"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-modules"
+    },
+    {
+      "id": "promise-jobs",
+      "title": "Promise jobs and microtask ordering",
+      "core": [
+        "CORE-08"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-promise-jobs"
+    },
+    {
+      "id": "weak-reference-lifecycle",
+      "title": "Weak references and finalization lifecycle",
+      "core": [
+        "CORE-07"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/managing-memory.html#sec-weak-ref-objects"
+    },
+    {
+      "id": "runtime-lifecycle",
+      "title": "Sustained GC, cancellation and owned shutdown acceptance",
+      "core": [
+        "CORE-07",
+        "CORE-16"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/development-plan.md"
+    },
+    {
+      "id": "platform-distribution",
+      "title": "Cross-platform release and artifact acceptance",
+      "core": [
+        "CORE-14"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/development-plan.md"
+    },
+    {
+      "id": "performance-security",
+      "title": "Performance measurements, fuzzing and independent review",
+      "core": [
+        "CORE-16"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/development-plan.md"
+    },
+    {
+      "id": "array-union-inference",
+      "title": "Uncontextual array union inference",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-array-initializer"
+    }
+  ],
+  "cases": [
+    {
+      "id": "number-negative-zero",
+      "feature": "binary64",
+      "path": "cases/number-negative-zero.ts",
+      "sha256": "67b599d17181e0d0e7f77f6351540e604a3f340e206f58f16693c73cd06d8a37",
+      "stdout": [
+        "varta log: -Infinity",
+        "varta log: -1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "number-power-sign",
+      "feature": "binary64",
+      "path": "cases/number-power-sign.ts",
+      "sha256": "a2c88881e17a6bf16f8cf9f65b344261ea2f263ccc28e658ec8c11d8a2b4eeb2",
+      "stdout": [
+        "varta log: -Infinity",
+        "varta log: 0.25"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "number-whole-string",
+      "feature": "primitive-conversions",
+      "path": "cases/number-whole-string.ts",
+      "sha256": "9d8bddc132f19f0a7abffc9dda32144d3221d56eaf9485e0080ae8b2e8941a63",
+      "stdout": [
+        "varta log: 16",
+        "varta log: NaN"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "prefix-integer-and-float",
+      "feature": "numeric-prefix-parsers",
+      "path": "cases/prefix-integer-and-float.ts",
+      "sha256": "ea3a9de5020bdc799164570fb3efbbb24725647caef01eb8d055d7b359c20406",
+      "stdout": [
+        "varta log: -16",
+        "varta log: 1.25"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "number-tie-format",
+      "feature": "number-formatting",
+      "path": "cases/number-tie-format.ts",
+      "sha256": "c63eee86ff1b028df7431d18a699d90f0fb923ad57b6f576798b8ccea04baac8",
+      "stdout": [
+        "varta log: 1.3",
+        "varta log: f"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "utf16-surrogates",
+      "feature": "utf16",
+      "path": "cases/utf16-surrogates.ts",
+      "sha256": "0fcd54cd6d92af97f20a592fb9ca3dae78524c3f139720576f0c1de647ec8012",
+      "stdout": [
+        "varta log: 2",
+        "varta log: 55296"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "truth-values",
+      "feature": "truth-logical",
+      "path": "cases/truth-values.ts",
+      "sha256": "c21305c34d6e2576373d55ce4e68afeb5975d0505c75e333d83ae8a1f4fbd311",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "logical-short-circuit",
+      "feature": "truth-logical",
+      "path": "cases/logical-short-circuit.ts",
+      "sha256": "90e22da3593650d2a6412726577bb85270f4ebf64d86c2986ce2ea4a8b13b1a6",
+      "stdout": [
+        "varta log: 3",
+        "varta log: 3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "strict-number-equality",
+      "feature": "strict-equality",
+      "path": "cases/strict-number-equality.ts",
+      "sha256": "37df09729f98dca529d0a4f12e8f19c55ca3ec0cb4f36954d6b95946473e7fd0",
+      "stdout": [
+        "varta log: 0",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "record-own-order",
+      "feature": "record-properties",
+      "path": "cases/record-own-order.ts",
+      "sha256": "8596b0485e2781cb31caa1dbc2f5fadb4d82f2eff613ea760f23b36c8dfde9c7",
+      "stdout": [
+        "varta log: [\"2\",\"10\",\"label\"]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "record-optional-presence",
+      "feature": "record-properties",
+      "path": "cases/record-optional-presence.ts",
+      "sha256": "7eb7ebf55b95f7a7dc2cbc24087bab58850b61550a6269edd001e45548627046",
+      "stdout": [
+        "varta log: 0",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "sparse-predicate-index",
+      "feature": "array-sparse-search",
+      "path": "cases/sparse-predicate-index.ts",
+      "sha256": "6ab03cb1eb40fd3c1f16588bdff72c02cbe2f63ecc201d063db59d5adbd48b6c",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "sparse-search-presence",
+      "feature": "array-sparse-search",
+      "path": "cases/sparse-search-presence.ts",
+      "sha256": "783c3aea0f8981a848c06c02061dbf3cf73b6128048b53fa6d4e6cec02e086cc",
+      "stdout": [
+        "varta log: 1",
+        "varta log: -1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "reverse-fold-order",
+      "feature": "array-reverse-fold",
+      "path": "cases/reverse-fold-order.ts",
+      "sha256": "c4c5488dba54909045c3cf078a390cbdbbc1cef724c5d9726e78741d2e15770b",
+      "stdout": [
+        "varta log: 0",
+        "varta log: 4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "reverse-fold-sparse-mutation",
+      "feature": "array-reverse-fold",
+      "path": "cases/reverse-fold-sparse-mutation.ts",
+      "sha256": "0ad7b84336c1877c762fb90db8c798857d1c100dfd3676106fc9994bf456a1bd",
+      "stdout": [
+        "varta log: 4"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "reverse-keeps-hole",
+      "feature": "array-reverse",
+      "path": "cases/reverse-keeps-hole.ts",
+      "sha256": "407fbb7c5e07c29b51ab675b9fc62921c58028d5d98ba26fe76c637cc238cd21",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: [3,null,1]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "closure-live-cell",
+      "feature": "closures",
+      "path": "cases/closure-live-cell.ts",
+      "sha256": "0efcf94e9fd75f57eedf06cd3968d6d52c1839d8e14e2a93c050a78e330fab28",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "finally-overrides-return",
+      "feature": "finally-completion",
+      "path": "cases/finally-overrides-return.ts",
+      "sha256": "14d97e159c0378823ad07691f84b566f8918c5d124f4171e724a1383a3cb6e63",
+      "stdout": [
+        "varta log: 7"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "repeat-range-error",
+      "feature": "native-errors",
+      "path": "cases/repeat-range-error.ts",
+      "sha256": "28dbb8154643b93ff0949aa2980f79bda588e6d04d589b46a701a9fc036ec66a",
+      "stdout": [
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "math-negative-zero-and-hypot",
+      "feature": "math",
+      "path": "cases/math-negative-zero-and-hypot.ts",
+      "sha256": "9d929b702a4fa76f333bcadf8aa76bef12e4f56c9271fbd1b0fe366e3a4e37ae",
+      "stdout": [
+        "varta log: -Infinity",
+        "varta log: 5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "json-undefined-members",
+      "feature": "json-stringify",
+      "path": "cases/json-undefined-members.ts",
+      "sha256": "091bce727eb90c10ceaf778c985e035c61a853c1fa94f9cc5810fe366bbcc8e0",
+      "stdout": [
+        "varta log: {\"x\":1}",
+        "varta log: [1,null]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "strict-json-fields",
+      "feature": "typed-json",
+      "path": "cases/strict-json-fields.ts",
+      "sha256": "53b8fb104cff36d1ca9874c97b16b11d1f171a84e6403625977e214295641bba",
+      "stdout": [
+        "varta log: 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "denied-environment",
+      "feature": "capability-denials",
+      "path": "cases/denied-environment.ts",
+      "sha256": "ce1d857cf9367032b5001b2c7c6b0a78815261203045366c5ef349acec091717",
+      "stdout": [
+        "varta log: <capability denied: env> (VARTA_CONFORMANCE_SECRET)",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "bigint-addition",
+      "feature": "bigint",
+      "path": "cases/bigint-addition.ts",
+      "sha256": "0f0a8c5406160fa4bf7a9bd91bed437de22fdc9abd83ce68cef8b279ee8706d1",
+      "stdout": [
+        "varta log: 3"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "BigInt value kinds, operations and output are not implemented."
+      }
+    },
+    {
+      "id": "symbol-type",
+      "feature": "symbol",
+      "path": "cases/symbol-type.ts",
+      "sha256": "fad5204cdd4e576ba5fba37c7c9dd06202c0eed387bcc87dd5e0f050b22d8770",
+      "stdout": [
+        "varta log: symbol"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Symbol construction and value semantics are not implemented."
+      }
+    },
+    {
+      "id": "class-instance",
+      "feature": "classes",
+      "path": "cases/class-instance.ts",
+      "sha256": "2a6f7e564e4e2a56ca5d95e3400ae47f008d601dbb3f41a014336192528c7643",
+      "stdout": [
+        "varta log: 7"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Class declarations and constructor/instance semantics are not implemented."
+      }
+    },
+    {
+      "id": "define-data-property",
+      "feature": "property-descriptors",
+      "path": "cases/define-data-property.ts",
+      "sha256": "6d368357df7f84f1fd51dbb854b0e2005b7d7f2e7ef4268302606ef64f5fff7c",
+      "stdout": [
+        "varta log: 2"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Dynamic property descriptors and general Object operations are not implemented."
+      }
+    },
+    {
+      "id": "map-set-get",
+      "feature": "map",
+      "path": "cases/map-set-get.ts",
+      "sha256": "30d667efcba4f1ada851509174b340be0cc5c665b158cf093438999bbbc0974a",
+      "stdout": [
+        "varta log: 2"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Map allocation, key semantics and tracing are not implemented."
+      }
+    },
+    {
+      "id": "set-deduplication",
+      "feature": "set",
+      "path": "cases/set-deduplication.ts",
+      "sha256": "c5aff72b67a8595b8b64a838c3af46530cc69f02e24469dad7206600c715df60",
+      "stdout": [
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Set allocation, key semantics and tracing are not implemented."
+      }
+    },
+    {
+      "id": "uint8-conversion",
+      "feature": "typed-arrays",
+      "path": "cases/uint8-conversion.ts",
+      "sha256": "ef05692d4965fccf48be123a919b15783a7831f7276b1eec8494957636710577",
+      "stdout": [
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Typed-array storage and conversion semantics are not implemented."
+      }
+    },
+    {
+      "id": "promise-resolve",
+      "feature": "promise-construction",
+      "path": "cases/promise-resolve.ts",
+      "sha256": "6b6b72f473d3a2863a7f07695f064ae06b5f5bdb7b0e734d30dcedfa1663a409",
+      "stdout": [
+        "varta log: object"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Promise objects and resolution are not implemented."
+      }
+    },
+    {
+      "id": "async-function",
+      "feature": "async-await",
+      "path": "cases/async-function.ts",
+      "sha256": "edf06926871630dbfcb22ce213d727a15fead0d223592b00248282293c3c1859",
+      "stdout": [
+        "varta log: 3"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Async execution, await suspension and shutdown are not implemented."
+      }
+    },
+    {
+      "id": "date-epoch",
+      "feature": "date",
+      "path": "cases/date-epoch.ts",
+      "sha256": "5453e62aa71e72238b8a3313ed8ba59fd63e1913b1376533e804c83a8c29e5f1",
+      "stdout": [
+        "varta log: 1970"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Date construction and time semantics are not implemented."
+      }
+    },
+    {
+      "id": "regexp-test",
+      "feature": "regexp",
+      "path": "cases/regexp-test.ts",
+      "sha256": "3c3d977bec8f1c256dafc215dd2fea62b3e71ee1268a0928163ca14830357c8e",
+      "stdout": [
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "RegExp values and matching are not implemented."
+      }
+    },
+    {
+      "id": "generator-next",
+      "feature": "generators",
+      "path": "cases/generator-next.ts",
+      "sha256": "7f718b3710a6d55846f206f0b7805627b474093de8d5840e502b92d2bdf4b25d",
+      "stdout": [
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Generators, iterators and suspended frames are not implemented."
+      }
+    },
+    {
+      "id": "array-union-inference",
+      "feature": "array-union-inference",
+      "path": "cases/array-union-inference.ts",
+      "sha256": "4d84da1262b26e9a9d0098d93f444d3837de0a580419608d852c247994dfe423",
+      "stdout": [
+        "varta log: [1,null]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "array-union-primitives",
+      "feature": "array-union-inference",
+      "path": "cases/array-union-primitives.ts",
+      "sha256": "7ce5036c61b2f9ba869d485434d5ac8653e61106a288892ebc98b905b6ecf490",
+      "stdout": [
+        "varta log: [true,\"x\",null,2,null]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "array-empty-peer-inference",
+      "feature": "array-union-inference",
+      "path": "cases/array-empty-peer-inference.ts",
+      "sha256": "6c668c18e125e0b6384021683535dec0c1e68e9d0bba5bc12bc79f298646c867",
+      "stdout": [
+        "varta log: [[],[1],[null]]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "array-reference-union-alias",
+      "feature": "array-union-inference",
+      "path": "cases/array-reference-union-alias.ts",
+      "sha256": "4b4f5c4ff89005673b7d57c173f568f65e631de6cfefbb722b7d2a667a86d31b",
+      "stdout": [
+        "varta log: 2",
+        "varta log: [{\"n\":2},null]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "array-aggregate-context",
+      "feature": "array-union-inference",
+      "path": "cases/array-aggregate-context.ts",
+      "sha256": "bbd4a6ebd9872adfa4ecefac8601aa232fe2b111d29d019fe1af5640f828e290",
+      "stdout": [
+        "varta log: [{\"items\":[7]},[1,2]]",
+        "varta log: [{\"items\":[7]},{\"items\":[]}]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    }
+  ]
+}

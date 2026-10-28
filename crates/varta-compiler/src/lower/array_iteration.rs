@@ -87,8 +87,8 @@ impl Lower<'_> {
         let this_slot = this_arg.map(|ty| self.hidden(ty));
         // A supplied seed is the third wrapper parameter; otherwise this local
         // is initialized from the first present slot before any read.
-        let accumulator = (method == Method::Reduce).then(|| self.hidden(self.result));
-        let ready = (method == Method::Reduce && !initial).then(|| self.hidden(Type::Boolean));
+        let accumulator = method.reduces().then(|| self.hidden(self.result));
+        let ready = (method.reduces() && !initial).then(|| self.hidden(Type::Boolean));
         let limit = self.hidden(Type::Float64);
         let index = self.hidden(Type::Float64);
         let current = self.hidden(item);
@@ -209,7 +209,7 @@ impl Lower<'_> {
                     },
                 ));
             }
-            Method::Reduce => {
+            Method::Reduce | Method::ReduceRight => {
                 let accumulator =
                     accumulator.ok_or_else(|| invalid("missing reduce accumulator"))?;
                 let update = S::Set(accumulator, invocation);
@@ -310,7 +310,12 @@ impl Lower<'_> {
             )]
         } else if matches!(
             method,
-            Method::Filter | Method::ForEach | Method::Some | Method::Every | Method::Reduce
+            Method::Filter
+                | Method::ForEach
+                | Method::Some
+                | Method::Every
+                | Method::Reduce
+                | Method::ReduceRight
         ) {
             vec![S::If(
                 binary(
@@ -372,7 +377,7 @@ impl Lower<'_> {
             )],
             step,
         ));
-        if method == Method::Reduce && !initial {
+        if method.reduces() && !initial {
             let ready = ready.ok_or_else(|| invalid("missing reduce initialization flag"))?;
             let error = self.array_error(
                 varta_common::value::ErrorClass::TypeError,
@@ -401,7 +406,7 @@ impl Lower<'_> {
                 ty: Type::Boolean,
                 kind: E::Integer(i32::from(method == Method::Every)),
             }),
-            Method::Reduce => Some(local(
+            Method::Reduce | Method::ReduceRight => Some(local(
                 span,
                 accumulator.ok_or_else(|| invalid("missing reduce accumulator"))?,
                 self.result,

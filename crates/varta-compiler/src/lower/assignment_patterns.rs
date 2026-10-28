@@ -28,15 +28,16 @@ impl Lower<'_> {
         assign: &ast::AssignExpr,
         target: &ast::AssignTargetPat,
     ) -> Result<S> {
-        Ok(S::Expr(
-            self.destructuring_assignment_value(assign, target, None)?,
-        ))
+        Ok(S::Expr(self.destructuring_assignment_value(
+            assign, target, None, None,
+        )?))
     }
     pub(super) fn destructuring_assignment_value(
         &mut self,
         assign: &ast::AssignExpr,
         target: &ast::AssignTargetPat,
         expected: Option<Type>,
+        hints: Option<references::AggregateHints>,
     ) -> Result<Expr> {
         if assign.op != ast::AssignOp::Assign {
             return Err(unsupported("compound destructuring assignment"));
@@ -55,10 +56,16 @@ impl Lower<'_> {
         }
         let context = if expected.is_some() {
             expected
+        } else if let Some(hint) = hints.and_then(|h| match &pattern {
+            ast::Pat::Array(_) => h.array,
+            ast::Pat::Object(_) => h.record,
+            _ => None,
+        }) {
+            Some(hint)
         } else {
             self.assignment_array_context(&pattern)?
         };
-        let value = self.expr_expected(&assign.right, context)?;
+        let value = self.expr_contextual(&assign.right, context, hints)?;
         let ty = value.ty;
         let input = self.hidden(ty);
         let marker = self.hidden(Type::Number);

@@ -192,6 +192,8 @@ report the supported profile and its origin:
 | Explicit numeric-prefix profile + ABI v26 | `profile:"checked-f64-utf16-v23", origin:"declared"` |
 | Explicit truth-guard profile + shared ABI v26 | `profile:"checked-f64-utf16-v24", origin:"declared"` |
 | Explicit predicate-search profile + shared ABI v26 | `profile:"checked-f64-utf16-v25", origin:"declared"` |
+| Explicit reverse-fold profile + shared ABI v26 | `profile:"checked-f64-utf16-v26", origin:"declared"` |
+| Explicit array-inference profile + shared ABI v26 | `profile:"checked-f64-utf16-v27", origin:"declared"` |
 | ABI v1 without a language section (older Varta output) | Same profile, `origin:"legacyHostAbi"`; existing behavior is preserved |
 | Neither section (generic portable Wasm) | `profile:null, origin:"unspecified"`; no claim about source-language semantics |
 | Unknown/invalid/duplicate profile or ABI | Reject; no fallback to the current profile |
@@ -1770,7 +1772,7 @@ inherits every v16 source/value/heap/exception/closure/sparse-mutation feature.
 Default i32 and old profiles retain their contracts. Matching language and ABI20
 metadata is mandatory even when the source uses no random call. Unknown/mismatched,
 downgraded and missing declarations fail before execution. Launcher protocol v2
-advertises maximum26/value12 and includes v17/v18/v19/v20/v21/v22/v23/v24/v25; both trusted native build companions must be
+advertises maximum26/value12 and includes v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27; both trusted native build companions must be
 rebuilt together. Container/manifest formats and resource limits are unchanged.
 
 The one new shared registry operation is `MathRandom`, import
@@ -1829,7 +1831,7 @@ keeps the existing JSON/value import selectors. Default i32 semantics and every
 older profile remain unchanged. Matching language/ABI19 metadata is mandatory
 even without a native Math import. Runtime/artifact validation rejects unknown,
 downgraded, mismatched or duplicate declarations before guest effects. Launcher
-protocol v2 now advertises maximum26/value12 and includes v16/v17/v18/v19/v20/v21/v22/v23/v24/v25; packaging requires
+protocol v2 now advertises maximum26/value12 and includes v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27; packaging requires
 the matching rebuilt trusted companion. Container/manifest formats and all resource
 limits remain unchanged; no binary64 tool/HTTP adapter is introduced.
 
@@ -1934,7 +1936,7 @@ body visitors see both operands and compound read/check/store branches. Existing
 temporary floors/root transfer preserve original graphs, earlier physical pairs,
 captured cells, callback results and saved returns through GC/calls/finalizers.
 No new helper export or Wasm EH mechanism is introduced. Launcher protocol v2
-advertises v15 with ABI18/value12; its current maximum26/value12 also includes v16/v17/v18/v19/v20/v21/v22/v23/v24/v25.
+advertises v15 with ABI18/value12; its current maximum26/value12 also includes v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27.
 Native packaging
 requires a matching rebuilt trusted companion and probes the private snapshot;
 portable and fixed-footer native container formats stay unchanged.
@@ -5538,7 +5540,7 @@ scopes, enablement, versions, imports and exports.
 `checked-f64-utf16-v25` inherits v24 and adds direct Array.findIndex,
 Array.findLast and Array.findLastIndex for narrowed checked arrays. The source
 feature has its own profile; physical host ABI26/value12/schema12 are shared.
-Protocol2 now advertises 28 exact supported profiles. Rebuild both native
+V25 introduced 28 supported profiles; v27 expands the exact protocol2 list to 30. Rebuild both native
 companions; a shared physical ABI does not replace profile negotiation or prove
 source provenance. Default compilation still selects checked-i32-utf8-v1.
 
@@ -5575,3 +5577,155 @@ fatal fuel exhaustion and host-effect rejection in managed helpers. Public engin
 module/source diagnostics and source-free CLI/companion/container paths exercise
 the integration. Generic array-like/borrowed prototype methods, prototype lookup,
 dynamic callable values and unsupported Function unions remain separate work.
+
+### Reverse array fold profile v26 with shared host ABI v26
+
+`checked-f64-utf16-v26` inherits v25 and adds direct Array.reduceRight on
+narrowed checked arrays. Source/profile versions advance independently of the
+unchanged host ABI26/value12/schema12. Both native companions advertise the exact
+30-profile list under protocol2. Default compilation remains checked-i32-utf8-v1;
+shared physical ABI compatibility does not establish source provenance.
+
+The fold follows ECMAScript 2025
+[Array.prototype.reduceRight](https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.reduceright):
+it captures the range before callback invocation, traverses descending indices,
+skips absent positions and reads live present values. A supplied initial value
+starts the accumulator; otherwise the rightmost present element supplies it and
+does not trigger a callback. Empty/all-hole unseeded inputs throw TypeError.
+Callbacks receive accumulator/value/index/original array with Undefined this.
+Deletion, truncation and replacement affect subsequent visits; appended indices
+beyond the captured length are ignored.
+
+Shared typed reduction lowering now distinguishes fold kind from direction.
+The wrapper retains the existing presence checks, accumulator-ready state,
+per-item roots, validated calls and scoped exception/finalizer cleanup. Reverse
+iteration reuses the guest loop machinery already used by reverse searches;
+no new IR, imports, helper exports, dependencies or physical layouts are needed.
+Seed inference reuses callback parameter/result annotations and contextual
+aggregate literals. The accumulator and callback result have the same admitted
+type; function/shape/union limits remain explicit. An explicit Undefined seed is
+a supplied value, distinct from absence. Arrows retain lexical receivers;
+ordinary functions must accept Undefined as their receiver. Missing/mistyped
+callbacks and mismatched seed/result types are source diagnostics.
+
+Argument expressions execute source/callback/seed/ignored-tail order. A rooted
+value block caches effective operands before ignored expressions; the generated
+wrapper snapshots length afterwards. Extra captured-result pairs are discarded
+without expanding physical callback parameters. Callback metadata is validated
+even on empty arrays; corrupt handles remain fatal and cannot become recoverable
+empty-fold errors. Callback side effects remain visible to managed-helper
+validation, grants and host policy. Pure folding preserves system status.
+
+Tests cover sparse/dense and explicit Undefined values, noncommutative order,
+mutation/regrowth, contextual aggregate seeds, graph identity, exact Number bits,
+receiver/default/arity rules, thrown/fatal paths, ignored pairs and collection.
+Independent maximum-size folds use bounded parsed inputs under default fuel;
+repeated push-based preparation and multiple operations share the whole-program
+fuel budget. Forced-collection stress uses explicit test fuel only. Public API,
+module diagnostics and source-free CLI/companion/native artifacts cover deployment
+paths. Production limits stay unchanged. Generic array-like objects, inherited
+indices/prototypes, borrowed methods and dynamic accumulator coercion remain
+separate CORE-02/03 work. Existing reduce and earlier profiles keep their admission.
+
+## Developer compatibility inventory
+
+`varta-conformance` is an outer development-tool consumer of public common,
+compiler and runtime APIs. It has no dependency on project packaging or the CLI
+and adds no dependency, import, source profile or budget to the execution-only
+runtime. Workspace dependency-boundary tests classify it as tooling. SHA-256
+uses the already locked sha2 0.10.9 dependency in this tool alone.
+
+The [runner contract](../conformance/README.md) pins edition 2025, profile v27 and
+checked-ts-main-v1 programs. Original corpus files are mandatory manifest entries
+with exact SHA-256; duplicate/unknown metadata, escapes, symlinks, omissions and
+byte/count limits fail before launch. Source bytes are snapshotted before workers
+and passed on stdin without compiler filesystem loading or upstream rewriting.
+The report includes inventory/source/dependency-lock fingerprints and host target
+identity. ECMAScript-derived feature rows and Varta-specific contracts have
+separate origins and map to CORE IDs; feature case counts do not assert complete
+feature semantics or produce a global completion percentage.
+
+A child process compiles each source, validates it through the runtime API and
+runs with empty grants/host ceiling and ordinary fuel/memory/deadline limits.
+The parent clears the worker environment, writes and drains bounded protocol
+pipes on independent threads, polls a bounded wall deadline, and kills/reaps failed
+workers. Internal compiler, transport, output, process and timeout faults are
+infrastructure failures. Runtime faults and changed observations are regressions;
+a documented exact compile diagnostic may match a known-unsupported baseline but
+never increments the passed count. Unexpected support requires baseline review.
+Strict mode also rejects known gaps and untested feature rows. CI stores the
+baseline report in logs while preserving these categories.
+
+This is partial CORE-15 verification of the checked execution model. Script/global
+realms, full module/strict/non-strict modes, upstream harness bindings, complete
+edition/profile matrices and independent platform/readiness evidence remain open.
+The current 38-feature/40-case snapshot yields 28 passes, 12 known unsupported
+cases and 7 untested feature rows. An explicit union-typed JSON case and separate
+uncontextual inference/peer/reference cases retain independent observations;
+v27 closes the formerly unsupported inference case. Existing
+regression tests, public APIs, artifacts, fuzzing and readiness acceptance work
+remain part of the full core objective.
+
+### Array literal inference profile v27 with shared host ABI v26
+
+`checked-f64-utf16-v27` inherits v26 and adds inference for array initializers
+without an explicit array context. Host ABI26/value12/schema12, helper exports,
+container formats, capabilities and default source/type/frame/root/memory/fuel/
+function-body limits remain unchanged. Both rebuilt native companions advertise
+the exact 30-profile protocol2 list; the default remains checked-i32-utf8-v1.
+Shared physical compatibility is separate from source admission/provenance.
+
+The compiler lowers effectful elements once in source order, collects their
+admitted member types, flattens existing unions and interns one final element
+union. Existing widening boxes each scalar/reference as needed and reuses already
+boxed union values. One structural record shape and one nested array element type
+remain the reference-union bounds. Function and opaque result elements are still
+rejected. Ordinary void-call values become Undefined after their effects.
+Homogeneous initializers keep their direct element type.
+
+Earlier compatible aggregate contexts remain available for literals, calls,
+conditionals and destructuring results. Context-only record/array layout hints
+remain separate from actual type constraints; branches can contribute new scalar
+members without manufacturing extra union descriptors or replaying source. Literal empty/all-hole array peers contain no binding reads or expression
+effects, so their type can be completed from a later typed array peer without
+revisiting other source expressions. Their final IR position remains unchanged.
+Pure outer empties and empty peer groups without array evidence still require an
+annotation. General backward inference through arbitrary expressions, record
+shape/field joining and recursive/dynamic empty types remain separate work.
+
+The runtime behavior follows the admitted portion of ECMAScript 2025
+[ArrayAccumulation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-runtime-semantics-arrayaccumulation):
+initializer values are observed in order and elisions retain absent positions.
+Type evidence from holes does not broaden writes to accept Undefined. Existing
+missing reads supply Undefined independently. Explicit array annotations take
+precedence, and mutable array aliases retain invariant element descriptors;
+no existing array is copied or reinterpreted as a different element kind.
+
+The unchanged array/union emitter roots earlier boxes and child graphs while
+later expressions allocate, mutate bindings or throw. Tests cover primitive and
+reference mixtures, existing union inputs, peer order, contextual records, Number
+bits, callbacks/destructuring/spread calls, aliased writes, saved returns, GC,
+host denials/status, fatal paths and managed-helper effect validation. Sparse
+maximum-length and bounded dense literals pass; wide boxed literals retain the
+64 KiB body limit, as in earlier explicitly typed profiles. Independent stress
+fuel is confined to the forced-collection test. Module/public/source-free CLI and
+native-companion paths retain the same deployment contract.
+
+The checked compatibility inventory advances its pinned profile to v27 after an
+observed unexpected-support result for the unchanged `[1, undefined]` source.
+Review promotes that case and adds four positive primitive/peer/alias/context cases:
+40 total, 28 passes and 12 known unsupported, with 7 feature rows still untested.
+Earlier profiles retain their original literal admission rules. This closes the
+specific inference gap and does not close CORE-01/02/15 or establish general
+ECMAScript, dynamic object or Test262 support.
+
+### BigInt mathematical foundation (guest integration pending)
+
+The internal `varta-bigint` crate supplies immutable mathematical integers with
+explicit caller-provided result-bit and work budgets. It implements string/UTF-16
+parsing, arithmetic, signed bitwise/shift operations, Number conversion and exact
+comparison, radix formatting and signed/unsigned width conversion. Resource errors
+remain distinct from recoverable semantic errors. Compiler/runtime guest values
+do not consume this crate yet: no BigInt tag, profile or host ABI is admitted.
+The next step requires versioned transport, roots, host validation and source-level
+regressions before updating the compatibility inventory.

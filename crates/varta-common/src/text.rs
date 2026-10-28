@@ -137,6 +137,12 @@ pub fn write_json(writer: &mut impl Write, units: &[u16]) -> std::io::Result<()>
     writer.write_all(b"\"")
 }
 
+/// ECMAScript WhiteSpace plus LineTerminator code units; U+0085 is excluded.
+#[must_use]
+pub fn ecmascript_whitespace(unit: u16) -> bool {
+    matches!(unit,0x0009..=0x000d|0x0020|0x00a0|0x1680|0x2000..=0x200a|0x2028|0x2029|0x202f|0x205f|0x3000|0xfeff)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

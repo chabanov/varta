@@ -23,6 +23,8 @@ impl Lower<'_> {
         callback: &ast::Expr,
         seed: &ast::Expr,
         expected: Option<Type>,
+        method: &str,
+        hints: Option<references::AggregateHints>,
     ) -> Result<(Option<Expr>, Option<Expr>)> {
         let (context, resolved) = if let ast::Expr::Arrow(arrow) = unparen(callback) {
             let parameter = annotation(parameter_annotation(arrow.params.first()), self.types)
@@ -77,7 +79,11 @@ impl Lower<'_> {
         // select their matching aggregate member rather than the enclosing union.
         let context = context.or_else(|| match unparen(seed) {
             literal @ (ast::Expr::Array(_) | ast::Expr::Object(_)) => {
-                self.context(literal, expected)
+                if expected.is_some() {
+                    self.context(literal, expected)
+                } else {
+                    hints.and_then(|h| h.select(literal))
+                }
             }
             _ => None,
         });
@@ -87,7 +93,7 @@ impl Lower<'_> {
         {
             return Err(self.source.locate(
                 type_error(format!(
-                    "array.reduce initial value mismatch: expected {expected}, found {}",
+                    "array.{method} initial value mismatch: expected {expected}, found {}",
                     initial.ty
                 )),
                 initial.span,

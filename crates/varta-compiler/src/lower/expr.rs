@@ -18,18 +18,30 @@ impl Lower<'_> {
         expression: &ast::Expr,
         expected: Option<Type>,
     ) -> Result<Expr> {
+        self.expr_contextual(expression, expected, None)
+    }
+    pub(super) fn expr_contextual(
+        &mut self,
+        expression: &ast::Expr,
+        expected: Option<Type>,
+        hints: Option<references::AggregateHints>,
+    ) -> Result<Expr> {
         self.depth += 1;
         if self.depth > 64 {
             return Err(self
                 .source
                 .locate(invalid("expression nesting exceeds 64"), expression.span()));
         }
-        let context = self.context(expression, expected);
+        let context = if expected.is_some() {
+            self.context(expression, expected)
+        } else {
+            hints.and_then(|h| h.select(expression))
+        };
         let result = match expression {
             ast::Expr::Arrow(arrow) => self.arrow(arrow, expected),
             ast::Expr::Fn(function) => self.function_expression(function, expected),
             ast::Expr::Call(call) => {
-                let value = self.call(call, expected);
+                let value = self.call(call, expected, hints);
                 if let Ok(value) = &value {
                     self.flow_call(call, value);
                 }
@@ -39,16 +51,16 @@ impl Lower<'_> {
                 let ast::AssignTarget::Pat(target) = &assign.left else {
                     return Err(invalid("missing assignment pattern"));
                 };
-                self.destructuring_assignment_value(assign, target, expected)
+                self.destructuring_assignment_value(assign, target, expected, hints)
             }
             ast::Expr::Assign(assign) => self.simple_assignment_value(assign),
             ast::Expr::Update(update) => self.update_value(update),
             ast::Expr::Cond(branch) if self.types.profile.reference_unions() => {
-                self.conditional(branch, expected)
+                self.conditional(branch, expected, hints)
             }
             ast::Expr::Array(array) => self.array(array, context),
             ast::Expr::Object(object) => self.record(object, context),
-            ast::Expr::Paren(paren) => self.expr_expected(&paren.expr, expected),
+            ast::Expr::Paren(paren) => self.expr_contextual(&paren.expr, expected, hints),
             _ => self.expr_inner(expression),
         };
         self.depth -= 1;
@@ -372,9 +384,9 @@ impl Lower<'_> {
                 )
             }
             ast::Expr::Cond(branch) if self.types.profile.unions() => {
-                return self.conditional(branch, None);
+                return self.conditional(branch, None, None);
             }
-            ast::Expr::Call(call) => return self.call(call, None),
+            ast::Expr::Call(call) => return self.call(call, None, None),
             ast::Expr::Member(member) => return self.result_field(member),
             _ => return Err(unsupported("expression")),
         };
@@ -384,7 +396,12 @@ impl Lower<'_> {
             kind,
         })
     }
-    fn call(&mut self, call: &ast::CallExpr, expected: Option<Type>) -> Result<Expr> {
+    fn call(
+        &mut self,
+        call: &ast::CallExpr,
+        expected: Option<Type>,
+        hints: Option<references::AggregateHints>,
+    ) -> Result<Expr> {
         if let ast::Callee::Expr(callee) = &call.callee
             && callee_name(callee).as_deref() == Some("varta.json.parse")
         {
@@ -527,13 +544,14 @@ impl Lower<'_> {
                     | "findLast"
                     | "findLastIndex"
                     | "reduce"
+                    | "reduceRight"
                     | "some"
                     | "every"
                     | "reverse"
                     | "fill"
             )
         {
-            return self.array_method(call, member, method.sym.as_ref(), expected);
+            return self.array_method(call, member, method.sym.as_ref(), expected, hints);
         }
         if let ast::Expr::Member(member) = &**callee
             && matches!(&member.prop,ast::MemberProp::Ident(id) if id.sym=="repeat")

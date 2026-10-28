@@ -213,6 +213,7 @@ fn returns(body: &[S]) -> bool {
 
 mod arguments;
 mod array_callbacks;
+mod array_inference;
 mod array_iteration;
 mod array_mutation;
 mod arrays;

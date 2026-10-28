@@ -20,6 +20,8 @@ mod unions;
 mod utf16;
 pub use server::{HttpShutdown, RuntimeEvent, RuntimeObserver};
 #[cfg(test)]
+mod array_inference_tests;
+#[cfg(test)]
 mod bitwise_compound_tests;
 #[cfg(test)]
 mod bitwise_tests;
@@ -98,6 +100,8 @@ mod random_tests;
 mod record_compound_tests;
 #[cfg(test)]
 mod record_tests;
+#[cfg(test)]
+mod reduce_right_tests;
 #[cfg(test)]
 mod truth_guard_tests;
 #[cfg(test)]

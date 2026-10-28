@@ -21,6 +21,9 @@ impl Lower<'_> {
         if array.elems.len() > MAX_ARRAY_ELEMENTS {
             return Err(invalid("array element count exceeds limit"));
         }
+        if self.types.profile.array_inference() && !matches!(expected, Some(Type::Array(_))) {
+            return self.inferred_array(array);
+        }
         let mut element = match expected {
             Some(Type::Array(index)) => Some(self.types.arrays[index as usize]),
             _ => None,
@@ -123,6 +126,7 @@ impl Lower<'_> {
         member: &ast::MemberExpr,
         method: &str,
         expected: Option<Type>,
+        hints: Option<references::AggregateHints>,
     ) -> Result<Expr> {
         if matches!(
             method,
@@ -134,10 +138,11 @@ impl Lower<'_> {
                 | "findLast"
                 | "findLastIndex"
                 | "reduce"
+                | "reduceRight"
                 | "some"
                 | "every"
         ) {
-            return self.array_callback(call, member, method, expected);
+            return self.array_callback(call, member, method, expected, hints);
         }
         let base = self.expr(&member.obj)?;
         self.array_plain_method(call, base, method)

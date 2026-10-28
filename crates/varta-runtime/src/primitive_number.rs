@@ -6,7 +6,7 @@ use varta_common::{
 };
 use wasmtime::{Caller, Extern, Linker};
 pub(super) fn whitespace(unit: u16) -> bool {
-    matches!(unit,0x0009..=0x000d|0x0020|0x00a0|0x1680|0x2000..=0x200a|0x2028|0x2029|0x202f|0x205f|0x3000|0xfeff)
+    varta_common::text::ecmascript_whitespace(unit)
 }
 fn decimal(bytes: &[u8]) -> f64 {
     let unsigned = if matches!(bytes.first(), Some(b'+' | b'-')) {

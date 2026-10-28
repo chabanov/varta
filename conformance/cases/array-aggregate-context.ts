@@ -1,0 +1,1 @@
+function choose(flag:boolean):{items:number[]}|number[]{return flag?{items:[7]}:[9];}export function main():void{const first=choose(true);const data=[1,2];console.log(JSON.stringify([first,data.reduce((out,value)=>{out.push(value);return out;},[])]));console.log(JSON.stringify([first,true?{items:[]}:[]]));}

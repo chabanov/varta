@@ -1,3 +1,20 @@
+// checked-f64-utf16-v27 inherits v26 and infers one admitted element union for
+// uncontextual array literals. Initializers execute once in source order; holes
+// stay absent and do not broaden writable element types. Empty/all-hole nested
+// peers can use typed array evidence; outer/unresolved empties need annotations.
+// Explicit contexts and mutable-array invariance remain. One record shape/array
+// kind per union; Function/opaque elements and general dynamic inference remain
+// unsupported. Shared ABI26/value12/schema12; rebuild both companions for 30 profiles.
+// Wide boxed literals retain source/root/fuel and 64 KiB function-body budgets.
+// checked-f64-utf16-v26 inherits v25 and adds checked-array reduceRight.
+// Callbacks receive (accumulator,value,index,array); holes/deleted slots are skipped.
+// Explicit initial values set the accumulator type; otherwise the rightmost present
+// element seeds it. Empty/all-hole unseeded arrays throw recoverable TypeError.
+// Callback result must match accumulator type. Ordinary function receivers accept
+// Undefined; arrows retain lexical this. Cache source/callback/seed before ignored
+// effects, then capture traversal length. Existing reduce/profile rules stay unchanged.
+// Shared ABI26/value12/schema12; rebuild both companions for protocol2's 30 profiles.
+// Generic array-like/prototype calls and dynamically changing accumulators remain pending.
 // checked-f64-utf16-v25 inherits v24, adding direct checked-array findIndex,
 // findLast and findLastIndex. Index methods return Number (-1 on no match);
 // findLast returns element|undefined. Callbacks accept element|undefined,
@@ -6,7 +23,7 @@
 // Effective operands are cached before ignored trailing argument effects;
 // snapshot length is captured afterwards. Existing profiles reject these methods.
 // Shared ABI26/value12/schema12 and limits persist. Rebuild both native companions
-// for protocol2's exact 28-profile list. Generic array-like/prototype calls remain pending.
+// for protocol2's exact 30-profile list with v27. Generic array-like/prototype calls remain pending.
 // Select languageProfile in project configuration. checked-f64-utf8-v1 uses
 // binary64 numbers, host ABI v2 and aggregate/JSON value ABI v3. Tool/HTTP
 // adapters, UTF-16 and undefined remain pending for that profile.
@@ -451,7 +468,7 @@
 // Each power charges one existing host call and checks the deadline before/after
 // native math. Exhaustion/exit stay fatal; host-free JSON helpers cannot call it.
 // Profile/ABI/signature negotiation is mandatory; v15 needs ABI18/value12, while
-// the current launcher advertises maxima26/value12 with v16/v17/v18/v19/v20/v21/v22/v23/v24/v25 support. No value/schema/container/limit change; rebuild both binaries.
+// the current launcher advertises maxima26/value12 with v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27 support. No value/schema/container/limit change; rebuild both binaries.
 // V15 also admits direct unshadowed Math.abs/floor/ceil/trunc/round/sqrt(value),
 // with exactly one narrowed Number argument. These are guest-only intrinsics:
 // no host import/allowance/status change, new permission/helper export or ABI.
@@ -604,7 +621,7 @@
 // No object/reference-union conversion, wrappers, generic/spread/borrowed calls,
 // Number.prototype.toString or radix support here. Host-free helpers reject calls.
 // Mandatory profile/ABI22 even unused; rebuilt protocol2 launcher maxima26/value12
-// includes v19/v20/v21/v22/v23/v24/v25. No dependency/helper export/layout/container/permission change.
+// includes v19/v20/v21/v22/v23/v24/v25/v26/v27. No dependency/helper export/layout/container/permission change.
 // checked-f64-utf16-v18 adds canonical decimal Number output in console.log/log,
 // including narrowed/union Numbers. ABI21/value12/schema12, inherited v17 values:
 // log_f64_v2 (f64)->(), value_log_v7 (i64)->(), minimum21, no permission/results.
@@ -615,7 +632,7 @@
 // Old profiles/imports keep historical text; v18 rejects old log imports. One
 // host charge, unchanged deadlines/output/status/buffers/roots/pairs/finalizers;
 // host-free helpers reject reachable logs. Mandatory profile/ABI21 metadata even
-// unused; rebuilt launcher maxima26/value12 includes v18/v19/v20/v21/v22/v23/v24/v25. No layout/limit/dependency
+// unused; rebuilt launcher maxima26/value12 includes v18/v19/v20/v21/v22/v23/v24/v25/v26/v27. No layout/limit/dependency
 // change. V19 adds primitive String(); Number.prototype.toString/radices and object coercion remain separate work.
 // checked-f64-utf16-v17 adds direct Math.random, inheriting v16/Number/values.
 // Host ABI20/value12/schema12: number_random ()->f64, minimum20, no permission or
@@ -627,7 +644,7 @@
 // One host charge, pre/post entropy deadline checks, fatal failure without fallback;
 // preserve status, buffers, pairs, GC/earlier roots, saved returns and fatal exit.
 // JSON helpers reject host reachability. ABI20/profile metadata is mandatory even
-// unused; native launcher maxima26/value12 includes v17/v18/v19/v20/v21/v22/v23/v24/v25. No layout/container/limit
+// unused; native launcher maxima26/value12 includes v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27. No layout/container/limit
 // change. Test-only entropy injection is store-local and absent from production.
 // checked-f64-utf16-v16 adds native Math acos/acosh/asin/asinh/atan/atanh/cbrt/
 // cos/cosh/exp/expm1/log/log1p/log10/log2/sin/sinh/tan/tanh (one Number) and atan2
@@ -640,7 +657,7 @@
 // host-free JSON helpers reject all reachable native math. Math.random is absent.
 // V16/ABI19 metadata and rebuilt launcher support are mandatory, even without an
 // active native import. Old profiles/import contracts/defaults remain unchanged;
-// launcher maxima26/value12 includes v17/v18/v19/v20/v21/v22/v23/v24/v25. No layout/container/dependency/resource-limit change.
+// launcher maxima26/value12 includes v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27. No layout/container/dependency/resource-limit change.
 // V15 Math.hypot(...numbers) admits zero or more narrowed Numbers (no spread).
 // All arguments execute once before selection: ±Infinity wins over NaN, otherwise
 // NaN propagates and empty/all-zero calls return +0. Hidden f64 snapshots and an

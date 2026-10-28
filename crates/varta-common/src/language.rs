@@ -33,6 +33,8 @@ pub const SUPPORTED_PROFILES: &[LanguageProfile] = &[
     LanguageProfile::CheckedF64Utf16V23,
     LanguageProfile::CheckedF64Utf16V24,
     LanguageProfile::CheckedF64Utf16V25,
+    LanguageProfile::CheckedF64Utf16V26,
+    LanguageProfile::CheckedF64Utf16V27,
 ];
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +96,10 @@ pub enum LanguageProfile {
     CheckedF64Utf16V24,
     #[serde(rename = "checked-f64-utf16-v25")]
     CheckedF64Utf16V25,
+    #[serde(rename = "checked-f64-utf16-v26")]
+    CheckedF64Utf16V26,
+    #[serde(rename = "checked-f64-utf16-v27")]
+    CheckedF64Utf16V27,
 }
 impl LanguageProfile {
     #[must_use]
@@ -124,9 +130,11 @@ impl LanguageProfile {
             Self::CheckedF64Utf16V20 => crate::abi::PRIMITIVE_NUMBER_VERSION,
             Self::CheckedF64Utf16V21 => crate::abi::NUMBER_RADIX_VERSION,
             Self::CheckedF64Utf16V22 => crate::abi::NUMBER_FORMAT_VERSION,
-            Self::CheckedF64Utf16V23 | Self::CheckedF64Utf16V24 | Self::CheckedF64Utf16V25 => {
-                crate::abi::NUMBER_PARSE_VERSION
-            }
+            Self::CheckedF64Utf16V23
+            | Self::CheckedF64Utf16V24
+            | Self::CheckedF64Utf16V25
+            | Self::CheckedF64Utf16V26
+            | Self::CheckedF64Utf16V27 => crate::abi::NUMBER_PARSE_VERSION,
         }
     }
     #[must_use]
@@ -163,6 +171,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -194,6 +204,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -224,6 +236,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -253,6 +267,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -281,6 +297,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -308,6 +326,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -334,6 +354,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -359,6 +381,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -383,6 +407,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -406,6 +432,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -428,6 +456,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -449,6 +479,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -469,6 +501,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -488,6 +522,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -506,6 +542,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -523,6 +561,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -540,6 +580,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -557,6 +599,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -574,6 +618,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -590,6 +636,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -605,6 +653,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -619,6 +669,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -632,6 +684,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -644,6 +698,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -655,6 +711,8 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -665,13 +723,19 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V23
                 | Self::CheckedF64Utf16V24
                 | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
     pub fn number_parse(self) -> bool {
         matches!(
             self,
-            Self::CheckedF64Utf16V23 | Self::CheckedF64Utf16V24 | Self::CheckedF64Utf16V25
+            Self::CheckedF64Utf16V23
+                | Self::CheckedF64Utf16V24
+                | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
         )
     }
     #[must_use]
@@ -680,11 +744,28 @@ impl LanguageProfile {
     }
     #[must_use]
     pub fn truth_guards(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V24 | Self::CheckedF64Utf16V25)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V24
+                | Self::CheckedF64Utf16V25
+                | Self::CheckedF64Utf16V26
+                | Self::CheckedF64Utf16V27
+        )
     }
     #[must_use]
     pub fn predicate_searches(self) -> bool {
-        self == Self::CheckedF64Utf16V25
+        matches!(
+            self,
+            Self::CheckedF64Utf16V25 | Self::CheckedF64Utf16V26 | Self::CheckedF64Utf16V27
+        )
+    }
+    #[must_use]
+    pub fn reverse_reduce(self) -> bool {
+        matches!(self, Self::CheckedF64Utf16V26 | Self::CheckedF64Utf16V27)
+    }
+    #[must_use]
+    pub fn array_inference(self) -> bool {
+        self == Self::CheckedF64Utf16V27
     }
     #[must_use]
     pub fn refinement_writes(self) -> bool {
@@ -824,7 +905,9 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V22
             | Self::CheckedF64Utf16V23
             | Self::CheckedF64Utf16V24
-            | Self::CheckedF64Utf16V25 => crate::value::SPARSE_VALUE_VERSION,
+            | Self::CheckedF64Utf16V25
+            | Self::CheckedF64Utf16V26
+            | Self::CheckedF64Utf16V27 => crate::value::SPARSE_VALUE_VERSION,
             Self::CheckedI32Utf8V1 => crate::value::VALUE_VERSION,
             Self::CheckedF64Utf8V1 => crate::value::NUMBER_VALUE_VERSION,
             Self::CheckedF64Utf8V2 => crate::value::UNDEFINED_VALUE_VERSION,
@@ -857,7 +940,9 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V22
             | Self::CheckedF64Utf16V23
             | Self::CheckedF64Utf16V24
-            | Self::CheckedF64Utf16V25 => crate::HostOperation::JsonStringifyV12,
+            | Self::CheckedF64Utf16V25
+            | Self::CheckedF64Utf16V26
+            | Self::CheckedF64Utf16V27 => crate::HostOperation::JsonStringifyV12,
             Self::CheckedI32Utf8V1 => crate::HostOperation::JsonStringify,
             Self::CheckedF64Utf8V1 => crate::HostOperation::JsonStringifyV3,
             Self::CheckedF64Utf8V2 => crate::HostOperation::JsonStringifyV4,
@@ -892,7 +977,9 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V22
             | Self::CheckedF64Utf16V23
             | Self::CheckedF64Utf16V24
-            | Self::CheckedF64Utf16V25 => crate::HostOperation::JsonParseV14,
+            | Self::CheckedF64Utf16V25
+            | Self::CheckedF64Utf16V26
+            | Self::CheckedF64Utf16V27 => crate::HostOperation::JsonParseV14,
             Self::CheckedI32Utf8V1 => crate::HostOperation::JsonParse,
             Self::CheckedF64Utf8V1 => crate::HostOperation::JsonParseV3,
             Self::CheckedF64Utf8V2 => crate::HostOperation::JsonParseV4,
@@ -972,12 +1059,93 @@ pub struct LanguageError(pub String);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn array_inference_v27_inherits_v26_with_shared_abi_and_exact_negotiation() {
+        let old = LanguageProfile::CheckedF64Utf16V26;
+        let new = LanguageProfile::CheckedF64Utf16V27;
+        for &profile in SUPPORTED_PROFILES {
+            assert_eq!(profile.array_inference(), profile == new);
+        }
+        assert!(
+            new.reverse_reduce()
+                && new.predicate_searches()
+                && new.truth_guards()
+                && new.refinement_writes()
+                && new.primitive_builtins()
+        );
+        assert_eq!(new.host_abi(), old.host_abi());
+        assert_eq!(new.value_abi(), old.value_abi());
+        assert_eq!(new.json_parse(), old.json_parse());
+        assert_eq!(new.json_stringify(), old.json_stringify());
+        let contract = LanguageContract {
+            schema_version: SCHEMA_VERSION,
+            profile: new,
+        };
+        assert_eq!(
+            LanguageContract::parse(&contract.to_bytes().unwrap()).unwrap(),
+            contract
+        );
+        let mut launcher = crate::launcher::LauncherInfo::current();
+        assert!(launcher.language_profiles.contains(&new));
+        launcher.language_profiles.retain(|p| *p != new);
+        assert!(launcher.validate_current().is_err());
+        assert_eq!(
+            LanguageContract::current().profile,
+            LanguageProfile::CheckedI32Utf8V1
+        );
+    }
+    #[test]
+    fn reverse_reduce_v26_inherits_v25_with_exact_profile_negotiation() {
+        let old = LanguageProfile::CheckedF64Utf16V25;
+        let new = LanguageProfile::CheckedF64Utf16V26;
+        for &profile in SUPPORTED_PROFILES {
+            assert_eq!(
+                profile.reverse_reduce(),
+                profile == new || profile == LanguageProfile::CheckedF64Utf16V27
+            );
+        }
+        assert!(
+            new.predicate_searches()
+                && new.truth_guards()
+                && new.refinement_writes()
+                && new.closures()
+                && new.sparse_arrays()
+                && new.array_mutations()
+                && new.primitive_builtins()
+        );
+        assert_eq!(new.host_abi(), old.host_abi());
+        assert_eq!(new.value_abi(), old.value_abi());
+        assert_eq!(new.json_parse(), old.json_parse());
+        assert_eq!(new.json_stringify(), old.json_stringify());
+        let contract = LanguageContract {
+            schema_version: SCHEMA_VERSION,
+            profile: new,
+        };
+        assert_eq!(
+            LanguageContract::parse(&contract.to_bytes().unwrap()).unwrap(),
+            contract
+        );
+        let mut launcher = crate::launcher::LauncherInfo::current();
+        assert!(launcher.language_profiles.contains(&new));
+        launcher.language_profiles.retain(|p| *p != new);
+        assert!(launcher.validate_current().is_err());
+        assert_eq!(
+            LanguageContract::current().profile,
+            LanguageProfile::CheckedI32Utf8V1
+        );
+    }
     #[test]
     fn predicate_searches_v25_inherit_v24_and_share_abi_with_exact_negotiation() {
         let old = LanguageProfile::CheckedF64Utf16V24;
         let new = LanguageProfile::CheckedF64Utf16V25;
         for &profile in SUPPORTED_PROFILES {
-            assert_eq!(profile.predicate_searches(), profile == new);
+            assert_eq!(
+                profile.predicate_searches(),
+                profile == new
+                    || profile == LanguageProfile::CheckedF64Utf16V26
+                    || profile == LanguageProfile::CheckedF64Utf16V27
+            );
         }
         assert!(
             new.truth_guards()
@@ -1016,11 +1184,17 @@ mod tests {
         for &profile in SUPPORTED_PROFILES {
             assert_eq!(
                 profile.truth_guards(),
-                profile == new || profile == LanguageProfile::CheckedF64Utf16V25
+                profile == new
+                    || profile == LanguageProfile::CheckedF64Utf16V25
+                    || profile == LanguageProfile::CheckedF64Utf16V26
+                    || profile == LanguageProfile::CheckedF64Utf16V27
             );
             assert_eq!(
                 profile.refinement_writes(),
-                profile == new || profile == LanguageProfile::CheckedF64Utf16V25
+                profile == new
+                    || profile == LanguageProfile::CheckedF64Utf16V25
+                    || profile == LanguageProfile::CheckedF64Utf16V26
+                    || profile == LanguageProfile::CheckedF64Utf16V27
             );
         }
         assert!(
@@ -1060,6 +1234,8 @@ mod tests {
                 profile == new
                     || profile == LanguageProfile::CheckedF64Utf16V24
                     || profile == LanguageProfile::CheckedF64Utf16V25
+                    || profile == LanguageProfile::CheckedF64Utf16V26
+                    || profile == LanguageProfile::CheckedF64Utf16V27
             );
         }
         assert_eq!(new.host_abi(), crate::abi::NUMBER_PARSE_VERSION);

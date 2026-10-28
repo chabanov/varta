@@ -8,6 +8,8 @@ members = [
   "crates/varta-runtime",
   "crates/varta-compiler",
   "crates/varta-project",
+  "crates/varta-conformance",
+  "crates/varta-bigint",
 ]
 default-members = ["crates/varta-cli", "crates/varta-launcher"]
 

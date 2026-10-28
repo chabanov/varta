@@ -2014,6 +2014,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "varta-bigint"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror",
+ "varta-common",
+]
+
+[[package]]
 name = "varta-common"
 version = "0.1.0"
 dependencies = [
@@ -2035,6 +2045,20 @@ dependencies = [
  "varta-common",
  "wasm-encoder 0.241.2",
  "wasmparser 0.241.2",
+]
+
+[[package]]
+name = "varta-conformance"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "varta-common",
+ "varta-compiler",
+ "varta-runtime",
 ]
 
 [[package]]

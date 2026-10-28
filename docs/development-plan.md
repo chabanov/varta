@@ -17,11 +17,14 @@ Completed since baseline commit `526f9ab`:
 | String.slice/substring | Optional Number/Undefined bounds, exact UTF-16 units, owned result strings and unchanged Array.slice |
 | String.includes/startsWith/endsWith | Required String needle, bounded optional positions, allocation-free unit comparison and unchanged Array.includes |
 | Array.findIndex/findLast/findLastIndex (v25) | Typed forward/reverse predicate search, live sparse reads, snapshot bounds and rooted cached matched values |
+| Array.reduceRight (v26) | Reverse folds with typed seeded/unseeded accumulators, live sparse presence and rooted values |
+| Array literal inference (v27) | One admitted element union, rooted once-only initializers, typed peer empties and unchanged mutable-array invariance |
+| Checked compatibility inventory | Pinned v27/ECMAScript 2025 sources, isolated executor, explicit supported/gap/untested counts and reviewed-baseline CI gate |
 
 Earlier additive operations require v12+; sparse/mutation rules remain profile-specific.
 The default remains `checked-i32-utf8-v1`. The latest opt-in profile is
-`checked-f64-utf16-v25`, sharing host ABI v26, value ABI v12 and schema v12. It adds
-Array.findIndex/findLast/findLastIndex, inheriting v24
+`checked-f64-utf16-v27`, sharing host ABI v26, value ABI v12 and schema v12. It adds
+uncontextual array element-union inference, inheriting v26 Array.reduceRight and v25 Array.findIndex/findLast/findLastIndex and v24
 truth-based local narrowing, post-store/targeted-exit joins, proven call effects
 and stable callback-input specialization,
 write/capture-aware invalidation and short-circuit
@@ -43,8 +46,12 @@ Number predicates accept admitted values/unnarrowed unions without coercion,
 retaining missing/ignored-argument semantics and the same guest-only boundary.
 The source/artifact paths and public engine API are covered by regression tests.
 
-Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1491 workspace
-tests passed**, followed by **262 CLI tests passed** in a separate repeat run.
+BigInt now has an internal budgeted mathematical foundation (`varta-bigint`),
+with guest representation, compiler admission and runtime integration still pending.
+It does not close the BigInt compatibility gap or change CORE-01 status.
+
+Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1582 workspace
+tests passed**, followed by **268 CLI tests passed** in a separate repeat run.
 Formatting, the core-only library check, runtime-companion build, workspace/all-target
 build and Clippy with warnings denied also passed. This records local verification;
 it does not claim a new cross-platform CI or release qualification.
@@ -278,6 +285,38 @@ effects preserve roots, capabilities, system status and fatal limits. Existing
 profiles reject the new methods. Generic array-like/prototype calls and other
 array APIs remain unfinished. See the [predicate-search contract](architecture.md#predicate-array-search-profile-v25-with-shared-host-abi-v26).
 
+Completed: **Array.reduceRight** in opt-in v26, sharing ABI26/value12/schema12.
+The fold visits present indices in descending order, uses an explicit typed seed
+or the rightmost present element, and throws recoverable TypeError for unseeded
+empty/all-hole arrays. Live mutation/presence, source/callback/seed/ignored-argument
+ordering, accumulator inference/identity, callback roots and fatal/resource/capability
+boundaries have regression coverage. V25 and earlier reject the new method;
+existing reduce admission stays unchanged. See the
+[reverse-fold contract](architecture.md#reverse-array-fold-profile-v26-with-shared-host-abi-v26).
+
+Completed: **initial checked compatibility inventory and isolated runner**.
+The pinned ECMAScript 2025/v27 corpus has 38 feature rows and 40 original checked
+programs: 28 passed, 12 known unsupported, with 7 feature rows untested. Source
+SHA-256 checks, complete corpus listing, strict metadata, default runtime budgets,
+empty authority and per-process deadline/output bounds preserve explicit results.
+Baseline CI distinguishes expected gaps from conformance passes; strict mode
+currently fails. The suite exposed uncontextual array union inference as a
+separate CORE-01/02 gap; v27 closes that case and adds four positive cases. This advances CORE-15 to Partial and does not close it;
+upstream Test262 execution and broader coverage remain required. See the
+[runner contract](../conformance/README.md).
+
+Completed: **uncontextual array literal inference** in opt-in v27, sharing
+ABI26/value12/schema12. Source-order expressions are lowered once, admitted union
+members flatten into one final element type, and existing boxing/rooting preserves
+Number bits, reference identity, holes and captured-cell effects. Empty/all-hole
+array peers can use typed array evidence without side-effect reanalysis; existing
+aggregate contexts and explicit annotations remain strict. Conflicting record/
+array kinds, Function/opaque elements and untyped empty graphs remain unsupported.
+The old profile still rejects the formerly unsupported `[1, undefined]` case;
+the v27 compatibility baseline now records it as supported. Source/type/root/fuel
+and function-body limits remain unchanged. See the
+[inference contract](architecture.md#array-literal-inference-profile-v27-with-shared-host-abi-v26).
+
 Next: **higher-order callback-argument binding, property/exception effects, initializer
 inference and loop fixed points**, then
 the broader object/prototype and conversion foundation. Remaining
@@ -379,7 +418,7 @@ inferred from the current regression suite.
 | CORE-12 | ES modules and packages | Partial | Module initialization/linking/loading semantics, explicit package-resolution policy and tested package targets |
 | CORE-13 | ABI and capability enforcement | Implemented for current profiles | Retain fail-closed version/signature/resource checks for every newly admitted boundary |
 | CORE-14 | Distribution | Partial | Supported target matrix, Windows/cross-target validation, release delivery and package authenticity |
-| CORE-15 | Conformance | Planned | Maintain a pinned feature inventory and conformance-suite runner; track expected failures rather than counting unsupported syntax as passing |
+| CORE-15 | Conformance | Partial | Pinned checked-case inventory and isolated runner are implemented; expand edition-wide cases, script/module/harness execution for upstream Test262, historical profiles and independent compatibility verification |
 | CORE-16 | Performance and production readiness | Partial | Reproducible startup/memory/throughput/leak measurements, sustained workloads, fuzzing and independent security review |
 
 The immediate implementation order remains CORE-01/02/03/06 foundation work,

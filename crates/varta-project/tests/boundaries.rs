@@ -26,6 +26,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
     let packages = metadata["packages"].as_array().unwrap();
     let rules: BTreeMap<&str, &[&str]> = BTreeMap::from([
         ("varta-common", [].as_slice()),
+        ("varta-bigint", ["varta-common"].as_slice()),
         ("varta-artifact", ["varta-common"].as_slice()),
         (
             "varta-launcher",
@@ -44,6 +45,10 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             .as_slice(),
         ),
         ("varta", ["varta-project"].as_slice()),
+        (
+            "varta-conformance",
+            ["varta-common", "varta-compiler", "varta-runtime"].as_slice(),
+        ),
     ]);
     for package in packages {
         let name = package["name"].as_str().unwrap();
@@ -63,6 +68,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 if matches!(
                     name,
                     "varta-common"
+                        | "varta-bigint"
                         | "varta-compiler"
                         | "varta-runtime"
                         | "varta-artifact"
@@ -72,6 +78,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                         matches!(
                             target,
                             "varta-common"
+                                | "varta-bigint"
                                 | "varta-compiler"
                                 | "varta-runtime"
                                 | "varta-artifact"

@@ -25,6 +25,7 @@ TS/JS projects built on the engine's public APIs.
 
 | Directory | Responsibility |
 | --- | --- |
+| `crates/varta-bigint` | Budgeted integer arithmetic foundation; guest BigInt integration remains pending |
 | `crates/varta-common` | Engine contracts, ABI, permissions, diagnostics and shared values |
 | `crates/varta-compiler` | Checked TS subset and portable Wasm generation |
 | `crates/varta-runtime` | Validation, inspection, bounded execution and JSON tool invocation |
@@ -32,6 +33,7 @@ TS/JS projects built on the engine's public APIs.
 | `crates/varta-launcher` | The execution-only `varta-runtime` binary distributed with applications |
 | `crates/varta-project` | Development tooling: project configuration/source loading, packaging and policy files |
 | `crates/varta-cli` | Commands and output, calling the project tooling layer |
+| `crates/varta-conformance` | Developer-only pinned compatibility inventory and isolated case execution |
 | `docs`, `.github` | Implemented specifications, core roadmap and verification |
 | `target` | Ignored, generated Rust build output |
 
@@ -116,6 +118,10 @@ refinement, sharing host ABI26 / value/schema12 with v23.
 `checked-f64-utf16-v25` adds checked Array.findIndex/findLast/findLastIndex,
 sharing host ABI26 / value/schema12 and inheriting v24. Rebuild both native
 companions for the expanded protocol2 profile list.
+`checked-f64-utf16-v26` adds checked Array.reduceRight with optional typed
+initial values, inheriting v25 with the same host ABI26 / value/schema12.
+`checked-f64-utf16-v27` adds uncontextual array element-union inference and
+peer typing for empty nested arrays, retaining host ABI26 / value/schema12.
 General dynamic objects and external adapters remain pending. The
 [migration contract](docs/development-plan.md#k4--ecmascript-value-profile-and-language-expansion)
 preserves the existing artifact and tool semantics.
@@ -2157,7 +2163,7 @@ The helper cannot be reached from host-free JSON allocation/retention exports.
 Only direct global calls are added. Object/array/Error/function conversion needs
 the remaining object-to-primitive work; mixed reference unions must be narrowed.
 `new String`, borrowed/generic/spread calls, Number.prototype.toString/radix formatting require v21. Native packaging requires both rebuilt binaries,
-with launcher protocol v2 advertising v19/v20/v21/v22/v23/v24/v25/maximum ABI26 and value/schema12.
+with launcher protocol v2 advertising v19/v20/v21/v22/v23/v24/v25/v26/v27/maximum ABI26 and value/schema12.
 No dependency, helper export or container/value layout change. See the
 [primitive String contract](docs/architecture.md#primitive-string-profile-and-host-abi-v22).
 
@@ -2191,7 +2197,7 @@ Scalar `log_f64_v2: (f64)->()` and union `value_log_v7: (i64)->()` require ABI21
 with unchanged value/schema12. They consume one existing host allowance per log,
 retain output/deadline limits, and preserve status and result buffers. Host-free
 JSON helpers cannot call them. Rebuild both binaries for native packaging; launcher
-protocol v2 advertises v18/v19/v20/v21/v22/v23/v24/v25 and maximum ABI26. No dependency, permission, value/
+protocol v2 advertises v18/v19/v20/v21/v22/v23/v24/v25/v26/v27 and maximum ABI26. No dependency, permission, value/
 container layout or resource limit is added. Primitive `String(...)` is available
 in v19; Number method calls, radix formatting and object coercion remain separate work. See the
 [Number output contract](docs/architecture.md#number-output-profile-and-host-abi-v21).
@@ -3301,3 +3307,83 @@ methods and general dynamic callback coercion remain pending. V24 and earlier
 reject these three methods. ABI26/value12/schema12, production limits and the
 default i32 profile remain unchanged. Both native companions must advertise v25;
 see the [detailed contract](docs/architecture.md#predicate-array-search-profile-v25-with-shared-host-abi-v26).
+
+## Reverse array folds (opt-in v26)
+
+Select `"languageProfile":"checked-f64-utf16-v26"` for Array.reduceRight on
+checked arrays:
+
+```ts
+const values = [1, 2, 3];
+console.log(values.reduceRight((sum, value) => sum - value));     // 0
+console.log(values.reduceRight((sum, value) => sum - value, 10)); // 4
+const reversed = values.reduceRight((out: number[], value: number): number[] => {
+  out.push(value);
+  return out;
+}, []);
+```
+
+Callbacks receive accumulator/value/index/original array. The accumulator keeps
+one checked type, inferred from the explicit initial value or the array element
+type. Without an initial value, empty and all-hole arrays throw TypeError;
+a single present element is returned without invoking the callback. Holes and
+deleted positions are skipped; present Undefined values remain ordinary values.
+Functions have an Undefined receiver; arrows keep their lexical receiver.
+
+Source, callback, initial value and ignored trailing arguments are evaluated in
+source order before the traversal snapshot. Intermediate values remain rooted
+across callback mutation and collection. Existing production bounds still apply
+to the whole program, including preparation of the input array. V25 and earlier
+reject reduceRight. Both native companions must be rebuilt for the exact v26
+profile list; host ABI26/value12/schema12 remain unchanged. Generic array-like
+objects, prototype methods and fully dynamic accumulator types remain pending.
+See the [reverse-fold contract](docs/architecture.md#reverse-array-fold-profile-v26-with-shared-host-abi-v26).
+
+## Checked compatibility inventory
+
+The [checked core suite](conformance/README.md) pins ECMAScript 2025, profile v27
+and explicit source hashes. It reports successful cases, known unsupported cases,
+regressions, infrastructure failures and feature rows without executable cases.
+Its current 40 cases yield 28 passes and 12 known gaps; 7 feature rows remain
+untested. The inventory covers checked TypeScript `main` programs and does not
+establish full ECMAScript/Test262 or production readiness.
+
+```sh
+cargo run -p varta-conformance --locked -- --json
+cargo run -p varta-conformance --locked -- --require-supported
+```
+
+The strict command currently exits 1 for the remaining gaps/omissions. CI checks
+the reviewed baseline and records its JSON report in the job log. Each case uses
+a fresh process, default runtime limits and empty host authority. The tool is a
+development consumer of public compiler/runtime APIs and is excluded from native
+runtime distribution. See the [CORE ledger](docs/development-plan.md#core-completion-ledger)
+for the broader acceptance work.
+
+## Array literal inference (opt-in v27)
+
+Select `"languageProfile":"checked-f64-utf16-v27"` to infer one admitted element
+union from an array initializer:
+
+```ts
+const values = [1, "text", undefined];
+values.push(2); // Number, String and Undefined are admitted members.
+console.log(JSON.stringify(values)); // [1,"text",null,2]
+const nested = [[], [1]];             // Empty peer uses the typed Number array.
+```
+
+Primitives, existing unions and admitted record/array/Error references can join.
+Initializers run once in source order; values and shallow identities remain rooted
+through later effects, exceptions and collection. Holes remain absent and do not
+add Undefined to the writable element type. Reads keep the usual missing-value
+rules. Empty/all-hole nested array peers can use a typed peer in either order.
+An outer empty/all-hole array or a peer group without typed array evidence still
+needs an annotation. Earlier record/array contextual typing remains available.
+
+Explicit annotations control admitted values; mutable arrays retain exact element
+types. Different record shapes or nested array element types, function-valued/
+opaque elements and general recursive/dynamic inference remain pending. V26 and
+earlier require the previous homogeneous/annotated-literal rules. Rebuild both
+companions for the exact 30-profile list; host ABI26/value12/schema12 and default
+budgets remain unchanged. Very wide boxed literals can still exceed the 64 KiB
+function-body budget. See the [inference contract](docs/architecture.md#array-literal-inference-profile-v27-with-shared-host-abi-v26).

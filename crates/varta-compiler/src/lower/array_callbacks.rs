@@ -12,6 +12,7 @@ pub(super) enum Method {
     Some,
     Every,
     Reduce,
+    ReduceRight,
 }
 impl Method {
     pub(super) fn visits_holes(self) -> bool {
@@ -21,7 +22,13 @@ impl Method {
         )
     }
     pub(super) fn reverse(self) -> bool {
-        matches!(self, Self::FindLast | Self::FindLastIndex)
+        matches!(
+            self,
+            Self::FindLast | Self::FindLastIndex | Self::ReduceRight
+        )
+    }
+    pub(super) fn reduces(self) -> bool {
+        matches!(self, Self::Reduce | Self::ReduceRight)
     }
     pub(super) fn index_result(self) -> bool {
         matches!(self, Self::FindIndex | Self::FindLastIndex)
@@ -38,6 +45,7 @@ impl Method {
             "some" => Self::Some,
             "every" => Self::Every,
             "reduce" => Self::Reduce,
+            "reduceRight" => Self::ReduceRight,
             _ => return Err(invalid("unknown array callback method")),
         })
     }
@@ -58,23 +66,32 @@ impl Lower<'_> {
         member: &ast::MemberExpr,
         name: &str,
         expected: Option<Type>,
+        hints: Option<references::AggregateHints>,
     ) -> Result<Expr> {
         if !self.types.profile.closures() {
             return Err(unsupported("array callbacks require checked-f64-utf16-v12"));
         }
         let method = Method::parse(name)?;
-        let extended = method.visits_holes() && method != Method::Find;
-        if extended && !self.types.profile.predicate_searches() {
+        let search = method.visits_holes() && method != Method::Find;
+        let extended = search || method == Method::ReduceRight;
+        if method == Method::ReduceRight && !self.types.profile.reverse_reduce() {
+            return Err(unsupported(
+                "array.reduceRight requires checked-f64-utf16-v26",
+            ));
+        }
+        if search && !self.types.profile.predicate_searches() {
             return Err(unsupported(
                 "array predicate search requires checked-f64-utf16-v25",
             ));
         }
-        if method == Method::Reduce && !(1..=2).contains(&call.args.len()) {
-            return Err(unsupported(
-                "array.reduce requires a callback and optional initial value",
-            ));
+        if method.reduces()
+            && (call.args.is_empty() || method == Method::Reduce && call.args.len() > 2)
+        {
+            return Err(unsupported(&format!(
+                "array.{name} requires a callback and optional initial value"
+            )));
         }
-        if method != Method::Reduce && (call.args.is_empty() || !extended && call.args.len() > 2) {
+        if !method.reduces() && (call.args.is_empty() || !extended && call.args.len() > 2) {
             return Err(unsupported(
                 "array callback method requires a callback and optional thisArg",
             ));
@@ -91,13 +108,19 @@ impl Lower<'_> {
         } else {
             element
         };
-        let (initial, resolved_callback) = if method == Method::Reduce && call.args.len() == 2 {
-            self.reduce_seed(&call.args[0].expr, &call.args[1].expr, expected)?
+        let (initial, resolved_callback) = if method.reduces() && call.args.len() >= 2 {
+            self.reduce_seed(
+                &call.args[0].expr,
+                &call.args[1].expr,
+                expected,
+                name,
+                hints,
+            )?
         } else {
             (None, None)
         };
         let accumulator = initial.as_ref().map_or(element, |value| value.ty);
-        let params = if method == Method::Reduce {
+        let params = if method.reduces() {
             vec![accumulator, item, Type::Float64, base.ty]
         } else {
             vec![item, Type::Float64, base.ty]
@@ -107,7 +130,7 @@ impl Lower<'_> {
         } else {
             self.array_callback_value(&call.args[0].expr, &params, method, accumulator)?
         };
-        let this_arg = if method != Method::Reduce {
+        let this_arg = if !method.reduces() {
             call.args
                 .get(1)
                 .map(|arg| self.expr(&arg.expr))
@@ -166,11 +189,11 @@ impl Lower<'_> {
             Method::Find | Method::FindLast => item,
             Method::FindIndex | Method::FindLastIndex => Type::Float64,
             Method::Some | Method::Every => Type::Boolean,
-            Method::Reduce => {
+            Method::Reduce | Method::ReduceRight => {
                 if signature.result != accumulator {
                     return Err(self.source.locate(
                         type_error(format!(
-                            "array.reduce callback result must match accumulator: expected {accumulator}, found {}",
+                            "array.{name} callback result must match accumulator: expected {accumulator}, found {}",
                             signature.result
                         )),
                         callback.span,
@@ -261,8 +284,8 @@ impl Lower<'_> {
                 kind: E::Call(index, operands),
             });
         }
-        // Cache the three effective operands before ignored expressions. They
-        // may reassign the source/this/callback or collect temporary graphs.
+        // Cache effective operands before ignored expressions. They
+        // may reassign the source/callback/seed/this or collect temporary graphs.
         let mut roots = Vec::new();
         let mut body = Vec::new();
         let mut cached = Vec::new();
@@ -313,7 +336,7 @@ impl Lower<'_> {
                 functions::LiftContext {
                     params: Some(params.to_vec()),
                     shape: None,
-                    result: (method == Method::Reduce).then_some(accumulator),
+                    result: method.reduces().then_some(accumulator),
                     infer: true,
                     receiver: None,
                     lexical: true,
@@ -323,7 +346,7 @@ impl Lower<'_> {
             ast::Expr::Fn(function) => self.function_expression_context(
                 function,
                 Some(params.to_vec()),
-                (method == Method::Reduce).then_some(accumulator),
+                method.reduces().then_some(accumulator),
                 None,
                 None,
             ),

@@ -9,6 +9,32 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Internal `varta-bigint` mathematical foundation provides immutable integers,
+  parsing, arithmetic, shifts, bitwise operations, Number/radix conversions and
+  signed/unsigned widths with caller-supplied bit/work budgets. It is not yet
+  connected to guest values; source BigInt remains unsupported.
+
+- Opt-in v27 infers one admitted union for uncontextual array elements, flattening
+  existing unions and preserving source-order effects, exact Number bits, shallow
+  reference identity and roots. Empty/all-hole peers use typed array evidence;
+  explicit contexts, array invariance, shape/Function/opaque restrictions and
+  production budgets persist. Shared ABI26/value12/schema12 requires rebuilt
+  companions with the exact v27 profile list. The reviewed compatibility corpus
+  closes its inference gap and grows to 40 cases (28 passes, 12 known unsupported).
+
+- Developer-only `varta-conformance` pins an ECMAScript 2025/v27 checked-program
+  inventory with source/dependency digests, isolated default-budget workers,
+  bounded protocols and explicit pass/gap/regression/infrastructure/untested
+  reporting. CI checks the reviewed baseline; strict mode exposes remaining gaps.
+  The current suite records 28 passes, 12 known unsupported cases and 7 untested
+  feature rows. Full Test262/script support remains planned CORE-15 work.
+
+- Opt-in v26 adds checked Array.reduceRight with seeded/unseeded accumulator
+  inference, descending live sparse traversal, recoverable empty-fold TypeError,
+  callback/seed/ignored-argument ordering and rooted intermediate graphs. Existing
+  reduce/profile admission remains unchanged; no new host imports, dependencies,
+  ABI/layout versions or production budgets. Rebuild both companions for v26.
+
 - Opt-in v25 adds checked Array.findIndex/findLast/findLastIndex with live sparse
   reads, forward/reverse snapshot traversal, cached matched values, receiver and
   ignored-argument evaluation, rooted callbacks and unchanged capability/fatal

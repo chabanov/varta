@@ -1,0 +1,15 @@
+[package]
+name = "varta-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+varta-common = { path = "../varta-common" }
+varta-compiler = { path = "../varta-compiler" }
+varta-runtime = { path = "../varta-runtime" }
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2 = "=0.10.9"

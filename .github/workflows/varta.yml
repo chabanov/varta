@@ -38,3 +38,5 @@ jobs:
         run: cargo test --workspace --locked
       - name: CLI security and packaging regressions
         run: cargo test -p varta --test smoke --locked
+      - name: Checked core compatibility baseline (known gaps remain separate)
+        run: cargo run -p varta-conformance --locked -- --json

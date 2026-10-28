@@ -835,7 +835,7 @@ Shared registry names/signatures/minimum ABI must drive compiler/runtime/artifac
 validation. New language/ABI18 metadata is mandatory even without an active power
 import; downgrade/profile/signature/unknown-import mismatches fail before effects.
 V15 originally negotiated maximum18/value12; current protocol v2 also advertises
-v16/v17/v18/v19/v20/v21/v22/v23/v24/v25 with maximum26/value12. Packaging
+v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27 with maximum26/value12. Packaging
 requires a matching rebuilt trusted companion. Keep old artifact execution and
 value/schema/container layouts. Host-free JSON allocation/retain helper validation
 still rejects any reachable math host call. Test special-case bits/parity/subnormals,
@@ -1157,7 +1157,7 @@ result-buffer/pending/GC/pair/finalizer contracts; JSON helpers still reject log
 This increment adds no String()/Number.prototype.toString, radix/coercion/wrappers
 or new dependency/layout/limits.
 Mandatory ABI21/profile metadata even unused; launcher maximum26/value12/protocol2
-includes v18/v19/v20/v21/v22/v23/v24/v25, rebuild both binaries. See the architecture Number output contract.
+includes v18/v19/v20/v21/v22/v23/v24/v25/v26/v27, rebuild both binaries. See the architecture Number output contract.
 
 The random profile checked-f64-utf16-v17 uses ABI20/value12/schema12 and inherits
 v16. Shared MathRandom / number_random has ()->f64, minimum20, no capability/result
@@ -1170,7 +1170,7 @@ argument throws, saved returns, pairs/status and fatal exit/limits. Host ticks o
 before entropy and checks budget/deadline after; entropy failure is fatal with no
 fallback or status/result-buffer mutation. JSON helpers still reject any host
 reachability. Profile/ABI20 metadata is mandatory even unused; launcher maximum24,
-value12/protocol2 includes v17/v18/v19/v20/v21/v22/v23/v24/v25. No limits/layout/container/tool-adapter changes.
+value12/protocol2 includes v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27. No limits/layout/container/tool-adapter changes.
 See docs/architecture.md#random-profile-and-host-abi-v20 for lifecycle and tests.
 
 The native-Math profile checked-f64-utf16-v16 selects ABI19 with unchanged
@@ -1185,7 +1185,7 @@ Tick once before math and check budget/deadline after, preserve status, and reta
 fatal traps/exit. Host-free JSON helpers reject reachable native imports regardless
 of purity. V16 has no Math.random, coercion, spread/generics/computed/borrowed calls or
 unnarrowed unions. V16/ABI19 metadata is mandatory without any active import;
-launcher maximum26/value12 and v16/v17/v18/v19/v20/v21/v22/v23/v24/v25 negotiation must accompany both rebuilt binaries.
+launcher maximum26/value12 and v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26/v27 negotiation must accompany both rebuilt binaries.
 No new heap/helper/layout/container/dependency/capability/limit. Test every operation,
 special bits/domains/atan2 quadrants, finite known values/exponent invariants,
 one-call accounting, hostile ABI/signature/profile/name data, helper purity, roots/
@@ -1264,7 +1264,7 @@ Placement rules:
 
 ## 3. Commands and quality gates
 
-All three gates must pass before every commit, and they are run frequently during work — not only at the end:
+The following gates must pass before every commit, and they are run frequently during work — not only at the end:
 
 ```bash
 cargo fmt --all -- --check              # formatting; plain `cargo fmt --all` fixes
@@ -1274,6 +1274,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build --workspace --all-targets --locked
 cargo test --workspace --locked
 cargo test -p varta --test smoke --locked # CLI end-to-end tests
+cargo run -p varta-conformance --locked -- --json # reviewed checked-case baseline; known gaps are not passes
 ```
 
 CI runs exactly this set. If clippy fails, fix the code, not the lint; `cargo clippy --fix --allow-dirty` may apply the mechanical part, but review the result as code. Report failures honestly with output; never claim tests pass without running them.
@@ -1366,8 +1367,8 @@ business routes, authentication policy or example payloads belong in runtime.
 ## Predicate search profile v25
 
 Inherit all v24 rules under checked-f64-utf16-v25; share ABI26/value12/schema12.
-Only v25 admits findIndex/findLast/findLastIndex. Both rebuilt native companions
-must advertise the exact profile (28 supported profiles under protocol2).
+V25+ admits findIndex/findLast/findLastIndex. Both rebuilt native companions
+must advertise the exact profile (30 supported profiles under protocol2 with v27).
 Use existing rooted iteration/call IR, live MaybeIndex reads for holes, reverse
 indices for last searches, cached matched values and -1/Undefined sentinels.
 Preserve callback-before-thisArg lowering and cache effective operands before
@@ -1377,3 +1378,64 @@ Function/shape limits persist. Corrupt Fn metadata is fatal even for empty array
 Do not raise production fuel/array/source limits for tests. Generic array-like
 objects and prototype/borrowed methods remain separate CORE-02 work.
 See architecture predicate-search contract and predicate_search regression suites.
+
+## Reverse-fold profile v26
+
+Inherit v25 and share host ABI26/value12/schema12 under checked-f64-utf16-v26.
+V26+ admits reduceRight; earlier profiles and existing reduce admission stay
+unchanged. Both native companions advertise the exact 30-profile protocol2 list.
+Use shared reduces()/reverse() traversal, live present checks, rooted accumulator
+and current slots, rightmost implicit seed and recoverable empty-fold TypeError.
+Callback metadata must still validate on empty inputs. Evaluate callback before
+seed; cache source/callback/seed before ignored effects and snapshot length later.
+Retain exact seed/result typing, Undefined this, lexical arrows and all existing
+Function/shape/source/fuel limits. Parsed maximum-array fixtures avoid conflating
+repeated input construction with fold cost; do not raise production budgets.
+Keep granted/denied effects, status, pairs, GC and fatal boundaries across all
+artifact/public paths. Generic/prototype/dynamic accumulator support remains
+explicit future work. See architecture reverse-fold contract and reduce_right tests.
+
+## Checked conformance tooling
+
+Classify varta-conformance as development tooling; dependencies point to common,
+compiler and runtime only. Never add it, sha2 or its CLI to runtime distribution.
+The corpus pins ECMAScript 2025/profile v27/checked-ts-main-v1. Keep source hashes,
+mandatory .ts manifest listing, strict schema/version/field/ID/path/core bounds and
+LF checkout bytes. Preserve original snapshots, fresh workers/stores, empty grants
+and environment, default guest limits and bounded stdin/stdout/stderr/deadlines.
+Kill/reap workers and join pipe threads on failure. Internal compiler/runtime/
+transport failures cannot become supported passes or known-gap suppressions.
+Only exact reviewed compile diagnostics match a concrete unsupported baseline;
+keep them, unexpected support and untested feature rows separate in every report.
+Do not automatically learn baselines or rewrite Test262 into main functions.
+Run the baseline gate with workspace tests; --require-supported currently exits 1
+for open acceptance work. Source/profile/baseline changes require explicit semantic
+review and matching documentation. See conformance/README.md and the CORE ledger.
+
+## Array initializer inference v27
+
+Inherit v26 under checked-f64-utf16-v27 with shared ABI26/value12/schema12;
+both rebuilt native companions advertise the exact 30-profile list. Only v27 adds
+uncontextual array unions. Lower effectful elements once, retain source order,
+flatten admitted member evidence and intern the final union once. Preserve earlier
+aggregate contexts and explicit array typing. Keep context-only record/array
+hints distinct from constraints, including calls, ternaries and pattern results. Resolve only literal empty/all-hole
+array peers from typed array evidence; never replay an effectful expression to
+obtain its type. Keep final IR positions, holes/presence, reference identity,
+boxed Number bits, alias invariance and all existing shape/Function/opaque limits.
+Outer/unresolved empties still need annotations. Do not raise root/fuel/body/source
+limits for wide literals: 1024 elements and 64 KiB function bodies are independent
+bounds. Keep stale capture diagnostics, host/status/fatal and GC contracts across
+module/public/artifact paths. The reviewed v27 corpus promotes the old gap and adds
+four cases (40 total, 28 pass, 12 known unsupported); v26 still rejects it. See
+architecture inference contract, array_inference tests and conformance/README.md.
+
+## BigInt mathematical foundation
+
+`varta-bigint` is an engine numeric foundation depending only on common engine
+contracts and pinned numeric libraries. Every allocating arithmetic/conversion
+operation takes an explicit caller bit/work budget. Keep fatal capacity/work
+failures distinct from recoverable semantic errors. It has no guest ABI, source
+admission, host imports or default production budget yet. BigInt integration must
+add versioned values, rooting, boundary validation and public source/runtime tests
+before promoting the known unsupported conformance case.

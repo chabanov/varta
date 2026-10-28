@@ -3133,3 +3133,62 @@ fn public_engine_predicate_searches_run_across_virtual_modules() {
         ]
     );
 }
+
+#[test]
+fn public_engine_reduce_right_runs_across_virtual_modules() {
+    struct FoldSources;
+    impl ModuleLoader for FoldSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./fold.ts" {
+                Ok("fold.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function reverse(a:number[]):number[]{return a.reduceRight((s:number[],v:number):number[]=>{s.push(v);return s;},[]);}export function sum(a:number[]):number{return a.reduceRight((s,v)=>s+v,0);}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {reverse,sum} from './fold.ts';export function main():void{console.log(JSON.stringify(reverse([1,2,3])));console.log(sum([1,,3]));console.log(sum([]));try{const empty:number[]=[];empty.reduceRight((s,v)=>s+v);}catch(error){console.log(error instanceof TypeError);}}".into()},&FoldSources,varta_common::language::LanguageProfile::CheckedF64Utf16V26).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: [3,2,1]",
+            "varta log: 4",
+            "varta log: 0",
+            "varta log: 1"
+        ]
+    );
+}
+
+#[test]
+fn public_engine_array_inference_runs_across_virtual_modules() {
+    struct InferSources;
+    impl ModuleLoader for InferSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./infer.ts" {
+                Ok("infer.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function make():(number|string|undefined)[]{const values=[1,'x',undefined];values.push(2);return values;}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(ModuleSource{path:"entry.ts".into(),text:"import {make} from './infer.ts';export function main():void{console.log(JSON.stringify(make()));console.log(JSON.stringify([[],[2]]));const record={n:7};const values=[record,undefined];const first=values[0];if(first){first.n=9;}console.log(record.n);}".into()},&InferSources,varta_common::language::LanguageProfile::CheckedF64Utf16V27).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: [1,\"x\",null,2]",
+            "varta log: [[],[2]]",
+            "varta log: 9"
+        ]
+    );
+}

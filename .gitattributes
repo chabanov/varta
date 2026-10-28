@@ -1,0 +1,3 @@
+# Source digests in the checked conformance inventory pin these exact LF bytes.
+/conformance/*.json text eol=lf
+/conformance/cases/*.ts text eol=lf
