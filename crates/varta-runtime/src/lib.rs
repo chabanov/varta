@@ -18,6 +18,10 @@ mod contract_tests;
 mod contracts;
 mod exceptions;
 mod execution;
+mod prepared;
+#[cfg(test)]
+mod prepared_tests;
+pub use prepared::PreparedModule;
 mod host;
 mod http;
 #[cfg(test)]
@@ -171,6 +175,7 @@ pub(crate) struct RuntimeContext {
     deadline: Instant,
     http_control: Option<(String, HttpShutdown)>,
     random: random::RandomSource,
+    function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
 }
 
 impl RuntimeContext {
@@ -268,6 +273,21 @@ impl VartaRuntime {
         &self,
         bytes: &[u8],
     ) -> Result<(Module, Option<varta_common::ToolCatalog>), RuntimeError> {
+        self.prepare_module_and_tools(bytes)
+            .map(|(prepared, tools)| (prepared.module, tools))
+    }
+
+    /// Validate portable code and retain its immutable private capture metadata.
+    pub fn prepare_module(&self, bytes: &[u8]) -> Result<PreparedModule, RuntimeError> {
+        self.prepare_module_and_tools(bytes)
+            .map(|(module, _)| module)
+    }
+
+    /// Prepare code and its public contracts without executing guest code.
+    pub fn prepare_module_and_tools(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(PreparedModule, Option<varta_common::ToolCatalog>), RuntimeError> {
         validate::module(&self.engine, bytes)
     }
 
@@ -338,10 +358,10 @@ impl VartaRuntime {
         ceiling: Option<&[CapabilityGrant]>,
         observer: Option<RuntimeObserver>,
     ) -> Result<RunOutput, RuntimeError> {
-        let module = self.validate_module(bytes)?;
+        let module = self.prepare_module(bytes)?;
         let mut execution = execution::Execution::new(&self.engine, capabilities, ceiling)?;
         let result = (|| {
-            let instance = execution.instantiate(&module)?;
+            let instance = execution.instantiate_prepared(&module)?;
             let store = &mut execution.store;
             if let Some(start) = instance.get_func(&mut *store, "_start") {
                 start.call(&mut *store, &[], &mut [])?;

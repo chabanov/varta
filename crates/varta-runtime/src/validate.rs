@@ -5,8 +5,8 @@ use wasmtime::{Engine, Module};
 pub(crate) fn module(
     engine: &Engine,
     bytes: &[u8],
-) -> Result<(Module, Option<varta_common::ToolCatalog>), RuntimeError> {
-    let language = preflight(bytes)?;
+) -> Result<(crate::PreparedModule, Option<varta_common::ToolCatalog>), RuntimeError> {
+    let (language, function_catalog) = preflight(bytes)?;
     let version = language.profile.map_or(abi::VERSION, |p| p.host_abi());
     if bytes.len() > abi::MAX_WASM_BYTES || !bytes.starts_with(b"\0asm\x01\0\0\0") {
         return Err(wasmtime::Error::msg("expected a bounded portable Wasm module").into());
@@ -58,7 +58,13 @@ pub(crate) fn module(
     crate::exceptions::validate(&module, language.profile.unwrap_or_default())?;
     check_exports(&module)?;
     let tools = crate::contracts::validate(&module, bytes)?;
-    Ok((module, tools))
+    Ok((
+        crate::PreparedModule {
+            module,
+            function_catalog,
+        },
+        tools,
+    ))
 }
 
 fn error(message: &str) -> RuntimeError {
@@ -81,14 +87,22 @@ pub(crate) fn value_version(bytes: &[u8]) -> Result<Option<u32>, RuntimeError> {
     Ok(None)
 }
 
-fn preflight(bytes: &[u8]) -> Result<varta_common::language::LanguageInspection, RuntimeError> {
+fn preflight(
+    bytes: &[u8],
+) -> Result<
+    (
+        varta_common::language::LanguageInspection,
+        Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+    ),
+    RuntimeError,
+> {
     use wasmparser::{Parser, Payload};
     if bytes.len() > abi::MAX_WASM_BYTES {
         return Err(error("Wasm exceeds size limit"));
     }
     let language = crate::language::inspect(bytes)?;
     let mut values = 0;
-    let mut function_catalog = false;
+    let mut function_catalog = None;
     let mut union_imports = false;
     let mut json_imports = std::collections::BTreeSet::new();
     let mut http = false;
@@ -213,21 +227,22 @@ fn preflight(bytes: &[u8]) -> Result<varta_common::language::LanguageInspection,
             Payload::CustomSection(section)
                 if section.name() == varta_common::function::CATALOG_SECTION =>
             {
-                if function_catalog
+                if function_catalog.is_some()
                     || language
                         .profile
                         .is_none_or(|profile| !profile.property_deletion())
                 {
                     return Err(error("unsupported or duplicate function capture catalog"));
                 }
-                let catalog = varta_common::function::FunctionCatalog::from_bytes(section.data())
-                    .map_err(|e| error(&e.to_string()))?;
-                if Some(catalog.value_version)
+                let catalog =
+                    varta_common::function::VerifiedFunctionCatalog::from_bytes(section.data())
+                        .map_err(|e| error(&e.to_string()))?;
+                if Some(catalog.as_catalog().value_version)
                     != language.profile.map(|profile| profile.value_abi())
                 {
                     return Err(error("function capture catalog value version mismatch"));
                 }
-                function_catalog = true;
+                function_catalog = Some(std::sync::Arc::new(catalog));
             }
             Payload::CustomSection(section)
                 if section.name() == varta_common::value::VALUE_SECTION =>
@@ -276,7 +291,7 @@ fn preflight(bytes: &[u8]) -> Result<varta_common::language::LanguageInspection,
     if (!json_imports.is_empty() || union_imports || profile.exceptions()) && values != 1 {
         return Err(error("JSON import requires structured value ABI metadata"));
     }
-    Ok(language)
+    Ok((language, function_catalog))
 }
 
 fn check_exports(module: &Module) -> Result<(), RuntimeError> {

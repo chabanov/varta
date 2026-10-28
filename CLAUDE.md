@@ -1642,3 +1642,14 @@ allowance. Preserve legal private capture cycles; malformed functions must fail
 even when serialization would omit them. Reject callable toJSON until guest-side
 hooks are implemented. Schema14 cannot fabricate functions. This codec does not
 change the 33 admitted profiles; new host imports and source gating are pending.
+
+
+Prepared module capture ownership is part of the runtime foundation. Keep
+`PreparedModule` construction private to validation, with immutable verified
+catalog ownership paired to its backend module. Startup, invocation and fresh
+HTTP instances must use `instantiate_prepared`; raw module validation remains a
+compatibility/inspection API. Install the catalog before instantiation, clear it
+on failure, and forbid replacing it after the execution's first attempt. Never
+recover trusted metadata from guest memory or a global module registry. Sealed
+catalog proofs may skip schema revalidation, but must retain all graph/work and
+payload checks. This does not admit value14 source operations or call authority.

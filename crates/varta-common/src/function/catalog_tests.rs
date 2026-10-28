@@ -133,3 +133,24 @@ fn capture_catalog_rejects_invalid_metadata_and_deep_bottom_up_type_dags() {
     assert!(FunctionCatalog::from_bytes(&serde_json::to_vec(&json).unwrap()).is_err());
     assert!(FunctionCatalog::from_bytes(b"{}").is_err());
 }
+
+#[test]
+fn verified_capture_catalog_keeps_metadata_and_graph_work_checks() {
+    let (data, root, _, binding, mut catalog) = fixture();
+    let raw = catalog.validate_closure(&data, root, abi::FUEL).unwrap();
+    let verified = catalog.clone().into_verified().unwrap();
+    let decoded = VerifiedFunctionCatalog::from_bytes(&catalog.to_bytes().unwrap()).unwrap();
+    // Mutating the former owner cannot alter either sealed catalog.
+    catalog.functions.clear();
+    assert!(catalog.validate_closure(&data, root, abi::FUEL).is_err());
+    for owner in [&verified, &decoded] {
+        let proof = owner.validate_closure(&data, root, abi::FUEL).unwrap();
+        assert_eq!((proof.nodes, proof.work), (raw.nodes, raw.work));
+        assert!(owner.validate_closure(&data, root, raw.work - 1).is_err());
+        let mut corrupt = data.clone();
+        put64(&mut corrupt, binding + 16, 5);
+        assert!(owner.validate_closure(&corrupt, root, abi::FUEL).is_err());
+    }
+    catalog.value_version = 0;
+    assert!(catalog.into_verified().is_err());
+}

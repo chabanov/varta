@@ -34,7 +34,34 @@ struct Walker<'a> {
     nodes: usize,
     seen: BTreeSet<(u64, usize)>,
 }
+/// Validated, immutable metadata owned by the module loader. Guest memory can
+/// never replace the schema. This proves capture layout, not call authority.
+#[derive(Debug, Clone)]
+pub struct VerifiedFunctionCatalog(FunctionCatalog);
+impl VerifiedFunctionCatalog {
+    /// Decode and verify metadata once, then retain it without mutable access.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ValueAbiError> {
+        FunctionCatalog::from_bytes(bytes).map(Self)
+    }
+
+    pub fn as_catalog(&self) -> &FunctionCatalog {
+        &self.0
+    }
+    pub fn validate_closure(
+        &self,
+        data: &[u8],
+        handle: u64,
+        work_budget: u64,
+    ) -> Result<CaptureValidation, ValueAbiError> {
+        self.0.walk_closure(data, handle, work_budget)
+    }
+}
 impl FunctionCatalog {
+    pub fn into_verified(self) -> Result<VerifiedFunctionCatalog, ValueAbiError> {
+        self.validate()?;
+        Ok(VerifiedFunctionCatalog(self))
+    }
+
     /// The catalog must come from immutable module metadata. This method never
     /// grants call authority and never invokes a function from its code index.
     pub fn validate_closure(
@@ -44,6 +71,14 @@ impl FunctionCatalog {
         work_budget: u64,
     ) -> Result<CaptureValidation, ValueAbiError> {
         self.validate()?;
+        self.walk_closure(data, handle, work_budget)
+    }
+    fn walk_closure(
+        &self,
+        data: &[u8],
+        handle: u64,
+        work_budget: u64,
+    ) -> Result<CaptureValidation, ValueAbiError> {
         let mut walker = Walker {
             catalog: self,
             data,

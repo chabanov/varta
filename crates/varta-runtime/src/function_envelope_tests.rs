@@ -125,9 +125,9 @@ pub(super) fn catalog_fixture(
         })
         .unwrap();
     let runtime = VartaRuntime::new();
-    let module = runtime.validate_module(&bytes).unwrap();
+    let module = runtime.prepare_module(&bytes).unwrap();
     let mut execution = crate::execution::Execution::new(&runtime.engine, &[], Some(&[])).unwrap();
-    let instance = execution.instantiate(&module).unwrap();
+    let instance = execution.instantiate_prepared(&module).unwrap();
     instance
         .get_typed_func::<(), ()>(&mut execution.store, "_start")
         .unwrap()
@@ -149,6 +149,14 @@ pub(super) fn catalog_fixture(
             functions.push((24u64 << 32) | (at + 16) as u64);
         }
         at += size;
+    }
+    let owner = execution.store.data().function_catalog.as_ref().unwrap();
+    assert_eq!(
+        owner.as_catalog().to_bytes().unwrap(),
+        catalog.to_bytes().unwrap()
+    );
+    for handle in &functions {
+        owner.validate_closure(&data, *handle, abi::FUEL).unwrap();
     }
     (data, catalog, functions)
 }
@@ -304,6 +312,17 @@ fn function_catalog_preflight_rejects_duplicate_malformed_and_wrong_profile_meta
     let catalog = catalog.unwrap();
     let runtime = VartaRuntime::new();
     runtime.validate_module(&stripped).unwrap();
+    assert!(
+        runtime
+            .prepare_module(&stripped)
+            .unwrap()
+            .function_catalog()
+            .is_none()
+    );
+    assert_eq!(
+        runtime.run_wasm_bytes(&stripped, &[]).unwrap().lines,
+        ["varta log: 7"]
+    );
     let mut duplicate = bytes;
     append_catalog(&mut duplicate, &catalog);
     assert!(runtime.validate_module(&duplicate).is_err());

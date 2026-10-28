@@ -33,6 +33,6 @@ pub use catalog::{
     FunctionCatalog, MAX_CAPTURE_TYPES,
 };
 mod validate;
-pub use validate::CaptureValidation;
+pub use validate::{CaptureValidation, VerifiedFunctionCatalog};
 #[cfg(test)]
 mod catalog_tests;

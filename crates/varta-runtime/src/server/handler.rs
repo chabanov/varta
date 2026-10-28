@@ -10,7 +10,7 @@ pub(super) fn execute(
         Execution::new(&shared.engine, &shared.requested, shared.ceiling.as_deref())?;
     execution.store.data_mut().http_control =
         Some((shared.contract.bind.clone(), shared.stop.clone()));
-    let instance = execution.instantiate(&shared.module)?;
+    let instance = execution.instantiate_prepared(&shared.module)?;
     let memory = instance
         .get_memory(&mut execution.store, "memory")
         .ok_or_else(|| HttpError::Message("missing ABI memory".into()))?;

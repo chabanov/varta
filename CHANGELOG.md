@@ -9,6 +9,11 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Prepared runtime modules retain immutable verified function catalogs through
+  startup, tool invocation and HTTP request execution. Stores own their module's
+  metadata, reject replacement after instantiation starts and clear it on failure.
+  Existing module-validation APIs and source-profile contracts remain compatible.
+
 - Value14 codec groundwork adds catalog-checked Function tag12 and a Rust JSON
   graph encoder with function omission/null rules and bounded capture validation.
   Schema14 retains existing JSON input types; current source profiles/host imports

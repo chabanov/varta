@@ -6030,3 +6030,27 @@ properties fail explicitly until invocation can happen in guest code. Schema14
 inherits JSON input types/layout generation without a callable JSON constructor.
 Host-operation registration and source admission remain future versioned work;
 current v30 modules still use value13/ABI28.
+
+
+### Prepared module capture ownership
+
+`VartaRuntime::prepare_module` and `prepare_module_and_tools` retain the validated
+Wasm module together with an optional immutable `VerifiedFunctionCatalog`.
+Metadata is verified once during portable-module preflight. The sealed common
+catalog exposes shared schema reads and bounded capture proofs, without mutable
+schema access or repeated metadata-DAG validation. The raw `FunctionCatalog`
+API still verifies metadata on each proof because its fields remain mutable.
+
+Normal startup, tool invocation and fresh HTTP request instances use the prepared
+module path. Each Store receives its module's catalog before instantiation and
+owns an Arc independently of the prepared module's lifetime. Execution allows
+one instantiation attempt, matching its existing one-instance resource ceiling.
+A second attempt cannot replace a live instance's schema; a failed first attempt
+clears the schema and cannot be retried in that Store. No process-wide catalog
+registry or guest-memory metadata lookup is involved.
+
+The existing `validate_module`/`validate_module_and_tools` APIs continue returning
+backend modules for compatibility and inspection. A backend module alone carries
+no capture owner. Missing optional catalogs remain accepted for older v30 code.
+This ownership layer does not admit value14 source operations or grant indirect
+call authority; versioned host handlers and source admission are still pending.

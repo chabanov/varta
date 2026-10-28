@@ -50,7 +50,7 @@ impl VartaRuntime {
                 .map_err(|e| Error::InvalidPolicy(e.to_string()))?;
         }
         let (module, catalog) = self
-            .validate_module_and_tools(bytes)
+            .prepare_module_and_tools(bytes)
             .map_err(|e| Error::InvalidArtifact(e.to_string()))?;
         let tool = catalog
             .as_ref()
@@ -60,7 +60,9 @@ impl VartaRuntime {
         // No instantiation or guest allocation occurs until every argument is valid.
         let mut execution =
             Execution::new(&self.engine, requested, ceiling).map_err(runtime_error)?;
-        let instance = execution.instantiate(&module).map_err(execution_error)?;
+        let instance = execution
+            .instantiate_prepared(&module)
+            .map_err(execution_error)?;
         let mut params = Vec::with_capacity(arguments.len());
         for argument in arguments {
             execution.check_deadline().map_err(execution_error)?;

@@ -7,6 +7,7 @@ use wasmtime::{Engine, Instance, Module, Store, StoreLimitsBuilder};
 pub(crate) struct Execution {
     pub store: Store<RuntimeContext>,
     _deadline: Deadline,
+    instantiation_started: bool,
 }
 impl Execution {
     pub fn new(
@@ -36,6 +37,7 @@ impl Execution {
                 output_bytes: 0,
                 host_calls: 0,
                 http_control: None,
+                function_catalog: None,
                 random: crate::random::RandomSource::default(),
                 deadline: Instant::now() + Duration::from_secs(abi::DEADLINE_SECONDS),
             },
@@ -54,14 +56,44 @@ impl Execution {
         Ok(Self {
             store,
             _deadline: deadline,
+            instantiation_started: false,
         })
     }
+    #[cfg(test)]
     pub fn instantiate(&mut self, module: &Module) -> Result<Instance, wasmtime::Error> {
-        let mut linker = wasmtime::Linker::new(self.store.engine());
-        host::register(&mut linker)?;
-        let instance = linker.instantiate(&mut self.store, module)?;
-        crate::exceptions::initial(&instance, &mut self.store)?;
-        Ok(instance)
+        self.instantiate_owned(module, None)
+    }
+    pub fn instantiate_prepared(
+        &mut self,
+        module: &crate::PreparedModule,
+    ) -> Result<Instance, wasmtime::Error> {
+        self.instantiate_owned(&module.module, module.function_catalog.clone())
+    }
+    fn instantiate_owned(
+        &mut self,
+        module: &Module,
+        catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+    ) -> Result<Instance, wasmtime::Error> {
+        // One instance per execution, including failed attempts. Never replace
+        // metadata while an existing instance can still call host operations.
+        if self.instantiation_started {
+            return Err(wasmtime::Error::msg(
+                "execution already attempted instantiation",
+            ));
+        }
+        self.instantiation_started = true;
+        self.store.data_mut().function_catalog = catalog;
+        let result = (|| {
+            let mut linker = wasmtime::Linker::new(self.store.engine());
+            host::register(&mut linker)?;
+            let instance = linker.instantiate(&mut self.store, module)?;
+            crate::exceptions::initial(&instance, &mut self.store)?;
+            Ok(instance)
+        })();
+        if result.is_err() {
+            self.store.data_mut().function_catalog.take();
+        }
+        result
     }
     pub fn check_deadline(&self) -> Result<(), wasmtime::Error> {
         if Instant::now() >= self.store.data().deadline {

@@ -22,7 +22,7 @@ Completed since baseline commit `526f9ab`:
 | BigInt scalars (v28) | Canonical managed leaves, exact arithmetic/conversions/comparisons, recoverable semantic errors and typed width/radix methods; aggregate/union/throw/JSON integration pending |
 | BigInt graphs (v29) | Value/schema13, exact reference masks, primitive-union arithmetic, native JSON TypeError and owned BigInt exceptions; BigInt compound assignments and numeric updates; primitive width/radix, update, compound and ordinary arithmetic/unary coercion and six-kind comparison/equality; object ToPrimitive pending |
 | Object operations (v30) | Optional-record deletion and dense Object.entries snapshots for closed records/typed arrays; String/primitive own-index enumeration, Object.is/SameValue and checked Object.assign with fresh-record shape preparation; descriptors and general objects remain pending |
-| Function codec groundwork | Common value14 tag12, catalog-required function cells, typed graph checks and JSON omission/null rules; source profile and versioned host operations remain pending |
+| Function codec groundwork | Common value14 tag12, catalog-required function cells, typed graph checks, JSON omission/null rules and immutable per-module/Store catalog ownership; source profile and versioned host operations remain pending |
 | Checked compatibility inventory | Pinned v30/ECMAScript 2025 sources, isolated executor, explicit supported/gap/untested counts and reviewed-baseline CI gate |
 
 Earlier additive operations require v12+; sparse/mutation rules remain profile-specific.
@@ -2408,3 +2408,35 @@ fixture; formatting and whitespace checks pass. Node.js independently matches
 ordinary function omission/null/Undefined and both private-cycle JSON outcomes.
 No source/artifact/conformance pass is claimed for value14 host operations, which
 are not registered yet; current language admission stays unchanged.
+
+
+### Prepared function-catalog ownership increment
+
+The preceding source snapshot was committed and pushed as `bebe8d4` after the
+full seven-command verification gate passed 1746 tests with unchanged sources.
+The reviewed compatibility inventory remains 78 cases: 67 supported, 11 known
+gaps, plus seven untested feature rows; this is not complete compatibility.
+
+The next runtime increment retains an immutable verified capture catalog beside
+its validated module and transfers shared ownership into each execution Store.
+Startup, tools and HTTP requests use this prepared path. One instantiation
+attempt per execution prevents replacing a live module's schema, including after
+a failure. Failed instantiation clears the owner. Legacy backend validation APIs
+and optional-catalog admission remain available. Capture proofs on the sealed
+common catalog retain graph/work checks without revalidating immutable schemas.
+Source profile31, host ABI29, function-valued aggregates/member invocation and
+end-to-end value14 source/artifact/conformance checks are still outstanding.
+CORE completion states remain unchanged; this increment closes runtime metadata
+ownership groundwork, not the full function transport requirement.
+
+
+Verification for prepared ownership: the new common sealed-catalog test and
+three runtime ownership tests pass (the prepared-name filter also ran nine
+existing regressions). Eight tool-invocation tests, six HTTP tests and the final
+58-test function filter pass, including real emitted capture graphs validated
+through the Store's catalog and v30 artifacts with optional metadata removed.
+The cross-module public API test and rebuilt runtime companion/source-free CLI
+artifact test pass. Strict common/runtime all-target Clippy passed; final test
+fixture additions passed compilation and focused behavior checks. Formatting and
+whitespace checks pass. No new full-workspace gate or value14 source compatibility
+pass is claimed for this increment.

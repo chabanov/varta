@@ -10,7 +10,7 @@ use varta_common::{
     CapabilityGrant, abi,
     http::{HttpContract, HttpError},
 };
-use wasmtime::{Engine, Module};
+use wasmtime::Engine;
 
 #[derive(Clone, Debug)]
 pub struct HttpShutdown(tokio::sync::watch::Sender<bool>);
@@ -82,7 +82,7 @@ impl Sink {
 }
 struct Shared {
     engine: Engine,
-    module: Module,
+    module: crate::PreparedModule,
     contract: HttpContract,
     requested: Vec<CapabilityGrant>,
     ceiling: Option<Vec<CapabilityGrant>>,
@@ -93,7 +93,7 @@ struct Shared {
 
 pub(super) struct Start<'a> {
     pub engine: Engine,
-    pub module: Module,
+    pub module: crate::PreparedModule,
     pub contract: HttpContract,
     pub requested: &'a [CapabilityGrant],
     pub ceiling: Option<&'a [CapabilityGrant]>,
