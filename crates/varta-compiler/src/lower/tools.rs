@@ -341,6 +341,7 @@ fn expression(
         E::ArrayPop(a)
         | E::HasOwn(a, _)
         | E::Negative(a)
+        | E::MathUnary(_, a)
         | E::Undefined(a)
         | E::Not(a)
         | E::Capture(a)

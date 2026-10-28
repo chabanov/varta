@@ -1,5 +1,6 @@
 mod array_mutation;
 mod arrays;
+mod bitwise;
 mod closures;
 mod collect;
 mod errors;
@@ -8,6 +9,7 @@ mod expr;
 mod finally;
 mod functions;
 mod labels;
+mod math;
 mod missing;
 mod numbers;
 mod object_enumeration;

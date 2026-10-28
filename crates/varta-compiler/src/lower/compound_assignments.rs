@@ -1,4 +1,4 @@
-//! Noncoercive arithmetic reads the prepared old value before RHS effects.
+//! Noncoercive arithmetic/bitwise operations read old values before RHS effects.
 use super::*;
 
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
@@ -45,16 +45,30 @@ impl Lower<'_> {
             ast::AssignOp::MulAssign => ast::BinaryOp::Mul,
             ast::AssignOp::DivAssign => ast::BinaryOp::Div,
             ast::AssignOp::ModAssign => ast::BinaryOp::Mod,
+            ast::AssignOp::BitAndAssign => ast::BinaryOp::BitAnd,
+            ast::AssignOp::BitOrAssign => ast::BinaryOp::BitOr,
+            ast::AssignOp::BitXorAssign => ast::BinaryOp::BitXor,
+            ast::AssignOp::LShiftAssign => ast::BinaryOp::LShift,
+            ast::AssignOp::RShiftAssign => ast::BinaryOp::RShift,
+            ast::AssignOp::ZeroFillRShiftAssign => ast::BinaryOp::ZeroFillRShift,
+            ast::AssignOp::ExpAssign => ast::BinaryOp::Exp,
             _ => {
                 return Err(unsupported(
-                    "compound assignment operator other than arithmetic or logical assignment",
+                    "compound assignment operator other than arithmetic, bitwise or logical assignment",
                 ));
             }
         };
-        if !self.types.profile.closures() {
+        if op == ast::BinaryOp::Exp && !self.types.profile.number_power() {
             return Err(unsupported(
-                "arithmetic compound assignments require checked-f64-utf16-v12",
+                "compound exponentiation requires checked-f64-utf16-v15",
             ));
+        }
+        if !self.types.profile.closures() {
+            return Err(unsupported(if ir::is_number_bitwise(op) {
+                "bitwise compound assignments require checked-f64-utf16-v12"
+            } else {
+                "arithmetic compound assignments require checked-f64-utf16-v12"
+            }));
         }
         let target = match &assign.left {
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(name)) => self
@@ -140,6 +154,8 @@ impl Lower<'_> {
         op: ast::BinaryOp,
         span: swc_common::Span,
     ) -> Result<Expr> {
+        let bitwise = ir::is_number_bitwise(op);
+        let power = op == ast::BinaryOp::Exp;
         let left = unions::members(old.ty, self.types);
         let candidates: Vec<_> = [Type::Float64, Type::String]
             .into_iter()
@@ -147,7 +163,13 @@ impl Lower<'_> {
             .collect();
         if candidates.is_empty() {
             return Err(self.source.locate(
-                type_error("compound arithmetic requires a Number target or String target for +="),
+                type_error(if power {
+                    "compound exponentiation requires a Number target; coercion is unsupported"
+                } else if bitwise {
+                    "compound bitwise operation requires a Number target; coercion is unsupported"
+                } else {
+                    "compound arithmetic requires a Number target or String target for +="
+                }),
                 old.span,
             ));
         }
@@ -158,6 +180,22 @@ impl Lower<'_> {
             .filter(|ty| right.contains(ty))
             .collect();
         if cases.is_empty() {
+            if power {
+                return Err(self.source.locate(
+                    type_error(
+                        "compound exponentiation requires a Number RHS; coercion is unsupported",
+                    ),
+                    value.span,
+                ));
+            }
+            if bitwise {
+                return Err(self.source.locate(
+                    type_error(
+                        "compound bitwise operation requires a Number RHS; coercion is unsupported",
+                    ),
+                    value.span,
+                ));
+            }
             return Err(self.source.locate(type_error("compound arithmetic requires matching Number operands, or matching Strings for +=; coercion is unsupported"),value.span));
         }
         let ty = unions::intern(cases.clone(), self.types)?;
@@ -169,7 +207,13 @@ impl Lower<'_> {
         let marker = self.hidden(Type::Number);
         let error = self.array_error(
             varta_common::value::ErrorClass::TypeError,
-            "Invalid compound arithmetic operands",
+            if power {
+                "Invalid compound exponentiation operands"
+            } else if bitwise {
+                "Invalid compound bitwise operands"
+            } else {
+                "Invalid compound arithmetic operands"
+            },
             span,
         )?;
         let mut branch = vec![S::Throw(error)];

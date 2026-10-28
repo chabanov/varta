@@ -236,6 +236,9 @@ impl Lower<'_> {
                         (value.ty, E::Negative(Box::new(value)))
                     }
                     ast::UnaryOp::Plus if value.ty == Type::Float64 => return Ok(value),
+                    ast::UnaryOp::Tilde => {
+                        return self.number_bitwise_not(value, expression.span());
+                    }
                     ast::UnaryOp::Bang
                         if matches!(value.ty, Type::Number | Type::Float64 | Type::Boolean)
                             || self.types.profile.has_undefined()
@@ -253,6 +256,12 @@ impl Lower<'_> {
             ast::Expr::Bin(binary) => {
                 let left = self.expr(&binary.left)?;
                 let right = self.expr(&binary.right)?;
+                if binary.op == ast::BinaryOp::Exp {
+                    return self.number_power(left, right, expression.span());
+                }
+                if ir::is_number_bitwise(binary.op) {
+                    return self.number_bitwise(binary.op, left, right, expression.span());
+                }
                 if left.ty.is_error() && right.ty.is_error() && left.ty != right.ty {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
@@ -358,6 +367,11 @@ impl Lower<'_> {
         let ast::Callee::Expr(callee) = &call.callee else {
             return Err(unsupported("callee"));
         };
+        if let ast::Expr::Member(member) = &**callee
+            && matches!(&*member.obj, ast::Expr::Ident(id) if id.sym == "Math")
+        {
+            return self.math_call(call, member);
+        }
         if call.args.iter().any(|arg| arg.spread.is_some()) {
             return self.spread_call(call, callee);
         }

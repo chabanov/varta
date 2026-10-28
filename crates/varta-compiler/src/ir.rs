@@ -1,5 +1,17 @@
 use swc_ecma_ast::BinaryOp;
 
+pub(crate) fn is_number_bitwise(op: BinaryOp) -> bool {
+    matches!(
+        op,
+        BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+            | BinaryOp::LShift
+            | BinaryOp::RShift
+            | BinaryOp::ZeroFillRShift
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Type {
     Function(u32),
@@ -249,6 +261,16 @@ pub(crate) enum StringTrimMode {
     TrimEnd,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MathUnary {
+    Abs,
+    Floor,
+    Ceil,
+    Trunc,
+    Round,
+    Sqrt,
+}
+
 pub(crate) enum Expression {
     Assignment {
         value: Box<Expr>,
@@ -314,6 +336,7 @@ pub(crate) enum Expression {
     Local(u32),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Negative(Box<Expr>),
+    MathUnary(MathUnary, Box<Expr>),
     Not(Box<Expr>),
     Call(usize, Vec<Expr>),
     Host(Host, Vec<Expr>),

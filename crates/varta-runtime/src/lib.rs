@@ -20,6 +20,10 @@ mod unions;
 mod utf16;
 pub use server::{HttpShutdown, RuntimeEvent, RuntimeObserver};
 #[cfg(test)]
+mod bitwise_compound_tests;
+#[cfg(test)]
+mod bitwise_tests;
+#[cfg(test)]
 mod invocation_tests;
 mod invoke;
 mod json;
@@ -33,12 +37,16 @@ mod language;
 mod language_tests;
 #[cfg(test)]
 mod logical_assignment_tests;
+#[cfg(test)]
+mod math_tests;
 mod number;
 #[cfg(test)]
 mod number_tests;
 #[cfg(test)]
 mod number_value_tests;
 mod policy;
+#[cfg(test)]
+mod power_tests;
 #[cfg(test)]
 mod record_compound_tests;
 #[cfg(test)]
@@ -93,6 +101,10 @@ pub(crate) struct RuntimeContext {
 impl RuntimeContext {
     fn tick(&mut self) -> Result<(), wasmtime::Error> {
         self.host_calls += 1;
+        self.check_budget()
+    }
+
+    fn check_budget(&self) -> Result<(), wasmtime::Error> {
         if self.host_calls > abi::MAX_HOST_CALLS || Instant::now() >= self.deadline {
             return Err(wasmtime::Error::msg("host operation budget exhausted"));
         }

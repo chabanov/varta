@@ -1,4 +1,4 @@
-//! Scalar numeric ABI v2 and undefined logging in v3. No legacy layout is reinterpreted.
+//! Scalar numeric imports, undefined logging and versioned pure Number power.
 use crate::{GuestExit, HostFailure, RuntimeContext, host};
 use varta_common::HostOperation as Host;
 use wasmtime::{Caller, Linker};
@@ -13,6 +13,44 @@ fn checked_exit(value: f64) -> Result<i32, HostFailure> {
     }
     Ok(value as i32)
 }
+/// Number::exponentiate special cases precede the platform's approximated pow.
+fn power(base: f64, exponent: f64) -> f64 {
+    if exponent.is_nan() {
+        return f64::NAN;
+    }
+    if exponent == 0.0 {
+        return 1.0;
+    }
+    if base.is_nan() {
+        return f64::NAN;
+    }
+    let odd = exponent.is_finite() && exponent.fract() == 0.0 && exponent.abs() % 2.0 == 1.0;
+    let negative = base.is_sign_negative() && odd;
+    if base.is_infinite() {
+        let magnitude = if exponent > 0.0 { f64::INFINITY } else { 0.0 };
+        return if negative { -magnitude } else { magnitude };
+    }
+    if base == 0.0 {
+        let magnitude = if exponent > 0.0 { 0.0 } else { f64::INFINITY };
+        return if negative { -magnitude } else { magnitude };
+    }
+    if exponent.is_infinite() {
+        let magnitude = base.abs();
+        if magnitude == 1.0 {
+            return f64::NAN;
+        }
+        return if (magnitude > 1.0) == exponent.is_sign_positive() {
+            f64::INFINITY
+        } else {
+            0.0
+        };
+    }
+    if base < 0.0 && exponent.fract() != 0.0 {
+        return f64::NAN;
+    }
+    let magnitude = base.abs().powf(exponent);
+    if negative { -magnitude } else { magnitude }
+}
 pub(super) fn display(value: f64) -> String {
     if value == f64::INFINITY {
         "Infinity".into()
@@ -23,6 +61,20 @@ pub(super) fn display(value: f64) -> String {
     }
 }
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
+    linker.func_wrap(
+        "varta",
+        Host::FloatPower.name(),
+        |mut caller: Caller<'_, RuntimeContext>,
+         base: f64,
+         exponent: f64|
+         -> Result<f64, wasmtime::Error> {
+            caller.data_mut().tick()?;
+            let value = power(base, exponent);
+            // Recheck the deadline without charging a second host operation.
+            caller.data().check_budget()?;
+            Ok(value)
+        },
+    )?;
     linker.func_wrap(
         "varta",
         Host::LogUndefined.name(),

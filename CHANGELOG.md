@@ -9,6 +9,23 @@ records the current core stage, completed increments, validation and next work.
 
 ### Added
 
+- Direct checked `Math.abs`, `floor`, `ceil`, `trunc`, `round` and `sqrt` calls
+  in v15, each with one narrowed Number argument. Guest instructions preserve
+  signed-zero/nonfinite rules and rounding toward positive infinity on ties,
+  without new imports, permissions, helper exports, ABI versions or limits.
+- Opt-in `checked-f64-utf16-v15` / host ABI v18 adds Number `**` and `**=` through
+  the pure typed `number_power` import. Explicit NaN/zero/Infinity/odd-integer
+  rules precede implementation-approximated finite power, preserving status and
+  one-call/deadline budgets. Value/schema v12 and container formats are retained;
+  older profiles reject the new operators/import and native negotiation includes v15.
+- Checked `&=`, `|=`, `^=`, `<<=`, `>>=` and `>>>=` in v12+ for mutable variables,
+  static/dynamic record fields and numeric arrays, plus length in v14. Retain
+  old values before RHS effects, validate actual Number operands, reuse full-range
+  bitwise conversion and store computed results through existing checked references.
+- Number-only `&`, `|`, `^`, `~`, `<<`, `>>` and `>>>` in v12+, with full-range
+  ToInt32/ToUint32 semantics, signed/unsigned Number results and masked shifts.
+  Conversion is inline, host-free and nontrapping, with exhaustive exponent/
+  seeded-payload checks and unchanged union-narrowing/profile/resource boundaries.
 - Checked prefix/postfix `++` and `--` in v12+ for mutable variables, static/dynamic
   record fields and numeric arrays, plus length in v14. Require an actual Number,
   store through one prepared reference, then return the exact old/new value;

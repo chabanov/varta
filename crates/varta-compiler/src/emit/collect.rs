@@ -303,6 +303,9 @@ impl<'a> Collected<'a> {
                 if a.ty == Type::Float64 && *op == BinaryOp::Mod {
                     self.hosts.insert(Host::FloatRemainder);
                 }
+                if a.ty == Type::Float64 && *op == BinaryOp::Exp {
+                    self.hosts.insert(Host::FloatPower);
+                }
                 if a.ty == Type::String {
                     self.helpers.insert(if *op == BinaryOp::Add {
                         strings::Helper::Concat
@@ -323,6 +326,7 @@ impl<'a> Collected<'a> {
             | E::IsUndefined(a)
             | E::UnboxUnion(a)
             | E::Negative(a)
+            | E::MathUnary(_, a)
             | E::Undefined(a)
             | E::Not(a)
             | E::Capture(a)

@@ -52,12 +52,16 @@ impl Emitter<'_> {
         }
     }
     pub(super) fn float_binary(&mut self, op: BinaryOp) -> Result<()> {
+        if ir::is_number_bitwise(op) {
+            return self.float_bitwise(op);
+        }
         self.code.push(match op {
             BinaryOp::Add => I::F64Add,
             BinaryOp::Sub => I::F64Sub,
             BinaryOp::Mul => I::F64Mul,
             BinaryOp::Div => I::F64Div,
             BinaryOp::Mod => I::Call(self.hosts[&Host::FloatRemainder]),
+            BinaryOp::Exp => I::Call(self.hosts[&Host::FloatPower]),
             BinaryOp::Lt => I::F64Lt,
             BinaryOp::LtEq => I::F64Le,
             BinaryOp::Gt => I::F64Gt,

@@ -17,6 +17,7 @@ pub const FUNCTION_VERSION: u32 = 14;
 pub const CLOSURE_VERSION: u32 = 15;
 pub const SPARSE_VERSION: u32 = 16;
 pub const ARRAY_MUTATION_VERSION: u32 = 17;
+pub const NUMBER_POWER_VERSION: u32 = 18;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -38,6 +39,7 @@ pub fn supported(version: u32) -> bool {
             | CLOSURE_VERSION
             | SPARSE_VERSION
             | ARRAY_MUTATION_VERSION
+            | NUMBER_POWER_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";

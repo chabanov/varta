@@ -77,6 +77,7 @@ pub enum HostOperation {
     StringCharCodeAt16,
     LogFloat,
     FloatRemainder,
+    FloatPower,
     ExitFloat,
     LogInt,
     LogString,
@@ -226,6 +227,7 @@ impl HostOperation {
             Self::StringCharCodeAt16 => "string_char_code_at16",
             Self::LogFloat => "log_f64",
             Self::FloatRemainder => "number_remainder",
+            Self::FloatPower => "number_power",
             Self::ExitFloat => "process_exit_f64",
             Self::LogInt => "log_i32",
             Self::LogString => "log_string",
@@ -255,6 +257,9 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if self == Self::FloatPower {
+            return crate::abi::NUMBER_POWER_VERSION;
+        }
         if matches!(
             self,
             Self::ValueLogV6
@@ -494,7 +499,7 @@ impl HostOperation {
             | Self::UnionStrictEqual
             | Self::UnionNullishEqual => (&[I64, I64], &[I32]),
             Self::LogFloat | Self::ExitFloat => (&[F64], &[]),
-            Self::FloatRemainder => (&[F64, F64], &[F64]),
+            Self::FloatRemainder | Self::FloatPower => (&[F64, F64], &[F64]),
             Self::LogInt | Self::Exit | Self::LogUndefined => (&[I32], &[]),
             Self::LogString16
             | Self::EnvPrint16
@@ -629,6 +634,7 @@ impl HostOperation {
             "string_char_code_at16" => Self::StringCharCodeAt16,
             "log_f64" => Self::LogFloat,
             "number_remainder" => Self::FloatRemainder,
+            "number_power" => Self::FloatPower,
             "process_exit_f64" => Self::ExitFloat,
             "log_i32" => Self::LogInt,
             "log_string" => Self::LogString,
@@ -724,6 +730,7 @@ impl HostOperation {
             | Self::LogInt
             | Self::LogFloat
             | Self::FloatRemainder
+            | Self::FloatPower
             | Self::LogString
             | Self::JsonStringify
             | Self::JsonParse

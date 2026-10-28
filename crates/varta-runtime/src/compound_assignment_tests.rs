@@ -184,7 +184,6 @@ fn compound_assignments_reject_other_operators_targets_static_mismatches_and_old
         "export function main():void{let s='x';console.log(s-=2);}",
         "export function main():void{let n=true;console.log(n+=2);}",
         "export function main():void{let n=1;console.log(n**=2);}",
-        "export function main():void{let n=1;console.log(n<<=2);}",
         "export function main():void{const value={n:1};const key='n';console.log(value[key]**=2);}",
         "export function main():void{const value={n:1};console.log(value.missing+=2);}",
         "export function main():void{const a=[1];console.log(a['0']+=2);}",

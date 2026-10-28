@@ -2344,3 +2344,175 @@ fn public_engine_runs_updates_across_virtual_modules() {
         );
     }
 }
+
+#[test]
+fn public_engine_runs_bitwise_operators_across_virtual_modules() {
+    struct BitwiseSources;
+    impl ModuleLoader for BitwiseSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./bits.ts" {
+                Ok("bits.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function flags(value:number,count:number):number{return ((value&255)|16)^(1<<count);}export function unsigned(value:number):number{return value>>>0;}export function complement(value:number):number{return ~value;}export function shift(value:number,count:number):number{return value>>count;}".into())
+        }
+    }
+    let source = "import {flags,unsigned,complement,shift} from './bits.ts';export function main():void{console.log(flags(259,5));console.log(unsigned(-1));console.log(complement(1.5));console.log(shift(-8,33));console.log(unsigned(flags(4294967297,0)));console.log(unsigned(1.7976931348623157e308));const record={n:unsigned(-1)};console.log(JSON.stringify(record));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &BitwiseSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "51",
+                "4294967295",
+                "-2",
+                "-4",
+                "16",
+                "0",
+                "{\"n\":4294967295}"
+            ]
+            .map(|s| format!("varta log: {s}")),
+            "{profile:?}"
+        );
+    }
+}
+
+#[test]
+fn public_engine_runs_bitwise_compounds_across_virtual_modules() {
+    struct BitwiseCompoundSources;
+    impl ModuleLoader for BitwiseCompoundSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./compound-bits.ts" {
+                Ok("compound-bits.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function mix(record:{n?:number},key:string,values:number[],mask:number):number{let local=1;return local|=record[key]<<=values[0]^=mask;}export function unsigned(record:{n?:number},key:string):number{return record[key]>>>=0;}".into())
+        }
+    }
+    let source = "import {mix,unsigned} from './compound-bits.ts';export function main():void{const record:{n?:number}={n:2};const values=[4];console.log(mix(record,'n',values,1));console.log(JSON.stringify(record));console.log(JSON.stringify(values));record.n=-1;console.log(unsigned(record,'n'));console.log(JSON.stringify(record));const missing:{n?:number}={};try{mix(missing,'n',values,1);}catch(error){console.log(error instanceof TypeError);}console.log(Object.hasOwn(missing,'n'));console.log(JSON.stringify(values));}";
+    for profile in [
+        varta_common::language::LanguageProfile::CheckedF64Utf16V12,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V14,
+    ] {
+        let compilation = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: source.into(),
+            },
+            &BitwiseCompoundSources,
+            profile,
+        )
+        .unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compilation.wasm, &[])
+                .unwrap()
+                .lines,
+            [
+                "65",
+                "{\"n\":64}",
+                "[5]",
+                "4294967295",
+                "{\"n\":4294967295}",
+                "1",
+                "0",
+                "[4]"
+            ]
+            .map(|s| format!("varta log: {s}")),
+            "{profile:?}"
+        );
+    }
+}
+
+#[test]
+fn public_engine_runs_power_profile_across_virtual_modules() {
+    struct PowerSources;
+    impl ModuleLoader for PowerSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./power.ts" {
+                Ok("power.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function evaluate(base:number,exponent:number):number{return base**exponent;}export function update(record:{n?:number},key:string,values:number[]):number{return record[key]**=values[0]**=2;}".into())
+        }
+    }
+    let source = "import {evaluate,update} from './power.ts';export function main():void{const record:{n?:number}={n:2};const values=[3];console.log(update(record,'n',values));console.log(JSON.stringify(record));console.log(JSON.stringify(values));console.log(evaluate(9,0.5));console.log(evaluate(1,NaN));console.log(1/evaluate(-0,3));const missing:{n?:number}={};try{update(missing,'n',values);}catch(error){console.log(error instanceof TypeError);}console.log(Object.hasOwn(missing,'n'));console.log(JSON.stringify(values));}";
+    let compilation = varta_compiler::compile_modules_with_profile(
+        ModuleSource {
+            path: "entry.ts".into(),
+            text: source.into(),
+        },
+        &PowerSources,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V15,
+    )
+    .unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "512",
+            "{\"n\":512}",
+            "[9]",
+            "3",
+            "NaN",
+            "-Infinity",
+            "1",
+            "0",
+            "[81]"
+        ]
+        .map(|s| format!("varta log: {s}"))
+    );
+}
+
+#[test]
+fn public_engine_runs_checked_math_across_virtual_modules() {
+    struct MathSources;
+    impl ModuleLoader for MathSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            if name == "./math.ts" {
+                Ok("math.ts".into())
+            } else {
+                Err(CompilerError::Module("unknown virtual dependency".into()))
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export function evaluate(x:number):number[]{return [Math.abs(x),Math.floor(x),Math.ceil(x),Math.trunc(x),Math.round(x),Math.sqrt(Math.abs(x))];}".into())
+        }
+    }
+    let compilation=varta_compiler::compile_modules_with_profile(
+        ModuleSource{path:"entry.ts".into(),text:"import {evaluate} from './math.ts';export function main():void{console.log(JSON.stringify(evaluate(-6.25)));console.log(Math.round(0.49999999999999994));console.log(1/Math.round(-0.5));}".into()},
+        &MathSources,varta_common::language::LanguageProfile::CheckedF64Utf16V15,
+    ).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compilation.wasm, &[])
+            .unwrap()
+            .lines,
+        ["[6.25,-7,-6,-6,-6,2.5]", "0", "-Infinity"].map(|s| format!("varta log: {s}"))
+    );
+}

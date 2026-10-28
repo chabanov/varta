@@ -22,6 +22,7 @@ pub const SUPPORTED_PROFILES: &[LanguageProfile] = &[
     LanguageProfile::CheckedF64Utf16V12,
     LanguageProfile::CheckedF64Utf16V13,
     LanguageProfile::CheckedF64Utf16V14,
+    LanguageProfile::CheckedF64Utf16V15,
 ];
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +62,8 @@ pub enum LanguageProfile {
     CheckedF64Utf16V13,
     #[serde(rename = "checked-f64-utf16-v14")]
     CheckedF64Utf16V14,
+    #[serde(rename = "checked-f64-utf16-v15")]
+    CheckedF64Utf16V15,
 }
 impl LanguageProfile {
     #[must_use]
@@ -83,6 +86,7 @@ impl LanguageProfile {
             Self::CheckedF64Utf16V12 => crate::abi::CLOSURE_VERSION,
             Self::CheckedF64Utf16V13 => crate::abi::SPARSE_VERSION,
             Self::CheckedF64Utf16V14 => crate::abi::ARRAY_MUTATION_VERSION,
+            Self::CheckedF64Utf16V15 => crate::abi::NUMBER_POWER_VERSION,
         }
     }
     #[must_use]
@@ -108,6 +112,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -128,6 +133,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -147,6 +153,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -165,6 +172,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -182,6 +190,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -198,6 +207,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -213,6 +223,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -227,6 +238,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -240,6 +252,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -252,6 +265,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -263,6 +277,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
@@ -273,22 +288,37 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V12
                 | Self::CheckedF64Utf16V13
                 | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
     pub fn closures(self) -> bool {
         matches!(
             self,
-            Self::CheckedF64Utf16V12 | Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14
+            Self::CheckedF64Utf16V12
+                | Self::CheckedF64Utf16V13
+                | Self::CheckedF64Utf16V14
+                | Self::CheckedF64Utf16V15
         )
     }
     #[must_use]
     pub fn sparse_arrays(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14 | Self::CheckedF64Utf16V15
+        )
     }
     #[must_use]
     pub fn array_mutations(self) -> bool {
-        self == Self::CheckedF64Utf16V14
+        matches!(self, Self::CheckedF64Utf16V14 | Self::CheckedF64Utf16V15)
+    }
+    #[must_use]
+    pub fn number_power(self) -> bool {
+        self == Self::CheckedF64Utf16V15
+    }
+    #[must_use]
+    pub fn math_intrinsics(self) -> bool {
+        self == Self::CheckedF64Utf16V15
     }
     #[must_use]
     pub fn string_bytes(self, text: &str) -> Vec<u8> {
@@ -403,7 +433,7 @@ impl LanguageProfile {
     #[must_use]
     pub fn value_abi(self) -> u32 {
         match self {
-            Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14 => {
+            Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14 | Self::CheckedF64Utf16V15 => {
                 crate::value::SPARSE_VALUE_VERSION
             }
             Self::CheckedI32Utf8V1 => crate::value::VALUE_VERSION,
@@ -426,7 +456,7 @@ impl LanguageProfile {
     #[must_use]
     pub fn json_stringify(self) -> crate::HostOperation {
         match self {
-            Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14 => {
+            Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14 | Self::CheckedF64Utf16V15 => {
                 crate::HostOperation::JsonStringifyV12
             }
             Self::CheckedI32Utf8V1 => crate::HostOperation::JsonStringify,
@@ -451,7 +481,7 @@ impl LanguageProfile {
     #[must_use]
     pub fn json_parse(self) -> crate::HostOperation {
         match self {
-            Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14 => {
+            Self::CheckedF64Utf16V13 | Self::CheckedF64Utf16V14 | Self::CheckedF64Utf16V15 => {
                 crate::HostOperation::JsonParseV14
             }
             Self::CheckedI32Utf8V1 => crate::HostOperation::JsonParse,
@@ -533,6 +563,70 @@ pub struct LanguageError(pub String);
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn power_profile_versions_math_without_changing_sparse_values_or_default() {
+        let old = LanguageProfile::CheckedF64Utf16V14;
+        let new = LanguageProfile::CheckedF64Utf16V15;
+        assert_eq!(new.host_abi(), crate::abi::NUMBER_POWER_VERSION);
+        assert_eq!(old.host_abi(), crate::abi::ARRAY_MUTATION_VERSION);
+        assert!(new.number_power());
+        assert!(!old.number_power());
+        assert!(new.math_intrinsics());
+        assert!(!old.math_intrinsics());
+        assert_eq!(new.value_abi(), old.value_abi());
+        assert_eq!(new.json_parse(), old.json_parse());
+        assert_eq!(new.json_stringify(), old.json_stringify());
+        assert!(
+            [
+                new.has_undefined(),
+                new.utf16(),
+                new.unions(),
+                new.missing(),
+                new.reference_unions(),
+                new.checked_json(),
+                new.resizable_arrays(),
+                new.exceptions(),
+                new.errors(),
+                new.error_families(),
+                new.recoverable_json(),
+                new.function_values(),
+                new.closures(),
+                new.sparse_arrays(),
+                new.array_mutations()
+            ]
+            .into_iter()
+            .all(|enabled| enabled)
+        );
+        assert_eq!(
+            LanguageContract::current().profile,
+            LanguageProfile::CheckedI32Utf8V1
+        );
+        let contract = LanguageContract {
+            schema_version: SCHEMA_VERSION,
+            profile: new,
+        };
+        assert_eq!(
+            LanguageContract::parse(&contract.to_bytes().unwrap()).unwrap(),
+            contract
+        );
+    }
+    #[test]
+    fn power_host_registry_is_pure_typed_and_requires_the_new_abi() {
+        use crate::{HostOperation as H, HostScalar as S};
+        assert_eq!(H::from_name("number_power"), Some(H::FloatPower));
+        assert_eq!(H::FloatPower.name(), "number_power");
+        assert_eq!(
+            H::FloatPower.scalar_signature(),
+            (&[S::F64, S::F64][..], &[S::F64][..])
+        );
+        assert_eq!(
+            H::FloatPower.minimum_abi(),
+            crate::abi::NUMBER_POWER_VERSION
+        );
+        assert_eq!(H::FloatPower.capability(), None);
+        assert!(!H::FloatPower.returns_string());
+        assert!(!H::FloatPower.needs_result_globals());
+    }
     #[test]
     fn language_contract_is_strict_bounded_and_versioned() {
         let contract = LanguageContract::current();

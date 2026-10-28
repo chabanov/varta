@@ -682,7 +682,7 @@ Arithmetic compounds are specified below. Keep status/grants/fatal bounds and AB
 
 V12+ +=, -=, *=, /= and %= reuse prepared local/static-field/numeric-array references;
 v14 also admits length; dynamic record keys are specified next. Reject compound destructuring,
-exponent/bitwise assignments, Error/result mutation and old
+Error/result mutation and old
 profiles. Read/cache the old value after receiver/key effects but before RHS.
 Do not re-read after RHS changes the same target/backing; use current storage only
 for the final store. MaybeIndex snapshots sparse/missing/invalid numeric reads as
@@ -769,6 +769,95 @@ all source/key/read/check/store branches; pure helper controls must pass while
 host effects in either source/key fail validation. Preserve status/grants/ceilings
 and all compilation/value/fatal bounds. No new host operation/import, emitter
 helper, helper export or ABI/schema/layout version.
+
+V12+ &, |, ^, ~, <<, >> and >>> require already narrowed Float64 Number operands.
+Reject other types/unnarrowed unions at their operand span and older profiles;
+bitwise compounds are specified next. Do not add ToNumber coercion or weaken ordinary union rules.
+Use Binary IR and shared numeric operator classification; lower ~ as xor with -1.
+Evaluate both binary operands once in source order before conversion. ToUint32
+truncates finite fractions/modulo 2^32; nonfinite/either zero becomes positive
+zero. Reinterpret the binary64 exponent/significand for bounded shifts, masking
+fraction bits and restoring the sign modulo 2^32; do not use saturating/trapping
+float casts or host remainder. Magnitudes below one and exponents >=84 yield zero;
+subnormal/NaN/infinity cases take the zero branch. Apply i32 operations, with Wasm
+shift-count low-five-bit masking and signed conversion back to f64 except >>>'s
+unsigned conversion. No negative-zero result or new integer value type.
+Reuse declared scratch locals only after all user operand evaluation, with no
+calls/allocations in conversion; never trace numeric bits as pointers or clobber
+an earlier/nested operand, graph or physical pair. Existing visitors must see
+both operands and unary source effects. Preserve original exceptions, status,
+grants/ceilings and fatal bounds. Exhaustive exponent/seeded-payload tests compare
+an independent truncation/remainder oracle in fresh bounded stores, plus runtime
+Wasm validation, nested/GC/helper-purity/source-range/module/artifact/denial tests.
+No new host operation/import, emitter helper export, schema or ABI/layout version;
+existing compilation/code/root/memory/fuel/deadline limits stay active.
+
+V12+ &=, |=, ^=, <<=, >>= and >>>= reuse numeric compound preparation/storage for
+mutable initialized locals/parameters, static/dynamic record fields and numeric
+arrays; v14 admits length. Cache receiver/key and old value once before RHS.
+Evaluate RHS once, then require actual Number tags for both cached operands before
+unboxing/conversion/computation. Static types without a possible Number pair fail
+at target/RHS spans; closed unions otherwise throw owned TypeError after RHS on
+incompatible kinds. Do not coerce or change plain bitwise narrowing rules. Return
+the computed Float64 Number, widening only the storage copy; preserve unsigned
+>>> results and positive zero using existing inline ToInt32/ToUint32 conversion.
+Dynamic keys retain read-union/UTF-16/inherited timing and full selected-field
+checks. Missing/unknown/invalid numeric reads fail after RHS without attempted
+writes or property creation, retaining original RHS exceptions/effects. Valid
+results retain current storage/profile/length/fatal bounds, including v14 regrowth
+after RHS and RangeError/non-uint32 versus fatal >1024 length results. Nested
+chains retain completed inner writes; roots/floors retain original source/key/
+old/RHS graphs, earlier pairs and saved returns through GC/calls/finalizers.
+Keep const/TDZ/guarded/function/result/Error-field/coercive-key/old-profile rules.
+Visitors must see all source/key/RHS/check/store effects; pure helper controls
+pass while any operand host effect remains detectable. Preserve status/grants/
+ceilings and all budgets. No new IR kind, host operation/import, helper export or
+ABI/schema/layout version.
+
+The Number-power profile checked-f64-utf16-v15 selects host ABI v18 and inherits
+all v14 features/value ABI/schema v12/import selectors. Default remains i32; old
+profiles keep rejecting `**`/`**=`. New pure FloatPower/number_power takes (f64,f64)
+and returns f64, minimum ABI18, with no capability/result buffer/status reset.
+Compiler plain ** requires narrowed Number operands at their spans; compound **=
+uses prepared references and Number-pair guards after RHS, preserving original
+old/RHS graphs, partial stores, current backing/length rules and computed Number
+results. Keep standard exponentiation associativity/unary-base syntax via parsing.
+Runtime Number::exponentiate checks exponent NaN, either exponent zero, base NaN,
+signed infinity/zero with odd integral exponent signs, infinite exponent |base|
+rules and negative finite/nonintegral domain before abs(base).powf(exponent).
+Restore negative signs only for odd integral powers. Preserve signed underflow,
+NaN**0=1, 1**NaN=NaN and (±1)**(±Infinity)=NaN. Finite ordinary power is platform
+implementation-approximated, not cross-platform bit-identical. Do not add BigInt,
+ToNumber coercion, Math.pow, or custom exponent loops proportional to exponent.
+Charge one existing host operation, check host/deadline before and after native
+math without a second charge, preserve status/permissions and fatal budgets.
+Shared registry names/signatures/minimum ABI must drive compiler/runtime/artifact
+validation. New language/ABI18 metadata is mandatory even without an active power
+import; downgrade/profile/signature/unknown-import mismatches fail before effects.
+Launcher protocol v2 advertises maximum18/value12 and the v15 profile; packaging
+requires a matching rebuilt trusted companion. Keep old artifact execution and
+value/schema/container layouts. Host-free JSON allocation/retain helper validation
+still rejects any reachable math host call. Test special-case bits/parity/subnormals,
+finite sqrt accuracy, one-call accounting, narrowed types/old-profile rejection,
+prepared effects/GC/pairs/finalizers, inherited sparse/JSON/closure behavior,
+hostile metadata, source ranges, modules/artifacts, grants/status and fatal limits.
+
+V15 also admits direct unshadowed Math.abs/floor/ceil/trunc/round/sqrt with exactly
+one narrowed Number argument, via typed unary IR and guest instructions. Recurse
+through arguments in collection/effect visitors; preserve effects/exceptions,
+earlier roots/pairs and saved returns through GC/finalizers. Reject old profiles,
+coercion/unnarrowed unions, missing/extra/spread/generic args, shadowing including
+captures/imports/TDZ, computed calls, aliases/constants and other methods.
+Use f64 abs/floor/ceil/trunc/sqrt; preserve nonfinite/signed-zero rules. Round uses
+cached x and nearest(x), adding one only for x-nearest(x)==0.5; this fixes lower-even
+ties toward +Infinity without floor(x+.5) errors. Scratch is used after argument
+completion so nested calls cannot corrupt it. No new host import, allowance,
+permission, helper export, dependency, ABI/layout/container version or limit.
+Pure JSON helper trees may use these guest operations; argument host effects must
+still fail helper validation. Existing tool/HTTP binary64 adapter gates persist.
+Test exact finite bits, all exponents/representative mantissas, half neighbors,
+special values, nesting/narrowing, roots/pairs/finalizers, argument permissions/
+status/fatal limits, source ranges, modules and source-free Wasm/native artifacts.
 
 Artifact I/O checks manifest/code ABI agreement. Next implement the remaining
 value/ABI design under K4; a further breaking profile requires a new host ABI so old runtimes fail

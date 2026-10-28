@@ -358,7 +358,8 @@
 // old numeric bits/String ownership and current backing/presence/write limits.
 // Missing-value errors do not attempt writes or convert budgets into catchable
 // failures. Preserve roots/floors/graphs/pairs/partial chains/GC/finalizers/status/
-// grants. Dynamic record keys/logical assignments/Number updates are below. Reject exponent/bitwise assignments,
+// grants. Dynamic record keys/logical assignments/Number updates/bitwise compounds
+// and v15 exponentiation are below. Reject
 // immutable/guard-refined targets and older profiles. No ABI/import/helper export.
 // V12+ dynamic record arithmetic compounds require narrowed record/String inputs
 // and the existing computed-read union admission: all fields plus Undefined, at
@@ -404,6 +405,53 @@
 // Root/floor transfer retains graphs/earlier pairs/returns through GC/finalizers;
 // visitors see source/key/read/check/store effects, pure helper controls pass and
 // host effects fail. Status/grants/ceilings/bounds and ABI/import/helper exports persist.
+// V12+ Number-only &, |, ^, ~, <<, >> and >>> require narrowed Number operands;
+// reject other types/unnarrowed unions at their span and older
+// profiles. No ToNumber coercion or integer value type. Evaluate operands once,
+// left to right, before full-range ToInt32/ToUint32 conversion: truncate finite
+// fractions/modulo 2^32, map nonfinite/either zero to positive zero. Mask shift
+// counts to five bits; return signed Number except >>>'s unsigned 0..4294967295.
+// Inline guarded exponent/significand operations do not allocate, call hosts or
+// trap on float conversion. Scratch reuse after operand evaluation preserves
+// nesting/earlier graphs/pairs/roots. Keep source effects, original exceptions,
+// status/grants/ceilings and fatal budgets; no ABI/import/helper export change.
+// V12+ &=, |=, ^=, <<=, >>= and >>>= reuse prepared mutable local/parameter,
+// static/dynamic record and numeric-array targets; v14 admits length. Cache the
+// original receiver/key and old value before RHS, then validate actual Number
+// tags after RHS success. Impossible static pairs fail at target/RHS spans;
+// incompatible runtime members throw TypeError without coercion/requested store.
+// Return computed Number results using existing ToInt32/ToUint32 operations,
+// including unsigned >>> storage; widen only storage copies. Keep dynamic-read
+// union/UTF-16/inherited timing and full field checks. Missing/unknown/invalid
+// numeric reads fail after RHS without attempted writes/property creation; keep
+// original exceptions/effects. Valid results use current backing/presence/length
+// and profile/fatal rules. Root/floor transfer preserves original graphs, earlier
+// pairs and saved returns through partial chains/calls/GC/finalizers. Visitors
+// see every operand/check/store effect. Status/grants/ceilings/bounds and existing
+// target rules persist; no new IR kind/ABI/import/helper export.
+// checked-f64-utf16-v15 adds Number ** and **= with host ABI v18, inheriting v14
+// features and value/schema v12. Default and older profile semantics are retained.
+// Plain ** requires narrowed Number operands; **= checks actual Number tags after
+// RHS using prepared source/key/old snapshots and existing checked stores/roots.
+// Preserve source effects, partial chains, optional/sparse absence, current
+// backing/length, computed Number results and GC/pairs/returns/finalizers.
+// number_power(f64,f64)->f64 is a pure minimum-ABI18 import with no capability or
+// result buffer/status reset. Number NaN/zero/infinity/odd-integer/domain rules
+// precede platform-approximated finite power; preserve signed zero/underflow and
+// NaN**0=1, 1**NaN=NaN, (±1)**(±Infinity)=NaN. No BigInt/coercion/Math.pow.
+// Each power charges one existing host call and checks the deadline before/after
+// native math. Exhaustion/exit stay fatal; host-free JSON helpers cannot call it.
+// Profile/ABI/signature negotiation is mandatory; launcher maxima18/value12 with
+// v15 support. No value/schema/container/limit change; rebuild both binaries.
+// V15 also admits direct unshadowed Math.abs/floor/ceil/trunc/round/sqrt(value),
+// with exactly one narrowed Number argument. These are guest-only intrinsics:
+// no host import/allowance/status change, new permission/helper export or ABI.
+// Round ties toward +Infinity, preserving -0 and near-halfway binary64 values;
+// sqrt preserves -0 and yields NaN for negative nonzero inputs. Evaluate the
+// argument once, preserving its effects, exceptions, roots and fatal limits.
+// Reject omitted/extra/spread/generic args, coercion, unnarrowed unions, shadowed
+// Math, computed calls, aliases, constants and other Math methods. Older profiles
+// reject all six. No global Math declaration: the editor uses standard TS lib types.
 // V12+ Object.keys(record) returns a fresh dense string[] of present own keys:
 // canonical array indices first numerically, other strings by insertion order.
 // Explicit Undefined is present; absent optional fields are omitted. Input is

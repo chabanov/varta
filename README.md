@@ -91,6 +91,8 @@ opt-in profile adds distinct `undefined`; `checked-f64-utf16-v1` adds UTF-16 str
 plus map/filter/forEach/find/reduce/some/every as additive compiler operations.
 `checked-f64-utf16-v13` adds sparse array presence and hole-preserving map results.
 `checked-f64-utf16-v14` adds bounded indexed extension, delete and writable length.
+`checked-f64-utf16-v15` adds checked Number exponentiation (`**`, `**=`), using
+host ABI v18 with the existing value/schema v12 layouts.
 General dynamic objects and external adapters remain pending. The
 [migration contract](docs/development-plan.md#k4--ecmascript-value-profile-and-language-expansion)
 preserves the existing artifact and tool semantics.
@@ -1386,7 +1388,7 @@ and fatal results above 1024. Resource exhaustion remains fatal, including strin
 overflow, and skips catch/finally rather than becoming an operand error.
 
 Constants, TDZ/guard-refined targets, String array indices,
-Error/result mutation and exponent/bitwise assignments
+Error/result mutation
 remain unsupported. Original operand/result roots, earlier arguments/result pairs,
 callbacks and saved returns survive GC/finalizers. The operation reuses binary
 helpers, pure remainder, checked setters and value blocks; no ABI/layout, new host
@@ -1536,6 +1538,158 @@ Const/TDZ/guard-refined targets, functions/result pairs, Error/result field muta
 coercive keys and earlier profiles stay rejected. Parenthesized simple targets
 work. No new host operation, helper export or ABI/layout is introduced. See the
 [contract](docs/architecture.md#number-update-contract).
+
+## Number bitwise operators (v12 and later)
+
+Narrowed Number operands support `&`, `|`, `^`, `~`, `<<`, `>>` and `>>>`:
+
+```ts
+export function main(): void {
+  console.log(5 & 3); // 1
+  console.log(~5); // -6
+  console.log(1 << 31); // -2147483648
+  console.log(-8 >> 2); // -2; sign extended
+  console.log(-1 >>> 0); // 4294967295; zero filled
+  console.log(4294967297 | 0); // 1; wraps to 32 bits
+  console.log(1 << 33); // 2; shift count wraps to 0..31
+  console.log(NaN | Infinity); // 0
+}
+```
+
+Inputs follow Number ToInt32/ToUint32 rules: truncate finite fractions toward zero
+and reduce integers modulo 2³²; NaN, infinities and either zero become zero. Signed
+operations return a Number in the signed 32-bit range. `>>>` returns a Number in
+0..4294967295. Shift counts use their unsigned low five bits, including negative,
+fractional and large counts. Results are ordinary binary64 Numbers; zero results
+are positive zero.
+
+Operands evaluate once, left to right, before conversion. Narrow unions, optional
+fields and array reads to Number first, as for ordinary arithmetic. Strings,
+Boolean, Null/Undefined, references and opaque results are not coerced. Invalid
+static operands report their own source range. BigInt remains unsupported;
+bitwise compound assignments are specified below. Older profiles keep their behavior.
+
+Conversion handles the complete binary64 range without overflow traps or system
+calls. It adds no allocation, helper export, host operation or ABI/layout version.
+Existing operand exceptions, fatal budgets/exit, exact roots, earlier result pairs,
+system status and permissions remain active. See the
+[contract](docs/architecture.md#number-bitwise-contract).
+
+## Bitwise compound assignments (v12 and later)
+
+`&=`, `|=`, `^=`, `<<=`, `>>=` and `>>>=` support mutable initialized variables,
+declared static/dynamic record fields and numeric array indices. V14 also admits
+array length. Expressions return the computed Number after a successful store:
+
+```ts
+export function main(): void {
+  let flags = 1;
+  console.log(flags |= 4); // 5
+  const record = {n: -1};
+  const key = "n";
+  console.log(record[key] >>>= 0); // 4294967295
+  const values = [4];
+  console.log(values[0] ^= 1); // 5
+  console.log(flags <<= 33); // 10; count uses the low five bits
+}
+```
+
+Evaluate receiver/key once and snapshot the old value before evaluating RHS.
+RHS mutation or rebinding cannot redirect the prepared reference or replace its
+old value. After RHS succeeds, require actual Number operands, apply the existing
+ToInt32/ToUint32 operation, then perform the checked store. Closed unions may
+contain other members; incompatible runtime kinds raise TypeError after RHS
+without coercion or the requested write. Statically impossible targets/RHS fail
+at their source range. Ordinary bitwise expressions retain their narrowing rules.
+
+Unknown ordinary record names, absent optional fields, explicit Undefined and
+sparse/missing/invalid numeric array reads fail after RHS effects. They do not
+create a property or attempt a write. An RHS throw keeps its original exception;
+undeclared inherited record names fail during the read before RHS. Earlier
+effects and successful inner stores remain when an outer operation fails.
+
+Successful writes use current backing/presence/length: v12/v13 retain fatal
+current-length bounds, while v14 can recreate/extend valid indices after RHS
+mutation. V14 length stores keep RangeError for invalid uint32 results and fatal
+results above 1024. Exact selected-field types, original receiver/key/old/RHS roots,
+earlier operands/result pairs and saved returns survive GC/calls/finalizers.
+Signed/unsigned results remain Number values; no integer value type, new host
+operation, helper export or ABI/layout change. Permissions/status and all fatal
+budgets remain active. See the
+[contract](docs/architecture.md#bitwise-compound-assignment-contract).
+
+## Number exponentiation (opt-in v15)
+
+Select `"languageProfile":"checked-f64-utf16-v15"` for Number `**` and `**=`.
+V15 inherits v14's sparse arrays, closures, exceptions and checked JSON, and uses
+host ABI v18 with value/schema v12. Rebuild both user binaries together for native
+packaging so the companion advertises the new profile.
+
+```ts
+export function main(): void {
+  console.log(2 ** 3 ** 2); // 512; right associative
+  console.log(9 ** 0.5); // 3
+  console.log(NaN ** 0); // 1
+  console.log(1 ** NaN); // NaN
+  console.log(1 / ((-0) ** 3)); // -Infinity
+  const record = {n: 2};
+  const key = "n";
+  console.log(record[key] **= 3); // 8
+}
+```
+
+Plain `**` requires narrowed Number operands. `**=` admits closed types with a
+possible Number pair, then checks actual kinds after RHS success; other kinds
+raise TypeError without coercion or the requested store. It prepares receiver/key
+and saves the old value before RHS, uses current checked storage after computation,
+and returns the computed Number. Optional/sparse absence, inherited lookup timing,
+partial chains, GC/finalizers, length errors and fatal limits keep their contracts.
+Older profiles reject both operators.
+
+NaN/zero/Infinity rules follow Number exponentiation, including odd-integer signs
+for negative zero/infinity, NaN for finite negative bases with non-integral powers,
+and NaN for either ±1 raised to an infinite power. Finite ordinary results use
+the platform's implementation-approximated binary64 power; exact last bits may
+differ across platforms. BigInt, coercive operands and `Math.pow` are not added.
+Unary bases need parentheses, as in `(-2) ** 3`.
+
+The versioned pure `number_power(f64,f64)->f64` import requires no permission and
+preserves system status. Each power consumes one existing host-operation allowance;
+deadline checks run before and after native math. Budget exhaustion stays fatal
+through catch/finally. JSON allocation/retention helpers remain host-free and cannot
+call this import. ABI/profile/signature checks reject incompatible artifacts before
+guest effects. No value/schema/container version or resource limit is changed.
+See the [contract](docs/architecture.md#number-power-profile-and-host-abi-v18).
+
+## Basic Math functions (opt-in v15)
+
+Set `languageProfile` to `checked-f64-utf16-v15` in `varta.config.json` for
+direct `Math.abs`, `Math.floor`, `Math.ceil`, `Math.trunc`, `Math.round` and
+`Math.sqrt` calls. Each accepts exactly one narrowed Number argument and returns
+a Number. These are compiler intrinsics using guest instructions.
+
+```ts
+export function main(): void {
+  console.log(Math.sqrt(Math.abs(-6.25))); // 2.5
+  console.log(Math.floor(-1.2));           // -2
+  console.log(Math.ceil(-1.2));            // -1
+  console.log(Math.trunc(-1.2));           // -1
+  console.log(Math.round(-2.5));           // -2
+  console.log(Math.round(0.49999999999999994)); // 0
+  console.log(1 / Math.round(-0.5));       // -Infinity (negative zero result)
+}
+```
+
+`round` resolves halfway values toward positive infinity and preserves negative
+zero. `sqrt` preserves negative zero and produces NaN for negative nonzero inputs.
+NaN and infinities follow each function's Number rules. Arguments run once before
+the operation; their errors and permissions retain their existing behavior.
+
+Only direct calls on unshadowed `Math` are supported. Omitted/extra/spread
+arguments, coercion, unnarrowed unions, computed names, borrowed functions,
+constants and other Math methods remain unsupported. Older profiles reject this
+subset. It adds no host import, permission, helper export or version/limit change
+within v15/ABI18. See the [contract](docs/architecture.md#checked-math-intrinsic-subset).
 
 ## Object.keys for closed records (v12 and later)
 

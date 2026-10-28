@@ -17,14 +17,17 @@ Completed since baseline commit `526f9ab`:
 | String.slice/substring | Optional Number/Undefined bounds, exact UTF-16 units, owned result strings and unchanged Array.slice |
 | String.includes/startsWith/endsWith | Required String needle, bounded optional positions, allocation-free unit comparison and unchanged Array.includes |
 
-These additions require v12+; v13/v14 keep their sparse/mutation rules. The default
-remains `checked-i32-utf8-v1`. The latest opt-in profile remains
-`checked-f64-utf16-v14`, with host ABI v17, value ABI v12 and schema v12. This
-checkpoint adds no host operation, capability, helper export or ABI/layout version.
+Earlier additive operations require v12+; sparse/mutation rules remain profile-specific.
+The default remains `checked-i32-utf8-v1`. The latest opt-in profile is
+`checked-f64-utf16-v15`, with host ABI v18, value ABI v12 and schema v12. Number
+exponentiation adds one pure typed math import, with no new permission/helper
+export/value/schema/container version or resource-limit change.
+The six basic Math intrinsics execute as guest instructions in the same profile,
+with strict Number arguments and no additional host imports or version change.
 The source/artifact paths and public engine API are covered by regression tests.
 
-Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1040 workspace
-tests passed**, followed by **191 CLI tests passed** in a separate repeat run.
+Verification on macOS arm64 with Rust 1.98.0 and locked dependencies: **1109 workspace
+tests passed**, followed by **203 CLI tests passed** in a separate repeat run.
 Formatting, the core-only library check, runtime-companion build, workspace/all-target
 build and Clippy with warnings denied also passed. This records local verification;
 it does not claim a new cross-platform CI or release qualification.
@@ -104,8 +107,28 @@ prepared references and actual Number checks, then returning old/new values only
 after successful stores. Captured/fresh loop cells, partial effects, exact numeric
 bits, optional/sparse absence, length errors and rooted GC/finalizers are covered.
 
-Next: specify **checked Number bitwise and shift operations**, with explicit
-ToInt32/ToUint32 conversions and preserved profile/type/resource boundaries.
+Completed: **checked Number bitwise and shift operations** in v12+, with explicit
+full-range ToInt32/ToUint32 conversions, masked counts and signed/unsigned Number
+results. Inline host-free conversion preserves source order, ordinary narrowing,
+GC/pairs/status and profile/resource boundaries; exhaustive numeric checks pass.
+
+Completed: **bitwise compound assignments** in v12+, retaining prepared references
+and old values before RHS, strict runtime Number guards, computed results and
+post-RHS selected-field/current-storage checks. Partial chains, absence timing,
+GC/pairs/finalizers, unsigned results and fatal/profile boundaries are covered.
+
+Completed: **checked Number exponentiation** (`**`, `**=`) in the opt-in v15/ABI18
+profile, with explicit signed-zero/nonfinite/odd-integer rules and bounded pure
+native power. Ordinary finite results are implementation-approximated; registry/
+profile/signature checks, host-call/deadline budgets and old-profile gates persist.
+
+Completed: **checked Math.abs/floor/ceil/trunc/round/sqrt** in v15, with one
+narrowed Number argument, exact rounding/signed-zero rules and guest-only bounded
+execution. All-exponent numeric checks, argument effects/roots, profile/type/
+shadowing gates and source-free artifact paths are covered without an ABI change.
+
+Next: expand the checked Math subset with **min/max, sign, fround, clz32 and imul**,
+specifying arity, Number conversions, NaN/zero ordering and bounded execution.
 Broader generalized record reads/writes/coercion, constructors and prototypes,
 aggregate exception design, scheduler/promise jobs, standard/system API expansion
 and package compatibility. Wider dynamic values remain explicit profile work.
@@ -1279,9 +1302,42 @@ loop cells, GC/pairs/returns/finalizers, helper purity, precise source ranges,
 module/artifact execution, status/grants/host ceilings and fatal exhaustion/exit.
 No ABI/import/helper-export/layout or resource-limit change.
 
-Next specify checked Number bitwise and shift operations with explicit
-ToInt32/ToUint32 rules. Generalized coercion, aggregate exception
-design and constructors/prototypes
+Number bitwise/shift operations are implemented under the
+[bitwise contract](architecture.md#number-bitwise-contract). Regressions cover
+all binary64 exponent ranges and seeded payloads against an independent numeric
+oracle, all operators/shift masks, source order, narrowed unions/callbacks, roots/
+pairs/GC/finalizers, helper purity, source ranges, module/source-free execution and
+operation/host-policy/fatal boundaries. No ABI/import/helper-export/layout change.
+
+Bitwise compound assignments are implemented under the
+[bitwise compound contract](architecture.md#bitwise-compound-assignment-contract).
+Regressions cover all six operators, Number guards/results, original receiver/key/
+old snapshots, RHS effects/exceptions, exact UTF-16 names/all field bits, partial
+chains, sparse/current storage/length rules, GC/pairs/saved returns/finalizers,
+helper purity, dependency ranges, modules/source-free artifacts and permission/
+status/fatal boundaries. No new IR/ABI/import/helper-export/layout or limit change.
+
+Number exponentiation is implemented in **checked-f64-utf16-v15 / host ABI18 /
+value and schema12** under the [power contract](architecture.md#number-power-profile-and-host-abi-v18).
+The pure typed import preserves system status and uses one host-operation budget
+unit with deadline checks before/after native math. Explicit Number edge cases
+precede platform-approximated finite pow; Math.pow/BigInt/coercion remain deferred.
+Tests cover exact special-case bits/parity, independent sqrt accuracy, budgets,
+prepared compounds/GC/pairs/finalizers, inherited sparse/JSON/closure contracts,
+old-profile and hostile metadata/signature rejection, virtual modules, source-free
+artifacts, source ranges and operation/host-policy/fatal boundaries. Native
+negotiation advertises v15/18; value/schema/container formats and limits persist.
+
+Direct Math.abs/floor/ceil/trunc/round/sqrt are implemented in v15 under the
+[checked Math contract](architecture.md#checked-math-intrinsic-subset). One narrowed
+Number input, exact zero/nonfinite/rounding rules and guest-only execution preserve
+all argument effects/roots/pairs/finalizers, host status and budgets. All-exponent
+numeric checks and source-free artifacts cover this subset; shadowed/computed/
+borrowed/coercive calls and older profiles are rejected. No ABI/import/permission/
+helper-export/layout/limit change.
+
+Next expand Math with checked min/max, sign, fround, clz32 and imul. Generalized
+coercion, aggregate exception design and constructors/prototypes
 remain language work. Scheduler/promise jobs follow retained-root, cancellation,
 queue and handle lifetime design.
 

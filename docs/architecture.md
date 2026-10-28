@@ -181,10 +181,11 @@ report the supported profile and its origin:
 | Explicit lexical-closure profile + ABI v15 | `profile:"checked-f64-utf16-v12", origin:"declared"` |
 | Explicit sparse-array profile + ABI v16 | `profile:"checked-f64-utf16-v13", origin:"declared"` |
 | Explicit array-mutation profile + ABI v17 | `profile:"checked-f64-utf16-v14", origin:"declared"` |
+| Explicit Number-power profile + ABI v18 | `profile:"checked-f64-utf16-v15", origin:"declared"` |
 | ABI v1 without a language section (older Varta output) | Same profile, `origin:"legacyHostAbi"`; existing behavior is preserved |
 | Neither section (generic portable Wasm) | `profile:null, origin:"unspecified"`; no claim about source-language semantics |
 | Unknown/invalid/duplicate profile or ABI | Reject; no fallback to the current profile |
-| ABI v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17 without an explicit matching profile | Reject; only ABI v1 has a legacy fallback |
+| ABI v2/v3/v4/v5/v6/v7/v8/v9/v10/v11/v12/v13/v14/v15/v16/v17/v18 without an explicit matching profile | Reject; only ABI v1 has a legacy fallback |
 
 The default i32 profile describes the existing checked subset, not full JavaScript. Arithmetic
 wraps/truncates/traps as documented above. `-0` becomes integer zero. Floating-point
@@ -1021,6 +1022,118 @@ catch/finally. Tests cover this boundary, maximum strings with explicit test fue
 UTF-16 unit alignment, effects/throws, GC/pairs/saved results, array/legacy rules,
 virtual modules and source-free artifacts with grants/ceilings and diagnostics.
 
+### Number power profile and host ABI v18
+
+`checked-f64-utf16-v15` selects **host ABI v18 / value ABI v12 / JSON schema v12**.
+It inherits v14's source features, heap/exception layouts and v6 value/checked-JSON
+import selectors. The default stays `checked-i32-utf8-v1`; v1–v14 artifacts retain
+their declared contracts, and their compilers keep rejecting ** and **=.
+Mandatory language/ABI18 metadata prevents old runtimes from silently accepting
+the new profile even if they ignore a future language section. A v15 module needs
+the matching ABI18 declaration even when no power import is emitted.
+
+The single new registry operation is `FloatPower`, import
+`varta.number_power : (f64,f64)->f64`, minimum ABI18. It is pure: no capability,
+guest pointers, allocation, result buffer, system-status reset or pending-channel
+mutation. Shared registry names/signatures/minimum ABI drive compiler, runtime
+and artifact checks. Unknown imports, wrong physical signatures, profile/ABI
+mismatches and downgrade attempts fail before guest effects. No manifest permission,
+value/schema/container version or resource-limit change is introduced.
+
+Plain ** requires narrowed Number operands and reports incompatible types at
+their own source ranges. Standard parsing preserves right associativity and the
+unparenthesized-unary-base early error. Compound **= shares prepared arithmetic
+references: root/cache receiver/key and old value before RHS, evaluate/cache RHS,
+then validate actual Number tags before native math. Statically impossible Number
+pairs fail at target/RHS spans; other runtime kinds raise owned TypeError `Invalid
+compound exponentiation operands` after RHS without coercion or a requested store.
+Missing/optional/sparse reads, inherited record timing, original exceptions and
+partial inner writes retain existing contracts. Store the computed Number through
+current backing/presence/length checks, widening only storage copies. Computed NaN,
+infinity or fractional length results raise RangeError; valid lengths above 1024
+remain fatal. Ordinary numeric results may be nonfinite, as in earlier profiles.
+
+Follow [Number::exponentiate](https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-exponentiate):
+check exponent NaN before either exponent zero, then base NaN. Handle signed
+infinity/zero using exponent sign and odd-integral parity. Infinite exponents use
+the absolute base's relation to one, with either ±1 producing NaN. A finite
+negative base with a nonintegral exponent produces NaN. This preserves NaN**0=1,
+1**NaN=NaN and the ECMAScript behavior that differs from IEEE pow for unit bases.
+Ordinary finite power uses `abs(base).powf(exponent)` and restores a negative sign
+only for an odd integral exponent. Parity checks operate on finite binary64 values
+without narrowing integer casts, including the 2^53 odd/even boundary. Preserve
+signed zero on underflow and signed infinities on overflow. Finite ordinary results
+are platform implementation-approximated; cross-platform last-bit identity or
+universal correct rounding is not promised. No BigInt, ToNumber coercion, Math.pow
+source API or exponent-sized guest loop is added.
+
+The runtime charges one existing host-operation unit before math and rechecks
+the same budget/deadline afterward without a second increment. Native scalar math
+does no IO or input-sized allocation. Existing host-call, fuel, deadline, memory,
+source/type/frame/root/value/output limits remain active. Budget exhaustion and
+authorized exit are fatal through catch/finally, including during RHS evaluation
+before a later operand error. Pure math preserves prior status and grants/host
+ceilings. Host-free JSON allocation/retention helpers must still reject any
+reachable power import; purity does not exempt it from the no-host-call rule.
+
+The compiler uses existing Binary IR and a resolved registry import index, and all
+body visitors see both operands and compound read/check/store branches. Existing
+temporary floors/root transfer preserve original graphs, earlier physical pairs,
+captured cells, callback results and saved returns through GC/calls/finalizers.
+No new helper export or Wasm EH mechanism is introduced. Launcher protocol v2
+advertises host maximum18, value maximum12 and the v15 profile. Native packaging
+requires a matching rebuilt trusted companion and probes the private snapshot;
+portable and fixed-footer native container formats stay unchanged.
+
+Tests cover special-case bits/parity/subnormals/overflow, independent sqrt accuracy,
+one-call accounting, plain narrowing/compound Number guards, prepared effects,
+sparse/length/JSON/closure inheritance, partial chains/GC/pairs/finalizers, strict
+old-profile and hostile metadata/signature rejection, helper purity, exact source
+ranges, virtual modules and source-free portable/native artifacts with operation
+grants, host ceilings, status and fatal exits/budgets.
+
+### Checked Math intrinsic subset
+
+The v15 compiler also admits direct unshadowed `Math.abs`, `Math.floor`,
+`Math.ceil`, `Math.trunc`, `Math.round` and `Math.sqrt` calls with exactly one
+narrowed Number argument. The result is Number. This additive source subset
+retains v15/host18/value12/schema12 and all artifact/container negotiation.
+Older profiles reject all six. No host import, helper export, capability,
+dependency, layout or runtime budget is added.
+
+The numeric semantics follow the admitted Number part of
+[ECMAScript Math](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-math.round),
+without ToNumber coercion. Abs clears the sign, including -0. Floor/ceil/trunc
+preserve nonfinite values and both zeroes, including negative-zero results for
+ceil/trunc of values between -1 and 0. Sqrt uses binary64 Wasm sqrt, preserves -0,
+and returns NaN for negative nonzero inputs. NaN payload/sign are unspecified.
+
+Round returns the closest integral Number with ties toward +Infinity, retaining
+-0 for [-0.5,0). Lower it by caching the completed argument once, computing
+`nearest(x)`, and adding one only when `x - nearest(x) == 0.5`. This adjusts ties
+where Wasm's ties-to-even selected the lower integer. All other values, including
+nonfinite values, zeroes, integral large numbers and halfway neighbors, keep the
+nearest result. Do not use `floor(x + 0.5)`: addition rounding changes some non-ties
+and loses negative zero. Scratch locals are used only after all argument effects
+finish; nested intrinsics cannot overwrite an outer unfinished computation.
+
+Only a direct dot call is admitted. Reject shadowing (including parameters,
+captures, imports and TDZ bindings), computed names, aliases/borrowed methods,
+constants, other methods, generic calls and omitted/extra/spread arguments.
+Non-Number and unnarrowed-union arguments produce a type diagnostic at the argument.
+Arguments evaluate once, retain their host effects and exception channel, and
+preserve earlier roots/pairs and saved returns through allocation/finalizers.
+Compiler collection/effect visitors recurse through the new typed unary IR.
+
+The operations allocate no values, preserve system status and consume guest fuel
+without consuming a host-call allowance. Host-free JSON helper validation admits
+pure argument trees but still rejects reachable host effects within arguments.
+Existing tool/HTTP binary64 adapter restrictions remain. Tests execute all six
+over signed zero, subnormals, infinities, NaN, half-integer neighbors and every
+binary64 exponent with representative significands, with fresh bounded stores;
+they also cover types/shadowing/profile gates, roots/pairs/finalizers, argument
+effects, fatal fuel/exit, source ranges, modules and source-free artifacts.
+
 ### Array mutation profile and host ABI v17
 
 `checked-f64-utf16-v14` selects **host ABI v17 with unchanged value ABI v12/schema
@@ -1029,7 +1142,8 @@ that differ from v13's checked existing-index-only writes. Sparse vector/backing
 record, Error, closure and exception layouts, v6 value operations and the
 json_stringify_v12/json_parse_v14 boundary remain unchanged. There is no new host
 import or capability. Earlier profiles retain their rules and helper ceilings;
-launcher protocol v2 now advertises 17/12 and the new profile.
+launcher protocol v2 negotiates the profile and current advertised maxima; v14's
+pair remains 17/12. The v15 power profile below raises the host maximum to 18.
 
 For indexed assignment, receiver, numeric key and RHS evaluate once in that order.
 Each live reference is rooted through later operand effects and allocation. A key
@@ -2423,7 +2537,7 @@ references. V14 also admits length/literal-["length"] targets. Support statement
 for init/update and existing enclosing expression positions, returning the computed
 assigned result. Reject const/TDZ/guard-refined targets, unchecked receivers,
 String/coercive array keys, Error/result mutation,
-destructuring targets, exponent/bitwise assignments and older
+destructuring targets and older
 profiles. Ordinary simple assignment and binary-expression contracts remain intact.
 
 Follow admitted [compound evaluation](https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-assignment-operators-runtime-semantics-evaluation):
@@ -2646,6 +2760,121 @@ cover binary64 edges, prefix/postfix results, profile/type boundaries, optional/
 sparse absence, exact keys/all field bits, nested order/partial effects, captures/
 fresh loop cells, roots/pairs/saved returns, source ranges, fatal limits and
 virtual/source-free Wasm/native execution with allowed/denied operations.
+
+### Number bitwise contract
+
+V12+ admits &, |, ^, ~, <<, >> and >>> for already narrowed binary64 Number
+operands. Check each operand's resolved type before ordinary union/missing-value
+dispatch and report a type error at the offending operand span. No implicit
+ToNumber conversion of String/Boolean/Null/Undefined/references/opaque results is
+added. Union, optional and array-read operands require explicit source narrowing,
+as in ordinary arithmetic. Older profiles remain rejected; bitwise compounds are
+specified below.
+Use existing typed Binary IR and a shared numeric operator classifier; lower ~x
+to x xor -1, retaining its source effects exactly once.
+
+Follow the Number parts of
+[ToInt32](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-toint32),
+[ToUint32](https://tc39.es/ecma262/2025/multipage/abstract-operations.html#sec-touint32)
+and [Number shifts/bitwise operations](https://tc39.es/ecma262/2025/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-leftShift).
+Finite values truncate toward zero and wrap modulo 2^32; nonfinite values and both
+zeroes map to positive zero. Signed operations interpret the resulting word as
+two's complement; >>> keeps the unsigned word. Shift counts use the unsigned low
+five bits. Return ordinary binary64 Number values: signed 32-bit range except >>>'s
+0..4294967295. Do not introduce an integer value type or change numeric aggregate
+slots, roots, JSON descriptors or external signatures.
+
+Evaluate both binary operands once, left to right, before conversion. Emit inline
+ToUint32 by reinterpreting binary64 bits, extracting the encoded exponent and
+masked fraction, and restoring the hidden significand bit only in the admitted
+normal exponent range. Exponents below the bias truncate to zero; unbiased
+exponents >=84 describe multiples of 2^32 and yield zero, as do NaN/infinity.
+For remaining exponents, shift the significand right to discard fractional bits
+or left to position integer bits, then wrap the low word and apply the original
+sign modulo 2^32. Bound shifts before emitting them; never depend on wrapping a
+large shift count to repair an out-of-range exponent. No trapping/saturating
+float-to-integer cast, host remainder, allocation or guest helper call is used.
+
+Cache the already evaluated RHS in a declared f64 scratch slot, convert the LHS
+using existing i64/i32 scratch slots, then convert the saved RHS. No user code or
+allocation runs during scratch reuse. Apply Wasm i32 AND/OR/XOR/shift operations;
+Wasm masks shift counts to five bits. Convert the result back to f64 with signed
+conversion except for >>>. Numeric bits temporarily stored in an i64 scratch must
+never become shadow roots or heap pointers. Nested bitwise/assignment/update
+expressions and earlier String/aggregate/result-pair operands retain their normal
+stack/root lifetimes; body visitors must still see every operand effect.
+
+Conversion adds no host operation/import, emitter helper, helper export or ABI/
+schema/layout version. Preserve pure-operation system status, exact permissions
+and host ceilings. Original operand exceptions skip later effects; fuel/memory/
+deadline exhaustion and authorized exit remain fatal through catch/finally. All
+existing source/type/code/frame/root/value/resource budgets stay active.
+
+Regressions execute every operator through Wasmtime, narrowed unions/callbacks,
+nested effects/GC/finalizers/physical pairs, precise dependency ranges, virtual
+modules and source-free Wasm/native artifacts. An independent truncation/remainder
+oracle checks all 2048 binary64 encoded exponent ranges, both signs, four fraction
+patterns and 1024 seeded payloads, totaling 17408 inputs and 121856 results. Fresh
+small batches keep the ordinary fuel ceiling; production limits are unchanged.
+Pure helper controls must validate while left/right/unary host effects remain
+detectable. Allowed/denied operand operations, unchanged status and fatal exit are
+covered across development, portable and native execution.
+
+### Bitwise compound assignment contract
+
+V12+ admits &=, |=, ^=, <<=, >>= and >>>= for mutable initialized locals/parameters,
+declared static/dynamic record fields and numeric array elements; v14 also admits
+checked length. Reuse the arithmetic compound reference/cache/store pipeline,
+existing Number bitwise conversion and complete selected-field types. Keep
+const/TDZ/guard-refinement, coercive-key, function/result/Error-field and earlier
+profile restrictions. Dynamic records retain the bounded computed-read union and
+exact UTF-16 lookup, while literal keys retain precise static checks.
+
+Evaluate/root receiver and key/index once, then read/cache the old value before
+RHS. A key's effects precede this read. Evaluate/cache RHS once before validating
+either operand. Require actual Number tags on both sides, using pure union-member
+checks before unboxing; no String/Boolean/Null/Undefined/reference coercion is
+introduced. Static target/RHS types without a possible Number pair fail at their
+own span. Otherwise incompatible runtime members raise owned TypeError `Invalid
+compound bitwise operands` after RHS success, with no requested store. Preserve
+the original RHS exception and its prior effects on failure. Ordinary bitwise
+expressions still require source narrowing.
+
+Compute through the existing full-range ToInt32/ToUint32 operations, with masked
+shift counts and signed results except >>>'s unsigned result. Return exactly the
+computed Number after successful storage, widening only a storage copy. Values
+through 4294967295 remain ordinary binary64 Number slots/cells. Do not re-read an
+old value, redirect the cached receiver/key or validate raw RHS as an array length.
+Nested compounds cache outer references/old values before inner work; inner
+failure skips outer stores and later operands, while outer failure retains
+completed inner writes and effects.
+
+Unknown ordinary record names, absent optional fields and explicit Undefined
+produce invalid old operands. Evaluate RHS, then throw without property creation
+or presence/order publication. Undeclared inherited names fail during the read,
+before RHS; declared own inherited-looking names work normally. Numeric arrays
+retain MaybeIndex read semantics: holes/out-of-range/noncanonical reads fail the
+Number check after RHS without attempting a write or converting a budget trap.
+On success, existing setters select current backing/presence/length: v12/v13
+post-RHS out-of-range writes stay fatal, v14 may recreate/extend valid indices.
+Selected length stores retain RangeError/non-uint32 and fatal >1024 behavior
+against the computed result. Source/key/RHS exhaustion and authorized exit remain
+fatal through catch/finally, including when an operand would later fail its tag
+check. No resource limit is raised.
+
+Existing nested ValueBlocks/floors root original receivers/keys, complete old/RHS
+graphs and returned values, preserving earlier physical pairs and saved returns
+through GC/calls/callbacks/finalizers. Visitors must see all read/check/compute/
+store/failure branches. Pure helper controls must pass; isolated host effects in
+source, key or RHS must remain detectable. Conversion itself has no host effects
+or allocation, preserving system status and exact grants/host ceilings. No new IR
+kind, host operation/import, helper export or ABI/schema/layout version.
+
+Regressions cover all six operators and numeric edges, original-reference/old
+snapshots, strict union kinds, absence/inherited timing, exact keys/all field bits,
+mixed partial chains, sparse/current storage/length checks, GC/pairs/returns,
+source diagnostics, helper purity, fatal domains, virtual modules and source-free
+portable/native artifacts with allowed/denied operations and host ceilings.
 
 ### Object.keys contract
 
