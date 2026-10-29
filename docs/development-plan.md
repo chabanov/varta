@@ -2,7 +2,7 @@
 
 ## Status
 
-Updated 2026-10-28. Varta is an experimental research project: a compiler and
+Updated 2026-10-29. Varta is an experimental research project: a compiler and
 capability-checked runtime core with K1–K3 implemented in their initial checked
 profiles and K4 language/value work in progress. It is not a production release
 and does not claim full ECMAScript, Node or npm compatibility.
@@ -10,10 +10,10 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Item | Current state |
 | --- | --- |
 | Profiles | Default `checked-i32-utf8-v1`; latest released opt-in `checked-f64-utf16-v31`; `checked-f64-utf16-v32` is the [pilot batch](#pilot-batch-v32-in-development), merged on the `v32-integration` branch and not released. Versions of every profile: [version matrix](architecture.md#version-matrix) |
-| Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration`: commit `27d11ae` (2026-10-28), 1826 tests. Both are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
+| Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. Both are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the v32 integration branch `generated/meta.ts`, `generated/models.ts` and `core/json.ts` compile and validate; the other files stop at `Headers`, generics, async or the import limit ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the v32 integration branch `generated/meta.ts`, `generated/models.ts` and `core/json.ts` compile and validate; the other files stop at `Headers`, an async generator, `AbortSignal` or the module graph limits ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 
 Next work, in order:
 
@@ -21,11 +21,13 @@ Next work, in order:
    block 1): expression normalization, continuation frames over closure cells,
    exception and GC invariants and the closed resume dispatcher are implemented
    compiler-internally and tested in Wasmtime
-   ([contract](architecture.md#suspension-foundation-k44-block-1)). What remains
-   is the runtime-admission versioning step (profile, host ABI, preflight).
-2. **Pilot M1–M3**, alongside block 1: review and release the v32 pilot batch,
-   then index signatures and wider records, generics, `Error` subclasses,
-   Web types (`Headers`) and the 65-file module graph budgets.
+   ([contract](architecture.md#suspension-foundation-k44-block-1)) and merged
+   on the v32 integration branch. What remains is the runtime-admission
+   versioning step (profile, host ABI, preflight).
+2. **Pilot M1–M3**, alongside block 1: review and release the v32 pilot batch
+   (both waves are merged on the integration branch), then index signatures and
+   wider records, Web types (`Headers`, `AbortSignal`) and the 65-file module
+   graph budgets.
 3. Synchronous generators, then Promise jobs, then async/await (K4.4 steps 2–4).
 
 Completed increment logs, earlier checkpoints and verification records are in
@@ -265,7 +267,34 @@ dependencies, and contains no explicit `any`, so it meets the
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
 
-**Verified behavior with v32 on the integration branch (2026-10-28).** Each of
+**Verified behavior with v32, second wave (2026-10-29).** The same probe on the
+integration branch with all nine v32 selectors (default exports, interface
+inheritance, generics and Error subclasses added): each of the 65 source files of
+the pinned tarball was compiled with `varta check` under `checked-f64-utf16-v32`
+as the only `export *` source of a probe entry, so the file and all its
+dependencies form the graph; production budgets were unchanged. The first
+diagnostic per file:
+
+| First diagnostic | Files |
+| --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts` | 3 |
+| `core/errors.ts:121` `unsupported type reference Headers` (reached through `core/resource.ts`, `core/transport.ts`, `core/sse.ts` and most resources) | 36 |
+| `core/pagination.ts:27` `unsupported async or generator generic function` (`autoPaginate<T>`, an `async function*`, reached by paginated resources) | 23 |
+| `core/util.ts:21` `unsupported type reference AbortSignal` (`sleep`) | 1 |
+| `generated/resources/index.ts`, `index.ts`: module graph exceeds the import-declaration limit | 2 |
+
+Compared with the first wave, `CursorPage<T>` and the uninstantiated generic
+`pick<T, K extends keyof T>` now pass, so pagination stops at the async generator
+(K4.4) and `core/util.ts` at Web types; `index.ts` passes its `export default` and
+stops at the graph limits (65 modules and about 370 relative import/re-export
+declarations against 64 modules and 256 declarations). With `Headers` stubbed,
+`core/errors.ts` still stops first at the index signature in `ProblemDocument`,
+so its `class … extends Error` hierarchy (now in the v32 subset, except
+`unknown`-typed causes) is not yet reached in the file itself. Instantiating `pick` would next need `Record<string, unknown>`,
+`unknown`, an `as` assertion and computed access with a `keyof` key, all still
+rejected.
+
+**Verified behavior with v32, first wave (2026-10-28).** Each of
 the 65 source files of the pinned tarball was compiled under
 `checked-f64-utf16-v32` as the only `export *` source of a probe entry, so the
 file and all its dependencies form the graph; production budgets were unchanged.
@@ -305,12 +334,12 @@ its module graph.
 
 | Requirement | Occurrences | Current Varta |
 | --- | --- | --- |
-| Modules: `import type`, `export *`, `export default`, top-level `export const`, `.js` specifiers resolving to `.ts` | 65 files | v31: type-only imports/exports and `.js` specifiers; v32 (unreleased): `export const`, `export { … } from` and `export *`; `export default` not supported; the 65-file graph exceeds the import-declaration limit |
-| Named interfaces/aliases; structural assignability; index signatures and `Record<string, …>` | 1917 interfaces / 38 | v31: named closed shapes; no width subtyping, index signatures or `Record` |
+| Modules: `import type`, `export *`, `export default`, top-level `export const`, `.js` specifiers resolving to `.ts` | 65 files | v31: type-only imports/exports and `.js` specifiers; v32 (unreleased): `export const`, `export { … } from`, `export *` and `export default`; the 65-file graph exceeds the module and import-declaration limits |
+| Named interfaces/aliases; structural assignability; index signatures and `Record<string, …>` | 1917 interfaces / 38 | v31: named closed shapes; v32 (unreleased): `interface … extends` and merging, literal-keyed `Record`; no width subtyping, index signatures or `Record<string, …>` |
 | String-literal types and `as const` | 357 aliases / 357 | v32 (unreleased): literal types and their unions, `as const` on whole initializers |
 | Records wider than 32 fields (`Agent` 55, `UpdateRuntimeConfigRequest` 60) | 5 | 32-field limit |
-| Classes: `extends`, `protected`, `#private`, getters, `Error` subclasses, `new.target` | 74 classes, 82 `#` members | v32 (unreleased): top-level classes with `extends`, `protected`/`private`, getters and static methods; `#private`, `Error` subclasses and `new.target` not supported |
-| Generics: `request<T>`, `pick<T, K extends keyof T>` | 13 in core | Not supported |
+| Classes: `extends`, `protected`, `#private`, getters, `Error` subclasses, `new.target` | 74 classes, 82 `#` members | v32 (unreleased): top-level classes with `extends`, `protected`/`private`, getters and static methods, `Error` subclasses and `new.target.name`; `#private` and `unknown` causes not supported |
+| Generics: `request<T>`, `pick<T, K extends keyof T>` | 13 in core | v32 (unreleased): generic interfaces, aliases and top-level functions by monomorphization with `keyof`, `T[K]` types and inference; generic methods/classes, async generic functions and computed access with a `keyof` key not supported |
 | `await` / `for await`; async generators, `Symbol.asyncIterator`, `new Promise` | 44 / 22 | Not supported ([suspension design](#k44--suspension-scheduling-and-async-planned)) |
 | Template literals, optional chaining `?.`, object spread | 537 / 27 / 48 | v32 (unreleased): untagged template literals; `?.` and object spread not supported |
 | Already supported: `??` (52), default parameters, `Math.random` (6) | — | v12+, v12+ and v17+ respectively |
@@ -363,24 +392,28 @@ and memory compared with Node, Deno and Bun.
 
 Profile `checked-f64-utf16-v32` collects pilot M1–M3 features developed in
 parallel, one work stream per selector. Each stream landed on its own branch with
-its own tests, contract subsection and profile rules. All five streams are merged
-on the `v32-integration` branch together with their cross-stream integration
-(constants and classes through re-exports, literal-typed class fields and
-template substitutions, class bodies reading constants) and one conformance
-case per executable stream. V32 is not released: the integration branch awaits
-review and its merge into `main`.
+its own tests, contract subsection and profile rules. All nine streams are merged
+on the `v32-integration` branch in two waves together with their cross-stream
+integration (constants, classes, generic functions and Error classes through
+re-exports and default exports; literal-typed class fields and template
+substitutions; class bodies reading constants; generic interfaces extending
+generic bases; Error-class instances through generic functions and suspension
+frames) and one conformance case per stream that a single-file case can test.
+The second wave also merges the compiler-internal K4.4 suspension foundation.
+V32 is not released: the integration branch awaits review and its merge into
+`main`.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `module_constants()` | Top-level `const`/`export const` with checked initializers and `as const` | M1 | Merged on the integration branch |
 | `literal_types()` | String/number/boolean literal types and wide literal unions | M1 | Merged on the integration branch |
-| `classes()` | Classes, fields, constructors, methods, `extends`; `Error` subclasses pending | M2 | Merged on the integration branch |
+| `classes()` | Classes, fields, constructors, methods, `extends` | M2 | Merged on the integration branch |
 | `module_reexports()` | `export { x } from`, `export * from`, `export type { T } from` | M3, M7 | Merged on the integration branch |
 | `template_literals()` | Template literal expressions | M3 | Merged on the integration branch |
-| `generics()` | Generic type declarations and functions by monomorphization, `keyof` | M1, M4 |
-| `default_exports()` | `export default` and default imports | M7 |
-| `interface_extends()` | `interface … extends` and declaration merging of interfaces | M1, M7 |
-| `error_subclasses()` | `class X extends Error` | M2 |
+| `generics()` | Generic type declarations and functions by monomorphization, `keyof` | M1, M4 | Merged on the integration branch (second wave) |
+| `default_exports()` | `export default` and default imports | M7 | Merged on the integration branch (second wave) |
+| `interface_extends()` | `interface … extends` and declaration merging of interfaces | M1, M7 | Merged on the integration branch (second wave); interface/class merging stays rejected |
+| `error_subclasses()` | `class X extends Error`; exception channel v5 | M2 | Merged on the integration branch (second wave) |
 
 ### Deferred external validation scenarios
 
@@ -1390,7 +1423,9 @@ queue and handle lifetime design.
 #### K4.4 — Suspension, scheduling and async (planned)
 
 Status: design agreed with the project author on 2026-10-28. Block 1 (step 1
-below) is implemented as a compiler-internal foundation; its contract is in
+below) is implemented as a compiler-internal foundation and merged on the v32
+integration branch, where frames also carry v32 class and Error-class instances;
+its contract is in
 [architecture.md](architecture.md#suspension-foundation-k44-block-1). No profile,
 host import, value tag or runtime preflight admits it yet. The frame heap kind,
 frame catalog version 2 and the `varta_resume` export exist only in modules
@@ -1590,7 +1625,10 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    are in `varta-compiler` `suspension_tests`. Still open for this block:
    - runtime admission: a new profile and host ABI that declare the
      `varta_resume` export and the frame catalog, and preflight validation of
-     both. Until then the runtime surface stays test-only.
+     both. Until then the runtime surface stays test-only. Open decision: admit
+     it in its own profile after v32 together with step 2 (the first source
+     syntax), rather than adding a runtime surface to the v32 pilot batch that
+     no source can reach.
    - suspension inside `catch`/`finally` bodies, `switch` cases, `do-while`
      conditions and the remaining intrinsic value blocks;
    - host-supplied reference inputs;
