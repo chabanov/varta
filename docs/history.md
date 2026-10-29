@@ -542,6 +542,38 @@ and package compatibility. Wider dynamic values remain explicit profile work.
 Shared application state, MCP, signing and external adapters remain later
 milestones. Detailed completed contracts and sequencing follow.
 
+## Pilot measurements
+
+Superseded uarp-sdk pilot measurements, newest first; the current one is in the
+[development plan](development-plan.md#pilot-acceptance-package-uarp-sdk).
+
+**Verified behavior with v32, second wave (2026-10-29).** The same probe on the
+integration branch with all nine v32 selectors (default exports, interface
+inheritance, generics and Error subclasses added): each of the 65 source files of
+the pinned tarball was compiled with `varta check` under `checked-f64-utf16-v32`
+as the only `export *` source of a probe entry, so the file and all its
+dependencies form the graph; production budgets were unchanged. The first
+diagnostic per file:
+
+| First diagnostic | Files |
+| --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts` | 3 |
+| `core/errors.ts:121` `unsupported type reference Headers` (reached through `core/resource.ts`, `core/transport.ts`, `core/sse.ts` and most resources) | 36 |
+| `core/pagination.ts:27` `unsupported async or generator generic function` (`autoPaginate<T>`, an `async function*`, reached by paginated resources) | 23 |
+| `core/util.ts:21` `unsupported type reference AbortSignal` (`sleep`) | 1 |
+| `generated/resources/index.ts`, `index.ts`: module graph exceeds the import-declaration limit | 2 |
+
+Compared with the first wave, `CursorPage<T>` and the uninstantiated generic
+`pick<T, K extends keyof T>` now pass, so pagination stops at the async generator
+(K4.4) and `core/util.ts` at Web types; `index.ts` passes its `export default` and
+stops at the graph limits (65 modules and about 370 relative import/re-export
+declarations against 64 modules and 256 declarations). With `Headers` stubbed,
+`core/errors.ts` still stops first at the index signature in `ProblemDocument`,
+so its `class … extends Error` hierarchy (now in the v32 subset, except
+`unknown`-typed causes) is not yet reached in the file itself. Instantiating `pick` would next need `Record<string, unknown>`,
+`unknown`, an `as` assertion and computed access with a `keyof` key, all still
+rejected.
+
 ## Completed milestones and follow-ups
 
 ### Completed milestone: architectural hardening

@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. Both are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the v32 integration branch `generated/meta.ts`, `generated/models.ts` and `core/json.ts` compile and validate; the other files stop at `Headers`, an async generator, `AbortSignal` or the module graph limits ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v34-integration-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts` and `core/pagination.ts` compile and validate; the other files stop at `Headers` or `AbortSignal` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 
 Next work, in order:
 
@@ -274,32 +274,32 @@ dependencies, and contains no explicit `any`, so it meets the
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
 
-**Verified behavior with v32, second wave (2026-10-29).** The same probe on the
-integration branch with all nine v32 selectors (default exports, interface
-inheritance, generics and Error subclasses added): each of the 65 source files of
-the pinned tarball was compiled with `varta check` under `checked-f64-utf16-v32`
-as the only `export *` source of a probe entry, so the file and all its
-dependencies form the graph; production budgets were unchanged. The first
-diagnostic per file:
+**Verified behavior with v34 (2026-10-29).** The same probe on the
+`v34-integration-merge` branch with all eight v34 selectors (value layout 15,
+index signatures, recursive types, wide records, `unknown`, checked
+assertions, promises and async functions): each of the 65 source files of the
+pinned tarball was compiled with `varta check` under `checked-f64-utf16-v34`
+as the only `export *` source of a probe entry (`index.ts` through its default
+import), so the file and all its dependencies form the graph; production
+budgets were unchanged. The first diagnostic per file:
 
 | First diagnostic | Files |
 | --- | --- |
-| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts` | 3 |
-| `core/errors.ts:121` `unsupported type reference Headers` (reached through `core/resource.ts`, `core/transport.ts`, `core/sse.ts` and most resources) | 36 |
-| `core/pagination.ts:27` `unsupported async or generator generic function` (`autoPaginate<T>`, an `async function*`, reached by paginated resources) | 23 |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` | 4 |
+| `core/errors.ts:121` `unsupported type reference Headers` (reached through `core/resource.ts`, `core/transport.ts`, `core/sse.ts`, every resource, `generated/resources/index.ts` and `index.ts`) | 60 |
 | `core/util.ts:21` `unsupported type reference AbortSignal` (`sleep`) | 1 |
-| `generated/resources/index.ts`, `index.ts`: module graph exceeds the import-declaration limit | 2 |
 
-Compared with the first wave, `CursorPage<T>` and the uninstantiated generic
-`pick<T, K extends keyof T>` now pass, so pagination stops at the async generator
-(K4.4) and `core/util.ts` at Web types; `index.ts` passes its `export default` and
-stops at the graph limits (65 modules and about 370 relative import/re-export
-declarations against 64 modules and 256 declarations). With `Headers` stubbed,
-`core/errors.ts` still stops first at the index signature in `ProblemDocument`,
-so its `class … extends Error` hierarchy (now in the v32 subset, except
-`unknown`-typed causes) is not yet reached in the file itself. Instantiating `pick` would next need `Record<string, unknown>`,
-`unknown`, an `as` assertion and computed access with a `keyof` key, all still
-rejected.
+Compared with the second v32 wave, `core/pagination.ts` passes: `CursorPage<T>`
+is admitted and the uninstantiated `async function* autoPaginate<T>` is not
+lowered until a caller instantiates it (async generators remain rejected, K4.4
+step 6). `generated/resources/index.ts` and `index.ts` now report `Headers`
+first instead of the module graph limits, because the walk reaches
+`core/errors.ts` before the graph is complete; the graph limits are still
+expected next. With a `Headers` class stub, `core/errors.ts` stops at
+`ProblemDocument`, whose declared fields are combined with
+`[key: string]: unknown` — a mixed object type that v34 index signatures do
+not admit, so the `class … extends Error` hierarchy with its `unknown` causes
+is still not reached in the file itself.
 
 **Verified behavior with v32, first wave (2026-10-28).** Each of
 the 65 source files of the pinned tarball was compiled under
