@@ -1785,9 +1785,9 @@ kind its own table. A new type-like kind registers in `named` declarations.
 Local `export` declarations of a new kind must be recorded as scanned `Export`s
 under its selector, as `export const` and `export class` are.
 
-Namespace re-exports, `export {} from`, `export type *`, attributed forms and
-default names stay rejected; namespace objects and default exports need their
-own contracts.
+Namespace re-exports, `export {} from`, `export type *` and attributed forms
+stay rejected; namespace objects need their own contract. `default` names follow
+[default exports](#default-exports-default_exports).
 
 ### Template literals (`template_literals()`)
 
@@ -1808,6 +1808,49 @@ separate decision. Cooked parts reuse the string-literal WTF-8 to UTF-16 encodin
 (lone surrogates exact); empty parts emit nothing; a missing cooked value is an
 invalid program. Tagged templates and `String.raw` stay rejected. No host import,
 layout or budget change; `encodeURIComponent` remains a separate builtin.
+
+### Default exports (`default_exports()`)
+
+`default_exports()` gates the scanner only. `modules/defaults.rs` rewrites every
+`export default` item in place before the scan: declarations become the plain
+top-level function/class/interface (anonymous ones named `defaults::ANONYMOUS`,
+ECMAScript's unspellable `*default*`), a binding identifier becomes an empty
+statement, and any other expression becomes `const *default* = expr`. Each
+records an `Export` with `exported: DEFAULT_EXPORT`, so every later phase sees
+ordinary declarations and the export tables see an ordinary name; never add a
+default-specific path to linking, classes or constants. `import x from` is an
+`ImportBinding` with `imported: "default"`; `name(.., defaults)` admits `default`
+only as an imported, exported or re-exported name, never as the local name of a
+local list. Keep the identifier rule syntactic (`bound`: a top-level declaration
+or import of that name) and the temporal-dead-zone check for later `const`/class
+declarations. `exports::link` already filters `default` from stars; one default
+per module is checked in the rewrite, before bindings could collide. Earlier
+profiles never reach the rewrite and keep `module export form`,
+`default or namespace import` and `string or default export name`. Namespace
+imports keep a distinct `namespace import` diagnostic under the selector.
+
+### Interface inheritance and merging (`interface_extends()`)
+
+Under `interface_extends()`, `named::link_module` defers every non-generic
+interface into `interfaces::Merged` (per module, by name) instead of rejecting
+`extends`/duplicates, then `declare_interface` registers each name after the
+item loop. A single declaration without `extends` stays `Declaration::Local`
+with its v31 type literal (byte-identical behavior); anything else becomes
+`Declaration::Interface`, resolved lazily by `Interface::resolve` inside
+`named::resolve`, so the resolving stack catches cycles through bases. Bases are
+lowered through `keyword_type` of a synthesized `TsTypeRef` (with the written
+type arguments) in the declaring module: generic bases start working when
+generic references do, without changes here. Only `Type::Record` bases are
+admitted; class bases stay rejected because class types are nominal and have
+methods. Own fields come from `records::type_fields` (no interning of partial
+shapes, which would consume `MAX_RECORD_SHAPES`), redeclarations are checked with
+`arguments::accepts` (base type expected) plus the optional-to-required rule,
+and only the combined shape is interned. An interface name taken by a class gets
+the `declaration merging of interface X with class X` diagnostic; implementing
+it needs constructor initialization of merged fields (the pilot's
+`Object.assign(this, …)`), which the class definite-initialization discipline
+forbids. The scanner records one export for merged `export interface`
+declarations.
 
 ### Cross-stream integration (v32)
 

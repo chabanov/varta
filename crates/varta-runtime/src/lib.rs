@@ -43,9 +43,13 @@ mod bitwise_tests;
 #[cfg(test)]
 mod call_flow_tests;
 #[cfg(test)]
+mod default_export_tests;
+#[cfg(test)]
 mod exit_flow_tests;
 #[cfg(test)]
 mod guest_truth_tests;
+#[cfg(test)]
+mod interface_extends_tests;
 #[cfg(test)]
 mod invocation_tests;
 mod invoke;

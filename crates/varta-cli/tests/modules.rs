@@ -499,6 +499,88 @@ export function code():number{return 1;}"#,
 }
 
 #[test]
+fn default_exports_and_extended_interfaces_link_and_run_in_v32() {
+    const V32: &str = r#"{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-v32","capabilities":{}}"#;
+    let main = r#"import UarpClient, {type ClientOptions} from "./index.js";
+import VERSION from "./version.js";
+export function main():void{const options:ClientOptions={baseURL:"https://api.test",retries:2};
+const client=new UarpClient(options);console.log(client.baseURL+" "+VERSION+" "+String(client.options.retries));}"#;
+    let project = Project::new(main);
+    project.write("varta.config.json", V32);
+    project.write(
+        "src/index.ts",
+        r#"export {default} from "./client.js";export * from "./client.js";"#,
+    );
+    project.write(
+        "src/client.ts",
+        r#"import type {Transport} from "./transport.js";
+export interface ClientOptions extends Transport {retries:number}
+export class UarpClient{readonly options:ClientOptions;constructor(options:ClientOptions){this.options=options;}
+get baseURL():string{return this.options.baseURL;}}
+export default UarpClient;"#,
+    );
+    project.write(
+        "src/transport.ts",
+        "export interface Transport{baseURL:string}",
+    );
+    project.write("src/version.ts", r#"export default "0.12.0";"#);
+    let expected = "varta log: https://api.test 0.12.0 2";
+    assert!(success(project.command(&["dev"])).contains(expected));
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains(expected));
+
+    // The pilot's class/interface declaration merging is rejected precisely.
+    let merged = Project::new(main);
+    merged.write("varta.config.json", V32);
+    merged.write("src/version.ts", r#"export default "0.12.0";"#);
+    merged.write(
+        "src/index.ts",
+        r#"export interface Resources{limit:number}
+export interface UarpClient extends Resources {}
+export class UarpClient{}
+export default UarpClient;"#,
+    );
+    let diagnostic = merged.diagnostic();
+    assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("declaration merging of interface UarpClient with class UarpClient"),
+        "{diagnostic}"
+    );
+
+    // v31 keeps rejecting default imports and interface extends.
+    let old = Project::new(main);
+    old.write(
+        "varta.config.json",
+        &V32.replace("checked-f64-utf16-v32", "checked-f64-utf16-v31"),
+    );
+    let diagnostic = old.diagnostic();
+    assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("default or namespace import"),
+        "{diagnostic}"
+    );
+    old.write(
+        "src/main.ts",
+        "interface A{x:number}interface B extends A{}export function main():void{}",
+    );
+    let diagnostic = old.diagnostic();
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("interface extends"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
 fn module_constants_link_and_run_from_packaged_artifacts_in_v32() {
     let main = r#"import {SDK_VERSION,SCOPES} from "./meta.js";
 import {describe} from "./lib.js";

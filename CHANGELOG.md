@@ -43,6 +43,14 @@ in [conformance/README.md](conformance/README.md).
     templates and `String.raw` fail with diagnostics. The source-complexity
     pre-pass rescans template text after each substitution, so template text and
     later doc comments no longer trip a false complexity error.
+- Opt-in v32 also admits default exports and interface inheritance. `export
+  default` declarations, bindings and constant expressions, `import x from`,
+  `import x, { y } from` and `default` in export and re-export lists link as the
+  ordinary name `default` (never forwarded by `export *`). `interface B extends
+  A, C` builds the combined closed record from local, imported and aliased record
+  bases with checked redeclarations, and repeated interface declarations merge.
+  Class bases, interface/class merging (the pilot `UarpClient` pattern) and
+  namespace imports are rejected with diagnostics; v31 and earlier are unchanged.
 
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`

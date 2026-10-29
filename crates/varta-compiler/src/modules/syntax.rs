@@ -6,9 +6,13 @@ fn unsupported(kind: &str) -> CompilerError {
         detail: "outside the local named-function module subset".into(),
     }
 }
-fn name(name: &ast::ModuleExportName) -> Result<String, CompilerError> {
+/// An identifier export/import name; `default` only where `defaults` admits it
+/// (v32 `default_exports()`: imported, exported and re-exported names).
+fn name(name: &ast::ModuleExportName, defaults: bool) -> Result<String, CompilerError> {
     match name {
-        ast::ModuleExportName::Ident(id) if id.sym != "default" => Ok(id.sym.to_string()),
+        ast::ModuleExportName::Ident(id) if defaults || id.sym != DEFAULT_EXPORT => {
+            Ok(id.sym.to_string())
+        }
         _ => Err(unsupported("string or default export name")),
     }
 }
@@ -20,7 +24,7 @@ pub(super) struct Scan {
 }
 
 pub(super) fn scan(
-    module: &ast::Module,
+    module: &mut ast::Module,
     source: &Source,
     path: &Path,
     loader: &dyn ModuleLoader,
@@ -28,9 +32,11 @@ pub(super) fn scan(
 ) -> Result<Scan, CompilerError> {
     let named_types = profile.named_types();
     let reexports = profile.module_reexports();
+    let defaults = profile.default_exports();
     let mut imports = Vec::new();
-    let mut exports = Vec::new();
+    let mut exports = defaults::lower(module, source, profile)?;
     let mut stars = Vec::new();
+    let mut merged = std::collections::BTreeSet::new();
     for item in &module.body {
         let ast::ModuleItem::ModuleDecl(declaration) = item else {
             continue;
@@ -42,7 +48,7 @@ pub(super) fn scan(
                     source,
                     path,
                     loader,
-                    named_types,
+                    (named_types, defaults),
                 )?),
                 ast::ModuleDecl::ExportDecl(export) => match &export.decl {
                     ast::Decl::Fn(function) => exports.push(Export {
@@ -52,6 +58,21 @@ pub(super) fn scan(
                         type_only: false,
                         from: None,
                     }),
+                    // A later declaration of a merged `export interface` (v32)
+                    // adds members to the type already exported.
+                    ast::Decl::TsInterface(interface)
+                        if profile.interface_extends()
+                            && merged.contains(interface.id.sym.as_ref()) => {}
+                    ast::Decl::TsInterface(interface) if profile.interface_extends() => {
+                        merged.insert(interface.id.sym.to_string());
+                        exports.push(Export {
+                            local: interface.id.sym.to_string(),
+                            exported: interface.id.sym.to_string(),
+                            span: interface.id.span,
+                            type_only: true,
+                            from: None,
+                        })
+                    }
                     ast::Decl::TsInterface(interface) if named_types => exports.push(Export {
                         local: interface.id.sym.to_string(),
                         exported: interface.id.sym.to_string(),
@@ -125,11 +146,12 @@ pub(super) fn scan(
                         if specifier.is_type_only && !named_types {
                             return Err(unsupported("type-only export"));
                         }
-                        let local = name(&specifier.orig)?;
+                        // A local list names bindings; only a re-export names `default`.
+                        let local = name(&specifier.orig, defaults && from.is_some())?;
                         let exported = specifier
                             .exported
                             .as_ref()
-                            .map(name)
+                            .map(|exported| name(exported, defaults))
                             .transpose()?
                             .unwrap_or_else(|| local.clone());
                         exports.push(Export {
@@ -205,7 +227,7 @@ fn import_declaration(
     source: &Source,
     path: &Path,
     loader: &dyn ModuleLoader,
-    named_types: bool,
+    (named_types, defaults): (bool, bool),
 ) -> Result<Dependency, CompilerError> {
     if import.type_only && !named_types
         || import.with.is_some()
@@ -216,8 +238,22 @@ fn import_declaration(
     }
     let mut bindings = Vec::new();
     for specifier in &import.specifiers {
-        let ast::ImportSpecifier::Named(specifier) = specifier else {
-            return Err(unsupported("default or namespace import"));
+        let specifier = match specifier {
+            ast::ImportSpecifier::Named(specifier) => specifier,
+            // `import x from` (v32) binds the dependency's `default` export.
+            ast::ImportSpecifier::Default(default) if defaults => {
+                bindings.push(ImportBinding {
+                    imported: DEFAULT_EXPORT.into(),
+                    local: default.local.sym.to_string(),
+                    span: default.span,
+                    type_only: import.type_only,
+                });
+                continue;
+            }
+            ast::ImportSpecifier::Namespace(_) if defaults => {
+                return Err(unsupported("namespace import (import * as name)"));
+            }
+            _ => return Err(unsupported("default or namespace import")),
         };
         if specifier.is_type_only && !named_types {
             return Err(unsupported("type-only import"));
@@ -225,7 +261,7 @@ fn import_declaration(
         let imported = specifier
             .imported
             .as_ref()
-            .map(name)
+            .map(|imported| name(imported, defaults))
             .transpose()?
             .unwrap_or_else(|| specifier.local.sym.to_string());
         bindings.push(ImportBinding {

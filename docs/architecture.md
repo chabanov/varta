@@ -5641,8 +5641,9 @@ the value namespace (functions and module constants) and the type namespace
   module metadata, subject to cycle detection, and counted against the module,
   depth and import-declaration limits, which are unchanged.
 - **Rejected with diagnostics.** `export * as ns from` (namespace re-export),
-  `export {} from` (side-effect re-export), `default` names in re-export lists,
-  `export type * from`, attributed re-exports, and default exports. V31 and
+  `export {} from` (side-effect re-export), string export names,
+  `export type * from` and attributed re-exports. `default` in re-export lists
+  follows [default exports](#default-exports-default_exports). V31 and
   earlier keep `re-export or type-only export` for `export … from` and
   `module export form` for `export *`.
 
@@ -5685,6 +5686,73 @@ Template literals add no host import, value tag, layout, helper or catalog entry
 artifacts are indistinguishable from the equivalent `String(…)` and `+` program.
 All budgets are unchanged.
 
+#### Default exports (`default_exports()`)
+
+Selector `default_exports()`. A default export is an ordinary binding exported
+under the name `default` (ECMAScript semantics), so it links through the value
+and type [export tables](#module-re-exports-module_reexports) like any other name.
+V31 and earlier keep `module export form` for `export default`,
+`default or namespace import` for `import x from` and `string or default export
+name` for `default` in export lists.
+
+- **Declarations.** `export default function f(…) {…}`, `export default class C
+  {…}` and `export default interface I {…}` declare the ordinary top-level
+  function, class or interface `f`/`C`/`I` and export it as `default`; the local
+  name stays usable in the module. Anonymous `export default function (…) {…}`
+  and `export default class {…}` bind ECMAScript's unspellable local name
+  `*default*`.
+- **Expressions.** `export default x` where `x` is a module binding (function,
+  class, module constant, named type or import) exports that binding in every
+  namespace in which it exists, like `export { x as default }`; naming a local
+  `const` or class declared later fails (`default export of x precedes its
+  declaration`), because ECMAScript would read it in its temporal dead zone. Any
+  other expression (including global values such as `undefined`) becomes the
+  [module constant](#module-constants-module_constants) `*default*` and follows
+  the constant initializer subset and its diagnostics.
+- **Lists, imports and re-exports.** `export { x as default }`, `import x from`,
+  `import x, { y } from`, `import type T from`, `import { default as x } from`,
+  `export { default } from` and `export { default as x } from` are admitted.
+  `export *` never forwards `default`. A module has at most one default export
+  (`duplicate export: default`); importing a missing one fails with `module m.ts
+  has no default export`.
+- **Rejected with diagnostics.** `import * as ns from` (`namespace import`),
+  `export * as ns from`, `export { default }` without `from` (parser), string
+  export names and the `export v from` proposal.
+
+Default exports are resolved at compile time and add no host import, value tag,
+layout, catalog entry or artifact field. Budgets are unchanged.
+
+#### Interface inheritance and merging (`interface_extends()`)
+
+Selector `interface_extends()`. V31 and earlier keep `interface extends` and
+`duplicate type declaration` for these forms.
+
+- **Inheritance.** `interface B extends A, C { … }` is the closed record type
+  whose fields are B's own members plus every field of each base. A base is a
+  type reference resolved like an annotation in the declaring module: a local or
+  imported interface or an alias of a closed record type, so bases from other
+  modules and re-exports work and cycles fail with `recursive type declaration`.
+  The result is an ordinary structural record shape (`interface B extends A {}`
+  is the shape of `A`); there is no width subtyping between B and A, no new
+  layout and no runtime representation.
+- **Redeclaration.** An own member may redeclare an inherited field with a type
+  assignable to it under the profile's assignability (identical, a literal or
+  union member of the base type, a subclass) and may make an optional field
+  required; making a required field optional or an incompatible type fails with a
+  type error at the member. Two bases providing one field must agree exactly
+  unless B redeclares it.
+- **Declaration merging.** Several `interface X` declarations in one module merge
+  their members and `extends` clauses; a repeated member must be identical. All
+  declarations must be exported or all local; one export binding is recorded.
+- **Rejected with diagnostics.** Bases that are classes (nominal instance types:
+  `interface A extends class C`), non-record types, qualified or computed bases,
+  generic bases until generic references are admitted, and merging an interface
+  with a class (`declaration merging of interface X with class X`): merged
+  members would be class fields its constructor never initializes. The pilot's
+  `interface UarpClient extends Resources {}` beside `class UarpClient` is
+  rejected this way. Like every named type, an interface is resolved when it is
+  referenced; an unreferenced invalid declaration is not diagnosed.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),
@@ -5693,8 +5761,9 @@ direct function exports (`export function f(...)`) and local export lists
 Each module has a separate function scope; private helpers with the same name in
 different files do not collide. Imports must name exported functions, and their
 parameter/result types are checked at each call. Duplicate or reserved bindings,
-duplicate exports and unresolved exports fail before emission. Type aliases and
-interfaces retain their existing erased behavior; they are not importable values.
+duplicate exports and unresolved exports fail before emission. Before v31, type
+aliases and interfaces retain their existing erased behavior and are not
+importable.
 Profile v31 adds [named types](#checked-f64-utf16-v31--named-types), including
 type-only imports/exports and `./x.js` specifiers for `.ts` sources. Profile v32
 adds [re-exports](#module-re-exports-module_reexports): `export { … } from` and
@@ -5730,13 +5799,17 @@ symlinks are rejected. Inputs must be bounded regular UTF-8 files. The explicitl
 configured entry retains support for legacy layouts outside the config directory;
 this does not expand the boundary for discovered dependencies.
 
+Profile v32 also adds [default exports](#default-exports-default_exports):
+`export default` declarations and bindings, `import x from` and `default` in
+export and re-export lists, linked as the name `default`.
+
 Limits: 64 unique modules including the entry, 256 import declarations, 32 modules
 on the active dependency path, 1 MiB per source, 4 MiB aggregate source and 256
 user functions across the graph. Re-export declarations (v32) count as import
 declarations. Existing per-file lexical/semantic complexity
-limits still apply. Default, namespace, side-effect, type-only and attributed
-imports, export-from/export-star before v32, namespace re-exports, default
-exports and dynamic imports fail explicitly. Unused imports and re-exports still
+limits still apply. Namespace, side-effect and attributed imports, type-only
+imports before v31, default imports/exports and export-from/export-star before
+v32, namespace re-exports and dynamic imports fail explicitly. Unused imports and re-exports still
 resolve and validate their dependency.
 
 Embeddings use `compile_modules(ModuleSource, &dyn ModuleLoader)`. The loader

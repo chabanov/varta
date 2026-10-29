@@ -90,11 +90,20 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     Ok(Type::Record(index))
 }
 pub(super) fn type_literal(literal: &ast::TsTypeLit, types: &mut ir::ValueTypes) -> Result<Type> {
-    if literal.members.len() > MAX_RECORD_FIELDS {
+    let fields = type_fields(&literal.members, types)?;
+    intern(fields, types)
+}
+/// The checked fields of closed object type members, in declaration order and
+/// not yet interned (interface `extends` combines them first).
+pub(super) fn type_fields(
+    members: &[ast::TsTypeElement],
+    types: &mut ir::ValueTypes,
+) -> Result<Vec<RecordField>> {
+    if members.len() > MAX_RECORD_FIELDS {
         return Err(invalid("object field count exceeds limit"));
     }
     let mut fields = Vec::new();
-    for member in &literal.members {
+    for member in members {
         let ast::TsTypeElement::TsPropertySignature(field) = member else {
             return Err(unsupported("object type member"));
         };
@@ -118,7 +127,7 @@ pub(super) fn type_literal(literal: &ast::TsTypeLit, types: &mut ir::ValueTypes)
             optional: field.optional,
         });
     }
-    intern(fields, types)
+    Ok(fields)
 }
 
 impl Lower<'_> {
