@@ -826,8 +826,8 @@ web-developer peer.
 
 ##### L0 protocol draft v0
 
-A draft for the peer's browser applier and headless renderer; every number is a
-placeholder to be replaced by named constants after measurement.
+A draft for the peer's browser applier and headless renderer; every budget is a
+placeholder to be replaced by measured named limits.
 
 - **Transport.** Patches: the guest encodes one **batch** in its own memory and
   calls `view_commit(ptr: i32, len: i32) → (i32)` once per turn, a new
@@ -849,25 +849,11 @@ placeholder to be replaced by named constants after measurement.
   Handler ids are nonzero `u32` chosen by the guest. Any unknown, dead or duplicate id
   invalidates the batch. Removing a node releases its subtree and listeners.
 
-| Opcode | Operation | Operands |
-| --- | --- | --- |
-| 1 | `create_element` | id, tag |
-| 2 | `create_text` | id, text |
-| 3 | `set_text` | id, text |
-| 4 | `set_attribute` | id, attribute, value |
-| 5 | `remove_attribute` | id, attribute |
-| 6 | `set_class` | id, class list |
-| 7 | `set_style` | id, property, value (parsed by the host against the subset grammar) |
-| 8 | `remove_style` | id, property |
-| 9 | `insert` | parent, id, before (0 = append); also moves an attached node |
-| 10 | `remove` | id |
-| 11 | `listen` | id, event, handler, options (bit 0 `preventDefault`, bit 1 `stopPropagation`) |
-| 12 | `unlisten` | id, event |
-| 13 | `set_value` | id, value, base seq |
-| 14 | `set_checked` | id, checked (u32 0/1), base seq |
-| 15 | `command` | id, command (focus, blur, select, scroll_into_view, scroll_to, show_modal, close), argument (f64, `scroll_to` top) |
-| 16 | `stylesheet` | sheet id, CSS text (replaces that sheet; subset grammar) |
-| 17 | `set_title` | text (document or window title) |
+The opcodes, operand wire order, element/attribute/CSS/event/command codes, bit
+sets, event record offsets and placeholder budgets are data-only registry tables in
+`varta_common::view` (unstable draft v0, no host operation registered), generated
+into the [embedding contract](embedding.md#view-protocol-draft-v0-unstable) and
+checked by a drift test.
 
 - **Event record.** `version: u16`, `kind: u16` (click, input, change, submit,
   keydown, focusin, focusout, scroll, cancel, close), `handler: u32`, `target: u32`
@@ -886,10 +872,10 @@ placeholder to be replaced by named constants after measurement.
   guest handles it, runs the microtask checkpoint and commits at most one batch. The
   renderer applies batches in order and may coalesce several turns into one frame;
   scroll records are coalesced to one per frame and keep only the latest position.
-- **Budgets (placeholders).** Batch bytes 256 KiB; operations per batch 16,384; live
-  nodes 65,536; live listeners 8,192; one text or attribute value 64 KiB; stylesheet
-  text 256 KiB in total; pending event records 64 (coalescible records replaced,
-  others fatal on overflow).
+- **Budgets (placeholders).** Batch bytes and operations, live nodes and listeners,
+  one text or attribute value, total stylesheet text and pending event records, as
+  the `view::DRAFT_*` constants; coalescible records are replaced, others are fatal
+  on overflow.
 - **Headless output.** The headless renderer returns the node tree (tags,
   attributes, text), the layout rectangle of every element and the accessibility
   tree as deterministic JSON, the basis of the freeze criterion and of conformance

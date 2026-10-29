@@ -1,0 +1,603 @@
+//! L0 view protocol, **unstable draft v0**: data only.
+//!
+//! These tables give the browser applier, the headless renderer and a future
+//! native renderer one source for every numeric code of the accepted L0 v1
+//! subset (development plan, "View layer"). Nothing here is a registered host
+//! operation: no compiler emits `view_commit`, no runtime links it and no
+//! profile admits it. Codes may change until the protocol is frozen by the
+//! freeze criterion; a frozen protocol gets its own version and host ABI.
+use crate::HostScalar;
+
+/// Draft protocol version carried in every batch and event record header.
+pub const DRAFT_VERSION: u16 = 0;
+
+/// The planned patch import: `view_commit(ptr, len) -> status`. Not registered.
+pub const COMMIT_IMPORT: &str = "view_commit";
+pub const COMMIT_PARAMS: [HostScalar; 2] = [HostScalar::I32, HostScalar::I32];
+pub const COMMIT_RESULTS: [HostScalar; 1] = [HostScalar::I32];
+/// The planned guest export that receives one event record written at
+/// `abi::RESULT_BASE`: `(len: i32) -> ()`.
+pub const EVENT_EXPORT: &str = "varta.view_abi.event";
+pub const EVENT_EXPORT_PARAMS: [HostScalar; 1] = [HostScalar::I32];
+
+/// Node id of the root container that the host creates; guest ids are nonzero.
+pub const ROOT_NODE: u32 = 1;
+/// "No node" in `insert`'s `before` operand (append).
+pub const NO_NODE: u32 = 0;
+
+/// Batch header: `version: u16`, `flags: u16`, `op_count: u32`.
+pub const BATCH_HEADER_BYTES: usize = 8;
+/// Operation header: `opcode: u8` and three reserved zero bytes.
+pub const OPERATION_HEADER_BYTES: usize = 4;
+/// Strings are a `u32` byte length followed by UTF-16LE code units, padded to this.
+pub const STRING_ALIGNMENT: usize = 4;
+
+/// Placeholder budgets, to be replaced by measured named limits before freezing.
+pub const DRAFT_MAX_BATCH_BYTES: usize = 256 * 1024;
+pub const DRAFT_MAX_BATCH_OPERATIONS: usize = 16 * 1024;
+pub const DRAFT_MAX_LIVE_NODES: usize = 64 * 1024;
+pub const DRAFT_MAX_LIVE_LISTENERS: usize = 8 * 1024;
+pub const DRAFT_MAX_VALUE_BYTES: usize = 64 * 1024;
+pub const DRAFT_MAX_STYLESHEET_BYTES: usize = 256 * 1024;
+pub const DRAFT_MAX_PENDING_EVENTS: usize = 64;
+
+/// Declares a `u16`/`u8`-coded enum with its wire name and an `ALL` table in code order.
+macro_rules! coded {
+    ($(#[$meta:meta])* $name:ident: $repr:ty { $($variant:ident = $code:literal => $text:literal,)+ }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        #[repr($repr)]
+        pub enum $name {
+            $($variant = $code,)+
+        }
+        impl $name {
+            /// Every variant, in ascending code order.
+            pub const ALL: &[Self] = &[$(Self::$variant,)+];
+            #[must_use]
+            pub fn code(self) -> $repr {
+                self as $repr
+            }
+            /// The HTML/CSS/DOM spelling, or the protocol operation name.
+            #[must_use]
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text,)+
+                }
+            }
+            #[must_use]
+            pub fn from_code(code: $repr) -> Option<Self> {
+                Self::ALL.iter().copied().find(|value| value.code() == code)
+            }
+        }
+    };
+}
+
+coded! {
+    /// Patch operations; operands follow [`Opcode::operands`].
+    Opcode: u8 {
+        CreateElement = 1 => "create_element",
+        CreateText = 2 => "create_text",
+        SetText = 3 => "set_text",
+        SetAttribute = 4 => "set_attribute",
+        RemoveAttribute = 5 => "remove_attribute",
+        SetClass = 6 => "set_class",
+        SetStyle = 7 => "set_style",
+        RemoveStyle = 8 => "remove_style",
+        Insert = 9 => "insert",
+        Remove = 10 => "remove",
+        Listen = 11 => "listen",
+        Unlisten = 12 => "unlisten",
+        SetValue = 13 => "set_value",
+        SetChecked = 14 => "set_checked",
+        Command = 15 => "command",
+        Stylesheet = 16 => "stylesheet",
+        SetTitle = 17 => "set_title",
+    }
+}
+
+coded! {
+    /// Elements of the L0 v1 subset (HTML namespace only).
+    Tag: u16 {
+        Div = 1 => "div",
+        Span = 2 => "span",
+        P = 3 => "p",
+        H1 = 4 => "h1",
+        H2 = 5 => "h2",
+        H3 = 6 => "h3",
+        Ul = 7 => "ul",
+        Ol = 8 => "ol",
+        Li = 9 => "li",
+        Header = 10 => "header",
+        Nav = 11 => "nav",
+        Main = 12 => "main",
+        Section = 13 => "section",
+        Footer = 14 => "footer",
+        Strong = 15 => "strong",
+        Em = 16 => "em",
+        Code = 17 => "code",
+        Pre = 18 => "pre",
+        Br = 19 => "br",
+        Button = 20 => "button",
+        A = 21 => "a",
+        Form = 22 => "form",
+        Label = 23 => "label",
+        Input = 24 => "input",
+        Textarea = 25 => "textarea",
+        Select = 26 => "select",
+        Option = 27 => "option",
+        Dialog = 28 => "dialog",
+        Progress = 29 => "progress",
+        Img = 30 => "img",
+    }
+}
+
+coded! {
+    /// Attributes of the L0 v1 subset. `class`, `style`, the live input value and
+    /// `checked` have their own operations.
+    Attribute: u16 {
+        Id = 1 => "id",
+        Type = 2 => "type",
+        Name = 3 => "name",
+        Value = 4 => "value",
+        Placeholder = 5 => "placeholder",
+        Disabled = 6 => "disabled",
+        Readonly = 7 => "readonly",
+        Maxlength = 8 => "maxlength",
+        Autofocus = 9 => "autofocus",
+        Selected = 10 => "selected",
+        For = 11 => "for",
+        Href = 12 => "href",
+        Src = 13 => "src",
+        Alt = 14 => "alt",
+        Tabindex = 15 => "tabindex",
+        Max = 16 => "max",
+        Role = 17 => "role",
+        AriaLabel = 18 => "aria-label",
+        AriaLabelledby = 19 => "aria-labelledby",
+        AriaDescribedby = 20 => "aria-describedby",
+        AriaLive = 21 => "aria-live",
+        AriaExpanded = 22 => "aria-expanded",
+        AriaSelected = 23 => "aria-selected",
+        AriaCurrent = 24 => "aria-current",
+        AriaBusy = 25 => "aria-busy",
+        AriaInvalid = 26 => "aria-invalid",
+        AriaHidden = 27 => "aria-hidden",
+    }
+}
+
+coded! {
+    /// CSS properties of the L0 v1 subset; values follow the subset grammar.
+    CssProperty: u16 {
+        Display = 1 => "display",
+        Width = 2 => "width",
+        Height = 3 => "height",
+        MinWidth = 4 => "min-width",
+        MinHeight = 5 => "min-height",
+        MaxWidth = 6 => "max-width",
+        MaxHeight = 7 => "max-height",
+        Margin = 8 => "margin",
+        MarginTop = 9 => "margin-top",
+        MarginRight = 10 => "margin-right",
+        MarginBottom = 11 => "margin-bottom",
+        MarginLeft = 12 => "margin-left",
+        Padding = 13 => "padding",
+        PaddingTop = 14 => "padding-top",
+        PaddingRight = 15 => "padding-right",
+        PaddingBottom = 16 => "padding-bottom",
+        PaddingLeft = 17 => "padding-left",
+        Gap = 18 => "gap",
+        RowGap = 19 => "row-gap",
+        ColumnGap = 20 => "column-gap",
+        FlexDirection = 21 => "flex-direction",
+        FlexWrap = 22 => "flex-wrap",
+        JustifyContent = 23 => "justify-content",
+        AlignItems = 24 => "align-items",
+        AlignSelf = 25 => "align-self",
+        FlexGrow = 26 => "flex-grow",
+        FlexShrink = 27 => "flex-shrink",
+        FlexBasis = 28 => "flex-basis",
+        GridTemplateColumns = 29 => "grid-template-columns",
+        GridTemplateRows = 30 => "grid-template-rows",
+        GridColumn = 31 => "grid-column",
+        GridRow = 32 => "grid-row",
+        Position = 33 => "position",
+        Top = 34 => "top",
+        Right = 35 => "right",
+        Bottom = 36 => "bottom",
+        Left = 37 => "left",
+        ZIndex = 38 => "z-index",
+        Overflow = 39 => "overflow",
+        Border = 40 => "border",
+        BorderWidth = 41 => "border-width",
+        BorderStyle = 42 => "border-style",
+        BorderColor = 43 => "border-color",
+        BorderRadius = 44 => "border-radius",
+        BackgroundColor = 45 => "background-color",
+        Color = 46 => "color",
+        Opacity = 47 => "opacity",
+        Outline = 48 => "outline",
+        OutlineWidth = 49 => "outline-width",
+        OutlineStyle = 50 => "outline-style",
+        OutlineColor = 51 => "outline-color",
+        OutlineOffset = 52 => "outline-offset",
+        FontFamily = 53 => "font-family",
+        FontSize = 54 => "font-size",
+        FontWeight = 55 => "font-weight",
+        FontStyle = 56 => "font-style",
+        LineHeight = 57 => "line-height",
+        TextAlign = 58 => "text-align",
+        TextDecoration = 59 => "text-decoration",
+        WhiteSpace = 60 => "white-space",
+        TextOverflow = 61 => "text-overflow",
+        OverflowWrap = 62 => "overflow-wrap",
+        Cursor = 63 => "cursor",
+        Transform = 64 => "transform",
+        TransitionProperty = 65 => "transition-property",
+        TransitionDuration = 66 => "transition-duration",
+        TransitionTimingFunction = 67 => "transition-timing-function",
+        TransitionDelay = 68 => "transition-delay",
+    }
+}
+
+coded! {
+    /// Event kinds a `listen` may name and an event record may carry.
+    EventKind: u16 {
+        Click = 1 => "click",
+        Input = 2 => "input",
+        Change = 3 => "change",
+        Submit = 4 => "submit",
+        Keydown = 5 => "keydown",
+        Focusin = 6 => "focusin",
+        Focusout = 7 => "focusout",
+        Scroll = 8 => "scroll",
+        Cancel = 9 => "cancel",
+        Close = 10 => "close",
+    }
+}
+
+coded! {
+    /// Imperative commands of the `command` operation.
+    Command: u16 {
+        Focus = 1 => "focus",
+        Blur = 2 => "blur",
+        Select = 3 => "select",
+        ScrollIntoView = 4 => "scroll_into_view",
+        ScrollTo = 5 => "scroll_to",
+        ShowModal = 6 => "show_modal",
+        Close = 7 => "close",
+    }
+}
+
+/// One operand of a patch operation, in wire order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operand {
+    /// `u32` node id.
+    Node,
+    /// `u32` parent node id.
+    Parent,
+    /// `u32` node id to insert before, or [`NO_NODE`] to append.
+    Before,
+    /// `u16` [`Tag`] code, padded to 4 bytes.
+    Tag,
+    /// `u16` [`Attribute`] code, padded to 4 bytes.
+    Attribute,
+    /// `u16` [`CssProperty`] code, padded to 4 bytes.
+    Property,
+    /// `u16` [`EventKind`] code, padded to 4 bytes.
+    Event,
+    /// `u16` [`Command`] code, padded to 4 bytes.
+    Command,
+    /// `u32` guest-chosen nonzero handler id.
+    Handler,
+    /// `u32` [`ListenOption`] bit set.
+    Options,
+    /// `u32` field edit counter the guest last saw.
+    BaseSeq,
+    /// `u32` 0 or 1.
+    Checked,
+    /// `u32` stylesheet id.
+    Sheet,
+    /// `f64` command argument (`scroll_to` top; otherwise 0).
+    Argument,
+    /// UTF-16LE string.
+    Text,
+}
+impl Operand {
+    #[must_use]
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Node | Self::Parent | Self::Before | Self::Handler | Self::Sheet => "u32 id",
+            Self::Tag | Self::Attribute | Self::Property | Self::Event | Self::Command => {
+                "u16 code + 2 pad"
+            }
+            Self::Options | Self::BaseSeq | Self::Checked => "u32",
+            Self::Argument => "f64",
+            Self::Text => "string",
+        }
+    }
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Parent => "parent",
+            Self::Before => "before",
+            Self::Tag => "tag",
+            Self::Attribute => "attribute",
+            Self::Property => "property",
+            Self::Event => "event",
+            Self::Command => "command",
+            Self::Handler => "handler",
+            Self::Options => "options",
+            Self::BaseSeq => "base_seq",
+            Self::Checked => "checked",
+            Self::Sheet => "sheet",
+            Self::Argument => "argument",
+            Self::Text => "text",
+        }
+    }
+}
+impl Opcode {
+    /// Operands in wire order after the operation header.
+    #[must_use]
+    pub fn operands(self) -> &'static [Operand] {
+        use Operand as O;
+        match self {
+            Self::CreateElement => &[O::Node, O::Tag],
+            Self::CreateText | Self::SetText | Self::SetClass => &[O::Node, O::Text],
+            Self::SetAttribute => &[O::Node, O::Attribute, O::Text],
+            Self::RemoveAttribute => &[O::Node, O::Attribute],
+            Self::SetStyle => &[O::Node, O::Property, O::Text],
+            Self::RemoveStyle => &[O::Node, O::Property],
+            Self::Insert => &[O::Parent, O::Node, O::Before],
+            Self::Remove => &[O::Node],
+            Self::Listen => &[O::Node, O::Event, O::Handler, O::Options],
+            Self::Unlisten => &[O::Node, O::Event],
+            Self::SetValue => &[O::Node, O::Text, O::BaseSeq],
+            Self::SetChecked => &[O::Node, O::Checked, O::BaseSeq],
+            Self::Command => &[O::Node, O::Command, O::Argument],
+            Self::Stylesheet => &[O::Sheet, O::Text],
+            Self::SetTitle => &[O::Text],
+        }
+    }
+}
+
+/// Bits of the `listen` options operand, executed synchronously by the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ListenOption {
+    PreventDefault = 1,
+    StopPropagation = 1 << 1,
+}
+impl ListenOption {
+    pub const ALL: &[Self] = &[Self::PreventDefault, Self::StopPropagation];
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PreventDefault => "preventDefault",
+            Self::StopPropagation => "stopPropagation",
+        }
+    }
+}
+
+/// Bits of an event record's `flags` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum EventFlag {
+    Shift = 1,
+    Ctrl = 1 << 1,
+    Alt = 1 << 2,
+    Meta = 1 << 3,
+    Composing = 1 << 4,
+    Checked = 1 << 5,
+}
+impl EventFlag {
+    pub const ALL: &[Self] = &[
+        Self::Shift,
+        Self::Ctrl,
+        Self::Alt,
+        Self::Meta,
+        Self::Composing,
+        Self::Checked,
+    ];
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Shift => "shiftKey",
+            Self::Ctrl => "ctrlKey",
+            Self::Alt => "altKey",
+            Self::Meta => "metaKey",
+            Self::Composing => "isComposing",
+            Self::Checked => "checked",
+        }
+    }
+}
+
+/// Wire type of a fixed event record field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldType {
+    U16,
+    U32,
+    F64,
+}
+impl FieldType {
+    #[must_use]
+    pub fn bytes(self) -> usize {
+        match self {
+            Self::U16 => 2,
+            Self::U32 => 4,
+            Self::F64 => 8,
+        }
+    }
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+            Self::F64 => "f64",
+        }
+    }
+}
+
+/// A fixed-offset field of the event record header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventField {
+    pub name: &'static str,
+    pub offset: usize,
+    pub ty: FieldType,
+}
+
+/// The event record header; the `key` and `value` strings follow it, in that order.
+pub const EVENT_FIELDS: &[EventField] = &[
+    EventField {
+        name: "version",
+        offset: 0,
+        ty: FieldType::U16,
+    },
+    EventField {
+        name: "kind",
+        offset: 2,
+        ty: FieldType::U16,
+    },
+    EventField {
+        name: "handler",
+        offset: 4,
+        ty: FieldType::U32,
+    },
+    EventField {
+        name: "target",
+        offset: 8,
+        ty: FieldType::U32,
+    },
+    EventField {
+        name: "seq",
+        offset: 12,
+        ty: FieldType::U32,
+    },
+    EventField {
+        name: "flags",
+        offset: 16,
+        ty: FieldType::U32,
+    },
+    EventField {
+        name: "reserved",
+        offset: 20,
+        ty: FieldType::U32,
+    },
+    EventField {
+        name: "scroll_top",
+        offset: 24,
+        ty: FieldType::F64,
+    },
+    EventField {
+        name: "scroll_height",
+        offset: 32,
+        ty: FieldType::F64,
+    },
+    EventField {
+        name: "client_height",
+        offset: 40,
+        ty: FieldType::F64,
+    },
+];
+/// Header bytes before the `key` string.
+pub const EVENT_HEADER_BYTES: usize = 48;
+/// Strings following the event header, in wire order.
+pub const EVENT_STRINGS: &[&str] = &["key", "value"];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn contiguous<T: Copy>(all: &[T], code: impl Fn(T) -> u32) {
+        for (index, &value) in all.iter().enumerate() {
+            assert_eq!(
+                code(value) as usize,
+                index + 1,
+                "codes start at 1 without gaps"
+            );
+        }
+    }
+    fn unique_names(names: impl IntoIterator<Item = &'static str>) {
+        let mut seen = BTreeSet::new();
+        for name in names {
+            assert!(seen.insert(name), "duplicate name {name}");
+        }
+    }
+
+    #[test]
+    fn codes_are_contiguous_unique_and_round_trip() {
+        contiguous(Opcode::ALL, |v| u32::from(v.code()));
+        contiguous(Tag::ALL, |v| u32::from(v.code()));
+        contiguous(Attribute::ALL, |v| u32::from(v.code()));
+        contiguous(CssProperty::ALL, |v| u32::from(v.code()));
+        contiguous(EventKind::ALL, |v| u32::from(v.code()));
+        contiguous(Command::ALL, |v| u32::from(v.code()));
+        unique_names(Opcode::ALL.iter().map(|v| v.name()));
+        unique_names(Tag::ALL.iter().map(|v| v.name()));
+        unique_names(Attribute::ALL.iter().map(|v| v.name()));
+        unique_names(CssProperty::ALL.iter().map(|v| v.name()));
+        unique_names(EventKind::ALL.iter().map(|v| v.name()));
+        unique_names(Command::ALL.iter().map(|v| v.name()));
+        for &tag in Tag::ALL {
+            assert_eq!(Tag::from_code(tag.code()), Some(tag));
+        }
+        assert_eq!(Opcode::from_code(0), None);
+        assert_eq!(Tag::from_code(0), None);
+    }
+
+    #[test]
+    fn bit_sets_are_single_distinct_bits() {
+        let mut seen = 0;
+        for &option in ListenOption::ALL {
+            let bit = option as u32;
+            assert!(bit.is_power_of_two() && seen & bit == 0);
+            seen |= bit;
+        }
+        let mut seen = 0;
+        for &flag in EventFlag::ALL {
+            let bit = flag as u32;
+            assert!(bit.is_power_of_two() && seen & bit == 0);
+            seen |= bit;
+        }
+    }
+
+    #[test]
+    fn event_header_is_packed_and_aligned() {
+        let mut end = 0;
+        for field in EVENT_FIELDS {
+            assert_eq!(
+                field.offset, end,
+                "{} follows the previous field",
+                field.name
+            );
+            assert_eq!(
+                field.offset % field.ty.bytes(),
+                0,
+                "{} is aligned",
+                field.name
+            );
+            end = field.offset + field.ty.bytes();
+        }
+        assert_eq!(end, EVENT_HEADER_BYTES);
+        assert_eq!(EVENT_HEADER_BYTES % STRING_ALIGNMENT, 0);
+    }
+
+    #[test]
+    fn operations_have_operands_and_at_most_one_string() {
+        for &opcode in Opcode::ALL {
+            let operands = opcode.operands();
+            assert!(!operands.is_empty(), "{}", opcode.name());
+            assert!(
+                operands
+                    .iter()
+                    .filter(|operand| **operand == Operand::Text)
+                    .count()
+                    <= 1,
+                "{} carries at most one string",
+                opcode.name()
+            );
+        }
+        assert_eq!(ROOT_NODE, NO_NODE + 1);
+    }
+}

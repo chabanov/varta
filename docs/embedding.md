@@ -15,12 +15,17 @@ than copying the reference host's behaviour. The language-level meaning of each
 profile stays in [architecture.md](architecture.md); this document covers only the
 module/host boundary.
 
-The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
+The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Where the
+right long-term rule differs from today's behaviour, this document states today's
+behaviour as normative and lists the change under
+[Proposed changes](#proposed-changes); nothing there applies until a later
+revision adopts it.
 
 Tables between `generated:` markers are produced from the `varta-common`
 registries (`HostOperation`, `LanguageProfile`, `abi`, `value`, `exceptions`,
-`function::frame`, `tool`, `http`) and compared with them by
-`crates/varta-common/tests/embedding_documentation.rs`. When a registry changes,
+`function`, `tool`, `http`, `view`) and compared with them by
+`crates/varta-common/tests/embedding_documentation.rs` (with its `view`
+module). When a registry changes,
 replace the block with the test's expected output. Prose never restates a
 registry value.
 
@@ -34,8 +39,8 @@ best-effort approximation or a no-op in place of a registered operation.
 | Level | Accepts | Entry point | Specified in |
 | --- | --- | --- | --- |
 | **T1 — tool host** | `checked-i32-utf8-v1` modules that publish tools | One named tool per fresh instance | [Tool invocation ABI v1](#tool-invocation-abi-v1) |
-| **R1 — run host** | Modules whose imports the host implements | `_start`, then exception check | [Run lifecycle](#run-lifecycle) |
-| **R2 — scheduled run host** | R1 plus frame and scheduler profiles | `_start`, exception check, microtask checkpoint | [Microtask checkpoint](#microtask-checkpoint) |
+| **R1 — run host** | Modules whose imports the host implements, including `varta.functions` catalogs checked as in [Function and frame catalogs](#function-and-frame-catalogs) | `_start`, then exception check | [Run lifecycle](#run-lifecycle) |
+| **R2 — scheduled run host** | R1 plus frame and scheduler profiles, with the [frame admission](#function-and-frame-catalogs) rules | `_start`, exception check, microtask checkpoint | [Microtask checkpoint](#microtask-checkpoint) |
 | **H1 — HTTP host** | `checked-i32-utf8-v1` modules with an HTTP contract | One request per fresh instance | [architecture.md](architecture.md#http-service-v1); not specified for third-party hosts yet |
 
 Level T1 needs only the scalar, string and privileged imports a tool module
@@ -53,8 +58,13 @@ formatting, BigInt) are not specified here at the bit level; see
   rules in [architecture.md](architecture.md#artifact-format-and-validation); it
   MUST NOT execute the native prefix or scan payload bytes for markers. The
   embedded manifest wins over any sidecar, even when empty.
-- **Host ceiling** (optional): a second manifest owned by the embedder. It never
-  comes from the package.
+- **Host ceiling** (optional): a policy owned by the embedder, never by the
+  package. It uses the [manifest](#manifest) schema with its defaults, so the
+  smallest valid ceiling is `{"capabilities":[]}` (deny everything). Its
+  `abiVersion`, when present, must be a supported host ABI but is **not** compared
+  with the module's; `entry` and `target` are ignored metadata; the reference CLI
+  reads at most 256 KiB. A missing, unreadable or malformed ceiling is an error,
+  never a fallback to the package's grants.
 
 Hosts MUST reject native machine code and MUST NOT cache or accept precompiled
 engine payloads from package input.
@@ -73,9 +83,18 @@ engine payloads from package input.
 }
 ```
 
-`entry` and `target` are optional metadata. Unknown fields, unknown capability ids,
-duplicate ids, a `policy` other than `strict`, a value of the wrong kind and unsafe
-patterns are errors. Capability ids and the operations they authorize are the
+| Field | Rule |
+| --- | --- |
+| `schemaVersion` | Optional, default 1; must be 1 |
+| `abiVersion` | Optional, default 1; must be a supported host ABI. In a package manifest it must **equal the module's host ABI**: the `varta.abi` value, or 1 when the module has no `varta.abi` section (legacy and unspecified generic Wasm). A missing sidecar is synthesized with the module's host ABI and no grants |
+| `policy` | Optional, default `"strict"`; must be `"strict"` |
+| `entry` | Optional string, metadata only |
+| `target` | Optional; `"wasm"` or `"native"` |
+| `capabilities` | Required array of grants (`[]` denies everything) |
+
+Unknown or duplicate fields, unknown capability ids, duplicate ids and a value of
+the wrong kind (a boolean id needs exactly `enabled`, every other id exactly
+`patterns`) are errors. Capability ids and the operations they authorize are the
 **Capability** column of the [host operation table](#host-operations). Each id has
 one grant kind:
 
@@ -86,9 +105,16 @@ one grant kind:
 | URL patterns | `"patterns": [...]` | `net.fetch`, `net.get` |
 | Listen endpoints | `"patterns": ["127.0.0.1:8080"]` | `net.listen` |
 
-Policy complexity is capped at 128 grants and 256 patterns, at most 64 patterns
-per grant and 512 bytes per pattern. Empty lists and `false` are explicit denials;
-an omitted id denies.
+Policy complexity is capped at 128 grants and 256 patterns in total, and at most
+64 patterns per grant. Empty lists and `false` are explicit denials; an omitted id
+denies. A pattern is **unsafe**, and the whole manifest is rejected, when:
+
+| Grant kind | Unsafe pattern |
+| --- | --- |
+| Names, paths and URLs | Longer than 512 bytes; empty or only whitespace; only `*` and `?` characters; contains NUL |
+| `fs.*` paths (additionally) | Not absolute, or contains a `..` component |
+| URLs (additionally) | Does not start with `http://`; empty authority, or an authority containing `*`, `?`, `@` or `#`; any control or whitespace character; a path containing `#`, `%` or `\`; a `.` or `..` path segment; not parseable as a URL, without a host, with a user name or password, or with `%` in the parsed path |
+| Listen endpoints | Not a literal `IP:port` socket address, or not in canonical form (for example `[::1]:8080`); listen endpoints have no wildcards |
 
 ## Module validation
 
@@ -119,10 +145,11 @@ Passing validation is not proof of provenance or authorization.
    shared, with an initial size of at most `abi::MAX_MEMORY_BYTES /
    abi::WASM_PAGE_BYTES` pages; at most one table with at most 1024 initial
    elements; at most 128 globals; every function body at most
-   `abi::MAX_WASM_FUNCTION_BODY_BYTES`; at most `abi::MAX_USER_FUNCTIONS` plus the
-   profile's compiler-helper allowance plus `abi::MAX_HTTP_HANDLERS` defined
-   functions (helper allowances are in the
-   [limits table](architecture.md#resource-limits)).
+   `abi::MAX_WASM_FUNCTION_BODY_BYTES`; at most the profile's **Max defined
+   functions** (`abi::MAX_USER_FUNCTIONS` plus its helper allowance plus
+   `abi::MAX_HTTP_HANDLERS`) defined functions, from the
+   [acceptance table](#profiles). Unspecified generic Wasm uses the
+   `checked-i32-utf8-v1` row.
 4. **Memory maximum (third-party hosts).** The reference host caps growth with a
    store limiter. Hosts without one, including every JavaScript host, MUST parse
    the memory section and reject a memory whose maximum is absent or above
@@ -148,17 +175,21 @@ Passing validation is not proof of provenance or authorization.
    - exception, tool, HTTP, value-ABI and frame exports are checked as described in
      their sections; an unlisted export with the `varta.exception.`,
      `varta.tool.` or `varta.http_abi.` prefix is an error.
-7. **Value section.** At most one `varta.values` section holding a little-endian
-   `u32` value ABI compatible with the profile's (**Value ABI** column). It is
-   REQUIRED when the module imports a JSON or union/value reader operation or the
-   profile has an exception channel.
+7. **Value section.** At most one `varta.values` section holding exactly four
+   bytes, a little-endian `u32` listed under **Accepted `varta.values`** for the
+   profile in the [acceptance table](#profiles): equality with the profile's value
+   ABI for every binary64 profile, and value ABI 1 or 2 for
+   `checked-i32-utf8-v1` (and unspecified generic Wasm). An HTTP contract
+   additionally requires value ABI 2 exactly. The section is REQUIRED when the
+   module imports a JSON operation or any `union_*`/`value_*` reader, and in every
+   profile with an exception channel.
 8. **Start function.** Exception profiles, tool modules and HTTP modules MUST NOT
    have a Wasm start section.
 9. **Contracts.** A `varta.tools` catalog is validated as in
    [Tool invocation ABI v1](#tool-invocation-abi-v1). A `varta.http` contract and the
-   `http_service` import occur together or not at all. Frame catalogs and the
-   `varta_resume` dispatcher are validated by the reference admission algorithm
-   (`varta_common::function::admission`), which is [unstable](#what-is-unstable).
+   `http_service` import occur together or not at all. A `varta.functions`
+   catalog and the `varta_resume` dispatcher follow
+   [Function and frame catalogs](#function-and-frame-catalogs).
 
 ## Profiles
 
@@ -209,6 +240,52 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 <!-- generated:embedding-profiles:end -->
+
+Acceptance details per profile (used by validation steps 3, 7 and 9):
+
+<!-- generated:embedding-profile-acceptance:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
+| Profile | Accepted `varta.values` | `varta.functions` versions | Helper allowance | Max defined functions |
+| --- | --- | --- | --- | --- |
+| `checked-i32-utf8-v1` | 1, 2 | — | 10 | 267 |
+| `checked-f64-utf8-v1` | 3 | — | 10 | 267 |
+| `checked-f64-utf8-v2` | 4 | — | 10 | 267 |
+| `checked-f64-utf16-v1` | 5 | — | 10 | 267 |
+| `checked-f64-utf16-v2` | 6 | — | 10 | 267 |
+| `checked-f64-utf16-v3` | 7 | — | 10 | 267 |
+| `checked-f64-utf16-v4` | 8 | — | 10 | 267 |
+| `checked-f64-utf16-v5` | 8 | — | 10 | 267 |
+| `checked-f64-utf16-v6` | 9 | — | 10 | 267 |
+| `checked-f64-utf16-v7` | 9 | — | 10 | 267 |
+| `checked-f64-utf16-v8` | 10 | — | 10 | 267 |
+| `checked-f64-utf16-v9` | 11 | — | 10 | 267 |
+| `checked-f64-utf16-v10` | 11 | — | 10 | 267 |
+| `checked-f64-utf16-v11` | 11 | — | 10 | 267 |
+| `checked-f64-utf16-v12` | 11 | — | 10 | 267 |
+| `checked-f64-utf16-v13` | 12 | — | 12 | 269 |
+| `checked-f64-utf16-v14` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v15` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v16` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v17` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v18` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v19` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v20` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v21` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v22` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v23` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v24` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v25` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v26` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v27` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v28` | 12 | — | 13 | 270 |
+| `checked-f64-utf16-v29` | 13 | — | 13 | 270 |
+| `checked-f64-utf16-v30` | 13 | 1 | 13 | 270 |
+| `checked-f64-utf16-v31` | 13 | 1 | 13 | 270 |
+| `checked-f64-utf16-v32` | 13 | 1 | 13 | 270 |
+| `checked-f64-utf16-v33` | 13 | 1 (no frames), 2 (frames) | 13 | 270 |
+| `checked-f64-utf16-v34` | 15 | 1 (no frames), 2 (frames) | 13 | 270 |
+| `checked-f64-utf16-v35` | 16 | 1 (no frames), 3 (frames) | 13 | 270 |
+| `checked-f64-utf16-v36` | 16 | 1 (no frames), 3 (frames) | 13 | 270 |
+<!-- generated:embedding-profile-acceptance:end -->
 
 Numbers are signed i32 in `checked-i32-utf8-v1` (wrapping arithmetic, truncating
 division) and IEEE 754 binary64 in every other profile. Booleans are i32 `0`/`1`.
@@ -261,8 +338,13 @@ in this order:
    execution deadline. Exceeding `abi::MAX_HOST_CALLS` or the deadline is a fatal
    trap of the execution, never a status.
 2. **Reset.** For a privileged operation (one with a **Capability**) and for the
-   HTTP stop operation, set `env_result_len` to 0 and `result_status` to 0 when they
-   are exported. Pure operations preserve the previous `result_status`.
+   HTTP stop operation, set `env_result_len` to 0 and `result_status` to 0 **when
+   they are exported**. Pure operations do not reset `result_status`. **Result
+   globals** = yes means the module MUST export the globals; operations with "—"
+   (for example `time_now`, `env_has`, `process_exit`, `net_fetch`) still report
+   their status through `result_status` whenever it is exported, and have no
+   observable status otherwise. Varta-compiled modules always export `memory`,
+   `env_result_len`, `result_status` and `_start`.
 3. **Validate input** as described under [encodings](#memory-layout-and-encodings),
    with `abi::MAX_INPUT_BYTES` for resource names, paths and URLs.
 4. **Authorize** the exact operation id and the concrete resource against the
@@ -276,26 +358,71 @@ in this order:
    false, zero), except `net_fetch`/`net_fetch16`, which return -1.
 
 Failures of steps 3–6 are recoverable statuses; the guest decides what to do.
-Hosts MAY emit a human-readable diagnostic line for a failure, charged to the
-output budget; its text is not part of the contract.
 
-**Output.** Every emitted line costs its byte length plus one against
-`abi::MAX_OUTPUT_BYTES`; overflow is a fatal trap. The reference host prefixes
-log lines with `varta log: `; hosts MAY choose their own presentation.
+**Output and its budget (today).** The reference host emits one output line per
+logging call, per `env_print`/`fs_print` and per failed privileged call (a
+diagnostic). Each line costs its UTF-8 byte length plus one against
+`abi::MAX_OUTPUT_BYTES`, and overflow is a fatal trap. The cost is computed on the
+**reference line text**, whatever a host displays:
+
+| Source | Reference line text |
+| --- | --- |
+| Logging imports | `varta log: ` followed by the logged text |
+| `env_print*` | `varta env: <name>=<value>` |
+| `fs_print*` | The file content, unprefixed |
+| Failure diagnostic | `varta log: ` followed by `<capability denied: <label>> (<target>)` (label `env` for every `env.*` id, otherwise the id), `<invalid host input>`, `<result too large>` or `<host I/O error: <text>>` |
+
+A host that presents output differently MUST still charge these texts, so budget
+exhaustion happens at the same call as in the reference host. The I/O error text
+comes from the operating system, so exhaustion points after I/O failures are not
+host-independent today; see [Proposed changes](#proposed-changes).
 
 ### Operation families
 
 | Family | Imports | Contract |
 | --- | --- | --- |
-| Logging | `log_i32`, `log_string`, `log_string16`, `log_f64*`, `log_undefined` | Emit one line. No capability. UTF-16 text is displayed with U+FFFD for lone units; display text never authorizes anything |
+| Logging | `log_i32`, `log_string`, `log_string16`, `log_f64*`, `log_undefined` | Emit one line, no capability; see [Logging](#logging) |
 | Clock | `time_now` | Requires `time.now` enabled. Unix seconds as i32; a time outside i32 is status 2 with 0 |
-| Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most 256 bytes, no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 0/1, `env_get` the value as a string result, `env_print` emits `name=value` |
+| Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most 256 bytes, no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 1 if the variable is set and 0 otherwise (status 0 either way). For an allowed name whose variable is **unset** (or whose value is not valid Unicode), `env_get` returns 0 with status 3 (I/O) and `env_print` emits nothing but the diagnostic and sets status 3; a value larger than `abi::MAX_RESULT_BYTES` is status 4. `env_get` returns the value as a string result, `env_print` emits `varta env: <name>=<value>` |
 | Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..` rejected; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it |
 | Network | `net_get*`, `net_fetch*` | `http:` URLs only; parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
-| Exit | `process_exit`, `process_exit_f64` | Requires `process.exit` enabled. Authorized: end the execution with the code (not the host process); no result is produced. Denied: status 1 and the guest continues |
+| Exit | `process_exit`, `process_exit_f64` | Requires `process.exit` enabled. Authorized: end the execution with the code (not the host process); no result is produced. Denied: status 1 and the guest continues. `process_exit_f64` requires a finite integral value within i32, otherwise status 2 and the guest continues |
 | HTTP | `http_service`, `http_stop` | Feature marker and owned shutdown of [HTTP service v1](architecture.md#http-service-v1) |
 | Scheduler | `promise_*`, `scheduler_enqueue` | See [Microtask checkpoint](#microtask-checkpoint) |
-| Pure intrinsics | `number_*`, `string_char_*16`, `primitive_*`, `json_*`, `value_*`, `union_*`, `bigint_*` | Capability-free, deterministic except `number_random`; semantics are the profile contracts in [architecture.md](architecture.md); see [What is unstable](#what-is-unstable) |
+| Pure intrinsics | `number_*`, `string_char_*16`, `primitive_*`, `json_*`, `value_*`, `union_*`, `bigint_*` | Capability-free; semantics are the profile contracts in [architecture.md](architecture.md); numeric exactness in [Numeric intrinsics](#numeric-intrinsics); layout-bound ones are [unstable](#what-is-unstable) |
+
+### Logging
+
+| Import | Argument | Logged text |
+| --- | --- | --- |
+| `log_i32` | i32 | Decimal, with `-` for negative values |
+| `log_string` | UTF-8 `(ptr, len)`, at most `abi::MAX_RESULT_BYTES` | The text. An invalid range or invalid UTF-8 sets status 2 and emits the `<invalid host input>` diagnostic instead |
+| `log_string16` | UTF-16LE `(ptr, len)`, at most `abi::MAX_STRING_BYTES` | The text with each lone surrogate replaced by U+FFFD (display only). An invalid range or odd length is a **fatal trap**, not a status |
+| `log_f64` | f64 (profiles up to the last one admitting it in the [table](#host-operation-table)) | `NaN`, `Infinity`, `-Infinity`; `-0` for negative zero; otherwise the shortest decimal that round-trips, **without exponent notation** (`1e21` logs `1000000000000000000000`, `1e-7` logs `0.0000001`) |
+| `log_f64_v2` | f64 | ECMAScript `Number::toString(x)`, exactly JavaScript's `String(x)` (`-0` logs `0`, `1e21` logs `1e+21`) |
+| `log_undefined` | i32 that MUST be 0 | `undefined`; any other argument is a **fatal trap** |
+| `value_log_*`, `union_log` | Boxed value | Layout-bound, [unstable](#what-is-unstable) |
+
+Logging never resets `result_status`, and display text never authorizes anything.
+
+### Numeric intrinsics
+
+- **Exact.** `number_remainder` is the truncating remainder (C `fmod`, which
+  JavaScript's `%` equals); `number_power` applies ECMAScript `Number::exponentiate`'s
+  special cases (NaN, zero, infinite and negative bases, odd integral exponents);
+  the Math imports return the ECMAScript-required results for NaN, signed zeros,
+  infinities and domain boundaries listed in
+  [architecture.md](architecture.md#checked-f64-utf16-v16--native-math). These results
+  MUST equal the reference bit for bit (NaN payload and sign excepted).
+- **Approximated.** Ordinary finite results of `number_power` and the `number_sin`
+  family are **implementation-approximated**: the reference host uses the
+  platform's `f64` library, so its own results may differ between operating
+  systems in the last bits. A host MAY use any faithful implementation, including
+  JavaScript's `Math`; it MUST NOT claim last-bit equality, and conformance cases
+  MUST NOT depend on the last bits of these results. Programs that need
+  cross-host determinism (record/replay) cannot rely on them today; see
+  [Proposed changes](#proposed-changes).
+- `number_random` is entropy, not deterministic, and needs no grant.
 
 ### Pattern matching
 
@@ -624,9 +751,17 @@ never retains a guest reference.
 - `promise_unhandled(reason) → id` records a rejection without a handler and
   returns a new tracking id (1, 2, …); `promise_handled(id)` withdraws it. The host
   MAY render the boxed `reason` for its diagnostic (unstable layout).
-- A token held twice, a non-integer, unknown or already settled serial or id, and
-  exceeding the scheduler rows of the [limits table](architecture.md#resource-limits)
-  are fatal errors.
+- **Bounds.** A token is *held* from `scheduler_enqueue` or `promise_react` until
+  the host takes it from the queue. At most
+  `scheduler::MAX_PENDING_CONTINUATIONS` tokens are held at once, **counting queued
+  tokens and tokens registered as reactions together**; registering one more is
+  fatal. At most `scheduler::MAX_EXECUTION_JOBS` tokens are taken from the queue
+  per execution (taking one more is fatal). Serials and tracking ids are separate
+  counters, each at most `scheduler::MAX_PROMISE_SERIALS` per execution.
+- Holding a token that is already held, a serial or id that is not an integer in
+  range or was not issued, settling a serial twice, reacting to a settled serial
+  and withdrawing an id twice are fatal errors. Fatal scheduler errors are never
+  delivered to the guest.
 
 After `_start` returns with an empty exception channel, the host takes tokens in
 FIFO order, including tokens queued meanwhile, and for each calls
@@ -635,6 +770,58 @@ must be the `Suspended` or `Returned` outcome code; then the exception channel m
 be empty. When the queue is empty, any outstanding unhandled rejection fails the
 execution. Scheduler imports are not charged to the host-call budget but still
 observe the deadline.
+
+## Function and frame catalogs
+
+Profiles with entries in the **`varta.functions` versions** column of the
+[acceptance table](#profiles) may carry one `varta.functions` custom section; every
+other profile, and unspecified generic Wasm, MUST NOT. Closures in earlier
+profiles carry no catalog. A host that never reads guest memory through catalog
+metadata (no layout-bound readers) needs only the rules below; they are enough to
+run R1 modules with catalogs and R2 modules honestly. The catalog is consistency
+metadata: Wasm isolation does not depend on it, and a host never resumes anything
+but tokens the guest itself handed over.
+
+**Catalog section (normative minimum).**
+
+1. At most one section, at most `abi::MAX_WASM_BYTES`, strict JSON (unknown or
+   duplicate fields rejected) with fields `version`, `value_version`, `types`,
+   `bindings`, `functions` and, only in frame versions, `frames`.
+2. `version` is one the profile lists: `function::CATALOG_VERSION` with no
+   `frames` member, or the profile's frame version (2 with cell layouts in
+   v33/v34, 3 with liveness layouts in v35/v36) with a non-empty `frames` array.
+   Version 1 never carries frames.
+3. `value_version` equals the profile's value ABI.
+4. Array lengths stay within the reference bounds (`types` and `bindings` at most
+   `function::MAX_CAPTURE_TYPES`, `functions` and `frames` at most
+   `abi::MAX_USER_FUNCTIONS`), and every `ty`/`binding` index is in range.
+
+The remaining structural rules (type graph, capture and liveness entries, binding
+classes per layout) are defined by `varta_common::function::{catalog, validate,
+admission}`; they are [unstable](#what-is-unstable). A host that does not apply them
+MUST NOT interpret guest memory through the catalog and MUST say that it applies
+reduced catalog validation.
+
+**Frame admission (R2, normative).** For a profile with **Frames** in the
+[profile table](#profiles):
+
+1. `varta_resume` is exported **if and only if** the catalog has frame layouts;
+   profiles without frames must not export it.
+2. It is a guest-defined function (not an import) with signature
+   `(i64, i32, i64) → (i32)`.
+3. Its body contains no `call_indirect`, `return_call_indirect`, `call_ref`,
+   `return_call_ref` or table instruction, and every direct `call`/`return_call`
+   targets a guest-defined function other than itself.
+4. The distinct direct call targets with signature `(i64, i32, i64) → ()` (resume
+   bodies) number exactly as many as the frame layouts; no resume body is exported.
+5. Each layout's `code` plus the number of imported functions names a
+   guest-defined function that is neither the dispatcher nor a resume body and
+   returns exactly one `i64`.
+
+Rules 1–5 need only the export, type, function and import sections plus a decode of
+the dispatcher's own body. The host calls `varta_resume` only with tokens it
+received from the scheduler imports, `Completion` code 0 and input 0, and treats
+any outcome other than `Suspended`/`Returned` as fatal.
 
 ## Tool invocation ABI v1
 
@@ -689,8 +876,11 @@ values exactly. Every listed export exists with the physical signature below, no
 other `varta.tool.` export exists, the module has exactly one `varta.abi` section
 and no start section, and string-using tools come with both `varta.tool_abi.`
 helpers. The reference host also recomputes each handler's transitive privileged
-imports and requires them to equal `requiredEffects`; a third-party host SHOULD do
-the same and MUST NOT treat `requiredEffects` as a grant.
+imports from its direct call graph and requires them to equal `requiredEffects`.
+A third-party host MAY do the same (it needs a decoder for every function body);
+a host that does not MUST present `requiredEffects` as unverified metadata. In no
+case is `requiredEffects` a grant: only the package grants and the host ceiling
+authorize effects.
 
 **Physical signature.**
 
@@ -726,11 +916,290 @@ the same and MUST NOT treat `requiredEffects` as a grant.
 7. Serialize `{"value": <result>}` and check it is at most `outputBytes`.
 8. Drop the instance.
 
-Success is `{"result":{"value":…},"logs":[…]}`. Failures use the stable codes
-`invalid_arguments`, `unknown_tool`, `invalid_artifact`, `invalid_policy`,
-`invalid_result`, `execution_failed` and `guest_exit`, and expose no partial result.
 A denied host operation inside a handler is a status the handler sees, not an
-invocation failure. Arguments never carry rights.
+invocation failure. Arguments never carry rights. Failures expose no partial
+result and no logs.
+
+**Envelopes.** The machine-readable output of `varta invoke --json` and of the
+runtime companion's `invoke --json` / packaged `--invoke --json` is one line of
+compact JSON with keys in lexicographic order (consumers MUST NOT depend on the
+order):
+
+| Outcome | Envelope | Exit status |
+| --- | --- | --- |
+| Success | `{"logs":[<line>…],"result":{"value":<integer \| boolean \| string \| null>},"status":"ok"}` | 0 |
+| Failure, development CLI | `{"code":<code \| null>,"diagnostics":[<diagnostic>…],"error":"<text>","status":"failed"}` | 1 |
+| Failure, runtime companion | `{"code":<code \| null>,"error":"<text>","status":"failed"}` (no `diagnostics` member today) | 1 |
+
+`code` is one of the stable codes `invalid_arguments`, `unknown_tool`,
+`invalid_artifact`, `invalid_policy`, `invalid_result`, `execution_failed` and
+`guest_exit`, or `null` for an error before dispatch that has no invocation code
+(for example a file that cannot be read, or a malformed policy); a malformed artifact reports
+`invalid_artifact`. `error` is human-readable and not stable; `diagnostics` holds
+source diagnostics and is empty for invocation errors. Each `logs` entry is the
+**reference line text** of [Output and its budget](#call-protocol), including the
+`varta log: ` prefix and failure diagnostics (see
+[Proposed changes](#proposed-changes)). Without `--json`, stdout carries only
+`{"value":…}` and the log lines go to stderr.
+
+## View protocol draft v0 (unstable)
+
+**Unstable draft v0, data only.** These tables are generated from
+`varta_common::view` so that a browser applier, the headless renderer and a
+native renderer can be written against one set of codes for the accepted L0 v1
+subset ([design](development-plan.md#view-layer-l0l3)). Nothing here is
+implemented: `view_commit` is not a registered host operation, no compiler emits
+it, no runtime links it and no profile admits it. Codes and layouts may change
+until the freeze criterion is met; the frozen protocol gets its own version and
+host ABI.
+
+**Encoding.** Little-endian. A batch is the batch header (`version: u16`,
+`flags: u16` = 0, `op_count: u32`) followed by `op_count` operations. Each
+operation is the operation header (`opcode: u8` and three zero bytes) followed by
+its operands in wire order: ids and `u32` values take 4 bytes, codes take a `u16`
+plus two zero bytes, `f64` takes 8 bytes, and a string is a `u32` byte length
+followed by UTF-16LE code units, zero-padded to the string alignment. Operands
+are aligned to 4 bytes only, so an `f64` may start at a 4-byte offset. The host
+validates the whole batch before applying any operation; an unknown opcode, code,
+id or nonzero padding invalidates it. An event record is the fixed header below
+followed by the `key` and `value` strings.
+
+<!-- generated:view-layout:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Item | Value |
+| --- | --- |
+| Draft version | 0 |
+| Patch import (not registered) | `varta.view_commit` (i32, i32) → (i32) |
+| Event export (not registered) | `varta.view_abi.event` (i32) → () |
+| Root node id | 1 |
+| "No node" id | 0 |
+| Batch header bytes | 8 |
+| Operation header bytes | 4 |
+| String alignment bytes | 4 |
+| Event header bytes | 48 |
+| Event strings after the header | key, value |
+| Placeholder: batch bytes / operations | 262144 / 16384 |
+| Placeholder: live nodes / listeners | 65536 / 8192 |
+| Placeholder: value bytes / stylesheet bytes / pending events | 65536 / 262144 / 64 |
+| `listen` option `preventDefault` | bit value 1 |
+| `listen` option `stopPropagation` | bit value 2 |
+| Event flag `shiftKey` | bit value 1 |
+| Event flag `ctrlKey` | bit value 2 |
+| Event flag `altKey` | bit value 4 |
+| Event flag `metaKey` | bit value 8 |
+| Event flag `isComposing` | bit value 16 |
+| Event flag `checked` | bit value 32 |
+| Event field `version` | offset 0, u16 |
+| Event field `kind` | offset 2, u16 |
+| Event field `handler` | offset 4, u32 |
+| Event field `target` | offset 8, u32 |
+| Event field `seq` | offset 12, u32 |
+| Event field `flags` | offset 16, u32 |
+| Event field `reserved` | offset 20, u32 |
+| Event field `scroll_top` | offset 24, f64 |
+| Event field `scroll_height` | offset 32, f64 |
+| Event field `client_height` | offset 40, f64 |
+<!-- generated:view-layout:end -->
+
+**Operations.**
+
+<!-- generated:view-opcodes:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Opcode | Operation | Operands (wire order) |
+| --- | --- | --- |
+| 1 | `create_element` | node (u32 id), tag (u16 code + 2 pad) |
+| 2 | `create_text` | node (u32 id), text (string) |
+| 3 | `set_text` | node (u32 id), text (string) |
+| 4 | `set_attribute` | node (u32 id), attribute (u16 code + 2 pad), text (string) |
+| 5 | `remove_attribute` | node (u32 id), attribute (u16 code + 2 pad) |
+| 6 | `set_class` | node (u32 id), text (string) |
+| 7 | `set_style` | node (u32 id), property (u16 code + 2 pad), text (string) |
+| 8 | `remove_style` | node (u32 id), property (u16 code + 2 pad) |
+| 9 | `insert` | parent (u32 id), node (u32 id), before (u32 id) |
+| 10 | `remove` | node (u32 id) |
+| 11 | `listen` | node (u32 id), event (u16 code + 2 pad), handler (u32 id), options (u32) |
+| 12 | `unlisten` | node (u32 id), event (u16 code + 2 pad) |
+| 13 | `set_value` | node (u32 id), text (string), base_seq (u32) |
+| 14 | `set_checked` | node (u32 id), checked (u32), base_seq (u32) |
+| 15 | `command` | node (u32 id), command (u16 code + 2 pad), argument (f64) |
+| 16 | `stylesheet` | sheet (u32 id), text (string) |
+| 17 | `set_title` | text (string) |
+<!-- generated:view-opcodes:end -->
+
+**Elements.**
+
+<!-- generated:view-tags:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Code | Name |
+| --- | --- |
+| 1 | `div` |
+| 2 | `span` |
+| 3 | `p` |
+| 4 | `h1` |
+| 5 | `h2` |
+| 6 | `h3` |
+| 7 | `ul` |
+| 8 | `ol` |
+| 9 | `li` |
+| 10 | `header` |
+| 11 | `nav` |
+| 12 | `main` |
+| 13 | `section` |
+| 14 | `footer` |
+| 15 | `strong` |
+| 16 | `em` |
+| 17 | `code` |
+| 18 | `pre` |
+| 19 | `br` |
+| 20 | `button` |
+| 21 | `a` |
+| 22 | `form` |
+| 23 | `label` |
+| 24 | `input` |
+| 25 | `textarea` |
+| 26 | `select` |
+| 27 | `option` |
+| 28 | `dialog` |
+| 29 | `progress` |
+| 30 | `img` |
+<!-- generated:view-tags:end -->
+
+**Attributes.**
+
+<!-- generated:view-attributes:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Code | Name |
+| --- | --- |
+| 1 | `id` |
+| 2 | `type` |
+| 3 | `name` |
+| 4 | `value` |
+| 5 | `placeholder` |
+| 6 | `disabled` |
+| 7 | `readonly` |
+| 8 | `maxlength` |
+| 9 | `autofocus` |
+| 10 | `selected` |
+| 11 | `for` |
+| 12 | `href` |
+| 13 | `src` |
+| 14 | `alt` |
+| 15 | `tabindex` |
+| 16 | `max` |
+| 17 | `role` |
+| 18 | `aria-label` |
+| 19 | `aria-labelledby` |
+| 20 | `aria-describedby` |
+| 21 | `aria-live` |
+| 22 | `aria-expanded` |
+| 23 | `aria-selected` |
+| 24 | `aria-current` |
+| 25 | `aria-busy` |
+| 26 | `aria-invalid` |
+| 27 | `aria-hidden` |
+<!-- generated:view-attributes:end -->
+
+**CSS properties.**
+
+<!-- generated:view-css-properties:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Code | Name |
+| --- | --- |
+| 1 | `display` |
+| 2 | `width` |
+| 3 | `height` |
+| 4 | `min-width` |
+| 5 | `min-height` |
+| 6 | `max-width` |
+| 7 | `max-height` |
+| 8 | `margin` |
+| 9 | `margin-top` |
+| 10 | `margin-right` |
+| 11 | `margin-bottom` |
+| 12 | `margin-left` |
+| 13 | `padding` |
+| 14 | `padding-top` |
+| 15 | `padding-right` |
+| 16 | `padding-bottom` |
+| 17 | `padding-left` |
+| 18 | `gap` |
+| 19 | `row-gap` |
+| 20 | `column-gap` |
+| 21 | `flex-direction` |
+| 22 | `flex-wrap` |
+| 23 | `justify-content` |
+| 24 | `align-items` |
+| 25 | `align-self` |
+| 26 | `flex-grow` |
+| 27 | `flex-shrink` |
+| 28 | `flex-basis` |
+| 29 | `grid-template-columns` |
+| 30 | `grid-template-rows` |
+| 31 | `grid-column` |
+| 32 | `grid-row` |
+| 33 | `position` |
+| 34 | `top` |
+| 35 | `right` |
+| 36 | `bottom` |
+| 37 | `left` |
+| 38 | `z-index` |
+| 39 | `overflow` |
+| 40 | `border` |
+| 41 | `border-width` |
+| 42 | `border-style` |
+| 43 | `border-color` |
+| 44 | `border-radius` |
+| 45 | `background-color` |
+| 46 | `color` |
+| 47 | `opacity` |
+| 48 | `outline` |
+| 49 | `outline-width` |
+| 50 | `outline-style` |
+| 51 | `outline-color` |
+| 52 | `outline-offset` |
+| 53 | `font-family` |
+| 54 | `font-size` |
+| 55 | `font-weight` |
+| 56 | `font-style` |
+| 57 | `line-height` |
+| 58 | `text-align` |
+| 59 | `text-decoration` |
+| 60 | `white-space` |
+| 61 | `text-overflow` |
+| 62 | `overflow-wrap` |
+| 63 | `cursor` |
+| 64 | `transform` |
+| 65 | `transition-property` |
+| 66 | `transition-duration` |
+| 67 | `transition-timing-function` |
+| 68 | `transition-delay` |
+<!-- generated:view-css-properties:end -->
+
+**Events.**
+
+<!-- generated:view-events:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Code | Name |
+| --- | --- |
+| 1 | `click` |
+| 2 | `input` |
+| 3 | `change` |
+| 4 | `submit` |
+| 5 | `keydown` |
+| 6 | `focusin` |
+| 7 | `focusout` |
+| 8 | `scroll` |
+| 9 | `cancel` |
+| 10 | `close` |
+<!-- generated:view-events:end -->
+
+**Commands.**
+
+<!-- generated:view-commands:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Code | Name |
+| --- | --- |
+| 1 | `focus` |
+| 2 | `blur` |
+| 3 | `select` |
+| 4 | `scroll_into_view` |
+| 5 | `scroll_to` |
+| 6 | `show_modal` |
+| 7 | `close` |
+<!-- generated:view-commands:end -->
 
 ## Entry-point limits
 
@@ -778,7 +1247,7 @@ A host that runs Varta modules MUST:
 | Budget | Reference host (Wasmtime) | JavaScript host today |
 | --- | --- | --- |
 | Memory | Store limiter | Module-declared maximum, checked before instantiation (validation step 4) |
-| Fuel (instructions) | Engine fuel metering | **Not enforceable**: JavaScript engines expose no instruction metering; a host MUST state that fuel is not enforced |
+| Fuel (instructions) | Engine fuel metering | **Not enforceable**: JavaScript engines expose no instruction metering; a host MUST state that fuel is not enforced. The accepted design adds a deterministic metering transform at browser packaging ([decision 5](development-plan.md#accepted-decisions-2026-10-29)), not implemented yet |
 | Deadline | Epoch interruption inside guest code | Checked at host calls only; a guest loop without host calls runs until the embedder terminates it (in a browser: `Worker.terminate()`) |
 | Host calls, output | Counted per call | Counted per call (enforceable) |
 | Stack | Engine stack limit, trap | Engine stack limit, `RangeError`, treat as a trap |
@@ -795,12 +1264,26 @@ accepts that the format may change in a later profile:
   exception renderers;
 - the exact text of `number_to_*` formatting and parsing beyond the ECMAScript
   algorithms the profile sections cite;
-- frame catalogs (`varta.functions`) and the `varta_resume` admission algorithm;
+- the structural rules of `varta.functions` beyond the
+  [normative minimum](#function-and-frame-catalogs);
 - HTTP service v1 for third-party hosts;
 - diagnostic and log text, and the order of validation failures;
-- every planned interface: long-lived instances, host-to-guest events, timers,
-  async I/O, view output and browser capability mappings.
+- the [view protocol draft v0](#view-protocol-draft-v0-unstable) and every other
+  planned interface: long-lived instances, host-to-guest events, timers, async I/O
+  and browser capability mappings.
 
 Tool invocation ABI v1, the status codes, the string handle and host-buffer rules
 and the call protocol are stable for `checked-i32-utf8-v1` and keep their meaning;
 a change requires a new version identity.
+
+## Proposed changes
+
+Not normative yet; each needs its own change to the engine, CLI or contract.
+
+| Topic | Today (normative) | Proposed change | What would change |
+| --- | --- | --- | --- |
+| `logs` in machine envelopes | Reference line text with the `varta log: ` / `varta env: ` prefixes and failure diagnostics | Raw guest lines only (the logged text, `name=value`, file content); the prefix only in human CLI output; diagnostics in a separate `diagnostics` array | Runtime output capture (`RunOutput` and `ToolInvocationOutput` keep unprefixed records with a kind), the CLI and runtime companion presentation, smoke and runtime tests that assert prefixed lines, and this document; machine envelopes would change meaning, so it needs a new envelope version |
+| Output budget | Charged on the reference line text, including prefixes and diagnostics | Charge guest bytes only (UTF-8 bytes of the guest's text plus one per line); bound diagnostics by a separate host budget | The runtime's output accounting and its tests; exhaustion points of existing programs would move, so it applies to a new profile or envelope version |
+| Runtime companion failure envelope | No `diagnostics` member | Same envelope as the development CLI, with `"diagnostics":[]` | `varta-launcher` JSON error output and its tests |
+| `varta.functions` structure | Normative minimum here; full rules only in code | Publish the full catalog schema and structural rules in this document, generated from the registry | Documentation and a drift test only |
+| Approximated Math results | Platform `f64` library, last bits host-dependent | Bit-identical results on every host by linking one pure-Rust implementation into the guest (the accepted thin-host decision) | A new profile whose Math imports are guest code |

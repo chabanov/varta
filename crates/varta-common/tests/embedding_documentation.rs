@@ -3,6 +3,8 @@
 //! status codes and entry-point limits. Its tables are generated here from the
 //! registries, so a registry change fails the gate until the document follows.
 mod support;
+#[path = "embedding_documentation/view.rs"]
+mod view;
 
 use std::collections::BTreeSet;
 use support::{assert_block, profile_name, table, workspace_file};
@@ -11,6 +13,7 @@ use varta_common::{
     TOOL_SECTION, ToolCatalog, ToolContract, ToolLimits, ToolParameter, ToolType,
     abi::{self, HostStatus},
     exceptions, function,
+    function::admission,
     function::frame::{self, Completion, Outcome},
     http,
     language::{self, LanguageProfile},
@@ -223,6 +226,57 @@ fn profiles() -> String {
                 frames,
                 if profile.promises() { "yes" } else { "—" }.to_owned(),
                 imports.to_string(),
+            ]
+        }),
+    )
+}
+
+/// Compiler-helper functions a profile may define beyond user functions.
+fn helper_allowance(profile: LanguageProfile) -> usize {
+    if profile.array_mutations() {
+        abi::MAX_INTERNAL_FUNCTIONS
+    } else if profile.sparse_arrays() {
+        abi::SPARSE_INTERNAL_FUNCTIONS
+    } else {
+        abi::LEGACY_INTERNAL_FUNCTIONS
+    }
+}
+
+/// Per-profile acceptance details that module validation applies.
+fn profile_acceptance() -> String {
+    table(
+        &[
+            "Profile",
+            "Accepted `varta.values`",
+            "`varta.functions` versions",
+            "Helper allowance",
+            "Max defined functions",
+        ],
+        language::SUPPORTED_PROFILES.iter().map(|&profile| {
+            let values: Vec<String> = (value::LEGACY_VALUE_VERSION..=value::PROMISE_VALUE_VERSION)
+                .filter(|&version| value::compatible_version(version, profile.value_abi()))
+                .map(|version| version.to_string())
+                .collect();
+            let catalog = if !profile.property_deletion() {
+                "—".to_owned()
+            } else {
+                match admission::frame_catalog_version(profile) {
+                    Some(frames) => {
+                        format!(
+                            "{} (no frames), {frames} (frames)",
+                            function::CATALOG_VERSION
+                        )
+                    }
+                    None => function::CATALOG_VERSION.to_string(),
+                }
+            };
+            let helpers = helper_allowance(profile);
+            vec![
+                format!("`{}`", profile_name(profile)),
+                values.join(", "),
+                catalog,
+                helpers.to_string(),
+                (abi::MAX_USER_FUNCTIONS + helpers + abi::MAX_HTTP_HANDLERS).to_string(),
             ]
         }),
     )
@@ -629,6 +683,11 @@ fn embedding_host_operations_match_registry() {
 #[test]
 fn embedding_profiles_match_registry() {
     assert_block(DOCUMENT, "embedding-profiles", &profiles());
+    assert_block(
+        DOCUMENT,
+        "embedding-profile-acceptance",
+        &profile_acceptance(),
+    );
 }
 
 #[test]
