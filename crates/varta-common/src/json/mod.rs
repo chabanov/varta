@@ -20,6 +20,9 @@ pub const SPARSE_SCHEMA_VERSION: u32 = 12;
 pub const BIGINT_SCHEMA_VERSION: u32 = 13;
 /// Existing JSON types materialize value14 layouts; JSON cannot fabricate callables.
 pub const FUNCTION_SCHEMA_VERSION: u32 = 14;
+/// Value15 layouts (profile v34): JSON types materialize value15 records,
+/// arrays and cells. Later v34 types extend this schema version.
+pub const DYNAMIC_SCHEMA_VERSION: u32 = 15;
 pub const MAX_SCHEMA_BYTES: usize = crate::abi::RESULT_BASE;
 pub const LEGACY_MAX_SCHEMA_TYPES: usize =
     4 + crate::value::MAX_RECORD_SHAPES + crate::value::MAX_ARRAY_TYPES;

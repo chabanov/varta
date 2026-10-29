@@ -70,7 +70,7 @@ impl Lower<'_> {
                 span,
                 ty: Type::String,
                 kind: E::Host(
-                    Host::PrimitiveStringV2,
+                    self.types.profile.host_operation(Host::PrimitiveStringV2),
                     vec![unions::widen(key, Some(cell), self.types)?],
                 ),
             }

@@ -74,6 +74,7 @@ pub fn record_bytes(version: u32, count: usize) -> usize {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
             size_of::<u32>() * (count + 1)
         } else {
@@ -196,12 +197,13 @@ impl ValueKind {
     }
     #[must_use]
     pub fn supported_by(self, version: u32) -> bool {
-        // Value15 is a reserved identity without tags (see DYNAMIC_VALUE_VERSION).
         supported_version(version)
-            && version != DYNAMIC_VALUE_VERSION
             && match self {
                 Self::Function => version == FUNCTION_VALUE_VERSION,
-                Self::BigInt => matches!(version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION),
+                Self::BigInt => matches!(
+                    version,
+                    BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+                ),
                 Self::Float64 => matches!(
                     version,
                     NUMBER_VALUE_VERSION
@@ -216,6 +218,7 @@ impl ValueKind {
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
                 ),
                 Self::Undefined => matches!(
                     version,
@@ -230,6 +233,7 @@ impl ValueKind {
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
                 ),
                 Self::PrimitiveUnion => {
                     matches!(
@@ -243,6 +247,7 @@ impl ValueKind {
                             | SPARSE_VALUE_VERSION
                             | BIGINT_VALUE_VERSION
                             | FUNCTION_VALUE_VERSION
+                            | DYNAMIC_VALUE_VERSION
                     )
                 }
                 Self::ReferenceUnion => {
@@ -255,6 +260,7 @@ impl ValueKind {
                             | SPARSE_VALUE_VERSION
                             | BIGINT_VALUE_VERSION
                             | FUNCTION_VALUE_VERSION
+                            | DYNAMIC_VALUE_VERSION
                     )
                 }
                 Self::Error => matches!(
@@ -264,6 +270,7 @@ impl ValueKind {
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
                 ),
                 Self::I32 => matches!(version, LEGACY_VALUE_VERSION | VALUE_VERSION),
                 _ => true,

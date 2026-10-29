@@ -216,6 +216,14 @@ impl LanguageProfile {
     pub fn generators(self) -> bool {
         matches!(self, Self::CheckedF64Utf16V33 | Self::CheckedF64Utf16V34)
     }
+    /// Value layout 15 (v34): every value graph, descriptor, catalog, JSON
+    /// schema and exception cell uses the value15 layouts, read only by the
+    /// value15 host operations, JSON schema 15 and exception channel v6. The
+    /// value15 layouts keep every value13 layout and tag and add the batch's own.
+    #[must_use]
+    pub fn dynamic_values(self) -> bool {
+        self == Self::CheckedF64Utf16V34
+    }
     /// Pilot batch v34, records stream: string index signatures
     /// (`{[k: string]: T}`) and `Record<string, T>` as a dynamic-key record kind
     /// under the v34 value ABI. Admits nothing yet.
@@ -1215,6 +1223,26 @@ impl LanguageProfile {
     #[must_use]
     pub fn host_operation(self, operation: crate::HostOperation) -> crate::HostOperation {
         use crate::HostOperation::*;
+        if self.dynamic_values() {
+            // Value15 readers replace every value13 reader; nothing else changes.
+            let value13 = LanguageProfile::CheckedF64Utf16V33.host_operation(operation);
+            return match value13 {
+                ValueLogV8 => ValueLogV9,
+                ValueTypeOfV7 => ValueTypeOfV8,
+                ValueTruthyV7 => ValueTruthyV8,
+                ValueNullishV7 => ValueNullishV8,
+                ValueStrictEqualV7 => ValueStrictEqualV8,
+                ValueNullishEqualV7 => ValueNullishEqualV8,
+                ValueIsArrayV7 => ValueIsArrayV8,
+                ValueIsErrorClassV3 => ValueIsErrorClassV4,
+                JsonStringifyV13 => JsonStringifyV14,
+                JsonParseV15 => JsonParseV16,
+                PrimitiveStringV2 => PrimitiveStringV3,
+                PrimitiveNumberV2 => PrimitiveNumberV3,
+                BigIntFromValue => BigIntFromValueV2,
+                other => other,
+            };
+        }
         if self.bigint_values() {
             return match operation {
                 UnionLog | ValueLog | ValueLogV3 | ValueLogV4 | ValueLogV5 | ValueLogV6
@@ -1348,7 +1376,9 @@ impl LanguageProfile {
     #[must_use]
     pub fn exception_channel(self) -> (&'static str, i32) {
         use crate::exceptions as e;
-        if self.error_subclasses() {
+        if self.dynamic_values() {
+            (e::DYNAMIC_VERSION, e::DYNAMIC_CHANNEL_VERSION)
+        } else if self.error_subclasses() {
             (e::CLASS_ERROR_VERSION, e::CLASS_ERROR_CHANNEL_VERSION)
         } else if self.bigint_values() {
             (e::BIGINT_VERSION, e::BIGINT_CHANNEL_VERSION)
@@ -1402,16 +1432,12 @@ impl LanguageProfile {
     }
     /// Value-graph layout version that compiled code stamps into record
     /// descriptors and closure catalogs and that the profile's value, JSON and
-    /// exception operations read. It equals [`Self::value_abi`] for every profile
-    /// except v34, whose reserved value ABI
-    /// ([`crate::value::DYNAMIC_VALUE_VERSION`]) defines no layout yet, so v34
-    /// keeps the value13 layouts and their host operations.
+    /// exception operations read. It equals [`Self::value_abi`] for every
+    /// profile: v34 stamps the value15 layouts
+    /// ([`crate::value::DYNAMIC_VALUE_VERSION`]) read by its value15 operations.
     #[must_use]
     pub fn value_layout(self) -> u32 {
-        match self {
-            Self::CheckedF64Utf16V34 => crate::value::BIGINT_VALUE_VERSION,
-            other => other.value_abi(),
-        }
+        self.value_abi()
     }
     #[must_use]
     pub fn json_stringify(self) -> crate::HostOperation {
@@ -1420,8 +1446,8 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V30
             | Self::CheckedF64Utf16V31
             | Self::CheckedF64Utf16V32
-            | Self::CheckedF64Utf16V33
-            | Self::CheckedF64Utf16V34 => crate::HostOperation::JsonStringifyV13,
+            | Self::CheckedF64Utf16V33 => crate::HostOperation::JsonStringifyV13,
+            Self::CheckedF64Utf16V34 => crate::HostOperation::JsonStringifyV14,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1464,8 +1490,8 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V30
             | Self::CheckedF64Utf16V31
             | Self::CheckedF64Utf16V32
-            | Self::CheckedF64Utf16V33
-            | Self::CheckedF64Utf16V34 => crate::HostOperation::JsonParseV15,
+            | Self::CheckedF64Utf16V33 => crate::HostOperation::JsonParseV15,
+            Self::CheckedF64Utf16V34 => crate::HostOperation::JsonParseV16,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1765,20 +1791,28 @@ mod tests {
                 profile.value_abi() == crate::value::DYNAMIC_VALUE_VERSION,
                 profile == new
             );
-            assert_eq!(
-                profile.value_layout() == profile.value_abi(),
-                profile != new,
-                "{profile:?}"
-            );
+            assert_eq!(profile.value_layout(), profile.value_abi(), "{profile:?}");
+            assert_eq!(profile.dynamic_values(), profile == new, "{profile:?}");
         }
-        // Value15 has no layout yet: v34 keeps the v33 layouts, exception
-        // channel and JSON operations, and no reader accepts the new version.
-        assert_eq!(new.value_layout(), old.value_abi());
-        assert_eq!(new.exception_channel(), old.exception_channel());
-        assert_eq!(new.json_parse(), old.json_parse());
-        assert_eq!(new.json_stringify(), old.json_stringify());
+        // Value layout 15: v34 stamps value15 and reads it through channel v6,
+        // JSON schema 15 and its own value/JSON operations. Every value13 tag
+        // keeps its meaning under value15.
+        assert_eq!(new.value_layout(), crate::value::DYNAMIC_VALUE_VERSION);
+        assert_eq!(
+            new.exception_channel(),
+            (
+                crate::exceptions::DYNAMIC_VERSION,
+                crate::exceptions::DYNAMIC_CHANNEL_VERSION
+            )
+        );
+        assert_eq!(new.json_parse(), crate::HostOperation::JsonParseV16);
+        assert_eq!(new.json_stringify(), crate::HostOperation::JsonStringifyV14);
         for kind in (0..=u32::from(u8::MAX)).filter_map(crate::value::ValueKind::from_tag) {
-            assert!(!kind.supported_by(crate::value::DYNAMIC_VALUE_VERSION));
+            assert_eq!(
+                kind.supported_by(crate::value::DYNAMIC_VALUE_VERSION),
+                kind.supported_by(crate::value::BIGINT_VALUE_VERSION),
+                "{kind:?}"
+            );
         }
         assert_eq!(
             serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v34\"").unwrap(),
@@ -1800,16 +1834,78 @@ mod tests {
     }
 
     #[test]
+    fn value15_operations_mirror_value13_and_bind_only_to_v34() {
+        use crate::HostOperation as H;
+        let new = LanguageProfile::CheckedF64Utf16V34;
+        let old = LanguageProfile::CheckedF64Utf16V33;
+        let pairs = [
+            (H::ValueLogV9, H::ValueLogV8),
+            (H::ValueTypeOfV8, H::ValueTypeOfV7),
+            (H::ValueTruthyV8, H::ValueTruthyV7),
+            (H::ValueNullishV8, H::ValueNullishV7),
+            (H::ValueStrictEqualV8, H::ValueStrictEqualV7),
+            (H::ValueNullishEqualV8, H::ValueNullishEqualV7),
+            (H::ValueIsArrayV8, H::ValueIsArrayV7),
+            (H::ValueIsErrorClassV4, H::ValueIsErrorClassV3),
+            (H::JsonParseV16, H::JsonParseV15),
+            (H::JsonStringifyV14, H::JsonStringifyV13),
+            (H::PrimitiveStringV3, H::PrimitiveStringV2),
+            (H::PrimitiveNumberV3, H::PrimitiveNumberV2),
+            (H::BigIntFromValueV2, H::BigIntFromValue),
+        ];
+        for (value15, value13) in pairs {
+            assert_eq!(value15.value13_counterpart(), Some(value13));
+            assert_eq!(value13.value13_counterpart(), None);
+            assert_eq!(value15.scalar_signature(), value13.scalar_signature());
+            assert_eq!(value15.returns_string(), value13.returns_string());
+            assert_eq!(
+                value15.needs_result_globals(),
+                value13.needs_result_globals()
+            );
+            assert_eq!(value15.capability(), None);
+            assert_eq!(value15.minimum_abi(), crate::abi::SCHEDULED_FRAMES_VERSION);
+            assert_eq!(H::from_name(value15.name()), Some(value15));
+            assert_ne!(value15.name(), value13.name());
+            // v34 replaces each value13 reader; v33 never selects value15 and
+            // its host ABI is below the operation's minimum.
+            assert_eq!(new.host_operation(value13), value15);
+            assert_eq!(new.host_operation(value15), value15);
+            assert_eq!(old.host_operation(value13), value13);
+            assert!(value15.minimum_abi() > old.host_abi());
+        }
+        // Generic selectors reach the value15 readers under v34 only.
+        for (generic, value15) in [
+            (H::UnionLog, H::ValueLogV9),
+            (H::ValueTypeOf, H::ValueTypeOfV8),
+            (H::UnionTruthy, H::ValueTruthyV8),
+            (H::ValueIsError, H::ValueIsErrorClassV4),
+            (H::ValueIsArray, H::ValueIsArrayV8),
+        ] {
+            assert_eq!(new.host_operation(generic), value15);
+            assert_ne!(old.host_operation(generic), value15);
+        }
+        assert_eq!(new.host_operation(H::LogString), H::LogString16);
+        assert_eq!(new.host_operation(H::LogFloat), H::LogFloatV2);
+    }
+
+    #[test]
     fn error_subclasses_select_channel_v5_from_v32() {
         use crate::exceptions as e;
         for &profile in SUPPORTED_PROFILES {
             let channel = profile.exception_channel();
             assert_eq!(
                 channel == (e::CLASS_ERROR_VERSION, e::CLASS_ERROR_CHANNEL_VERSION),
-                profile.error_subclasses(),
+                profile.error_subclasses() && !profile.dynamic_values(),
+                "{profile:?}"
+            );
+            assert_eq!(
+                channel == (e::DYNAMIC_VERSION, e::DYNAMIC_CHANNEL_VERSION),
+                profile.dynamic_values(),
                 "{profile:?}"
             );
         }
+        assert!(e::DYNAMIC_VERSION.starts_with(e::PREFIX));
+        const { assert!(e::CLASS_ERROR_CHANNEL_VERSION < e::DYNAMIC_CHANNEL_VERSION) };
         assert_eq!(
             LanguageProfile::CheckedF64Utf16V31.exception_channel(),
             (e::BIGINT_VERSION, e::BIGINT_CHANNEL_VERSION)

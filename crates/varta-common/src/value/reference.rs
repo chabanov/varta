@@ -57,12 +57,16 @@ impl ReferenceBox {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
             return Err(invalid());
         }
         let cell = PrimitiveBox::raw(data, handle)?;
         if cell.kind == ValueKind::BigInt {
-            if !matches!(version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION) {
+            if !matches!(
+                version,
+                BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+            ) {
                 return Err(invalid());
             }
             crate::bigint::BigIntView::read(data, cell.payload)?;
@@ -74,6 +78,7 @@ impl ReferenceBox {
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
+                    | DYNAMIC_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
@@ -122,6 +127,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         )
     {
         Vector::read_with_version(data, cell.payload, version)?;

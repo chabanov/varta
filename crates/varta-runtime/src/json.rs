@@ -97,39 +97,51 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
-    linker.func_wrap(
-        "varta",
-        varta_common::HostOperation::JsonStringifyV13.name(),
-        |mut caller: Caller<'_, RuntimeContext>,
-         kind: i32,
-         lo: i32,
-         hi: i32|
-         -> Result<(i32, i32), wasmtime::Error> {
-            caller.data_mut().tick()?;
-            let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
-                return Err(error("missing memory"));
-            };
-            let packed = ((hi as u32 as u64) << 32) | (lo as u32 as u64);
-            let encoded = Encoder::with_version(memory.data(&caller), BIGINT_VALUE_VERSION)
-                .encode_optional(kind as u32, packed);
-            caller.data().check_budget()?;
-            match encoded {
-                Ok(Some(bytes)) => Ok((
-                    host::result16(&mut caller, &bytes)
-                        .map_err(|_| error("result transfer failed"))?,
-                    0,
-                )),
-                Ok(None) => {
-                    host::result(&mut caller, &[]).map_err(|_| error("result transfer failed"))?;
-                    Ok((0, 0))
+    for (operation, version) in [
+        (
+            varta_common::HostOperation::JsonStringifyV13,
+            BIGINT_VALUE_VERSION,
+        ),
+        (
+            varta_common::HostOperation::JsonStringifyV14,
+            DYNAMIC_VALUE_VERSION,
+        ),
+    ] {
+        linker.func_wrap(
+            "varta",
+            operation.name(),
+            move |mut caller: Caller<'_, RuntimeContext>,
+                  kind: i32,
+                  lo: i32,
+                  hi: i32|
+                  -> Result<(i32, i32), wasmtime::Error> {
+                caller.data_mut().tick()?;
+                let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+                    return Err(error("missing memory"));
+                };
+                let packed = ((hi as u32 as u64) << 32) | (lo as u32 as u64);
+                let encoded = Encoder::with_version(memory.data(&caller), version)
+                    .encode_optional(kind as u32, packed);
+                caller.data().check_budget()?;
+                match encoded {
+                    Ok(Some(bytes)) => Ok((
+                        host::result16(&mut caller, &bytes)
+                            .map_err(|_| error("result transfer failed"))?,
+                        0,
+                    )),
+                    Ok(None) => {
+                        host::result(&mut caller, &[])
+                            .map_err(|_| error("result transfer failed"))?;
+                        Ok((0, 0))
+                    }
+                    Err(error) if error.downcast_ref::<BigIntSerialization>().is_some() => {
+                        Ok((0, ErrorClass::TypeError as i32))
+                    }
+                    Err(error) => Err(error),
                 }
-                Err(error) if error.downcast_ref::<BigIntSerialization>().is_some() => {
-                    Ok((0, ErrorClass::TypeError as i32))
-                }
-                Err(error) => Err(error),
-            }
-        },
-    )?;
+            },
+        )?;
+    }
     Ok(())
 }
 
@@ -251,6 +263,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
+                    | DYNAMIC_VALUE_VERSION
             ) {
                 return Err(error("incompatible reference union"));
             }
@@ -276,6 +289,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
             return Err(error("incompatible primitive union"));
         }
@@ -414,7 +428,10 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 self.write(b"{}")
             }
             ValueKind::Record => {
-                if matches!(self.version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION) {
+                if matches!(
+                    self.version,
+                    BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+                ) {
                     validate_aggregate(self.data, ValueKind::Record, packed, self.version)
                         .map_err(wasmtime::Error::new)?;
                 }
@@ -447,6 +464,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
             HEAP_ERROR_FLAG as u32
         } else {
@@ -461,6 +479,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
+                    | DYNAMIC_VALUE_VERSION
             ) {
                 HEAP_VECTOR_FLAG as u32
             } else {
@@ -476,6 +495,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
+                    | DYNAMIC_VALUE_VERSION
             ) {
                 HEAP_UNION_FLAG as u32
             } else {
@@ -503,6 +523,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
             return self.vector(packed, depth);
         }
@@ -577,6 +598,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
             return self.record_present(packed, depth);
         }

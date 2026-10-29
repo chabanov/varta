@@ -20,6 +20,14 @@ in [conformance/README.md](conformance/README.md).
   `unknown_type`, `checked_assertions`, `promises` and `async_functions`
   selectors admit nothing yet.
 
+- Value layout 15 under opt-in v34 (selector `dynamic_values`): v34 stamps and
+  reads the value15 layouts, which keep every value13 tag and layout, through
+  its own value15 readers (`value_log_v9`, `value_typeof_v8` and the other `_v8`
+  value predicates, `value_is_error_class_v4`, `json_stringify_v14`,
+  `json_parse_v16` with JSON schema 15, `primitive_to_string_v3`,
+  `primitive_to_number_v3`, `bigint_from_value_v2`) and exception channel v6.
+  V34 programs behave exactly as under v33; v33 and earlier keep value13.
+
 - Synchronous generators under opt-in v33 (selector `generators`, K4.4 step 2):
   annotated top-level and generic `function*` declarations
   (`Generator<T, TReturn, TNext>`, with `void`/`undefined` defaults instead of

@@ -86,7 +86,7 @@ impl Lower<'_> {
                     span,
                     ty: Type::String,
                     kind: E::Host(
-                        Host::PrimitiveStringV2,
+                        self.types.profile.host_operation(Host::PrimitiveStringV2),
                         vec![unions::widen(
                             local(span, a, left_ty),
                             Some(cell_ty),
@@ -102,7 +102,7 @@ impl Lower<'_> {
                     span,
                     ty: Type::String,
                     kind: E::Host(
-                        Host::PrimitiveStringV2,
+                        self.types.profile.host_operation(Host::PrimitiveStringV2),
                         vec![unions::widen(
                             local(span, b, right_ty),
                             Some(cell_ty),

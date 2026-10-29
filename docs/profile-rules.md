@@ -2110,8 +2110,8 @@ Contract: [architecture.md](architecture.md#synchronous-generators-generators).
 
 ## Profile v34 (in development)
 
-Inherit v33 under checked-f64-utf16-v34 with every v33 selector, exception
-channel v5 and the v33 JSON selectors, but its own host ABI
+Inherit v33 under checked-f64-utf16-v34 with every v33 selector, but its own
+value layout (exception channel v6, JSON schema 15), its own host ABI
 (`abi::SCHEDULED_FRAMES_VERSION`, the microtask scheduler that drives
 `varta_resume`) and its own value ABI (`value::DYNAMIC_VALUE_VERSION`); never
 map another profile to either. Seven selectors gate the streams and admit
@@ -2120,14 +2120,28 @@ unknown (`unknown_type`, `checked_assertions`) and async (`promises`,
 `async_functions`). Gate every admission on its own selector, keep v33 and
 earlier profiles frozen, and add each stream's rules under its own heading here.
 
-- The value ABI is a reserved identity without layouts. Declare it only in the
-  `varta.values` section (`value_abi`); stamp descriptors, record sizes and
-  capture/frame catalogs with `LanguageProfile::value_layout` (still value13
-  for v34). Never pass value15 to a reader before its layout is specified.
-- A stream that adds a value15 layout or tag switches `value_layout` for v34
-  in the same change and then extends the readers (`ValueKind::supported_by`,
-  `ReferenceBox`, `Vector`, `ErrorObject`, `record_bytes`, the runtime JSON
-  encoder/decoder, capture catalogs and the exception channel) and adds the
-  value/JSON host operations and JSON schema version bound to value15: the
-  value13 operations reject descriptors stamped with any other version. Only
-  one stream does this switch; the others rebase onto it.
+### Value layout 15 (`dynamic_values`)
+
+Contract: [architecture.md](architecture.md#value-layout-15-dynamic_values).
+
+- V34 stamps descriptors, record sizes and capture/frame catalogs with
+  `LanguageProfile::value_layout`, which equals `value_abi` (value15). Value15
+  keeps every value13 tag and layout with its value13 meaning; a new value15
+  layout or tag is added only through its own selector and never changes what
+  an existing tag means.
+- A value-graph reader that accepts value13 accepts value15 by adding
+  `DYNAMIC_VALUE_VERSION` next to `BIGINT_VALUE_VERSION`, never next to
+  `FUNCTION_VALUE_VERSION` alone: value15 has no value14 function tag. Never
+  let a value13 operation read value15 or the reverse.
+- Value-reading host operations are bound to a layout. Add a v34 replacement
+  through `HostOperation::value13_counterpart` (same signature, capability,
+  results and recoverable errors; minimum host ABI
+  `abi::SCHEDULED_FRAMES_VERSION`) and map it in
+  `LanguageProfile::host_operation` for `dynamic_values()` only. Compiler call
+  sites that name a value13 reader directly go through `host_operation`.
+- JSON schema 15 belongs to v34; exception channel v6 reads thrown cells as
+  value15. Keep the schema-13 grammar and channel-v5 contents unchanged.
+- Prove equivalence for every change in this area: the same program under v33
+  and v34 must log identical, Node-pinned output (`varta-runtime`
+  `value15_tests`), and the conformance inventory must report identically
+  under both profiles.

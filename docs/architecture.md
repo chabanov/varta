@@ -154,7 +154,7 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v31` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
-| `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
+| `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
@@ -6150,10 +6150,10 @@ selectors. It declares two new version identities (see the
 - **Host ABI** `abi::SCHEDULED_FRAMES_VERSION`. The async stream adds a runtime
   microtask scheduler that calls `varta_resume` for promise jobs and `await`,
   so a runtime without that scheduler must reject v34 modules before
-  compilation or any guest effect. The v34 host ABI adds no host import yet;
-  every operation available under the v33 host ABI keeps its signature, and v33
-  and earlier profiles keep their host ABI.
-- **Value ABI** `value::DYNAMIC_VALUE_VERSION`, reserved for the value layouts
+  compilation or any guest effect. Its only new imports so far are the value15
+  readers below; every operation available under the v33 host ABI keeps its
+  signature, and v33 and earlier profiles keep their host ABI.
+- **Value ABI** `value::DYNAMIC_VALUE_VERSION` (value15), the value layouts
   and tags of this batch: dynamic-key records (index signatures and
   `Record<string, T>`), records wider than `value::MAX_RECORD_FIELDS` (whose
   presence trailer is a layout), recursive alias graphs and promise values. A
@@ -6162,20 +6162,49 @@ selectors. It declares two new version identities (see the
   ABI, an unknown value ABI and a missing value section all fail validation
   before instantiation. Earlier profiles keep value ABI 13.
 
-The reserved value ABI defines no layout or tag yet. `ValueKind::supported_by`
-admits no kind under it and every value reader rejects it, so no value graph can
-be read as value15 until a stream specifies its layout here. Until then
-`LanguageProfile::value_layout` keeps v34 on the value13 layouts: record
-descriptors, record sizes and presence trailers and closure/frame catalogs are
-stamped with value13, the runtime checks a v34 capture catalog against that
-layout version, and the value13 host operations, JSON schema 13
-(`json_stringify_v13`, `json_parse_v15`) and exception channel v5 read them
-unchanged. For every other profile the layout version equals the value ABI.
+#### Value layout 15 (`dynamic_values()`)
 
-A stream that introduces a value15 layout or tag switches `value_layout` for
-v34 to the reserved value ABI in the same change, and then owns the readers,
-JSON schema version and value/JSON host operations bound to it, because those
-operations check the version stamped in every record descriptor.
+V34 stamps and reads the value15 layouts: `LanguageProfile::value_layout`
+equals `value_abi` for every profile, so v34 record descriptors, record sizes,
+presence trailers and closure/frame catalogs carry version 15, and the runtime
+checks a v34 capture catalog against it. Value15 keeps every value13 layout and
+tag with exactly its value13 meaning — `ValueKind::supported_by(15)` admits the
+same tags as value13 (BigInt, Error, unions, sparse vectors, records with
+presence/order trailers; never the value14 function tag) — and adds the batch's
+own layouts, specified in the subsections below. Value13 readers stay frozen:
+they reject descriptors, catalogs and cells stamped 15, and the value15 readers
+reject 13, so no graph is read under the other layout.
+
+Because every value-graph reader checks the stamped version, v34 binds its own
+pure, capability-free operations to value15. Each mirrors its value13
+counterpart's signature, result convention, budgets and recoverable errors
+(`HostOperation::value13_counterpart`) and requires host ABI
+`abi::SCHEDULED_FRAMES_VERSION`:
+
+| Value15 import | Value13 counterpart |
+| --- | --- |
+| `value_log_v9` | `value_log_v8` |
+| `value_typeof_v8`, `value_truthy_v8`, `value_nullish_v8`, `value_strict_equal_v8`, `value_nullish_equal_v8`, `value_is_array_v8` | the `_v7` operations |
+| `value_is_error_class_v4` | `value_is_error_class_v3` |
+| `json_stringify_v14`, `json_parse_v16` | `json_stringify_v13`, `json_parse_v15` |
+| `primitive_to_string_v3`, `primitive_to_number_v3`, `bigint_from_value_v2` | `primitive_to_string_v2`, `primitive_to_number_v2`, `bigint_from_value` |
+
+`LanguageProfile::host_operation` maps every value13 reader to its value15
+replacement for v34 only, so the runtime rejects a v34 module importing a
+value13 reader and a v33 module importing a value15 reader (whose minimum host
+ABI also exceeds v33's). `json_parse_v16` reads **JSON schema 15**
+(`json::DYNAMIC_SCHEMA_VERSION`), which has the schema-13 grammar plus the
+batch's new types, and materializes value15 graphs. Thrown values use
+**exception channel v6** (`varta.exception.version_v6` = 6): channel-v5
+contents (primitives, BigInt, native errors, class instances with String
+`name`/`message`) read as value15 cells, records and Error objects.
+
+The switch changes no observable behaviour: tests compile the same programs
+under v33 and v34 (JSON stringify and checked/recoverable parse, diagnostics,
+String/Number/BigInt conversion, thrown and uncaught class instances,
+generators, closures) and require identical, Node-pinned output, and the whole
+conformance inventory produces identical reports under both profiles. Older
+profiles keep exactly their layouts, operations and rejections.
 
 Seven selectors gate the batch's work streams, and all admit nothing yet:
 
@@ -6192,8 +6221,8 @@ Seven selectors gate the batch's work streams, and all admit nothing yet:
   (`async`/`await` on the continuation frames).
 
 Until a stream adds its subsection here, a v34 module compiles and runs exactly
-like a v33 module apart from its declared profile, host ABI and value ABI, and
-production budgets are unchanged.
+like a v33 module apart from its declared profile, host ABI, value layout 15
+and the value15 readers, and production budgets are unchanged.
 
 ## Local modules
 

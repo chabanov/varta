@@ -98,6 +98,7 @@ impl JsonSchema {
                 | SPARSE_SCHEMA_VERSION
                 | BIGINT_SCHEMA_VERSION
                 | FUNCTION_SCHEMA_VERSION
+                | DYNAMIC_SCHEMA_VERSION
         ) || self.types.is_empty()
             || self.types.len()
                 > if matches!(
@@ -109,6 +110,7 @@ impl JsonSchema {
                         | SPARSE_SCHEMA_VERSION
                         | BIGINT_SCHEMA_VERSION
                         | FUNCTION_SCHEMA_VERSION
+                        | DYNAMIC_SCHEMA_VERSION
                 ) {
                     MAX_SCHEMA_TYPES
                 } else {
@@ -133,6 +135,7 @@ impl JsonSchema {
                     | SPARSE_SCHEMA_VERSION
                     | BIGINT_SCHEMA_VERSION
                     | FUNCTION_SCHEMA_VERSION
+                    | DYNAMIC_SCHEMA_VERSION
             ) && matches!(
                 ty,
                 JsonType::Undefined
@@ -169,6 +172,7 @@ impl JsonSchema {
                                     | SPARSE_SCHEMA_VERSION
                                     | BIGINT_SCHEMA_VERSION
                                     | FUNCTION_SCHEMA_VERSION
+                                    | DYNAMIC_SCHEMA_VERSION
                             ) || !self.admits_undefined(field.ty))
                         {
                             return Err(bad(
@@ -228,6 +232,9 @@ impl JsonSchema {
     }
     #[must_use]
     pub fn value_version(&self) -> u32 {
+        if self.version == DYNAMIC_SCHEMA_VERSION {
+            return DYNAMIC_VALUE_VERSION;
+        }
         if self.version == FUNCTION_SCHEMA_VERSION {
             return FUNCTION_VALUE_VERSION;
         }

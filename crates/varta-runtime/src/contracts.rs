@@ -91,6 +91,7 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
                     | varta_common::HostOperation::JsonParseV13
                     | varta_common::HostOperation::JsonParseV14
                     | varta_common::HostOperation::JsonParseV15
+                    | varta_common::HostOperation::JsonParseV16
             )
         )
     });

@@ -73,6 +73,7 @@ impl Vector {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
             return Err(invalid());
         }
@@ -90,7 +91,10 @@ impl Vector {
             | ((word(data, ptr + VECTOR_STORAGE_OFFSET as usize + 4)? as u64) << i32::BITS);
         let sparse = matches!(
             version,
-            SPARSE_VALUE_VERSION | BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION
+            SPARSE_VALUE_VERSION
+                | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         );
         let (storage, bytes) = managed(
             data,

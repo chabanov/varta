@@ -183,7 +183,9 @@ impl FunctionCatalog {
             || frames == self.frames.is_empty()
             || !matches!(
                 self.value_version,
-                value::BIGINT_VALUE_VERSION | value::FUNCTION_VALUE_VERSION
+                value::BIGINT_VALUE_VERSION
+                    | value::FUNCTION_VALUE_VERSION
+                    | value::DYNAMIC_VALUE_VERSION
             )
             || self.types.len() > MAX_CAPTURE_TYPES
             || self.bindings.len() > MAX_CAPTURE_TYPES
@@ -251,7 +253,7 @@ impl FunctionCatalog {
                     for field in fields {
                         if field.name.len() > value::MAX_RECORD_KEY_BYTES
                             || !names.insert(&field.name)
-                            || self.value_version == value::BIGINT_VALUE_VERSION
+                            || self.value_version != value::FUNCTION_VALUE_VERSION
                                 && matches!(
                                     self.types[field.ty as usize],
                                     CaptureType::Function { .. }
@@ -265,7 +267,7 @@ impl FunctionCatalog {
                     }
                 }
                 CaptureType::Array { element }
-                    if self.value_version == value::BIGINT_VALUE_VERSION
+                    if self.value_version != value::FUNCTION_VALUE_VERSION
                         && matches!(
                             self.types[*element as usize],
                             CaptureType::Function { .. }

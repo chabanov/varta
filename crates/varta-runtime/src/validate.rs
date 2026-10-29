@@ -171,6 +171,10 @@ fn preflight(
                                 | varta_common::HostOperation::JsonStringifyV11
                                 | varta_common::HostOperation::JsonStringifyV12
                                 | varta_common::HostOperation::JsonStringifyV10
+                                | varta_common::HostOperation::JsonStringifyV13
+                                | varta_common::HostOperation::JsonParseV15
+                                | varta_common::HostOperation::JsonStringifyV14
+                                | varta_common::HostOperation::JsonParseV16
                         )
                     {
                         json_imports.insert(operation);

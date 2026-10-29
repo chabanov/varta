@@ -41,7 +41,7 @@ impl Lower<'_> {
             span,
             ty: Type::Float64,
             kind: E::Host(
-                Host::PrimitiveNumberV2,
+                self.types.profile.host_operation(Host::PrimitiveNumberV2),
                 vec![unions::widen(value, Some(ty), self.types)?],
             ),
         })
@@ -68,7 +68,7 @@ impl Lower<'_> {
             span,
             ty: Type::String,
             kind: E::Host(
-                Host::PrimitiveStringV2,
+                self.types.profile.host_operation(Host::PrimitiveStringV2),
                 vec![unions::widen(value, Some(ty), self.types)?],
             ),
         })

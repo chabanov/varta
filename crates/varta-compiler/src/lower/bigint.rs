@@ -336,7 +336,12 @@ impl Lower<'_> {
                         .iter()
                         .all(|ty| unions::primitive(*ty) || *ty == Type::BigInt) =>
             {
-                self.bigint_checked(span, Host::BigIntFromValue, vec![value], Type::BigInt)?
+                self.bigint_checked(
+                    span,
+                    self.types.profile.host_operation(Host::BigIntFromValue),
+                    vec![value],
+                    Type::BigInt,
+                )?
             }
             Type::BigInt => value,
             Type::String => {
