@@ -3884,3 +3884,81 @@ fn public_engine_links_the_v32_pilot_streams_through_one_barrel() {
     .to_string();
     assert!(frozen.contains("module export form"), "{frozen}");
 }
+
+#[test]
+fn public_engine_instantiates_generics_across_modules_in_v32() {
+    // The pilot's `core/pagination.ts`/`core/util.ts` shapes: each instance is
+    // lowered in the defining module (its private helpers and constants) and
+    // generic declarations link through imports and star re-exports.
+    struct GenericSources;
+    impl ModuleLoader for GenericSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./pagination.ts" => Ok("pagination.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("pagination.ts") => "export interface CursorPage<T>{items:T[];cursor:string|null;has_more?:boolean}\
+                    const EMPTY_PAGE_LIMIT=3;function more(cursor:string|null):boolean{return cursor!==null;}\
+                    export function collect<T>(pages:CursorPage<T>[],limit:number=EMPTY_PAGE_LIMIT):T[]{const out:T[]=[];\
+                    for(const page of pages){if(page===undefined){continue;}for(const item of page.items){\
+                    if(item!==undefined&&out.length<limit){out.push(item);}}if(!more(page.cursor)){break;}}return out;}\
+                    export function pick<T extends object,K extends readonly (keyof T & string)[]>(source:T|undefined,keys:K):number{\
+                    if(source===undefined){return 0;}return keys.length;}",
+                Some("index.ts") => "export * from './pagination.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |text: &str, profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: text.into(),
+            },
+            &GenericSources,
+            profile,
+        )
+    };
+    let source = "import type {CursorPage} from './index.ts';import {collect,pick as select} from './index.ts';\
+                  interface User{id:string;age:number}\
+                  export function main():void{const users:CursorPage<User>[]=[{items:[{id:'a',age:1},{id:'b',age:2}],cursor:'n'},\
+                  {items:[{id:'c',age:3}],cursor:null},{items:[{id:'d',age:4}],cursor:null}];\
+                  const all=collect(users,10);console.log(all.length);const third=all[2];\
+                  if(third!==undefined){console.log(JSON.stringify(third));}\
+                  const ids=collect<number>([{items:[1,2,3,4],cursor:null}]);console.log(ids.length);\
+                  console.log(select(all[0],['id','age']));}";
+    let profile = varta_common::language::LanguageProfile::CheckedF64Utf16V32;
+    let compiled = compile(source, profile).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap().lines,
+        [
+            "varta log: 3",
+            "varta log: {\"id\":\"c\",\"age\":3}",
+            "varta log: 3",
+            "varta log: 2"
+        ]
+    );
+    let constrained = compile(
+        "import {pick} from './index.ts';interface User{id:string}\
+         export function main():void{const u:User={id:'a'};console.log(pick(u,['name']));}",
+        profile,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(constrained.contains("not assignable"), "{constrained}");
+    let frozen = compile(
+        source,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V31,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(frozen.contains("module export form"), "{frozen}");
+}

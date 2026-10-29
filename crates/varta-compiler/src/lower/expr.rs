@@ -179,6 +179,11 @@ impl Lower<'_> {
                 {
                     return self.function_reference(&signature, expression.span());
                 }
+                if self.generic_name(name.sym.as_ref()).is_some() {
+                    return Err(unsupported(
+                        "generic function as a value (call it so its type arguments are known)",
+                    ));
+                }
                 let binding = self.resolve_binding(name.sym.as_ref())?;
                 if !binding.initialized {
                     return Err(invalid(format!(
@@ -547,6 +552,9 @@ impl Lower<'_> {
                     return self.class_method_call(call, member, None);
                 }
             }
+        }
+        if let Some(generic) = self.generic_callee(call) {
+            return self.generic_call(call, generic, expected);
         }
         if call.type_args.is_some() {
             return Err(unsupported("generic call"));

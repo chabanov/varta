@@ -43,6 +43,12 @@ in [conformance/README.md](conformance/README.md).
     templates and `String.raw` fail with diagnostics. The source-complexity
     pre-pass rescans template text after each substitution, so template text and
     later doc comments no longer trip a false complexity error.
+  - Generics: generic interfaces, aliases and top-level functions by
+    monomorphization, with defaults, `extends` constraints, explicit or inferred
+    type arguments, `keyof`, `R[K]`, `Readonly`, `ReadonlyArray`, `Partial` and
+    literal-keyed `Record`; one function per distinct instantiation within the
+    existing function and body budgets. `Record<string, V>`, `Promise<T>` and
+    generic classes, methods and arrows stay rejected with reasons.
 
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`

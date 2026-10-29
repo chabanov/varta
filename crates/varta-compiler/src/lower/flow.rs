@@ -60,6 +60,7 @@ pub(super) fn native(call: &ast::CallExpr, lower: &Lower<'_>) -> bool {
     if lower.binding(root).is_ok()
         || lower.functions.contains_key(root)
         || lower.outer.contains_key(root)
+        || lower.generic_name(root).is_some()
     {
         return false;
     }

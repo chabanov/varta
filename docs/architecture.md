@@ -5685,6 +5685,85 @@ Template literals add no host import, value tag, layout, helper or catalog entry
 artifacts are indistinguishable from the equivalent `String(…)` and `+` program.
 All budgets are unchanged.
 
+#### Generics (`generics()`)
+
+Selector `generics()`. V32 admits generic interfaces, generic type aliases and
+generic top-level functions, implemented by monomorphization: every distinct
+type-argument list is an ordinary closed type or an ordinary emitted function,
+so nothing generic reaches emission. V31 and earlier keep `unsupported generic
+type declaration`, `unsupported generic type reference` and the existing
+generic-function and generic-call diagnostics.
+
+- **Type parameters.** A declaration lists parameters with optional `extends`
+  constraints and defaults; defaults and constraints may name earlier parameters
+  (a constraint may also name its own parameter). Only the declaration's own
+  parameters are in scope in its body: a named type referenced from a generic
+  body never sees the caller's parameters. `in`/`out`/`const` modifiers and
+  duplicate names are rejected. A constraint is checked with the ordinary
+  argument assignability (literal subsets, class upcasts, union members);
+  `object` admits records, class instances, arrays and functions, `unknown`
+  admits everything.
+- **Generic types.** `interface CursorPage<T> { … }` and `type Pair<A, B = A> = …`
+  are instantiated per distinct argument list, in the defining module, and the
+  result is interned structurally: `CursorPage<number>` is the same shape as the
+  equivalent type literal or interface. A reference must supply every parameter
+  without a default (`type X requires a type argument for T`); type arguments on
+  a non-generic name are rejected. Recursion through instantiation, direct or
+  through other names and with any arguments, stays `recursive type declaration`.
+  Instances are memoized by declaration and argument list.
+- **Generic functions.** A call `f<A, B>(…)` uses the explicit arguments
+  (missing trailing ones take defaults); a call without type arguments infers
+  them from the argument types. Arguments are lowered exactly once, in source
+  order: an argument whose parameter type is already determined is checked
+  against it contextually; otherwise it is lowered without context (a bare type
+  parameter with a lowerable constraint uses the constraint as context, so
+  `keys: K` with `K extends readonly (keyof T & string)[]` takes literal keys)
+  and matched structurally against the parameter type: bare parameters, arrays,
+  `readonly` arrays, function types, record type literals, generic named types
+  (through their declaration body) and unions with exactly one generic member
+  (`T | undefined` binds `T` to the remaining members). A contextual result type
+  determines parameters the arguments left open. Conflicting inferences, and
+  parameters that remain undetermined without a default, are rejected with a
+  diagnostic asking for explicit type arguments; an argument whose
+  context-free type fixed an instantiation it does not match (for example
+  `{ cursor: null }` against `string | null`) reports that the type arguments
+  were inferred. Each distinct instantiation is one function with its own index,
+  lowered in the defining module with that module's functions and constants, and
+  repeated instantiations share it. Instances count against the user function
+  limit (`varta_common::abi::MAX_USER_FUNCTIONS`) and each body against the Wasm
+  body limit; instantiations requested from instance bodies nest at most
+  `MAX_INSTANTIATION_DEPTH` (32, `varta-compiler` `lower::generics`) deep, which
+  rejects polymorphic recursion. Generic functions link through imports, export
+  lists and re-exports in the value namespace like functions and constants.
+- **Checking.** A generic function body is checked once per instantiation, like
+  any function with those concrete types. A generic function that is never
+  instantiated is only checked for its declaration form and for explicit `any`;
+  its body produces no code.
+- **Type operators.** `keyof R` of a closed record type is the string literal
+  set of its field names (`keyof` of an empty record, a class or any other type
+  is rejected). `R[K]` with a string literal set `K` is the field type (the union
+  of field types for several keys); `A[number]` of an array type is its element.
+  An intersection collapses when each member is a subtype of the narrowest one
+  (`keyof T & string`); other intersections and `typeof` type queries are rejected.
+- **Built-in generic references.** `Readonly<T>` is `T`, `ReadonlyArray<T>` and
+  `readonly T[]` are `T[]`: readonly stays binding-level intent, so writes through
+  such annotations are not rejected and behave as in JavaScript. `Partial<R>` of
+  a closed record is the record with every field optional. `Record<K, V>` with a
+  string literal key set is the closed record with one required `V` field per
+  key. `Record<string, V>` and other non-literal keys (dynamic keys need a map
+  value representation) and `Promise<T>` (asynchronous values need the suspension
+  foundation) are rejected with those reasons; a declared or imported type of the
+  same name shadows a built-in generic. `Array<T>` is unchanged.
+- **Rejected with diagnostics.** Generic classes, class methods, arrows,
+  function expressions and callback types; async or generator generic
+  functions; generic functions with a `this` parameter; a generic `main`; generic
+  functions used as values (`generic function as a value`) and spread arguments
+  to them.
+
+Generics add no host import, value tag, layout, helper or catalog entry; an
+instantiation is indistinguishable from the hand-written specialized function.
+All budgets are unchanged.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),

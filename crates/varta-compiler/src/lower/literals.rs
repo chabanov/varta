@@ -134,6 +134,52 @@ fn string_bytes(
     })
 }
 
+fn name_bytes(name: &str, profile: varta_common::language::LanguageProfile) -> Vec<u8> {
+    if profile.utf16() {
+        name.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    } else {
+        name.as_bytes().to_vec()
+    }
+}
+
+/// The string literal set of `names` (v32 `keyof` over record field names).
+pub(super) fn string_set<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    let values = names
+        .into_iter()
+        .map(|name| LiteralValue::String(name_bytes(name, types.profile)))
+        .collect();
+    intern(LiteralBase::String, values, types)
+}
+
+/// The members of a string literal set as record keys; `None` for any other
+/// type or for a member that is not a well-formed key string.
+pub(super) fn string_members(ty: Type, types: &ir::ValueTypes) -> Option<Vec<String>> {
+    let Type::Literal(LiteralBase::String, id) = ty else {
+        return None;
+    };
+    types
+        .literals
+        .set(id)
+        .iter()
+        .map(|value| match value {
+            LiteralValue::String(bytes) if types.profile.utf16() => {
+                let units: Vec<u16> = bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| u16::from_le_bytes(*pair))
+                    .collect();
+                String::from_utf16(&units).ok()
+            }
+            LiteralValue::String(bytes) => String::from_utf8(bytes.clone()).ok(),
+            _ => None,
+        })
+        .collect()
+}
+
 fn intern(base: LiteralBase, values: Set, types: &mut ir::ValueTypes) -> Result<Type> {
     if values.is_empty() {
         return Err(invalid("empty literal type"));

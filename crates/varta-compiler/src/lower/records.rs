@@ -2,7 +2,7 @@ use super::*;
 use ir::{RecordField, RecordShape};
 use varta_common::value::{MAX_RECORD_FIELDS, MAX_RECORD_KEY_BYTES, MAX_RECORD_SHAPES};
 
-fn key(name: String) -> Result<String> {
+pub(super) fn key(name: String) -> Result<String> {
     if name.len() > MAX_RECORD_KEY_BYTES {
         return Err(invalid("object key exceeds byte limit"));
     }

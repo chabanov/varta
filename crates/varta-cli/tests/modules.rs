@@ -588,6 +588,46 @@ export function label(a:Auth):string{const h=a.header;return a.type+(h===undefin
 }
 
 #[test]
+fn generic_declarations_and_functions_link_across_modules_in_v32() {
+    let main = r#"import type {CursorPage} from "./pagination.js";
+import {first,size} from "./pagination.js";
+interface User{id:string}
+export function main():void{const page:CursorPage<User>={items:[{id:"u1"}],cursor:null};
+const user=first(page);if(user!==undefined){console.log(user.id);}console.log(size<number>({items:[1,2],cursor:"n"}));}"#;
+    let profile = |version: &str| {
+        format!(
+            r#"{{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-{version}","capabilities":{{}}}}"#
+        )
+    };
+    let pagination = "export interface CursorPage<T>{items:T[];cursor:string|null;has_more?:boolean}\
+                      export function first<T>(page:CursorPage<T>):T|undefined{return page.items[0];}\
+                      export function size<T>(page:CursorPage<T>):number{return page.items.length;}";
+    let project = Project::new(main);
+    project.write("varta.config.json", &profile("v32"));
+    project.write("src/pagination.ts", pagination);
+    let output = success(project.command(&["dev"]));
+    for line in ["varta log: u1", "varta log: 2"] {
+        assert!(output.contains(line), "{output}");
+    }
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains("varta log: u1"));
+
+    // v31 keeps rejecting generic declarations with a located diagnostic.
+    let old = Project::new(main);
+    old.write("varta.config.json", &profile("v31"));
+    old.write("src/pagination.ts", pagination);
+    let diagnostic = old.diagnostic();
+    assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("generic type declaration")),
+        "{diagnostic}"
+    );
+}
+
+#[test]
 fn v32_pilot_streams_link_through_a_barrel_in_dev_and_packaged_artifacts() {
     let main = r#"import {SDK_VERSION,SCOPES,Users,Client,type AuthType} from "./index.js";
 export function main():void{const auth:AuthType='apiKey';const users=new Users(new Client());

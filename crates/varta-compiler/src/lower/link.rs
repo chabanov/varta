@@ -44,6 +44,12 @@ pub(crate) fn lower(
         }
         let mut symbols = BTreeMap::new();
         for declaration in declarations::collect(&unit.ast, &unit.source, profile)? {
+            // Generic functions get slots per instantiation (v32 `generics`).
+            if profile.generics() && declaration.function.type_params.is_some() {
+                let entry = path == &graph.entry;
+                generics::declare(declaration, module, entry, &unit.source, &mut types)?;
+                continue;
+            }
             if next >= MAX_FUNCTIONS {
                 return Err(unit.source.locate(
                     invalid("too many functions across modules"),
@@ -75,6 +81,15 @@ pub(crate) fn lower(
             }
             next += 1;
         }
+        if let Some(name) = generics::collision(&types, module, symbols.keys())
+            .cloned()
+            .or_else(|| generics::class_collision(&types, module))
+        {
+            return Err(unit.source.locate(
+                invalid(format!("duplicate or reserved function name: {name}")),
+                unit.ast.span(),
+            ));
+        }
         if profile.classes() {
             classes::layout_module(module, &symbols, &mut types, &mut next)?;
         }
@@ -105,6 +120,9 @@ pub(crate) fn lower(
         named::enter(&mut types, module);
         let visible = constants.scopes.get(path).cloned().unwrap_or_default();
         for declaration in declarations::collect(&unit.ast, &unit.source, profile)? {
+            if profile.generics() && declaration.function.type_params.is_some() {
+                continue;
+            }
             let signature = &definitions[path][declaration.ident.sym.as_ref()];
             functions.push(body(
                 declaration,
@@ -129,6 +147,16 @@ pub(crate) fn lower(
     }
     if profile.classes() {
         classes::dispatch_bodies(&types, &mut functions)?;
+    }
+    if profile.generics() {
+        generics::bodies(
+            graph,
+            &scopes,
+            &constants.scopes,
+            main,
+            &mut types,
+            (&mut generated, &mut next, &mut call_effects),
+        )?;
     }
     functions.extend(generated.into_values());
     // Initialize stored constants in dependency order before the entry body.
@@ -178,6 +206,8 @@ pub(crate) fn lower(
 enum Value {
     Function(Signature),
     Constant(module_constants::Constant),
+    /// A v32 generic function, instantiated per call.
+    Generic(usize),
 }
 #[derive(PartialEq, Eq)]
 enum ValueIdentity {
@@ -185,6 +215,7 @@ enum ValueIdentity {
     Function(usize),
     /// Constant declarations are unique across the graph.
     Constant(usize),
+    Generic(usize),
 }
 
 /// Value bindings, module by module in dependency order: resolve value imports
@@ -223,12 +254,19 @@ fn link_values(
                             .insert(binding.local.clone(), signature.clone())
                             .is_none()
                             && !imported.contains_key(&binding.local)
+                            && generics::lookup(types, module, &binding.local).is_none()
                     }
                     exports::Lookup::Bound(Value::Constant(constant)) => {
                         !scope.contains_key(&binding.local)
+                            && generics::lookup(types, module, &binding.local).is_none()
                             && imported
                                 .insert(binding.local.clone(), constant.clone())
                                 .is_none()
+                    }
+                    exports::Lookup::Bound(Value::Generic(id)) => {
+                        !scope.contains_key(&binding.local)
+                            && !imported.contains_key(&binding.local)
+                            && generics::import(types, module, &binding.local, *id)
                     }
                     exports::Lookup::Ambiguous => {
                         return Err(unit.source.locate(
@@ -267,6 +305,12 @@ fn link_values(
             return Err(unit
                 .source
                 .locate(duplicate_import(&binding.local), binding.span));
+        }
+        if let Some(name) = generics::collision(types, module, visible.keys()) {
+            return Err(unit.source.locate(
+                invalid(format!("duplicate module binding: {name}")),
+                unit.ast.span(),
+            ));
         }
         let values = Values {
             functions: &scope,
@@ -329,6 +373,9 @@ impl exports::Namespace for Values<'_> {
         if let Some(constant) = self.constants.get(&export.local) {
             return Ok(Some(Value::Constant(constant.clone())));
         }
+        if let Some(id) = generics::lookup(self.types, self.module, &export.local) {
+            return Ok(Some(Value::Generic(id)));
+        }
         if named::is_type(self.types, self.module, &export.local) {
             return Ok(None);
         }
@@ -347,6 +394,7 @@ impl exports::Namespace for Values<'_> {
         match value {
             Value::Function(signature) => ValueIdentity::Function(signature.index),
             Value::Constant(constant) => ValueIdentity::Constant(constant.id()),
+            Value::Generic(id) => ValueIdentity::Generic(*id),
         }
     }
 }

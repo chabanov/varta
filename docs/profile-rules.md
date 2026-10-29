@@ -1809,6 +1809,41 @@ separate decision. Cooked parts reuse the string-literal WTF-8 to UTF-16 encodin
 invalid program. Tagged templates and `String.raw` stay rejected. No host import,
 layout or budget change; `encodeURIComponent` remains a separate builtin.
 
+### Generics (`generics()`)
+
+Monomorphization only: never emit a generic body or a type parameter. Generic
+interfaces/aliases store their `TsTypeParamDecl` in `named::Declaration::Local`;
+`named::instantiate` lowers type arguments in the referencing module and frame,
+then `generics::bind` (defaults, constraints) and the body run in the defining
+module, memoized by (declaration key, argument types) in `NamedTypes.resolved`.
+Keep the `resolving` check keyed by declaration alone, so recursion through any
+instantiation fails. Type parameters live in `Generics.frames`; only the top
+frame is visible (`generics::parameter`, the first check in `keyword_type`), and
+every named resolution pushes its own frame, so a referenced declaration never
+sees the caller's parameters.
+
+Generic functions get no slot in `link::lower`; `generics::declare` registers
+them (stripped of type parameters) with a module binding. They join the value
+namespace as `link::Value::Generic`, so imports, exports and star re-exports use
+the shared rules; names must not collide with functions, constants or classes.
+`Lower::generic_call` (before the `generic call` rejection in `expr::call`)
+lowers every argument once and in source order, never reordering or re-lowering
+an argument for inference: lowering allocates locals and lifted functions and
+updates flow facts. `generics::instantiate` allocates an index from
+`next_function` on first use of an argument list and queues the body;
+`generics::bodies` lowers the queue (including instances requested by instances)
+after class dispatch bodies, with the instance frame and `depth` set, through
+`link::body` and the defining module's scope. Generic names make `flow::native`
+false; a generic call is an unknown call for flow effects. Generic functions as
+values need a function-value instance per type; keep them rejected.
+
+`keyof`, indexed access, intersections and the built-in generic references live
+in `type_operators`. A built-in maps onto an existing closed type or is rejected
+with its reason; `Readonly`/`ReadonlyArray`/`readonly T[]` erase readonly, which
+stays binding-level (`reject_readonly_write` does not see it). Admitting
+`Record<string, V>`, `Promise<T>`, generic classes/methods/arrows or
+inference through context-sensitive arguments needs its own design.
+
 ### Cross-stream integration (v32)
 
 - Constants and functions share `link::Value`; constant imports resolve in
