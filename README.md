@@ -24,6 +24,7 @@ Developed by **Squad AI, Inc.** Architecture and technology by **Pavlo Chabanov*
 | --- | --- |
 | [Language guide](docs/language-guide.md) | Feature tour with examples, by profile |
 | [Architecture contract](docs/architecture.md) | Normative language, ABI, capability and limit contracts; [version matrix](docs/architecture.md#version-matrix) |
+| [Embedding contract](docs/embedding.md) | Normative contract for third-party hosts (JavaScript, other Wasm engines): validation, imports, layout, Tool ABI v1, security obligations |
 | [Development plan](docs/development-plan.md) | Status, research thesis, roadmap and the [uarp-sdk pilot](docs/development-plan.md#pilot-acceptance-package-uarp-sdk) |
 | [Verification](docs/verification.md) | Scoped and full quality gates |
 | [Compatibility inventory](conformance/README.md) | Pinned checked conformance cases |

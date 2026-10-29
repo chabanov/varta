@@ -24,6 +24,9 @@ How this document is organized:
   [artifacts](#artifact-format-and-validation).
 - Non-normative appendices: the [compatibility inventory](#developer-compatibility-inventory)
   and [runtime internals](#runtime-internals-non-normative).
+- Third-party hosts (JavaScript, other Wasm engines): the separate
+  [embedding contract](embedding.md) restates the host boundary per ABI version,
+  with tables generated from the same registries.
 
 Profile sections keep the negotiation details (launcher maxima, profile counts)
 that applied when each increment landed. Current values appear only in the
@@ -7816,7 +7819,9 @@ packaged executable serve source-free HTTP through this same runtime event path.
 ## ABI v1 and errors
 
 Imports live under `varta`. `HostOperation` in `varta-common` owns their names,
-capability identifiers and scalar Wasm signatures. Pointer-taking imports require
+capability identifiers and scalar Wasm signatures; the
+[embedding contract](embedding.md#host-operation-table) lists every operation
+with its signature, minimum host ABI, capability and admitting profiles. Pointer-taking imports require
 an exported non-shared 32-bit `memory`. String-returning imports also require
 exported mutable i32 globals `env_result_len` and `result_status`. Invalid import
 signatures, result globals and advertised ABI versions fail before instantiation.
