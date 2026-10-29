@@ -11,6 +11,24 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Timers under opt-in v36 (selector `timers`, K4.4 step 5): `setTimeout`,
+  `setInterval`, `clearTimeout`, `clearInterval`, the
+  `new Promise<void>((resolve) => setTimeout(resolve, ms))` sleep pattern and
+  `AbortSignal.timeout` run on a runtime event loop after the microtask
+  checkpoint, in Node's order (main and its microtasks, then timers by due
+  time and creation order, each followed by its microtasks). Ids are numbers,
+  as in browsers. Arming a timer requires the new exact boolean grant
+  `time.timer` (`"time": { "timer": true }`), denied by default: without it
+  the execution ends at the call. A timer due at or after the 5-second
+  execution deadline ends the execution with a budget error instead of
+  waiting, at most `MAX_PENDING_TIMERS` timers are pending, an exception from
+  a timer callback ends the execution like one from `main`, and
+  `AbortSignal.timeout` timers do not keep the loop alive. Four internal host
+  imports (`timer_start`, `timer_clear`, `timer_take`, `timer_uncaught`) use
+  host ABI 32; v35 and earlier keep rejecting the timer globals. Under v36 an
+  arrow expression body in a `void` context discards its value, as in
+  TypeScript.
+
 - Opt-in v36 (pilot batch: checked declared fields, function fields, async
   generators and timers, in development) is registered. It inherits every v35
   feature, shares value ABI/layout 16 with v35 and declares its own host ABI 32

@@ -6512,8 +6512,9 @@ trap before any effect.
   while it drains, until the queue is empty. Reactions of one promise are
   queued in registration order when it settles; a reaction registered on a
   settled promise is queued at once. This is the ECMAScript Jobs order, so
-  event logs match Node for the same program. There are no timers or I/O
-  tasks yet (K4.4 step 5), so the checkpoint ends the execution.
+  event logs match Node for the same program. V34 and v35 have no timers or
+  I/O tasks, so the checkpoint ends the execution; v36 adds timer tasks after
+  it (see [Timers](#timers-timers)), still with no I/O tasks.
 - **Imports.** Five internal imports exist only under the v34 host ABI
   (minimum `SCHEDULED_FRAMES_VERSION`), take no capability, are never callable
   from source and are matched by exact name and signature:
@@ -7223,7 +7224,9 @@ dispatch, rooting and diagnostics for each type.
   value layout 16 has no function-valued object field (function values live
   only in locals, parameters, results, closure cells and frames). Admitting
   them needs a value-layout change. `AbortSignal.timeout` and `AbortSignal.any`
-  are rejected as well: v35 has no timers and no listeners.
+  are rejected as well: v35 has no timers and no listeners. V36 admits
+  `AbortSignal.timeout` (see [Timers](#timers-timers)); `AbortSignal.any`
+  stays pending.
 - **Value operations.** `JSON.stringify` of a value that may reach an engine
   Web type instance (including `unknown` in a program that loads a prelude) is
   rejected, because the instances keep private state where JavaScript has no
@@ -7252,9 +7255,9 @@ to v35 and v36; v34 and earlier profiles stay frozen. V36 declares one version
 identity of its own (see the [version matrix](#version-matrix)):
 
 - **Host ABI** `abi::TIMERS_VERSION` (32), for v36 alone. It adds no host
-  import yet: every v35 operation keeps its signature, binding and minimum ABI,
-  and no registered operation requires host ABI 32. Host imports added in this
-  batch (the timer operations first) use host ABI 32 as their minimum.
+  import of its own: every v35 operation keeps its signature, binding and
+  minimum ABI. Host imports added in this batch use host ABI 32 as their
+  minimum; the [timer operations](#timers-timers) are the first.
 - **Value ABI and layout** `value::PROMISE_VALUE_VERSION` (value16), shared
   with v35. V36 adds no value tag or layout yet; `LanguageProfile::value_layout`
   equals `value_abi`, so descriptors, catalogs, frames and exception cells are
@@ -7274,7 +7277,7 @@ stream owns any value-layout bump (value17: a new `value` constant,
 their minimum host ABI 32, and the launcher maximum); the other streams rebase
 onto it. V35 and earlier profiles keep their host ABI, value ABI and layouts.
 
-Four selectors gate the batch's work streams, and all admit nothing yet:
+Four selectors gate the batch's work streams:
 
 - records stream: `checked_declared_fields()` (declared fields of mixed
   records that are checkable from `unknown`, for example arrays of optional
@@ -7284,11 +7287,160 @@ Four selectors gate the batch's work streams, and all admit nothing yet:
 - async stream: `async_generators()` (`async function*` generators and
   `for await…of`);
 - timers stream: `timers()` (`setTimeout`/`clearTimeout` and timer-driven
-  promises).
+  promises), implemented: see [Timers](#timers-timers).
 
 Until a stream adds its subsection here, a v36 module compiles and runs exactly
 like a v35 module apart from its declared profile and host ABI, and production
 budgets of every profile are unchanged.
+
+#### Timers (`timers`)
+
+K4.4 step 5. `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval` and
+`AbortSignal.timeout` run on a runtime event loop that extends the
+[microtask scheduler](#microtask-scheduler-promises) of the same execution.
+V35 and earlier profiles keep rejecting the timer globals as unknown calls
+(`unsupported call`), and `AbortSignal.timeout` keeps its v35 pending-member
+diagnostic there.
+
+- **Source subset.** `setTimeout(callback, ms?, ...args)` and
+  `setInterval(callback, ms?, ...args)` are direct calls of the unshadowed
+  globals; they return the timer id, a `number`. The callback is a
+  contextually typed arrow or function expression (async ones included) or
+  any typed function value without a `this` type; its fixed parameters must
+  accept the extra arguments, parameters without an argument must be
+  optional (so `resolve` of a `Promise<void>` qualifies), extra arguments
+  beyond them are evaluated and ignored, and a rest parameter receives them.
+  Each extra argument is a one-slot value. Its result is discarded. `ms` is a
+  `number` or `undefined`. Arguments evaluate in source order. Type
+  arguments, spread arguments, string callbacks and non-function callbacks
+  are rejected. `clearTimeout(id?)`/`clearInterval(id?)` take at most one
+  argument, converted with `Number` (so `undefined` and `null` are no-ops)
+  and are interchangeable, as in Node and browsers. Under `timers()` an arrow
+  expression body in a `void` context discards its value, as TypeScript
+  allows, so `new Promise<void>((resolve) => setTimeout(resolve, ms))` is the
+  sleep pattern.
+- **Ids, not `Timeout` objects.** A timer id is a positive integer issued
+  per execution, as in browsers and the DOM typings; Node returns a
+  `Timeout` object (with `ref`, `unref`, `refresh`, `hasRef` and
+  `[Symbol.toPrimitive]`). Numbers keep the value model unchanged (an id can
+  live in records, arrays and unions) and are type-safe, since clearing never
+  dereferences them: an id that names no armed timer of this execution,
+  including one already fired or cleared, is ignored. No other execution's
+  timers are reachable.
+- **Frames.** A timer is a scheduled continuation frame of a synthesized
+  function `(promise, callback, ...args)` that first awaits an
+  engine-internal pending `Promise<void>` no source code can reach. Starting
+  a timer creates the promise, starts the frame (it suspends at once, so its
+  resume token becomes the promise's only reaction) and calls
+  `timer_start` with the promise's reaction serial. When the timer fires or
+  is cleared, the runtime queues that reaction without settling the promise
+  record (its state stays pending, its unset value slot reads as
+  `undefined`); the resumed frame calls `timer_take`, which answers whether
+  the timer fired, runs the callback inside a `try` only if it did, and then
+  completes (a timeout, a cleared timer) or awaits the same promise again (an
+  interval). The frame therefore roots the callback, its captures and its
+  arguments exactly while the timer is pending, through the live-frame table;
+  the runtime keeps serials and ids, never a guest reference. An exception
+  that escapes a callback reaches `timer_uncaught`, which renders it with the
+  uncaught-exception readers and ends the execution with the same
+  `UncaughtException` as one escaping `main`; later timers never run.
+- **Imports.** Four host ABI 32 imports, matched by exact name and signature:
+  `timer_start (serial:f64, delay:f64, flags:i32) -> f64` arms a timer and
+  returns its id (flags `TIMER_INTERVAL` and `TIMER_UNREF`, any other bit is
+  fatal); `timer_clear (id:f64) -> ()`; `timer_take (serial:f64) -> i32`;
+  `timer_uncaught (reason:i64) -> ()`. `timer_start` is a host effect: it is
+  charged to the host-call budget and requires the capability below. The other
+  three are scheduler bookkeeping like the v34 scheduler imports: no
+  capability, not charged to the host-call budget, deadline-checked. A serial
+  that is not a pending reaction of exactly one token, a second timer on one
+  serial, `timer_take` for a timer that neither fired nor was cleared and
+  every bound below are fatal `SchedulerError`s.
+- **Capability.** Arming a timer requires the exact boolean grant
+  `time.timer` (`"time": { "timer": true }` in `varta.config.json`), denied by
+  default and constrained by a host ceiling like every grant. Rationale: like
+  `time.now` and `process.exit`, a timer is authority over the host rather
+  than guest computation: it holds the execution (and its thread) for wall
+  time that fuel does not bound, up to the deadline, which no ungranted
+  program could do before v36. `time.now` does not imply it and it does not
+  imply `time.now`; clearing needs no grant. The check precedes the timer's
+  creation: without the grant `timer_start` ends the execution with
+  `SchedulerError::TimerDenied` (`<capability denied: time.timer>`) before
+  the timer exists, so no callback runs and nothing waits. A denial is fatal
+  rather than a status because timer code has no result to check, and a
+  silently unarmed timer would leave a pending promise that quietly ends the
+  execution early. Inspection and `validate` list `timer_start` with
+  `time.timer` through the shared registry, so a module's declared
+  permissions are reviewable offline.
+- **Event loop.** After `main` returns, the runtime repeats: run the
+  microtask checkpoint to quiescence; apply the unhandled-rejection policy
+  (so, as in Node, a rejection is fatal before the next timer even if a later
+  timer would handle it); take the armed timer with the smallest
+  (due time, sequence) and fire it; until no armed timer keeps the loop
+  alive. Only one timer fires per turn, so each callback's microtasks run
+  before the next timer, which is Node's order since Node 11. Due times use
+  a loop clock in milliseconds that starts at 0 with the execution and
+  advances only to the due time of the timer that fires; a timer started in
+  a turn is due at the loop time plus its delay, and the sequence number
+  orders equal due times by creation. Timer order therefore depends only on
+  the program, never on how fast guest code ran, which keeps executions
+  reproducible and the timer order free of a timing side channel. Before a
+  timer fires the runtime sleeps until the wall clock reaches the execution
+  start plus its due time, so a callback never runs early (it can run late if
+  guest code was slow). Delays follow Node: a delay that is not a number in
+  `1..=TIMER_MAX_DELAY_MS` (2^31 - 1, Node's `TIMEOUT_MAX`) is 1 ms (Node also
+  prints a `TimeoutOverflowWarning` for too large delays), fractions are
+  kept, and an interval re-arms at its fire time plus its delay. A cleared
+  timer wakes its frame through the microtask queue; the frame completes
+  without calling the callback, so the release is unobservable and finishes
+  in the next checkpoint.
+- **Deadline and budgets.** Fuel, memory, the host-call ceiling and the
+  deadline `abi::DEADLINE_SECONDS` cover the whole execution, including every
+  callback; waiting consumes no fuel, but callbacks do. A timer due at or after
+  the deadline can never fire, so when it is the next timer the execution ends
+  at once with `SchedulerError::TimerDeadline` ("execution deadline exceeded:
+  the next timer is due at least N ms after the execution started, beyond the
+  5 s deadline") instead of sleeping until the deadline; an interval that is
+  never cleared ends this way too. If guest code already used the time, the
+  wait stops at the deadline with "execution deadline exceeded". At most
+  `MAX_PENDING_TIMERS` timers are pending (armed, fired and not yet taken,
+  or cleared and not yet released) at once; each also holds one token
+  counted against `MAX_PENDING_CONTINUATIONS` and one live frame, every
+  firing is one job against `MAX_EXECUTION_JOBS`, and ids share the serial
+  bound `MAX_PROMISE_SERIALS`. A loop that clears timers without reaching a
+  checkpoint keeps their slots until the next checkpoint releases them.
+  Production budgets are unchanged.
+- **`AbortSignal.timeout(delay)`.** An engine prelude
+  (`<varta>/web/abort_timeout.ts`, admitted by `timers()`) loaded only when a
+  module names the static member `AbortSignal.timeout` (and does not bind
+  `AbortSignal` itself); the call binds to the prelude function under the
+  dotted name, which no source declaration can spell. It validates the delay
+  like Node's `validateUint32` (a `RangeError` "The value of \"delay\" is out
+  of range. …" for a non-integer or a value outside 0..2^32-1) and returns the
+  signal of a fresh controller that a timeout aborts with
+  `new DOMException('The operation was aborted due to timeout',
+  'TimeoutError')`. The timer is unreferenced (`TIMER_UNREF`), as in Node: it
+  fires while other work keeps the loop alive, and an execution whose only
+  remaining timers are unreferenced ends without waiting (and without a
+  deadline error). The prelude calls the prelude-only intrinsic
+  `varta.web.unrefTimeout(callback, ms)`; in program modules that name is an
+  ordinary unknown call. Programs that do not name `AbortSignal.timeout`
+  load no timer code, so they need no `time.timer` grant. `AbortSignal.any`
+  and abort listeners stay pending (function fields).
+- **Entry points and isolation.** Only `main` gets the event loop, so
+  timers are tied to one execution: they never outlive its store, and a
+  guest exit (`process.exit` inside a callback) or any fatal error ends the
+  execution with its timers. Tool invocations and HTTP contracts are rejected
+  in every binary64 profile, so a request handler cannot start a timer; a
+  request-scoped isolate with its own loop (pending timers cancelled when the
+  response ends) is the planned model when async HTTP lands. Packaged
+  artifacts (`build --single`) and the `varta-runtime` companion run the same
+  loop; the launcher's host-ceiling flag constrains `time.timer` like every
+  grant.
+- **Tests.** Runtime tests use a test-only virtual clock (compiled only under
+  `cfg(test)`) that advances loop time without sleeping, so ordering, deadline
+  and bound tests are fast and cannot flake; production code always waits for
+  the wall clock, and one test checks that a production wait lasts at least
+  the delay.
 
 ## Local modules
 
@@ -7441,6 +7593,10 @@ Configuration shorthand:
   }
 }
 ```
+
+`time.timer` (v36) is a separate boolean operation: it authorizes arming
+timers (`setTimeout`, `setInterval`, `AbortSignal.timeout`) and neither implies
+nor is implied by `time.now`; see [Timers](#timers-timers).
 
 Only `strict` is implemented. `compat` is rejected until it has an actual
 behavioral contract. Unknown operations, unknown fields, duplicate manifest
@@ -7953,6 +8109,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Microtasks per execution (v34) | 65536 | `scheduler::MAX_EXECUTION_JOBS` |
 | Promise serials / rejection ids per execution (v34) | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
 | Unhandled-rejection reasons kept / units per field / bytes each | 16 / 256 / 2048 | `scheduler::MAX_*REJECTION_REASON*` |
+| Pending timers (v36) | 32 | `scheduler::MAX_PENDING_TIMERS` |
 <!-- generated:limits:end -->
 
 Limits that are derived from several constants or enforced outside `abi`:

@@ -35,7 +35,8 @@ Next work, in order:
    and merged with the records and unknown streams on `v34-integration-merge`
    ([scheduler](architecture.md#microtask-scheduler-promises),
    [async functions](architecture.md#async-functions-async_functions));
-   timers, I/O and async HTTP (step 5) are next.
+   step 5's timers are implemented under v36 (`timers`,
+   [contract](architecture.md#timers-timers)); I/O and async HTTP are next.
 
 Completed increment logs, earlier checkpoints and verification records are in
 [history.md](history.md).
@@ -536,14 +537,15 @@ a v36 module relabelled as v35 fails at its host ABI section, and runtimes that
 do not list v36 reject its declared profile name. The function-fields stream
 owns any value-layout bump (value17)
 ([contract](architecture.md#checked-f64-utf16-v36--pilot-batch-checked-declared-fields-function-fields-async-generators-and-timers)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; `timers()` is implemented and the others admit
+nothing yet.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Registered, admits nothing |
 | `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns any value17 bump) | M2, M4 | Registered, admits nothing |
 | `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Registered, admits nothing |
-| `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Registered, admits nothing |
+| `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Implemented ([contract](architecture.md#timers-timers)): `setTimeout`/`setInterval`/clears, sleep pattern, `AbortSignal.timeout`, exact `time.timer` grant; abort listeners wait for `function_fields` |
 
 ### Deferred external validation scenarios
 
@@ -1564,7 +1566,8 @@ host import or value tag changes. Step 2 (synchronous generators) is the first
 source producer of frames; generator frames are resumed only by guest code, and
 the v33 runtime still does not call the dispatcher. Steps 3–4 (promises and
 async functions) are implemented under v34, where the runtime scheduler is the
-dispatcher's first caller; steps 5–6 are not implemented.
+dispatcher's first caller. Step 5's timers are implemented under v36
+(`timers`); its asynchronous I/O and step 6 are not implemented.
 Each increment still needs its own versioned contract in
 [architecture.md](architecture.md), positive/negative and resource tests and the
 normal gates before source admission.
@@ -1848,6 +1851,23 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    planned fix) and request-scoped isolates for async HTTP (step 5).
 5. Timers, asynchronous I/O, cancellation and shutdown. Exit: separate budgets,
    generation-checked late completions and request-scoped cleanup.
+   **Timers implemented** in v36 (selector `timers`,
+   [contract](architecture.md#timers-timers)): `setTimeout`, `setInterval`,
+   their clears, the sleep pattern and `AbortSignal.timeout` on a runtime
+   event loop after the microtask checkpoint. A timer is a scheduled job
+   frame awaiting an engine-internal promise, so the existing frames root its
+   callback and arguments and the runtime keeps only serials and ids; the
+   queue is ordered by (due time, sequence) on a virtual loop clock that the
+   runtime advances to each due time while it waits for the wall clock.
+   Decided in this increment: timer ids are numbers (browser model, not
+   Node's `Timeout`); arming a timer requires the exact `time.timer` grant
+   (deny by default, fatal at the call); a timer due at or after the
+   execution deadline ends the execution with a budget error instead of
+   waiting; at most `MAX_PENDING_TIMERS` are pending; the single execution
+   deadline still covers the whole loop (no separate wait budget yet). Open:
+   asynchronous I/O, cancellation of host operations through `AbortSignal`,
+   abort listeners (function fields), request-scoped loops for async HTTP and
+   a per-case grant in the conformance runner.
 6. Async generators, `for await`, top-level await and compatibility expansion.
    Exit: the uarp-sdk pilot steps M5–M6 compile and pass their tests.
 

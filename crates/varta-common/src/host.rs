@@ -1,6 +1,16 @@
 //! Canonical operation names and Wasm signatures shared by compiler and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostOperation {
+    /// v36 timers (`crate::scheduler`): arm a timer for the one reaction of
+    /// an engine-internal pending promise; capability `time.timer`.
+    TimerStart,
+    /// v36: clear an armed timer by id; unknown ids are a no-op.
+    TimerClear,
+    /// v36: a released timer frame asks whether its timer fired (1) or was
+    /// cleared (0).
+    TimerTake,
+    /// v36: an exception escaped a timer callback; terminates the execution.
+    TimerUncaught,
     /// Value16 (profile v35) readers: each mirrors its value15 counterpart's
     /// signature and contract, reading value16 layouts and nothing else.
     ValueLogV10,
@@ -339,6 +349,10 @@ impl HostOperation {
     }
     pub fn name(self) -> &'static str {
         match self {
+            Self::TimerStart => "timer_start",
+            Self::TimerClear => "timer_clear",
+            Self::TimerTake => "timer_take",
+            Self::TimerUncaught => "timer_uncaught",
             Self::ValueLogV10 => "value_log_v10",
             Self::ValueTypeOfV9 => "value_typeof_v9",
             Self::ValueTruthyV9 => "value_truthy_v9",
@@ -540,12 +554,25 @@ impl HostOperation {
                 | Self::PromiseHandled
         )
     }
+    /// The v36 timer operations. Only `timer_start` takes a capability
+    /// (`time.timer`) and is charged to the host-call budget; the others are
+    /// scheduler bookkeeping like [`Self::scheduler`].
+    #[must_use]
+    pub fn timer(self) -> bool {
+        matches!(
+            self,
+            Self::TimerStart | Self::TimerClear | Self::TimerTake | Self::TimerUncaught
+        )
+    }
     pub fn signature(self) -> (usize, usize) {
         let (params, results) = self.scalar_signature();
         (params.len(), results.len())
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if self.timer() {
+            return crate::abi::TIMERS_VERSION;
+        }
         if self.value15_counterpart().is_some() {
             return crate::abi::PROMISE_VALUES_VERSION;
         }
@@ -815,6 +842,10 @@ impl HostOperation {
         use HostScalar::{F64, I32, I64};
         match self {
             Self::PrimitiveCompare => (&[I64, I64], &[F64]),
+            Self::TimerStart => (&[F64, F64, I32], &[F64]),
+            Self::TimerClear => (&[F64], &[]),
+            Self::TimerTake => (&[F64], &[I32]),
+            Self::TimerUncaught => (&[I64], &[]),
             Self::PromiseReact => (&[F64, I64], &[F64]),
             Self::PromiseSettle => (&[F64], &[]),
             Self::SchedulerEnqueue => (&[I64], &[]),
@@ -1007,6 +1038,10 @@ impl HostOperation {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
+            "timer_start" => Self::TimerStart,
+            "timer_clear" => Self::TimerClear,
+            "timer_take" => Self::TimerTake,
+            "timer_uncaught" => Self::TimerUncaught,
             "value_log_v10" => Self::ValueLogV10,
             "value_typeof_v9" => Self::ValueTypeOfV9,
             "value_truthy_v9" => Self::ValueTruthyV9,
@@ -1225,6 +1260,9 @@ impl HostOperation {
             | Self::SchedulerEnqueue
             | Self::PromiseUnhandled
             | Self::PromiseHandled
+            | Self::TimerClear
+            | Self::TimerTake
+            | Self::TimerUncaught
             | Self::PrimitiveCompare
             | Self::PrimitiveEqual
             | Self::BigIntWidthV2
@@ -1367,6 +1405,7 @@ impl HostOperation {
             | Self::LogUndefined
             | Self::HttpService => return None,
             Self::Time => "time.now",
+            Self::TimerStart => "time.timer",
             Self::EnvHas | Self::EnvHas16 => "env.has",
             Self::EnvGet | Self::EnvGet16 => "env.get",
             Self::EnvPrint | Self::EnvPrint16 => "env.print",

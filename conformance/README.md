@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 58 feature rows and 104 cases:
-95 pass, 9 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 59 feature rows and 105 cases:
+95 pass, 10 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -234,3 +234,13 @@ The async, Web and `promise-resolve` cases were observed as unexpected support
 with their pinned hashes and expected output under the v35 pin before review
 and promotion. Abort listeners, timers and live header iterators remain outside
 these rows.
+
+The v36 timers stream adds the `timers` row (CORE-09, a Varta contract) with
+one original case, `timers-event-loop` (main and its microtasks before any
+timer, equal delays in creation order, each timer's microtasks before the next,
+a cleared timer and the sleep pattern); its output matches Node.js v24.20.0
+type stripping, and the v36 runtime tests run the same source with a
+`time.timer` grant. Under the v35 pin it is a known gap (`unsupported_syntax`
+for the `setTimeout` call). Moving the pin to v36 will not promote it by itself:
+the runner executes every case without grants, so a timer case needs a reviewed
+per-case grant in the inventory (a runner change) before it can pass.

@@ -2544,7 +2544,7 @@ Contract: [engine Web types](architecture.md#engine-web-types-web_headers-abort_
   diagnostic instead of an unknown-member error. Abort listeners need
   function-valued object fields, a value-layout change: keep them pending
   until a stream owns that layout bump. `AbortSignal.timeout`/`any` stay
-  pending until timers exist.
+  pending in v35; v36 implements `timeout` (see Timers below).
 - The fewer-parameter rule for function literals is gated by `web_headers()`;
   earlier profiles keep the exact-count rule.
 
@@ -2555,9 +2555,9 @@ Inherit v35 under checked-f64-utf16-v36 with every v35 selector, value layout
 scheduler and frame catalog version 3. V36 has its own host ABI
 `abi::TIMERS_VERSION` (32) and shares value ABI/layout 16
 (`value::PROMISE_VALUE_VERSION`) with v35; v35 keeps host ABI 31. Four selectors
-gate the streams and admit nothing yet: records (`checked_declared_fields`),
-functions (`function_fields`), async (`async_generators`) and timers
-(`timers`). Gate every admission on its own selector, keep v35 and earlier
+gate the streams: records (`checked_declared_fields`), functions
+(`function_fields`), async (`async_generators`) and timers (`timers`,
+implemented below). Gate every admission on its own selector, keep v35 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
 - A v35 rule or binding stated "for v35 only" (value16 readers, liveness
@@ -2578,3 +2578,44 @@ profiles frozen, and add each stream's rules under its own heading here.
 - Timers are scheduled by the runtime, never by guest busy-waiting; keep
   production fuel, deadline and scheduler limits unchanged and pin timer
   ordering against Node output.
+
+### Timers (`timers`)
+
+Contract: [architecture](architecture.md#timers-timers). Lowering lives in
+`lower/promises/timers.rs`; the event loop in `varta-runtime` `scheduler.rs`.
+
+- A timer is a scheduled frame of a synthesized function (memoized per
+  `Helper::Timer(kind)` and callback/argument types) that awaits an
+  engine-internal pending `Promise<void>`. Keep it that way: the frame is what
+  roots the callback, captures and arguments, and the runtime must never hold a
+  guest reference or call a function value directly. The runtime resumes timer
+  frames only through `varta_resume`, like every job.
+- Never settle the timer promise record; the runtime only queues its one
+  reaction. Fired and cleared timers are told apart by `timer_take`; an
+  interval frame loops on `timer_take` and awaits the same promise again, and
+  `Scheduler::react` releases a cleared interval's frame at once.
+- `timer_start` is the only timer import with a capability (`time.timer`,
+  exact boolean grant) and the only one charged to the host-call budget; check
+  the grant before the timer exists and keep denial fatal
+  (`SchedulerError::TimerDenied`). Clear/take/uncaught stay bookkeeping.
+- Loop time is virtual: it starts at 0 and moves only to the due time of the
+  timer that fires. Never derive a due time from the wall clock; the runtime
+  only waits for the wall clock to catch up. Order is (due bits, sequence).
+- A timer due at or after `abi::DEADLINE_SECONDS` must end the execution with
+  `SchedulerError::TimerDeadline` without waiting. Unreferenced timers
+  (`TIMER_UNREF`, only `AbortSignal.timeout`) never keep the loop alive.
+- Check unhandled rejections after every microtask checkpoint, before the
+  next timer.
+- Runtime tests run on `scheduler::with_virtual_clock` (test-only, never in a
+  production build); keep at most a lower-bound assertion on real waits so no
+  test depends on timing.
+- `AbortSignal.timeout` is the `ABORT_TIMEOUT` prelude, loaded by the member
+  trigger `AbortSignal.timeout` and bound under that dotted name, which source
+  cannot declare; `varta.web.unrefTimeout` is a prelude-only intrinsic. Programs
+  that never name it must not import a timer operation.
+- Under `timers()` an arrow expression body in a `void` context discards its
+  value (TypeScript's void compatibility); earlier profiles keep "arrow
+  expression result mismatch".
+- Timers belong to `main` executions only; when async HTTP or tools are
+  admitted, give each request isolate its own loop and cancel its pending
+  timers when the request ends, rather than sharing a queue.

@@ -6,6 +6,30 @@
 // scheduler_enqueue (i64 token)->(), promise_unhandled (i64 reason)->f64 id and
 // promise_handled (f64 id)->(). Tokens name live frames resumed only through
 // varta_resume; the runtime keeps serials, never guest references.
+// checked-f64-utf16-v36 (pilot batch, unreleased) timers: the globals below run
+// their callback in a later event-loop task, ordered by (due time, creation
+// order) on a loop clock that advances only to the due time of the timer that
+// fires. Arming a timer requires the exact `time.timer` grant (denied by
+// default: the execution ends at the call); clearing needs none. Ids are
+// numbers, as in browsers (Node returns Timeout objects). Delays follow Node:
+// a delay outside 1..2^31-1 ms is 1 ms. A timer due at or after the 5 s
+// execution deadline ends the execution with a budget error. Internal imports,
+// host ABI32 minimum: timer_start (f64 serial, f64 delay, i32 flags)->f64 id
+// [time.timer, host-call budget], timer_clear (f64 id)->(), timer_take
+// (f64 serial)->i32 and timer_uncaught (i64 reason)->(). AbortSignal.timeout
+// uses a timer that does not keep the event loop alive.
+declare function setTimeout<A extends unknown[]>(
+  callback: (...args: A) => void,
+  ms?: number,
+  ...args: A
+): number;
+declare function setInterval<A extends unknown[]>(
+  callback: (...args: A) => void,
+  ms?: number,
+  ...args: A
+): number;
+declare function clearTimeout(id?: number | null): void;
+declare function clearInterval(id?: number | null): void;
 // checked-f64-utf16-v32 (pilot batch, unreleased) inherits v31 and its ABIs with
 // no new host declaration: module constants and `as const`, string/number/boolean
 // literal types, top-level classes, `export ... from`/`export *` re-exports,

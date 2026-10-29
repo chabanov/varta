@@ -545,6 +545,15 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md"
+    },
+    {
+      "id": "timers",
+      "title": "Event-loop timers (setTimeout, setInterval, timer-driven promises)",
+      "core": [
+        "CORE-09"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
     }
   ],
   "cases": [
@@ -2139,6 +2148,26 @@
       ],
       "baseline": {
         "status": "supported"
+      }
+    },
+    {
+      "id": "timers-event-loop",
+      "feature": "timers",
+      "path": "cases/timers-event-loop.ts",
+      "sha256": "f474a2a164c843a8756df54b54475c973c1c3ac09ba5609350ff24535f513415",
+      "stdout": [
+        "varta log: main end",
+        "varta log: microtask of main",
+        "varta log: timeout 0 first",
+        "varta log: microtask of first",
+        "varta log: timeout 0 second",
+        "varta log: slept 5",
+        "varta log: slept 1"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Timers are a v36 feature (timers, host ABI 32) that also needs the exact time.timer grant; the inventory pins v35 and runs every case without grants."
       }
     }
   ]

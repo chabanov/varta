@@ -4439,4 +4439,85 @@ export async function main(): Promise<void> {
 `abort()` without a reason uses a `DOMException` named `AbortError`, which is
 also an `Error`; `signal.reason` is `unknown`. `addEventListener`,
 `removeEventListener`, `onabort`, `AbortSignal.timeout`, `AbortSignal.any` and
-`new AbortSignal()` are rejected with a diagnostic.
+`new AbortSignal()` are rejected with a diagnostic (v36 admits
+`AbortSignal.timeout`, see [timers](#timers-opt-in-v36)).
+
+### `checked-f64-utf16-v36`
+
+Profile v36 (in development) inherits every v35 feature. Its first stream adds
+timers.
+
+#### Timers (opt-in v36)
+
+`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval` and
+`AbortSignal.timeout` run on the event loop after `main` and its microtasks.
+Arming a timer needs the exact `time.timer` grant:
+
+```json
+{ "languageProfile": "checked-f64-utf16-v36", "capabilities": { "time": { "timer": true } } }
+```
+
+```ts
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function backoffDelay(attempt: number): number {
+  return Math.min(8000, 50 * 2 ** attempt);
+}
+
+function tryOnce(attempt: number): string {
+  if (attempt < 2) {
+    throw new Error(`attempt ${attempt} failed`);
+  }
+  return `ok after ${attempt + 1} attempts`;
+}
+
+async function withRetry(attempts: number): Promise<string> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return tryOnce(attempt);
+    } catch (error) {
+      await sleep(backoffDelay(attempt));                 // 50, 100 ms
+    }
+  }
+  throw new Error("gave up");
+}
+
+export async function main(): Promise<void> {
+  setTimeout((label: string) => console.log(label), 0, "first timer");
+  Promise.resolve(0).then(() => console.log("microtask")); // runs first
+  let ticks = 0;
+  let id = 0;
+  id = setInterval(() => {
+    ticks++;
+    if (ticks === 3) {
+      clearInterval(id);
+    }
+  }, 10);
+  const signal = AbortSignal.timeout(20);
+  const result = await withRetry(3);
+  console.log(result);                                     // ok after 3 attempts
+  console.log(`${ticks} ${signal.aborted}`);               // 3 true
+}
+```
+
+The order is Node's: `main`, its microtasks, then timers by due time (equal
+delays in creation order), each followed by its own microtasks. Differences
+from Node:
+
+- `setTimeout` and `setInterval` return a number id, as in browsers, not a
+  `Timeout` object (no `ref`, `unref` or `refresh`).
+- The whole execution, timers included, has the 5-second deadline: a timer
+  due later ends the run at once with "execution deadline exceeded", and an
+  interval that is never cleared ends that way.
+- Without the `time.timer` grant the run stops at the first `setTimeout` or
+  `setInterval` with `<capability denied: time.timer>`; `clearTimeout` needs
+  no grant.
+- An exception thrown by a timer callback ends the run like one thrown by
+  `main`.
+- A callback cannot refer to the `const` its own timer is assigned to (the
+  binding is not initialized when the closure is created); assign the id to
+  a `let` first, as above.
+- A callback must accept the extra arguments it is given; parameters without
+  an argument must be optional.

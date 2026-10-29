@@ -4566,3 +4566,91 @@ fn public_engine_shares_v35_web_types_across_modules_without_listing_preludes() 
         .to_string();
     assert!(frozen.contains("Headers"), "{frozen}");
 }
+
+#[test]
+fn public_engine_runs_v36_timers_across_modules_with_an_exact_grant() {
+    // The pilot's retry shape: a util module sleeps on a timer between
+    // attempts and the entry module arms a timeout signal; the timer imports
+    // need the exact `time.timer` grant and the module lists no prelude.
+    use varta_common::language::LanguageProfile;
+    use varta_common::scheduler::{SchedulerError, TIMER_CAPABILITY};
+    struct TimerSources;
+    impl ModuleLoader for TimerSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./util.ts" => Ok("util.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("util.ts") => Ok("export function sleep(ms:number):Promise<void>{\
+                     return new Promise<void>((resolve)=>setTimeout(resolve,ms));}\
+                     export function backoffDelay(attempt:number):number{\
+                     return Math.min(40,5*2**attempt);}"
+                    .into()),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {sleep,backoffDelay} from './util.ts';\
+                       export async function main():Promise<void>{\
+                       const signal=AbortSignal.timeout(12);\
+                       for(let attempt=0;attempt<3;attempt++){\
+                       const wait=backoffDelay(attempt);await sleep(wait);\
+                       console.log(`attempt ${attempt} waited ${wait} aborted ${signal.aborted}`);}}"
+                    .into(),
+            },
+            &TimerSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V36).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    let modules: Vec<_> = compiled.modules.iter().map(|m| m.path.clone()).collect();
+    assert_eq!(
+        modules,
+        [PathBuf::from("util.ts"), PathBuf::from("entry.ts")]
+    );
+    let grant = varta_common::CapabilityGrant {
+        id: TIMER_CAPABILITY.into(),
+        value: varta_common::CapabilityValue::Boolean(true),
+    };
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compiled.wasm, std::slice::from_ref(&grant))
+            .unwrap()
+            .lines,
+        [
+            "varta log: attempt 0 waited 5 aborted false",
+            "varta log: attempt 1 waited 10 aborted true",
+            "varta log: attempt 2 waited 20 aborted true",
+        ]
+    );
+    let denied = runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap_err();
+    assert!(
+        matches!(
+            denied,
+            varta_runtime::RuntimeError::Scheduler(SchedulerError::TimerDenied)
+        ),
+        "{denied:?}"
+    );
+    let ceiling = runtime
+        .run_wasm_bytes_with_policy(&compiled.wasm, std::slice::from_ref(&grant), &[])
+        .unwrap_err();
+    assert!(ceiling.to_string().contains("time.timer"), "{ceiling}");
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V35)
+        .err()
+        .unwrap()
+        .to_string();
+    // V35 keeps rejecting the timer globals as unknown calls.
+    assert!(
+        frozen.contains("unsupported call") && frozen.contains("setTimeout"),
+        "{frozen}"
+    );
+}

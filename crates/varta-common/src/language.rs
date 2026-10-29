@@ -437,9 +437,12 @@ impl LanguageProfile {
     pub fn async_generators(self) -> bool {
         self == Self::CheckedF64Utf16V36
     }
-    /// Pilot batch v36, timers stream: `setTimeout`/`clearTimeout` and
-    /// timer-driven promises; host imports it adds use
-    /// [`crate::abi::TIMERS_VERSION`]. Admits nothing yet.
+    /// Pilot batch v36, timers stream: `setTimeout`/`clearTimeout`,
+    /// `setInterval`/`clearInterval`, timer-driven promises and
+    /// `AbortSignal.timeout` on the runtime event loop. Its host imports
+    /// ([`crate::HostOperation::timer`]) require
+    /// [`crate::abi::TIMERS_VERSION`]; arming a timer requires the exact
+    /// `time.timer` grant.
     #[must_use]
     pub fn timers(self) -> bool {
         self == Self::CheckedF64Utf16V36
@@ -2314,8 +2317,8 @@ mod tests {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }
         }
-        // V36 has its own host ABI 32 for the batch's host imports (none yet)
-        // and shares value ABI/layout 16, exception channel v7 and JSON schema
+        // V36 has its own host ABI 32 for the batch's host imports (the
+        // timer operations) and shares value ABI/layout 16, exception channel v7 and JSON schema
         // 16 with v35.
         assert_eq!(new.host_abi(), crate::abi::TIMERS_VERSION);
         assert_eq!(old.host_abi(), crate::abi::PROMISE_VALUES_VERSION);
@@ -2342,8 +2345,8 @@ mod tests {
             crate::function::admission::frame_catalog_version(new),
             crate::function::admission::frame_catalog_version(old)
         );
-        // Every host operation, including the value16 readers, binds exactly
-        // as under v35; no registered operation requires host ABI 32 yet.
+        // Every v35 host operation, including the value16 readers, binds
+        // exactly as under v35; only the timer operations require host ABI 32.
         for operation in [
             H::LogString,
             H::LogFloat,
@@ -2365,6 +2368,23 @@ mod tests {
             );
             assert!(new.host_operation(operation).minimum_abi() <= old.host_abi());
         }
+        for operation in [H::TimerStart, H::TimerClear, H::TimerTake, H::TimerUncaught] {
+            assert!(operation.timer() && !operation.scheduler());
+            assert_eq!(operation.minimum_abi(), crate::abi::TIMERS_VERSION);
+            assert!(operation.minimum_abi() > old.host_abi());
+            assert_eq!(new.host_operation(operation), operation);
+            assert_eq!(H::from_name(operation.name()), Some(operation));
+            assert!(!operation.returns_string() && !operation.needs_result_globals());
+            // Only arming a timer is privileged; the rest is bookkeeping.
+            assert_eq!(
+                operation.capability(),
+                (operation == H::TimerStart).then_some(crate::scheduler::TIMER_CAPABILITY)
+            );
+        }
+        assert_eq!(
+            crate::capability_kind(crate::scheduler::TIMER_CAPABILITY),
+            Some(crate::GrantKind::Boolean)
+        );
         assert_eq!(
             serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v36\"").unwrap(),
             new

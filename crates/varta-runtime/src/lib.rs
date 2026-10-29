@@ -152,6 +152,8 @@ mod record_tests;
 mod reduce_right_tests;
 mod scheduler;
 #[cfg(test)]
+mod timer_tests;
+#[cfg(test)]
 mod truth_guard_tests;
 #[cfg(test)]
 mod undefined_tests;
@@ -401,20 +403,7 @@ impl VartaRuntime {
             scheduler::checkpoint(&instance, store)?;
             Ok::<(), RuntimeError>(())
         })();
-        // Scheduler failures inside guest calls keep their typed error.
-        let result = result.map_err(|error| match error {
-            RuntimeError::Execution(source)
-                if source
-                    .downcast_ref::<varta_common::scheduler::SchedulerError>()
-                    .is_some() =>
-            {
-                match source.downcast::<varta_common::scheduler::SchedulerError>() {
-                    Ok(error) => RuntimeError::Scheduler(error),
-                    Err(source) => RuntimeError::Execution(source),
-                }
-            }
-            other => other,
-        });
+        let result = result.map_err(scheduler::typed);
         let store = &mut execution.store;
         let exited = result.is_err();
         if let Err(error) = result {

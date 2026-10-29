@@ -422,7 +422,11 @@ impl Lower<'_> {
             }
             ast::ArrowFunctionBody::Expr(expr) => {
                 let value = child.expr_expected(expr, result)?;
-                if result == Some(Type::Void) && value.ty == Type::Undefined {
+                // V36 (`timers`): as in TypeScript, a void context discards
+                // the value of an expression body, so `(resolve) =>
+                // setTimeout(resolve, ms)` is a void executor.
+                let discarded = child.types.profile.timers() && value.ty != Type::Void;
+                if result == Some(Type::Void) && (value.ty == Type::Undefined || discarded) {
                     vec![S::Expr(value), S::Return(None)]
                 } else {
                     if result.is_some_and(|ty| ty != value.ty) {
