@@ -132,7 +132,9 @@ fn admissible(program: &ir::Program, index: usize) -> Result<()> {
             .is_some_and(|(http, _)| *http == index)
     {
         Some("an entry function")
-    } else if function.environment || function.self_slot.is_some() {
+    } else if function.self_slot.is_some()
+        || function.environment && !async_closure_body(program, index)
+    {
         Some("a closure")
     } else if function.receiver.is_some() {
         Some("a method")
@@ -149,6 +151,12 @@ fn admissible(program: &ir::Program, index: usize) -> Result<()> {
             .locate(rejected(reason), suspension_span(&function.body))),
         None => Ok(()),
     }
+}
+
+/// The scheduled body of an async closure (v35 `async_methods`): an
+/// environment function whose captured cells its frame keeps as shared slots.
+fn async_closure_body(program: &ir::Program, index: usize) -> bool {
+    program.types.profile.async_methods() && program.types.asynchrony.scheduled.contains(&index)
 }
 
 /// Suspendable functions are not ordinary callables until generator/async

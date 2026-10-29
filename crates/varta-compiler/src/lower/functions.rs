@@ -217,10 +217,11 @@ impl Lower<'_> {
     }
     pub(super) fn arrow(&mut self, arrow: &ast::ArrowExpr, expected: Option<Type>) -> Result<Expr> {
         required(self.types)?;
-        if arrow.is_async && self.types.profile.async_functions() {
+        let asynchronous = arrow.is_async && self.types.profile.async_methods();
+        if arrow.is_async && !asynchronous && self.types.profile.async_functions() {
             return Err(promises::rejected("async arrow function"));
         }
-        if arrow.is_async || arrow.is_generator || arrow.type_params.is_some() {
+        if arrow.is_async && !asynchronous || arrow.is_generator || arrow.type_params.is_some() {
             return Err(unsupported("async/generic/generator arrow"));
         }
         let expected = match expected {
@@ -261,7 +262,10 @@ impl Lower<'_> {
             self_name,
         } = context;
         required(self.types)?;
-        if arrow.is_async || arrow.is_generator || arrow.type_params.is_some() {
+        // Async arrows and function expressions are split into a wrapper and
+        // a scheduled body over the closure's own captures (v35).
+        let asynchronous = arrow.is_async && self.types.profile.async_methods();
+        if arrow.is_async && !asynchronous || arrow.is_generator || arrow.type_params.is_some() {
             return Err(unsupported("async/generic/generator arrow"));
         }
         let plans = parameters::analyze(
@@ -298,9 +302,23 @@ impl Lower<'_> {
         } else {
             None
         };
-        let infer_returns = infer_block
-            && result.is_none()
-            && matches!(&*arrow.body, ast::ArrowFunctionBody::FunctionBody(_));
+        // An async closure's body returns the promise's `T`; without an
+        // annotation or context a block body infers it from its returns.
+        let promise = match result {
+            Some(Type::Promise(id)) if asynchronous => Some(id),
+            Some(other) if asynchronous => {
+                return Err(type_error(format!(
+                    "async function must return Promise<T>, not {other}"
+                )));
+            }
+            _ => None,
+        };
+        let result = match promise {
+            Some(id) => Some(self.types.promises[id as usize].value),
+            None => result,
+        };
+        let block = matches!(&*arrow.body, ast::ArrowFunctionBody::FunctionBody(_));
+        let infer_returns = (infer_block || asynchronous) && result.is_none() && block;
         let index = *self.next_function;
         if index >= varta_common::abi::MAX_USER_FUNCTIONS {
             return Err(invalid("too many functions including arrows"));
@@ -362,7 +380,8 @@ impl Lower<'_> {
             cells: Default::default(),
             guarded: Default::default(),
             generator: None,
-            asynchronous: None,
+            // An unknown promise type until inference fixes it.
+            asynchronous: asynchronous.then_some(promise.unwrap_or(u32::MAX)),
         };
         if let Some(ty) = receiver {
             child.declare("this", Some(ty), true, false)?;
@@ -387,9 +406,14 @@ impl Lower<'_> {
         } else {
             None
         };
+        // The async body takes its promise right after the parameters.
+        let promise_slot = asynchronous.then(|| child.hidden(Type::Void));
         let mut prologue = child.initialize_parameters(&plans, receiver.is_some())?;
         let body = match &*arrow.body {
             ast::ArrowFunctionBody::FunctionBody(block) => child.block(&block.stmts, false)?,
+            ast::ArrowFunctionBody::Expr(expr) if asynchronous => {
+                child.async_expression_body(expr, result)?
+            }
             ast::ArrowFunctionBody::Expr(expr) => {
                 let value = child.expr_expected(expr, result)?;
                 if result == Some(Type::Void) && value.ty == Type::Undefined {
@@ -406,14 +430,29 @@ impl Lower<'_> {
         prologue.extend(body);
         let mut body = prologue;
         if infer_returns {
-            child.infer_callback_returns(&mut body, arrow.span)?;
+            child.infer_callback_returns(&mut body, arrow.span, asynchronous)?;
+            if let Some(Type::Promise(id)) = asynchronous
+                .then(|| promises::intern(child.result, child.types))
+                .transpose()?
+            {
+                child.asynchronous = Some(id);
+            }
         }
         super::link::finish_body(&mut child, &mut body, arrow.span)?;
+        let callable_result = match promise_slot {
+            Some(slot) => {
+                let ty = promises::intern(child.result, child.types)
+                    .map_err(|error| child.source.locate(error, arrow.span))?;
+                child.local_types.insert(slot, ty);
+                ty
+            }
+            None => child.result,
+        };
         let ty = intern_full(
             receiver,
             params.clone(),
             shape.clone(),
-            child.result,
+            callable_result,
             child.types,
         )?;
         let mut physical_params: Vec<_> =
@@ -434,28 +473,47 @@ impl Lower<'_> {
         let captured: Vec<_> = child.captures.values().cloned().collect();
         let effects = child.flow_summary();
         child.call_effects.insert(index, effects);
-        let function = ir::Function {
-            shape,
-            self_slot,
-            receiver,
-            cells: std::mem::take(&mut child.cells),
-            captures: captured.iter().map(|binding| binding.slot).collect(),
-            environment: child.types.profile.closures(),
-            generator: None,
-            source: child.source.clone(),
-            span: arrow.span,
-            params: physical_params,
-            result: child.result,
-            locals: (0..child.next)
-                .map(|slot| {
-                    child
-                        .local_types
-                        .get(&slot)
-                        .copied()
-                        .unwrap_or(Type::Number)
-                })
-                .collect(),
-            body: std::mem::take(&mut body),
+        let function = if let Some(promise) = promise_slot {
+            let source = child.source;
+            child.split_async(
+                promises::AsyncSplit {
+                    incoming: physical_params,
+                    shape,
+                    receiver,
+                    self_slot,
+                    captures: captured.iter().map(|binding| binding.slot).collect(),
+                    environment: child.types.profile.closures(),
+                    promise,
+                    entry: false,
+                    span: arrow.span,
+                    source,
+                },
+                std::mem::take(&mut body),
+            )?
+        } else {
+            ir::Function {
+                shape,
+                self_slot,
+                receiver,
+                cells: std::mem::take(&mut child.cells),
+                captures: captured.iter().map(|binding| binding.slot).collect(),
+                environment: child.types.profile.closures(),
+                generator: None,
+                source: child.source.clone(),
+                span: arrow.span,
+                params: physical_params,
+                result: child.result,
+                locals: (0..child.next)
+                    .map(|slot| {
+                        child
+                            .local_types
+                            .get(&slot)
+                            .copied()
+                            .unwrap_or(Type::Number)
+                    })
+                    .collect(),
+                body: std::mem::take(&mut body),
+            }
         };
         child.generated.insert(index, function);
         let captures = captured

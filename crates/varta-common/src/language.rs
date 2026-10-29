@@ -342,14 +342,16 @@ impl LanguageProfile {
     }
     /// Pilot batch v35, async stream: `async` class methods, async arrow
     /// functions and async function expressions over the continuation frames
-    /// and [`Self::promises`]. Admits nothing yet.
+    /// and [`Self::promises`]; async closure bodies keep their captured cells
+    /// as shared frame slots.
     #[must_use]
     pub fn async_methods(self) -> bool {
         self == Self::CheckedF64Utf16V35
     }
-    /// Pilot batch v35, async stream: promises as tagged values (in arrays,
-    /// unions and `unknown`) and the `Promise.all`/`allSettled`/`race`/`any`
-    /// combinators. Admits nothing yet.
+    /// Pilot batch v35, async stream: value layout 16
+    /// ([`crate::value::PROMISE_VALUE_VERSION`]), promises as tagged values
+    /// (in arrays, unions and `unknown`) and the
+    /// `Promise.all`/`allSettled`/`race`/`any` combinators.
     #[must_use]
     pub fn promise_values(self) -> bool {
         self == Self::CheckedF64Utf16V35

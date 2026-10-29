@@ -480,7 +480,7 @@ streams rebase onto it.
 | `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Registered, admits nothing |
 | `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Registered, admits nothing |
 | `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Registered, admits nothing |
-| `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Registered, admits nothing |
+| `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Implemented on `v35-async`; generic methods stay rejected with all generic methods |
 | `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Registered, admits nothing |
 | `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Registered, admits nothing |
 

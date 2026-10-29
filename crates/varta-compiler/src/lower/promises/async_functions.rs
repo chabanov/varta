@@ -43,6 +43,57 @@ impl Lower<'_> {
     }
 }
 
+impl Lower<'_> {
+    /// The body of an expression-bodied async arrow (v35). `result` is the
+    /// promise's `T` when an annotation or context fixes it; otherwise the
+    /// value's type does, and a promise value is adopted.
+    pub(in crate::lower) fn async_expression_body(
+        &mut self,
+        expr: &ast::Expr,
+        result: Option<Type>,
+    ) -> Result<Vec<S>> {
+        let value = self.expr_expected(expr, result.filter(|ty| *ty != Type::Void))?;
+        let Some(result) = result else {
+            return Ok(match value.ty {
+                Type::Promise(id) => {
+                    self.result = self.types.promises[id as usize].value;
+                    self.asynchronous = Some(id);
+                    vec![S::Return(Some(value))]
+                }
+                Type::Void => {
+                    self.result = Type::Void;
+                    vec![S::Expr(value), S::Return(None)]
+                }
+                ty => {
+                    self.result = ty.erased();
+                    let value = unions::widen(value, Some(self.result), self.types)?;
+                    vec![S::Return(Some(value))]
+                }
+            });
+        };
+        if result == Type::Void && matches!(value.ty, Type::Void | Type::Undefined) {
+            return Ok(vec![S::Expr(value), S::Return(None)]);
+        }
+        if self
+            .asynchronous
+            .is_some_and(|id| value.ty == Type::Promise(id))
+        {
+            return Ok(vec![S::Return(Some(value))]);
+        }
+        let value = unions::widen(value, Some(result), self.types)?;
+        if value.ty != result {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "async arrow result mismatch: expected {result}, found {}",
+                    value.ty
+                )),
+                value.span,
+            ));
+        }
+        Ok(vec![S::Return(Some(value))])
+    }
+}
+
 /// Exit of a rewritten async body: a `return` stores its value and leaves
 /// the labelled body, which then settles the async function's promise.
 struct Exit {
@@ -139,18 +190,57 @@ fn rewrite_statement(statement: S, exit: &Exit) -> S {
     }
 }
 
-/// Split a lowered `async function` into its wrapper and its scheduled body.
-/// The wrapper (at the declaration's own index, so every call and function
-/// value reaches it) creates the promise, starts the body frame and returns
-/// the promise. The body takes the promise as its last parameter and settles
-/// it on every completion: a returned value fulfills, a returned promise is
-/// adopted and an uncaught exception rejects.
+/// Split a lowered async function, method or closure into its wrapper and its
+/// scheduled body. The wrapper (at the declaration's own index, so every call,
+/// dispatch and function value reaches it) creates the promise, starts the
+/// body frame and returns the promise. The body takes the wrapper's physical
+/// parameters (a method's receiver is its first, plain parameter) followed by
+/// the promise, and settles it on every completion: a returned value fulfills,
+/// a returned promise is adopted and an uncaught exception rejects.
+///
+/// A closure's body is itself an environment function with the closure's
+/// captures (v35 `async_methods`): the wrapper forwards its own environment,
+/// so the body frame keeps the very binding cells the closure captured.
 pub(in crate::lower) struct AsyncSplit<'s> {
-    pub signature: &'s Signature,
+    /// The wrapper's physical parameters: receiver, parameters, self value.
+    pub incoming: Vec<Type>,
+    pub shape: ir::ParameterShape,
+    pub receiver: Option<Type>,
+    pub self_slot: Option<u32>,
+    /// Captured binding slots of an async closure (empty otherwise).
+    pub captures: Vec<u32>,
+    pub environment: bool,
     pub promise: u32,
     pub entry: bool,
     pub span: swc_common::Span,
     pub source: &'s Source,
+}
+impl<'s> AsyncSplit<'s> {
+    /// The split of a declaration or class method lowered from `signature`.
+    pub(in crate::lower) fn declaration(
+        signature: &Signature,
+        promise: u32,
+        entry: bool,
+        span: swc_common::Span,
+        source: &'s Source,
+    ) -> Self {
+        Self {
+            incoming: signature
+                .receiver
+                .into_iter()
+                .chain(signature.params.iter().copied())
+                .collect(),
+            shape: signature.shape.clone(),
+            receiver: signature.receiver,
+            self_slot: None,
+            captures: Vec::new(),
+            environment: false,
+            promise,
+            entry,
+            span,
+            source,
+        }
+    }
 }
 impl Lower<'_> {
     pub(in crate::lower) fn split_async(
@@ -159,12 +249,22 @@ impl Lower<'_> {
         statements: Vec<S>,
     ) -> Result<ir::Function> {
         let AsyncSplit {
-            signature,
+            incoming,
+            shape,
+            receiver,
+            self_slot,
+            captures,
+            environment,
             promise,
             entry,
             span,
             source,
         } = split;
+        if promise as usize != incoming.len() {
+            return Err(CompilerError::Internal(
+                "async promise slot must follow the parameters".into(),
+            ));
+        }
         let promise_ty = Type::Promise(promise_id(self, promise)?);
         let Type::Promise(id) = promise_ty else {
             return Err(CompilerError::Internal("missing async promise".into()));
@@ -219,65 +319,76 @@ impl Lower<'_> {
                 marker,
             },
         ]);
-        let mut params: Vec<Type> = signature.params.clone();
+        let mut params = incoming.clone();
         params.push(promise_ty);
         let index = *self.next_function;
         if index >= varta_common::abi::MAX_USER_FUNCTIONS {
             return Err(invalid("too many functions including async bodies"));
         }
         *self.next_function += 1;
+        let locals: Vec<Type> = (0..self.next)
+            .map(|slot| self.local_types.get(&slot).copied().unwrap_or(Type::Number))
+            .collect();
+        // The wrapper needs its parameters, the promise and the captured
+        // cells it validates; every other slot is an unused scalar.
+        let used = captures.iter().copied().fold(promise, u32::max) as usize + 1;
+        let wrapper_locals = locals[..used]
+            .iter()
+            .enumerate()
+            .map(|(slot, ty)| {
+                let slot = slot as u32;
+                if slot <= promise || captures.contains(&slot) {
+                    *ty
+                } else {
+                    Type::Number
+                }
+            })
+            .collect();
         let body_function = ir::Function {
             shape: ir::ParameterShape::fixed(params.len()),
             self_slot: None,
             receiver: None,
             cells: std::mem::take(&mut self.cells),
-            captures: vec![],
-            environment: false,
+            captures: captures.clone(),
+            environment,
             generator: None,
             source: source.clone(),
             span,
-            params: params.clone(),
+            params,
             result: Type::Void,
-            locals: (0..self.next)
-                .map(|slot| self.local_types.get(&slot).copied().unwrap_or(Type::Number))
-                .collect(),
+            locals,
             body,
         };
         self.generated.insert(index, body_function);
         self.types.asynchrony.scheduled.insert(index);
-        // The wrapper keeps the declaration's index and source signature.
-        let mut locals = signature.params.clone();
-        let slot = locals.len() as u32;
-        locals.push(promise_ty);
-        let mut args: Vec<Expr> = signature
-            .params
+        let mut args: Vec<Expr> = incoming
             .iter()
             .enumerate()
             .map(|(index, ty)| local(span, index as u32, *ty))
             .collect();
-        args.push(local(span, slot, promise_ty));
+        args.push(local(span, promise, promise_ty));
         let mut wrapper = vec![
-            S::Init(slot, self.promise_object(span, id, None)?),
+            S::Init(promise, self.promise_object(span, id, None)?),
             schedule(span, index, args, ScheduleMode::Start),
         ];
         wrapper.push(if entry {
             S::Return(None)
         } else {
-            S::Return(Some(local(span, slot, promise_ty)))
+            S::Return(Some(local(span, promise, promise_ty)))
         });
         Ok(ir::Function {
-            shape: signature.shape.clone(),
-            self_slot: None,
-            receiver: None,
-            cells: Default::default(),
-            captures: vec![],
-            environment: false,
+            shape,
+            self_slot,
+            receiver,
+            cells: captures.iter().copied().collect(),
+            captures,
+            environment,
             generator: None,
             source: source.clone(),
             span,
-            params: signature.params.clone(),
+            params: incoming,
             result: if entry { Type::Void } else { promise_ty },
-            locals,
+            locals: wrapper_locals,
             body: wrapper,
         })
     }

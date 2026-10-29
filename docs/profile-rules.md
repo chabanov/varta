@@ -2351,3 +2351,24 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
 - A stream that needs another layout-bound operation or tag under v35 rebases
   onto this layout and adds the value16 variant only; it does not bump the
   value or host ABI again in this batch.
+
+### Async methods and closures (`async_methods`)
+
+- Split every async method, arrow and function expression through
+  `AsyncSplit` (`lower::promises::async_functions`): the wrapper keeps the
+  source function's index, receiver, self slot, captures and shape; the body
+  takes the wrapper's physical parameters plus the promise, which must be the
+  slot right after them. Never give the body a receiver or a self slot.
+- An async closure's body is an environment function with the closure's
+  captures; `Schedule` forwards the wrapper's environment
+  (`Emitter::environment_param`) and the frame creator stores captured cells as
+  shared slots. Do not copy captured values into the body: mutable captures
+  must stay one cell. `suspension::admissible` admits environment functions only
+  for v35 scheduled bodies; generator closures and self slots stay rejected.
+- Keep v34 frozen: async instance methods, async arrows and function
+  expressions, async optional/rest parameters and `Promise<T>` inference in
+  generic calls are gated on `async_methods()`; v34 keeps its diagnostics.
+- Tests compare against pinned Node logs (`varta-runtime`
+  `async_method_tests`, `async_method_cases`); GC tests force a collection
+  before every job with the test hook, paying collections from a test-only
+  fuel refill, never by raising a production budget.

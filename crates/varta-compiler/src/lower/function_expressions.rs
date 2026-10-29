@@ -57,10 +57,11 @@ impl Lower<'_> {
             ));
         }
         let function = &expression.function;
-        if function.is_async && self.types.profile.async_functions() {
+        let asynchronous = function.is_async && self.types.profile.async_methods();
+        if function.is_async && !asynchronous && self.types.profile.async_functions() {
             return Err(promises::rejected("async function expression"));
         }
-        if function.is_async
+        if function.is_async && !asynchronous
             || function.is_generator
             || function.type_params.is_some()
             || !function.decorators.is_empty()
@@ -100,6 +101,7 @@ impl Lower<'_> {
             params: positional,
             body: Box::new(ast::ArrowFunctionBody::FunctionBody(body.clone())),
             return_type: function.return_type.clone(),
+            is_async: asynchronous,
             ..Default::default()
         };
         self.arrow_context(

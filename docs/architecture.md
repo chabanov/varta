@@ -6684,7 +6684,8 @@ bumps and the other streams rebase onto them, adding value16 variants of any
 layout-bound operation they need. V34 and earlier profiles keep their host ABI,
 value ABI and layouts.
 
-Seven selectors gate the batch's work streams, and all admit nothing yet:
+Seven selectors gate the batch's work streams (subsections below specify the
+implemented ones):
 
 - Web stream: `web_headers()` (an engine-provided typed `Headers` class,
   implemented in the guest and requiring no capability) and `abort_signals()`
@@ -6748,6 +6749,49 @@ compile the value15, unknown, generator and promise cases under v34 and v35 and
 require identical output, and check that v35 imports only value16 readers and
 exports channel v7, that swapped readers and channels are rejected before guest
 effects and that a value15-stamped descriptor fails under v35.
+
+#### Async methods and closures (`async_methods`)
+
+V35 admits `async` on class instance methods (including overrides in
+subclasses and `super.m()` calls), on async arrows and on async function
+expressions, named ones included. V34 already compiled `static async` methods
+as receiver-free async functions; v35 keeps that. Every such function has an
+explicit `Promise<T>` result or one fixed by its context (a typed binding, a
+parameter such as `() => Promise<T>`, or a `then`/`catch` handler). Without
+either, an expression-bodied async arrow takes `T` from its value (a promise
+value is adopted) and a block-bodied one infers `T` like other callbacks,
+where a returned `Promise<U>` contributes `U`. Async functions, methods and
+closures of v35 also admit optional, default and rest parameters: callers pad
+and gather them as for synchronous calls, and defaults run in the body before
+its first `await`, so an exception there rejects the promise. A `Promise<T>`
+parameter pattern of a generic function now infers `T` from a promise
+argument. Generic methods and generic classes stay rejected as for every
+method; async generators, `for await` and top-level `await` stay rejected.
+
+- **Split.** Each one is split like an async function declaration: the
+  wrapper keeps the source function's index, receiver, self binding, captures
+  and parameter shape, so calls, virtual dispatch, `super` calls and function
+  values reach it; it creates the promise, starts the body frame and returns
+  the promise. The body takes the wrapper's physical parameters (a method's
+  `this` is its first, plain parameter) followed by the promise, and settles
+  the promise on every completion.
+- **Closure frames.** The body of an async closure is itself an environment
+  function with the closure's captures. The wrapper forwards its own
+  environment to it (the only new emission path, `Schedule` of an environment
+  function), and the frame creator stores each captured binding cell in the
+  frame as a shared slot. Captured bindings are therefore the very cells the
+  enclosing function and other closures use: writes on either side of an
+  `await` are seen by both, as in JavaScript. Frame slot allocation, the
+  dispatcher and the frame catalog format are unchanged; the body frame is an
+  ordinary scheduled frame (`generator: false`, `undefined` inputs).
+- **Roots.** A method's receiver, an async closure's captured cells and every
+  saved local are frame slots, rooted while the frame is suspended, queued or
+  registered as a reaction; `varta-runtime` `async_method_tests` forces a
+  collection before every job and checks the logs.
+- **Budgets.** Async methods and closures draw on the one execution budget
+  like every job: `await` never renews fuel, deadline or host calls, and
+  exhaustion inside their jobs is fatal, never a rejection. A rejected promise
+  nobody handles terminates the execution after the checkpoint.
 
 ## Local modules
 

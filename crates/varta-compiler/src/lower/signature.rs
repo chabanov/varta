@@ -67,7 +67,9 @@ pub(super) fn check(
             declaration.ident.span,
         ));
     }
-    if asynchronous && shape.extended() {
+    // V35 splits optional, default and rest parameters like any other: the
+    // caller pads and gathers them, so the scheduled body takes fixed slots.
+    if asynchronous && shape.extended() && !types.profile.async_methods() {
         return Err(source.locate(
             promises::rejected("async function with optional or rest parameters"),
             declaration.ident.span,

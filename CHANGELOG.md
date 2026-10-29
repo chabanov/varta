@@ -18,6 +18,14 @@ in [conformance/README.md](conformance/README.md).
   `mixed_index_records`, `unknown_json`, `async_methods`, `promise_values` and
   `frame_liveness`.
 
+- Async class methods, async arrows and async function expressions under
+  opt-in v35 (selector `async_methods`): instance methods with overrides and
+  awaited `super.m()` calls, async closures that share their captured bindings
+  across `await`, contextual or inferred `Promise<T>` results, optional,
+  default and rest parameters in every async function, and `Promise<T>`
+  inference in generic calls. Receivers and captured cells are exact frame
+  roots; job order matches Node.
+
 - Value layout 16 for v35 (`promise_values` foundation): value ABI 16 adds the
   promise value tag to every value15 layout, read by thirteen value16 host
   operations that mirror their value15 counterparts (host ABI 31), exception

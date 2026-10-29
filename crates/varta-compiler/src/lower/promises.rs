@@ -763,7 +763,7 @@ impl Lower<'_> {
             ast::Expr::Ident(id) if id.sym == "undefined" && self.binding("undefined").is_err() => {
                 return Ok(None);
             }
-            ast::Expr::Arrow(arrow) if arrow.is_async => {
+            ast::Expr::Arrow(arrow) if arrow.is_async && !self.types.profile.async_methods() => {
                 return Err(self
                     .source
                     .locate(rejected("async arrow function"), arrow.span));

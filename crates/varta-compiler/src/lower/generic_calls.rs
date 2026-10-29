@@ -132,6 +132,26 @@ impl Inference {
                     _ => Ok(()),
                 }
             }
+            // `Promise<T>` against a promise infers `T` from its value (v35).
+            ast::TsType::TsTypeRef(reference)
+                if types.profile.async_methods()
+                    && matches!(&reference.type_name, ast::TsEntityName::Ident(id)
+                    if id.sym == "Promise"
+                        && !in_definition(self.module, &Frame::new(), types, |t| {
+                            named::declared(t, "Promise")
+                        })) =>
+            {
+                match (
+                    reference.type_params.as_deref().map(|p| &p.params[..]),
+                    actual,
+                ) {
+                    (Some([value]), Type::Promise(id)) => {
+                        let stored = types.promises[id as usize].value;
+                        self.unify(value, stored, types, depth + 1)
+                    }
+                    _ => Ok(()),
+                }
+            }
             ast::TsType::TsUnionOrIntersectionType(
                 ast::TsUnionOrIntersectionType::TsUnionType(union),
             ) => self.union(union, actual, types, depth),

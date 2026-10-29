@@ -9,6 +9,8 @@ pub use modules::{Compilation, ModuleLoader, ModuleSource};
 #[cfg(test)]
 mod array_tests;
 #[cfg(test)]
+mod async_method_tests;
+#[cfg(test)]
 mod generator_tests;
 #[cfg(test)]
 mod http_tests;
