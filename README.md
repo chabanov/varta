@@ -136,6 +136,7 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v33` | Suspension frames and sync generators (in development) |
 | `checked-f64-utf16-v34` | Pilot batch (in development): index signatures, recursive and wide records, `unknown` and checked `as`, Promise and async/await |
 | `checked-f64-utf16-v35` | Pilot batch in development: Web types, mixed records, async methods, frame liveness |
+| `checked-f64-utf16-v36` | Pilot batch in development: checked declared fields, function fields, async generators, timers |
 <!-- generated:profile-index:end -->
 
 ## Commands

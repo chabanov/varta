@@ -37,6 +37,11 @@ pub const SCHEDULED_FRAMES_VERSION: u32 = 30;
 /// Pilot batch v35: the value16 readers (`HostOperation::value15_counterpart`)
 /// bound to value layout 16, which adds promise values.
 pub const PROMISE_VALUES_VERSION: u32 = 31;
+/// Pilot batch v36 (timers and function-valued fields): the minimum host ABI
+/// of every import the batch adds, such as the timer operations behind
+/// `setTimeout`/`clearTimeout`. No import requires it yet; it binds v36 alone,
+/// so a v36 module relabelled as v35 fails at its host ABI section.
+pub const TIMERS_VERSION: u32 = 32;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -72,6 +77,7 @@ pub fn supported(version: u32) -> bool {
             | RESUMABLE_FRAMES_VERSION
             | SCHEDULED_FRAMES_VERSION
             | PROMISE_VALUES_VERSION
+            | TIMERS_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";

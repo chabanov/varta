@@ -11463,7 +11463,7 @@ fn pilot_profile_v35_declares_value16_and_host_abi_31_through_both_binaries() {
     const PROFILE: &str = "checked-f64-utf16-v35";
     // An unregistered successor of the same length: every binary sees it as a
     // v34 binary sees v35.
-    const UNKNOWN: &str = "checked-f64-utf16-v36";
+    const UNKNOWN: &str = "checked-f64-utf16-v37";
     let project = RegressionProject::new(
         "import {label} from './api.ts';export function main():void{console.log(label(35));}",
         serde_json::json!({}),
@@ -11539,6 +11539,99 @@ fn pilot_profile_v35_declares_value16_and_host_abi_31_through_both_binaries() {
     );
     fs::write(&wasm, renamed).unwrap();
     rejects("invalid language profile");
+}
+
+#[test]
+fn pilot_profile_v36_declares_host_abi_32_with_value16_through_both_binaries() {
+    use varta_common::{abi, value};
+    const PROFILE: &str = "checked-f64-utf16-v36";
+    // An unregistered successor of the same length: every binary sees it as a
+    // v35 binary sees v36.
+    const UNKNOWN: &str = "checked-f64-utf16-v37";
+    // The predecessor of the same length, whose host ABI is 31.
+    const PREDECESSOR: &str = "checked-f64-utf16-v35";
+    let project = RegressionProject::new(
+        "import {label} from './api.ts';export function main():void{console.log(label(36));}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/api.ts"),
+        "class Probe{n:number;constructor(n:number){this.n=n;}}export function label(n:number):string{const scores:Record<string,number>={v:new Probe(n).n};return JSON.stringify(scores);}",
+    )
+    .unwrap();
+    project.language_profile(PROFILE);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        let inspect = project.command(&["inspect", artifact, "--json"]);
+        assert!(inspect.status.success(), "{}", combined(&inspect));
+        let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+        assert_eq!(info["language"]["profile"], PROFILE);
+        assert_eq!(info["abiVersion"], abi::TIMERS_VERSION);
+        assert_eq!(info["valueAbiVersion"], value::PROMISE_VALUE_VERSION);
+    }
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), [r#"varta log: {"v":36}"#]);
+    }
+    let wasm = project.0.join("dist/app.wasm");
+    let original = fs::read(&wasm).unwrap();
+    let rejects = |expected: &str| {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            let output = command
+                .args(["run", "dist/app.wasm"])
+                .current_dir(&project.0)
+                .output()
+                .unwrap();
+            assert!(!output.status.success(), "{}", combined(&output));
+            assert!(logs(&output).is_empty(), "{}", combined(&output));
+            assert!(
+                combined(&output).contains(expected),
+                "{}",
+                combined(&output)
+            );
+        }
+    };
+    // Renames the declared profile in the Wasm language section in place.
+    let rename = |to: &str| {
+        let mut renamed = original.clone();
+        let at = renamed
+            .windows(PROFILE.len())
+            .position(|window| window == PROFILE.as_bytes())
+            .unwrap();
+        renamed[at..at + to.len()].copy_from_slice(to.as_bytes());
+        assert!(
+            !renamed
+                .windows(PROFILE.len())
+                .any(|window| window == PROFILE.as_bytes())
+        );
+        renamed
+    };
+    // A profile the binaries do not list fails before any guest output.
+    fs::write(&wasm, rename(UNKNOWN)).unwrap();
+    rejects("invalid language profile");
+    // Relabelled as v35, the module keeps host ABI 32 and fails at its host
+    // ABI section before any guest output.
+    fs::write(&wasm, rename(PREDECESSOR)).unwrap();
+    rejects("matching host ABI");
 }
 
 #[test]

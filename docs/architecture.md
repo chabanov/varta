@@ -156,10 +156,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
+| `checked-f64-utf16-v36` | 32 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **31**, value ABI **16**, HTTP contract **1** and **38** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **32**, value ABI **16**, HTTP contract **1** and **39** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -5984,7 +5985,7 @@ guest effect. The runtime reports a failure as the typed
 `RuntimeError::Frames`; artifact I/O reports it as an invalid artifact.
 
 - **Catalog reader.** A `resumable_frames()` profile reads catalog versions 1
-  and 2 (v35, a `frame_liveness()` profile, reads versions 1 and 3 instead, see
+  and 2 (v35 and v36, the `frame_liveness()` profiles, read versions 1 and 3 instead, see
   [frame liveness](#frame-liveness-frame_liveness)). Every other profile keeps
   the version 1 reader, which never accepts versions 2 or 3; a frame catalog
   under such a profile fails as a profile that does not admit resumable frames. Duplicate catalog sections, unknown fields,
@@ -6578,7 +6579,7 @@ trap before any effect.
   `<reason not retained>`. These bounds change no guest-observable behaviour
   (the same reports are made and withdrawn, and the same executions
   terminate), only the diagnostic text, so they apply to every scheduler
-  profile (v34 and v35). Values are in the [limits table](#resource-limits).
+  profile (v34 to v36). Values are in the [limits table](#resource-limits).
 - **Entry points.** Only `main` gets a checkpoint. Tool and HTTP contracts are
   rejected in every binary64 profile, so async tool handlers and HTTP adapters
   cannot be declared; a request-scoped isolate with its own checkpoint is the
@@ -7239,6 +7240,55 @@ dispatch, rooting and diagnostics for each type.
   (`Array.isArray` distinguishes a record init from a sequence), a bound that
   `web_headers_tests` pins; `abort` makes one host call for its `undefined`
   reason check. Production budgets are unchanged.
+
+### `checked-f64-utf16-v36` — Pilot batch: checked declared fields, function fields, async generators and timers
+
+V36 is registered and inherits every v35 feature and selector, including value
+layout 16 (`promise_values()`) with the value16 host readers, exception channel
+v7, JSON schema 16 (`json_stringify_v15`, `json_parse_v17`), the microtask
+scheduler and frame catalog version 3 (`frame_liveness()`). Wherever a v35
+subsection above admits a feature, layout or binding for v35 only, it applies
+to v35 and v36; v34 and earlier profiles stay frozen. V36 declares one version
+identity of its own (see the [version matrix](#version-matrix)):
+
+- **Host ABI** `abi::TIMERS_VERSION` (32), for v36 alone. It adds no host
+  import yet: every v35 operation keeps its signature, binding and minimum ABI,
+  and no registered operation requires host ABI 32. Host imports added in this
+  batch (the timer operations first) use host ABI 32 as their minimum.
+- **Value ABI and layout** `value::PROMISE_VALUE_VERSION` (value16), shared
+  with v35. V36 adds no value tag or layout yet; `LanguageProfile::value_layout`
+  equals `value_abi`, so descriptors, catalogs, frames and exception cells are
+  stamped and read exactly as under v35.
+
+An older runtime that does not list v36 rejects the unknown profile name in
+`varta.language` validation, before compilation or any guest effect. A v36
+module relabelled as v35 declares host ABI 32 against v35's 31 and fails at its
+host ABI section before instantiation; as for every profile, a v36 declaration
+with a downgraded or missing host ABI section, a value ABI other than value16
+or a missing value section fails validation before any guest effect.
+
+Each ABI is bumped at most once per batch. The host ABI bump is already made at
+registration and every stream adds its imports under it. The function-fields
+stream owns any value-layout bump (value17: a new `value` constant,
+`value_abi`, `value_layout`, value17 variants of every layout-bound reader with
+their minimum host ABI 32, and the launcher maximum); the other streams rebase
+onto it. V35 and earlier profiles keep their host ABI, value ABI and layouts.
+
+Four selectors gate the batch's work streams, and all admit nothing yet:
+
+- records stream: `checked_declared_fields()` (declared fields of mixed
+  records that are checkable from `unknown`, for example arrays of optional
+  records, so checked assertions and JSON narrowing reach them);
+- functions stream: `function_fields()` (function-valued record and class
+  fields, and optional or defaulted function-typed parameters);
+- async stream: `async_generators()` (`async function*` generators and
+  `for await…of`);
+- timers stream: `timers()` (`setTimeout`/`clearTimeout` and timer-driven
+  promises).
+
+Until a stream adds its subsection here, a v36 module compiles and runs exactly
+like a v35 module apart from its declared profile and host ABI, and production
+budgets of every profile are unchanged.
 
 ## Local modules
 

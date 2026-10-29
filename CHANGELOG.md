@@ -11,6 +11,15 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Opt-in v36 (pilot batch: checked declared fields, function fields, async
+  generators and timers, in development) is registered. It inherits every v35
+  feature, shares value ABI/layout 16 with v35 and declares its own host ABI 32
+  (`TIMERS_VERSION`) without a new import yet; the launcher advertises host ABI
+  32. A v36 module relabelled as v35 fails at its host ABI section, and
+  runtimes that do not list v36 reject its declared profile name before any
+  guest effect. Its `checked_declared_fields`, `function_fields`,
+  `async_generators` and `timers` selectors admit nothing yet.
+
 - Mixed records and JSON to `unknown` under opt-in v35 (selectors
   `mixed_index_records`, `unknown_json`). Object types
   may declare fields next to a string index signature (the pilot's

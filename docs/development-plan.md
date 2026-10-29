@@ -521,6 +521,30 @@ function-valued object field in the value layout.
 | `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Implemented (value ABI 16, host ABI 31); no `AggregateError` class, `Promise.withResolvers` and executor `resolve(promise)` not admitted |
 | `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Implemented ([contract](architecture.md#frame-liveness-frame_liveness)): per-state saved sets, direct liveness segments with exact per-state GC maps, frame catalog version 3; about half the fuel per `await`/`yield` of v34 |
 
+### Pilot batch v36 (in development)
+
+The next pilot batch targets the remaining diagnostics of the
+[v35 measurement](#pilot-acceptance-package-uarp-sdk) (declared fields of the
+mixed `ProblemDocument` that are not checkable from its index type, and the
+defaulted function-typed parameter of `streamBackoffDelay`), together with the
+v35 follow-ups that need function-valued fields (abort listeners), async
+generators and timers (`AbortSignal.timeout`, backoff delays), in profile
+`checked-f64-utf16-v36`, developed in four parallel streams. V36 inherits every
+v35 feature with value ABI/layout 16 and declares its own host ABI 32
+(`abi::TIMERS_VERSION`), under which every host import of the batch is added;
+a v36 module relabelled as v35 fails at its host ABI section, and runtimes that
+do not list v36 reject its declared profile name. The function-fields stream
+owns any value-layout bump (value17)
+([contract](architecture.md#checked-f64-utf16-v36--pilot-batch-checked-declared-fields-function-fields-async-generators-and-timers)).
+All selectors are registered and admit nothing yet.
+
+| Selector | Work stream | Pilot step | State |
+| --- | --- | --- | --- |
+| `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Registered, admits nothing |
+| `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns any value17 bump) | M2, M4 | Registered, admits nothing |
+| `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Registered, admits nothing |
+| `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Registered, admits nothing |
+
 ### Deferred external validation scenarios
 
 | Profile | Example contract operations | Required behavior |

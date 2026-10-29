@@ -43,6 +43,7 @@ pub const SUPPORTED_PROFILES: &[LanguageProfile] = &[
     LanguageProfile::CheckedF64Utf16V33,
     LanguageProfile::CheckedF64Utf16V34,
     LanguageProfile::CheckedF64Utf16V35,
+    LanguageProfile::CheckedF64Utf16V36,
 ];
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +125,8 @@ pub enum LanguageProfile {
     CheckedF64Utf16V34,
     #[serde(rename = "checked-f64-utf16-v35")]
     CheckedF64Utf16V35,
+    #[serde(rename = "checked-f64-utf16-v36")]
+    CheckedF64Utf16V36,
 }
 impl LanguageProfile {
     #[must_use]
@@ -136,10 +139,11 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     /// Pilot M1-M3 batch (v32). Each selector gates one independently developed
-    /// feature; all admit v32 and the profiles that inherit it (v33, v34, v35).
+    /// feature; all admit v32 and the profiles that inherit it (v33 to v36).
     #[must_use]
     pub fn module_constants(self) -> bool {
         matches!(
@@ -148,6 +152,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -158,6 +163,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -168,6 +174,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -178,6 +185,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -188,6 +196,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -198,6 +207,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -208,6 +218,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -218,6 +229,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -228,6 +240,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     /// K4.4 step 1 runtime admission (v33): continuation frames, function
@@ -239,7 +252,10 @@ impl LanguageProfile {
     pub fn resumable_frames(self) -> bool {
         matches!(
             self,
-            Self::CheckedF64Utf16V33 | Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35
+            Self::CheckedF64Utf16V33
+                | Self::CheckedF64Utf16V34
+                | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     /// K4.4 step 2 (v33): synchronous `function*` declarations with a
@@ -250,37 +266,52 @@ impl LanguageProfile {
     pub fn generators(self) -> bool {
         matches!(
             self,
-            Self::CheckedF64Utf16V33 | Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35
+            Self::CheckedF64Utf16V33
+                | Self::CheckedF64Utf16V34
+                | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
-    /// Value layout 15 (v34 and v35): every value graph, descriptor, catalog, JSON
+    /// Value layout 15 (v34 and its successors): every value graph, descriptor, catalog, JSON
     /// schema and exception cell uses the value15 layouts, read only by the
     /// value15 host operations, JSON schema 15 and exception channel v6. The
     /// value15 layouts keep every value13 layout and tag and add the batch's own.
     #[must_use]
     pub fn dynamic_values(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36
+        )
     }
     /// Pilot batch v34, records stream: string index signatures
     /// (`{[k: string]: T}`) and `Record<string, T>` as value15 dictionaries
     /// ([`crate::value::Dictionary`], tag [`crate::value::ValueKind::Dictionary`]).
     #[must_use]
     pub fn index_signatures(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36
+        )
     }
     /// Pilot batch v34, records stream: non-generic recursive aliases and
     /// interfaces, such as a JSON value union, that refer to themselves through
     /// record fields, arrays or index signatures; JSON schema 15 refers forward.
     #[must_use]
     pub fn recursive_types(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36
+        )
     }
     /// Pilot batch v34, records stream: records wider than
     /// [`crate::value::MAX_RECORD_FIELDS`] up to
     /// [`crate::value::MAX_WIDE_RECORD_FIELDS`] in the value15 wide layout.
     #[must_use]
     pub fn wide_records(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36
+        )
     }
     /// Pilot batch v34, unknown stream: the `unknown` type, a reference-union
     /// cell holding any value with a cell tag, usable after narrowing by
@@ -288,14 +319,20 @@ impl LanguageProfile {
     /// Error `cause` are `unknown`. Adds no value tag, layout or host import.
     #[must_use]
     pub fn unknown_type(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36
+        )
     }
     /// Pilot batch v34, unknown stream: `x as T` and `x!` as runtime-checked
     /// conversions that throw `TypeError` on mismatch (upcasts are free); never
     /// an unchecked reinterpretation.
     #[must_use]
     pub fn checked_assertions(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36
+        )
     }
     /// Pilot batch v34, async stream (K4.4 step 3): base `Promise<T>` semantics
     /// (`then`/`catch`/`finally`, resolve/reject, adoption, FIFO jobs and the
@@ -303,14 +340,20 @@ impl LanguageProfile {
     /// drives `varta_resume`, declared by the v34 host ABI. Admits nothing yet.
     #[must_use]
     pub fn promises(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36
+        )
     }
     /// Pilot batch v34, async stream (K4.4 step 4): `async` functions and
     /// `await` over the continuation frames and [`Self::promises`]. Admits
     /// nothing yet.
     #[must_use]
     pub fn async_functions(self) -> bool {
-        matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
+        matches!(
+            self,
+            Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36
+        )
     }
     /// Pilot batch v35, web stream: the engine-provided typed `Headers` class
     /// (case-insensitive names, ordered entries), a guest prelude compiled
@@ -318,14 +361,14 @@ impl LanguageProfile {
     /// literals that omit trailing contextual parameters.
     #[must_use]
     pub fn web_headers(self) -> bool {
-        self == Self::CheckedF64Utf16V35
+        matches!(self, Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36)
     }
     /// Pilot batch v35, web stream: the `AbortController`/`AbortSignal` data
     /// model (`abort`, `aborted`, `reason`, `throwIfAborted`) and
     /// `DOMException`, a guest prelude without timers; listeners stay pending.
     #[must_use]
     pub fn abort_signals(self) -> bool {
-        self == Self::CheckedF64Utf16V35
+        matches!(self, Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36)
     }
     /// Pilot batch v35, records stream: interfaces and object types that
     /// combine declared fields with a string index signature (mixed records:
@@ -336,7 +379,7 @@ impl LanguageProfile {
     /// tag, layout or host import.
     #[must_use]
     pub fn mixed_index_records(self) -> bool {
-        self == Self::CheckedF64Utf16V35
+        matches!(self, Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36)
     }
     /// Pilot batch v35, records stream: `JSON.parse` and checked parsing that
     /// produce `unknown` (a graph of primitives, `unknown[]` and
@@ -346,7 +389,7 @@ impl LanguageProfile {
     /// layout, schema version or host import.
     #[must_use]
     pub fn unknown_json(self) -> bool {
-        self == Self::CheckedF64Utf16V35
+        matches!(self, Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36)
     }
     /// Pilot batch v35, async stream: `async` class methods, async arrow
     /// functions and async function expressions over the continuation frames
@@ -354,7 +397,7 @@ impl LanguageProfile {
     /// as shared frame slots.
     #[must_use]
     pub fn async_methods(self) -> bool {
-        self == Self::CheckedF64Utf16V35
+        matches!(self, Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36)
     }
     /// Pilot batch v35, async stream: value layout 16
     /// ([`crate::value::PROMISE_VALUE_VERSION`]), promises as tagged values
@@ -362,7 +405,7 @@ impl LanguageProfile {
     /// `Promise.all`/`allSettled`/`race`/`any` combinators.
     #[must_use]
     pub fn promise_values(self) -> bool {
-        self == Self::CheckedF64Utf16V35
+        matches!(self, Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36)
     }
     /// Pilot batch v35, frames stream: liveness-based continuation frame slots,
     /// an internal frame layout change for v35 modules only; earlier profiles
@@ -371,7 +414,35 @@ impl LanguageProfile {
     /// version 3 ([`crate::function::admission::frame_catalog_version`]).
     #[must_use]
     pub fn frame_liveness(self) -> bool {
-        self == Self::CheckedF64Utf16V35
+        matches!(self, Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36)
+    }
+    /// Pilot batch v36, records stream: declared fields of mixed records that
+    /// are checkable from `unknown` (for example arrays of optional records),
+    /// so checked assertions and JSON narrowing reach them. Admits nothing yet.
+    #[must_use]
+    pub fn checked_declared_fields(self) -> bool {
+        self == Self::CheckedF64Utf16V36
+    }
+    /// Pilot batch v36, functions stream: function-valued record and class
+    /// fields, and optional or defaulted function-typed parameters. Owns any
+    /// value-layout bump of the batch (value 17). Admits nothing yet.
+    #[must_use]
+    pub fn function_fields(self) -> bool {
+        self == Self::CheckedF64Utf16V36
+    }
+    /// Pilot batch v36, async stream: `async function*` generators and
+    /// `for await...of` over the continuation frames and [`Self::promises`].
+    /// Admits nothing yet.
+    #[must_use]
+    pub fn async_generators(self) -> bool {
+        self == Self::CheckedF64Utf16V36
+    }
+    /// Pilot batch v36, timers stream: `setTimeout`/`clearTimeout` and
+    /// timer-driven promises; host imports it adds use
+    /// [`crate::abi::TIMERS_VERSION`]. Admits nothing yet.
+    #[must_use]
+    pub fn timers(self) -> bool {
+        self == Self::CheckedF64Utf16V36
     }
     /// Named interface/alias annotations and type-only module bindings (v31).
     #[must_use]
@@ -383,6 +454,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -426,6 +498,7 @@ impl LanguageProfile {
             Self::CheckedF64Utf16V33 => crate::abi::RESUMABLE_FRAMES_VERSION,
             Self::CheckedF64Utf16V34 => crate::abi::SCHEDULED_FRAMES_VERSION,
             Self::CheckedF64Utf16V35 => crate::abi::PROMISE_VALUES_VERSION,
+            Self::CheckedF64Utf16V36 => crate::abi::TIMERS_VERSION,
         }
     }
     #[must_use]
@@ -472,6 +545,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -513,6 +587,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -553,6 +628,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -592,6 +668,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -630,6 +707,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -667,6 +745,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -703,6 +782,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -738,6 +818,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -772,6 +853,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -805,6 +887,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -837,6 +920,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -868,6 +952,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -898,6 +983,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -927,6 +1013,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -955,6 +1042,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -982,6 +1070,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1009,6 +1098,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1036,6 +1126,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1063,6 +1154,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1089,6 +1181,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1114,6 +1207,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1138,6 +1232,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1161,6 +1256,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1183,6 +1279,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1204,6 +1301,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1224,6 +1322,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1243,6 +1342,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1265,6 +1365,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1282,6 +1383,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1298,6 +1400,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1311,6 +1414,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1325,6 +1429,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1340,6 +1445,7 @@ impl LanguageProfile {
                 | Self::CheckedF64Utf16V33
                 | Self::CheckedF64Utf16V34
                 | Self::CheckedF64Utf16V35
+                | Self::CheckedF64Utf16V36
         )
     }
     #[must_use]
@@ -1554,7 +1660,9 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V32
             | Self::CheckedF64Utf16V33 => crate::value::BIGINT_VALUE_VERSION,
             Self::CheckedF64Utf16V34 => crate::value::DYNAMIC_VALUE_VERSION,
-            Self::CheckedF64Utf16V35 => crate::value::PROMISE_VALUE_VERSION,
+            Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36 => {
+                crate::value::PROMISE_VALUE_VERSION
+            }
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1591,8 +1699,10 @@ impl LanguageProfile {
     /// Value-graph layout version that compiled code stamps into record
     /// descriptors and closure catalogs and that the profile's value, JSON and
     /// exception operations read. It equals [`Self::value_abi`] for every
-    /// profile: v34 and v35 stamp the value15 layouts
-    /// ([`crate::value::DYNAMIC_VALUE_VERSION`]) read by its value15 operations.
+    /// profile: v34 stamps the value15 layouts
+    /// ([`crate::value::DYNAMIC_VALUE_VERSION`]) read by its value15 operations,
+    /// and v35 and v36 stamp the value16 layouts
+    /// ([`crate::value::PROMISE_VALUE_VERSION`]) read by the value16 operations.
     #[must_use]
     pub fn value_layout(self) -> u32 {
         self.value_abi()
@@ -1606,7 +1716,9 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V32
             | Self::CheckedF64Utf16V33 => crate::HostOperation::JsonStringifyV13,
             Self::CheckedF64Utf16V34 => crate::HostOperation::JsonStringifyV14,
-            Self::CheckedF64Utf16V35 => crate::HostOperation::JsonStringifyV15,
+            Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36 => {
+                crate::HostOperation::JsonStringifyV15
+            }
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1651,7 +1763,9 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V32
             | Self::CheckedF64Utf16V33 => crate::HostOperation::JsonParseV15,
             Self::CheckedF64Utf16V34 => crate::HostOperation::JsonParseV16,
-            Self::CheckedF64Utf16V35 => crate::HostOperation::JsonParseV17,
+            Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36 => {
+                crate::HostOperation::JsonParseV17
+            }
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1786,6 +1900,7 @@ mod tests {
                     || profile == LanguageProfile::CheckedF64Utf16V33
                     || profile == LanguageProfile::CheckedF64Utf16V34
                     || profile == LanguageProfile::CheckedF64Utf16V35
+                    || profile == LanguageProfile::CheckedF64Utf16V36
             );
         }
         assert_eq!(new.host_abi(), old.host_abi());
@@ -1822,6 +1937,7 @@ mod tests {
                         || profile == LanguageProfile::CheckedF64Utf16V33
                         || profile == LanguageProfile::CheckedF64Utf16V34
                         || profile == LanguageProfile::CheckedF64Utf16V35
+                        || profile == LanguageProfile::CheckedF64Utf16V36
                 );
             }
         }
@@ -1857,6 +1973,7 @@ mod tests {
             profile == new
                 || profile == LanguageProfile::CheckedF64Utf16V34
                 || profile == LanguageProfile::CheckedF64Utf16V35
+                || profile == LanguageProfile::CheckedF64Utf16V36
         };
         for &profile in SUPPORTED_PROFILES {
             assert_eq!(
@@ -1900,7 +2017,9 @@ mod tests {
         let new = LanguageProfile::CheckedF64Utf16V34;
         let old = LanguageProfile::CheckedF64Utf16V33;
         let inherited = |profile: LanguageProfile| {
-            profile == new || profile == LanguageProfile::CheckedF64Utf16V35
+            profile == new
+                || profile == LanguageProfile::CheckedF64Utf16V35
+                || profile == LanguageProfile::CheckedF64Utf16V36
         };
         assert!(new.named_types() && new.property_deletion() && new.bigint_values());
         assert!(
@@ -2015,6 +2134,9 @@ mod tests {
         use crate::HostOperation as H;
         let new = LanguageProfile::CheckedF64Utf16V35;
         let old = LanguageProfile::CheckedF64Utf16V34;
+        let inherited = |profile: LanguageProfile| {
+            profile == new || profile == LanguageProfile::CheckedF64Utf16V36
+        };
         assert!(new.named_types() && new.property_deletion() && new.bigint_values());
         assert!(
             new.module_constants()
@@ -2047,18 +2169,16 @@ mod tests {
                 profile.promise_values(),
                 profile.frame_liveness(),
             ] {
-                assert_eq!(selector, profile == new, "{profile:?}");
+                assert_eq!(selector, inherited(profile), "{profile:?}");
             }
         }
         // The promise-values stream owns the v35 ABI bumps: value ABI and
         // layout 16 (promise values), host ABI 31 (the value16 readers),
-        // exception channel v7 and JSON schema 16. V34 keeps its own.
+        // exception channel v7 and JSON schema 16. V34 keeps its own; v36
+        // inherits the value16 layouts under its own host ABI.
         assert_eq!(new.host_abi(), crate::abi::PROMISE_VALUES_VERSION);
         assert_eq!(old.host_abi(), crate::abi::SCHEDULED_FRAMES_VERSION);
         assert!(crate::abi::supported(new.host_abi()));
-        assert!(!crate::abi::supported(
-            crate::abi::PROMISE_VALUES_VERSION + 1
-        ));
         assert_eq!(new.value_abi(), crate::value::PROMISE_VALUE_VERSION);
         assert_eq!(new.value_layout(), new.value_abi());
         assert_eq!(old.value_abi(), crate::value::DYNAMIC_VALUE_VERSION);
@@ -2081,7 +2201,7 @@ mod tests {
             );
             assert_eq!(
                 profile.value_abi() == crate::value::PROMISE_VALUE_VERSION,
-                profile == new
+                inherited(profile)
             );
         }
         assert_eq!(
@@ -2103,7 +2223,7 @@ mod tests {
                 assert!(
                     SUPPORTED_PROFILES
                         .iter()
-                        .filter(|p| **p != new)
+                        .filter(|p| !inherited(**p))
                         .all(|p| !kind.supported_by(p.value_layout()))
                 );
                 continue;
@@ -2142,9 +2262,124 @@ mod tests {
             LanguageContract::parse(&contract.to_bytes().unwrap()).unwrap(),
             contract
         );
-        assert!(serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v36\"").is_err());
+        let mut launcher = crate::launcher::LauncherInfo::current();
+        assert!(launcher.language_profiles.contains(&new));
+        assert!(launcher.host_abi > new.host_abi());
+        assert_eq!(launcher.value_abi, new.value_abi());
+        launcher.language_profiles.retain(|p| *p != new);
+        assert!(launcher.validate_current().is_err());
+    }
+
+    #[test]
+    fn pilot_v36_inherits_v35_with_a_new_host_abi_and_admits_nothing_yet() {
+        use crate::HostOperation as H;
+        let new = LanguageProfile::CheckedF64Utf16V36;
+        let old = LanguageProfile::CheckedF64Utf16V35;
+        assert!(new.named_types() && new.property_deletion() && new.bigint_values());
         assert!(
-            LanguageContract::parse(br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v36"}"#)
+            new.module_constants()
+                && new.literal_types()
+                && new.classes()
+                && new.module_reexports()
+                && new.template_literals()
+                && new.generics()
+                && new.default_exports()
+                && new.interface_extends()
+                && new.error_subclasses()
+                && new.resumable_frames()
+                && new.generators()
+                && new.dynamic_values()
+                && new.index_signatures()
+                && new.recursive_types()
+                && new.wide_records()
+                && new.unknown_type()
+                && new.checked_assertions()
+                && new.promises()
+                && new.async_functions()
+                && new.web_headers()
+                && new.abort_signals()
+                && new.mixed_index_records()
+                && new.unknown_json()
+                && new.async_methods()
+                && new.promise_values()
+                && new.frame_liveness()
+        );
+        for &profile in SUPPORTED_PROFILES {
+            for selector in [
+                profile.checked_declared_fields(),
+                profile.function_fields(),
+                profile.async_generators(),
+                profile.timers(),
+            ] {
+                assert_eq!(selector, profile == new, "{profile:?}");
+            }
+        }
+        // V36 has its own host ABI 32 for the batch's host imports (none yet)
+        // and shares value ABI/layout 16, exception channel v7 and JSON schema
+        // 16 with v35.
+        assert_eq!(new.host_abi(), crate::abi::TIMERS_VERSION);
+        assert_eq!(old.host_abi(), crate::abi::PROMISE_VALUES_VERSION);
+        assert!(new.host_abi() > old.host_abi());
+        assert!(crate::abi::supported(new.host_abi()));
+        assert!(!crate::abi::supported(crate::abi::TIMERS_VERSION + 1));
+        for &profile in SUPPORTED_PROFILES {
+            assert_eq!(
+                profile.host_abi() == crate::abi::TIMERS_VERSION,
+                profile == new,
+                "{profile:?}"
+            );
+        }
+        assert_eq!(new.value_abi(), crate::value::PROMISE_VALUE_VERSION);
+        assert_eq!(new.value_abi(), old.value_abi());
+        assert_eq!(new.value_layout(), old.value_layout());
+        assert!(!crate::value::supported_version(
+            crate::value::PROMISE_VALUE_VERSION + 1
+        ));
+        assert_eq!(new.exception_channel(), old.exception_channel());
+        assert_eq!(new.json_parse(), old.json_parse());
+        assert_eq!(new.json_stringify(), old.json_stringify());
+        assert_eq!(
+            crate::function::admission::frame_catalog_version(new),
+            crate::function::admission::frame_catalog_version(old)
+        );
+        // Every host operation, including the value16 readers, binds exactly
+        // as under v35; no registered operation requires host ABI 32 yet.
+        for operation in [
+            H::LogString,
+            H::LogFloat,
+            H::FsRead,
+            H::PromiseReact,
+            H::UnionLog,
+            H::ValueTypeOf,
+            H::ValueIsError,
+            H::ValueLogV9,
+            H::JsonParseV16,
+            H::JsonStringifyV14,
+            H::PrimitiveStringV3,
+            H::BigIntFromValueV2,
+        ] {
+            assert_eq!(
+                new.host_operation(operation),
+                old.host_operation(operation),
+                "{operation:?}"
+            );
+            assert!(new.host_operation(operation).minimum_abi() <= old.host_abi());
+        }
+        assert_eq!(
+            serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v36\"").unwrap(),
+            new
+        );
+        let contract = LanguageContract {
+            schema_version: SCHEMA_VERSION,
+            profile: new,
+        };
+        assert_eq!(
+            LanguageContract::parse(&contract.to_bytes().unwrap()).unwrap(),
+            contract
+        );
+        assert!(serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v37\"").is_err());
+        assert!(
+            LanguageContract::parse(br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v37"}"#)
                 .is_err()
         );
         let mut launcher = crate::launcher::LauncherInfo::current();
@@ -2343,6 +2578,7 @@ mod tests {
                     || profile == LanguageProfile::CheckedF64Utf16V33
                     || profile == LanguageProfile::CheckedF64Utf16V34
                     || profile == LanguageProfile::CheckedF64Utf16V35
+                    || profile == LanguageProfile::CheckedF64Utf16V36
             );
         }
         for (host, args, results) in [
@@ -2469,6 +2705,7 @@ mod tests {
                             | LanguageProfile::CheckedF64Utf16V33
                             | LanguageProfile::CheckedF64Utf16V34
                             | LanguageProfile::CheckedF64Utf16V35
+                            | LanguageProfile::CheckedF64Utf16V36
                     )
             );
         }
@@ -2522,6 +2759,7 @@ mod tests {
                             | LanguageProfile::CheckedF64Utf16V33
                             | LanguageProfile::CheckedF64Utf16V34
                             | LanguageProfile::CheckedF64Utf16V35
+                            | LanguageProfile::CheckedF64Utf16V36
                     )
             );
         }
@@ -2547,7 +2785,7 @@ mod tests {
         );
         let mut launcher = crate::launcher::LauncherInfo::current();
         assert!(launcher.language_profiles.contains(&new));
-        assert_eq!(launcher.host_abi, crate::abi::PROMISE_VALUES_VERSION);
+        assert_eq!(launcher.host_abi, crate::abi::TIMERS_VERSION);
         launcher.language_profiles.retain(|p| *p != new);
         assert!(launcher.validate_current().is_err());
         assert_eq!(
@@ -2576,6 +2814,7 @@ mod tests {
                             | LanguageProfile::CheckedF64Utf16V33
                             | LanguageProfile::CheckedF64Utf16V34
                             | LanguageProfile::CheckedF64Utf16V35
+                            | LanguageProfile::CheckedF64Utf16V36
                     )
             );
             assert_eq!(
@@ -2594,6 +2833,7 @@ mod tests {
                             | LanguageProfile::CheckedF64Utf16V33
                             | LanguageProfile::CheckedF64Utf16V34
                             | LanguageProfile::CheckedF64Utf16V35
+                            | LanguageProfile::CheckedF64Utf16V36
                     )
             );
         }
@@ -2646,6 +2886,7 @@ mod tests {
                             | LanguageProfile::CheckedF64Utf16V33
                             | LanguageProfile::CheckedF64Utf16V34
                             | LanguageProfile::CheckedF64Utf16V35
+                            | LanguageProfile::CheckedF64Utf16V36
                     )
             );
         }
@@ -3015,7 +3256,7 @@ mod tests {
         );
         assert_eq!(
             crate::launcher::LauncherInfo::current().host_abi,
-            crate::abi::PROMISE_VALUES_VERSION
+            crate::abi::TIMERS_VERSION
         );
     }
     #[test]

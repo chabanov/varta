@@ -2547,3 +2547,34 @@ Contract: [engine Web types](architecture.md#engine-web-types-web_headers-abort_
   pending until timers exist.
 - The fewer-parameter rule for function literals is gated by `web_headers()`;
   earlier profiles keep the exact-count rule.
+
+## Profile v36 (in development)
+
+Inherit v35 under checked-f64-utf16-v36 with every v35 selector, value layout
+16 and the value16 host operations, exception channel v7, JSON schema 16, the
+scheduler and frame catalog version 3. V36 has its own host ABI
+`abi::TIMERS_VERSION` (32) and shares value ABI/layout 16
+(`value::PROMISE_VALUE_VERSION`) with v35; v35 keeps host ABI 31. Four selectors
+gate the streams and admit nothing yet: records (`checked_declared_fields`),
+functions (`function_fields`), async (`async_generators`) and timers
+(`timers`). Gate every admission on its own selector, keep v35 and earlier
+profiles frozen, and add each stream's rules under its own heading here.
+
+- A v35 rule or binding stated "for v35 only" (value16 readers, liveness
+  frames, preludes, mixed records) extends to v36 through the inherited
+  selectors; never widen it to v34 or earlier.
+- Every host import the batch adds takes `abi::TIMERS_VERSION` as its minimum
+  ABI in the `HostOperation` registry; do not add another host ABI constant in
+  this batch. Add its `.d.ts`, linker, validation and denial tests in the same
+  change.
+- The function-fields stream owns the batch's value-layout bump (value17): a
+  new `value` constant, `value_abi`/`value_layout` for v36, value17 variants of
+  every layout-bound reader (minimum ABI 32) and the launcher value maximum.
+  Value16 readers stay frozen for v35. The other streams rebase onto it.
+- Tests that assert v36 equals v35 apart from its host ABI
+  (`pilot_v36_inherits_v35_…` in `varta-common` `language`, the v36 runtime
+  language test and the v36 CLI smoke test) change in the stream that
+  introduces the difference.
+- Timers are scheduled by the runtime, never by guest busy-waiting; keep
+  production fuel, deadline and scheduler limits unchanged and pin timer
+  ordering against Node output.
