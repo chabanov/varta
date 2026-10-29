@@ -104,7 +104,7 @@ fn capture_catalog_rejects_invalid_metadata_and_deep_bottom_up_type_dags() {
     bad.functions[0].captures = vec![0; MAX_CAPTURES + 1];
     assert!(bad.validate().is_err());
     let mut bad = catalog.clone();
-    bad.value_version = value::DYNAMIC_VALUE_VERSION + 1;
+    bad.value_version = value::PROMISE_VALUE_VERSION + 1;
     assert!(bad.validate().is_err());
     let mut bad = catalog.clone();
     bad.types = vec![CaptureType::Array { element: 0 }];

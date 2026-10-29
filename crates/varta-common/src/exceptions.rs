@@ -16,6 +16,10 @@ pub const CLASS_ERROR_CHANNEL_VERSION: i32 = 5;
 /// and class-instance record read as value15.
 pub const DYNAMIC_VERSION: &str = "varta.exception.version_v6";
 pub const DYNAMIC_CHANNEL_VERSION: i32 = 6;
+/// v35 value layout 16: channel v6 contents, every thrown cell, Error object
+/// and class-instance record read as value16. Promises are never thrown.
+pub const PROMISE_VERSION: &str = "varta.exception.version_v7";
+pub const PROMISE_CHANNEL_VERSION: i32 = 7;
 pub const VALUE: &str = "varta.exception.value";
 pub const ROOT: usize = abi::STRING_ROOT_BASE;
 pub const RESERVED_ROOT_BYTES: usize = abi::STRING_ROOT_SLOT_BYTES;

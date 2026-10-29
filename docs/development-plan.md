@@ -469,7 +469,10 @@ ABI/layout 15 with v34; the declared profile name alone makes runtimes that do
 not list v35 reject its modules. A stream that adds a host import or a value tag
 bumps the corresponding ABI for v35 itself
 ([contract](architecture.md#checked-f64-utf16-v35--pilot-batch-web-types-mixed-records-async-methods-and-frame-liveness)).
-All selectors are registered and admit nothing yet.
+The async stream switched v35 to value layout 16 (value15 plus the promise
+tag) with host ABI 31 for its value16 readers
+([contract](architecture.md#value-layout-16-promise_values)); the other
+streams rebase onto it.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |

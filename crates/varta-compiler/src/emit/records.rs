@@ -60,6 +60,7 @@ pub(super) fn descriptor(
                         | abi::SPARSE_VALUE_VERSION
                         | abi::BIGINT_VALUE_VERSION
                         | abi::DYNAMIC_VALUE_VERSION
+                        | abi::PROMISE_VALUE_VERSION
                 ) && field.optional
                 {
                     abi::OPTIONAL_FIELD_FLAG

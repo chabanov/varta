@@ -74,6 +74,7 @@ impl Vector {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         ) {
             return Err(invalid());
         }
@@ -95,6 +96,7 @@ impl Vector {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         );
         let (storage, bytes) = managed(
             data,

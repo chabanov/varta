@@ -106,6 +106,7 @@ impl JsonSchema {
                 | BIGINT_SCHEMA_VERSION
                 | FUNCTION_SCHEMA_VERSION
                 | DYNAMIC_SCHEMA_VERSION
+                | PROMISE_SCHEMA_VERSION
         ) || self.types.is_empty()
             || self.types.len()
                 > if matches!(
@@ -118,6 +119,7 @@ impl JsonSchema {
                         | BIGINT_SCHEMA_VERSION
                         | FUNCTION_SCHEMA_VERSION
                         | DYNAMIC_SCHEMA_VERSION
+                        | PROMISE_SCHEMA_VERSION
                 ) {
                     MAX_SCHEMA_TYPES
                 } else {
@@ -130,7 +132,7 @@ impl JsonSchema {
         // Strict backward edges give a bounded DAG without recursive validation.
         // Schema 15 admits recursive types: any in-range edge, with the input
         // depth and visit limits enforced while decoding instead.
-        let recursive = self.version == DYNAMIC_SCHEMA_VERSION;
+        let recursive = dynamic_schema(self.version);
         let mut depths = Vec::new();
         for (index, ty) in self.types.iter().enumerate() {
             if !ty.kind().supported_by(self.value_version()) {
@@ -146,6 +148,7 @@ impl JsonSchema {
                     | BIGINT_SCHEMA_VERSION
                     | FUNCTION_SCHEMA_VERSION
                     | DYNAMIC_SCHEMA_VERSION
+                    | PROMISE_SCHEMA_VERSION
             ) && matches!(
                 ty,
                 JsonType::Undefined
@@ -186,6 +189,7 @@ impl JsonSchema {
                                     | BIGINT_SCHEMA_VERSION
                                     | FUNCTION_SCHEMA_VERSION
                                     | DYNAMIC_SCHEMA_VERSION
+                                    | PROMISE_SCHEMA_VERSION
                             ) || !self.admits_undefined(field.ty))
                         {
                             return Err(bad(
@@ -256,6 +260,9 @@ impl JsonSchema {
     }
     #[must_use]
     pub fn value_version(&self) -> u32 {
+        if self.version == PROMISE_SCHEMA_VERSION {
+            return crate::value::PROMISE_VALUE_VERSION;
+        }
         if self.version == DYNAMIC_SCHEMA_VERSION {
             return DYNAMIC_VALUE_VERSION;
         }

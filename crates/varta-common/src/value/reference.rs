@@ -58,6 +58,7 @@ impl ReferenceBox {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         ) {
             return Err(invalid());
         }
@@ -65,7 +66,10 @@ impl ReferenceBox {
         if cell.kind == ValueKind::BigInt {
             if !matches!(
                 version,
-                BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+                BIGINT_VALUE_VERSION
+                    | FUNCTION_VALUE_VERSION
+                    | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
@@ -79,12 +83,20 @@ impl ReferenceBox {
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
             ErrorObject::read_with_version(data, cell.payload, version)?;
         } else if cell.kind == ValueKind::Dictionary {
             Dictionary::read(data, cell.payload, version)?;
+        } else if cell.kind == ValueKind::Promise {
+            // A promise is its private record block; consumers that read its
+            // state check the record's descriptor (see `promise_state`).
+            if !cell.kind.supported_by(version) {
+                return Err(invalid());
+            }
+            validate_aggregate(data, ValueKind::Record, cell.payload, version)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
             aggregate(data, cell, version)?;
         } else {
@@ -130,6 +142,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         )
     {
         Vector::read_with_version(data, cell.payload, version)?;

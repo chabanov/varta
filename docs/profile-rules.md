@@ -2309,14 +2309,12 @@ Contracts: [scheduler](architecture.md#microtask-scheduler-promises),
 
 ## Profile v35 (in development)
 
-Inherit v34 under checked-f64-utf16-v35 with every v34 selector, value layout
-15, the value15 host operations, exception channel v6, the v34 JSON selectors
-and the scheduler. At registration v35 shares host ABI 30
-(`abi::SCHEDULED_FRAMES_VERSION`) and value ABI/layout 15
-(`value::DYNAMIC_VALUE_VERSION`) with v34; the declared profile name is its only
-distinction, and runtimes that do not list v35 reject that name before any
-guest effect. Seven selectors gate the streams and admit nothing yet: Web
-(`web_headers`, `abort_signals`), records (`mixed_index_records`,
+Inherit v34 under checked-f64-utf16-v35 with every v34 selector and the
+scheduler. The async stream owns the batch's ABI bumps: v35 declares host ABI
+`abi::PROMISE_VALUES_VERSION` and value ABI/layout `value::PROMISE_VALUE_VERSION`
+(value16), read by the value16 host operations, exception channel v7 and JSON
+schema 16; v34 keeps host ABI 30 and value15. Seven selectors gate the streams:
+Web (`web_headers`, `abort_signals`), records (`mixed_index_records`,
 `unknown_json`), async (`async_methods`, `promise_values`) and frames
 (`frame_liveness`). Gate every admission on its own selector, keep v34 and
 earlier profiles frozen, and add each stream's rules under its own heading here.
@@ -2336,3 +2334,20 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   change the runtime reads is admitted for v35 alone.
 - `web_headers` and `abort_signals` are guest-implemented engine types with no
   capability and no host I/O; `AbortSignal` has no timers until a later batch.
+
+### Value layout 16 (`promise_values`)
+
+- Value16 is value15 plus the promise tag (`ValueKind::Promise`). Every reader
+  that accepts value15 accepts value16 through the same code path: extend a
+  version pattern with `PROMISE_VALUE_VERSION` (or use `value::dynamic_layout`,
+  `json::dynamic_schema`), never copy a reader. Value15 readers keep rejecting
+  value16 stamps and the promise tag, and value16 readers reject value15.
+- Each value16 host operation mirrors its value15 counterpart
+  (`HostOperation::value15_counterpart`): same signature, result convention,
+  capability (none) and budgets, minimum host ABI `PROMISE_VALUES_VERSION`.
+  Register it as one more row of the existing per-layout tables; select it only
+  through `LanguageProfile::host_operation`, which maps every value15 reader to
+  value16 for v35 alone.
+- A stream that needs another layout-bound operation or tag under v35 rebases
+  onto this layout and adds the value16 variant only; it does not bump the
+  value or host ABI again in this batch.

@@ -367,10 +367,10 @@ export function main():void{
 }
 
 #[test]
-fn pilot_profile_v35_shares_the_v34_abis_and_its_name_fails_where_it_is_unknown() {
+fn pilot_profile_v35_declares_value16_and_host_abi_31_and_fails_where_unknown() {
     use varta_common::value;
-    // Classes, generators, value15 dictionaries, checked JSON and the
-    // scheduler: v35 runs every inherited v34 feature unchanged.
+    // Classes, generators, dictionaries, checked JSON and the scheduler: v35
+    // runs every inherited v34 feature unchanged under value layout 16.
     let source = r#"
 class Probe{n:number;constructor(n:number){this.n=n;}}
 function* digits():Generator<number,void,undefined>{yield 3;yield 5;}
@@ -393,12 +393,12 @@ export function main():void{
     assert_eq!(inspection.language.origin, LanguageOrigin::Declared);
     assert_eq!(
         inspection.value_abi_version,
-        Some(value::DYNAMIC_VALUE_VERSION)
+        Some(value::PROMISE_VALUE_VERSION)
     );
-    assert_eq!(v35.host_abi(), abi::SCHEDULED_FRAMES_VERSION);
+    assert_eq!(v35.host_abi(), abi::PROMISE_VALUES_VERSION);
     assert_eq!(
-        (v35.host_abi(), v35.value_abi()),
-        (v34.host_abi(), v34.value_abi())
+        (v34.host_abi(), v34.value_abi()),
+        (abi::SCHEDULED_FRAMES_VERSION, value::DYNAMIC_VALUE_VERSION)
     );
     let grants = [varta_common::CapabilityGrant {
         id: "process.exit".into(),
@@ -420,12 +420,15 @@ export function main():void{
             &bytes,
             br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v36"}"#,
         ),
-        // V35 metadata with the v33 host ABI or without a host ABI section.
+        // V35 metadata with the v34 or v33 host ABI or without a host ABI
+        // section.
+        host_abi(&bytes, Some(abi::SCHEDULED_FRAMES_VERSION)),
         host_abi(&bytes, Some(abi::RESUMABLE_FRAMES_VERSION)),
         host_abi(&bytes, None),
         // The v35 host ABI without a declared profile is not legacy input.
         legacy(&bytes),
-        // V35 declaring the value13 ABI or the function value codec version.
+        // V35 declaring the value15, value13 or function value codec version.
+        value_abi(&bytes, Some(value::DYNAMIC_VALUE_VERSION)),
         value_abi(&bytes, Some(value::BIGINT_VALUE_VERSION)),
         value_abi(&bytes, Some(value::FUNCTION_VALUE_VERSION)),
     ];
@@ -442,7 +445,7 @@ export function main():void{
         ));
     }
     for changed in [
-        value_abi(&bytes, Some(value::DYNAMIC_VALUE_VERSION + 1)),
+        value_abi(&bytes, Some(value::PROMISE_VALUE_VERSION + 1)),
         value_abi(&bytes, None),
     ] {
         assert!(runtime.validate_module(&changed).is_err());

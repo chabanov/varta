@@ -11458,7 +11458,7 @@ fn pilot_profile_v34_declares_its_host_and_value_abis_through_both_binaries() {
 }
 
 #[test]
-fn pilot_profile_v35_shares_the_v34_abis_through_both_binaries() {
+fn pilot_profile_v35_declares_value16_and_host_abi_31_through_both_binaries() {
     use varta_common::{abi, value};
     const PROFILE: &str = "checked-f64-utf16-v35";
     // An unregistered successor of the same length: every binary sees it as a
@@ -11481,8 +11481,8 @@ fn pilot_profile_v35_shares_the_v34_abis_through_both_binaries() {
         assert!(inspect.status.success(), "{}", combined(&inspect));
         let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
         assert_eq!(info["language"]["profile"], PROFILE);
-        assert_eq!(info["abiVersion"], abi::SCHEDULED_FRAMES_VERSION);
-        assert_eq!(info["valueAbiVersion"], value::DYNAMIC_VALUE_VERSION);
+        assert_eq!(info["abiVersion"], abi::PROMISE_VALUES_VERSION);
+        assert_eq!(info["valueAbiVersion"], value::PROMISE_VALUE_VERSION);
     }
     fs::remove_dir_all(project.0.join("src")).unwrap();
     fs::remove_file(project.0.join("varta.config.json")).unwrap();

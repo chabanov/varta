@@ -155,11 +155,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
-| `checked-f64-utf16-v35` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
+| `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **30**, value ABI **15**, HTTP contract **1** and **38** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **31**, value ABI **16**, HTTP contract **1** and **38** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -6662,35 +6662,27 @@ primitive.
 
 ### `checked-f64-utf16-v35` — Pilot batch: Web types, mixed records, async methods and frame liveness
 
-V35 is registered and inherits every v34 feature and selector, including value
-layout 15 (`dynamic_values()`), the value15 host operations, exception channel
-v6, the v34 JSON selectors (`json_stringify_v14`, `json_parse_v16`), the
-microtask scheduler and the frame catalog. At registration it declares no new
-version identity (see the [version matrix](#version-matrix)):
+V35 is registered and inherits every v34 feature and selector, including the
+value15 layouts (`dynamic_values()`), the microtask scheduler and the frame
+catalog. It declares two version identities of its own (see the
+[version matrix](#version-matrix)), both introduced by the async stream's
+[value layout 16](#value-layout-16-promise_values):
 
-- **Host ABI** `abi::SCHEDULED_FRAMES_VERSION`, shared with v34. V35 adds no
-  host import yet, and every v34 operation keeps its signature and binding.
-- **Value ABI and layout** `value::DYNAMIC_VALUE_VERSION` (value15), shared
-  with v34. V35 adds no value tag or layout yet; `LanguageProfile::value_layout`
-  equals `value_abi`, so descriptors, catalogs and exception cells are stamped
-  and read exactly as under v34.
+- **Host ABI** `abi::PROMISE_VALUES_VERSION`: the value16 readers are new
+  imports. Every other v34 operation keeps its signature and binding.
+- **Value ABI and layout** `value::PROMISE_VALUE_VERSION` (value16), value15
+  plus the promise tag; `LanguageProfile::value_layout` equals `value_abi`.
 
-The declared `varta.language` profile is therefore v35's only distinction from
-v34 at registration. An older runtime that does not list v35 rejects the
-unknown profile name in `varta.language` validation, before compilation or any
-guest effect, so v35 modules never run under v34 semantics there. As for every
-profile, a v35 declaration with a downgraded or missing host ABI section, a
-value ABI other than value15 or a missing value section fails validation before
-instantiation.
+An older runtime that does not list v35 rejects the unknown profile name in
+`varta.language` validation, before compilation or any guest effect. As for
+every profile, a v35 declaration with a downgraded or missing host ABI section,
+a value ABI other than value16 or a missing value section fails validation
+before instantiation.
 
-A stream that adds a host import bumps the host ABI for v35 in the same change
-(a new `abi` constant, `LanguageProfile::host_abi`, the import's minimum ABI,
-the launcher maximum and the version matrix); a stream that adds a value tag or
-layout bumps the value ABI for v35 the same way (a new `value` constant,
-`value_abi`, `value_layout`, every reader bound to it and the launcher
-maximum). Each ABI is bumped at most once per batch: the first stream that needs
-it owns the bump and the others rebase onto it. V34 and earlier profiles keep
-their host ABI, value ABI and layouts.
+Each ABI is bumped at most once per batch: the async stream owns both v35
+bumps and the other streams rebase onto them, adding value16 variants of any
+layout-bound operation they need. V34 and earlier profiles keep their host ABI,
+value ABI and layouts.
 
 Seven selectors gate the batch's work streams, and all admit nothing yet:
 
@@ -6712,8 +6704,50 @@ Seven selectors gate the batch's work streams, and all admit nothing yet:
   for v35 only).
 
 Until a stream adds its subsection here, a v35 module compiles and runs exactly
-like a v34 module apart from its declared profile, and production budgets of
-every profile are unchanged.
+like a v34 module apart from its declared profile and value layout 16, and
+production budgets of every profile are unchanged.
+
+#### Value layout 16 (`promise_values`)
+
+V35 stamps and reads the value16 layouts: record descriptors, record sizes,
+presence trailers, closure and frame catalogs and exception cells carry version
+16, and the runtime checks a v35 capture catalog against it. Value16 keeps every
+value15 layout and tag with exactly its value15 meaning (dictionaries, wide
+records and recursive graphs included; `value::dynamic_layout` names the
+family) and adds one tag, `ValueKind::Promise` = 14, specified with
+[promise values](#promise-values-promise_values). Value15 readers stay frozen:
+they reject descriptors, catalogs and cells stamped 16 and the promise tag, and
+the value16 readers reject 15.
+
+V35 binds its own pure, capability-free operations to value16. Each is one
+more row of the runtime's per-layout registration tables, mirroring its value15
+counterpart's signature, result convention, budgets and recoverable errors
+(`HostOperation::value15_counterpart`), and requires host ABI
+`abi::PROMISE_VALUES_VERSION`:
+
+| Value16 import | Value15 counterpart |
+| --- | --- |
+| `value_log_v10` | `value_log_v9` |
+| `value_typeof_v9`, `value_truthy_v9`, `value_nullish_v9`, `value_strict_equal_v9`, `value_nullish_equal_v9`, `value_is_array_v9` | the `_v8` operations |
+| `value_is_error_class_v5` | `value_is_error_class_v4` |
+| `json_stringify_v15`, `json_parse_v17` | `json_stringify_v14`, `json_parse_v16` |
+| `primitive_to_string_v4`, `primitive_to_number_v4`, `bigint_from_value_v3` | `primitive_to_string_v3`, `primitive_to_number_v3`, `bigint_from_value_v2` |
+
+`LanguageProfile::host_operation` maps every value15 reader (and the value13
+reader it replaced) to its value16 replacement for v35 only, so the runtime
+rejects a v35 module importing a value15 reader and a v34 module importing a
+value16 reader (whose minimum host ABI also exceeds v34's). `json_parse_v17`
+reads **JSON schema 16** (`json::PROMISE_SCHEMA_VERSION`), the schema-15
+grammar materializing value16 graphs; JSON never produces a promise. Thrown
+values use **exception channel v7** (`varta.exception.version_v7` = 7): the
+channel-v6 contents read as value16 cells, records and Error objects; a promise
+is never thrown.
+
+The switch changes no observable behaviour: `varta-runtime` `value16_tests`
+compile the value15, unknown, generator and promise cases under v34 and v35 and
+require identical output, and check that v35 imports only value16 readers and
+exports channel v7, that swapped readers and channels are rejected before guest
+effects and that a value15-stamped descriptor fails under v35.
 
 ## Local modules
 
