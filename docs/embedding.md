@@ -5,9 +5,9 @@ than `varta-runtime` that validate and execute Varta-compiled portable Wasm, for
 example a JavaScript host in Node or a browser, or a host on another Wasm engine.
 It states what exists at this revision of the repository, per host ABI version.
 Planned platform work (a generated browser host, an application lifecycle, view
-output, async `fetch`) is a proposal in the
-[development plan](development-plan.md#platform-targets-and-application-model-proposed),
-not part of this contract.
+output, async `fetch`) is an accepted design in the
+[development plan](development-plan.md#platform-targets-and-application-model),
+not implemented and not part of this contract.
 
 The reference host is `varta-runtime` (Wasmtime). Where this document and the
 reference host disagree, the disagreement is a bug in one of them; report it rather

@@ -74,6 +74,7 @@ crates/
   varta-cli/             # the `varta` binary; thin orchestration, no domain logic
   varta-conformance/     # development tooling: pinned compatibility inventory runner
 conformance/             # inventory manifest (core-v1.json) and checked cases
+examples/                # product examples (e.g. uarp-console); not workspace members, never depended on by crates
 docs/
   architecture.md        # normative contract; generated version matrix and limits
   embedding.md           # third-party host contract; generated registry tables
@@ -97,6 +98,7 @@ Placement rules:
   (`VartaConfig`, `CapabilitySpec`) belongs to `varta-project`, not common. CLI
   production code depends on `varta-project`; backend details stay in runtime.
   The boundary regression test and the CI core-only build enforce this direction.
+- `examples/` holds product examples such as `examples/uarp-console/`, kept apart from the engine. It is not a Cargo workspace member, and no crate (engine, distribution, tooling or tests) depends on it. Third-party sources such as uarp-sdk are pinned npm dependencies installed under `node_modules/`, ignored by version control, and are never vendored.
 - New crates go in `crates/<name>/` and are added to workspace `members` and, if user-facing, `default-members`.
 - Domain logic (parsing, emission, capability matching, host I/O, artifact packaging and validation) never lives in `varta-cli`. The CLI calls varta-project and prints results.
 - Shared types and errors belong in `varta-common`. Compiler and runtime must not re-declare them.
