@@ -640,6 +640,7 @@ impl Lower<'_> {
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && let Some(class) = self.class_callee(&member.obj)
+                    && !self.prelude_member(callee)
                 {
                     return self.class_static_call(call, member, class);
                 }
@@ -693,6 +694,12 @@ impl Lower<'_> {
             return self.math_call(call, member);
         }
         if call.args.iter().any(|arg| arg.spread.is_some()) {
+            if let ast::Expr::Ident(id) = &**callee
+                && self.timer_builtin(id.sym.as_ref())
+            {
+                // Timer calls reject spread arguments by name.
+                return self.timer_call(call, id.sym.as_ref());
+            }
             return self.spread_call(call, callee);
         }
         if let ast::Expr::Ident(id) = &**callee
@@ -869,6 +876,7 @@ impl Lower<'_> {
         }
         if let ast::Expr::Member(member) = &**callee
             && self.class_late_receiver(member)
+            && !self.prelude_member(callee)
         {
             let value = self.expr(&member.obj)?;
             return self.class_method_call(call, member, Some(value));
@@ -880,6 +888,9 @@ impl Lower<'_> {
         }
         let name = callee_name(callee).ok_or_else(|| unsupported("callee"))?;
         if let Some(value) = self.web_text(call, &name)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.prelude_timer(call, &name)? {
             return Ok(value);
         }
         if name == "Array.isArray" && self.types.profile.reference_unions() {
@@ -1008,6 +1019,9 @@ impl Lower<'_> {
                 ty: signature.result,
                 kind: E::Call(signature.index, args),
             });
+        }
+        if self.timer_builtin(&name) {
+            return self.timer_call(call, &name);
         }
         if matches!(name.as_str(), "Boolean" | "isFinite" | "isNaN") {
             return self.primitive_builtin(call, &name);

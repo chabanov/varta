@@ -237,6 +237,11 @@ fn limits() -> String {
             ),
             "scheduler::MAX_*REJECTION_REASON*",
         ),
+        (
+            "Pending timers (v36)",
+            scheduler::MAX_PENDING_TIMERS.to_string(),
+            "scheduler::MAX_PENDING_TIMERS",
+        ),
     ];
     let mut lines = vec![
         "| Resource | Limit | Source constant |".to_owned(),

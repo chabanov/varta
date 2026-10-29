@@ -11634,6 +11634,111 @@ fn pilot_profile_v36_declares_host_abi_32_with_value17_through_both_binaries() {
     rejects("matching host ABI");
 }
 
+/// V36 timers through `varta dev`, both artifacts, both binaries and the
+/// packaged executable: the sleep/backoff pattern, an interval, timer
+/// arguments and `AbortSignal.timeout` keep Node's order. Arming a timer
+/// needs the exact `time.timer` grant: without it, or under a host ceiling
+/// that withholds it, the execution fails at the call before any callback.
+#[test]
+fn pilot_profile_v36_timers_run_everywhere_and_are_denied_without_time_timer() {
+    const PROFILE: &str = "checked-f64-utf16-v36";
+    let project = RegressionProject::new(
+        "function sleep(ms:number):Promise<void>{return new Promise<void>((resolve)=>setTimeout(resolve,ms));}\
+         export async function main():Promise<void>{\
+         console.log('start');\
+         setTimeout((label:string)=>console.log(label),2,'timer arg');\
+         const signal=AbortSignal.timeout(1);\
+         let ticks=0;let id=0;\
+         id=setInterval(()=>{ticks=ticks+1;console.log('tick '+String(ticks));if(ticks===2){clearInterval(id);}},3);\
+         for(let attempt=1;attempt<=2;attempt++){await sleep(5*2**attempt);console.log('retry '+String(attempt));}\
+         console.log('aborted '+String(signal.aborted));}",
+        serde_json::json!({"time":{"timer":true}}),
+    );
+    project.language_profile(PROFILE);
+    let expected = [
+        "varta log: start",
+        "varta log: timer arg",
+        "varta log: tick 1",
+        "varta log: tick 2",
+        "varta log: retry 1",
+        "varta log: retry 2",
+        "varta log: aborted true",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let check = project.command(&["check"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info = String::from_utf8_lossy(&inspect.stdout).into_owned();
+    assert!(
+        info.contains("timer_start") && info.contains("time.timer"),
+        "{info}"
+    );
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(validate.status.success(), "{}", combined(&validate));
+    // The host ceiling withholds the grant the package requested.
+    project.host_policy(serde_json::json!([]));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let mut restricted = Command::new(command.get_program());
+        restricted.args(command.get_args());
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+        let output = restricted
+            .args(["--policy", "host-policy.json"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{}", combined(&output));
+        // A failed execution reports its error, not its captured log.
+        assert!(logs(&output).is_empty(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("<capability denied: time.timer>"),
+            "{}",
+            combined(&output)
+        );
+    }
+    // Without the grant, the timer call fails before any callback runs.
+    project.set_capabilities(serde_json::json!({"time":{"now":true}}));
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success(), "{}", combined(&dev));
+    assert!(logs(&dev).is_empty(), "{}", combined(&dev));
+    assert!(
+        combined(&dev).contains("<capability denied: time.timer>"),
+        "{}",
+        combined(&dev)
+    );
+    // Policy review requires a declaration for the privileged timer import.
+    let build = project.command(&["build"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(!validate.status.success(), "{}", combined(&validate));
+    assert!(
+        combined(&validate).contains("requires capability namespace: time.timer"),
+        "{}",
+        combined(&validate)
+    );
+}
+
 #[test]
 fn pilot_profile_v35_runs_mixed_records_and_json_to_unknown_in_dev_and_artifacts() {
     let project = RegressionProject::new(

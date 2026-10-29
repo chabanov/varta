@@ -101,6 +101,32 @@ mod tests {
         );
     }
     #[test]
+    fn timer_grants_are_exact_booleans() {
+        // V36 timers: `time.timer` is its own boolean operation.
+        let timers = config(serde_json::json!({"time":{"timer":true,"now":false}}));
+        timers.validate().unwrap();
+        assert_eq!(
+            timers.normalized_capabilities(),
+            [
+                CapabilityGrant {
+                    id: "time.now".into(),
+                    value: CapabilityValue::Boolean(false),
+                },
+                CapabilityGrant {
+                    id: varta_common::scheduler::TIMER_CAPABILITY.into(),
+                    value: CapabilityValue::Boolean(true),
+                },
+            ]
+        );
+        for grants in [
+            serde_json::json!({"time":{"timer":["X"]}}),
+            serde_json::json!({"time":{"sleep":true}}),
+            serde_json::json!({"time":{"timers":true}}),
+        ] {
+            assert!(config(grants).validate().is_err());
+        }
+    }
+    #[test]
     fn unsupported_transport_and_profiles_cannot_silently_pass() {
         for pattern in [
             "https://example.com/**",

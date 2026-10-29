@@ -20,7 +20,7 @@ use crate::{Result, VartaError};
 #[must_use]
 pub fn capability_kind(id: &str) -> Option<GrantKind> {
     match id {
-        "time.now" | "process.exit" => Some(GrantKind::Boolean),
+        "time.now" | "time.timer" | "process.exit" => Some(GrantKind::Boolean),
         "env.has" | "env.print" | "env.get" | "fs.read" | "fs.print" => Some(GrantKind::Patterns),
         "net.fetch" | "net.get" => Some(GrantKind::Urls),
         "net.listen" => Some(GrantKind::Listeners),

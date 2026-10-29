@@ -563,6 +563,15 @@
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-optional-chains"
+    },
+    {
+      "id": "timers",
+      "title": "Event-loop timers (setTimeout, setInterval, timer-driven promises)",
+      "core": [
+        "CORE-09"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
     }
   ],
   "cases": [
@@ -2219,6 +2228,26 @@
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
         "reason": "Abort listeners need function-valued fields (v36 abort prelude); the v35 Web types keep them pending."
+      }
+    },
+    {
+      "id": "timers-event-loop",
+      "feature": "timers",
+      "path": "cases/timers-event-loop.ts",
+      "sha256": "f474a2a164c843a8756df54b54475c973c1c3ac09ba5609350ff24535f513415",
+      "stdout": [
+        "varta log: main end",
+        "varta log: microtask of main",
+        "varta log: timeout 0 first",
+        "varta log: microtask of first",
+        "varta log: timeout 0 second",
+        "varta log: slept 5",
+        "varta log: slept 1"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Timers are a v36 feature (timers, host ABI 32) that also needs the exact time.timer grant; the inventory pins v35 and runs every case without grants."
       }
     }
   ]

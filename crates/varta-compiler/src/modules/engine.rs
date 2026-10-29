@@ -18,6 +18,10 @@ pub(crate) struct Prelude {
     pub source: &'static str,
     /// Exported names that trigger the implicit import, with their namespace.
     pub exports: &'static [(&'static str, Namespace)],
+    /// Static member calls that trigger the implicit import of an exported
+    /// function, bound under the member's dotted name, which no source
+    /// declaration can spell (v36 `AbortSignal.timeout`).
+    pub members: &'static [Member],
     pub admitted: fn(LanguageProfile) -> bool,
     /// A later profile's source of the same module, replacing `source` where
     /// its selector admits it; earlier profiles keep `source` unchanged.
@@ -33,6 +37,14 @@ impl Prelude {
             _ => self.source,
         }
     }
+}
+
+/// A static member `object.property` implemented by the prelude export
+/// `function`.
+pub(crate) struct Member {
+    pub object: &'static str,
+    pub property: &'static str,
+    pub function: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -51,6 +63,7 @@ pub(crate) const HEADERS: Prelude = Prelude {
         (HEADERS_CLASS, Namespace::Class),
         ("HeadersInit", Namespace::Type),
     ],
+    members: &[],
     admitted: LanguageProfile::web_headers,
     extended: None,
 };
@@ -64,13 +77,28 @@ pub(crate) const ABORT: Prelude = Prelude {
         (ABORT_SIGNAL_CLASS, Namespace::Class),
         ("DOMException", Namespace::Class),
     ],
+    members: &[],
     admitted: LanguageProfile::abort_signals,
     extended: Some((
         LanguageProfile::function_fields,
         include_str!("../prelude/abort_listeners.ts"),
     )),
 };
-pub(crate) const PRELUDES: [&Prelude; 2] = [&HEADERS, &ABORT];
+/// `AbortSignal.timeout` (v36 `timers`): an `AbortController` aborted by an
+/// unreferenced timer; it imports the abort prelude implicitly.
+pub(crate) const ABORT_TIMEOUT: Prelude = Prelude {
+    path: "<varta>/web/abort_timeout.ts",
+    source: include_str!("../prelude/abort_timeout.ts"),
+    exports: &[],
+    members: &[Member {
+        object: ABORT_SIGNAL_CLASS,
+        property: "timeout",
+        function: "abortSignalTimeout",
+    }],
+    admitted: LanguageProfile::timers,
+    extended: None,
+};
+pub(crate) const PRELUDES: [&Prelude; 3] = [&HEADERS, &ABORT, &ABORT_TIMEOUT];
 /// Class names that compiler hooks recognize in their prelude modules.
 pub(crate) const HEADERS_CLASS: &str = "Headers";
 pub(crate) const ABORT_SIGNAL_CLASS: &str = "AbortSignal";
@@ -163,6 +191,17 @@ impl Visit for References {
             .entry(ident.sym.to_string())
             .or_insert(ident.span);
     }
+    /// `Object.member` also records the dotted name of a static member.
+    fn visit_member_expr(&mut self, member: &ast::MemberExpr) {
+        if let (ast::Expr::Ident(object), ast::MemberProp::Ident(property)) =
+            (&*member.obj, &member.prop)
+        {
+            self.found
+                .entry(format!("{}.{}", object.sym, property.sym))
+                .or_insert(member.span);
+        }
+        member.visit_children_with(self);
+    }
 }
 
 /// Implicit prelude imports of one module, in prelude order. A prelude module
@@ -189,7 +228,7 @@ pub(super) fn implicit_imports(
     admitted
         .into_iter()
         .filter_map(|prelude| {
-            let bindings: Vec<ImportBinding> = prelude
+            let mut bindings: Vec<ImportBinding> = prelude
                 .exports
                 .iter()
                 .filter(|(name, _)| !bound.contains(*name))
@@ -202,6 +241,21 @@ pub(super) fn implicit_imports(
                     })
                 })
                 .collect();
+            bindings.extend(
+                prelude
+                    .members
+                    .iter()
+                    .filter(|member| !bound.contains(member.object))
+                    .filter_map(|member| {
+                        let local = format!("{}.{}", member.object, member.property);
+                        references.found.get(&local).map(|span| ImportBinding {
+                            imported: member.function.into(),
+                            local,
+                            span: *span,
+                            type_only: false,
+                        })
+                    }),
+            );
             let span = bindings.first()?.span;
             Some(Dependency {
                 target: PathBuf::from(prelude.path),

@@ -15,6 +15,7 @@ use functions::{LiftContext, intern_full};
 mod async_functions;
 mod combinators;
 mod methods;
+mod timers;
 mod values;
 pub(super) use async_functions::AsyncSplit;
 use ir::{PromiseType, ScheduleMode};
@@ -55,6 +56,8 @@ enum Helper {
     TailThrow,
     /// The element job of a promise combinator (v35).
     Combinator(combinators::Combinator),
+    /// The frame of a timeout or interval callback (v36).
+    Timer(timers::TimerKind),
 }
 
 /// Promise lowering state shared by every function of one program.
