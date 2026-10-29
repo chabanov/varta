@@ -563,6 +563,8 @@ mod object_values_tests;
 mod array_enumeration_tests;
 
 #[cfg(test)]
+mod abort_signal_tests;
+#[cfg(test)]
 mod catch_pattern_tests;
 #[cfg(test)]
 mod class_tests;
@@ -590,6 +592,8 @@ mod v35_cross_stream_tests;
 mod value15_tests;
 #[cfg(test)]
 mod value16_tests;
+#[cfg(test)]
+mod web_headers_tests;
 #[cfg(test)]
 mod wide_record_tests;
 

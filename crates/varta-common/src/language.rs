@@ -313,15 +313,16 @@ impl LanguageProfile {
         matches!(self, Self::CheckedF64Utf16V34 | Self::CheckedF64Utf16V35)
     }
     /// Pilot batch v35, web stream: the engine-provided typed `Headers` class
-    /// (case-insensitive names, ordered entries), implemented in the guest and
-    /// requiring no capability. Admits nothing yet.
+    /// (case-insensitive names, ordered entries), a guest prelude compiled
+    /// only when a program names it and requiring no capability; also function
+    /// literals that omit trailing contextual parameters.
     #[must_use]
     pub fn web_headers(self) -> bool {
         self == Self::CheckedF64Utf16V35
     }
     /// Pilot batch v35, web stream: the `AbortController`/`AbortSignal` data
-    /// model (`abort`, `aborted`, `reason`, `throwIfAborted`, listeners) without
-    /// timers. Admits nothing yet.
+    /// model (`abort`, `aborted`, `reason`, `throwIfAborted`) and
+    /// `DOMException`, a guest prelude without timers; listeners stay pending.
     #[must_use]
     pub fn abort_signals(self) -> bool {
         self == Self::CheckedF64Utf16V35

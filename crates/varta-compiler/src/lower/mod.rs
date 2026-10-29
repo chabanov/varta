@@ -369,6 +369,7 @@ mod undefined;
 mod unions;
 mod unknown;
 mod updates;
+mod web_text;
 
 impl Lower<'_> {
     fn declare(

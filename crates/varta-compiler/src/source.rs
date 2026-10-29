@@ -21,6 +21,11 @@ impl Source {
         }
     }
 
+    /// Whether this source is the module at `path` (an engine prelude, say).
+    pub(crate) fn is_path(&self, path: &Path) -> bool {
+        matches!(&*self.file.name, FileName::Real(real) if real == path)
+    }
+
     /// The source text of `span`, for messages that quote a construct.
     pub(crate) fn text(&self, span: Span) -> Option<String> {
         swc_common::SourceMapper::span_to_snippet(&*self.map, span).ok()

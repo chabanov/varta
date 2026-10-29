@@ -73,6 +73,7 @@ pub(in crate::lower) fn root(
         init: None,
         initializers: Vec::new(),
         state: State::Ready,
+        prelude: false,
     });
     types.classes.error_roots.insert(family, id);
     let (fields, mut init) = match parent {
@@ -201,28 +202,47 @@ pub(in crate::lower) fn new_target_name(member: &ast::MemberExpr) -> bool {
 /// Whether a value of `ty` may reach an Error subclass instance, whose own
 /// property enumerability (non-enumerable message/cause) is not modelled.
 pub(in crate::lower) fn reaches_instance(ty: Type, types: &ir::ValueTypes) -> bool {
-    fn visit(ty: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) -> bool {
+    // `unknown` (v34) reaches an instance whenever an Error class exists.
+    let unknown = types.classes.error_root(ErrorClass::Error).is_some();
+    types.profile.error_subclasses()
+        && reaches(ty, types, &|id| types.classes.is_error(id), unknown)
+}
+
+/// Whether a value of `ty` may reach an engine prelude instance (v35 Web
+/// types), which has no own enumerable data property in JavaScript.
+pub(in crate::lower) fn reaches_prelude(ty: Type, types: &ir::ValueTypes) -> bool {
+    let unknown = types.classes.has_prelude();
+    reaches(ty, types, &|id| types.classes.get(id).prelude, unknown)
+}
+
+fn reaches(ty: Type, types: &ir::ValueTypes, target: &dyn Fn(u32) -> bool, unknown: bool) -> bool {
+    fn visit(
+        ty: Type,
+        types: &ir::ValueTypes,
+        (target, unknown): (&dyn Fn(u32) -> bool, bool),
+        seen: &mut BTreeSet<Type>,
+    ) -> bool {
         if !seen.insert(ty) {
             return false;
         }
+        let visit = |ty, seen: &mut BTreeSet<Type>| visit(ty, types, (target, unknown), seen);
         match ty {
-            Type::Class(id) if types.classes.is_error(id) => true,
-            Type::Class(id) => visit(Type::Record(types.classes.shape(id)), types, seen),
+            Type::Class(id) if target(id) => true,
+            Type::Class(id) => visit(Type::Record(types.classes.shape(id)), seen),
             Type::Record(id) => types.records[id as usize]
                 .fields
                 .iter()
-                .any(|f| visit(f.ty, types, seen)),
-            Type::Array(id) => visit(types.arrays[id as usize], types, seen),
-            Type::Dictionary(id) => visit(types.dictionaries[id as usize].value, types, seen),
-            Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
-                .iter()
-                .any(|&t| visit(t, types, seen)),
-            // `unknown` (v34) reaches an instance whenever an Error class exists.
-            Type::Unknown => types.classes.error_root(ErrorClass::Error).is_some(),
+                .any(|f| visit(f.ty, seen)),
+            Type::Array(id) => visit(types.arrays[id as usize], seen),
+            Type::Dictionary(id) => visit(types.dictionaries[id as usize].value, seen),
+            Type::Union(id) | Type::ReferenceUnion(id) => {
+                types.unions[id as usize].iter().any(|&t| visit(t, seen))
+            }
+            Type::Unknown => unknown,
             _ => false,
         }
     }
-    types.profile.error_subclasses() && visit(ty, types, &mut BTreeSet::new())
+    visit(ty, types, (target, unknown), &mut BTreeSet::new())
 }
 
 fn local(span: Span, slot: u32, ty: Type) -> Expr {

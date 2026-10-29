@@ -99,6 +99,10 @@ impl<'a> Collected<'a> {
                 self.helpers.insert(strings::Helper::string_trim(*mode));
                 self.expression(value, source);
             }
+            E::TextUnits { value, op } => {
+                self.helpers.insert(strings::Helper::text_units(*op));
+                self.expression(value, source);
+            }
             E::StringRepeat {
                 value,
                 count,

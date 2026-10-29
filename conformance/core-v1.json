@@ -527,6 +527,24 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md"
+    },
+    {
+      "id": "web-headers",
+      "title": "Engine-provided Fetch Headers",
+      "core": [
+        "CORE-10"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "abort-signals",
+      "title": "AbortController and AbortSignal without timers",
+      "core": [
+        "CORE-09"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
     }
   ],
   "cases": [
@@ -931,9 +949,7 @@
         "varta log: object"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "typeof of a Promise is not admitted: v34 promise objects have no value tag."
+        "status": "supported"
       }
     },
     {
@@ -1016,9 +1032,7 @@
         "varta log: 2 6 3"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Async class methods are admitted from checked-f64-utf16-v35 (async_methods)."
+        "status": "supported"
       }
     },
     {
@@ -1030,9 +1044,7 @@
         "varta log: 60 120 6"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Async arrows and function expressions are admitted from checked-f64-utf16-v35 (async_methods)."
+        "status": "supported"
       }
     },
     {
@@ -1052,9 +1064,7 @@
         "varta log: [{\"status\":\"fulfilled\",\"value\":6},{\"status\":\"rejected\",\"reason\":{}}]"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Promises inside arrays and Promise.all/race/allSettled are admitted from checked-f64-utf16-v35 (promise_values)."
+        "status": "supported"
       }
     },
     {
@@ -2095,6 +2105,37 @@
         "varta log: object [\"b\",\"a\"]",
         "varta log: array object number",
         "varta log: [1,{\"n\":null}] undefined"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "web-headers",
+      "feature": "web-headers",
+      "path": "cases/web-headers.ts",
+      "sha256": "f3660b1cafb8b881998bb8522e981cbc19965324528f692596c7ec0453f86c9c",
+      "stdout": [
+        "varta log: */*, application/json true null",
+        "varta log: [accept=*/*, application/json][set-cookie=a=1][set-cookie=b=2][x-id=7]",
+        "varta log: [\"a=1\",\"b=2\"]",
+        "varta log: Headers.append: \"bad name\" is an invalid header name.",
+        "varta log: 7 8 true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "abort-controller",
+      "feature": "abort-signals",
+      "path": "cases/abort-controller.ts",
+      "sha256": "35dd290fcb4e6d9a72739741ebc926a987b2e14a482551e4dea6faca0833ac33",
+      "stdout": [
+        "varta log: false true",
+        "varta log: true AbortError(20): This operation was aborted",
+        "varta log: thrown true",
+        "varta log: string stop"
       ],
       "baseline": {
         "status": "supported"

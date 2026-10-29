@@ -34,6 +34,7 @@ pub(super) fn expression(expr: &Expr, visit: &mut dyn FnMut(&Expr)) {
         | E::Reinterpret(value)
         | E::Suspend { value, .. }
         | E::StringTrim { value, .. }
+        | E::TextUnits { value, .. }
         | E::ArrayEnumerate { value, .. }
         | E::ArrayReserve { length: value, .. }
         | E::NewError(_, value)

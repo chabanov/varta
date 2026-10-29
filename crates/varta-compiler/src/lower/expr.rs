@@ -867,6 +867,9 @@ impl Lower<'_> {
             return self.error_to_string(call, member);
         }
         let name = callee_name(callee).ok_or_else(|| unsupported("callee"))?;
+        if let Some(value) = self.web_text(call, &name)? {
+            return Ok(value);
+        }
         if name == "Array.isArray" && self.types.profile.reference_unions() {
             return self.array_is_array(call);
         }
@@ -903,6 +906,12 @@ impl Lower<'_> {
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()
             {
                 return Err(unsupported("JSON.stringify value type"));
+            }
+            if classes::reaches_prelude(value.ty, self.types) {
+                return Err(self.source.locate(
+                    unsupported("JSON.stringify of an engine Web type instance (Headers, AbortController, AbortSignal, DOMException); its state is private"),
+                    value.span,
+                ));
             }
             if classes::reaches_instance(value.ty, self.types) {
                 return Err(self.source.locate(

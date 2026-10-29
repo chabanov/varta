@@ -268,8 +268,14 @@ impl Lower<'_> {
         if arrow.is_async && !asynchronous || arrow.is_generator || arrow.type_params.is_some() {
             return Err(unsupported("async/generic/generator arrow"));
         }
+        let padded = ignored_parameters(
+            arrow,
+            expected.as_deref(),
+            expected_shape.as_ref(),
+            self.types,
+        );
         let plans = parameters::analyze(
-            &arrow.params,
+            padded.as_deref().unwrap_or(&arrow.params),
             expected.as_deref(),
             expected_shape.as_ref(),
             self.types,
@@ -530,6 +536,45 @@ impl Lower<'_> {
             },
         })
     }
+}
+
+/// Name prefix of a synthesized ignored parameter; `#` cannot start a source
+/// binding, so the name never shadows or captures user code.
+const IGNORED_PARAMETER: &str = "#ignored";
+
+/// V35 (`web_headers`): a function literal whose context is an exact function
+/// type may declare fewer parameters than that type, as in TypeScript, like
+/// `headers.forEach((value, name) => …)` for a three-parameter callback. The
+/// missing trailing parameters are synthesized as ignored bindings, so the
+/// literal has the context's exact function type. Earlier profiles keep the
+/// exact parameter count.
+fn ignored_parameters(
+    arrow: &ast::ArrowExpr,
+    expected: Option<&[Type]>,
+    shape: Option<&ir::ParameterShape>,
+    types: &ir::ValueTypes,
+) -> Option<Vec<ast::Pat>> {
+    let expected = expected?;
+    // A rest parameter of the context keeps its exact shape.
+    if !types.profile.web_headers()
+        || shape.is_none_or(|shape| shape.rest)
+        || arrow.params.len() >= expected.len()
+        || arrow
+            .params
+            .last()
+            .is_some_and(|param| matches!(param, ast::Pat::Rest(_)))
+    {
+        return None;
+    }
+    let mut params = arrow.params.clone();
+    for index in arrow.params.len()..expected.len() {
+        let name = format!("{IGNORED_PARAMETER}{index}");
+        params.push(ast::Pat::Ident(ast::BindingIdent {
+            id: ast::Ident::new(name.into(), arrow.span, Default::default()),
+            type_ann: None,
+        }));
+    }
+    Some(params)
 }
 
 impl Lower<'_> {

@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 56 feature rows and 99 cases:
-89 pass, 10 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 58 feature rows and 104 cases:
+95 pass, 9 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -209,13 +209,28 @@ a new reason: v34 promises have no value tag, so `typeof` rejects them.
 Thenables other than internal promises and the combinators remain outside
 these rows.
 
-The v35 async stream adds three original cases that stay known gaps under the
-v34 pin: `async-class-method` (an overridden async method awaiting
-`super.step`), `async-closure-captures` (an async arrow sharing a captured
-`let` across `await`, and an async function expression) and
-`promise-combinators` (`Promise.all`, `race` and `allSettled` job order and
-results). Their outputs match Node.js v24.20.0 type stripping. Run with the
-manifest temporarily pinned to `checked-f64-utf16-v35`, these three cases and
-`promise-resolve` were observed as unexpected support with their pinned hashes
-and expected output, and every other case kept its v34 status; they become
-supported when the inventory is pinned to v35.
+The v35 batch moves the pin to `checked-f64-utf16-v35`. Under it every v34
+case keeps its status except `promise-resolve`, which was observed as unexpected
+support with its pinned source hash and expected output (v35 promises carry a
+value tag, so `typeof` reports `"object"`) and is promoted. The batch adds
+eight original cases, all supported under the v35 pin and matching Node.js
+v24.20.0 type stripping:
+
+- the records stream's `mixed-index-records` row with `mixed-index-records`
+  and `dictionary-iteration-updates` (declared fields next to a string index
+  signature, `for...in`, compound updates and spreads), and its `unknown-json`
+  row with `json-parse-unknown` (`JSON.parse` to `unknown` and `object`
+  narrowing);
+- the async stream's `async-class-method` (an overridden async method
+  awaiting `super.step`), `async-closure-captures` (an async arrow sharing a
+  captured `let` across `await`, and an async function expression) and
+  `promise-combinators` (`Promise.all`, `race` and `allSettled` job order and
+  results);
+- the Web stream's `web-headers` (CORE-10) and `abort-signals` (CORE-09) rows,
+  both Varta contracts for the engine-provided Web types, with `web-headers`
+  and `abort-controller`.
+
+The async, Web and `promise-resolve` cases were observed as unexpected support
+with their pinned hashes and expected output under the v35 pin before review
+and promotion. Abort listeners, timers and live header iterators remain outside
+these rows.

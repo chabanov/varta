@@ -122,6 +122,10 @@ impl Emitter<'_> {
                 self.expr(value)?;
                 self.string_helper(strings::Helper::string_trim(*mode))?;
             }
+            E::TextUnits { value, op } => {
+                self.expr(value)?;
+                self.string_helper(strings::Helper::text_units(*op))?;
+            }
             E::StringRepeat {
                 value,
                 count,

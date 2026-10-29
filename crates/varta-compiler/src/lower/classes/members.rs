@@ -54,6 +54,17 @@ impl Lower<'_> {
             span,
         ))
     }
+    /// A missing member; engine prelude classes (v35) explain the members
+    /// they name but do not implement yet.
+    fn unknown_member(&self, class: u32, name: &str, kind: &str) -> CompilerError {
+        match self.types.classes.pending_member(class, name) {
+            Some(reason) => CompilerError::Unsupported {
+                kind: reason.into(),
+                detail: "not implemented by the checked-f64-utf16-v35 engine Web types".into(),
+            },
+            None => invalid(format!("unknown {kind}: {name}")),
+        }
+    }
     fn member_key(&self, prop: &ast::MemberProp) -> Result<String> {
         match prop {
             ast::MemberProp::Ident(id) => Ok(id.sym.to_string()),
@@ -159,6 +170,19 @@ impl Lower<'_> {
     pub(in crate::lower) fn class_new(&mut self, new: &ast::NewExpr, class: u32) -> Result<Expr> {
         if new.type_args.is_some() {
             return Err(unsupported("generic class construction"));
+        }
+        // An engine prelude constructs its own instances (v35 Web types).
+        if !crate::modules::engine::is_prelude_source(self.source)
+            && self
+                .types
+                .classes
+                .pending_member(class, crate::modules::engine::CONSTRUCTOR)
+                .is_some()
+        {
+            return Err(self.source.locate(
+                self.unknown_member(class, crate::modules::engine::CONSTRUCTOR, "constructor"),
+                new.callee.span(),
+            ));
         }
         let args = new.args.as_deref().unwrap_or_default();
         if args.iter().any(|arg| arg.spread.is_some()) {
@@ -285,7 +309,7 @@ impl Lower<'_> {
                     member.prop.span(),
                 )),
                 None => Err(self.source.locate(
-                    invalid(format!("unknown class member: {name}")),
+                    self.unknown_member(class, &name, "class member"),
                     member.prop.span(),
                 )),
             };
@@ -337,7 +361,7 @@ impl Lower<'_> {
                 if self.types.classes.field(class, &name).is_some() {
                     type_error(format!("class field {name} is not callable"))
                 } else {
-                    invalid(format!("unknown class method: {name}"))
+                    self.unknown_member(class, &name, "class method")
                 },
                 member.prop.span(),
             ));
@@ -400,7 +424,7 @@ impl Lower<'_> {
         let name = self.member_key(&member.prop)?;
         let Some(method) = self.types.classes.get(class).statics.get(&name).cloned() else {
             return Err(self.source.locate(
-                invalid(format!("unknown static class method: {name}")),
+                self.unknown_member(class, &name, "static class method"),
                 member.prop.span(),
             ));
         };

@@ -97,6 +97,8 @@ pub(super) struct Class {
     /// Own field initializers in declaration order.
     initializers: Vec<(String, Box<ast::Expr>)>,
     state: State,
+    /// Declared by an engine prelude module (v35 Web types).
+    pub prelude: bool,
 }
 
 /// The class whose member bodies are being lowered; `init` is the function
@@ -138,6 +140,30 @@ impl Classes {
     /// member calls of the same name are then no longer provably user-code free.
     pub(super) fn has_method(&self, name: &str) -> bool {
         self.method_names.contains(name)
+    }
+    /// The engine prelude class `name` (v35 Web types), when the program loaded it.
+    pub(super) fn prelude_class(&self, name: &str) -> Option<u32> {
+        self.list
+            .iter()
+            .position(|class| class.prelude && class.name == name)
+            .map(|id| id as u32)
+    }
+    /// Whether the program loaded any engine prelude class.
+    pub(super) fn has_prelude(&self) -> bool {
+        self.list.iter().any(|class| class.prelude)
+    }
+    /// The explanation for a member of an engine prelude class (or of a
+    /// subclass) that the profile names but does not implement.
+    pub(super) fn pending_member(&self, mut class: u32, name: &str) -> Option<&'static str> {
+        loop {
+            let info = &self.list[class as usize];
+            if info.prelude
+                && let Some(reason) = crate::modules::engine::pending(&info.name, name)
+            {
+                return Some(reason);
+            }
+            class = info.parent?;
+        }
     }
     /// `descendant` equals `ancestor` or inherits from it.
     pub(super) fn descends(&self, mut descendant: u32, ancestor: u32) -> bool {
@@ -377,6 +403,7 @@ pub(super) fn register(
         init: None,
         initializers: Vec::new(),
         state: State::Pending,
+        prelude: crate::modules::engine::is_prelude_source(source),
     });
     Ok(Some((name, id)))
 }
@@ -405,6 +432,6 @@ mod layout;
 mod members;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers};
 pub(super) use error_classes::{
-    MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance,
+    MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_prelude,
 };
 pub(super) use layout::layout_module;

@@ -1,6 +1,7 @@
 //! Owned UTF-16 trimming. Removes leading/trailing ECMAScript WhiteSpace
-//! and LineTerminator code units. Lone surrogates and NUL are
-//! preserved because neither is in the whitespace set.
+//! and LineTerminator code units, or only HTTP whitespace for the v35 Web
+//! preludes. Lone surrogates and NUL are preserved because neither is in
+//! either whitespace set.
 use super::*;
 const INPUT: u32 = 0;
 const START: u32 = 1;
@@ -12,7 +13,15 @@ const DEST: u32 = 6;
 const WS: u32 = 7;
 const UNIT_BYTES: i32 = size_of::<u16>() as i32;
 
-pub(super) fn function(allocate: u32, trim_start: bool, trim_end: bool) -> Function {
+/// HTTP whitespace code units (Fetch): TAB, LF, CR and SP.
+const HTTP_WHITESPACE: [u32; 4] = [0x0009, 0x000A, 0x000D, 0x0020];
+
+pub(super) fn function(
+    allocate: u32,
+    trim_start: bool,
+    trim_end: bool,
+    whitespace: Whitespace,
+) -> Function {
     let mut f = Function::new([(WS - START + 1, ValType::I32)]);
     // byte length -> code-unit length.
     instructions(
@@ -54,7 +63,7 @@ pub(super) fn function(allocate: u32, trim_start: bool, trim_end: bool) -> Funct
                 I::LocalSet(CHAR),
             ],
         );
-        whitespace_check(&mut f);
+        whitespace_check(&mut f, whitespace);
         instructions(
             &mut f,
             [
@@ -99,7 +108,7 @@ pub(super) fn function(allocate: u32, trim_start: bool, trim_end: bool) -> Funct
                 I::LocalSet(CHAR),
             ],
         );
-        whitespace_check(&mut f);
+        whitespace_check(&mut f, whitespace);
         instructions(
             &mut f,
             [
@@ -155,9 +164,26 @@ pub(super) fn function(allocate: u32, trim_start: bool, trim_end: bool) -> Funct
     f
 }
 
-fn whitespace_check(f: &mut Function) {
-    // WS = whether CHAR is JavaScript TrimWhitespace.
+fn whitespace_check(f: &mut Function, whitespace: Whitespace) {
+    // WS = whether CHAR is JavaScript TrimWhitespace (or HTTP whitespace).
     instructions(f, [I::I32Const(0), I::LocalSet(WS)]);
+    if whitespace == Whitespace::Http {
+        for value in HTTP_WHITESPACE {
+            instructions(
+                f,
+                [
+                    I::LocalGet(CHAR),
+                    I::I32Const(value as i32),
+                    I::I32Eq,
+                    I::If(BlockType::Empty),
+                    I::I32Const(1),
+                    I::LocalSet(WS),
+                    I::End,
+                ],
+            );
+        }
+        return;
+    }
     // U+0009 .. U+000D
     instructions(
         f,

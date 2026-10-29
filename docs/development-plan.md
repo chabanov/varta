@@ -473,31 +473,32 @@ bumps the corresponding ABI for v35 itself
 ([contract](architecture.md#checked-f64-utf16-v35--pilot-batch-web-types-mixed-records-async-methods-and-frame-liveness)).
 The async stream switched v35 to value layout 16 (value15 plus the promise
 tag) with host ABI 31 for its value16 readers
-([contract](architecture.md#value-layout-16-promise_values)); the other
-streams rebase onto it.
-All selectors are registered. The records stream implements `mixed_index_records()` and
-`unknown_json()` on the `v35-records` branch
-([mixed records](architecture.md#mixed-index-records-mixed_index_records),
-[JSON to unknown](architecture.md#json-to-unknown-unknown_json)) on the async
-stream's value layout 16 and JSON schema 16, without a further tag, layout,
-host import or schema version. Pending in that stream:
-spreads without a dictionary context and into closed records, numeric index
-signatures, class index signatures, declared fields that are not checkable from
-the index type (for example `items: Item[]` next to `[key: string]: unknown`),
-mixed records nested inside checked-parse targets, `x.key` on `object` without
-an `in` guard, a null test in an earlier statement than the `typeof` test
-(`if (x === null) return;` keeps `object | null`), and `JSON.stringify` of `unknown`-holding
-values in programs that declare Error classes (the v32 rule).
+([contract](architecture.md#value-layout-16-promise_values)); the records and
+Web streams run on that layout and JSON schema 16 without a further tag,
+layout, host import or schema version, and every v35 frame uses the frames
+stream's liveness layout, including async closure bodies, whose captured cells
+are shared state-0 slots. The four streams are integrated on `v35-merge`.
+
+Pending in the records stream: spreads without a dictionary context and into
+closed records, numeric index signatures, class index signatures, declared
+fields that are not checkable from the index type (for example `items: Item[]`
+next to `[key: string]: unknown`), mixed records nested inside checked-parse
+targets, `x.key` on `object` without an `in` guard, a null test in an earlier
+statement than the `typeof` test (`if (x === null) return;` keeps
+`object | null`), and `JSON.stringify` of `unknown`-holding values in programs
+that declare Error classes (the v32 rule). Pending in the Web stream: abort
+event listeners, because a signal would hold listener functions, which needs a
+function-valued object field in the value layout.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
-| `web_headers()` | Web: engine-provided typed `Headers` class, guest-implemented, no capability | M2, M5 | Registered, admits nothing |
-| `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Registered, admits nothing |
-| `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Implemented on `v35-records`: mixed records with checked declared reads, `for…in`, compound/logical/update assignments, spreads, number keys, `Record<string, T>` inference, shared dictionary operations, optional and redeclared class fields |
-| `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Implemented on `v35-records`: `JSON.parse` and `parse<unknown>`, `JSON.parse(text) as T` as checked parse, descriptor-checked dictionary assertions, `object` narrowing and `in` guards |
-| `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Implemented on `v35-async`; generic methods stay rejected with all generic methods |
-| `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Implemented on `v35-async` (value ABI 16, host ABI 31); no `AggregateError` class, `Promise.withResolvers` and executor `resolve(promise)` not admitted |
-| `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Implemented on `v35-frames` ([contract](architecture.md#frame-liveness-frame_liveness)): per-state saved sets, direct liveness segments with exact per-state GC maps, frame catalog version 3; about half the fuel per `await`/`yield` of v34 |
+| `web_headers()` | Web: engine-provided typed `Headers` class, guest-implemented, no capability | M2, M5 | Implemented (prelude; snapshot iteration, no tuple types) |
+| `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Implemented without listeners (pending a value-layout change), `timeout` or `any` |
+| `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Implemented: mixed records with checked declared reads, `for…in`, compound/logical/update assignments, spreads, number keys, `Record<string, T>` inference, shared dictionary operations, optional and redeclared class fields |
+| `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Implemented: `JSON.parse` and `parse<unknown>`, `JSON.parse(text) as T` as checked parse, descriptor-checked dictionary assertions, `object` narrowing and `in` guards |
+| `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Implemented; generic methods stay rejected with all generic methods |
+| `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Implemented (value ABI 16, host ABI 31); no `AggregateError` class, `Promise.withResolvers` and executor `resolve(promise)` not admitted |
+| `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Implemented ([contract](architecture.md#frame-liveness-frame_liveness)): per-state saved sets, direct liveness segments with exact per-state GC maps, frame catalog version 3; about half the fuel per `await`/`yield` of v34 |
 
 ### Deferred external validation scenarios
 

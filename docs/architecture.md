@@ -6702,7 +6702,8 @@ implemented ones):
 
 - Web stream: `web_headers()` (an engine-provided typed `Headers` class,
   implemented in the guest and requiring no capability) and `abort_signals()`
-  (the `AbortController`/`AbortSignal` data model, without timers);
+  (the `AbortController`/`AbortSignal` data model, without timers); both admit
+  the [engine Web types](#engine-web-types-web_headers-abort_signals) below;
 - records stream: `mixed_index_records()` (interfaces and object types that
   combine declared fields with a string index signature, plus `for…in`,
   compound assignment and spread on dictionaries) and `unknown_json()`
@@ -7134,6 +7135,105 @@ call`), `varta.json.parse<unknown>` and `in` on `unknown`.
   `unknown` (`undefined` after a later delete). Further guards add keys; flow
   joins keep `object`. Undeclared property reads and dynamic keys on `object`
   stay rejected, because TypeScript rejects them or types them `any`.
+
+#### Engine Web types (`web_headers`, `abort_signals`)
+
+V35 provides `Headers` (with the `HeadersInit` alias), `AbortController`,
+`AbortSignal` and `DOMException` as **engine preludes**: typed TypeScript
+modules embedded in `varta-compiler` (`src/prelude/headers.ts`,
+`src/prelude/abort.ts`) and compiled with the program through the shared module
+graph, lowering and emission pipeline. They are ordinary nominal classes, so
+`instanceof`, fields, parameters, unions, `unknown`, closures, generator and
+async frames, the collector and the exception channel treat them like program
+classes. They add no host import, value tag, layout or capability, and v35
+keeps host ABI 30 and value ABI/layout 15. The alternative, compiler
+intrinsics for every member, was rejected: it would duplicate class layout,
+dispatch, rooting and diagnostics for each type.
+
+- **Loading.** `modules::engine` gives a module an implicit import of a
+  prelude export when the module references that name as an identifier or type
+  name (property names, object keys and strings never count) and neither
+  declares nor imports it at the top level. `web_headers()` admits the
+  `Headers`/`HeadersInit` prelude and `abort_signals()` the
+  `AbortController`/`AbortSignal`/`DOMException` prelude; earlier profiles never
+  load one and keep their existing diagnostics. A program that names none of
+  these types loads no prelude, so its module is byte-identical to one compiled
+  without preludes. Each prelude is a graph unit counted against the module and
+  source budgets, and its functions and classes count against the
+  user-function and record-shape limits like program declarations. Prelude paths
+  (`<varta>/web/…`) are reserved: an import that a host loader resolves to one
+  is a module error, and module metadata (`Compilation::modules`,
+  `varta check --json`) lists only program sources.
+- **Prelude intrinsics.** Header names and values are checked per UTF-16 code
+  unit. `charCodeAt` is a host call, and the production host-call and fuel
+  budgets would be exhausted after a few headers, so prelude modules (and only
+  prelude modules) may call five guest helpers that lower to `ir::TextUnits`:
+  `varta.web.indexAboveByte`, `indexNonToken`, `indexForbiddenValue` (the index
+  of the first code unit above U+00FF, outside RFC 9110 `tchar`, or NUL/LF/CR,
+  or -1), `asciiLowercase` and `trimHttpWhitespace` (TAB, LF, CR, SP). They read
+  the immutable string in place, make no host call and allocate only their
+  result. In program modules these names are ordinary unknown host calls.
+- **Headers.** Names and values are WebIDL ByteStrings (`TypeError` "Cannot
+  convert argument to a ByteString …" with Node's index and value); a name must
+  be a non-empty HTTP token and a value, after stripping leading and trailing
+  HTTP whitespace, may not contain NUL, LF or CR (`TypeError`
+  `Headers.<method>: "<input>" is an invalid header name|value.`). Names are
+  ASCII-lowercased. The list is a chain of entries kept sorted by name with
+  equal names in insertion order; only the per-name order is observable.
+  `get` joins a name's values with `", "` and returns `null` when absent;
+  `set` replaces the first value and removes the rest; `getSetCookie`,
+  `has`, `delete` and `append` follow the Fetch standard. The constructor
+  accepts nothing, another `Headers`, `Record<string, string>` or `string[][]`
+  and converts every entry before it fills the list, with Node's messages for
+  pairs that are not of length 2 and for holes. Iteration (`for…of`, `entries`,
+  `keys`, `values`, `forEach`) uses the sort-and-combine list, with each
+  `set-cookie` value as its own entry. `forEach(callback)` rereads the list
+  after the callback mutates it, like the WebIDL pair iterator.
+- **Headers deviations.** `entries`, `keys` and `values` return fresh arrays of
+  the current list rather than live iterators (no `next()`), and `for…of` over
+  a `Headers` iterates the `entries` snapshot (always the `Headers`
+  implementation, as `[Symbol.iterator]` would). Without tuple types a pair is
+  `string[]`, so destructured names and values are `string | undefined`, and a
+  `[string, string][]` annotation is rejected. Iterable inits other than
+  arrays, `forEach`'s `thisArg` and `String(headers)` (`[object Object]`, Node:
+  `[object Headers]`) differ. The header list is a guest chain bounded by
+  memory and fuel, while iteration snapshots are arrays and share the array
+  element limit.
+- **AbortController and AbortSignal.** `new AbortController()` owns a fresh
+  `signal`. `abort(reason?)` aborts once: an omitted or `undefined` reason
+  becomes `new DOMException('This operation was aborted', 'AbortError')`, and
+  later calls change nothing. `signal.aborted`, `signal.reason` (`unknown`,
+  `undefined` before the abort) and `signal.throwIfAborted()` (throws the
+  reason) follow the DOM standard, and `AbortSignal.abort(reason?)` returns an
+  aborted signal. `DOMException` is an `Error` subclass with
+  `constructor(message = '', name = 'Error')` and the legacy `code` getter; the
+  default reason is therefore `instanceof Error` and `instanceof DOMException`,
+  reports as `AbortError: "…"` when uncaught, and its `name` is writable (a
+  read-only accessor in Node). `new AbortSignal()` is rejected at compile time
+  (Node throws `TypeError: Illegal constructor`).
+- **Pending members.** `addEventListener`, `removeEventListener`,
+  `dispatchEvent` and `onabort` are rejected with an `unsupported abort event
+  listeners` diagnostic: a signal would have to store listener functions, and
+  value layout 15 has no function-valued object field (function values live
+  only in locals, parameters, results, closure cells and frames). Admitting
+  them needs a value-layout change. `AbortSignal.timeout` and `AbortSignal.any`
+  are rejected as well: v35 has no timers and no listeners.
+- **Value operations.** `JSON.stringify` of a value that may reach an engine
+  Web type instance (including `unknown` in a program that loads a prelude) is
+  rejected, because the instances keep private state where JavaScript has no
+  own enumerable property. Private prelude members are compile-time private.
+- **Callbacks.** Under `web_headers()` a function literal whose context is an
+  exact function type may declare fewer parameters than that type, as in
+  TypeScript (`headers.forEach((value, name) => …)`); the missing trailing
+  parameters are synthesized as ignored bindings, so the literal has the
+  context's exact type. Extra parameters, function values with fewer
+  parameters and earlier profiles keep the exact-count rule.
+- **Costs.** A typical request's header work (a record init, eight appends,
+  `set`, `delete`, `get`, `has`, one `for…of` and one `forEach` over ten
+  entries) stays under a fifth of the production fuel with one host call
+  (`Array.isArray` distinguishes a record init from a sequence), a bound that
+  `web_headers_tests` pins; `abort` makes one host call for its `undefined`
+  reason check. Production budgets are unchanged.
 
 ## Local modules
 

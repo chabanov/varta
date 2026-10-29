@@ -520,6 +520,29 @@ pub(crate) enum StringTrimMode {
     TrimEnd,
 }
 
+/// Engine-internal UTF-16 code-unit operations of the v35 Web type preludes
+/// (`lower::web_text`); they make no host call and read no capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum TextUnits {
+    /// Index of the first code unit in the class as a Number, or -1.
+    Index(UnitClass),
+    /// A copy with ASCII `A`-`Z` lowercased.
+    AsciiLowercase,
+    /// A copy without leading and trailing HTTP whitespace (TAB, LF, CR, SP).
+    TrimHttpWhitespace,
+}
+
+/// A class of UTF-16 code units matched by [`TextUnits::Index`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum UnitClass {
+    /// Above U+00FF: not a WebIDL ByteString unit.
+    AboveByte,
+    /// Not an HTTP token character (RFC 9110 `tchar`).
+    NonToken,
+    /// NUL, LF or CR: not allowed in a header value.
+    ForbiddenValue,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MathIntrinsic {
     Abs,
@@ -584,6 +607,11 @@ pub(crate) enum Expression {
     StringTrim {
         value: Box<Expr>,
         mode: StringTrimMode,
+    },
+    /// A v35 Web prelude code-unit operation on a string value.
+    TextUnits {
+        value: Box<Expr>,
+        op: TextUnits,
     },
     StringRepeat {
         value: Box<Expr>,
