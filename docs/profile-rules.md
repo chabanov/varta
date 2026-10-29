@@ -1640,3 +1640,35 @@ the v31 exception/JSON selectors. Each pilot work stream has exactly one selecto
 (`module_constants`, `literal_types`, `classes`, `module_reexports`,
 `template_literals`); gate every new admission on its own selector, keep v31 and
 earlier profiles frozen, and add rules for the stream under its own heading here.
+
+### Classes (`classes()`)
+
+Class instances are records with a private `RecordShape.class` shape: inherited
+slots first, never interned with structural shapes. Identity is the canonical
+descriptor of the most-derived class; never add a hidden field, heap flag or
+value tag for it, and keep construction in canonical slot order so the allocated
+layout key equals `canonical_layout`. `Type::Class` must stay distinct from
+`Type::Record`: record operations are admitted for classes only by deliberate
+decision (subclass instances carry more slots and a different presence trailer
+than the static shape). Widen subclasses to ancestors only by retyping; a union
+holds at most one record-or-class member, and union cells keep the record tag.
+
+Classes register in the v31 type namespace (`named::Declaration::Class`) during
+`link_module`, are laid out per module after its function signatures (parents
+first, cycle-checked) and allocate initializer/method indices in that order;
+dispatchers are allocated after all modules and their bodies are pushed after the
+last module, before lifted closures. Function vector positions must equal the
+allocated indices. Every overridden root method uses one dispatcher shared by
+all descendants; never inline per-call dispatch or call an override directly
+through an ancestor-typed receiver.
+
+Placeholders must stay unobservable: keep the syntactic constructor discipline
+(field-only `this`, top-level definite assignment, single top-level `super`, no
+escape/capture/method calls/returns/`new.target`, `this`-free initializers and
+parameter defaults) unless a flow analysis proves the same property. Readonly
+writes are allowed only in the declaring class's initializer through `this`;
+private/protected checks use `classes.context`. Class calls are user code: keep
+`flow::native` false for names declared by any class method and treat class
+`new` as an unknown call in guard effects. Captured class bindings use the
+catalog's `class` leaf. Error subclasses, `#private`, statics and setters need
+their own design; keep them rejected with construct-specific diagnostics.

@@ -62,6 +62,9 @@ impl Lower<'_> {
         if matches!(value.ty, Type::Record(_)) {
             return self.record_field(member, value, true);
         }
+        if matches!(value.ty, Type::Class(_)) {
+            return self.class_member(member, value, true);
+        }
         let payload = value.ty.result_value().ok_or_else(|| {
             self.source.locate(
                 unsupported("property access on a non-result value"),

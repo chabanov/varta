@@ -2,6 +2,7 @@ use super::*;
 pub(super) fn collect<'a>(
     module: &'a ast::Module,
     source: &Source,
+    profile: varta_common::language::LanguageProfile,
 ) -> Result<Vec<&'a ast::FnDecl>> {
     let mut declarations = Vec::new();
     for item in &module.body {
@@ -58,6 +59,8 @@ pub(super) fn collect<'a>(
                 ));
             }
             ast::Decl::TsInterface(_) | ast::Decl::TsTypeAlias(_) => {}
+            // Classes are laid out and lowered by `classes` (v32).
+            ast::Decl::Class(class) if profile.classes() && !class.declare => {}
             ast::Decl::Var(var) if var.declare => {
                 for declaration in &var.decls {
                     let ast::Pat::Ident(binding) = &declaration.name else {

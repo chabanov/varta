@@ -20,10 +20,13 @@ pub(super) fn context(
 }
 pub(super) fn accepts(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
     expected == actual
+        || classes::upcast(types, actual, expected)
         || expected.is_union()
-            && unions::members(actual, types)
-                .iter()
-                .all(|t| unions::members(expected, types).contains(t))
+            && unions::members(actual, types).iter().all(|t| {
+                unions::members(expected, types)
+                    .iter()
+                    .any(|e| e == t || classes::upcast(types, *t, *e))
+            })
 }
 pub(super) fn count(count: usize, shape: &ir::ParameterShape) -> Result<()> {
     if count < shape.minimum() || !shape.rest && count > shape.optional.len() {

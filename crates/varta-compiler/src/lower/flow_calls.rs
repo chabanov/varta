@@ -36,6 +36,12 @@ pub(super) fn callbacks(ty: Type, types: &ir::ValueTypes, depth: usize) -> bool 
                 .iter()
                 .any(|f| visit(f.ty, types, depth + 1, seen)),
             Type::Array(id) => visit(types.arrays[id as usize], types, depth + 1, seen),
+            Type::Class(id) => visit(
+                Type::Record(types.classes.shape(id)),
+                types,
+                depth + 1,
+                seen,
+            ),
             Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
                 .iter()
                 .any(|&t| visit(t, types, depth + 1, seen)),

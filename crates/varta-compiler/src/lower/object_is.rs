@@ -15,7 +15,11 @@ fn boolean(span: swc_common::Span, value: bool) -> Expr {
     }
 }
 fn reference(ty: Type) -> bool {
-    ty.is_error() || matches!(ty, Type::Record(_) | Type::Array(_) | Type::Function(_))
+    ty.is_error()
+        || matches!(
+            ty,
+            Type::Record(_) | Type::Class(_) | Type::Array(_) | Type::Function(_)
+        )
 }
 fn member(span: swc_common::Span, slot: u32, source: Type, selected: Type) -> Expr {
     let value = local(span, slot, source);

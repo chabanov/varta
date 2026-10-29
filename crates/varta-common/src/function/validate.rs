@@ -247,6 +247,16 @@ impl Walker<'_> {
                 }
                 Ok(())
             }
+            // Class field types are nominal and compile-time checked.
+            CaptureType::Class => {
+                value::validate_aggregate(
+                    self.data,
+                    ValueKind::Record,
+                    payload,
+                    catalog.value_version,
+                )?;
+                Ok(())
+            }
             CaptureType::Array { element } => {
                 let vector =
                     value::Vector::read_with_version(self.data, payload, catalog.value_version)?;

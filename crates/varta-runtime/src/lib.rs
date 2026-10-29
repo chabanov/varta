@@ -518,6 +518,8 @@ mod array_enumeration_tests;
 
 #[cfg(test)]
 mod catch_pattern_tests;
+#[cfg(test)]
+mod class_tests;
 
 #[cfg(test)]
 mod string_range_tests;

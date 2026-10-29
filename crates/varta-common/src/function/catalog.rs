@@ -19,6 +19,9 @@ pub struct FunctionCatalog {
     pub bindings: Vec<CaptureBinding>,
     pub functions: Vec<CaptureFunction>,
 }
+/// `Class` is a nominal class instance (v32): a record carrying its own class
+/// descriptor. Its fields are fixed by the class declaration and may form
+/// cycles through other classes, so the catalog keeps it as a leaf.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum CaptureType {
@@ -35,6 +38,7 @@ pub enum CaptureType {
     Array { element: u32 },
     PrimitiveUnion { members: Vec<u32> },
     ReferenceUnion { members: Vec<u32> },
+    Class,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,7 +74,7 @@ impl CaptureType {
             Self::Undefined => ValueKind::Undefined,
             Self::BigInt => ValueKind::BigInt,
             Self::Error { .. } => ValueKind::Error,
-            Self::Record { .. } => ValueKind::Record,
+            Self::Record { .. } | Self::Class => ValueKind::Record,
             Self::Array { .. } => ValueKind::Array,
             Self::PrimitiveUnion { .. } => ValueKind::PrimitiveUnion,
             Self::ReferenceUnion { .. } => ValueKind::ReferenceUnion,
@@ -226,12 +230,16 @@ impl FunctionCatalog {
                         {
                             return Err(invalid_catalog());
                         }
-                        records += usize::from(matches!(member, CaptureType::Record { .. }));
+                        records += usize::from(matches!(
+                            member,
+                            CaptureType::Record { .. } | CaptureType::Class
+                        ));
                         arrays += usize::from(matches!(member, CaptureType::Array { .. }));
                         if matches!(ty, CaptureType::PrimitiveUnion { .. })
                             && matches!(
                                 member,
                                 CaptureType::Record { .. }
+                                    | CaptureType::Class
                                     | CaptureType::Array { .. }
                                     | CaptureType::Error { .. }
                                     | CaptureType::BigInt

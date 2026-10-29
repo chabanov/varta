@@ -31,6 +31,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                 || !primitive(*ty)
                     && !(types.profile.reference_unions()
                         && matches!(ty, Type::Record(_) | Type::Array(_))
+                        || types.profile.classes() && matches!(ty, Type::Class(_))
                         || types.profile.bigint_values() && *ty == Type::BigInt
                         || (types.profile.errors() && ty.is_error()))
         })
@@ -42,12 +43,18 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     let references = values.iter().any(|ty| {
         matches!(
             ty,
-            Type::BigInt | Type::Record(_) | Type::Array(_) | Type::Error | Type::NativeError(_)
+            Type::BigInt
+                | Type::Record(_)
+                | Type::Class(_)
+                | Type::Array(_)
+                | Type::Error
+                | Type::NativeError(_)
         )
     });
+    // Records and class instances share the record union tag.
     if values
         .iter()
-        .filter(|ty| matches!(ty, Type::Record(_)))
+        .filter(|ty| matches!(ty, Type::Record(_) | Type::Class(_)))
         .count()
         > 1
         || values
@@ -82,10 +89,16 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     })
 }
 pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes) -> Result<Expr> {
+    if let Some(ty @ Type::Class(_)) = expected
+        && classes::upcast(types, value.ty, ty)
+    {
+        return Ok(Expr { ty, ..value });
+    }
     let Some(ty @ (Type::Union(id) | Type::ReferenceUnion(id))) = expected else {
         return Ok(value);
     };
     let target = &types.unions[id as usize];
+    let value = classes::union_upcast(value, ty, types);
     if members(value.ty, types).iter().any(|m| !target.contains(m)) {
         return Err(type_error(format!(
             "value {} is not a member of the expected union",
@@ -265,6 +278,13 @@ impl Lower<'_> {
             && let ast::Expr::Ident(id) = &*call.args[0].expr
         {
             return self.refine(id.sym.as_ref(), Guard::Array, yes);
+        }
+        if let ast::Expr::Bin(binary) = test
+            && binary.op == ast::BinaryOp::InstanceOf
+            && let Some(class) = self.class_callee(&binary.right)
+            && let ast::Expr::Ident(id) = &*binary.left
+        {
+            return self.refine_class(id.sym.as_ref(), class, yes);
         }
         if let ast::Expr::Bin(binary) = test
             && binary.op == ast::BinaryOp::InstanceOf

@@ -11,6 +11,14 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Pilot batch v32 (`classes()`) adds top-level classes: typed and `readonly`
+  fields, `public`/`protected`/`private` checks, constructors with a definite-
+  initialization discipline, methods, getters, `extends` with `super(...)` and
+  `super.m(...)`, nominal subtyping, `instanceof` and closed-world override
+  dispatch. Instances are records with per-class descriptors and exact tracing;
+  class names work across modules through the type namespace. Error subclasses,
+  `#private`, statics and setters remain rejected.
+
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`
   and `export type { … }`. The project loader resolves `./x.js` specifiers to the

@@ -16,7 +16,8 @@ impl Lower<'_> {
         fn json_type(ty: Type, types: &ir::ValueTypes, optional: bool) -> bool {
             match ty {
                 Type::BigInt => types.profile.bigint_values(),
-                Type::Error | Type::NativeError(_) => false,
+                // Parsing cannot construct nominal class instances.
+                Type::Error | Type::NativeError(_) | Type::Class(_) => false,
                 Type::Undefined => types.profile.checked_json() && optional,
                 Type::Union(id) | Type::ReferenceUnion(id) => {
                     types.profile.checked_json()

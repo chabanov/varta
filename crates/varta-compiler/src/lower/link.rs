@@ -5,7 +5,7 @@ use crate::modules::Graph;
 use std::path::PathBuf;
 
 const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
-type Symbols = BTreeMap<String, Signature>;
+pub(super) type Symbols = BTreeMap<String, Signature>;
 
 pub(crate) fn lower(
     graph: &Graph,
@@ -41,7 +41,7 @@ pub(crate) fn lower(
             ));
         }
         let mut symbols = BTreeMap::new();
-        for declaration in declarations::collect(&unit.ast, &unit.source)? {
+        for declaration in declarations::collect(&unit.ast, &unit.source, profile)? {
             if next >= MAX_FUNCTIONS {
                 return Err(unit.source.locate(
                     invalid("too many functions across modules"),
@@ -73,7 +73,13 @@ pub(crate) fn lower(
             }
             next += 1;
         }
+        if profile.classes() {
+            classes::layout_module(module, &symbols, &mut types, &mut next)?;
+        }
         definitions.insert(path.clone(), symbols);
+    }
+    if profile.classes() {
+        classes::dispatchers(&mut types, &mut next)?;
     }
     let entry = &graph.units[&graph.entry];
     let main = main.ok_or_else(|| {
@@ -89,7 +95,7 @@ pub(crate) fn lower(
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
         named::enter(&mut types, module);
-        for declaration in declarations::collect(&unit.ast, &unit.source)? {
+        for declaration in declarations::collect(&unit.ast, &unit.source, profile)? {
             let signature = &definitions[path][declaration.ident.sym.as_ref()];
             functions.push(body(
                 declaration,
@@ -101,6 +107,19 @@ pub(crate) fn lower(
                 (&mut generated, &mut next, &mut call_effects),
             )?);
         }
+        if profile.classes() {
+            classes::bodies(
+                module,
+                &scopes[path],
+                main,
+                &mut types,
+                &mut functions,
+                (&mut generated, &mut next, &mut call_effects),
+            )?;
+        }
+    }
+    if profile.classes() {
+        classes::dispatch_bodies(&types, &mut functions)?;
     }
     functions.extend(generated.into_values());
     let tools = super::tools::collect(graph, &scopes, &functions, main)?;
@@ -201,7 +220,7 @@ fn link_bindings(
     Ok(scopes)
 }
 
-fn body(
+pub(super) fn body(
     declaration: &ast::FnDecl,
     signature: &Signature,
     functions: &Symbols,

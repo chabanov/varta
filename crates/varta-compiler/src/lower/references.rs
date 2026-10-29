@@ -50,7 +50,12 @@ impl Guard {
             Self::Exact(t) => t == ty,
             Self::Object => matches!(
                 ty,
-                Type::Error | Type::NativeError(_) | Type::Null | Type::Record(_) | Type::Array(_)
+                Type::Error
+                    | Type::NativeError(_)
+                    | Type::Null
+                    | Type::Record(_)
+                    | Type::Class(_)
+                    | Type::Array(_)
             ),
             Self::Array => matches!(ty, Type::Array(_)),
             Self::Nullish => matches!(ty, Type::Null | Type::Undefined),
@@ -58,6 +63,7 @@ impl Guard {
             Self::Truth(false) => !matches!(
                 ty,
                 Type::Record(_)
+                    | Type::Class(_)
                     | Type::Array(_)
                     | Type::Function(_)
                     | Type::Error

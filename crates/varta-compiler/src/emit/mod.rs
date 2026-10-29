@@ -1,6 +1,7 @@
 mod array_mutation;
 mod arrays;
 mod bitwise;
+mod classes;
 mod closures;
 mod collect;
 mod errors;
@@ -729,6 +730,7 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
             | Type::NativeError(_)
             | Type::String
             | Type::Record(_)
+            | Type::Class(_)
             | Type::Array(_)
             | Type::Union(_)
             | Type::ReferenceUnion(_) => vec![ValType::I64],

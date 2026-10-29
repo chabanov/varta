@@ -12,6 +12,13 @@ pub(super) fn native(call: &ast::CallExpr, lower: &Lower<'_>) -> bool {
     let ast::Callee::Expr(callee) = &call.callee else {
         return false;
     };
+    // A class method of the same name may run user code (v32 classes).
+    if let ast::Expr::Member(member) = &**callee
+        && let ast::MemberProp::Ident(method) = &member.prop
+        && lower.types.classes.has_method(method.sym.as_ref())
+    {
+        return false;
+    }
     // These admitted member calls dispatch to checked intrinsics before generic
     // function lookup. Array mutation changes elements, not caller binding cells.
     // Revisit this list when methods, prototypes or coercion can invoke user code.
@@ -163,6 +170,13 @@ impl Visit for Effects<'_, '_> {
     fn visit_update_expr(&mut self, node: &ast::UpdateExpr) {
         if let ast::Expr::Ident(id) = stmt::unparen(&node.arg) {
             self.add(id.sym.to_string());
+        }
+        node.visit_children_with(self);
+    }
+    fn visit_new_expr(&mut self, node: &ast::NewExpr) {
+        // A class constructor runs user code; treat it as an unknown call.
+        if self.lower.class_callee(&node.callee).is_some() {
+            self.calls = true;
         }
         node.visit_children_with(self);
     }

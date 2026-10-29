@@ -290,6 +290,7 @@ fn expression(
         | E::ErrorOwn(a)
         | E::BoxUnion(a)
         | E::IsError(a)
+        | E::IsClass { value: a, .. }
         | E::IsUnionMember(a, _)
         | E::IsUndefined(a)
         | E::IsNullish(a)
