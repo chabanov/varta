@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v34-integration-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts` and `core/pagination.ts` compile and validate; the other files stop at `Headers` or `AbortSignal` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v35-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts` and `core/pagination.ts` compile and validate; `Headers` and `AbortSignal` resolve, and the other files stop at `ProblemDocument.errors` or a defaulted function-typed parameter ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 
 Next work, in order:
 
@@ -273,6 +273,27 @@ dependencies, and contains no explicit `any`, so it meets the
 [typed-only rule](#research-thesis). Its only library-level `any` entry point is
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
+
+**Verified behavior with v35 (2026-10-29).** The same probe on the
+`v35-merge` branch with all seven v35 selectors integrated (Web types, mixed
+index records, JSON to `unknown`, async methods, promise values and liveness
+frames on value layout 16), under `checked-f64-utf16-v35` with production
+budgets unchanged. The first diagnostic per file:
+
+| First diagnostic | Files |
+| --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` | 4 |
+| `core/errors.ts:4` `unsupported declared property errors of a mixed object type` (`ProblemDocument.errors?: Array<{ field?: string; message?: string }>` next to `[key: string]: unknown`: the declared array type is not checkable from the index type; reached through the same 60 files as `Headers` before) | 60 |
+| `core/util.ts:125` `unsupported union members other than number, boolean, string, null or undefined` (the defaulted function-typed parameter `random: () => number = Math.random` of `streamBackoffDelay`) | 1 |
+
+The file count is unchanged, but both v34 blockers are gone: `Headers` and
+`AbortSignal` resolve to the engine preludes and the probe now stops later in
+the same two files. In a scratch copy with `errors?: unknown`, the `index.ts`
+probe reaches `core/util.ts:125` too; with that parameter's default removed as
+well, its next diagnostic is `core/sse.ts:226` `unsupported async generator
+function` (`parseEventStream`, K4.4 step 6). So the next pilot batch needs
+declared fields checkable from `unknown` (arrays of mixed/optional records),
+optional function-typed parameters and async generators.
 
 **Verified behavior with v34 (2026-10-29).** The same probe on the
 `v34-integration-merge` branch with all eight v34 selectors (value layout 15,
