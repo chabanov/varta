@@ -6697,8 +6697,8 @@ bumps and the other streams rebase onto them, adding value16 variants of any
 layout-bound operation they need. V34 and earlier profiles keep their host ABI,
 value ABI and layouts.
 
-Seven selectors gate the batch's work streams (subsections below specify the
-implemented ones):
+Seven selectors gate the batch's work streams, each specified by a subsection
+below:
 
 - Web stream: `web_headers()` (an engine-provided typed `Headers` class,
   implemented in the guest and requiring no capability) and `abort_signals()`
@@ -6718,10 +6718,14 @@ implemented ones):
   keep their layout, and any frame catalog change the runtime reads is admitted
   for v35 only).
 
-Until a stream adds its subsection here, a v35 module compiles and runs exactly
-like a v34 module apart from its declared profile, value layout 16 and the
-[frame liveness](#frame-liveness-frame_liveness) layout below, and production
-budgets of every profile are unchanged.
+A v35 program that uses none of the selectors' constructs runs exactly like
+the same program under v34, apart from its declared profile, value layout 16
+and the [frame liveness](#frame-liveness-frame_liveness) layout below. The
+streams compose on these layouts: mixed records, `unknown` JSON graphs and the
+Web types read and write value16 through the value16 host readers and JSON
+schema 16, promises may live in dictionaries and mixed records, and async
+closure bodies use liveness frames (`varta-runtime` `v35_cross_stream_tests`,
+`async_method_tests`). Production budgets of every profile are unchanged.
 
 #### Value layout 16 (`promise_values`)
 
@@ -7145,8 +7149,9 @@ modules embedded in `varta-compiler` (`src/prelude/headers.ts`,
 graph, lowering and emission pipeline. They are ordinary nominal classes, so
 `instanceof`, fields, parameters, unions, `unknown`, closures, generator and
 async frames, the collector and the exception channel treat them like program
-classes. They add no host import, value tag, layout or capability, and v35
-keeps host ABI 30 and value ABI/layout 15. The alternative, compiler
+classes. They add no host import, value tag, layout or capability of their
+own and run on v35's host ABI and value layout 16 like any program class. The
+alternative, compiler
 intrinsics for every member, was rejected: it would duplicate class layout,
 dispatch, rooting and diagnostics for each type.
 
@@ -7214,7 +7219,7 @@ dispatch, rooting and diagnostics for each type.
 - **Pending members.** `addEventListener`, `removeEventListener`,
   `dispatchEvent` and `onabort` are rejected with an `unsupported abort event
   listeners` diagnostic: a signal would have to store listener functions, and
-  value layout 15 has no function-valued object field (function values live
+  value layout 16 has no function-valued object field (function values live
   only in locals, parameters, results, closure cells and frames). Admitting
   them needs a value-layout change. `AbortSignal.timeout` and `AbortSignal.any`
   are rejected as well: v35 has no timers and no listeners.

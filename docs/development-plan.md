@@ -1747,7 +1747,7 @@ artifact execution and a documented contract in [architecture.md](architecture.m
      and the remaining intrinsic value blocks stay rejected by name;
    - host-supplied reference inputs;
    - liveness-based frame slots: **implemented** under v35 (selector
-     `frame_liveness`, branch `v35-frames`,
+     `frame_liveness`,
      [contract](architecture.md#frame-liveness-frame_liveness)): each point
      saves only the locals live across it, directly in liveness segments
      whose edge masks are the exact GC map of the suspended state, described

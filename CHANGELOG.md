@@ -12,7 +12,7 @@ in [conformance/README.md](conformance/README.md).
 ### Added
 
 - Mixed records and JSON to `unknown` under opt-in v35 (selectors
-  `mixed_index_records`, `unknown_json`, branch `v35-records`). Object types
+  `mixed_index_records`, `unknown_json`). Object types
   may declare fields next to a string index signature (the pilot's
   `ProblemDocument`); they are dictionaries of the index type whose declared
   reads are typed and checked, so a value stored through a dynamic key or a
@@ -28,8 +28,9 @@ in [conformance/README.md](conformance/README.md).
   parse at `T`, dictionary assertions are proven by the storage descriptor for
   any value type, and `typeof x === "object"` with a null test narrows
   `unknown` to `object` for `in`, `Object.keys`/`values`/`entries`/`hasOwn`
-  and `for...in`, while `"key" in x` proves `x.key`. No value tag, layout,
-  host import, schema version or budget is added.
+  and `for...in`, while `"key" in x` proves `x.key`. They run on v35's value
+  layout 16 and JSON schema 16 and add no further value tag, layout, host
+  import, schema version or budget.
 
 - Engine Web types under opt-in v35 (selectors `web_headers`,
   `abort_signals`): `Headers`/`HeadersInit`, `AbortController`, `AbortSignal`
@@ -80,7 +81,9 @@ in [conformance/README.md](conformance/README.md).
   catalog version 3 describes the per-state saved slots and the entry
   capacity; only v35 reads it, v33/v34 keep version 2 and their modules stay
   byte-identical, and a module relabelled across the two layouts fails
-  admission. No host or value ABI changes. Measured with production budgets,
+  admission. No host or value ABI changes. An async closure body's frame
+  keeps its captured cells as shared state-0 slots, and an assignment to a
+  closure-shared local keeps its cell live across a point. Measured with production budgets,
   an `await` costs about 1.6k fuel instead of 3.0k, a `yield` 1.1k instead of
   1.8k, and 141 instead of 57 suspended generators fit in one execution.
 
