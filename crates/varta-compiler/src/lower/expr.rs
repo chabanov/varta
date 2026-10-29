@@ -299,6 +299,7 @@ impl Lower<'_> {
                             | Type::Dictionary(_)
                             | Type::Class(_)
                             | Type::Array(_) => "object",
+                            Type::Promise(_) if self.types.profile.promise_values() => "object",
                             Type::Number | Type::Float64 => "number",
                             Type::BigInt => "bigint",
                             Type::Boolean => "boolean",
@@ -886,7 +887,7 @@ impl Lower<'_> {
                 return Err(invalid("JSON.stringify expects one value"));
             }
             let value = self.expr(&call.args[0].expr)?;
-            if value.ty.value_kind().is_none()
+            if value.ty.profile_kind(self.types.profile).is_none()
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()
             {
                 return Err(unsupported("JSON.stringify value type"));
@@ -1009,6 +1010,10 @@ impl Lower<'_> {
                         ty: Type::String,
                         kind: E::ErrorText(Box::new(arg)),
                     };
+                }
+                if matches!(arg.ty, Type::Promise(_)) && self.types.profile.promise_values() {
+                    // A value16 promise is logged through its tagged cell.
+                    arg = unknown::widen(arg, self.types)?;
                 }
                 let host = match arg.ty {
                     Type::String => Host::LogString,

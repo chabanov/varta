@@ -24,6 +24,14 @@ impl Lower<'_> {
                 kind: E::Undefined(Box::new(value)),
             };
         }
+        if self.promise_member(value.ty, value.span)?.is_some() {
+            let result = self
+                .await_union(span, value)?
+                .ok_or_else(|| CompilerError::Internal("missing promise member".into()))?;
+            self.flow_reentry();
+            return Ok(result);
+        }
+        let value = self.guarded_unknown(value)?;
         let promise = match value.ty {
             Type::Promise(_) => value,
             ty => {

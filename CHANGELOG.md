@@ -26,6 +26,14 @@ in [conformance/README.md](conformance/README.md).
   inference in generic calls. Receivers and captured cells are exact frame
   roots; job order matches Node.
 
+- Promise values under opt-in v35 (selector `promise_values`): promises in
+  arrays, records, class fields, dictionaries, unions and `unknown`, compared
+  by identity, `typeof` `"object"`, logged as `Promise { … }` and stringified
+  as `{}`; `await` and `Promise.resolve` of `T | Promise<T>`; and
+  `Promise.all`, `allSettled`, `race` and `any` over arrays of promises with
+  Node's job order. `Promise.any` rejects with an `Error` (no
+  `AggregateError`); a promise held by `unknown` is never adopted silently.
+
 - Value layout 16 for v35 (`promise_values` foundation): value ABI 16 adds the
   promise value tag to every value15 layout, read by thirteen value16 host
   operations that mirror their value15 counterparts (host ABI 31), exception

@@ -24,7 +24,7 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     if matches!(value, Type::Function(_)) {
         return Err(unsupported("function-valued index signature"));
     }
-    if value.value_kind().is_none() {
+    if value.profile_kind(types.profile).is_none() {
         return Err(unsupported("index signature value type"));
     }
     if let Some(id) = types.dictionaries.iter().position(|d| d.value == value) {

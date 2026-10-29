@@ -259,7 +259,9 @@ fn field(
     if matches!(ty, Type::Function(_)) {
         return Err(unsupported("function-valued class field"));
     }
-    if ty.value_kind().is_none() || ty == Type::BigInt && !types.profile.bigint_values() {
+    if ty.profile_kind(types.profile).is_none()
+        || ty == Type::BigInt && !types.profile.bigint_values()
+    {
         return Err(unsupported("class field value type"));
     }
     Ok((

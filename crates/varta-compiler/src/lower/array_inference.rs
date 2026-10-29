@@ -34,7 +34,7 @@ impl Lower<'_> {
             }
             let hints = references::AggregateHints::from_members(&evidence);
             let value = self.expr_contextual(&entry.expr, None, Some(hints))?;
-            if value.ty.value_kind().is_none()
+            if value.ty.profile_kind(self.types.profile).is_none()
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()
             {
                 return Err(self

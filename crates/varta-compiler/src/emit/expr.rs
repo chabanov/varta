@@ -230,7 +230,7 @@ impl Emitter<'_> {
                 self.expr(base)?;
                 let kind = needle
                     .ty
-                    .value_kind()
+                    .profile_kind(self.profile)
                     .ok_or_else(|| CompilerError::Internal("missing search value kind".into()))?;
                 self.code.push(I::I32Const(kind as i32));
                 self.expr(needle)?;

@@ -989,6 +989,56 @@
       }
     },
     {
+      "id": "async-class-method",
+      "feature": "async-await",
+      "path": "cases/async-class-method.ts",
+      "sha256": "5cf7bf4e0290dd4535997234d23ef7eecc7bda20b744689de72a4726eabb6a6e",
+      "stdout": [
+        "varta log: 2 6 3"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Async class methods are admitted from checked-f64-utf16-v35 (async_methods)."
+      }
+    },
+    {
+      "id": "async-closure-captures",
+      "feature": "async-await",
+      "path": "cases/async-closure-captures.ts",
+      "sha256": "bebdddb510bcee8a82a83bcb0cc7d5f26318844c0faeeaa9b826b6e21a8442d4",
+      "stdout": [
+        "varta log: 60 120 6"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Async arrows and function expressions are admitted from checked-f64-utf16-v35 (async_methods)."
+      }
+    },
+    {
+      "id": "promise-combinators",
+      "feature": "promise-jobs",
+      "path": "cases/promise-combinators.ts",
+      "sha256": "bb5ba2768dab4545820b06ab86370d3be11734fbaf8ab1f9e2a12b5e6b06c6fe",
+      "stdout": [
+        "varta log: settle 2",
+        "varta log: settle 3",
+        "varta log: settle 1",
+        "varta log: all 123",
+        "varta log: settle 5",
+        "varta log: settle 4",
+        "varta log: race 5",
+        "varta log: settle 6",
+        "varta log: [{\"status\":\"fulfilled\",\"value\":6},{\"status\":\"rejected\",\"reason\":{}}]"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Promises inside arrays and Promise.all/race/allSettled are admitted from checked-f64-utf16-v35 (promise_values)."
+      }
+    },
+    {
       "id": "date-epoch",
       "feature": "date",
       "path": "cases/date-epoch.ts",

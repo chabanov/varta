@@ -4170,6 +4170,74 @@ fn public_engine_runs_async_functions_and_promises_across_modules_in_v34() {
 }
 
 #[test]
+fn public_engine_runs_async_resource_methods_and_promise_values_across_modules_in_v35() {
+    // The pilot's resource shape: an `APIResource` base holding the client,
+    // `XResource extends APIResource` with async methods calling
+    // `this._client.request`, an async retry closure and `Promise.all` over
+    // an array of promises, re-exported through a barrel.
+    use varta_common::language::LanguageProfile;
+    struct ResourceSources;
+    impl ModuleLoader for ResourceSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./resource.ts" => Ok("resource.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("resource.ts") => "export class Client{calls:number;constructor(){this.calls=0;}\
+                    async request(path:string,value:number):Promise<number>{this.calls++;await null;\
+                    if(path==='/flaky'&&this.calls<4){throw new Error(`busy ${this.calls}`);}return value;}}\
+                    export class APIResource{_client:Client;constructor(client:Client){this._client=client;}}\
+                    export class Items extends APIResource{\
+                    async count(base?:number):Promise<number>{return this._client.request('/items',(base??0)+2);}\
+                    async retrieve(id:number):Promise<number>{const client=this._client;const retry=async function again(left:number):Promise<number>{\
+                    try{return await client.request('/flaky',id);}catch(error){if(left===0){throw error;}return again(left-1);}};\
+                    return retry(3);}}",
+                Some("index.ts") => "export * from './resource.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {Client,Items} from './index.ts';\
+                       export async function main():Promise<void>{\
+                       const client=new Client();const items=new Items(client);\
+                       const counts:Promise<number>[]=[items.count(),items.count(10)];\
+                       const both=await Promise.all(counts);console.log(`${both.length} ${both[1]}`);\
+                       const id=await items.retrieve(9);console.log(`${id} after ${client.calls} calls`);}"
+                    .into(),
+            },
+            &ResourceSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V35).unwrap();
+    // Node 24 prints the same two lines.
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: 2 12", "varta log: 9 after 4 calls"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V34)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("unsupported async class method"),
+        "{frozen}"
+    );
+}
+
+#[test]
 fn public_engine_runs_generic_generators_across_modules_in_v33() {
     // A synchronous shape of the pilot's `autoPaginate`: a generic generator
     // re-exported through a barrel and consumed by `for...of` with closing.

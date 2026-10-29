@@ -8,7 +8,7 @@ impl Emitter<'_> {
         };
         let element = self.arrays[id as usize];
         let kind = element
-            .value_kind()
+            .profile_kind(self.profile)
             .ok_or_else(|| CompilerError::Internal("missing array element kind".into()))?;
         for value in elements.iter().flatten() {
             self.expr(value)?;
@@ -274,7 +274,7 @@ impl Emitter<'_> {
         };
         let element = self.arrays[id as usize];
         let kind = element
-            .value_kind()
+            .profile_kind(self.profile)
             .ok_or_else(|| CompilerError::Internal("missing reserved element kind".into()))?;
         let count = self.local_slots[count as usize];
         let bytes = self.local_slots[bytes as usize];

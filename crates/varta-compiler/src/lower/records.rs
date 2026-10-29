@@ -60,7 +60,7 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     if fields.iter().any(|f| matches!(f.ty, Type::Generator(_))) {
         return Err(generators::opaque("an object"));
     }
-    if fields.iter().any(|f| matches!(f.ty, Type::Promise(_))) {
+    if fields.iter().any(|f| matches!(f.ty, Type::Promise(_))) && !types.profile.promise_values() {
         return Err(promises::opaque("an object"));
     }
     if fields
@@ -77,7 +77,8 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
         return Err(unsupported("duplicate object key"));
     }
     if fields.iter().any(|f| {
-        f.ty.value_kind().is_none() || f.ty == Type::BigInt && !types.profile.bigint_values()
+        f.ty.profile_kind(types.profile).is_none()
+            || f.ty == Type::BigInt && !types.profile.bigint_values()
     }) {
         return Err(unsupported("object field value type"));
     }

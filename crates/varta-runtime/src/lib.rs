@@ -136,6 +136,8 @@ mod primitive_string_tests;
 #[cfg(test)]
 mod promise_tests;
 #[cfg(test)]
+mod promise_value_tests;
+#[cfg(test)]
 mod property_deletion_tests;
 mod random;
 #[cfg(test)]

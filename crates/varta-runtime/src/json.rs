@@ -1,6 +1,7 @@
 //! Pure bounded serialization of the versioned guest value ABI. No OS access,
 //! native pointers, eval, arbitrary object hooks or host authority are involved.
 mod presence;
+mod promise;
 use crate::{RuntimeContext, host};
 use std::{collections::BTreeSet, io::Write};
 use varta_common::{abi, value::*};
@@ -448,6 +449,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             }
             ValueKind::Array => self.array(packed, depth),
             ValueKind::Dictionary => self.dictionary(packed, depth),
+            ValueKind::Promise => self.promise(packed, depth),
             _ => Err(error("noncanonical scalar")),
         }
     }

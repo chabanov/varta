@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 54 feature rows and 96 cases:
-86 pass, 10 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 54 feature rows and 99 cases:
+86 pass, 13 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -208,3 +208,14 @@ match Node.js v24.20.0 type stripping. `promise-resolve` stays a known gap with
 a new reason: v34 promises have no value tag, so `typeof` rejects them.
 Thenables other than internal promises and the combinators remain outside
 these rows.
+
+The v35 async stream adds three original cases that stay known gaps under the
+v34 pin: `async-class-method` (an overridden async method awaiting
+`super.step`), `async-closure-captures` (an async arrow sharing a captured
+`let` across `await`, and an async function expression) and
+`promise-combinators` (`Promise.all`, `race` and `allSettled` job order and
+results). Their outputs match Node.js v24.20.0 type stripping. Run with the
+manifest temporarily pinned to `checked-f64-utf16-v35`, these three cases and
+`promise-resolve` were observed as unexpected support with their pinned hashes
+and expected output, and every other case kept its v34 status; they become
+supported when the inventory is pinned to v35.

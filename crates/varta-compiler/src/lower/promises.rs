@@ -13,7 +13,9 @@
 use super::*;
 use functions::{LiftContext, intern_full};
 mod async_functions;
+mod combinators;
 mod methods;
+mod values;
 pub(super) use async_functions::AsyncSplit;
 use ir::{PromiseType, ScheduleMode};
 use std::collections::BTreeSet;
@@ -25,11 +27,11 @@ use varta_common::value::ErrorClass;
 pub(crate) mod fields {
     pub(crate) const HANDLED: &str = "handled";
     pub(crate) const LOCKED: &str = "locked";
-    pub(crate) const REASON: &str = "reason";
+    pub(crate) const REASON: &str = varta_common::scheduler::PROMISE_REASON_FIELD;
     pub(crate) const SERIAL: &str = "serial";
-    pub(crate) const STATE: &str = "state";
+    pub(crate) const STATE: &str = varta_common::scheduler::PROMISE_STATE_FIELD;
     pub(crate) const TRACKED: &str = "tracked";
-    pub(crate) const VALUE: &str = "value";
+    pub(crate) const VALUE: &str = varta_common::scheduler::PROMISE_VALUE_FIELD;
 }
 use fields::*;
 /// V8's message for resolving a promise with itself.
@@ -51,6 +53,8 @@ enum Helper {
     Finally,
     TailValue,
     TailThrow,
+    /// The element job of a promise combinator (v35).
+    Combinator(combinators::Combinator),
 }
 
 /// Promise lowering state shared by every function of one program.
@@ -107,6 +111,15 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     }
     if matches!(value, Type::Generator(_)) {
         return Err(generators::opaque("a promise"));
+    }
+    if value.is_union()
+        && unions::members(value, types)
+            .iter()
+            .any(|m| matches!(m, Type::Promise(_)))
+    {
+        return Err(rejected(
+            "Promise<T> whose T may hold a promise; a promise never fulfills with a promise",
+        ));
     }
     if value.width() > 1
         || matches!(value, Type::Function(_))
@@ -501,12 +514,15 @@ impl Lower<'_> {
                 Self::plain(span, vec![ty, value], false),
                 |child, params, _| {
                     let (p, v) = (params[0], params[1]);
-                    child.settle_body(
+                    // An unknown holding a promise is never adopted silently.
+                    let mut body = child.unknown_promise_guard(span, v, value)?;
+                    body.extend(child.settle_body(
                         span,
                         || local(span, p, ty),
                         PromiseState::Fulfilled,
                         local(span, v, value),
-                    )
+                    )?);
+                    Ok(body)
                 },
             )
         })

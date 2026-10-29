@@ -6793,6 +6793,70 @@ method; async generators, `for await` and top-level `await` stay rejected.
   exhaustion inside their jobs is fatal, never a rejection. A rejected promise
   nobody handles terminates the execution after the checkpoint.
 
+#### Promise values (`promise_values`)
+
+Under value layout 16 a promise is a tagged value (`ValueKind::Promise` = 14)
+whose payload is the handle of its private record block. V35 therefore admits
+`Promise<T>` as an array element, a record, interface or class field, a
+dictionary value, a union member (at most one promise type per union, like
+record shapes) and an `unknown` value. Promises compare by identity (`===`,
+`includes`, `indexOf`; `Object.is` stays rejected); `typeof` is `"object"`;
+they are truthy; a promise in a
+union or `unknown` cell carries the promise tag, which the value16 readers
+validate as a record block. `JSON.stringify` writes `{}` (a promise has no own
+enumerable properties). `console.log` prints `Promise { <pending> }`,
+`Promise { value }` or `Promise { <rejected> reason }`, with the settled value
+in the notation of logged aggregates (a string prints `"x"` where Node prints
+`'x'`). An element read `xs[i]` of a `Promise<T>[]` is `Promise<T> | undefined`,
+as for every reference element. Checked JSON parsing, `Array.isArray`,
+`instanceof` and checked assertions do not accept promise types, and earlier
+profiles keep every v34 rejection.
+
+- **Awaiting and resolving cells.** `await x` and `Promise.resolve(x)` of a
+  union holding one promise member and one other member test the cell's tag:
+  the promise member is awaited or returned itself (PromiseResolve), the other
+  member through a fulfilled promise, so `await` takes exactly one job either
+  way and yields the join of `T` and the other member. `Promise.resolve`
+  requires the other member to be a `T`. A union with several non-promise
+  members must be narrowed first. `Promise<T>` whose `T` may hold a promise is
+  rejected (a promise never fulfills with a promise).
+- **Unknown.** A promise held by `unknown` has no static `T`. Awaiting it,
+  `Promise.resolve` of it and fulfilling a `Promise<unknown>` with it throw a
+  recoverable `TypeError("a promise held by unknown cannot be adopted; keep it
+  typed as Promise<T>")` instead of silently keeping the promise as a value.
+  This is a documented deviation: JavaScript would adopt it.
+- **Executor resolve.** `resolve` of `new Promise<T>` keeps its v34 type
+  `(value: T) => void`, so resolver values stored in typed bindings keep
+  working; resolving with a promise is a type error (`Promise.resolve(p)` or
+  returning `p` from a handler or async function adopts it).
+- **Combinators.** `Promise.all`, `allSettled`, `race` and `any` take one
+  array of `Promise<T>` (an array literal of promises of one type, or a
+  `Promise<T>[]` value; iterables, tuples of different types and non-promise
+  elements are rejected). The call snapshots the array, creates the result
+  promise and starts one synthesized job frame per element in index order;
+  each job awaits its element, which registers one reaction as the
+  combinator's `then` does in ECMAScript, and updates a private state record
+  (`items`, `remaining`, `result`), so job order matches Node. `all` fulfills
+  with `T[]` when the last element fulfills and rejects with the first
+  rejection; `race` settles like the first element to settle; `any` fulfills
+  with the first fulfillment and, when every element rejected, rejects with a
+  native `Error("All promises were rejected")` — Varta has no `AggregateError`
+  class (documented deviation: no `errors` property, `instanceof
+  AggregateError` is unavailable); `allSettled` fulfills with records
+  `{ status: string; value?: T; reason?: unknown }` whose present fields match
+  Node's results (`value` absent when rejected, `reason` absent when
+  fulfilled), so reading `r.value` is typed `T | undefined`. Over an empty
+  array `all` and `allSettled` fulfill at once with `[]`, `any` rejects at once
+  and `race` stays pending. `Promise.withResolvers` is not admitted: its result
+  holds functions in record fields, which records do not admit.
+- **Roots and budgets.** Promise slots of arrays, records, dictionaries and
+  cells are managed edges like any reference; the combinators' state records
+  and every element job frame root the promises until they settle.
+  `varta-runtime` `promise_value_tests` forces a collection before every job.
+  The combinators add no host import and draw on the one execution budget;
+  each element costs one live frame and one reaction, within the scheduler
+  bounds.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),

@@ -5,10 +5,12 @@ pub(super) fn intern(element: Type, types: &mut ir::ValueTypes) -> Result<Type> 
     if matches!(element, Type::Generator(_)) {
         return Err(generators::opaque("an array"));
     }
-    if matches!(element, Type::Promise(_)) {
+    if matches!(element, Type::Promise(_)) && !types.profile.promise_values() {
         return Err(promises::opaque("an array"));
     }
-    if element.value_kind().is_none() || element == Type::BigInt && !types.profile.bigint_values() {
+    if element.profile_kind(types.profile).is_none()
+        || element == Type::BigInt && !types.profile.bigint_values()
+    {
         return Err(unsupported("array element type"));
     }
     if let Some(index) = types.arrays.iter().position(|ty| *ty == element) {
@@ -183,7 +185,7 @@ impl Lower<'_> {
                     kind: E::Integer(0),
                 }
             };
-            if needle.ty.value_kind().is_none()
+            if needle.ty.profile_kind(self.types.profile).is_none()
                 || needle.ty == Type::BigInt && !self.types.profile.bigint_values()
             {
                 return Err(self.source.locate(

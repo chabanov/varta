@@ -2372,3 +2372,24 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   `async_method_tests`, `async_method_cases`); GC tests force a collection
   before every job with the test hook, paying collections from a test-only
   fuel refill, never by raising a production budget.
+
+### Promise values (`promise_values`)
+
+- Promise tags exist only in value16: lowering admits a promise in an
+  aggregate through `Type::profile_kind` and emission writes its tag through
+  `profile_kind`/`layout_kind`; `Type::value_kind` stays untagged so v34 and
+  earlier keep every rejection (arrays, records, unions, dictionaries,
+  `unknown`, `typeof`, logging, `JSON.stringify`, the combinators by name).
+- At most one promise type per union; `Promise<T>` never admits a `T` that may
+  hold a promise. Await and resolve a cell by its tag (`promises::values`), so
+  a promise member keeps the one-job PromiseResolve path; never box or copy a
+  promise into a new promise.
+- A promise inside `unknown` is never adopted silently: every path that would
+  adopt one without a static `T` throws the documented `TypeError`.
+- Combinators are guest code: one memoized job frame per combinator and
+  element type, a private state record and ordinary helpers. Add no host
+  import and no scheduler bound; keep the element snapshot and index-order
+  starts so job order matches Node.
+- The runtime reads a promise only through the value16 readers: its record
+  block is validated like a record, and logging locates `state`, `value` and
+  `reason` by the shared `scheduler::PROMISE_*_FIELD` names.

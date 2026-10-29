@@ -189,8 +189,8 @@ impl Lower<'_> {
             )
         })
     }
-    /// `Promise.resolve(v)` and `Promise.reject(e)`; the combinators are
-    /// rejected by name.
+    /// `Promise.resolve(v)` and `Promise.reject(e)`; under v35 also the
+    /// combinators, which earlier profiles reject by name.
     pub(in crate::lower) fn promise_static(
         &mut self,
         call: &ast::CallExpr,
@@ -204,6 +204,11 @@ impl Lower<'_> {
                 .locate(rejected("computed Promise member"), member.span));
         };
         let method = name.sym.as_ref();
+        if self.types.profile.promise_values()
+            && let Some(combinator) = super::combinators::Combinator::from_name(method)
+        {
+            return self.promise_combinator(call, combinator);
+        }
         if !matches!(method, "resolve" | "reject") {
             return Err(self
                 .source
@@ -247,6 +252,12 @@ impl Lower<'_> {
                 }
                 return Ok(value);
             }
+            if self.promise_member(value.ty, value.span)?.is_some() {
+                return self
+                    .resolve_union(span, value, context)?
+                    .ok_or_else(|| CompilerError::Internal("missing promise member".into()));
+            }
+            let value = self.guarded_unknown(value)?;
             let target = context.unwrap_or(value.ty);
             let ty = intern(target, self.types).map_err(|e| self.source.locate(e, span))?;
             let Type::Promise(id) = ty else {
