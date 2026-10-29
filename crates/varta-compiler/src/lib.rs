@@ -161,6 +161,55 @@ mod tests {
         );
     }
     #[test]
+    fn flat_type_unions_and_lists_do_not_count_as_expression_chains() {
+        let complexity = |source: &str| {
+            compile_typescript(source)
+                .err()
+                .is_some_and(|e| e.to_string().contains("complexity"))
+        };
+        let members = (0..400).map(|n| format!("'m{n}'")).collect::<Vec<_>>();
+        // Wide flat constructs: alias unions (single and multi-line), list commas.
+        let alias = format!("type Wide = {};", members.join(" | "));
+        let lines = format!("type Wide =\n  | {}\n", members.join("\n  | "));
+        let array = format!("const a = [{}];", members.join(", "));
+        let block = format!(
+            "const o = {{ {} }};",
+            (0..400)
+                .map(|n| format!("k{n}: {n}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        for source in [
+            alias.clone(),
+            lines,
+            format!("function f(): void {{ {array} {block} }}"),
+        ] {
+            let source = format!("{source}\nexport function main(): void {{}}");
+            assert!(!complexity(&source), "{source}");
+        }
+        // More than the former 65,536-token file budget is bounded by bytes instead.
+        let many = (0..20_000)
+            .map(|n| format!("type T{n} = number;"))
+            .collect::<String>();
+        compile_typescript(&format!("{many}export function main(): void {{}}")).unwrap();
+        // Chains that build nested AST nodes keep the existing ceiling.
+        let chain = vec!["1"; 300].join(" | ");
+        for source in [
+            format!("export function main(): void {{ const x = {chain}; }}"),
+            format!("type A = 'a'\nexport function main(): void {{ const x = {chain}; }}"),
+            format!(
+                "type A = {{ x: number }}; export function main(): void {{ const x = {chain}; }}"
+            ),
+            format!("type A = Array<{}>;", vec!["'a'"; 300].join(" | ")),
+            format!(
+                "export function main(): void {{ f({}); }}",
+                vec!["1"; 300].join(", ")
+            ),
+        ] {
+            assert!(complexity(&source), "{source}");
+        }
+    }
+    #[test]
     fn static_strings_remain_bounded_and_void_values_are_rejected() {
         let source = format!(
             "export function main():void {{ console.log({:?}); }}",

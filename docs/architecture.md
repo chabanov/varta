@@ -215,7 +215,13 @@ range rather than wrapping.
 Unsupported import/export forms, top-level effects, async/generators, classes, closures, var,
 sparse/resizable arrays, dynamic objects, casts, any and unsupported syntax fail
 explicitly. They are never silently discarded. Source is capped at 1 MiB with
-lexical complexity limits before recursive parsing. Static strings occupy at most
+lexical complexity limits before recursive parsing: delimiter nesting at most 64
+and at most 256 consecutive chain tokens without a sibling separator, because
+operator, member and unary chains build nested AST nodes. Flat sibling lists do
+not deepen the AST and reset the run: commas inside `[...]`/`{...}` (call
+arguments keep the chain budget) and `|`/`&` members at the top level of a
+`type` alias outside generic angle syntax. There is no per-file token count;
+overall size is bounded by the per-file and per-graph byte limits. Static strings occupy at most
 one 64 KiB page shared with object descriptors. Parse errors retain source line/column positions.
 
 ### Language profiles and migration
@@ -5280,17 +5286,19 @@ rejecting named references, type-only imports and `.js` specifiers.
   method members, at most `value::MAX_RECORD_FIELDS` fields). An alias may name any
   admitted type expression, including unions, arrays, function types, Error
   families and other named types.
-- **Resolution.** A bare identifier reference not claimed by a built-in (`Array`,
-  `VartaResult`, HTTP types, Error families) resolves in the referencing module,
-  following import bindings to the defining declaration. The declaration is
+- **Resolution.** A bare identifier reference resolves in the referencing module,
+  following TypeScript's module scoping: a local or imported type named like an
+  Error family shadows that built-in *type* in annotations, while the `Error`
+  values and `instanceof` keep their built-in meaning. Otherwise built-ins
+  (`Array`, `VartaResult`, HTTP types, Error families) are matched first. Import
+  bindings are followed to the defining declaration, which is
   lowered once in its defining module and memoized. Declaration order does not
   matter. Named types are structural aliases: an interface and an identical
   type literal intern to the same record shape; there is no width or optional-
   field subtyping between distinct shapes.
 - **Rejected with diagnostics.** Recursive declarations (direct or through other
   names), type parameters on declarations or references, `interface … extends`,
-  duplicate type names in one module, redeclaring Error family names, unknown
-  names (`unsupported type reference Name`) and type declarations inside function
+  duplicate type names in one module, unknown names (`unsupported type reference Name`) and type declarations inside function
   bodies. Generic built-ins such as `Record<K, V>` are rejected as generic type
   references.
 - **Modules.** `import type { T }`, `import { type T }`, `import { T }` of an
@@ -5307,8 +5315,7 @@ rejecting named references, type-only imports and `.js` specifiers.
 
 Named types are compile-time only: they add no host import, value tag, layout,
 helper or catalog entry, and artifacts carry no type names. All budgets are
-unchanged; in particular the per-file lexical limits still apply to large
-type-only modules.
+unchanged.
 
 ## Local modules
 

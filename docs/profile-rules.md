@@ -1603,8 +1603,10 @@ signatures are checked, then computes its type exports. Imports follow
 declaration body once in its defining module (switching `named.current`) and
 memoizes the interned type. Keep the resolving stack: any cycle fails with
 `recursive type declaration`, never by unrolling. Built-ins (`Array`,
-`VartaResult`, HTTP types, Error families) are matched before named lookup;
-redeclaring an Error family name is rejected. Interfaces reuse the closed
+`VartaResult`, HTTP types, Error families) are matched before named lookup,
+except that a declared or imported type of the same name as an Error family
+shadows that type name (TypeScript module scoping); `Error` values and
+`instanceof` stay built-in. Interfaces reuse the closed
 type-literal rules; reject generics, `extends`, duplicates and unknown names
 with distinct diagnostics.
 
@@ -1617,6 +1619,16 @@ The project loader maps `./x.js` to `./x.ts` only for v31 and never reads `.js`
 files; all confinement, no-follow and size rules are unchanged.
 
 Structural subtyping between distinct record shapes, generics, literal types,
-module constants and re-exports are separate pilot-driven work. Do not raise the
-per-file lexical budgets to admit large generated type modules without an
-explicit decision.
+module constants and re-exports are separate pilot-driven work.
+
+## Source complexity limits
+
+The lexical pre-parse check bounds recursion, not width: nesting 64 and 256
+consecutive chain tokens. Only separators that are flat siblings in every grammar
+position reset the run: commas in `[...]`/`{...}` and top-level `|`/`&` in a
+`type` alias outside angle syntax (SWC collects union/intersection members in a
+loop). Expression `|`, call arguments and anything after `<` keep counting. An
+alias context ends at `;`, an enclosing close or a line break that does not
+continue the union. The former 65,536-token per-file count was removed by
+explicit decision (2026-10-28); byte limits bound total size. Never make a
+separator a reset unless its AST is a flat list in every context.

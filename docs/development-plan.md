@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | Commit `bf8c6c2` (2026-10-28): the seven-command gate in [verification.md](verification.md#full-gate) passed 1750 tests on a local host, as recorded in the commit message; not a cross-platform CI result |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: v31 named types and `.js` specifiers landed; `core/json.ts` links, `generated/models.ts` exceeds the per-file lexical budget |
+| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: v31 named types and `.js` specifiers landed; `core/json.ts` links; `generated/models.ts` parses and stops at top-level `export const` |
 
 Next work, in order:
 
@@ -265,9 +265,11 @@ approximate.
 **Verified behavior with v31 (2026-10-28).** Named interface/alias types,
 type-only imports/exports and `./x.js` specifiers are implemented, so
 `core/json.ts` links through `import type { JsonValue } from './core/json.js'`.
-`generated/models.ts` (about 125k tokens) exceeds the per-file lexical budget of
-65,536 tokens, and eight files contain token runs longer than the 256-token
-limit (long literal unions); admitting them requires a budget decision.
+After the 2026-10-28 source-limit change (no per-file token count; flat alias
+unions and list commas no longer count as chains), `generated/models.ts` parses
+and its local `interface Error` model shadows the built-in type name. It now stops
+at the first top-level `export const … as const`; literal union types (up to
+hundreds of members) are the following blocker.
 
 **Earlier verified behavior (2026-10-28).** `varta check` with profile
 `checked-f64-utf16-v30` rejects `import type` (`core/resource.ts`), top-level

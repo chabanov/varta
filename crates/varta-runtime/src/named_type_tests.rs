@@ -87,10 +87,6 @@ fn named_types_reject_unsupported_declarations_with_clear_diagnostics() {
         ),
         ("function f(x:Missing):void{}", "type reference Missing"),
         (
-            "interface Error{x:number}",
-            "redeclaring the built-in Error type",
-        ),
-        (
             "interface A{x:number}interface A{y:number}",
             "duplicate type declaration: A",
         ),
@@ -136,4 +132,15 @@ fn named_types_stay_rejected_in_v30() {
         P::CheckedF64Utf16V30,
     )
     .unwrap();
+}
+#[test]
+fn named_types_shadow_global_error_type_names_but_not_values() {
+    // A module-local `Error` type (an API model) shadows the built-in type name in
+    // annotations; the `Error` value and `instanceof` keep the built-in meaning.
+    run(
+        "interface Error{code:string;status:number}function describe(e:Error):string{return e.code+'/'+String(e.status);}\
+         export function main():void{console.log(describe({code:'E',status:404}));\
+         try{throw TypeError('boom');}catch(e){if(e instanceof TypeError){console.log(e.message);}}}",
+        &["E/404", "boom"],
+    );
 }

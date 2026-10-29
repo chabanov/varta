@@ -76,12 +76,6 @@ pub(super) fn link_module(
                 }
                 _ => continue,
             };
-        if varta_common::value::ErrorClass::from_name(name.sym.as_ref()).is_some() {
-            return Err(source.locate(
-                unsupported(&format!("redeclaring the built-in {} type", name.sym)),
-                name.span,
-            ));
-        }
         let declaration = Declaration::Local {
             ty: Box::new(ty),
             source: source.clone(),
@@ -158,6 +152,12 @@ pub(super) fn is_type(types: &ir::ValueTypes, module: usize, name: &str) -> bool
         .named
         .declarations
         .contains_key(&(module, name.to_owned()))
+}
+
+/// Whether the current module declares or imports `name`. Like TypeScript, a
+/// module-local type shadows a global built-in type name (not its value).
+pub(super) fn declared(types: &ir::ValueTypes, name: &str) -> bool {
+    is_type(types, types.named.current, name)
 }
 
 /// Resolve a non-generic named reference in the current module.

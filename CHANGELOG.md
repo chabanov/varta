@@ -323,6 +323,14 @@ in [conformance/README.md](conformance/README.md).
 
 ### Changed
 
+- Source complexity limits bound recursion instead of width: the per-file token
+  count is removed (byte limits remain), and list commas in `[...]`/`{...}` and
+  top-level union/intersection members of a type alias no longer count toward
+  the 256-token chain limit. Nesting, expression chains and call arguments keep
+  their existing limits.
+- In v31 a module-local type named like an Error family (for example an API
+  `Error` model) shadows the built-in type name in annotations, as in TypeScript.
+
 - Documentation is restructured: a short README orientation page, a
   [language guide](docs/language-guide.md), per-profile
   [implementation rules](docs/profile-rules.md), a [history](docs/history.md) of

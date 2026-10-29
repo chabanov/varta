@@ -102,6 +102,14 @@ fn annotation(ann: Option<&ast::TsTypeAnn>, types: &mut ir::ValueTypes) -> Resul
     Ok(Some(keyword_type(&ann.type_ann, types)?))
 }
 fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
+    if types.profile.named_types()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && reference.type_params.is_none()
+        && let ast::TsEntityName::Ident(id) = &reference.type_name
+        && named::declared(types, id.sym.as_ref())
+    {
+        return named::resolve(id.sym.as_ref(), types);
+    }
     if let ast::TsType::TsTypeRef(reference) = ty
         && reference.type_params.is_none()
         && let ast::TsEntityName::Ident(id) = &reference.type_name
