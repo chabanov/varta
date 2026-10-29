@@ -105,7 +105,13 @@ fn scheduler_imports_require_the_v34_host_abi_and_no_capability() {
         .validate_module(&downgraded)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("invalid host signature"), "{error}");
+    // Under value layout 15 the frame catalog's value15 stamp no longer matches
+    // the downgraded value ABI, which validation may report before the import.
+    assert!(
+        error.contains("invalid host signature")
+            || error.contains("capture catalog value version mismatch"),
+        "{error}"
+    );
     // An unknown scheduler operation name is not a host import.
     let unknown = patched(&bytes, b"promise_react", b"promise_reacx");
     let error = runtime.validate_module(&unknown).unwrap_err().to_string();

@@ -6350,8 +6350,16 @@ already iterative. Checked JSON schema 15 admits forward and self type
 references (decoding enforces the depth and visit bounds instead of static
 schema depth); earlier schemas keep strict backward edges. Compiler type walks
 over the graph visit each type once. Closure capture catalogs and generator
-frame catalogs stay acyclic type DAGs, so capturing a recursive type in a
-closure or keeping it in a generator frame slot fails with a diagnostic.
+frame catalogs stay acyclic type DAGs: when a recursive type is reached again
+while its catalog node is being described, the back-edge gets a shallow node
+of the same value kind whose children are validated by their consumers — a
+union closing the cycle (`JsonValue`) is described as `CaptureType::Unknown`
+(any canonical cell) and a record reached again (`Tree`) as
+`CaptureType::Class` (any record aggregate). Recursive values may therefore
+be captured by closures and kept in generator and async frames. A dictionary
+or array that contains itself without an intervening union or record
+(`type Nest = { [key: string]: Nest }`) has no shallow node, and capturing it
+or keeping it in a frame slot fails with a diagnostic.
 
 #### Unknown (`unknown_type`)
 
@@ -6366,13 +6374,17 @@ as `unsupported type annotation`.
   record descriptors, arrays and capture catalogs is `ReferenceUnion`, and the
   function catalog names it `CaptureType::Unknown`, which validates any canonical
   cell through `ReferenceBox` (children are validated by their consumers). No
-  value tag, layout, host import or budget is added, so the stream survives a
-  switch of `value_layout` to another layout version.
+  value tag, layout, host import or budget is added. Under v34 the cells use
+  value layout 15, and every operation on them (`typeof`, truthiness, nullish
+  and strict equality, `Array.isArray`, logging, String conversion, JSON) goes
+  through `LanguageProfile::host_operation` to its value15 reader.
 - **Admitted values.** Every value whose kind has a cell tag: Number, String,
-  Boolean, BigInt, `null`, `undefined`, records, arrays, native errors, Error
-  and other class instances, and closed unions of these. Function values (no
-  cell tag in value13), generators and `VartaResult` pairs are rejected
-  (`function value is not assignable to unknown`). Widening boxes a scalar or
+  Boolean, BigInt, `null`, `undefined`, records (including wide records),
+  dictionaries (value15 tag `Dictionary`), arrays, native errors, Error and
+  other class instances, and closed unions of these. Function values (no cell
+  tag in value13 or value15), generators, promises and `VartaResult` pairs are
+  rejected (`function value is not assignable to unknown`; a promise names its
+  missing value tag and asks to await it). Widening boxes a scalar or
   reference into a fresh cell without copying the referenced object; a closed
   union keeps its cell. A union with an `unknown` member is `unknown`.
 - **Operations.** As in TypeScript, only operations that accept any value apply
@@ -6401,7 +6413,10 @@ as `unsupported type annotation`.
   the family's Error-class root when the program declares one). Only positive
   branches narrow; negated guards, `typeof x === "object"`, `Array.isArray(x)`
   and truthiness keep `unknown`, because `object`, `any[]` and `{}` have no
-  checked representation. Assignment does not narrow `unknown`, as in
+  checked representation. In particular they do not narrow to a dictionary:
+  a value15 dictionary, a record and a class instance all answer `"object"`,
+  and `k in x` stays rejected on `unknown`; a checked `as Record<string, T>`
+  recovers a dictionary instead. Assignment does not narrow `unknown`, as in
   TypeScript. User type predicates (`x is T`) remain rejected. A narrowed read
   unboxes the cell after its tag was tested; reads of record and class
   members are justified by the descriptor test, never by the tag alone.
@@ -6453,12 +6468,17 @@ and `!` as `unsupported expression`.
   closed shape fails; a class by its tag and the descriptors of the class and
   its subclasses; an array whose element type is number, string, boolean,
   bigint, `null` or `undefined` by its tag and its element-kind word (constant
-  time; the elements are already typed by that kind); `unknown` always. `x as
+  time; the elements are already typed by that kind); a dictionary
+  (`Record<string, T>` or an index signature) whose value type is one of those
+  primitives by its `Dictionary` tag and the element-kind word of its value
+  vector (constant time; keys are always strings); `unknown` always. `x as
   Error` or a native family also accepts the family's Error-class instances and
-  yields the narrowed family union, like `instanceof`. Arrays of records,
-  unions, arrays or `unknown`, function types and generators are rejected with
+  yields the narrowed family union, like `instanceof`. Arrays and
+  dictionaries of records, unions, arrays, dictionaries or `unknown`, function
+  types, generators and promises are rejected with
   `unsupported type assertion to …`, because the element kind cannot prove
-  them in constant time.
+  them in constant time (a `Record<string, unknown>` view of a dictionary of a
+  closed union would let writes break the other alias's member set).
 - **Failure.** A failed test throws a recoverable
   `TypeError("type assertion to <T> failed")`, where `<T>` is the source text of
   the asserted type (at most 64 characters). This is a deliberate deviation:
@@ -6515,7 +6535,24 @@ trap before any effect.
   apply to the whole execution, including every job, and are never renewed by
   `await` or the checkpoint. Scheduler imports are bookkeeping, not host
   effects: they consume guest fuel and check the deadline but are not charged
-  to the host-call budget. Held tokens (queue and reactions together), jobs per
+  to the host-call budget. Rationale: every `await` and every reaction costs
+  at least one scheduler import, so charging them to the 1024-call budget would
+  cap an ordinary sequential async loop at a few hundred iterations, and the
+  budget exists to bound effects and host work per call, which these imports
+  do not have — they reach no capability, OS call or guest-controlled host
+  allocation beyond the named scheduler tables, and each is a constant or
+  logarithmic table update (`promise_unhandled` additionally copies one
+  thrown value with the bounded uncaught-exception readers). Every await loop
+  stays bounded without them: each iteration resumes guest code through
+  `varta_resume`, which consumes fuel; epoch interruption enforces the
+  deadline inside guest code and each import checks it again; and the
+  per-execution job count is bounded below. One cost is bounded only
+  indirectly: each unhandled report retains its rendered reason (a String
+  reason up to the 1 MiB value limit) in host memory until it is withdrawn,
+  so the host memory held by reports is limited by the tracking-id bound and
+  by the fuel each rejection costs (on the order of a few hundred units per
+  `Promise.reject`), not by the guest memory limit. Held tokens (queue and
+  reactions together), jobs per
   execution, and serials and tracking ids per execution are bounded by the
   scheduler rows of the [limits table](#resource-limits); the live-frame table
   bounds the frames pending at once. Exceeding any bound, the fuel or the

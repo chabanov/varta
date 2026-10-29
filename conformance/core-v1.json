@@ -1072,9 +1072,7 @@
         "varta log: a 1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Requires the v34 unknown_type and checked_assertions selectors; the inventory pins checked-f64-utf16-v33, which rejects unknown, as and !."
+        "status": "supported"
       }
     },
     {
@@ -1091,9 +1089,7 @@
         "varta log: high"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Requires the v34 unknown_type and checked_assertions selectors; the inventory pins checked-f64-utf16-v33, which rejects unknown, as and !."
+        "status": "supported"
       }
     },
     {

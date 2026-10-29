@@ -246,13 +246,20 @@ fn index_signatures_and_recursion_keep_older_profiles_and_bad_shapes_rejected() 
             "dictionary key must be a narrowed string",
         ),
         (
-            "interface T{c:T[]}export function main():void{const t:T={c:[]};const f=()=>t.c.length;console.log(f());}",
+            "type Nest={[k:string]:Nest};export function main():void{const n:Nest={};const f=()=>Object.keys(n).length;console.log(f());}",
             "recursive type",
         ),
     ] {
         let error = rejected(source, V34);
         assert!(error.contains(message), "{source}: {error}");
     }
+    // A recursive record or union reached again through a record field, an
+    // array element or a union gets a shallow catalog node, so closures may
+    // capture it (v34 cross-stream integration).
+    assert_logs(
+        "interface T{c:T[]}export function main():void{const t:T={c:[]};const f=()=>t.c.length;console.log(f());}",
+        &["0"],
+    );
 }
 
 #[test]

@@ -345,6 +345,15 @@ impl Lower<'_> {
         let Some(&declared) = self.local_types.get(&slot) else {
             return Ok(());
         };
+        if declared == Type::Unknown {
+            // `unknown` has no member list: any narrower admitted type that a
+            // path proved (a guard or a join of guarded paths) refines it.
+            self.refinements.remove(&slot);
+            if observed != Type::Unknown && unknown::admissible(observed) {
+                self.refinements.insert(slot, observed);
+            }
+            return Ok(());
+        }
         if self.types.profile.literal_types() {
             return self.literal_flow_fact(slot, declared, observed);
         }

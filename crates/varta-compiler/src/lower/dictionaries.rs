@@ -11,7 +11,7 @@ use varta_common::value::{
 
 /// Canonical storage slots (fields sorted by name: `keys` < `values`).
 const KEYS: u32 = 0;
-const VALUES: u32 = 1;
+pub(super) const VALUES: u32 = 1;
 const PROTO: &str = "__proto__";
 
 pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {

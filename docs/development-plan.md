@@ -32,7 +32,7 @@ Next work, in order:
    wider records, Web types (`Headers`, `AbortSignal`) and the 65-file module
    graph budgets.
 3. Promise jobs, then async/await (K4.4 steps 3–4): implemented under v34
-   on the `v34-async` branch
+   and merged with the records and unknown streams on `v34-integration-merge`
    ([scheduler](architecture.md#microtask-scheduler-promises),
    [async functions](architecture.md#async-functions-async_functions));
    timers, I/O and async HTTP (step 5) are next.
@@ -434,18 +434,28 @@ promise layouts of the records and async streams
 The records stream switched v34 to value layout 15 first
 ([contract](architecture.md#value-layout-15-dynamic_values)): value15 keeps
 every value13 layout behind its own value15 readers, JSON schema 15 and
-exception channel v6, and v34 programs behave exactly as under v33.
+exception channel v6, and v34 programs behave exactly as under v33. The three
+streams are merged on the `v34-integration-merge` branch, where `unknown` reads
+value15 cells (including dictionaries and wide records), `as Record<string, T>`
+is a checked target for primitive `T`, promise records and async frames run
+under value15 descriptors and recursive values may be held in frames
+(`varta-runtime` `v34_cross_stream_tests`). Pending: `JSON.parse` and
+`varta.json.parse<unknown>` producing `unknown` (they need an internal
+recursive JSON value type), narrowing `unknown` to dictionaries by
+`typeof`/`in`, `await` inside dictionary reads and writes (an intrinsic value
+block), and a decision on bounding the host memory retained by unhandled
+rejection reports.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
-| `dynamic_values()` | Records: value layout 15 foundation, value15 readers | M1 | Implemented on `v34-records` |
-| `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind (value15 tag 13) | M1 | Implemented on `v34-records` |
-| `recursive_types()` | Records: recursive aliases and interfaces such as `JsonValue` and trees | M1 | Implemented on `v34-records` |
-| `wide_records()` | Records: records wider than 32 fields, up to `MAX_WIDE_RECORD_FIELDS` (multiword presence, descriptor edge bitmap) | M1 | Implemented on `v34-records` |
-| `unknown_type()` | Unknown: `unknown` cells, `typeof`/`===`/`instanceof` narrowing, caught values and `cause?: unknown` | M1, M2 | Implemented on `v34-unknown` |
-| `checked_assertions()` | Unknown: `x as T` and `x!` as runtime-checked conversions | M1, M2 | Implemented on `v34-unknown`; arrays of non-primitive elements are not checkable assertion targets |
-| `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Implemented on `v34-async` |
-| `async_functions()` | Async (K4.4 step 4): `async`/`await` on continuation frames | M5 | Implemented on `v34-async` |
+| `dynamic_values()` | Records: value layout 15 foundation, value15 readers | M1 | Merged on `v34-integration-merge` |
+| `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind (value15 tag 13) | M1 | Merged on `v34-integration-merge` |
+| `recursive_types()` | Records: recursive aliases and interfaces such as `JsonValue` and trees | M1 | Merged on `v34-integration-merge` |
+| `wide_records()` | Records: records wider than 32 fields, up to `MAX_WIDE_RECORD_FIELDS` (multiword presence, descriptor edge bitmap) | M1 | Merged on `v34-integration-merge` |
+| `unknown_type()` | Unknown: `unknown` cells, `typeof`/`===`/`instanceof` narrowing, caught values and `cause?: unknown` | M1, M2 | Merged on `v34-integration-merge` |
+| `checked_assertions()` | Unknown: `x as T` and `x!` as runtime-checked conversions | M1, M2 | Merged on `v34-integration-merge`; arrays of non-primitive elements are not checkable assertion targets |
+| `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Merged on `v34-integration-merge` |
+| `async_functions()` | Async (K4.4 step 4): `async`/`await` on continuation frames | M5 | Merged on `v34-integration-merge` |
 
 ### Deferred external validation scenarios
 

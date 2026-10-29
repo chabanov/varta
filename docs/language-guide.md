@@ -3992,8 +3992,11 @@ function count(value: JsonValue): number {
 ```
 
 `type A = B; type B = A`, `type A = string | A` and recursive generic types are
-rejected. Closures and generator frames cannot hold a value of a recursive type
-yet; pass it as a parameter instead.
+rejected. Closures, generators and async functions may hold recursive values
+such as a `JsonValue` or a `Tree` across `yield` and `await`; only a dictionary
+that contains itself directly (`type Nest = { [key: string]: Nest }`) cannot be
+captured or held across a suspension.
+
 #### `unknown` values (opt-in v34)
 
 `unknown` holds any primitive, BigInt, record, array, native error or class
@@ -4059,9 +4062,11 @@ export function main(): void {
 ```
 
 Checkable targets are primitives, literal types, records (by their exact
-shape), classes (with subclasses), `Error` families, arrays of primitives and
-unions of these. Arrays of records or unions, function types and `<T>x` are
-rejected at compile time; `as const` keeps its meaning.
+shape), classes (with subclasses), `Error` families, arrays and dictionaries
+(`Record<string, T>`) of primitives and unions of these. Arrays and
+dictionaries of records or unions, function types and `<T>x` are rejected at
+compile time; `as const` keeps its meaning. `unknown` also holds dictionaries
+and wide records, but never a `Promise`: await it first.
 
 #### Async functions and await (opt-in v34)
 

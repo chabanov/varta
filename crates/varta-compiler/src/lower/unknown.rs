@@ -46,8 +46,9 @@ fn or(span: Span, a: Expr, b: Expr) -> Expr {
 }
 
 /// Whether `unknown` can hold a value of `ty`: every type whose values carry a
-/// reference-cell tag under the profile's value layout. Function values have no
-/// cell tag in the value13 layouts; generators and result pairs have none at all.
+/// reference-cell tag under the profile's value layout, including value15
+/// dictionaries and wide records. Function values have no cell tag in the
+/// value13/value15 layouts; generators, promises and result pairs have none at all.
 pub(super) fn admissible(ty: Type) -> bool {
     matches!(
         ty.erased(),
@@ -60,6 +61,7 @@ pub(super) fn admissible(ty: Type) -> bool {
             | Type::Error
             | Type::NativeError(_)
             | Type::Record(_)
+            | Type::Dictionary(_)
             | Type::Class(_)
             | Type::Array(_)
             | Type::Union(_)
@@ -75,10 +77,16 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     if value.ty == Type::Unknown {
         return Ok(value);
     }
+    if matches!(value.ty, Type::Promise(_)) {
+        return Err(type_error(
+            "promise value is not assignable to unknown; promises carry no value tag, \
+             so await the promise or keep it typed as Promise<T>",
+        ));
+    }
     if !admissible(value.ty) {
         return Err(type_error(format!(
             "{} value is not assignable to unknown; unknown holds primitives, BigInt, \
-             records, arrays and Error or class instances",
+             records, dictionaries, arrays and Error or class instances",
             value.ty
         )));
     }
@@ -115,6 +123,20 @@ pub(super) fn error_family(family: ErrorClass, types: &ir::ValueTypes) -> Vec<Ty
         .filter(|ty| guard.matches(*ty))
         .chain(types.classes.error_root(family).map(Type::Class))
         .collect()
+}
+
+/// The element kind that proves a vector holds exactly `element` values in
+/// constant time: only primitive element types have a kind of their own.
+fn primitive_kind(element: Type) -> Option<varta_common::value::ValueKind> {
+    match element {
+        Type::Float64
+        | Type::Boolean
+        | Type::String
+        | Type::Null
+        | Type::Undefined
+        | Type::BigInt => element.value_kind(),
+        _ => None,
+    }
 }
 
 /// Whether a value of `source` may be used as `target` without a runtime test.
@@ -354,17 +376,7 @@ impl Lower<'_> {
                 and(span, member(target), descriptor)
             }
             Type::Array(id) => {
-                let element = self.types.arrays[id as usize];
-                let kind = match element {
-                    Type::Float64
-                    | Type::Boolean
-                    | Type::String
-                    | Type::Null
-                    | Type::Undefined
-                    | Type::BigInt => element.value_kind(),
-                    _ => None,
-                }
-                .ok_or_else(|| {
+                let kind = primitive_kind(self.types.arrays[id as usize]).ok_or_else(|| {
                     unsupported(&format!(
                         "type assertion to {name}: arrays are checked by element kind, so only \
                          arrays of number, string, boolean, bigint, null or undefined are checkable"
@@ -374,6 +386,26 @@ impl Lower<'_> {
                     span,
                     member(target),
                     test(span, E::ArrayKind(Box::new(unboxed(target)), kind)),
+                )
+            }
+            Type::Dictionary(id) => {
+                let dictionary = self.types.dictionaries[id as usize];
+                let kind = primitive_kind(dictionary.value).ok_or_else(|| {
+                    unsupported(&format!(
+                        "type assertion to {name}: dictionaries are checked by the element kind \
+                         of their value vector, so only dictionaries of number, string, boolean, \
+                         bigint, null or undefined are checkable"
+                    ))
+                })?;
+                let values = Expr {
+                    span,
+                    ty: dictionary.values,
+                    kind: E::Field(Box::new(unboxed(target)), dictionaries::VALUES),
+                };
+                and(
+                    span,
+                    member(target),
+                    test(span, E::ArrayKind(Box::new(values), kind)),
                 )
             }
             _ => return Err(unsupported(&format!("type assertion to {name}"))),

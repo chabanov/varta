@@ -55,6 +55,16 @@ in [conformance/README.md](conformance/README.md).
   methods, `for await`, async generators, top-level `await` and `await` inside
   intrinsic value blocks fail with construct-specific diagnostics.
 
+- V34 stream integration: `unknown` holds value15 dictionaries and wide records
+  and reads them through the value15 operations; `x as Record<string, T>` for
+  a primitive `T` tests the `Dictionary` tag and the value vector's element
+  kind; promises are rejected from `unknown` with their own diagnostic;
+  promise records, async frames and the scheduler run under value15
+  descriptors, and recursive values (`JsonValue`, `Tree`) may be held in
+  closure cells and generator/async frames through shallow back-edge catalog
+  nodes. A flow join now keeps a refinement of an `unknown` binding that every
+  path proves, so a narrowed `catch (e)` stays narrowed after a branch.
+
 - Opt-in v34 (pilot batch: dynamic records, `unknown` and async, in
   development) is registered. It inherits every v33 feature and declares a new
   host ABI, so runtimes without the microtask scheduler reject its modules, and

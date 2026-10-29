@@ -15,6 +15,8 @@ pub(super) fn build(
         indices: BTreeMap<Type, u32>,
         /// Types being described; capture catalogs are acyclic type DAGs.
         open: BTreeSet<Type>,
+        /// Shallow back-edge nodes of recursive types, by type.
+        shallow: BTreeMap<Type, u32>,
     }
     impl Builder<'_> {
         fn node(&mut self, ty: Type) -> Result<u32> {
@@ -23,10 +25,7 @@ pub(super) fn build(
                 return Ok(*id);
             }
             if !self.open.insert(ty) {
-                return Err(CompilerError::Unsupported {
-                    kind: "closure or generator capture".into(),
-                    detail: "a recursive type in a captured binding or frame slot".into(),
-                });
+                return self.back_edge(ty);
             }
             let node = match ty {
                 Type::Number => CaptureType::I32,
@@ -62,6 +61,15 @@ pub(super) fn build(
                     }
                     CaptureType::Record { fields }
                 }
+                // A union closing a recursive cycle (`JsonValue`) is a shallow
+                // cell node: its members are validated by their consumers.
+                Type::Union(id) | Type::ReferenceUnion(id)
+                    if self.types.unions[id as usize]
+                        .iter()
+                        .any(|member| self.open.contains(member)) =>
+                {
+                    CaptureType::Unknown
+                }
                 Type::Union(id) | Type::ReferenceUnion(id) => {
                     let members = self.types.unions[id as usize]
                         .clone()
@@ -86,12 +94,38 @@ pub(super) fn build(
             self.indices.insert(ty, id);
             Ok(id)
         }
+        /// A recursive type reached again while it is being described (v34
+        /// `recursive_types`): the catalog stays an acyclic DAG, so the
+        /// back-edge gets a shallow node of the same value kind whose children
+        /// are validated by their consumers — any canonical cell for a union,
+        /// any record aggregate for a record. A dictionary or array reached
+        /// again without an intervening union or record has no shallow node.
+        fn back_edge(&mut self, ty: Type) -> Result<u32> {
+            let node = match ty {
+                Type::Union(_) | Type::ReferenceUnion(_) => CaptureType::Unknown,
+                Type::Record(_) => CaptureType::Class,
+                _ => {
+                    return Err(CompilerError::Unsupported {
+                        kind: "closure or generator capture".into(),
+                        detail: "a recursive type in a captured binding or frame slot".into(),
+                    });
+                }
+            };
+            if let Some(id) = self.shallow.get(&ty) {
+                return Ok(*id);
+            }
+            let id = self.nodes.len() as u32;
+            self.nodes.push(node);
+            self.shallow.insert(ty, id);
+            Ok(id)
+        }
     }
     let mut builder = Builder {
         types: &program.types,
         nodes: Vec::new(),
         indices: BTreeMap::new(),
         open: BTreeSet::new(),
+        shallow: BTreeMap::new(),
     };
     let mut binding_rows = vec![None; bindings.len()];
     for (&ty, &id) in bindings {

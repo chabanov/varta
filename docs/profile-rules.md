@@ -2114,11 +2114,15 @@ Inherit v33 under checked-f64-utf16-v34 with every v33 selector, but its own
 value layout (exception channel v6, JSON schema 15), its own host ABI
 (`abi::SCHEDULED_FRAMES_VERSION`, the microtask scheduler that drives
 `varta_resume`) and its own value ABI (`value::DYNAMIC_VALUE_VERSION`); never
-map another profile to either. Seven selectors gate the streams: records
-(`index_signatures`, `recursive_types`, `wide_records`) and unknown
-(`unknown_type`, `checked_assertions`) admit nothing yet; async (`promises`,
-`async_functions`) is specified below. Gate every admission on its own selector, keep v33 and
+map another profile to either. Eight selectors gate the streams, all
+specified below: the value layout (`dynamic_values`), records
+(`index_signatures`, `recursive_types`, `wide_records`), unknown
+(`unknown_type`, `checked_assertions`) and async (`promises`,
+`async_functions`). Gate every admission on its own selector, keep v33 and
 earlier profiles frozen, and add each stream's rules under its own heading here.
+Cross-stream behaviour (unknown cells holding value15 values, promise records
+under value15 descriptors, recursive values in frames) is pinned by
+`varta-runtime` `v34_cross_stream_tests`.
 
 ### Value layout 15 (`dynamic_values`)
 
@@ -2193,19 +2197,11 @@ Contract: [architecture.md](architecture.md#recursive-types-recursive_types).
 - Any compiler walk over interned types (assignability, literal search, JSON
   admission, instance reachability, callback search, schema building) must
   carry a visited set; recursion on `Type` structure without one is a bug.
-- Schema 15 may refer forward; capture and frame catalogs must not, so reject
-  recursive types there with a diagnostic instead of emitting a cycle.
-- The value ABI is a reserved identity without layouts. Declare it only in the
-  `varta.values` section (`value_abi`); stamp descriptors, record sizes and
-  capture/frame catalogs with `LanguageProfile::value_layout` (still value13
-  for v34). Never pass value15 to a reader before its layout is specified.
-- A stream that adds a value15 layout or tag switches `value_layout` for v34
-  in the same change and then extends the readers (`ValueKind::supported_by`,
-  `ReferenceBox`, `Vector`, `ErrorObject`, `record_bytes`, the runtime JSON
-  encoder/decoder, capture catalogs and the exception channel) and adds the
-  value/JSON host operations and JSON schema version bound to value15: the
-  value13 operations reject descriptors stamped with any other version. Only
-  one stream does this switch; the others rebase onto it.
+- Schema 15 may refer forward; capture and frame catalogs must not. Describe
+  a back-edge with a shallow node of the same value kind
+  (`CaptureType::Unknown` for a union, `CaptureType::Class` for a record) and
+  reject a dictionary or array that reaches itself without an intervening
+  union or record, instead of emitting a cycle.
 
 ### Unknown (`unknown_type`)
 
@@ -2223,8 +2219,16 @@ Contract: [architecture.md](architecture.md#unknown-unknown_type).
   array of unknown element type or by assignment. A refinement that unboxes a
   record or class must be proven by a descriptor test, never by the tag alone.
 - Keep property access, indexing, calls, arithmetic, `in`, `Object.hasOwn`,
-  `Number(x)` and typed JSON parsing rejected on `unknown`; the records stream
-  owns `typeof x === "object"` narrowing to dynamic records.
+  `Number(x)` and typed JSON parsing rejected on `unknown`. `typeof x ===
+  "object"`, `Array.isArray` and `in` do not narrow `unknown` to a dictionary
+  (records and class instances answer the same); a checked
+  `as Record<string, T>` is the way back.
+- Under v34 `unknown` cells use value layout 15 and may hold dictionaries and
+  wide records; every reader goes through `LanguageProfile::host_operation`.
+  Promises have no value tag and are rejected with their own diagnostic.
+- A flow join of paths that all refine an `unknown` binding keeps the joined
+  refinement (`flow_fact` admits any narrower admissible type for a declared
+  `unknown`); a path without a fact joins to `unknown`.
 - Only identifier catch bindings become `unknown`; catch patterns, the frame
   exception binding and the exception channel keep the closed catch union, and
   `throw` of an `unknown` is a checked conversion to it.
@@ -2242,13 +2246,15 @@ Contract: [architecture.md](architecture.md#checked-assertions-checked_assertion
   an asserted value.
 - Admit a tested assertion only when TypeScript would (comparable members) and
   the target is checkable exactly: primitive and literal tags/values, exact
-  record descriptors, class family descriptors and primitive-element array
-  kinds. Reject other targets with `unsupported type assertion to …` instead of
+  record descriptors, class family descriptors, primitive-element array kinds
+  and primitive-valued dictionaries (the `Dictionary` tag plus the value
+  vector's element kind). Reject other targets with `unsupported type assertion to …` instead of
   approximating them (no element-wise array scans, no structural record match).
 - `x!` is free on non-nullable operands and tested otherwise; `as const` keeps
   its v32 path; `<T>x` stays rejected.
 - Failure messages quote the asserted type's source text; tests pin them,
   because Node erases assertions and never throws there.
+
 ### Promises and async functions (`promises`, `async_functions`)
 
 Contracts: [scheduler](architecture.md#microtask-scheduler-promises),
