@@ -1890,12 +1890,12 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    to async generators, with Node's job counts
    (`varta-runtime` `async_generator_tests`, Node 24 logs, a collection forced
    before every job). No host import, value tag or layout is added. Measured
-   with production budgets: about 10.5k fuel per `for await` step, 3.6k per
+   with production budgets: about 10.0k fuel per `for await` step, 3.3k per
    `await` in a body (1.7k in an async function). Open: `yield*` over arrays
    and synchronous generators, async generator expressions and object methods, `Symbol.asyncIterator` and other
    async iterables, top-level `await`, `await` inside intrinsic value blocks
    other than checked assertions, and a cheaper relay (the per-step cost limits
-   one execution to about 90 `for await` values).
+   one execution to about 100 `for await` values).
 
 The prepared function-catalog ownership increment, which owns the immutable
 metadata that frame layouts extend, is committed (`bf8c6c2`).

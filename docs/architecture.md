@@ -7413,10 +7413,10 @@ iteration is not implemented yet)`) and the annotations below.
   rejection, and a request promise rejected without a handler terminates the
   execution after the checkpoint like any unhandled rejection. Production
   budgets are unchanged. Measured with them, a `for await` step over an async
-  generator costs about 10.5k fuel (the consumer's `await`, the `yield`'s
+  generator costs about 10.0k fuel (the consumer's `await`, the `yield`'s
   `await` through a relay and the protocol records), an `await` in a body about
-  3.6k (1.7k in an async function) and a created, started and abandoned
-  generator about 13.4k.
+  3.3k (1.7k in an async function) and a created, started and abandoned
+  generator about 12.7k.
 - **Deviations.** No other object implements the async iteration protocol
   (there is no `Symbol`); an `AsyncIterable<T>` parameter accepts async
   generator objects whose `TReturn` and `TNext` match its own; `IteratorResult`

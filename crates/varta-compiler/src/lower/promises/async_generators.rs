@@ -1202,21 +1202,20 @@ impl Lower<'_> {
                     _ => Completion::Throw,
                 };
                 let request = self.request(shapes, kind, local(span, input, input_ty), p)?;
+                // Append at the queue's length: no temporary array per request.
+                let queue = shapes.read(self.types, shapes.state(state), QUEUE_FIELD)?;
+                let slots = (self.hidden(queue.ty), self.hidden(Type::Float64));
                 let types = &*self.types;
-                let queue = shapes.read(types, shapes.state(state), QUEUE_FIELD)?;
-                let queue_ty = queue.ty;
-                let enqueue = discard(Expr {
-                    span,
-                    ty: Type::Float64,
-                    kind: E::ArrayPush(
-                        Box::new(queue),
-                        Box::new(Expr {
-                            span,
-                            ty: queue_ty,
-                            kind: E::Array(vec![Some(request)]),
-                        }),
-                    ),
-                });
+                let enqueue = S::SetIndex {
+                    array: shapes.read(types, shapes.state(state), QUEUE_FIELD)?,
+                    index: Expr {
+                        span,
+                        ty: Type::Float64,
+                        kind: E::Length(Box::new(queue)),
+                    },
+                    value: request,
+                    slots: Some(slots),
+                };
                 let resume_now = || {
                     invoke(
                         span,
@@ -1576,7 +1575,18 @@ impl Lower<'_> {
                     Self::plain(span, vec![frame, ty], true),
                     |child, params, _| {
                         let (handle, settled) = (params[0], params[1]);
-                        let awaited = child.await_promise(span, local(span, settled, ty))?;
+                        // Only the settlement matters: the body reads the
+                        // promise itself, so the relay's await never throws.
+                        let awaited = Expr {
+                            span,
+                            ty: Type::Undefined,
+                            kind: E::Await {
+                                promise: Box::new(local(span, settled, ty)),
+                                slot: child.hidden(ty),
+                                result: Box::new(undefined(span)),
+                                relay: None,
+                            },
+                        };
                         let step = Expr {
                             span,
                             ty: Type::Number,
@@ -1586,15 +1596,7 @@ impl Lower<'_> {
                                 value: Box::new(local(span, handle, frame)),
                             },
                         };
-                        Ok(vec![
-                            S::TryCatch {
-                                body: vec![discard(awaited)],
-                                binding: None,
-                                handler: vec![],
-                                marker: child.hidden(Type::Number),
-                            },
-                            discard(step),
-                        ])
+                        Ok(vec![discard(awaited), discard(step)])
                     },
                 )
             },
