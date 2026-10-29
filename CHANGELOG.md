@@ -20,6 +20,20 @@ in [conformance/README.md](conformance/README.md).
   guest effect. Its `checked_declared_fields`, `function_fields`,
   `async_generators` and `timers` selectors admit nothing yet.
 
+- Function fields under opt-in v36 (`function_fields`): function values in
+  record, interface and class fields, arrays, dictionaries, unions (one
+  function type each) and `unknown`; calls through fields without `this`;
+  optional and defaulted function-typed parameters such as
+  `random: () => number = Math.random`; `typeof f === "function"` and
+  truthiness narrowing; optional chains (`x?.p`, `x?.[i]`, `x?.m()`, `f?.()`);
+  `Math.random` as a value with one identity; JSON omission of functions and
+  a compile-time rejection of function-valued `toJSON` fields;
+  `reject(reason)` with an `unknown` reason; `Promise.withResolvers<T>()`; and
+  the v36 abort prelude's `addEventListener`/`removeEventListener`/`onabort`
+  (registration order, `once`, capture identity). V35 programs compile to
+  unchanged bytes (pinned digests); the conformance inventory gains three
+  v35-pinned gap cases.
+
 - Value ABI and layout 17 (`FUNCTION_FIELD_VALUE_VERSION`) for v36, owned by
   the function-fields stream: every value16 tag and layout keeps its meaning
   and the function tag becomes a reference kind of fields, elements and cells,

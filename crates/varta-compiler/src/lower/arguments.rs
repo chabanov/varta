@@ -51,9 +51,24 @@ impl Lower<'_> {
         args.iter()
             .enumerate()
             .map(|(index, arg)| {
-                self.expr_expected(&arg.expr, context(index, params, shape, self.types))
+                let expected = context(index, params, shape, self.types);
+                if self.unknown_reason(&arg.expr, expected)? {
+                    // `reject(reason)` with an `unknown` reason (v36): checked
+                    // like a thrown `unknown` value.
+                    let value = self.expr(&arg.expr)?;
+                    return self.thrown_unknown(value);
+                }
+                self.expr_expected(&arg.expr, expected)
             })
             .collect()
+    }
+    /// Whether `argument` is an `unknown` path passed where the exception
+    /// union (a promise rejection reason) is expected (v36 `function_fields`).
+    fn unknown_reason(&mut self, argument: &ast::Expr, expected: Option<Type>) -> Result<bool> {
+        Ok(self.types.profile.function_fields()
+            && expected.is_some_and(Type::is_union)
+            && self.peek_type(argument, 0) == Some(Type::Unknown)
+            && expected == Some(self.exception_type()?))
     }
     pub(super) fn bind_arguments(
         &mut self,

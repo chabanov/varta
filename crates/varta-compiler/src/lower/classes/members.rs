@@ -57,7 +57,11 @@ impl Lower<'_> {
     /// A missing member; engine prelude classes (v35) explain the members
     /// they name but do not implement yet.
     fn unknown_member(&self, class: u32, name: &str, kind: &str) -> CompilerError {
-        match self.types.classes.pending_member(class, name) {
+        match self
+            .types
+            .classes
+            .pending_member(class, name, self.types.profile)
+        {
             Some(reason) => CompilerError::Unsupported {
                 kind: reason.into(),
                 detail: "not implemented by the checked-f64-utf16-v35 engine Web types".into(),
@@ -176,7 +180,11 @@ impl Lower<'_> {
             && self
                 .types
                 .classes
-                .pending_member(class, crate::modules::engine::CONSTRUCTOR)
+                .pending_member(
+                    class,
+                    crate::modules::engine::CONSTRUCTOR,
+                    self.types.profile,
+                )
                 .is_some()
         {
             return Err(self.source.locate(

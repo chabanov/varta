@@ -63,9 +63,10 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     if fields.iter().any(|f| matches!(f.ty, Type::Promise(_))) && !types.profile.promise_values() {
         return Err(promises::opaque("an object"));
     }
-    if fields
-        .iter()
-        .any(|field| matches!(field.ty, Type::Function(_)))
+    if !types.profile.function_fields()
+        && fields
+            .iter()
+            .any(|field| matches!(field.ty, Type::Function(_)))
     {
         return Err(unsupported("function-valued record fields"));
     }

@@ -500,6 +500,8 @@ mod template_literal_tests;
 #[cfg(test)]
 mod function_envelope_tests;
 #[cfg(test)]
+mod function_field_tests;
+#[cfg(test)]
 mod function_value14_tests;
 #[cfg(test)]
 mod function_value_tests;

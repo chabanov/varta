@@ -2582,3 +2582,41 @@ profiles frozen, and add each stream's rules under its own heading here.
 - Timers are scheduled by the runtime, never by guest busy-waiting; keep
   production fuel, deadline and scheduler limits unchanged and pin timer
   ordering against Node output.
+
+### Function fields (`function_fields`)
+
+Contract: [architecture.md](architecture.md#function-fields-function_fields).
+
+- A function type is a value type only through `Type::profile_kind` /
+  `layout_kind` (value17 tags it `ValueKind::Function`); `value_kind` stays
+  `None` for functions so every pre-v36 admission check keeps rejecting them.
+  Gate each lifted rejection (record, class, dictionary, union, element,
+  `unknown`, logging) on `function_fields()` and keep the earlier diagnostic
+  text byte for byte for older profiles.
+- A union holds at most one function type: guards, `?.()` and contextual
+  typing select "the" function member. Never add signature tests to cells;
+  the call's checked closed dispatch (signature word, target code, environment)
+  is the only proof a function value has its static type.
+- Calls through a field go through `function_field_callee` (a side-effect-free
+  static peek) before builtin method names; the field is read once and called
+  without a receiver. Reject a receiver-typed function at such a call instead
+  of passing `undefined` or the object as `this`.
+- Optional chains lower the first optional link's object once into a hidden
+  `#chain` binding narrowed by a refinement; everything after it is the
+  ordinary AST lowered again on that binding. Keep the rewrite AST-only (no
+  second lowering of the object) and parentheses as chain boundaries.
+- Built-in function values are synthesized once per program
+  (`ValueTypes::builtin_functions`) and referenced canonically; add a name to
+  `function_fields::BUILTIN_VALUES` only with its own body and Node-pinned
+  identity test.
+- The v36 abort prelude is a separate source (`prelude/abort_listeners.ts`)
+  selected by `Prelude::text`; never edit `prelude/abort.ts` for a v36
+  feature. `v35_modules_keep_their_bytes` freezes v35 output (including the v35
+  prelude) by digest; a change there is a v35 regression, not a new baseline.
+- JSON: a function serializes like `undefined`; reject a reachable
+  function-valued `toJSON` field at compile time. Checked parsing never builds
+  functions.
+- Tests: Node-pinned `function_field_cases` logs, the forced-collection
+  driver for closures reached only through containers, descriptor-tag
+  tampering, v35 rejection and frozen-digest tests, the public API and CLI
+  smoke tests and the v35-pinned conformance gaps.

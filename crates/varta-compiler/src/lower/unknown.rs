@@ -86,7 +86,11 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     }
     // Value16 promises (v35) are tagged cells; the check above rejects them
     // for earlier profiles.
-    if !admissible(value.ty) && !matches!(value.ty, Type::Promise(_)) {
+    // Value17 function values (v36 `function_fields`) are tagged cells too.
+    if !admissible(value.ty)
+        && !matches!(value.ty, Type::Promise(_))
+        && !(types.profile.function_fields() && matches!(value.ty, Type::Function(_)))
+    {
         return Err(type_error(format!(
             "{} value is not assignable to unknown; unknown holds primitives, BigInt, \
              records, dictionaries, arrays and Error or class instances",
@@ -169,7 +173,10 @@ pub(super) fn upcast(source: Type, target: Type, types: &ir::ValueTypes) -> bool
         return true;
     }
     match target {
-        Type::Unknown => admissible(source),
+        Type::Unknown => {
+            admissible(source)
+                || types.profile.function_fields() && matches!(source, Type::Function(_))
+        }
         Type::Union(_) | Type::ReferenceUnion(_) => {
             let target_members = unions::members(target, types);
             unions::members(source, types).iter().all(|member| {

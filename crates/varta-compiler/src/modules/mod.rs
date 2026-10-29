@@ -194,7 +194,7 @@ impl Builder<'_> {
                         return Err(module_error("module graph exceeds module/depth limits"));
                     }
                     let text = match engine::prelude(&import.target) {
-                        Some(prelude) => prelude.source.to_owned(),
+                        Some(prelude) => prelude.text(self.profile).to_owned(),
                         None => self.loader.load(&import.target)?,
                     };
                     self.visit(ModuleSource {

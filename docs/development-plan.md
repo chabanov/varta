@@ -536,12 +536,18 @@ which every host import of the batch is added, and its own value ABI/layout 17
 a v36 module relabelled as v35 fails at its host ABI section, and runtimes that
 do not list v36 reject its declared profile name
 ([contract](architecture.md#checked-f64-utf16-v36--pilot-batch-checked-declared-fields-function-fields-async-generators-and-timers)).
-All selectors are registered and admit nothing yet.
+The functions stream is implemented; the other selectors admit nothing yet.
+With it, `core/util.ts` passes its v35 blocker (the defaulted
+`random: () => number = Math.random` of `streamBackoffDelay`, line 125) and the
+abort-listener and optional-chain code of `sleep`; its next blockers are
+`setTimeout`/`clearTimeout` (timers stream), a closure capturing a `const`
+declared after it (`onAbort` in `sleep`, a TDZ capture), `globalThis.crypto`
+with `Uint8Array`, `TextEncoder` and regular expressions.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Registered, admits nothing |
-| `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns the value17 bump) | M2, M4 | Value layout 17 and its readers in place; source admission in progress |
+| `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns the value17 bump) | M2, M4 | Implemented ([contract](architecture.md#function-fields-function_fields)): value layout 17, function fields/elements/unions/`unknown`, optional and defaulted function parameters, optional chains, `Math.random` as a value, abort listeners, `Promise.withResolvers`; `resolve(promise)` and checked `as` to function types pending |
 | `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Registered, admits nothing |
 | `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Registered, admits nothing |
 

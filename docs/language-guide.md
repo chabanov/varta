@@ -4440,3 +4440,71 @@ export async function main(): Promise<void> {
 also an `Error`; `signal.reason` is `unknown`. `addEventListener`,
 `removeEventListener`, `onabort`, `AbortSignal.timeout`, `AbortSignal.any` and
 `new AbortSignal()` are rejected with a diagnostic.
+
+### `checked-f64-utf16-v36`
+
+Profile v36 (in development) runs every v35 program unchanged and adds, so
+far, function values in fields, elements and unions, optional and defaulted
+function-typed parameters, optional chains, abort listeners and
+`Promise.withResolvers`.
+
+#### Function fields (opt-in v36)
+
+A function value can live in an interface or class field, an array, a
+dictionary, a union or `unknown`. Calling a field reads it and calls it
+without `this`; an optional field is called with `?.()` or after narrowing:
+
+```ts
+interface Hooks {
+  onRetry?: (attempt: number) => void;      // optional function field
+  delay: (attempt: number) => number;
+}
+
+function backoff(attempt: number, random: () => number = Math.random): number {
+  return Math.round(100 * attempt * (1 + random()));
+}
+
+function retry(hooks: Hooks, attempts: number): number {
+  let total = 0;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    hooks.onRetry?.(attempt);               // skipped when absent
+    total += hooks.delay(attempt);          // called without `this`
+  }
+  return total;
+}
+
+export function main(): void {
+  const events: string[] = [];
+  const hooks: Hooks = {
+    onRetry: (attempt: number): void => {
+      events.push(`retry ${attempt}`);
+    },
+    delay: (attempt: number): number => backoff(attempt, (): number => 0.5),
+  };
+  console.log(String(retry(hooks, 2)));                 // 450
+  console.log(JSON.stringify(events));                  // ["retry 1","retry 2"]
+  console.log(JSON.stringify(hooks));                   // {} (functions are skipped)
+
+  const controller = new AbortController();
+  controller.signal.addEventListener('abort', (): void => {
+    events.push(`aborted ${String(controller.signal.reason)}`);
+  }, { once: true });
+  controller.abort('shutdown');
+  console.log(events[2] ?? '');                         // aborted shutdown
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  promise.then((value: string): void => {
+    console.log(value);                                 // ready
+  });
+  resolve('ready');
+}
+```
+
+A union may hold one function type (`(() => void) | undefined`), narrowed by
+truthiness, `!== undefined` or `typeof f === "function"`. `x?.p`, `x?.m()` and
+`f?.()` skip the rest of the chain when `x` or `f` is `undefined` or `null`.
+`Math.random` is the only built-in function usable as a value. Listeners take
+no event argument, and a logged function prints `[Function (anonymous)]`.
+Rejected: two function types in one union, a field whose function type has a
+`this` parameter called as `obj.f()`, a function-valued `toJSON` field under
+`JSON.stringify`, `x as () => void` on `unknown`, and `resolve(promise)`.

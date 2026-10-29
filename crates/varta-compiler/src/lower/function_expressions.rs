@@ -26,8 +26,9 @@ impl Lower<'_> {
         expression: &ast::FnExpr,
         expected: Option<Type>,
     ) -> Result<Expr> {
-        let context = match expected {
+        let context = match self.function_context(expected).or(expected) {
             Some(Type::Function(id)) => Some(self.types.functions[id as usize].clone()),
+            Some(Type::Unknown) if self.types.profile.function_fields() => None,
             Some(_) => {
                 return Err(type_error(
                     "function expression requires a function context",

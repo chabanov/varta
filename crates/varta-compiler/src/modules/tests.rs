@@ -570,6 +570,38 @@ fn engine_preludes_load_only_for_named_web_types_and_stay_out_of_metadata() {
 }
 
 #[test]
+fn v36_selects_the_abort_listener_prelude_and_earlier_profiles_keep_theirs() {
+    use varta_common::language::{LanguageProfile as P, SUPPORTED_PROFILES};
+    let listeners = engine::ABORT.text(P::CheckedF64Utf16V36);
+    assert_ne!(listeners, engine::ABORT.source);
+    assert!(listeners.contains("addEventListener"));
+    assert!(!engine::ABORT.source.contains("addEventListener"));
+    for &profile in SUPPORTED_PROFILES {
+        // Only `function_fields` profiles compile the extended source, under
+        // the same reserved path; Headers has a single source.
+        assert_eq!(
+            engine::ABORT.text(profile) == listeners,
+            profile.function_fields(),
+            "{profile:?}"
+        );
+        assert_eq!(engine::HEADERS.text(profile), engine::HEADERS.source);
+    }
+    let loader = MemoryLoader::default();
+    let graph = Graph::load_with_profile(
+        entry("export function main():void{const c=new AbortController();}".into()),
+        &loader,
+        P::CheckedF64Utf16V36,
+    )
+    .unwrap();
+    assert!(
+        graph
+            .order
+            .iter()
+            .any(|path| path == Path::new(engine::ABORT.path))
+    );
+}
+
+#[test]
 fn engine_prelude_paths_are_reserved_from_host_loaders() {
     struct Reserved;
     impl ModuleLoader for Reserved {

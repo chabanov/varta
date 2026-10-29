@@ -7222,8 +7222,10 @@ dispatch, rooting and diagnostics for each type.
   listeners` diagnostic: a signal would have to store listener functions, and
   value layout 16 has no function-valued object field (function values live
   only in locals, parameters, results, closure cells and frames). Admitting
-  them needs a value-layout change. `AbortSignal.timeout` and `AbortSignal.any`
-  are rejected as well: v35 has no timers and no listeners.
+  them needs a value-layout change, which v36 makes
+  ([abort listeners](#abort-listeners-abort_signals-with-function_fields)).
+  `AbortSignal.timeout` and `AbortSignal.any` are rejected as well: v35 has no
+  timers and no listeners.
 - **Value operations.** `JSON.stringify` of a value that may reach an engine
   Web type instance (including `unknown` in a program that loads a prelude) is
   rejected, because the instances keep private state where JavaScript has no
@@ -7347,9 +7349,116 @@ Four selectors gate the batch's work streams:
 - timers stream: `timers()` (`setTimeout`/`clearTimeout` and timer-driven
   promises).
 
-Until a stream adds its subsection here, a v36 module compiles and runs exactly
-like a v35 module apart from its declared profile and host ABI, and production
-budgets of every profile are unchanged.
+Until a stream adds its subsection here, its features stay rejected and a v36
+module compiles and runs like a v35 module apart from its declared profile,
+host ABI and value layout 17; production budgets of every profile are
+unchanged.
+
+#### Function fields (`function_fields`)
+
+Under value layout 17 a function value (a v12+ closure, including a named
+function reference, an arrow, a function expression and an async closure) is a
+tagged value. V36 therefore admits a function type wherever a value type is
+admitted:
+
+- **Containers.** Record and interface fields (optional ones included), class
+  fields with or without an initializer, array elements (`(() => void)[]`,
+  `push`, `includes`/`indexOf` by identity, `map` over them), dictionary values
+  (`Record<string, (x: number) => number>`), `unknown` cells and union members.
+  A union holds at most one function type (as it holds at most one record
+  shape or array type), so `(() => void) | undefined` and
+  `((x: number) => number) | string` are admitted and
+  `(() => void) | ((x: number) => void)` is rejected. Element and dictionary
+  reads have the usual `T | undefined` type.
+- **Calls through fields.** `object.field(args)` on a record or class-instance
+  path whose field holds a function reads the field once and calls it without
+  a receiver: a function field is never called as a method. A field whose
+  function type declares a `this` parameter is rejected at such a call (the
+  call would bind `this` in JavaScript); arrows capture their lexical `this`
+  as before. A field that may be `undefined` (an optional field or a dictionary
+  entry) must be narrowed or called with `?.()`; calling it directly is a type
+  error naming both remedies.
+- **Optional and defaulted parameters.** `cb?: (x: number) => void`,
+  `fn: (() => void) | undefined` and `random: () => number = Math.random` are
+  ordinary optional, union and defaulted parameters. A function literal whose
+  context is a union with one function member takes that member as its
+  contextual type and is boxed into the union.
+- **Narrowing.** `if (f)`, `f !== undefined`, `f !== null` and
+  `typeof f === "function"` narrow a union to its function member (and the
+  negations to the rest); a function is always truthy. On `unknown`,
+  `typeof x === "function"` tests the cell's tag but proves no callable type,
+  and a checked `as` to a function type is rejected: the signature is a
+  module-private fact that no runtime test of an `unknown` cell can check.
+- **Built-in functions as values.** `Math.random` (unshadowed) is admitted as
+  a `() => number` value: one synthesized wrapper with a canonical identity
+  (`Math.random === Math.random`). It is the only built-in function value; any
+  other built-in method read as a value stays rejected.
+- **Identity, `typeof` and logging.** Strict equality of function values
+  (also through unions and `unknown`) is reference identity (a fresh arrow evaluation is a fresh function),
+  `typeof` is `"function"` and logging shows `[Function (anonymous)]`
+  ([value layout 17](#value-layout-17-function_fields)).
+- **JSON.** `JSON.stringify` drops function fields and dictionary entries,
+  writes `null` for function elements and returns `undefined` for a function
+  (its static result is `string | undefined` when a union may hold one). A
+  value whose type may reach a record or class field named `toJSON` holding a
+  function is rejected at compile time (the host serializer cannot call guest
+  code); an `unknown` cell holding such a record fails at run time. Checked
+  parsing cannot build a function: a parse target with a function field is
+  rejected. `String(f)`, template substitution and `throw f` of a function stay
+  rejected.
+- **Optional chains.** `x?.p`, `x?.[i]`, `x?.m(args)`, `f?.(args)` and longer
+  chains (`x?.a.b`, `x?.a?.b()`) evaluate the object of the first optional link once;
+  when it is `undefined` or `null` the rest of the chain, including its
+  arguments, is not evaluated and the result is `undefined`, otherwise the rest
+  is the ordinary member read or call on the narrowed value. A truthy
+  `x?.p` condition narrows `x` to its non-nullish members, as in TypeScript.
+  Parentheses end a chain.
+- **Rejection reasons.** A `reject(reason)` argument of type `unknown` (for
+  example `signal.reason`) is checked like a thrown `unknown` value: a
+  primitive, BigInt or Error value is admitted, anything else throws
+  `TypeError`.
+- **`Promise.withResolvers<T>()`** returns the record
+  `{ promise, resolve, reject }` (in that own-key order) of a new pending
+  promise and the same resolve/reject closures that `new Promise` passes to its
+  executor; the type argument is required. Resolving with another promise
+  (`resolve(promise)`) stays outside the subset, for the executor as for
+  `withResolvers`.
+
+Physical representation, collection and safety are unchanged from v12
+closures: a field, element or cell holds the closure's packed handle, its slot
+is an exact edge of the containing record, vector or cell (record edge masks
+and wide-record edge bitmaps, vector reference element kinds and the union
+cell's reference flag), and the collector traces the closure's environment and
+binding cells from there. Every call through a function value keeps the
+checked closed dispatch (signature word, code index among the signature's
+targets, environment presence); no indirect call or table is introduced and
+host-free helper analysis is unaffected. Earlier profiles keep rejecting every
+construct above with their own diagnostics and compile to unchanged bytes.
+
+##### Abort listeners (`abort_signals` with `function_fields`)
+
+V36 compiles its own abort prelude (the v35 prelude source with listeners;
+v35 programs keep the v35 source and bytes). `AbortSignal` gains
+`addEventListener(type, listener, options?)`,
+`removeEventListener(type, listener, options?)` and an `onabort` field, where
+a listener is `() => void` and `options` is `boolean` (capture) or
+`{ once?: boolean; capture?: boolean }`:
+
+- A listener is identified by its type, function identity and capture flag;
+  adding it again changes nothing, removing it removes that entry only.
+- When a controller aborts its signal (once), `onabort` runs first, then the
+  `abort` listeners registered when the dispatch starts, in registration
+  order: a `once` listener is removed before it runs, and a listener removed by
+  an earlier listener is skipped. Listeners of other types never run.
+  Listeners added to an aborted signal (including `AbortSignal.abort()`) never
+  run.
+- Deviations from Node: listeners receive no `Event` argument and `this` is
+  not bound (DOM events are not modelled); `onabort` runs before the
+  listeners, while Node runs it at the position of its first assignment among
+  them; an exception thrown by a listener propagates out of `abort()`, while
+  Node reports it as uncaught after the dispatch. `dispatchEvent` stays
+  pending; `AbortSignal.timeout` and `AbortSignal.any` belong to the timers
+  stream.
 
 ## Local modules
 
