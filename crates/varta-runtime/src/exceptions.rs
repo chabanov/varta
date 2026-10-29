@@ -71,6 +71,7 @@ pub(crate) fn initial(
         (abi::VERSION, abi::ERROR_CHANNEL_VERSION),
         (abi::FAMILY_VERSION, abi::FAMILY_CHANNEL_VERSION),
         (abi::BIGINT_VERSION, abi::BIGINT_CHANNEL_VERSION),
+        (abi::CLASS_ERROR_VERSION, abi::CLASS_ERROR_CHANNEL_VERSION),
     ] {
         if let Some(version) = instance.get_global(&mut *store, name)
             && version.get(&mut *store).i32() != Some(expected)
@@ -121,9 +122,13 @@ pub(crate) fn finish(
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| invalid("missing exception memory"))?;
-    let bigints = instance
-        .get_global(&mut *store, abi::BIGINT_VERSION)
+    let instances = instance
+        .get_global(&mut *store, abi::CLASS_ERROR_VERSION)
         .is_some();
+    let bigints = instances
+        || instance
+            .get_global(&mut *store, abi::BIGINT_VERSION)
+            .is_some();
     let families = bigints
         || instance
             .get_global(&mut *store, abi::FAMILY_VERSION)
@@ -197,7 +202,152 @@ pub(crate) fn finish(
                 }
             }
         }
+        ValueKind::Record if instances => error_instance(data, cell.payload)?,
         _ => return Err(invalid("unsupported thrown value kind")),
     };
     Err(varta_common::exceptions::UncaughtException { value }.into())
+}
+
+/// Field keys a thrown class-instance record must declare as String slots.
+const INSTANCE_NAME: &str = "name";
+const INSTANCE_MESSAGE: &str = "message";
+
+/// Copy the `name`/`message` String fields of a thrown class instance (channel
+/// v5). `ReferenceBox` has already validated the record header, descriptor
+/// range, keys, kinds and presence; this reads only those checked words.
+fn error_instance(
+    data: &[u8],
+    record: u64,
+) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
+    let word = |at: usize| {
+        at.checked_add(size_of::<u32>())
+            .and_then(|end| data.get(at..end))
+            .and_then(|s| s.try_into().ok())
+            .map(u32::from_le_bytes)
+            .ok_or_else(|| invalid("invalid thrown Error instance"))
+    };
+    let ptr = record as u32 as usize;
+    let descriptor = word(ptr)? as usize;
+    let count = word(ptr + size_of::<u32>())? as usize;
+    let mut fields = [None, None];
+    for index in 0..count {
+        let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
+        let key = word(entry)? as usize;
+        let len = word(entry + 4)? as usize;
+        let raw = word(entry + 8)?;
+        let kind = word(entry + 12)?;
+        let position = match key.checked_add(len).and_then(|end| data.get(key..end)) {
+            Some(bytes) if bytes == INSTANCE_NAME.as_bytes() => 0,
+            Some(bytes) if bytes == INSTANCE_MESSAGE.as_bytes() => 1,
+            _ => continue,
+        };
+        if raw & OPTIONAL_FIELD_FLAG != 0 || kind != ValueKind::String as u32 {
+            return Err(invalid("thrown Error instance field is not a string"));
+        }
+        let slot = ptr + RECORD_META_BYTES + raw as usize * RECORD_SLOT_BYTES;
+        let handle = (u64::from(word(slot + 4)?) << i32::BITS) | u64::from(word(slot)?);
+        let start = handle as u32 as usize;
+        let len = (handle >> i32::BITS) as usize;
+        if len > varta_common::abi::MAX_STRING_BYTES || !len.is_multiple_of(2) {
+            return Err(invalid("invalid thrown Error instance field"));
+        }
+        let bytes = start
+            .checked_add(len)
+            .and_then(|end| data.get(start..end))
+            .ok_or_else(|| invalid("invalid thrown Error instance field"))?;
+        fields[position] = Some(
+            varta_common::text::units(bytes)
+                .map_err(|_| invalid("invalid thrown Error instance field"))?,
+        );
+    }
+    let [Some(name), Some(message)] = fields else {
+        return Err(invalid("thrown record is not an Error instance"));
+    };
+    Ok(varta_common::exceptions::ThrownValue::ErrorInstance { name, message })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use varta_common::exceptions::ThrownValue;
+
+    const RECORD: usize = 64;
+    const DESCRIPTOR: usize = 256;
+    const KEYS: usize = 400;
+    const TEXT: usize = 440;
+
+    fn put(data: &mut [u8], at: usize, word: u32) {
+        data[at..at + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    /// A two-field record `{name, message}` whose name is "Ab" and message empty.
+    fn instance() -> Vec<u8> {
+        let mut data = vec![0; 512];
+        put(&mut data, RECORD, DESCRIPTOR as u32);
+        put(&mut data, RECORD + 4, 2);
+        let message_key = KEYS + INSTANCE_NAME.len();
+        data[KEYS..message_key].copy_from_slice(INSTANCE_NAME.as_bytes());
+        data[message_key..message_key + INSTANCE_MESSAGE.len()]
+            .copy_from_slice(INSTANCE_MESSAGE.as_bytes());
+        for (index, (key, len)) in [
+            (KEYS, INSTANCE_NAME.len()),
+            (message_key, INSTANCE_MESSAGE.len()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let entry = DESCRIPTOR + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
+            put(&mut data, entry, key as u32);
+            put(&mut data, entry + 4, len as u32);
+            put(&mut data, entry + 8, index as u32);
+            put(&mut data, entry + 12, ValueKind::String as u32);
+        }
+        let units: Vec<u8> = "Ab".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        data[TEXT..TEXT + units.len()].copy_from_slice(&units);
+        put(&mut data, RECORD + RECORD_META_BYTES, TEXT as u32);
+        put(
+            &mut data,
+            RECORD + RECORD_META_BYTES + 4,
+            units.len() as u32,
+        );
+        data
+    }
+    fn handle() -> u64 {
+        RECORD as u64
+    }
+
+    #[test]
+    fn thrown_instances_copy_name_and_message_fields() {
+        assert_eq!(
+            error_instance(&instance(), handle()).unwrap(),
+            ThrownValue::ErrorInstance {
+                name: "Ab".encode_utf16().collect(),
+                message: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn thrown_instances_reject_missing_or_noncanonical_fields() {
+        let entry =
+            |index: usize| DESCRIPTOR + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
+        let corruptions: [(usize, u32); 5] = [
+            // The message key no longer names `message`.
+            (entry(1) + 4, INSTANCE_MESSAGE.len() as u32 - 1),
+            // The name field is optional or not a string.
+            (entry(0) + 8, OPTIONAL_FIELD_FLAG),
+            (entry(0) + 12, ValueKind::Float64 as u32),
+            // The name string has an odd byte length or lies outside memory.
+            (RECORD + RECORD_META_BYTES + 4, 3),
+            (RECORD + RECORD_META_BYTES, u32::MAX - 1),
+        ];
+        for (at, word) in corruptions {
+            let mut data = instance();
+            put(&mut data, at, word);
+            assert!(error_instance(&data, handle()).is_err(), "{at}");
+        }
+        // Descriptor entries past the end of memory fail instead of panicking.
+        let mut data = instance();
+        put(&mut data, RECORD, u32::MAX - 8);
+        assert!(error_instance(&data, handle()).is_err());
+    }
 }

@@ -8,6 +8,10 @@ pub const FAMILY_VERSION: &str = "varta.exception.version_v3";
 pub const FAMILY_CHANNEL_VERSION: i32 = 3;
 pub const BIGINT_VERSION: &str = "varta.exception.version_v4";
 pub const BIGINT_CHANNEL_VERSION: i32 = 4;
+/// v32 `error_subclasses()`: the channel may also carry a class-instance record
+/// whose descriptor declares String `name` and `message` fields.
+pub const CLASS_ERROR_VERSION: &str = "varta.exception.version_v5";
+pub const CLASS_ERROR_CHANNEL_VERSION: i32 = 5;
 pub const VALUE: &str = "varta.exception.value";
 pub const ROOT: usize = abi::STRING_ROOT_BASE;
 pub const RESERVED_ROOT_BYTES: usize = abi::STRING_ROOT_SLOT_BYTES;
@@ -31,6 +35,12 @@ pub enum ThrownValue {
     Error {
         message: Vec<u16>,
         has_message: bool,
+    },
+    /// Instance of a source class extending a native error (channel v5). The
+    /// name and message are the instance's field values when it was thrown.
+    ErrorInstance {
+        name: Vec<u16>,
+        message: Vec<u16>,
     },
 }
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -64,6 +74,18 @@ impl std::fmt::Display for ThrownValue {
                 }
                 Ok(())
             }
+            Self::ErrorInstance { name, message } => {
+                // Error.prototype.toString: an empty part drops the separator.
+                if name.is_empty() {
+                    return write_units(f, message);
+                }
+                write_bare(f, name)?;
+                if !message.is_empty() {
+                    f.write_str(": ")?;
+                    write_units(f, message)?;
+                }
+                Ok(())
+            }
             Self::String(units) => write_units(f, units),
         }
     }
@@ -73,6 +95,20 @@ fn write_units(f: &mut std::fmt::Formatter<'_>, units: &[u16]) -> std::fmt::Resu
     text::write_json(&mut json, &units[..units.len().min(MAX_DIAGNOSTIC_UNITS)])
         .map_err(|_| std::fmt::Error)?;
     f.write_str(std::str::from_utf8(&json).map_err(|_| std::fmt::Error)?)?;
+    if units.len() > MAX_DIAGNOSTIC_UNITS {
+        f.write_str("…")?;
+    }
+    Ok(())
+}
+
+/// Escaped, bounded guest text without the surrounding JSON quotes.
+fn write_bare(f: &mut std::fmt::Formatter<'_>, units: &[u16]) -> std::fmt::Result {
+    let mut json = Vec::new();
+    text::write_json(&mut json, &units[..units.len().min(MAX_DIAGNOSTIC_UNITS)])
+        .map_err(|_| std::fmt::Error)?;
+    let text = std::str::from_utf8(&json).map_err(|_| std::fmt::Error)?;
+    let text = text.strip_prefix('"').unwrap_or(text);
+    f.write_str(text.strip_suffix('"').unwrap_or(text))?;
     if units.len() > MAX_DIAGNOSTIC_UNITS {
         f.write_str("…")?;
     }

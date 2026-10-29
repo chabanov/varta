@@ -112,6 +112,9 @@ impl Lower<'_> {
         {
             return Err(unsupported("instanceof operand type"));
         }
+        if self.has_error_instances(value.ty) {
+            return self.error_instance_test(value, class, binary.span);
+        }
         let kind = if value.ty.is_union() {
             if self.types.profile.error_families() {
                 E::Host(
@@ -177,6 +180,12 @@ impl Lower<'_> {
         }
         if value.ty == Type::Float64 {
             return self.number_to_string(call, value);
+        }
+        if matches!(value.ty, Type::Class(id) if self.types.classes.is_error(id)) {
+            return self.class_error_to_string(call, value);
+        }
+        if self.error_union(value.ty).is_some() && call.args.is_empty() {
+            return self.error_union_read(value, classes::NAME, true, call.span);
         }
         if self.types.profile.number_radix() && !self.error_value(value.ty) {
             return Err(self.source.locate(

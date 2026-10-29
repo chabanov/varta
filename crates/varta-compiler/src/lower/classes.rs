@@ -118,6 +118,8 @@ pub(crate) struct Classes {
     order: Vec<(usize, u32, Member)>,
     dispatchers: Vec<Dispatcher>,
     method_names: BTreeSet<String>,
+    /// Synthetic native-error root classes (v32 `error_subclasses`).
+    error_roots: BTreeMap<varta_common::value::ErrorClass, u32>,
 }
 impl Classes {
     pub(crate) fn shape(&self, id: u32) -> u32 {
@@ -395,7 +397,11 @@ impl Lower<'_> {
 
 mod constructors;
 mod dispatch;
+mod error_classes;
 mod layout;
 mod members;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers};
+pub(super) use error_classes::{
+    MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance,
+};
 pub(super) use layout::layout_module;

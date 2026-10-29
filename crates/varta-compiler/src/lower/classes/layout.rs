@@ -82,7 +82,11 @@ fn parent_class(
         layout(parent, types, next)?;
         return Ok(Some(parent));
     }
-    let kind = if varta_common::value::ErrorClass::from_name(name.sym.as_ref()).is_some() {
+    let family = varta_common::value::ErrorClass::from_name(name.sym.as_ref());
+    if let Some(family) = family.filter(|_| types.profile.error_subclasses()) {
+        return error_classes::root(family, source, name.span, types).map(Some);
+    }
+    let kind = if family.is_some() {
         "class extends a built-in Error class".to_owned()
     } else {
         format!("class extends {}, which is not a declared class", name.sym)

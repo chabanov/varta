@@ -13,7 +13,12 @@ pub(super) fn deadline(caller: &Caller<'_, RuntimeContext>) -> Result<(), wasmti
     }
 }
 pub(super) fn ready(caller: &mut Caller<'_, RuntimeContext>) -> Result<(), wasmtime::Error> {
-    let selector = if caller.get_export(channel::BIGINT_VERSION).is_some() {
+    let selector = if caller.get_export(channel::CLASS_ERROR_VERSION).is_some() {
+        (
+            channel::CLASS_ERROR_VERSION,
+            channel::CLASS_ERROR_CHANNEL_VERSION,
+        )
+    } else if caller.get_export(channel::BIGINT_VERSION).is_some() {
         (channel::BIGINT_VERSION, channel::BIGINT_CHANNEL_VERSION)
     } else {
         (channel::FAMILY_VERSION, channel::FAMILY_CHANNEL_VERSION)

@@ -86,7 +86,7 @@ impl Lower<'_> {
             self.types,
         )?;
         let absent = unions::widen(undefined(span), Some(result), self.types)?;
-        Ok(Expr {
+        let native = Expr {
             span,
             ty: result,
             kind: E::Conditional(
@@ -97,6 +97,19 @@ impl Lower<'_> {
                 }),
                 Box::new(present),
                 Box::new(absent),
+            ),
+        };
+        // v32 Error subclass instances carry the fields as class slots.
+        let Some((test, field)) = self.caught_instance_field(span, source, ty, name)? else {
+            return Ok(native);
+        };
+        Ok(Expr {
+            span,
+            ty: result,
+            kind: E::Conditional(
+                Box::new(test),
+                Box::new(unions::widen(field, Some(result), self.types)?),
+                Box::new(native),
             ),
         })
     }

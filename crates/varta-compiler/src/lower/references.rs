@@ -160,6 +160,28 @@ impl Lower<'_> {
         })
     }
     pub(super) fn refine(&mut self, name: &str, matched: Guard, positive: bool) -> Result<()> {
+        self.refine_with(name, |ty, types| {
+            if let Guard::Literal(single) = matched {
+                literals::refine(ty, single, positive, types).map(|refined| vec![refined])
+            } else if ty.is_union() {
+                Some(
+                    unions::members(ty, types)
+                        .into_iter()
+                        .filter(|ty| matched.matches(*ty) == positive)
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+    }
+    /// Refine `name` to the types `select` keeps of its current type; `None`
+    /// leaves the binding unrefined.
+    pub(super) fn refine_with(
+        &mut self,
+        name: &str,
+        select: impl FnOnce(Type, &mut ir::ValueTypes) -> Option<Vec<Type>>,
+    ) -> Result<()> {
         let Ok(binding) = self.binding(name).or_else(|_| self.resolve_binding(name)) else {
             return Ok(());
         };
@@ -169,17 +191,7 @@ impl Lower<'_> {
         let Some(ty) = self.refinements.get(&binding.slot).copied().or(binding.ty) else {
             return Ok(());
         };
-        let remaining: Vec<_> = if let Guard::Literal(single) = matched {
-            match literals::refine(ty, single, positive, self.types) {
-                Some(refined) => vec![refined],
-                None => return Ok(()),
-            }
-        } else if ty.is_union() {
-            unions::members(ty, self.types)
-                .into_iter()
-                .filter(|ty| matched.matches(*ty) == positive)
-                .collect()
-        } else {
+        let Some(remaining) = select(ty, self.types) else {
             return Ok(());
         };
         if self.types.profile.truth_guards()

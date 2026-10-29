@@ -35,9 +35,23 @@ impl Lower<'_> {
         if let Some(value) = self.numeric_constant(member)? {
             return Ok(value);
         }
+        if self.types.profile.error_subclasses() && classes::new_target_name(member) {
+            return self.new_target_member(member);
+        }
         let value = self.expr(&member.obj)?;
         if self.error_value(value.ty) {
             return self.error_field(member, value);
+        }
+        if self.error_union(value.ty).is_some() {
+            return match &member.prop {
+                ast::MemberProp::Ident(name) if [classes::MESSAGE, classes::NAME].contains(&name.sym.as_ref()) => {
+                    self.error_union_read(value, name.sym.as_ref(), false, member.span)
+                }
+                _ => Err(self.source.locate(
+                    unsupported("property other than name/message of a native error or Error subclass union; narrow with instanceof"),
+                    member.prop.span(),
+                )),
+            };
         }
         if value.ty == Type::String && self.types.profile.utf16() {
             if self.types.profile.missing()
