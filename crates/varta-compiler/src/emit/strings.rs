@@ -19,6 +19,7 @@ mod string_index;
 mod string_range;
 mod string_search;
 mod string_trim;
+mod text_units;
 use std::collections::BTreeMap;
 use varta_common::abi;
 use wasm_encoder::{BlockType, Function, Instruction as I, MemArg, ValType};
@@ -89,6 +90,12 @@ pub(super) enum Helper {
     ArrayResize,
     /// Value15 dictionaries: canonical array index of a key, or -1.
     ArrayIndexKey,
+    /// V35 Web preludes: index of the first code unit of a class, or -1.
+    UnitIndex(crate::ir::UnitClass),
+    /// V35 Web preludes: ASCII-lowercased copy.
+    AsciiLowercase,
+    /// V35 Web preludes: copy without leading/trailing HTTP whitespace.
+    TrimHttpWhitespace,
 }
 impl Helper {
     pub(super) fn string_search(mode: crate::ir::StringSearch) -> Self {
@@ -107,13 +114,20 @@ impl Helper {
             crate::ir::StringTrimMode::TrimEnd => Self::StringTrimEnd,
         }
     }
+    pub(super) fn text_units(op: crate::ir::TextUnits) -> Self {
+        match op {
+            crate::ir::TextUnits::Index(class) => Self::UnitIndex(class),
+            crate::ir::TextUnits::AsciiLowercase => Self::AsciiLowercase,
+            crate::ir::TextUnits::TrimHttpWhitespace => Self::TrimHttpWhitespace,
+        }
+    }
     pub(super) fn signature(self) -> (Vec<ValType>, Vec<ValType>) {
         match self {
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
             Self::Concat => (vec![ValType::I64; 2], vec![ValType::I64]),
             Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
-            Self::ArrayIndexKey => (vec![ValType::I64], vec![ValType::F64]),
+            Self::ArrayIndexKey | Self::UnitIndex(_) => (vec![ValType::I64], vec![ValType::F64]),
             Self::Collect => (vec![], vec![]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArraySearch | Self::ArrayLastIndex => (
@@ -138,9 +152,11 @@ impl Helper {
                 vec![ValType::I64, ValType::F64, ValType::F64],
                 vec![ValType::I64],
             ),
-            Self::StringTrim | Self::StringTrimStart | Self::StringTrimEnd => {
-                (vec![ValType::I64], vec![ValType::I64])
-            }
+            Self::StringTrim
+            | Self::StringTrimStart
+            | Self::StringTrimEnd
+            | Self::AsciiLowercase
+            | Self::TrimHttpWhitespace => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayKeys | Self::ArrayValues => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayPush => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::ArrayResize => (vec![ValType::I64, ValType::I32], vec![]),
@@ -160,6 +176,7 @@ impl Helper {
             Self::Compare
                 | Self::ArrayStringHasOwn
                 | Self::ArrayIndexKey
+                | Self::UnitIndex(_)
                 | Self::StringIncludes
                 | Self::StringStartsWith
                 | Self::StringEndsWith
@@ -209,9 +226,20 @@ impl Helper {
             Self::StringSlice | Self::StringSubstring => {
                 string_range::function(helpers[&Self::Allocate], self == Self::StringSubstring)
             }
-            Self::StringTrim => string_trim::function(helpers[&Self::Allocate], true, true),
-            Self::StringTrimStart => string_trim::function(helpers[&Self::Allocate], true, false),
-            Self::StringTrimEnd => string_trim::function(helpers[&Self::Allocate], false, true),
+            Self::StringTrim => {
+                string_trim::function(helpers[&Self::Allocate], true, true, Whitespace::Script)
+            }
+            Self::StringTrimStart => {
+                string_trim::function(helpers[&Self::Allocate], true, false, Whitespace::Script)
+            }
+            Self::StringTrimEnd => {
+                string_trim::function(helpers[&Self::Allocate], false, true, Whitespace::Script)
+            }
+            Self::TrimHttpWhitespace => {
+                string_trim::function(helpers[&Self::Allocate], true, true, Whitespace::Http)
+            }
+            Self::UnitIndex(class) => text_units::index(class),
+            Self::AsciiLowercase => text_units::lowercase(helpers[&Self::Allocate]),
             Self::ArraySlice => array_slice::function(
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
@@ -237,6 +265,14 @@ impl Helper {
             Self::ArrayIndexKey => index_key::function(),
         }
     }
+}
+/// The code units a trimming helper removes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Whitespace {
+    /// ECMAScript WhiteSpace and LineTerminator (`String.prototype.trim`).
+    Script,
+    /// HTTP whitespace: TAB, LF, CR and SP (Fetch header value normalization).
+    Http,
 }
 fn instructions(function: &mut Function, code: impl IntoIterator<Item = I<'static>>) {
     for instruction in code {

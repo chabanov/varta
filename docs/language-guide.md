@@ -4146,3 +4146,89 @@ identity; arrays, records, unions, `JSON.stringify`, `console.log` and
 `typeof` reject it, and so do `Promise.all`, `Promise.race`, `allSettled` and
 `any` for now. Async arrows, function expressions and class methods, `for
 await`, async generators and top-level `await` are rejected with a diagnostic.
+
+### `checked-f64-utf16-v35`
+
+V35 (in development) runs every v34 program unchanged.
+
+#### Headers (opt-in v35)
+
+`Headers` and `HeadersInit` are built in: a program that uses them needs no
+import and no permission. Names are case-insensitive, a name's values join
+with `", "`, and iteration is sorted by name:
+
+```ts
+function numericHeader(headers: Headers, name: string): number | undefined {
+  const value = headers.get(name);
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+export function main(): void {
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  headers.append('Retry-After', ' 30 ');           // value whitespace is trimmed
+  headers.append('accept', 'text/plain');
+  headers.append('Accept', 'application/json');
+  console.log(headers.get('ACCEPT'));               // text/plain, application/json
+  console.log(String(numericHeader(headers, 'retry-after'))); // 30
+  for (const [name, value] of headers) {
+    console.log(`${name}: ${value}`);               // accept, content-type, retry-after
+  }
+  headers.forEach((value, name) => {
+    if (name === 'content-type') console.log(value); // application/json
+  });
+  try {
+    headers.set('bad name', 'x');
+  } catch (error) {
+    if (error instanceof TypeError) console.log(error.message);
+    // Headers.set: "bad name" is an invalid header name.
+  }
+}
+```
+
+`new Headers(init)` takes another `Headers`, a `Record<string, string>` or an
+array of `[name, value]` arrays. `get`, `set`, `append`, `has`, `delete`,
+`getSetCookie` and `forEach` behave as in Node, including the `TypeError`
+messages for invalid names and values, and every `set-cookie` value is its own
+entry. `entries()`, `keys()` and `values()` return arrays (snapshots) rather
+than iterators. Tuple types are not supported yet, so a destructured
+`[name, value]` is `string | undefined`: use it in a template, narrow it or
+assert it with `!`. `JSON.stringify` of a `Headers` is rejected. Like
+TypeScript, v35 lets a callback declare fewer parameters than its function
+type, as in `forEach((value, name) => …)`.
+
+#### AbortController and AbortSignal (opt-in v35)
+
+`AbortController`, `AbortSignal` and `DOMException` are built in as well; there
+are no timers, so code checks or throws the signal itself:
+
+```ts
+async function step(n: number, signal: AbortSignal): Promise<number> {
+  signal.throwIfAborted();                          // throws signal.reason
+  await null;
+  return n * 2;
+}
+
+export async function main(): Promise<void> {
+  const controller = new AbortController();
+  const first = await step(1, controller.signal);
+  console.log(String(first));                             // 2
+  controller.abort();
+  console.log(String(controller.signal.aborted));         // true
+  try {
+    await step(2, controller.signal);
+  } catch (error) {
+    if (error instanceof DOMException) {
+      console.log(`${error.name} ${error.code}`);         // AbortError 20
+    }
+  }
+  const stopped = AbortSignal.abort('shutdown');
+  console.log(String(stopped.reason));                    // shutdown
+}
+```
+
+`abort()` without a reason uses a `DOMException` named `AbortError`, which is
+also an `Error`; `signal.reason` is `unknown`. `addEventListener`,
+`removeEventListener`, `onabort`, `AbortSignal.timeout`, `AbortSignal.any` and
+`new AbortSignal()` are rejected with a diagnostic.

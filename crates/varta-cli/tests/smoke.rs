@@ -11542,6 +11542,84 @@ fn pilot_profile_v35_shares_the_v34_abis_through_both_binaries() {
 }
 
 #[test]
+fn pilot_profile_v35_runs_web_types_in_dev_and_source_free_artifacts() {
+    // Two modules name Headers, AbortController and DOMException without
+    // importing them; no capability is granted or needed.
+    let project = RegressionProject::new(
+        "import {numericHeader} from './errors.ts';export function main():void{\
+         const headers=new Headers({'Retry-After':'30'});headers.append('Set-Cookie','a=1');\
+         headers.append('set-cookie','b=2');let names='';for(const [name] of headers){names=names+'['+name!+']';}\
+         const controller=new AbortController();controller.abort();\
+         try{controller.signal.throwIfAborted();}catch(error){\
+         if(error instanceof DOMException)console.log(`${error.name} ${error.code}`);}\
+         console.log(`${numericHeader(headers,'retry-after')} ${names}`);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/errors.ts"),
+        "export function numericHeader(headers:Headers,name:string):number|undefined{\
+         const value=headers.get(name);if(value===null)return undefined;return Number(value);}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v35");
+    let expected = [
+        "varta log: AbortError 20",
+        "varta log: 30 [retry-after][set-cookie][set-cookie]",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    // `check --json` lists the program's modules, not the engine preludes.
+    let check = project.command(&["check", "--json"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    let report: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let modules = report["modules"].as_array().unwrap();
+    assert_eq!(modules.len(), 2, "{report}");
+    assert!(!String::from_utf8_lossy(&check.stdout).contains("<varta>"));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn web_types_stay_rejected_by_v34_projects() {
+    let project = RegressionProject::new(
+        "export function main():void{const h=new Headers();console.log(String(h.has('a')));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v34");
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success());
+    let text = combined(&dev);
+    assert!(
+        text.contains("unsupported constructor other than an unshadowed supported error class"),
+        "{text}"
+    );
+    assert!(!text.contains("varta log:"), "{text}");
+}
+
+#[test]
 fn generators_run_through_dev_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {pages} from './pages.ts';export function main():void{let total=0;for(const page of pages(3)){if(page===2){break;}total+=page;}const g=pages(1);const first=g.next();const done=g.return();console.log(`total ${total} ${String(first.value)} ${String(done.done)}`);}",

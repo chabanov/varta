@@ -608,6 +608,7 @@ impl<'a> Normalizer<'a> {
             E::StringTrim { value, mode } => {
                 self.unary(*value, |value| E::StringTrim { value, mode })?
             }
+            E::TextUnits { value, op } => self.unary(*value, |value| E::TextUnits { value, op })?,
             E::FunctionCheck { value, slot } => {
                 self.unary(*value, |value| E::FunctionCheck { value, slot })?
             }

@@ -2315,10 +2315,10 @@ and the scheduler. At registration v35 shares host ABI 30
 (`abi::SCHEDULED_FRAMES_VERSION`) and value ABI/layout 15
 (`value::DYNAMIC_VALUE_VERSION`) with v34; the declared profile name is its only
 distinction, and runtimes that do not list v35 reject that name before any
-guest effect. Seven selectors gate the streams and admit nothing yet: Web
-(`web_headers`, `abort_signals`), records (`mixed_index_records`,
+guest effect. Seven selectors gate the streams: Web (`web_headers`,
+`abort_signals`, specified below), and records (`mixed_index_records`,
 `unknown_json`), async (`async_methods`, `promise_values`) and frames
-(`frame_liveness`). Gate every admission on its own selector, keep v34 and
+(`frame_liveness`), which admit nothing yet. Gate every admission on its own selector, keep v34 and
 earlier profiles frozen, and add each stream's rules under its own heading here.
 
 - A stream that adds a host import adds a new `abi` constant and maps only v35
@@ -2336,3 +2336,36 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   change the runtime reads is admitted for v35 alone.
 - `web_headers` and `abort_signals` are guest-implemented engine types with no
   capability and no host I/O; `AbortSignal` has no timers until a later batch.
+
+### Web stream (`web_headers`, `abort_signals`)
+
+Contract: [engine Web types](architecture.md#engine-web-types-web_headers-abort_signals).
+
+- Engine Web types are typed TypeScript preludes in
+  `crates/varta-compiler/src/prelude/`, registered in `modules::engine`
+  (`PRELUDES`, gated by their selector). Implement behavior in the prelude
+  source, not as compiler intrinsics, so classes, dispatch, rooting, frames and
+  diagnostics stay on the shared pipeline. A new engine type adds a prelude (or
+  an export of one) with its selector, never a host import or capability.
+- A prelude loads only when a module names one of its exports and does not
+  declare or import that name; keep programs that name none byte-identical
+  (`programs_that_do_not_name_web_types_are_unchanged`). Prelude paths stay
+  reserved from host loaders and out of module metadata.
+- Write preludes for the production budgets: no per-code-unit `charCodeAt`,
+  `%`, union `===`/`!==` against `null`/`undefined` or class identity in loops
+  (each is a host call); narrow chains with `instanceof`. Code-unit work uses
+  the `varta.web.*` intrinsics (`lower::web_text`, `ir::TextUnits`), which
+  exist only in prelude modules. Keep
+  `headers_typical_workload_stays_within_production_budgets` passing rather
+  than raising a budget.
+- Pin every behavior test to Node 24 output (`web_cases`, `web_headers_tests`,
+  `abort_signal_tests`); mark Varta-specific results. Validation messages
+  match Node's text.
+- Members a prelude names but cannot implement are listed in
+  `engine::PENDING` with their reason, so programs get an `unsupported`
+  diagnostic instead of an unknown-member error. Abort listeners need
+  function-valued object fields, a value-layout change: keep them pending
+  until a stream owns that layout bump. `AbortSignal.timeout`/`any` stay
+  pending until timers exist.
+- The fewer-parameter rule for function literals is gated by `web_headers()`;
+  earlier profiles keep the exact-count rule.

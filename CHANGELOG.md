@@ -11,6 +11,15 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Engine Web types under opt-in v35 (selectors `web_headers`,
+  `abort_signals`): `Headers`/`HeadersInit`, `AbortController`, `AbortSignal`
+  and `DOMException` are typed guest preludes compiled with a program only when
+  it names them, with Fetch/DOM validation, ordering and errors pinned to
+  Node 24 and no host import or capability. Header iteration returns array
+  snapshots; abort listeners, `AbortSignal.timeout` and `AbortSignal.any` are
+  rejected with explicit diagnostics. V35 function literals may also omit
+  trailing parameters of their contextual function type.
+
 - Opt-in v35 (pilot batch: Web types, mixed records, async methods and frame
   liveness, in development) is registered. It inherits every v34 feature and
   shares host ABI 30 and value ABI/layout 15 with v34; runtimes that do not list

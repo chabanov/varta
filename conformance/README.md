@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 54 feature rows and 96 cases:
-86 pass, 10 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 56 feature rows and 98 cases:
+86 pass, 12 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -208,3 +208,13 @@ match Node.js v24.20.0 type stripping. `promise-resolve` stays a known gap with
 a new reason: v34 promises have no value tag, so `typeof` rejects them.
 Thenables other than internal promises and the combinators remain outside
 these rows.
+
+The v35 Web stream adds the `web-headers` (CORE-10) and `abort-signals`
+(CORE-09) feature rows, both Varta contracts for the engine-provided Web types,
+with one original case each (`web-headers.ts`, `abort-controller.ts`). Their
+expected output matches Node.js v24.20.0 type stripping. Under the v34 pin the
+names are not types, so both are known gaps with the `unsupported_syntax`
+diagnostic; a trial run under the v35 profile observed both as unexpected
+support with the pinned output. Promote them when the batch moves the pin to
+v35. Abort listeners, timers and live header iterators remain outside these
+rows.

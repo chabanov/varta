@@ -469,12 +469,15 @@ ABI/layout 15 with v34; the declared profile name alone makes runtimes that do
 not list v35 reject its modules. A stream that adds a host import or a value tag
 bumps the corresponding ABI for v35 itself
 ([contract](architecture.md#checked-f64-utf16-v35--pilot-batch-web-types-mixed-records-async-methods-and-frame-liveness)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; the Web stream's two admit the engine Web types
+(`Headers`, `AbortController`/`AbortSignal`/`DOMException`) and the others admit
+nothing yet. Abort event listeners stay pending: a signal would hold listener
+functions, which needs a function-valued object field in the value layout.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
-| `web_headers()` | Web: engine-provided typed `Headers` class, guest-implemented, no capability | M2, M5 | Registered, admits nothing |
-| `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Registered, admits nothing |
+| `web_headers()` | Web: engine-provided typed `Headers` class, guest-implemented, no capability | M2, M5 | Implemented on `v35-web-types` (prelude; snapshot iteration, no tuple types) |
+| `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Implemented on `v35-web-types` without listeners (pending a value-layout change), `timeout` or `any` |
 | `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Registered, admits nothing |
 | `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Registered, admits nothing |
 | `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Registered, admits nothing |

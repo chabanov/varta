@@ -265,7 +265,7 @@ fn expression(
             expression(start, functions, visited, effects);
             expression(end, functions, visited, effects);
         }
-        E::StringTrim { value, .. } => {
+        E::StringTrim { value, .. } | E::TextUnits { value, .. } => {
             expression(value, functions, visited, effects);
         }
         E::StringRepeat {

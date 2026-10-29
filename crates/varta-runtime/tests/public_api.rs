@@ -4352,3 +4352,82 @@ fn public_engine_links_unknown_causes_and_checked_assertions_in_v34() {
         .to_string();
     assert!(frozen.contains("unsupported type annotation"), "{frozen}");
 }
+
+#[test]
+fn public_engine_shares_v35_web_types_across_modules_without_listing_preludes() {
+    // The pilot's transport shape: an errors module reads numeric headers and
+    // the entry module owns an AbortController. Both modules name the engine
+    // Web types without importing them, and they share one Headers class.
+    use varta_common::language::LanguageProfile;
+    struct WebSources;
+    impl ModuleLoader for WebSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./errors.ts" => Ok("errors.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("errors.ts") => Ok(
+                    "export function numericHeader(headers:Headers,name:string):number|undefined{\
+                     const value=headers.get(name);if(value===null)return undefined;\
+                     const parsed=Number(value);return Number.isNaN(parsed)?undefined:parsed;}\
+                     export function cancelled(signal:AbortSignal):boolean{return signal.aborted;}"
+                        .into(),
+                ),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {numericHeader,cancelled} from './errors.ts';\
+                       export function main():void{\
+                       const headers=new Headers([['Retry-After','30'],['x-limit','n/a']]);\
+                       const controller=new AbortController();\
+                       console.log(String(numericHeader(headers,'retry-after')));\
+                       console.log(String(numericHeader(headers,'X-Limit')));\
+                       controller.abort();\
+                       const reason=controller.signal.reason;\
+                       console.log(`${cancelled(controller.signal)} ${reason instanceof DOMException}`);}"
+                    .into(),
+            },
+            &WebSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V35).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    // Module metadata lists the program's sources, never the engine preludes.
+    let modules: Vec<_> = compiled
+        .modules
+        .iter()
+        .map(|module| (module.path.clone(), module.imports.clone()))
+        .collect();
+    assert_eq!(
+        modules,
+        [
+            (PathBuf::from("errors.ts"), vec![]),
+            (PathBuf::from("entry.ts"), vec![PathBuf::from("errors.ts")]),
+        ]
+    );
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 30",
+            "varta log: undefined",
+            "varta log: true true"
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V34)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("Headers"), "{frozen}");
+}

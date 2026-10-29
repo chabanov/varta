@@ -21,7 +21,44 @@ fn binary(span: swc_common::Span, op: ast::BinaryOp, left: Expr, right: Expr, ty
         kind: E::Binary(op, Box::new(left), Box::new(right)),
     }
 }
+/// The `Headers` method that is also its `[Symbol.iterator]`.
+const HEADERS_ITERATOR: &str = "entries";
 impl Lower<'_> {
+    /// `for (… of headers)` (v35 `web_headers`) iterates the fresh snapshot of
+    /// the sorted and combined header list that `Headers.prototype.entries`
+    /// returns. Like `[Symbol.iterator]`, it ignores a subclass override.
+    fn headers_iteration(&mut self, value: Expr) -> Result<Expr> {
+        let Type::Class(class) = value.ty else {
+            return Ok(value);
+        };
+        let Some(headers) = self
+            .types
+            .classes
+            .prelude_class(crate::modules::engine::HEADERS_CLASS)
+            .filter(|headers| self.types.classes.descends(class, *headers))
+        else {
+            return Ok(value);
+        };
+        let signature = self
+            .types
+            .classes
+            .get(headers)
+            .methods
+            .get(HEADERS_ITERATOR)
+            .map(|method| method.signature.clone())
+            .ok_or_else(|| CompilerError::Internal("missing Headers iterator".into()))?;
+        Ok(Expr {
+            span: value.span,
+            ty: signature.result,
+            kind: E::Call(
+                signature.index,
+                vec![Expr {
+                    ty: Type::Class(headers),
+                    ..value
+                }],
+            ),
+        })
+    }
     pub(super) fn for_of(&mut self, statement: &ast::ForOfStmt) -> Result<S> {
         if !self.types.profile.closures() {
             return Err(unsupported("for-of requires checked-f64-utf16-v12"));
@@ -60,6 +97,7 @@ impl Lower<'_> {
         // Lexical head names shadow outer names while evaluating the RHS and
         // remain in TDZ; assignment heads do not introduce bindings.
         let value = self.expr(&statement.right)?;
+        let value = self.headers_iteration(value)?;
         if self.types.profile.refinement_writes() {
             self.flow_for_of_effects(statement);
         }
