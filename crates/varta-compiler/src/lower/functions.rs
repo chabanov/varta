@@ -224,8 +224,10 @@ impl Lower<'_> {
         if arrow.is_async && !asynchronous || arrow.is_generator || arrow.type_params.is_some() {
             return Err(unsupported("async/generic/generator arrow"));
         }
-        let expected = match expected {
+        let expected = match self.function_context(expected).or(expected) {
             Some(Type::Function(id)) => Some(self.types.functions[id as usize].clone()),
+            // An annotated literal stored in `unknown` (v36) has no context.
+            Some(Type::Unknown) if self.types.profile.function_fields() => None,
             Some(_) => return Err(type_error("arrow requires a function context")),
             None => None,
         };

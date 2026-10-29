@@ -42,7 +42,7 @@ impl LauncherInfo {
             pointer_width: usize::BITS,
             // Advertised maxima; the profile and payload probe select the pair.
             host_abi: abi::TIMERS_VERSION,
-            value_abi: value::PROMISE_VALUE_VERSION,
+            value_abi: value::FUNCTION_FIELD_VALUE_VERSION,
             http_contract: http::VERSION,
             language_profiles: language::SUPPORTED_PROFILES.to_vec(),
         }

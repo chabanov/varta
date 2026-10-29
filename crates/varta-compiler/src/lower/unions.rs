@@ -86,6 +86,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                         || types.profile.classes() && matches!(ty, Type::Class(_))
                         || types.profile.bigint_values() && *ty == Type::BigInt
                         || types.profile.promise_values() && matches!(ty, Type::Promise(_))
+                        || types.profile.function_fields() && matches!(ty, Type::Function(_))
                         || (types.profile.errors() && ty.is_error()))
         })
     {
@@ -102,6 +103,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                 | Type::Class(_)
                 | Type::Array(_)
                 | Type::Promise(_)
+                | Type::Function(_)
                 | Type::Error
                 | Type::NativeError(_)
         )
@@ -127,10 +129,17 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
             .filter(|ty| matches!(ty, Type::Promise(_)))
             .count()
             > 1
+        || values
+            .iter()
+            .filter(|ty| matches!(ty, Type::Function(_)))
+            .count()
+            > 1
     {
-        return Err(unsupported(
-            "multiple record shapes, array element types or promise types in one union",
-        ));
+        return Err(unsupported(if types.profile.function_fields() {
+            "multiple record shapes, array element types, promise or function types in one union"
+        } else {
+            "multiple record shapes, array element types or promise types in one union"
+        }));
     }
     if values.len() == 1 {
         return Ok(values[0]);
@@ -367,6 +376,13 @@ impl Lower<'_> {
         {
             return self.guard(&unary.arg, !yes);
         }
+        // A truthy optional chain `x?.p` (v36) proves `x` is not nullish.
+        if yes
+            && self.types.profile.function_fields()
+            && let Some(name) = optional_chains::chained_binding(test)
+        {
+            return self.refine(&name, Guard::Nullish, false);
+        }
         if self.types.profile.reference_unions()
             && let ast::Expr::Call(call) = test
             && let ast::Callee::Expr(callee) = &call.callee
@@ -430,6 +446,9 @@ impl Lower<'_> {
                     "string" => Type::String,
                     "undefined" => Type::Undefined,
                     "object" => return Some((id.sym.to_string(), Guard::Object)),
+                    "function" if self.types.profile.function_fields() => {
+                        return Some((id.sym.to_string(), Guard::Function));
+                    }
                     _ => return None,
                 };
                 return Some((id.sym.to_string(), Guard::Exact(ty)));

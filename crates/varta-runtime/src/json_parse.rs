@@ -119,6 +119,7 @@ fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> 
                         | varta_common::json::FUNCTION_SCHEMA_VERSION
                         | varta_common::json::DYNAMIC_SCHEMA_VERSION
                         | varta_common::json::PROMISE_SCHEMA_VERSION
+                        | varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION
                 ) && slot & OPTIONAL_FIELD_FLAG != 0;
                 let slot = if matches!(
                     schema.version,
@@ -131,6 +132,7 @@ fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> 
                         | varta_common::json::FUNCTION_SCHEMA_VERSION
                         | varta_common::json::DYNAMIC_SCHEMA_VERSION
                         | varta_common::json::PROMISE_SCHEMA_VERSION
+                        | varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION
                 ) {
                     slot & !OPTIONAL_FIELD_FLAG
                 } else {
@@ -246,6 +248,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (
             HostOperation::JsonParseV17,
             varta_common::json::PROMISE_SCHEMA_VERSION,
+        ),
+        (
+            HostOperation::JsonParseV18,
+            varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION,
         ),
         (
             HostOperation::JsonParseV14,

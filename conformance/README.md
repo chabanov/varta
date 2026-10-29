@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 58 feature rows and 104 cases:
-95 pass, 9 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 60 feature rows and 107 cases:
+95 pass, 12 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -234,3 +234,11 @@ The async, Web and `promise-resolve` cases were observed as unexpected support
 with their pinned hashes and expected output under the v35 pin before review
 and promotion. Abort listeners, timers and live header iterators remain outside
 these rows.
+
+The v36 function-fields stream adds the `function-fields` and
+`optional-chains` rows (CORE-03) with one case each, and an `abort-listeners`
+case under the existing `abort-signals` row. All three are known gaps under the
+v35 pin (`unsupported_syntax`: v35 has no function-valued fields, function
+members of unions or abort listeners) and produce their expected output, which
+matches Node.js v24.20.0 type stripping, under `checked-f64-utf16-v36`; they are
+expected to be observed as unexpected support when the pin moves to v36.

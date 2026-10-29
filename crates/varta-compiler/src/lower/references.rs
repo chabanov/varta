@@ -41,6 +41,8 @@ pub(super) enum Guard {
     Nullish,
     /// `local === constant` against an interned singleton literal set (v32).
     Literal(Type),
+    /// `typeof x === "function"` (v36 `function_fields`): the function member.
+    Function,
 }
 impl Guard {
     pub fn matches(self, ty: Type) -> bool {
@@ -51,6 +53,7 @@ impl Guard {
                         || ty.error_class() == Some(class))
             }
             Self::Exact(t) => t == ty.erased(),
+            Self::Function => matches!(ty, Type::Function(_)),
             // Literal guards refine through `literals::refine`, never by member.
             Self::Literal(_) => false,
             Self::Object => matches!(

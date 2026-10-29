@@ -11542,7 +11542,7 @@ fn pilot_profile_v35_declares_value16_and_host_abi_31_through_both_binaries() {
 }
 
 #[test]
-fn pilot_profile_v36_declares_host_abi_32_with_value16_through_both_binaries() {
+fn pilot_profile_v36_declares_host_abi_32_with_value17_through_both_binaries() {
     use varta_common::{abi, value};
     const PROFILE: &str = "checked-f64-utf16-v36";
     // An unregistered successor of the same length: every binary sees it as a
@@ -11568,7 +11568,7 @@ fn pilot_profile_v36_declares_host_abi_32_with_value16_through_both_binaries() {
         let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
         assert_eq!(info["language"]["profile"], PROFILE);
         assert_eq!(info["abiVersion"], abi::TIMERS_VERSION);
-        assert_eq!(info["valueAbiVersion"], value::PROMISE_VALUE_VERSION);
+        assert_eq!(info["valueAbiVersion"], value::FUNCTION_FIELD_VALUE_VERSION);
     }
     fs::remove_dir_all(project.0.join("src")).unwrap();
     fs::remove_file(project.0.join("varta.config.json")).unwrap();
@@ -11741,6 +11741,83 @@ fn pilot_profile_v35_runs_web_types_in_dev_and_source_free_artifacts() {
         assert!(output.status.success(), "{}", combined(&output));
         assert_eq!(logs(&output), expected);
     }
+}
+
+#[test]
+fn pilot_profile_v36_runs_function_fields_and_abort_listeners_in_dev_and_artifacts() {
+    // A hooks interface with optional function fields, a defaulted
+    // `random: () => number = Math.random` parameter, optional chains, abort
+    // listeners and `Promise.withResolvers`; no capability is granted.
+    let project = RegressionProject::new(
+        "import {backoff,retry} from './util.ts';import type {Hooks} from './util.ts';\
+         export function main():void{let seen='';\
+         const hooks:Hooks={onRetry:(n:number):void=>{seen=seen+String(n);},delay:(n:number):number=>backoff(n,():number=>0.5)};\
+         const controller=new AbortController();const order:string[]=[];\
+         controller.signal.onabort=():void=>{order.push('onabort');};\
+         controller.signal.addEventListener('abort',():void=>{order.push('listener');},{once:true});\
+         const r=Promise.withResolvers<string>();r.promise.then((s:string):void=>{console.log(s);});\
+         controller.signal.addEventListener('abort',():void=>{r.resolve(`aborted ${String(controller.signal?.aborted)}`);});\
+         controller.abort();controller.abort();\
+         console.log(`${retry(hooks,3)} ${seen} ${JSON.stringify(order)} ${typeof hooks.delay}`);\
+         const jitter=backoff(1);console.log(String(jitter>=50&&jitter<=100));}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/util.ts"),
+        "export interface Hooks{onRetry?:(n:number)=>void;delay:(n:number)=>number}\
+         export function backoff(n:number,random:()=>number=Math.random):number{return Math.round(50*n*(1+random()));}\
+         export function retry(hooks:Hooks,attempts:number):number{let total=0;\
+         for(let n=1;n<=attempts;n++){hooks.onRetry?.(n);total+=hooks.delay(n);}return total;}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v36");
+    let expected = [
+        r#"varta log: 450 123 ["onabort","listener"] function"#,
+        "varta log: true",
+        "varta log: aborted true",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn function_fields_stay_rejected_by_v35_projects() {
+    let project = RegressionProject::new(
+        "interface H{run:(x:number)=>number}\
+         export function main():void{const h:H={run:(x:number):number=>x};console.log(h.run(1));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v35");
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success());
+    let text = combined(&dev);
+    assert!(text.contains("function-valued record fields"), "{text}");
+    assert!(!text.contains("varta log:"), "{text}");
 }
 
 #[test]

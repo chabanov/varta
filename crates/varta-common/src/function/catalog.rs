@@ -236,6 +236,7 @@ impl FunctionCatalog {
                     | value::FUNCTION_VALUE_VERSION
                     | value::DYNAMIC_VALUE_VERSION
                     | value::PROMISE_VALUE_VERSION
+                    | value::FUNCTION_FIELD_VALUE_VERSION
             )
             || self.types.len() > MAX_CAPTURE_TYPES
             || self.bindings.len() > MAX_CAPTURE_TYPES
@@ -308,7 +309,7 @@ impl FunctionCatalog {
                     for field in fields {
                         if field.name.len() > value::MAX_RECORD_KEY_BYTES
                             || !names.insert(&field.name)
-                            || self.value_version != value::FUNCTION_VALUE_VERSION
+                            || !value::function_layout(self.value_version)
                                 && matches!(
                                     self.types[field.ty as usize],
                                     CaptureType::Function { .. }
@@ -322,7 +323,7 @@ impl FunctionCatalog {
                     }
                 }
                 CaptureType::Array { element }
-                    if self.value_version != value::FUNCTION_VALUE_VERSION
+                    if !value::function_layout(self.value_version)
                         && matches!(
                             self.types[*element as usize],
                             CaptureType::Function { .. }
@@ -351,7 +352,7 @@ impl FunctionCatalog {
                             return Err(invalid_catalog());
                         }
                         if matches!(member, CaptureType::Function { .. })
-                            && (self.value_version != value::FUNCTION_VALUE_VERSION
+                            && (!value::function_layout(self.value_version)
                                 || matches!(ty, CaptureType::PrimitiveUnion { .. }))
                         {
                             return Err(invalid_catalog());

@@ -74,6 +74,10 @@ pub(crate) fn initial(
         (abi::CLASS_ERROR_VERSION, abi::CLASS_ERROR_CHANNEL_VERSION),
         (abi::DYNAMIC_VERSION, abi::DYNAMIC_CHANNEL_VERSION),
         (abi::PROMISE_VERSION, abi::PROMISE_CHANNEL_VERSION),
+        (
+            abi::FUNCTION_FIELD_VERSION,
+            abi::FUNCTION_FIELD_CHANNEL_VERSION,
+        ),
     ] {
         if let Some(version) = instance.get_global(&mut *store, name)
             && version.get(&mut *store).i32() != Some(expected)
@@ -151,14 +155,18 @@ pub(crate) struct Channel {
 impl Channel {
     pub(crate) fn detect(mut exported: impl FnMut(&str) -> bool) -> Self {
         // Channel v6 (v34) carries the v5 contents in value15 layouts and
-        // channel v7 (v35) the same contents in value16 layouts.
-        let promises = exported(abi::PROMISE_VERSION);
+        // channel v7 (v35) the same contents in value16 layouts, channel v8
+        // (v36) in value17 layouts.
+        let functions = exported(abi::FUNCTION_FIELD_VERSION);
+        let promises = functions || exported(abi::PROMISE_VERSION);
         let dynamic = promises || exported(abi::DYNAMIC_VERSION);
         let instances = dynamic || exported(abi::CLASS_ERROR_VERSION);
         let bigints = instances || exported(abi::BIGINT_VERSION);
         let families = bigints || exported(abi::FAMILY_VERSION);
         let errors = families || exported(abi::VERSION);
-        let version = if promises {
+        let version = if functions {
+            FUNCTION_FIELD_VALUE_VERSION
+        } else if promises {
             PROMISE_VALUE_VERSION
         } else if dynamic {
             DYNAMIC_VALUE_VERSION

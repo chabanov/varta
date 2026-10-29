@@ -239,6 +239,9 @@ pub(crate) struct ValueTypes {
     /// dictionary type id; see `lower::dictionary_helpers`.
     pub dictionary_helpers: std::collections::BTreeMap<(DictionaryHelper, u32), usize>,
     pub promises: Vec<PromiseType>,
+    /// Built-in functions referenced as values (v36 `function_fields`): the
+    /// synthesized wrapper of each, by name; see `lower::function_fields`.
+    pub builtin_functions: std::collections::BTreeMap<&'static str, usize>,
     /// Promise lowering state (v34): synthesized helpers and scheduled frames.
     pub asynchrony: crate::lower::promises::Asynchrony,
 }
@@ -451,14 +454,21 @@ impl Type {
             Self::Promise(_) if profile.promise_values() => {
                 Some(varta_common::value::ValueKind::Promise)
             }
+            // Value17 (v36 `function_fields`) tags function values.
+            Self::Function(_) if profile.function_fields() => {
+                Some(varta_common::value::ValueKind::Function)
+            }
             _ => self.value_kind(),
         }
     }
     /// The value tag of this type in a descriptor of value layout `version`.
     pub(crate) fn layout_kind(self, version: u32) -> Option<varta_common::value::ValueKind> {
         match self {
-            Self::Promise(_) if version == varta_common::value::PROMISE_VALUE_VERSION => {
+            Self::Promise(_) if varta_common::value::promise_layout(version) => {
                 Some(varta_common::value::ValueKind::Promise)
+            }
+            Self::Function(_) if version == varta_common::value::FUNCTION_FIELD_VALUE_VERSION => {
+                Some(varta_common::value::ValueKind::Function)
             }
             _ => self.value_kind(),
         }

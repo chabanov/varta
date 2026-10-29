@@ -107,6 +107,7 @@ impl JsonSchema {
                 | FUNCTION_SCHEMA_VERSION
                 | DYNAMIC_SCHEMA_VERSION
                 | PROMISE_SCHEMA_VERSION
+                | FUNCTION_FIELD_SCHEMA_VERSION
         ) || self.types.is_empty()
             || self.types.len()
                 > if matches!(
@@ -120,6 +121,7 @@ impl JsonSchema {
                         | FUNCTION_SCHEMA_VERSION
                         | DYNAMIC_SCHEMA_VERSION
                         | PROMISE_SCHEMA_VERSION
+                        | FUNCTION_FIELD_SCHEMA_VERSION
                 ) {
                     MAX_SCHEMA_TYPES
                 } else {
@@ -149,6 +151,7 @@ impl JsonSchema {
                     | FUNCTION_SCHEMA_VERSION
                     | DYNAMIC_SCHEMA_VERSION
                     | PROMISE_SCHEMA_VERSION
+                    | FUNCTION_FIELD_SCHEMA_VERSION
             ) && matches!(
                 ty,
                 JsonType::Undefined
@@ -190,6 +193,7 @@ impl JsonSchema {
                                     | FUNCTION_SCHEMA_VERSION
                                     | DYNAMIC_SCHEMA_VERSION
                                     | PROMISE_SCHEMA_VERSION
+                                    | FUNCTION_FIELD_SCHEMA_VERSION
                             ) || !self.admits_undefined(field.ty))
                         {
                             return Err(bad(
@@ -260,6 +264,9 @@ impl JsonSchema {
     }
     #[must_use]
     pub fn value_version(&self) -> u32 {
+        if self.version == FUNCTION_FIELD_SCHEMA_VERSION {
+            return crate::value::FUNCTION_FIELD_VALUE_VERSION;
+        }
         if self.version == PROMISE_SCHEMA_VERSION {
             return crate::value::PROMISE_VALUE_VERSION;
         }

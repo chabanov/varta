@@ -1,6 +1,23 @@
 //! Canonical operation names and Wasm signatures shared by compiler and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostOperation {
+    /// Value17 (profile v36) readers: each mirrors its value16 counterpart's
+    /// signature and contract, reading value17 layouts (which add function
+    /// values as tagged values) and nothing else.
+    ValueLogV11,
+    ValueTypeOfV10,
+    ValueTruthyV10,
+    ValueNullishV10,
+    ValueStrictEqualV10,
+    ValueNullishEqualV10,
+    ValueIsArrayV10,
+    ValueIsErrorClassV6,
+    JsonParseV18,
+    JsonStringifyV16,
+    PrimitiveStringV5,
+    PrimitiveNumberV5,
+    BigIntFromValueV4,
+
     /// Value16 (profile v35) readers: each mirrors its value15 counterpart's
     /// signature and contract, reading value16 layouts and nothing else.
     ValueLogV10,
@@ -205,6 +222,27 @@ pub enum HostOperation {
     HttpService,
 }
 impl HostOperation {
+    /// The value16 operation whose signature, capability and observable
+    /// contract a value17 (profile v36) operation keeps; `None` otherwise.
+    #[must_use]
+    pub fn value16_counterpart(self) -> Option<Self> {
+        Some(match self {
+            Self::ValueLogV11 => Self::ValueLogV10,
+            Self::ValueTypeOfV10 => Self::ValueTypeOfV9,
+            Self::ValueTruthyV10 => Self::ValueTruthyV9,
+            Self::ValueNullishV10 => Self::ValueNullishV9,
+            Self::ValueStrictEqualV10 => Self::ValueStrictEqualV9,
+            Self::ValueNullishEqualV10 => Self::ValueNullishEqualV9,
+            Self::ValueIsArrayV10 => Self::ValueIsArrayV9,
+            Self::ValueIsErrorClassV6 => Self::ValueIsErrorClassV5,
+            Self::JsonParseV18 => Self::JsonParseV17,
+            Self::JsonStringifyV16 => Self::JsonStringifyV15,
+            Self::PrimitiveStringV5 => Self::PrimitiveStringV4,
+            Self::PrimitiveNumberV5 => Self::PrimitiveNumberV4,
+            Self::BigIntFromValueV4 => Self::BigIntFromValueV3,
+            _ => return None,
+        })
+    }
     /// The value15 operation whose signature, capability and observable
     /// contract a value16 (profile v35) operation keeps; `None` otherwise.
     #[must_use]
@@ -249,6 +287,9 @@ impl HostOperation {
     }
     #[must_use]
     pub fn returns_string(self) -> bool {
+        if let Some(value16) = self.value16_counterpart() {
+            return value16.returns_string();
+        }
         if let Some(value15) = self.value15_counterpart() {
             return value15.returns_string();
         }
@@ -293,6 +334,9 @@ impl HostOperation {
     }
     #[must_use]
     pub fn needs_result_globals(self) -> bool {
+        if let Some(value16) = self.value16_counterpart() {
+            return value16.needs_result_globals();
+        }
         if let Some(value15) = self.value15_counterpart() {
             return value15.needs_result_globals();
         }
@@ -339,6 +383,19 @@ impl HostOperation {
     }
     pub fn name(self) -> &'static str {
         match self {
+            Self::ValueLogV11 => "value_log_v11",
+            Self::ValueTypeOfV10 => "value_typeof_v10",
+            Self::ValueTruthyV10 => "value_truthy_v10",
+            Self::ValueNullishV10 => "value_nullish_v10",
+            Self::ValueStrictEqualV10 => "value_strict_equal_v10",
+            Self::ValueNullishEqualV10 => "value_nullish_equal_v10",
+            Self::ValueIsArrayV10 => "value_is_array_v10",
+            Self::ValueIsErrorClassV6 => "value_is_error_class_v6",
+            Self::JsonParseV18 => "json_parse_v18",
+            Self::JsonStringifyV16 => "json_stringify_v16",
+            Self::PrimitiveStringV5 => "primitive_to_string_v5",
+            Self::PrimitiveNumberV5 => "primitive_to_number_v5",
+            Self::BigIntFromValueV4 => "bigint_from_value_v4",
             Self::ValueLogV10 => "value_log_v10",
             Self::ValueTypeOfV9 => "value_typeof_v9",
             Self::ValueTruthyV9 => "value_truthy_v9",
@@ -546,6 +603,9 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if self.value16_counterpart().is_some() {
+            return crate::abi::TIMERS_VERSION;
+        }
         if self.value15_counterpart().is_some() {
             return crate::abi::PROMISE_VALUES_VERSION;
         }
@@ -823,18 +883,22 @@ impl HostOperation {
             Self::PrimitiveEqual => (&[I32, I64, I64], &[I32]),
             Self::BigIntWidthV2 => (&[I32, I64, I64], &[I32, I32]),
             Self::BigIntToStringV2 => (&[I64, I64], &[I32, I32]),
-            Self::BigIntFromValueV3 | Self::BigIntFromValueV2 | Self::BigIntFromValue => {
-                (&[I64], &[I32, I32])
-            }
-            Self::JsonStringifyV15 | Self::JsonStringifyV14 | Self::JsonStringifyV13 => {
-                (&[I32, I32, I32], &[I32, I32])
-            }
-            Self::ValueIsErrorClassV5
+            Self::BigIntFromValueV4
+            | Self::BigIntFromValueV3
+            | Self::BigIntFromValueV2
+            | Self::BigIntFromValue => (&[I64], &[I32, I32]),
+            Self::JsonStringifyV16
+            | Self::JsonStringifyV15
+            | Self::JsonStringifyV14
+            | Self::JsonStringifyV13 => (&[I32, I32, I32], &[I32, I32]),
+            Self::ValueIsErrorClassV6
+            | Self::ValueIsErrorClassV5
             | Self::ValueIsErrorClassV4
             | Self::ValueIsErrorClassV3
             | Self::ValueIsErrorClassV2
             | Self::ValueIsErrorClass => (&[I64, I32], &[I32]),
-            Self::ValueLogV10
+            Self::ValueLogV11
+            | Self::ValueLogV10
             | Self::ValueLogV9
             | Self::ValueLogV8
             | Self::ValueLogV7
@@ -844,13 +908,18 @@ impl HostOperation {
             | Self::ValueLogV3
             | Self::ValueLog
             | Self::UnionLog => (&[I64], &[]),
-            Self::PrimitiveStringV4
+            Self::PrimitiveStringV5
+            | Self::PrimitiveStringV4
             | Self::PrimitiveStringV3
             | Self::PrimitiveStringV2
             | Self::PrimitiveString
+            | Self::ValueTypeOfV10
             | Self::ValueTypeOfV9
+            | Self::ValueTruthyV10
             | Self::ValueTruthyV9
+            | Self::ValueNullishV10
             | Self::ValueNullishV9
+            | Self::ValueIsArrayV10
             | Self::ValueIsArrayV9
             | Self::ValueTypeOfV8
             | Self::ValueTypeOfV7
@@ -884,7 +953,9 @@ impl HostOperation {
             | Self::UnionTypeOf
             | Self::UnionTruthy
             | Self::UnionNullish => (&[I64], &[I32]),
-            Self::ValueStrictEqualV9
+            Self::ValueStrictEqualV10
+            | Self::ValueStrictEqualV9
+            | Self::ValueNullishEqualV10
             | Self::ValueNullishEqualV9
             | Self::ValueStrictEqualV8
             | Self::ValueStrictEqualV7
@@ -920,6 +991,7 @@ impl HostOperation {
             Self::BigIntCompareNumber => (&[I64, F64], &[F64]),
             Self::NumberParseInt => (&[I64, I64], &[F64]),
             Self::NumberParseFloat
+            | Self::PrimitiveNumberV5
             | Self::PrimitiveNumberV4
             | Self::PrimitiveNumberV3
             | Self::PrimitiveNumberV2
@@ -970,6 +1042,7 @@ impl HostOperation {
             | Self::JsonParseV6
             | Self::JsonParseV7
             | Self::JsonParseV8
+            | Self::JsonParseV18
             | Self::JsonParseV17
             | Self::JsonParseV16
             | Self::JsonParseV15
@@ -1007,6 +1080,19 @@ impl HostOperation {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
+            "value_log_v11" => Self::ValueLogV11,
+            "value_typeof_v10" => Self::ValueTypeOfV10,
+            "value_truthy_v10" => Self::ValueTruthyV10,
+            "value_nullish_v10" => Self::ValueNullishV10,
+            "value_strict_equal_v10" => Self::ValueStrictEqualV10,
+            "value_nullish_equal_v10" => Self::ValueNullishEqualV10,
+            "value_is_array_v10" => Self::ValueIsArrayV10,
+            "value_is_error_class_v6" => Self::ValueIsErrorClassV6,
+            "json_parse_v18" => Self::JsonParseV18,
+            "json_stringify_v16" => Self::JsonStringifyV16,
+            "primitive_to_string_v5" => Self::PrimitiveStringV5,
+            "primitive_to_number_v5" => Self::PrimitiveNumberV5,
+            "bigint_from_value_v4" => Self::BigIntFromValueV4,
             "value_log_v10" => Self::ValueLogV10,
             "value_typeof_v9" => Self::ValueTypeOfV9,
             "value_truthy_v9" => Self::ValueTruthyV9,
@@ -1199,18 +1285,31 @@ impl HostOperation {
     #[must_use]
     pub fn capability(self) -> Option<&'static str> {
         Some(match self {
-            Self::ValueLogV10
+            Self::ValueLogV11
+            | Self::ValueLogV10
+            | Self::ValueTypeOfV10
             | Self::ValueTypeOfV9
+            | Self::ValueTruthyV10
             | Self::ValueTruthyV9
+            | Self::ValueNullishV10
             | Self::ValueNullishV9
+            | Self::ValueStrictEqualV10
             | Self::ValueStrictEqualV9
+            | Self::ValueNullishEqualV10
             | Self::ValueNullishEqualV9
+            | Self::ValueIsArrayV10
             | Self::ValueIsArrayV9
+            | Self::ValueIsErrorClassV6
             | Self::ValueIsErrorClassV5
+            | Self::JsonParseV18
             | Self::JsonParseV17
+            | Self::JsonStringifyV16
             | Self::JsonStringifyV15
+            | Self::PrimitiveStringV5
             | Self::PrimitiveStringV4
+            | Self::PrimitiveNumberV5
             | Self::PrimitiveNumberV4
+            | Self::BigIntFromValueV4
             | Self::BigIntFromValueV3
             | Self::ValueLogV9
             | Self::ValueTypeOfV8

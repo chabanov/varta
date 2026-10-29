@@ -19,6 +19,20 @@ pub(crate) struct Prelude {
     /// Exported names that trigger the implicit import, with their namespace.
     pub exports: &'static [(&'static str, Namespace)],
     pub admitted: fn(LanguageProfile) -> bool,
+    /// A later profile's source of the same module, replacing `source` where
+    /// its selector admits it; earlier profiles keep `source` unchanged.
+    pub extended: Option<Extension>,
+}
+/// A profile selector and the prelude source it selects.
+pub(crate) type Extension = (fn(LanguageProfile) -> bool, &'static str);
+impl Prelude {
+    /// The module text this profile compiles.
+    pub(crate) fn text(&self, profile: LanguageProfile) -> &'static str {
+        match self.extended {
+            Some((admitted, source)) if admitted(profile) => source,
+            _ => self.source,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,8 +52,10 @@ pub(crate) const HEADERS: Prelude = Prelude {
         ("HeadersInit", Namespace::Type),
     ],
     admitted: LanguageProfile::web_headers,
+    extended: None,
 };
-/// `AbortController`, `AbortSignal` and the `DOMException` abort reasons.
+/// `AbortController`, `AbortSignal` and the `DOMException` abort reasons;
+/// v36 (`function_fields`) adds abort listeners in its own source.
 pub(crate) const ABORT: Prelude = Prelude {
     path: "<varta>/web/abort.ts",
     source: include_str!("../prelude/abort.ts"),
@@ -49,6 +65,10 @@ pub(crate) const ABORT: Prelude = Prelude {
         ("DOMException", Namespace::Class),
     ],
     admitted: LanguageProfile::abort_signals,
+    extended: Some((
+        LanguageProfile::function_fields,
+        include_str!("../prelude/abort_listeners.ts"),
+    )),
 };
 pub(crate) const PRELUDES: [&Prelude; 2] = [&HEADERS, &ABORT];
 /// Class names that compiler hooks recognize in their prelude modules.
@@ -217,10 +237,27 @@ const PENDING: &[(&str, &[&str], &str)] = &[
     ),
 ];
 
+/// Members of prelude classes that v36 (`function_fields`, whose abort
+/// prelude implements the listeners) still names but does not implement;
+/// consulted before [`PENDING`].
+const PENDING_FUNCTION_FIELDS: &[(&str, &[&str], &str)] = &[(
+    ABORT_SIGNAL_CLASS,
+    &["dispatchEvent"],
+    "AbortSignal.dispatchEvent (DOM Event objects are not modelled; abort listeners run when the controller aborts)",
+)];
+
 /// Why member `name` of prelude class `class` is unsupported, if it is pending.
-pub(crate) fn pending(class: &str, name: &str) -> Option<&'static str> {
-    PENDING
-        .iter()
-        .find(|(owner, members, _)| *owner == class && members.contains(&name))
-        .map(|(_, _, reason)| *reason)
+pub(crate) fn pending(class: &str, name: &str, profile: LanguageProfile) -> Option<&'static str> {
+    let find = |table: &[(&str, &[&str], &'static str)]| {
+        table
+            .iter()
+            .find(|(owner, members, _)| *owner == class && members.contains(&name))
+            .map(|(_, _, reason)| *reason)
+    };
+    if profile.function_fields()
+        && let Some(reason) = find(PENDING_FUNCTION_FIELDS)
+    {
+        return Some(reason);
+    }
+    find(PENDING)
 }

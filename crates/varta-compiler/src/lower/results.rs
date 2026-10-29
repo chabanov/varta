@@ -32,6 +32,9 @@ impl Lower<'_> {
     }
 
     pub(super) fn result_field(&mut self, member: &ast::MemberExpr) -> Result<Expr> {
+        if let Some(value) = self.builtin_function_value(member)? {
+            return Ok(value);
+        }
         if let Some(value) = self.numeric_constant(member)? {
             return Ok(value);
         }

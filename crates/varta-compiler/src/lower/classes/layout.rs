@@ -288,7 +288,7 @@ fn field(
     } else {
         ty
     };
-    if matches!(ty, Type::Function(_)) {
+    if matches!(ty, Type::Function(_)) && !types.profile.function_fields() {
         return Err(unsupported("function-valued class field"));
     }
     if ty.profile_kind(types.profile).is_none()

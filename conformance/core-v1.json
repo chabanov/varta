@@ -545,6 +545,24 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md"
+    },
+    {
+      "id": "function-fields",
+      "title": "Function values in fields, elements, unions and optional parameters",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-function-calls"
+    },
+    {
+      "id": "optional-chains",
+      "title": "Optional chaining of member reads and calls",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-optional-chains"
     }
   ],
   "cases": [
@@ -2139,6 +2157,51 @@
       ],
       "baseline": {
         "status": "supported"
+      }
+    },
+    {
+      "id": "function-fields",
+      "feature": "function-fields",
+      "path": "cases/function-fields.ts",
+      "sha256": "8d72e58b3f5af4508ed3381522c644c4e056dfa4341f0dad2533da878b2233f0",
+      "stdout": [
+        "varta log: 900 123 3",
+        "varta log: 6 3 function {}"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Function-valued fields and function members of unions need value layout 17 (v36 function_fields); the v35 pin rejects the defaulted function-typed parameter."
+      }
+    },
+    {
+      "id": "optional-chains",
+      "feature": "optional-chains",
+      "path": "cases/optional-chains.ts",
+      "sha256": "004bcb1a64b81610668ab19775506ef5a1eb4e21fe94a629d86b85719a097ed5",
+      "stdout": [
+        "varta log: tail undefined 1",
+        "varta log: undefined tail@1",
+        "varta log: undefined 3"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Optional chains and optional function fields are v36 function_fields features; the v35 pin rejects the optional function-valued field."
+      }
+    },
+    {
+      "id": "abort-listeners",
+      "feature": "abort-signals",
+      "path": "cases/abort-listeners.ts",
+      "sha256": "25f0bb299de0f23de657447c9f059cadace14b5089283c86f63f06d60ead1805",
+      "stdout": [
+        "varta log: [\"first true\",\"once\"]"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Abort listeners need function-valued fields (v36 abort prelude); the v35 Web types keep them pending."
       }
     }
   ]

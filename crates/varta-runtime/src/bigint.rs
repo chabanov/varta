@@ -346,6 +346,12 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             H::BigIntFromValueV3,
             varta_common::value::PROMISE_VALUE_VERSION,
         ),
+        (
+            H::PrimitiveStringV5,
+            H::PrimitiveNumberV5,
+            H::BigIntFromValueV4,
+            varta_common::value::FUNCTION_FIELD_VALUE_VERSION,
+        ),
     ] {
         linker.func_wrap(
             "varta",

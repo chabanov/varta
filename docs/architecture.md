@@ -156,11 +156,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
-| `checked-f64-utf16-v36` | 32 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
+| `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **32**, value ABI **16**, HTTP contract **1** and **39** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **32**, value ABI **17**, HTTP contract **1** and **39** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -7222,8 +7222,10 @@ dispatch, rooting and diagnostics for each type.
   listeners` diagnostic: a signal would have to store listener functions, and
   value layout 16 has no function-valued object field (function values live
   only in locals, parameters, results, closure cells and frames). Admitting
-  them needs a value-layout change. `AbortSignal.timeout` and `AbortSignal.any`
-  are rejected as well: v35 has no timers and no listeners.
+  them needs a value-layout change, which v36 makes
+  ([abort listeners](#abort-listeners-abort_signals-with-function_fields)).
+  `AbortSignal.timeout` and `AbortSignal.any` are rejected as well: v35 has no
+  timers and no listeners.
 - **Value operations.** `JSON.stringify` of a value that may reach an engine
   Web type instance (including `unknown` in a program that loads a prelude) is
   rejected, because the instances keep private state where JavaScript has no
@@ -7243,38 +7245,99 @@ dispatch, rooting and diagnostics for each type.
 
 ### `checked-f64-utf16-v36` — Pilot batch: checked declared fields, function fields, async generators and timers
 
-V36 is registered and inherits every v35 feature and selector, including value
-layout 16 (`promise_values()`) with the value16 host readers, exception channel
-v7, JSON schema 16 (`json_stringify_v15`, `json_parse_v17`), the microtask
-scheduler and frame catalog version 3 (`frame_liveness()`). Wherever a v35
-subsection above admits a feature, layout or binding for v35 only, it applies
-to v35 and v36; v34 and earlier profiles stay frozen. V36 declares one version
-identity of its own (see the [version matrix](#version-matrix)):
+V36 is registered and inherits every v35 feature and selector, including the
+promise tag of value layout 16 (`promise_values()`), the microtask scheduler
+and frame catalog version 3 (`frame_liveness()`). Wherever a v35 subsection
+above admits a feature, layout or binding for v35 only, it applies to v35 and
+v36 (with the value17 readers below in place of the value16 ones); v34 and
+earlier profiles stay frozen. V36 declares two version identities of its own
+(see the [version matrix](#version-matrix)):
 
-- **Host ABI** `abi::TIMERS_VERSION` (32), for v36 alone. It adds no host
-  import yet: every v35 operation keeps its signature, binding and minimum ABI,
-  and no registered operation requires host ABI 32. Host imports added in this
-  batch (the timer operations first) use host ABI 32 as their minimum.
-- **Value ABI and layout** `value::PROMISE_VALUE_VERSION` (value16), shared
-  with v35. V36 adds no value tag or layout yet; `LanguageProfile::value_layout`
-  equals `value_abi`, so descriptors, catalogs, frames and exception cells are
-  stamped and read exactly as under v35.
+- **Host ABI** `abi::TIMERS_VERSION` (32), for v36 alone. Every v35 operation
+  other than the value16 readers keeps its signature, binding and minimum ABI.
+  Host imports added in this batch, including the value17 readers, use host
+  ABI 32 as their minimum.
+- **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17), for
+  v36 alone; `LanguageProfile::value_layout` equals `value_abi`, so
+  descriptors, catalogs, frames and exception cells are stamped 17
+  ([value layout 17](#value-layout-17-function_fields)).
 
 An older runtime that does not list v36 rejects the unknown profile name in
 `varta.language` validation, before compilation or any guest effect. A v36
 module relabelled as v35 declares host ABI 32 against v35's 31 and fails at its
 host ABI section before instantiation; as for every profile, a v36 declaration
-with a downgraded or missing host ABI section, a value ABI other than value16
+with a downgraded or missing host ABI section, a value ABI other than value17
 or a missing value section fails validation before any guest effect.
 
-Each ABI is bumped at most once per batch. The host ABI bump is already made at
-registration and every stream adds its imports under it. The function-fields
-stream owns any value-layout bump (value17: a new `value` constant,
-`value_abi`, `value_layout`, value17 variants of every layout-bound reader with
-their minimum host ABI 32, and the launcher maximum); the other streams rebase
-onto it. V35 and earlier profiles keep their host ABI, value ABI and layouts.
+Each ABI is bumped at most once per batch. The host ABI bump was made at
+registration and the value-layout bump by the function-fields stream; every
+stream adds its imports under host ABI 32 and stamps value17. V35 and earlier
+profiles keep their host ABI, value ABI and layouts.
 
-Four selectors gate the batch's work streams, and all admit nothing yet:
+#### Value layout 17 (`function_fields`)
+
+V36 stamps and reads the value17 layouts: record descriptors, record sizes,
+presence trailers, closure and frame catalogs and exception cells carry version
+17, and the runtime checks a v36 capture catalog against it. Value17 keeps every
+value16 layout and tag with exactly its value16 meaning (`value::dynamic_layout`
+and `value::promise_layout` name the families that include it) and admits the
+function tag `ValueKind::Function` = 12 as a reference kind of record and class
+fields, array elements, dictionary values, reference-union and `unknown`
+cells (`value::function_layout` is true for value14 and value17). The payload
+is the packed handle of the existing v12+ closure (heap flag 128, 24 bytes,
+optional environment edge); the guest collector traces it through the same
+exact edge masks as every other reference. Value16 readers stay frozen: they
+reject descriptors, catalogs and cells stamped 17 and the function tag, and the
+value17 readers reject 16.
+
+A value17 reader validates a function cell through its closure envelope
+(`function::ClosureView::read_envelope`: block header, size and flag, the
+signature/reserved words, the environment edge and every binding cell's
+envelope). Captured payloads stay opaque and no reader invokes or decodes a
+function, so unlike value14 (whose transport needs the owner capture catalog)
+no catalog proof is required and no call authority is implied. Observations:
+`typeof` is `"function"`, truthiness is `true`, nullish tests are `false`,
+`Array.isArray` is `false`, strict equality is handle identity,
+`JSON.stringify` treats a function like `undefined` (an omitted field or
+dictionary entry, `null` in an array, an absent top-level result), a callable
+`toJSON` field is a fatal error (the host cannot call guest code), and a logged
+function shows as `[Function (anonymous)]` (Node prints the function's name
+where it has one; closures carry no source name).
+
+V36 binds its own pure, capability-free operations to value17. Each is one more
+row of the runtime's per-layout registration tables, mirroring its value16
+counterpart's signature, result convention, budgets and recoverable errors
+(`HostOperation::value16_counterpart`), and requires host ABI
+`abi::TIMERS_VERSION`:
+
+| Value17 import | Value16 counterpart |
+| --- | --- |
+| `value_log_v11` | `value_log_v10` |
+| `value_typeof_v10`, `value_truthy_v10`, `value_nullish_v10`, `value_strict_equal_v10`, `value_nullish_equal_v10`, `value_is_array_v10` | the `_v9` operations |
+| `value_is_error_class_v6` | `value_is_error_class_v5` |
+| `json_stringify_v16`, `json_parse_v18` | `json_stringify_v15`, `json_parse_v17` |
+| `primitive_to_string_v5`, `primitive_to_number_v5`, `bigint_from_value_v4` | `primitive_to_string_v4`, `primitive_to_number_v4`, `bigint_from_value_v3` |
+
+`LanguageProfile::host_operation` maps every value16 reader (and the value15
+and value13 readers it replaced) to its value17 replacement for v36 only, so
+the runtime rejects a v36 module importing a value16 reader and a v35 module
+importing a value17 reader (whose minimum host ABI also exceeds v35's).
+`json_parse_v18` reads **JSON schema 17** (`json::FUNCTION_FIELD_SCHEMA_VERSION`),
+the schema-15 grammar materializing value17 graphs; JSON never produces a
+function or a promise. Thrown values use **exception channel v8**
+(`varta.exception.version_v8` = 8): the channel-v7 contents read as value17
+cells, records and Error objects; a function is never thrown.
+
+The switch changes no observable behaviour of a v35 program: `varta-runtime`
+`value17_tests` compile the value15, unknown, generator, promise, async-method,
+v35 cross-stream and Web cases under v35 and v36 and require identical output,
+check that v36 imports only value17 readers and exports channel v8, that
+swapped readers and channels are rejected before guest effects, that a
+value16-stamped descriptor fails under v36, and that value16 readers reject a
+function cell that value17 readers accept, while tampered closure envelopes
+fail.
+
+Four selectors gate the batch's work streams:
 
 - records stream: `checked_declared_fields()` (declared fields of mixed
   records that are checkable from `unknown`, for example arrays of optional
@@ -7286,9 +7349,116 @@ Four selectors gate the batch's work streams, and all admit nothing yet:
 - timers stream: `timers()` (`setTimeout`/`clearTimeout` and timer-driven
   promises).
 
-Until a stream adds its subsection here, a v36 module compiles and runs exactly
-like a v35 module apart from its declared profile and host ABI, and production
-budgets of every profile are unchanged.
+Until a stream adds its subsection here, its features stay rejected and a v36
+module compiles and runs like a v35 module apart from its declared profile,
+host ABI and value layout 17; production budgets of every profile are
+unchanged.
+
+#### Function fields (`function_fields`)
+
+Under value layout 17 a function value (a v12+ closure, including a named
+function reference, an arrow, a function expression and an async closure) is a
+tagged value. V36 therefore admits a function type wherever a value type is
+admitted:
+
+- **Containers.** Record and interface fields (optional ones included), class
+  fields with or without an initializer, array elements (`(() => void)[]`,
+  `push`, `includes`/`indexOf` by identity, `map` over them), dictionary values
+  (`Record<string, (x: number) => number>`), `unknown` cells and union members.
+  A union holds at most one function type (as it holds at most one record
+  shape or array type), so `(() => void) | undefined` and
+  `((x: number) => number) | string` are admitted and
+  `(() => void) | ((x: number) => void)` is rejected. Element and dictionary
+  reads have the usual `T | undefined` type.
+- **Calls through fields.** `object.field(args)` on a record or class-instance
+  path whose field holds a function reads the field once and calls it without
+  a receiver: a function field is never called as a method. A field whose
+  function type declares a `this` parameter is rejected at such a call (the
+  call would bind `this` in JavaScript); arrows capture their lexical `this`
+  as before. A field that may be `undefined` (an optional field or a dictionary
+  entry) must be narrowed or called with `?.()`; calling it directly is a type
+  error naming both remedies.
+- **Optional and defaulted parameters.** `cb?: (x: number) => void`,
+  `fn: (() => void) | undefined` and `random: () => number = Math.random` are
+  ordinary optional, union and defaulted parameters. A function literal whose
+  context is a union with one function member takes that member as its
+  contextual type and is boxed into the union.
+- **Narrowing.** `if (f)`, `f !== undefined`, `f !== null` and
+  `typeof f === "function"` narrow a union to its function member (and the
+  negations to the rest); a function is always truthy. On `unknown`,
+  `typeof x === "function"` tests the cell's tag but proves no callable type,
+  and a checked `as` to a function type is rejected: the signature is a
+  module-private fact that no runtime test of an `unknown` cell can check.
+- **Built-in functions as values.** `Math.random` (unshadowed) is admitted as
+  a `() => number` value: one synthesized wrapper with a canonical identity
+  (`Math.random === Math.random`). It is the only built-in function value; any
+  other built-in method read as a value stays rejected.
+- **Identity, `typeof` and logging.** Strict equality of function values
+  (also through unions and `unknown`) is reference identity (a fresh arrow evaluation is a fresh function),
+  `typeof` is `"function"` and logging shows `[Function (anonymous)]`
+  ([value layout 17](#value-layout-17-function_fields)).
+- **JSON.** `JSON.stringify` drops function fields and dictionary entries,
+  writes `null` for function elements and returns `undefined` for a function
+  (its static result is `string | undefined` when a union may hold one). A
+  value whose type may reach a record or class field named `toJSON` holding a
+  function is rejected at compile time (the host serializer cannot call guest
+  code); an `unknown` cell holding such a record fails at run time. Checked
+  parsing cannot build a function: a parse target with a function field is
+  rejected. `String(f)`, template substitution and `throw f` of a function stay
+  rejected.
+- **Optional chains.** `x?.p`, `x?.[i]`, `x?.m(args)`, `f?.(args)` and longer
+  chains (`x?.a.b`, `x?.a?.b()`) evaluate the object of the first optional link once;
+  when it is `undefined` or `null` the rest of the chain, including its
+  arguments, is not evaluated and the result is `undefined`, otherwise the rest
+  is the ordinary member read or call on the narrowed value. A truthy
+  `x?.p` condition narrows `x` to its non-nullish members, as in TypeScript.
+  Parentheses end a chain.
+- **Rejection reasons.** A `reject(reason)` argument of type `unknown` (for
+  example `signal.reason`) is checked like a thrown `unknown` value: a
+  primitive, BigInt or Error value is admitted, anything else throws
+  `TypeError`.
+- **`Promise.withResolvers<T>()`** returns the record
+  `{ promise, resolve, reject }` (in that own-key order) of a new pending
+  promise and the same resolve/reject closures that `new Promise` passes to its
+  executor; the type argument is required. Resolving with another promise
+  (`resolve(promise)`) stays outside the subset, for the executor as for
+  `withResolvers`.
+
+Physical representation, collection and safety are unchanged from v12
+closures: a field, element or cell holds the closure's packed handle, its slot
+is an exact edge of the containing record, vector or cell (record edge masks
+and wide-record edge bitmaps, vector reference element kinds and the union
+cell's reference flag), and the collector traces the closure's environment and
+binding cells from there. Every call through a function value keeps the
+checked closed dispatch (signature word, code index among the signature's
+targets, environment presence); no indirect call or table is introduced and
+host-free helper analysis is unaffected. Earlier profiles keep rejecting every
+construct above with their own diagnostics and compile to unchanged bytes.
+
+##### Abort listeners (`abort_signals` with `function_fields`)
+
+V36 compiles its own abort prelude (the v35 prelude source with listeners;
+v35 programs keep the v35 source and bytes). `AbortSignal` gains
+`addEventListener(type, listener, options?)`,
+`removeEventListener(type, listener, options?)` and an `onabort` field, where
+a listener is `() => void` and `options` is `boolean` (capture) or
+`{ once?: boolean; capture?: boolean }`:
+
+- A listener is identified by its type, function identity and capture flag;
+  adding it again changes nothing, removing it removes that entry only.
+- When a controller aborts its signal (once), `onabort` runs first, then the
+  `abort` listeners registered when the dispatch starts, in registration
+  order: a `once` listener is removed before it runs, and a listener removed by
+  an earlier listener is skipped. Listeners of other types never run.
+  Listeners added to an aborted signal (including `AbortSignal.abort()`) never
+  run.
+- Deviations from Node: listeners receive no `Event` argument and `this` is
+  not bound (DOM events are not modelled); `onabort` runs before the
+  listeners, while Node runs it at the position of its first assignment among
+  them; an exception thrown by a listener propagates out of `abort()`, while
+  Node reports it as uncaught after the dispatch. `dispatchEvent` stays
+  pending; `AbortSignal.timeout` and `AbortSignal.any` belong to the timers
+  stream.
 
 ## Local modules
 

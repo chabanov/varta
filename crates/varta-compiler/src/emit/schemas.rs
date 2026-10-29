@@ -116,7 +116,9 @@ pub(super) fn build(
     };
     let root = builder.node(root)?;
     JsonSchema {
-        version: if types.profile.promise_values() {
+        version: if types.profile.function_fields() {
+            varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION
+        } else if types.profile.promise_values() {
             varta_common::json::PROMISE_SCHEMA_VERSION
         } else if types.profile.dynamic_values() {
             varta_common::json::DYNAMIC_SCHEMA_VERSION

@@ -21,7 +21,7 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     if matches!(value, Type::Generator(_)) {
         return Err(generators::opaque("a dictionary"));
     }
-    if matches!(value, Type::Function(_)) {
+    if matches!(value, Type::Function(_)) && !types.profile.function_fields() {
         return Err(unsupported("function-valued index signature"));
     }
     if value.profile_kind(types.profile).is_none() {

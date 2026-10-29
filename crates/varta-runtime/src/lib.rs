@@ -500,6 +500,8 @@ mod template_literal_tests;
 #[cfg(test)]
 mod function_envelope_tests;
 #[cfg(test)]
+mod function_field_tests;
+#[cfg(test)]
 mod function_value14_tests;
 #[cfg(test)]
 mod function_value_tests;
@@ -592,6 +594,8 @@ mod v35_cross_stream_tests;
 mod value15_tests;
 #[cfg(test)]
 mod value16_tests;
+#[cfg(test)]
+mod value17_tests;
 #[cfg(test)]
 mod web_headers_tests;
 #[cfg(test)]

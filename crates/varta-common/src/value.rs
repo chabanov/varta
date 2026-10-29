@@ -29,11 +29,39 @@ pub const DYNAMIC_VALUE_VERSION: u32 = 15;
 /// layout with its value15 meaning, plus promise values
 /// ([`ValueKind::Promise`]). Only value16 readers accept it.
 pub const PROMISE_VALUE_VERSION: u32 = 16;
+/// Value ABI and layout of pilot batch v36 (value17): every value16 tag and
+/// layout with its value16 meaning, plus function values as tagged values
+/// ([`ValueKind::Function`]) in record and class fields, array elements,
+/// dictionary values, reference unions and `unknown` cells. Only value17
+/// readers accept it.
+pub const FUNCTION_FIELD_VALUE_VERSION: u32 = 17;
 /// Whether `version` is a layout of the dynamic-value family (value15 and its
-/// value16 extension), which share the dictionary and wide-record layouts.
+/// value16 and value17 extensions), which share the dictionary and
+/// wide-record layouts.
 #[must_use]
 pub fn dynamic_layout(version: u32) -> bool {
-    matches!(version, DYNAMIC_VALUE_VERSION | PROMISE_VALUE_VERSION)
+    matches!(
+        version,
+        DYNAMIC_VALUE_VERSION | PROMISE_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION
+    )
+}
+/// Whether `version` tags promise values (value16 and its value17 extension).
+#[must_use]
+pub fn promise_layout(version: u32) -> bool {
+    matches!(
+        version,
+        PROMISE_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION
+    )
+}
+/// Whether `version` admits the function tag: value14 (closure transport with
+/// an owner catalog) and value17 (function fields read through their closure
+/// envelope).
+#[must_use]
+pub fn function_layout(version: u32) -> bool {
+    matches!(
+        version,
+        FUNCTION_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION
+    )
 }
 pub const SPARSE_BITMAP_BYTES: usize = MAX_ARRAY_ELEMENTS / u8::BITS as usize;
 pub const HEAP_SPARSE_FLAG: i32 = 1024;
@@ -175,6 +203,7 @@ pub fn record_bytes(version: u32, count: usize) -> usize {
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             size_of::<u32>() * (count + presence_words(count))
         } else {
@@ -211,6 +240,7 @@ pub fn supported_version(version: u32) -> bool {
             | FUNCTION_VALUE_VERSION
             | DYNAMIC_VALUE_VERSION
             | PROMISE_VALUE_VERSION
+            | FUNCTION_FIELD_VALUE_VERSION
     )
 }
 #[must_use]
@@ -309,15 +339,16 @@ impl ValueKind {
     pub fn supported_by(self, version: u32) -> bool {
         supported_version(version)
             && match self {
-                Self::Function => version == FUNCTION_VALUE_VERSION,
+                Self::Function => function_layout(version),
                 Self::Dictionary => dynamic_layout(version),
-                Self::Promise => version == PROMISE_VALUE_VERSION,
+                Self::Promise => promise_layout(version),
                 Self::BigInt => matches!(
                     version,
                     BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
+                        | FUNCTION_FIELD_VALUE_VERSION
                 ),
                 Self::Float64 => matches!(
                     version,
@@ -335,6 +366,7 @@ impl ValueKind {
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
+                        | FUNCTION_FIELD_VALUE_VERSION
                 ),
                 Self::Undefined => matches!(
                     version,
@@ -351,6 +383,7 @@ impl ValueKind {
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
+                        | FUNCTION_FIELD_VALUE_VERSION
                 ),
                 Self::PrimitiveUnion => {
                     matches!(
@@ -366,6 +399,7 @@ impl ValueKind {
                             | FUNCTION_VALUE_VERSION
                             | DYNAMIC_VALUE_VERSION
                             | PROMISE_VALUE_VERSION
+                            | FUNCTION_FIELD_VALUE_VERSION
                     )
                 }
                 Self::ReferenceUnion => {
@@ -380,6 +414,7 @@ impl ValueKind {
                             | FUNCTION_VALUE_VERSION
                             | DYNAMIC_VALUE_VERSION
                             | PROMISE_VALUE_VERSION
+                            | FUNCTION_FIELD_VALUE_VERSION
                     )
                 }
                 Self::Error => matches!(
@@ -391,6 +426,7 @@ impl ValueKind {
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
+                        | FUNCTION_FIELD_VALUE_VERSION
                 ),
                 Self::I32 => matches!(version, LEGACY_VALUE_VERSION | VALUE_VERSION),
                 _ => true,

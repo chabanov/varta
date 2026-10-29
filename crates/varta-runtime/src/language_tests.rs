@@ -456,12 +456,12 @@ export function main():void{
 }
 
 #[test]
-fn pilot_profile_v36_declares_host_abi_32_with_value16_and_fails_where_unknown() {
+fn pilot_profile_v36_declares_host_abi_32_with_value17_and_fails_where_unknown() {
     use varta_common::language::{LanguageContract, SCHEMA_VERSION};
     use varta_common::value;
     // Classes, generators, dictionaries, checked JSON, promise values and the
     // scheduler: v36 runs every inherited v35 feature unchanged under its own
-    // host ABI and value layout 16.
+    // host ABI and value layout 17.
     let source = r#"
 class Probe{n:number;constructor(n:number){this.n=n;}}
 function* digits():Generator<number,void,undefined>{yield 3;yield 6;}
@@ -485,7 +485,7 @@ export function main():void{
     assert_eq!(inspection.language.origin, LanguageOrigin::Declared);
     assert_eq!(
         inspection.value_abi_version,
-        Some(value::PROMISE_VALUE_VERSION)
+        Some(value::FUNCTION_FIELD_VALUE_VERSION)
     );
     assert_eq!(v36.host_abi(), abi::TIMERS_VERSION);
     assert_eq!(
@@ -532,7 +532,9 @@ export function main():void{
         host_abi(&bytes, None),
         // The v36 host ABI without a declared profile is not legacy input.
         legacy(&bytes),
-        // V36 declaring the value15, value13 or function value codec version.
+        // V36 declaring the value16, value15, value13 or function value codec
+        // version.
+        value_abi(&bytes, Some(value::PROMISE_VALUE_VERSION)),
         value_abi(&bytes, Some(value::DYNAMIC_VALUE_VERSION)),
         value_abi(&bytes, Some(value::BIGINT_VALUE_VERSION)),
         value_abi(&bytes, Some(value::FUNCTION_VALUE_VERSION)),
@@ -550,7 +552,7 @@ export function main():void{
         ));
     }
     for changed in [
-        value_abi(&bytes, Some(value::PROMISE_VALUE_VERSION + 1)),
+        value_abi(&bytes, Some(value::FUNCTION_FIELD_VALUE_VERSION + 1)),
         value_abi(&bytes, None),
     ] {
         assert!(runtime.validate_module(&changed).is_err());

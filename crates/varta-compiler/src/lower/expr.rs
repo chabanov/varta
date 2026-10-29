@@ -97,6 +97,9 @@ impl Lower<'_> {
             ast::Expr::Await(expression) if self.types.profile.async_functions() => {
                 self.await_expression(expression)
             }
+            ast::Expr::OptChain(chain) if self.types.profile.function_fields() => {
+                self.optional_chain(chain)
+            }
             _ => self.expr_inner(expression),
         };
         self.depth -= 1;
@@ -618,6 +621,11 @@ impl Lower<'_> {
             }
             return self.parse_json(call);
         }
+        if let ast::Callee::Expr(callee) = &call.callee
+            && self.function_field_callee(callee)
+        {
+            return self.function_field_call(call, callee);
+        }
         if self.types.profile.classes() {
             if matches!(call.callee, ast::Callee::Super(_)) {
                 return self.super_call(call);
@@ -919,12 +927,22 @@ impl Lower<'_> {
                     value.span,
                 ));
             }
+            if function_fields::reaches_callable_to_json(value.ty, self.types) {
+                return Err(self.source.locate(
+                    unsupported("JSON.stringify of a value with a function-valued toJSON field; the host cannot call guest code"),
+                    value.span,
+                ));
+            }
+            // A function (v36) serializes like `undefined`.
+            let function = |ty: &Type| matches!(ty, Type::Function(_));
             let ty = if value.ty == Type::Unknown
                 || value.ty.is_union()
-                    && unions::members(value.ty, self.types).contains(&Type::Undefined)
+                    && unions::members(value.ty, self.types)
+                        .iter()
+                        .any(|ty| *ty == Type::Undefined || function(ty))
             {
                 unions::intern(vec![Type::String, Type::Undefined], self.types)?
-            } else if value.ty == Type::Undefined {
+            } else if value.ty == Type::Undefined || function(&value.ty) {
                 Type::Undefined
             } else {
                 Type::String
@@ -1034,6 +1052,10 @@ impl Lower<'_> {
                 }
                 if matches!(arg.ty, Type::Promise(_)) && self.types.profile.promise_values() {
                     // A value16 promise is logged through its tagged cell.
+                    arg = unknown::widen(arg, self.types)?;
+                }
+                if matches!(arg.ty, Type::Function(_)) && self.types.profile.function_fields() {
+                    // So is a value17 function.
                     arg = unknown::widen(arg, self.types)?;
                 }
                 let host = match arg.ty {

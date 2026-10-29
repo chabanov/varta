@@ -17,7 +17,7 @@ struct Field {
 
 impl Encoder<'_, '_> {
     pub(super) fn promise(&mut self, packed: u64, depth: usize) -> Result<(), wasmtime::Error> {
-        if self.version != PROMISE_VALUE_VERSION {
+        if !varta_common::value::promise_layout(self.version) {
             return Err(error("incompatible promise value"));
         }
         validate_aggregate(self.data, ValueKind::Record, packed, self.version)

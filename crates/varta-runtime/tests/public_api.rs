@@ -4566,3 +4566,63 @@ fn public_engine_shares_v35_web_types_across_modules_without_listing_preludes() 
         .to_string();
     assert!(frozen.contains("Headers"), "{frozen}");
 }
+
+#[test]
+fn public_engine_links_function_fields_and_defaulted_callbacks_across_modules_in_v36() {
+    // The pilot's backoff helper (a defaulted `random: () => number =
+    // Math.random` parameter) and a transport hooks interface with optional
+    // function fields, exported by one module and filled by the entry module.
+    use varta_common::language::LanguageProfile;
+    struct HookSources;
+    impl ModuleLoader for HookSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./util.ts" => Ok("util.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("util.ts") => "export interface Hooks{onRetry?:(attempt:number)=>void;delay:(attempt:number)=>number}\
+                    export function streamBackoffDelay(attempt:number,base:number,max:number,random:()=>number=Math.random):number{\
+                    const half=Math.max(Math.min(max,base*2**Math.max(attempt-1,0))/2,1);return Math.round(half+random()*half);}\
+                    export function retry(hooks:Hooks,attempts:number):number{let total=0;\
+                    for(let attempt=1;attempt<=attempts;attempt++){hooks.onRetry?.(attempt);total+=hooks.delay(attempt);}return total;}",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {retry,streamBackoffDelay} from './util.ts';import type {Hooks} from './util.ts';\
+                       export function main():void{let seen='';\
+                       const hooks:Hooks={onRetry:(attempt:number):void=>{seen=seen+String(attempt);},\
+                       delay:(attempt:number):number=>streamBackoffDelay(attempt,100,1000,():number=>0.5)};\
+                       console.log(`${retry(hooks,3)} ${seen}`);\
+                       const plain:Hooks={delay:(attempt:number):number=>attempt};console.log(retry(plain,3));\
+                       const jitter=streamBackoffDelay(2,100,1000);console.log(String(jitter>=100&&jitter<=200));}"
+                    .into(),
+            },
+            &HookSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V36).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: 525 123", "varta log: 6", "varta log: true"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V35)
+        .err()
+        .unwrap()
+        .to_string();
+    // V35 stops at the defaulted function-typed parameter (the pilot's v35 blocker).
+    assert!(frozen.contains("union members other than"), "{frozen}");
+}
