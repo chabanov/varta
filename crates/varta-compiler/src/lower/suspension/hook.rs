@@ -1,13 +1,18 @@
 //! Test-only lowering hook: while enabled on the current thread, a call to
 //! `__varta_suspend(value[, witness])` lowers to a suspension point. The literal
-//! witness selects the resume input type (number by default). Never compiled
-//! outside unit tests, so no profile admits suspension syntax.
+//! witness selects the resume input type (number by default). Compiled only
+//! for unit tests or the test-only `suspension-test-hook` feature, so no
+//! profile admits suspension syntax.
 use super::*;
 use std::cell::Cell;
 
 pub(crate) const NAME: &str = "__varta_suspend";
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(false) };
+}
+/// Whether the hook is enabled on this thread.
+pub(crate) fn enabled() -> bool {
+    ENABLED.with(Cell::get)
 }
 /// Run `f` with the hook enabled on this thread.
 pub(crate) fn with<T>(f: impl FnOnce() -> T) -> T {
@@ -27,7 +32,7 @@ impl Lower<'_> {
         let ast::Expr::Ident(name) = &**callee else {
             return Ok(None);
         };
-        if name.sym != NAME || !ENABLED.with(Cell::get) {
+        if name.sym != NAME || !enabled() {
             return Ok(None);
         }
         let (value, witness) = match call.args.as_slice() {

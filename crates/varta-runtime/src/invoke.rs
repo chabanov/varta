@@ -179,6 +179,7 @@ fn runtime_error(error: RuntimeError) -> Error {
         RuntimeError::ToolContract(error) => Error::InvalidArtifact(error.to_string()),
         RuntimeError::Http(error) => Error::InvalidArtifact(error.to_string()),
         RuntimeError::ValueAbi(error) => Error::InvalidArtifact(error.to_string()),
+        RuntimeError::Frames(error) => Error::InvalidArtifact(error.to_string()),
         RuntimeError::Language(error) => Error::InvalidArtifact(error.to_string()),
     }
 }

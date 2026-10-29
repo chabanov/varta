@@ -525,7 +525,7 @@ impl Lower<'_> {
         expected: Option<Type>,
         hints: Option<references::AggregateHints>,
     ) -> Result<Expr> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "suspension-test-hook"))]
         if let Some(point) = self.suspension_hook(call)? {
             return Ok(point);
         }

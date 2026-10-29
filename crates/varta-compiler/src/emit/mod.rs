@@ -35,7 +35,7 @@ use swc_ecma_ast::BinaryOp;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 type Result<T> = std::result::Result<T, CompilerError>;
-#[cfg(test)]
+#[cfg(any(test, feature = "suspension-test-hook"))]
 pub(crate) use frames::{TEST_COLLECT, TEST_CREATE_PREFIX};
 #[derive(Clone, Copy)]
 struct Label {
@@ -511,8 +511,13 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             wasm_encoder::ExportKind::Func,
             dispatcher,
         );
-        #[cfg(test)]
-        frames::test_exports(&mut exports, &frame_layouts, functions_begin, &helpers);
+        // Frame creators and the collector are exported only for tests: always
+        // in compiler unit tests, and for feature builds only while the hook
+        // is enabled on this thread.
+        #[cfg(any(test, feature = "suspension-test-hook"))]
+        if cfg!(test) || crate::lower::suspension::hook::enabled() {
+            frames::test_exports(&mut exports, &frame_layouts, functions_begin, &helpers);
+        }
     }
     if let Some(index) = error_channel_version {
         exports.export(

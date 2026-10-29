@@ -47,6 +47,9 @@ mod default_export_tests;
 #[cfg(test)]
 mod exit_flow_tests;
 #[cfg(test)]
+mod frame_admission_tests;
+mod frames;
+#[cfg(test)]
 mod guest_truth_tests;
 #[cfg(test)]
 mod interface_extends_tests;
@@ -162,6 +165,8 @@ pub enum RuntimeError {
     Http(#[from] varta_common::http::HttpError),
     #[error(transparent)]
     ValueAbi(#[from] varta_common::value::ValueAbiError),
+    #[error(transparent)]
+    Frames(#[from] varta_common::function::admission::FrameAdmissionError),
     #[error(transparent)]
     ToolContract(#[from] varta_common::ToolContractError),
     #[error(transparent)]

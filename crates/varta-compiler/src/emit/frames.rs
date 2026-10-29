@@ -946,11 +946,11 @@ pub(super) fn resume_body<'a>(
 
 /// Test-only entry points: frame creators by layout id and the collector, so
 /// tests can create frames and force collections between resumptions.
-#[cfg(test)]
+#[cfg(any(test, feature = "suspension-test-hook"))]
 pub(crate) const TEST_CREATE_PREFIX: &str = "varta.test.frame.";
-#[cfg(test)]
+#[cfg(any(test, feature = "suspension-test-hook"))]
 pub(crate) const TEST_COLLECT: &str = "varta.test.collect";
-#[cfg(test)]
+#[cfg(any(test, feature = "suspension-test-hook"))]
 pub(super) fn test_exports(
     exports: &mut wasm_encoder::ExportSection,
     layouts: &[Layout],

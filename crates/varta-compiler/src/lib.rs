@@ -27,6 +27,30 @@ mod tool_tests;
 
 pub use error::CompilerError;
 
+/// Test-only access to the K4.4 suspension lowering hook for other crates'
+/// tests (runtime admission of resumable frames). Never enabled by production
+/// dependents; no source profile admits suspension syntax through it.
+#[cfg(feature = "suspension-test-hook")]
+#[doc(hidden)]
+pub mod suspension_test_hook {
+    /// The hook call that lowers to a suspension point.
+    pub const SUSPEND: &str = crate::lower::suspension::hook::NAME;
+    /// Export prefix of frame creators, followed by the layout id.
+    pub const CREATE_PREFIX: &str = crate::emit::TEST_CREATE_PREFIX;
+    /// Export of the collector, for forced collections between resumptions.
+    pub const COLLECT: &str = crate::emit::TEST_COLLECT;
+
+    /// Compile one source with the hook enabled on this thread.
+    pub fn compile_with_profile(
+        source: &str,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Result<Vec<u8>, crate::CompilerError> {
+        crate::lower::suspension::hook::with(|| {
+            crate::compile_typescript_with_profile(source, profile)
+        })
+    }
+}
+
 /// Parse an in-memory source using the compatibility filename `input.ts`.
 pub fn parse_typescript(source: &str) -> Result<usize, CompilerError> {
     parse_typescript_with_path(source, std::path::Path::new("input.ts"))

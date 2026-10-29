@@ -25,4 +25,5 @@ http-body-util.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-varta-compiler = { path = "../varta-compiler" }
+# The test-only hook produces v33 frame modules for runtime admission tests.
+varta-compiler = { path = "../varta-compiler", features = ["suspension-test-hook"] }

@@ -15,6 +15,12 @@ swc_ecma_parser = "46.1.2"
 swc_ecma_ast = "29.0.0"
 swc_ecma_visit = "=29.0.0"
 
+[features]
+# Test-only: exposes the K4.4 suspension lowering hook and frame test exports
+# to other crates' tests (runtime admission). Production dependents never
+# enable it, and it is inert unless a test enables the hook on its thread.
+suspension-test-hook = []
+
 [dev-dependencies]
 # Suspension-foundation tests drive frames and the dispatcher directly.
 wasmtime.workspace = true

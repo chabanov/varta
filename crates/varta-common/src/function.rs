@@ -32,6 +32,9 @@ pub use catalog::{
     CATALOG_SECTION, CATALOG_VERSION, CaptureBinding, CaptureField, CaptureFunction, CaptureType,
     FrameLayout, FrameSlot, FrameState, FunctionCatalog, MAX_CAPTURE_TYPES,
 };
+pub mod admission;
+#[cfg(test)]
+mod admission_tests;
 pub mod frame;
 #[cfg(test)]
 mod frame_tests;

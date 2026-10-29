@@ -1,12 +1,13 @@
 //! K4.4 suspension foundation on typed IR after lowering: evaluation-order
 //! normalization, then a resumable state machine whose saved values all live in
 //! an explicit continuation frame. No source syntax produces suspension points
-//! yet; compiler tests reach them through the `#[cfg(test)]` lowering hook.
+//! yet; tests reach them through the test-only lowering hook (compiler unit
+//! tests, or other crates' tests through the `suspension-test-hook` feature).
 use super::*;
 use swc_ecma_ast::BinaryOp;
 use varta_common::function::frame;
 mod construct;
-#[cfg(test)]
+#[cfg(any(test, feature = "suspension-test-hook"))]
 pub(crate) mod hook;
 mod normalize;
 mod states;

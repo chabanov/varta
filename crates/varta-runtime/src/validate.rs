@@ -234,9 +234,12 @@ fn preflight(
                 {
                     return Err(error("unsupported or duplicate function capture catalog"));
                 }
-                let catalog =
-                    varta_common::function::VerifiedFunctionCatalog::from_bytes(section.data())
-                        .map_err(|e| error(&e.to_string()))?;
+                // Version 2 frame catalogs are read only for resumable-frame profiles.
+                let catalog = varta_common::function::admission::read_catalog(
+                    section.data(),
+                    language.profile.unwrap_or_default(),
+                )?
+                .into_verified()?;
                 if Some(catalog.as_catalog().value_version)
                     != language.profile.map(|profile| profile.value_abi())
                 {
@@ -291,6 +294,11 @@ fn preflight(
     if (!json_imports.is_empty() || union_imports || profile.exceptions()) && values != 1 {
         return Err(error("JSON import requires structured value ABI metadata"));
     }
+    crate::frames::admit(
+        bytes,
+        profile,
+        function_catalog.as_deref().map(|c| c.as_catalog()),
+    )?;
     Ok((language, function_catalog))
 }
 
