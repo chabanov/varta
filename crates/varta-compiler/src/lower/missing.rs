@@ -59,7 +59,7 @@ impl Lower<'_> {
         if call.args.len() != 2 {
             return Err(invalid("Object.hasOwn expects two arguments"));
         }
-        let value = self.expr(&call.args[0].expr)?;
+        let value = self.object_value(&call.args[0].expr)?;
         if matches!(value.ty, Type::Dictionary(_)) {
             let key = self.expr(&call.args[1].expr)?;
             return self.dictionary_has(value, key, false);

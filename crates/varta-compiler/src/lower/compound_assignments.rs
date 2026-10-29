@@ -76,6 +76,12 @@ impl Lower<'_> {
                 .ok_or_else(|| invalid("missing compound assignment binding"))?,
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) => {
                 let base = self.write_member_base(member)?;
+                if self.types.profile.mixed_index_records()
+                    && matches!(base.ty, Type::Dictionary(_))
+                {
+                    let update = dictionary_updates::Update::Compound(op, &assign.right);
+                    return self.dictionary_update(member, base, update, assign.span);
+                }
                 if let Type::Record(shape) = base.ty
                     && let ast::MemberProp::Computed(key) = &member.prop
                     && !matches!(

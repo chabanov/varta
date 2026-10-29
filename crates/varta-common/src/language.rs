@@ -327,15 +327,22 @@ impl LanguageProfile {
         self == Self::CheckedF64Utf16V35
     }
     /// Pilot batch v35, records stream: interfaces and object types that
-    /// combine declared fields with a string index signature, plus `for...in`,
-    /// compound assignment and spread on dictionaries. Admits nothing yet.
+    /// combine declared fields with a string index signature (mixed records:
+    /// value15 dictionaries whose declared fields are a checked static view),
+    /// `for...in` over dictionaries and records, compound, logical and update
+    /// assignments, spread, number keys and `Record<string, T>` inference on
+    /// dictionaries, and optional or redeclared class fields. Adds no value
+    /// tag, layout or host import.
     #[must_use]
     pub fn mixed_index_records(self) -> bool {
         self == Self::CheckedF64Utf16V35
     }
     /// Pilot batch v35, records stream: `JSON.parse` and checked parsing that
-    /// produce `unknown`, and narrowing `unknown` to dictionaries. Admits
-    /// nothing yet.
+    /// produce `unknown` (a graph of primitives, `unknown[]` and
+    /// `Record<string, unknown>` through JSON schema 15), dictionary
+    /// assertions checked by the exact storage descriptor, and narrowing
+    /// `unknown` to `object` and its `in`-proven keys. Adds no value tag,
+    /// layout, schema version or host import.
     #[must_use]
     pub fn unknown_json(self) -> bool {
         self == Self::CheckedF64Utf16V35

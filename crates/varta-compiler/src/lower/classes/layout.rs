@@ -121,6 +121,26 @@ fn layout_members(
             ast::ClassMember::ClassProp(property) => {
                 let (field, initializer) =
                     field(id, property, types).map_err(|e| source.locate(e, property.span))?;
+                if types.profile.mixed_index_records()
+                    && let Some(inherited) = fields
+                        .iter_mut()
+                        .find(|f| f.name == field.name && f.owner != id)
+                {
+                    // A compatible redeclaration of an inherited field (v35):
+                    // the slot is shared, and unless the declaration is
+                    // ambient it is defined again after `super(...)` returns.
+                    redeclare(inherited, &field).map_err(|e| source.locate(e, property.span))?;
+                    if !property.declare {
+                        initializers.push((
+                            field.name.clone(),
+                            initializer_or_undefined(initializer, property),
+                        ));
+                    }
+                    continue;
+                }
+                if property.declare {
+                    return Err(source.locate(unsupported("ambient class field"), property.span));
+                }
                 if fields.iter().any(|f| f.name == field.name) || methods.contains_key(&field.name)
                 {
                     return Err(source.locate(
@@ -130,6 +150,10 @@ fn layout_members(
                 }
                 if let Some(value) = initializer {
                     initializers.push((field.name.clone(), value));
+                } else if property.is_optional {
+                    // `x?: T` defines the own property `x` as `undefined`.
+                    initializers
+                        .push((field.name.clone(), initializer_or_undefined(None, property)));
                 }
                 fields.push(field);
             }
@@ -229,10 +253,12 @@ fn field(
         Some("class field decorator")
     } else if property.is_abstract {
         Some("abstract class field")
-    } else if property.is_optional {
+    } else if property.is_optional && !types.profile.mixed_index_records() {
         Some("optional class field")
-    } else if property.declare {
+    } else if property.declare && !types.profile.mixed_index_records() {
         Some("ambient class field")
+    } else if property.declare && property.value.is_some() {
+        Some("ambient class field initializer")
     } else if property.definite {
         Some("definite assignment assertion on a class field")
     } else if property.is_override {
@@ -256,6 +282,12 @@ fn field(
                 ))
             })?,
     };
+    // An optional field (v35) holds `undefined` when not assigned.
+    let ty = if property.is_optional {
+        unions::intern(vec![ty, Type::Undefined], types)?
+    } else {
+        ty
+    };
     if matches!(ty, Type::Function(_)) {
         return Err(unsupported("function-valued class field"));
     }
@@ -271,9 +303,65 @@ fn field(
             owner,
             access: Access::from_ast(property.accessibility),
             readonly: property.readonly,
+            redeclared: None,
         },
         property.value.clone(),
     ))
+}
+
+/// Check a subclass redeclaration of an inherited field (v35): TypeScript
+/// requires an assignable type, and Varta the same type, because the slot is
+/// shared with the base class, whose own writes would otherwise break a
+/// narrower type. A private base field cannot be redeclared, the access level
+/// may not become stricter, and the redeclaration may add `readonly`.
+fn redeclare(inherited: &mut Field, own: &Field) -> Result<()> {
+    if inherited.access == Access::Private {
+        return Err(type_error(format!(
+            "class field {} redeclares a private inherited field",
+            own.name
+        )));
+    }
+    let stricter = matches!(
+        (inherited.access, own.access),
+        (Access::Public, Access::Protected | Access::Private)
+            | (Access::Protected, Access::Private)
+    );
+    if stricter {
+        return Err(type_error(format!(
+            "class field {} must keep the inherited accessibility",
+            own.name
+        )));
+    }
+    if inherited.readonly && !own.readonly {
+        return Err(type_error(format!(
+            "class field {} must stay readonly like the inherited field",
+            own.name
+        )));
+    }
+    if inherited.ty != own.ty {
+        return Err(type_error(format!(
+            "class field {} redeclares the inherited field with type {} instead of {};              a redeclaration must keep the inherited type",
+            own.name, own.ty, inherited.ty
+        )));
+    }
+    inherited.access = own.access;
+    inherited.readonly = own.readonly;
+    inherited.redeclared = Some(own.owner);
+    Ok(())
+}
+
+/// The initializer of a field definition: its own, or `undefined`.
+fn initializer_or_undefined(
+    initializer: Option<Box<ast::Expr>>,
+    property: &ast::ClassProp,
+) -> Box<ast::Expr> {
+    initializer.unwrap_or_else(|| {
+        Box::new(ast::Expr::Ident(ast::Ident::new(
+            "undefined".into(),
+            property.span,
+            Default::default(),
+        )))
+    })
 }
 
 fn method(

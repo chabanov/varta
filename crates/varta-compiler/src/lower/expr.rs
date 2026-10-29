@@ -209,7 +209,11 @@ impl Lower<'_> {
                     )));
                 }
                 let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
-                if let Some(narrow) = self.refinements.get(&binding.slot).copied() {
+                if let Some(narrow) = self.refinements.get(&binding.slot).copied()
+                    // An `object` fact (v35) is read as the `unknown` cell; only
+                    // `object_value` consumers use it.
+                    && !matches!(narrow, Type::Object(_))
+                {
                     let local = Expr {
                         span: expression.span(),
                         ty,
@@ -389,7 +393,12 @@ impl Lower<'_> {
                     self.flow_restore(&saved);
                     return self.guest_logical(binary.op, left, right?, expression.span());
                 }
-                let right = self.expr(&binary.right)?;
+                let right = if binary.op == ast::BinaryOp::In {
+                    // `key in value` for an `object` narrowed from unknown (v35).
+                    self.object_value(&binary.right)?
+                } else {
+                    self.expr(&binary.right)?
+                };
                 if (left.ty == Type::Unknown || right.ty == Type::Unknown)
                     && !matches!(
                         binary.op,
@@ -881,6 +890,9 @@ impl Lower<'_> {
         }
         if name == "varta.result.capture" {
             return self.capture(call);
+        }
+        if name == "JSON.parse" && self.types.profile.unknown_json() {
+            return self.global_parse_json(call);
         }
         if name == "JSON.stringify" {
             if call.args.len() != 1 {

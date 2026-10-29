@@ -411,7 +411,15 @@ impl<'a> Collected<'a> {
             return;
         }
         match ty {
-            Type::Unknown => self.unions = true,
+            Type::Unknown => {
+                self.unions = true;
+                if let Some((array, dictionary)) =
+                    crate::lower::json::unknown_graph_types(self.types)
+                {
+                    self.schema_type(Type::Array(array), location);
+                    self.schema_type(Type::Dictionary(dictionary), location);
+                }
+            }
             Type::Union(id) | Type::ReferenceUnion(id) => {
                 self.unions = true;
                 let members = self.types.unions[id as usize].clone();

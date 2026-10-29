@@ -49,6 +49,11 @@ pub(crate) enum Type {
     /// `unknown` (v34 `unknown_type`): a reference-union cell whose member may
     /// be any admitted value kind; only checked guards and assertions extract it.
     Unknown,
+    /// TypeScript's `object` (v35 `unknown_json`): an `unknown` cell that a
+    /// `typeof x === "object"` guard proved to hold a non-primitive value, or
+    /// (`true`) that value or `null`. Physically the same cell as `unknown`;
+    /// dictionary operations on it test the cell first.
+    Object(bool),
     /// Promise object (v34 `promises`): a guest-heap record with private
     /// fields and no value tag; the id indexes `ValueTypes::promises`.
     Promise(u32),
@@ -100,11 +105,12 @@ impl Type {
                 | Self::Union(_)
                 | Self::ReferenceUnion(_)
                 | Self::Unknown
+                | Self::Object(_)
         )
     }
-    /// A managed union cell: a closed union or `unknown` (v34).
+    /// A managed union cell: a closed union, `unknown` (v34) or `object` (v35).
     pub(crate) fn is_cell(self) -> bool {
-        self.is_union() || self == Self::Unknown
+        self.is_union() || matches!(self, Self::Unknown | Self::Object(_))
     }
     pub(crate) fn from_error_class(class: varta_common::value::ErrorClass) -> Self {
         if class == varta_common::value::ErrorClass::Error {
@@ -226,6 +232,12 @@ pub(crate) struct ValueTypes {
     pub generics: crate::lower::generics::Generics,
     pub generators: Vec<GeneratorType>,
     pub dictionaries: Vec<DictionaryType>,
+    /// Declared members of mixed index records (v35 `mixed_index_records`),
+    /// indexed by `DictionaryType::declared`.
+    pub mixed: Vec<MixedMembers>,
+    /// Shared dictionary operation functions (v35), by operation and plain
+    /// dictionary type id; see `lower::dictionary_helpers`.
+    pub dictionary_helpers: std::collections::BTreeMap<(DictionaryHelper, u32), usize>,
     pub promises: Vec<PromiseType>,
     /// Promise lowering state (v34): synthesized helpers and scheduled frames.
     pub asynchrony: crate::lower::promises::Asynchrony,
@@ -238,6 +250,32 @@ pub(crate) struct DictionaryType {
     pub keys: Type,
     pub values: Type,
     pub storage: u32,
+    /// Declared members of a mixed index record or an `object` view (v35),
+    /// an index into `ValueTypes::mixed`; `None` for a plain dictionary. The
+    /// storage is always the plain dictionary's: declared members are a
+    /// static view whose reads are checked, never a layout.
+    pub declared: Option<u32>,
+}
+/// A dictionary operation lowered once per dictionary type into a shared
+/// function (v35) instead of inline at every use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DictionaryHelper {
+    /// `(d, key) -> T | undefined`.
+    Get,
+    /// `(d, key, value) -> T`: replace in place or insert at the own-key position.
+    Set,
+    /// `(d, key) -> boolean`.
+    Delete,
+}
+/// The declared fields of a mixed index record (v35 `mixed_index_records`),
+/// sorted by name, or the keys an `in` guard proved on an `object` (v35
+/// `unknown_json`). Field types include `undefined` for optional fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MixedMembers {
+    pub fields: Vec<RecordField>,
+    /// TypeScript's `object` narrowed by `in` guards: only the proven keys may
+    /// be read by name, and dynamic keys are rejected (they would be `any`).
+    pub object: bool,
 }
 /// `Promise<T>` (v34): the value type and the private record shape of its
 /// objects; see `lower::promises`.
@@ -297,6 +335,15 @@ impl ValueTypes {
             varta_common::value::max_record_fields(self.value_version())
         } else {
             varta_common::value::MAX_RECORD_FIELDS
+        }
+    }
+    /// The declared members of a mixed index record or `object` view (v35).
+    pub fn declared(&self, ty: Type) -> Option<&MixedMembers> {
+        match ty {
+            Type::Dictionary(id) => self.dictionaries[id as usize]
+                .declared
+                .map(|members| &self.mixed[members as usize]),
+            _ => None,
         }
     }
     /// The record shape that physically lays out a record or dictionary value.
@@ -386,7 +433,7 @@ impl Type {
             Self::Dictionary(_) => V::Dictionary,
             Self::Array(_) => V::Array,
             Self::Union(_) => V::PrimitiveUnion,
-            Self::ReferenceUnion(_) | Self::Unknown => V::ReferenceUnion,
+            Self::ReferenceUnion(_) | Self::Unknown | Self::Object(_) => V::ReferenceUnion,
             Self::Literal(base, _) => return base.erased().value_kind(),
             _ => return None,
         })
@@ -792,6 +839,8 @@ impl std::fmt::Display for Type {
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",
             Self::Unknown => "unknown",
+            Self::Object(false) => "object",
+            Self::Object(true) => "object | null",
             Self::Literal(LiteralBase::String, _) => "string literal type",
             Self::Literal(LiteralBase::Number, _) => "number literal type",
             Self::Literal(LiteralBase::Boolean, _) => "boolean literal type",

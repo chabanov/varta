@@ -48,6 +48,28 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     if values.contains(&Type::Unknown) {
         return Ok(Type::Unknown);
     }
+    // `object` facts (v35) join with `null` and with the dictionary views of
+    // `in` guards; any other member leaves only `unknown`.
+    let view = |ty: &Type| types.declared(*ty).is_some_and(|members| members.object);
+    let views = {
+        let mut views: Vec<_> = values.iter().copied().filter(view).collect();
+        views.sort();
+        views.dedup();
+        views.len()
+    };
+    if values.iter().any(|ty| matches!(ty, Type::Object(_))) || views > 1 {
+        let objects = values
+            .iter()
+            .all(|ty| matches!(ty, Type::Object(_) | Type::Null) || view(ty));
+        let nullable = values
+            .iter()
+            .any(|ty| matches!(ty, Type::Object(true) | Type::Null));
+        return Ok(if objects {
+            Type::Object(nullable)
+        } else {
+            Type::Unknown
+        });
+    }
     if types.profile.error_subclasses() {
         values = classes::join_error_classes(values, types);
     }
@@ -142,11 +164,24 @@ pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes)
     {
         return Ok(Expr { ty, ..value });
     }
+    // A mixed record and its plain dictionary share one storage (v35).
+    if let Some(ty @ Type::Dictionary(_)) = expected
+        && dictionaries::converts(ty, value.ty, types)
+    {
+        return Ok(Expr { ty, ..value });
+    }
     let Some(ty @ (Type::Union(id) | Type::ReferenceUnion(id))) = expected else {
         return Ok(value);
     };
     let target = &types.unions[id as usize];
-    let value = classes::union_upcast(value, ty, types);
+    let mut value = classes::union_upcast(value, ty, types);
+    if !target.contains(&value.ty)
+        && let Some(&member) = target
+            .iter()
+            .find(|member| dictionaries::converts(**member, value.ty, types))
+    {
+        value.ty = member;
+    }
     if members(value.ty, types)
         .iter()
         .any(|m| !literals::member_of(*m, target, types))
@@ -308,7 +343,15 @@ impl Lower<'_> {
                     || (binary.op == ast::BinaryOp::LogicalOr && !yes))
             {
                 self.guard(&binary.left, yes)?;
-                return self.guard(&binary.right, yes);
+                self.guard(&binary.right, yes)?;
+                // `x !== null && typeof x === "object"` (v35): the null test
+                // also applies to the `object | null` fact proved after it.
+                if self.types.profile.unknown_json()
+                    && object_narrowing::typeof_object(&binary.right)
+                {
+                    self.guard(&binary.left, yes)?;
+                }
+                return Ok(());
             }
             if self.types.profile.literal_types()
                 && let ast::Expr::Bin(binary) = test
@@ -359,6 +402,9 @@ impl Lower<'_> {
         let ast::Expr::Bin(binary) = test else {
             return Ok(());
         };
+        if binary.op == ast::BinaryOp::In && yes && self.types.profile.unknown_json() {
+            return self.in_guard(&binary.left, &binary.right);
+        }
         let positive = match binary.op {
             ast::BinaryOp::EqEqEq => yes,
             ast::BinaryOp::NotEqEq => !yes,

@@ -131,6 +131,7 @@ fn base_members(id: u32, types: &mut ir::ValueTypes) -> Result<(Vec<Field>, Sign
         owner: id,
         access: Access::Public,
         readonly: false,
+        redeclared: None,
     };
     let signature = Signature {
         shape: ir::ParameterShape {

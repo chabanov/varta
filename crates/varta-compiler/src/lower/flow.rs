@@ -471,6 +471,15 @@ impl Lower<'_> {
             effects.shadows.pop();
         });
     }
+    pub(super) fn flow_for_in_effects(&mut self, statement: &ast::ForInStmt) {
+        self.flow_effects(|effects| {
+            let names = effects.head(&statement.left);
+            effects.shadows.push(names);
+            statement.left.visit_with(effects);
+            statement.body.visit_with(effects);
+            effects.shadows.pop();
+        });
+    }
     pub(super) fn flow_block_effects(&mut self, block: &ast::BlockStmt) {
         self.flow_effects(|effects| block.visit_with(effects));
     }

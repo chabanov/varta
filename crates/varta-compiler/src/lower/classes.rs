@@ -42,6 +42,9 @@ pub(super) struct Field {
     pub owner: u32,
     pub access: Access,
     pub readonly: bool,
+    /// The most-derived class that redeclared this inherited field (v35); its
+    /// constructor may assign the field like the declaring class's.
+    pub redeclared: Option<u32>,
 }
 #[derive(Clone)]
 pub(super) struct Method {

@@ -174,6 +174,29 @@ impl Inference {
                     depth + 1,
                 )
             }
+            // `{ [key: string]: T }` (v35 `mixed_index_records`).
+            ast::TsType::TsTypeLit(literal)
+                if types.profile.mixed_index_records()
+                    && let [ast::TsTypeElement::TsIndexSignature(index)] =
+                        literal.members.as_slice()
+                    && let Some(value) = index.type_ann.as_deref() =>
+            {
+                self.index_value(&value.type_ann, actual, types, depth)
+            }
+            ast::TsType::TsTypeRef(reference)
+                if types.profile.mixed_index_records()
+                    && matches!(&reference.type_name, ast::TsEntityName::Ident(id)
+                    if id.sym == "Record"
+                        && !in_definition(self.module, &Frame::new(), types, |t| {
+                            named::declared(t, "Record")
+                        }))
+                    && let Some([key, value]) =
+                        reference.type_params.as_deref().map(|p| &p.params[..])
+                    && matches!(&**key, ast::TsType::TsKeywordType(k)
+                        if k.kind == ast::TsKeywordTypeKind::TsStringKeyword) =>
+            {
+                self.index_value(value, actual, types, depth)
+            }
             ast::TsType::TsTypeLit(literal) => {
                 let Type::Record(id) = actual else {
                     return Ok(());
@@ -249,6 +272,33 @@ impl Inference {
             }
         }
         Ok(())
+    }
+    /// The value type of a `Record<string, T>` or index signature pattern:
+    /// a dictionary argument's value type, or the union of the field types of
+    /// a record argument (an object literal), with literal types widened.
+    fn index_value(
+        &mut self,
+        pattern: &ast::TsType,
+        actual: Type,
+        types: &mut ir::ValueTypes,
+        depth: usize,
+    ) -> Result<()> {
+        let value = match actual {
+            Type::Dictionary(id) => types.dictionaries[id as usize].value,
+            Type::Record(id) if types.records[id as usize].class.is_none() => {
+                let fields: Vec<_> = types.records[id as usize]
+                    .fields
+                    .iter()
+                    .map(|field| field.ty.erased())
+                    .collect();
+                if fields.is_empty() {
+                    return Ok(());
+                }
+                unions::intern(fields, types)?
+            }
+            _ => return Ok(()),
+        };
+        self.unify(pattern, value, types, depth + 1)
     }
     fn element(
         &mut self,
@@ -390,6 +440,24 @@ impl Lower<'_> {
             let context =
                 arguments::context(index, &signature.params, &signature.shape, self.types);
             values.push(self.expr_expected(&arg.expr, context)?);
+        }
+        // An object literal typed on its own while it determined the value
+        // type of a `Record<string, T>` parameter (v35) is copied into the
+        // instantiated dictionary, keeping its key order.
+        if self.types.profile.mixed_index_records() {
+            for (value, &param) in values.iter_mut().zip(&signature.params) {
+                if matches!(param, Type::Dictionary(_)) && matches!(value.ty, Type::Record(_)) {
+                    let record = std::mem::replace(
+                        value,
+                        Expr {
+                            span,
+                            ty: Type::Undefined,
+                            kind: E::Integer(0),
+                        },
+                    );
+                    *value = self.dictionary_from_record(record, param)?;
+                }
+            }
         }
         let args = self
             .bind_arguments(values, &signature.params, &signature.shape, span)

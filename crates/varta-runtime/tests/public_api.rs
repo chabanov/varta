@@ -4420,3 +4420,70 @@ fn public_engine_links_unknown_causes_and_checked_assertions_in_v34() {
         .to_string();
     assert!(frozen.contains("unsupported type annotation"), "{frozen}");
 }
+
+#[test]
+fn public_engine_links_mixed_records_and_json_to_unknown_in_v35() {
+    // The pilot's problem documents: a mixed interface exported by an errors
+    // module, read by declared field and by key after `JSON.parse`, with an
+    // Error subclass that redeclares `cause?: unknown`.
+    use varta_common::language::LanguageProfile;
+    struct ProblemSources;
+    impl ModuleLoader for ProblemSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./errors.ts" => Ok("errors.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("errors.ts") => "export interface ProblemDocument{type?:string;title?:string;\
+                    status?:number;detail?:string;instance?:string;[key:string]:unknown}\
+                    export class ApiError extends Error{readonly cause?:unknown;readonly problem:ProblemDocument;\
+                    constructor(message:string,problem:ProblemDocument){super(message);this.problem=problem;}}\
+                    export function parseProblem(text:string):ProblemDocument|undefined{\
+                    const value:unknown=JSON.parse(text);\
+                    if(typeof value==='object'&&value!==null&&!Array.isArray(value)){return value as ProblemDocument;}\
+                    return undefined;}",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {ApiError,parseProblem} from './errors.ts';import type {ProblemDocument} from './errors.ts';\
+                       export function main():void{\
+                       const doc=parseProblem('{\"title\":\"Gone\",\"status\":410,\"traceId\":\"t-1\"}');\
+                       if(doc!==undefined){const error=new ApiError(String(doc.title),doc);\
+                       let extras='';for(const key in error.problem){if(key!=='title'&&key!=='status'){extras=extras+key;}}\
+                       console.log(error.message+' '+String(error.problem.status)+' '+extras+' '+String(error.cause));\
+                       const fallback:ProblemDocument={...doc,status:500};console.log(JSON.stringify(Object.keys(fallback))+' '+String(fallback.status));}\
+                       console.log(String(parseProblem('[1]')===undefined));}"
+                    .into(),
+            },
+            &ProblemSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V35).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: Gone 410 traceId undefined",
+            r#"varta log: ["title","status","traceId"] 500"#,
+            "varta log: true",
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V34)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("mixed object type"), "{frozen}");
+}

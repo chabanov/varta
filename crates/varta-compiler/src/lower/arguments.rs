@@ -22,11 +22,14 @@ pub(super) fn accepts(expected: Type, actual: Type, types: &ir::ValueTypes) -> b
     expected == actual
         || literals::assignable(expected, actual, types)
         || classes::upcast(types, actual, expected)
+        || dictionaries::converts(expected, actual, types)
         || expected.is_union() && {
             let target = unions::members(expected, types);
             unions::members(actual, types).iter().all(|t| {
                 literals::member_of(*t, &target, types)
-                    || target.iter().any(|e| classes::upcast(types, *t, *e))
+                    || target.iter().any(|e| {
+                        classes::upcast(types, *t, *e) || dictionaries::converts(*e, *t, types)
+                    })
             })
         }
 }

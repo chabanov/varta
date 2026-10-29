@@ -67,6 +67,7 @@ pub(super) fn admissible(ty: Type) -> bool {
             | Type::Union(_)
             | Type::ReferenceUnion(_)
             | Type::Unknown
+            | Type::Object(_)
     )
 }
 
@@ -106,13 +107,34 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
 }
 
 /// Members a guard proves for an `unknown` binding. Only positive tag-exact
-/// guards narrow; `typeof x === "object"`, `Array.isArray` and truthiness
-/// prove no representable type, and negated guards keep `unknown`.
-pub(super) fn refine(guard: Guard, positive: bool) -> Option<Vec<Type>> {
+/// guards narrow; `Array.isArray` and truthiness prove no representable type,
+/// negated guards keep `unknown`, and `typeof x === "object"` proves only the
+/// v35 `object | null` fact (see `lower::object_narrowing`).
+pub(super) fn refine(guard: Guard, positive: bool, types: &ir::ValueTypes) -> Option<Vec<Type>> {
     match guard {
         Guard::Exact(ty) if positive => Some(vec![ty]),
         Guard::Literal(single) if positive => Some(vec![single]),
+        // `typeof x === "object"` (v35 `unknown_json`): TypeScript's
+        // `object | null`, a fact about the cell, not a member type.
+        Guard::Object if positive && types.profile.unknown_json() => Some(vec![Type::Object(true)]),
         _ => None,
+    }
+}
+
+/// What a guard proves for a binding known to hold `object` or, when
+/// `nullable`, `object | null` (v35 `unknown_json`). Object values are always
+/// truthy and never nullish; `Array.isArray` and `instanceof` keep the fact.
+pub(super) fn refine_object(guard: Guard, positive: bool, nullable: bool) -> Option<Vec<Type>> {
+    let non_null = match guard {
+        Guard::Exact(Type::Null) => !positive,
+        Guard::Nullish => !positive,
+        Guard::Truth(truthy) => truthy == positive,
+        _ => return None,
+    };
+    match (non_null, nullable) {
+        (true, _) => Some(vec![Type::Object(false)]),
+        (false, true) => Some(vec![Type::Null]),
+        (false, false) => None,
     }
 }
 
@@ -142,8 +164,8 @@ fn primitive_kind(element: Type) -> Option<varta_common::value::ValueKind> {
 }
 
 /// Whether a value of `source` may be used as `target` without a runtime test.
-fn upcast(source: Type, target: Type, types: &ir::ValueTypes) -> bool {
-    if source == target {
+pub(super) fn upcast(source: Type, target: Type, types: &ir::ValueTypes) -> bool {
+    if source == target || dictionaries::converts(target, source, types) {
         return true;
     }
     match target {
@@ -160,6 +182,74 @@ fn upcast(source: Type, target: Type, types: &ir::ValueTypes) -> bool {
             matches!(source, Type::Class(class) if types.classes.descends(class, base))
         }
         _ => literals::assignable(target, source, types),
+    }
+}
+
+/// Whether a cell of `source` that holds a member of `target` can be told
+/// apart by its tag alone: the target is itself an array, dictionary, record or
+/// class member of the closed source union (v35), whose member tags are
+/// distinct, so the tag proves the exact member type.
+fn member_tag(source: Type, target: Type, types: &ir::ValueTypes) -> bool {
+    types.profile.mixed_index_records()
+        && source.is_union()
+        && matches!(
+            target,
+            Type::Array(_) | Type::Dictionary(_) | Type::Record(_) | Type::Class(_)
+        )
+        && unions::members(source, types).contains(&target)
+}
+
+/// Whether a dictionary is checkable by the exact descriptor of its storage
+/// record (v35 `unknown_json`): the storage shape is interned by the value
+/// type, so the descriptor proves the value type exactly, whatever it is.
+fn storage_descriptor(types: &ir::ValueTypes) -> bool {
+    types.profile.unknown_json()
+}
+
+/// Whether `cell_test` can prove that a cell of `source` holds a `target`
+/// (the checks of a tested assertion or of a declared mixed-record read).
+pub(super) fn checkable(source: Type, target: Type, types: &ir::ValueTypes) -> bool {
+    checkable_visit(
+        source,
+        target,
+        types,
+        &mut std::collections::BTreeSet::new(),
+    )
+}
+fn checkable_visit(
+    source: Type,
+    target: Type,
+    types: &ir::ValueTypes,
+    seen: &mut std::collections::BTreeSet<Type>,
+) -> bool {
+    if upcast(source, target, types) || member_tag(source, target, types) {
+        return true;
+    }
+    if !seen.insert(target) {
+        return true;
+    }
+    match target {
+        Type::Unknown => true,
+        Type::Union(_) | Type::ReferenceUnion(_) => unions::members(target, types)
+            .into_iter()
+            .all(|member| checkable_visit(source, member, types, seen)),
+        Type::Float64
+        | Type::Boolean
+        | Type::String
+        | Type::Null
+        | Type::Undefined
+        | Type::BigInt
+        | Type::Error
+        | Type::NativeError(_)
+        | Type::Literal(..)
+        | Type::Class(_) => true,
+        Type::Record(shape) => types.records[shape as usize].class.is_none(),
+        Type::Array(id) => primitive_kind(types.arrays[id as usize]).is_some(),
+        Type::Dictionary(id) => {
+            storage_descriptor(types)
+                || primitive_kind(types.dictionaries[id as usize].value).is_some()
+        }
+        _ => false,
     }
 }
 
@@ -211,6 +301,9 @@ impl Lower<'_> {
         }
         let name = self.quoted(annotation.span(), target);
         let operand = stmt::unparen(&assertion.expr);
+        if let Some(parsed) = self.asserted_parse_json(operand, target, assertion.span)? {
+            return Ok(parsed);
+        }
         // TypeScript types an object or array literal operand contextually.
         let value = if matches!(operand, ast::Expr::Object(_) | ast::Expr::Array(_)) {
             self.expr_expected(&assertion.expr, Some(target))?
@@ -321,6 +414,9 @@ impl Lower<'_> {
             ty,
             kind: E::UnboxUnion(Box::new(local(span, slot, source))),
         };
+        if member_tag(source, target, self.types) {
+            return Ok(member(target));
+        }
         Ok(match target {
             Type::Unknown => boolean(span, true),
             Type::Union(_) | Type::ReferenceUnion(_) => {
@@ -389,6 +485,21 @@ impl Lower<'_> {
                     member(target),
                     test(span, E::ArrayKind(Box::new(unboxed(target)), kind)),
                 )
+            }
+            Type::Dictionary(id) if storage_descriptor(self.types) => {
+                // The exact storage descriptor proves the value type, so a
+                // dictionary of another value type (or a record or instance of
+                // the same layout, which carries another tag) never passes.
+                let storage = self.types.dictionaries[id as usize].storage;
+                let descriptor = test(
+                    span,
+                    E::IsClass {
+                        value: Box::new(unboxed(target)),
+                        shapes: vec![storage],
+                        slot: self.hidden(Type::Number),
+                    },
+                );
+                and(span, member(target), descriptor)
             }
             Type::Dictionary(id) => {
                 let dictionary = self.types.dictionaries[id as usize];
