@@ -40,6 +40,7 @@ impl ErrorObject {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) || (version == ERROR_VALUE_VERSION && class != ErrorClass::Error)
         {
             return Err(invalid());

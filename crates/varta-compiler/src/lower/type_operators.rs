@@ -187,6 +187,10 @@ fn partial(target: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
 /// required `V` field per key. Dynamic `string`/`number` keys need a map value.
 fn record(key: &ast::TsType, value: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     let key = keyword_type(key, types)?;
+    if key == Type::String && types.profile.index_signatures() {
+        let value = keyword_type(value, types)?;
+        return dictionaries::intern(value, types);
+    }
     let Some(names) = literals::string_members(key, types) else {
         return Err(unsupported(
             "Record with non-literal keys (dynamic keys need a map value representation)",

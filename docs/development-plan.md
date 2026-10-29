@@ -424,17 +424,20 @@ Decided with the project author on 2026-10-29: the next pilot batch collects
 uarp-sdk M1–M2 remainders together with K4.4 steps 3–4 in profile
 `checked-f64-utf16-v34`, developed in three parallel streams. V34 inherits every
 v33 feature and declares its own host ABI, because the async stream's runtime
-scheduler calls `varta_resume`, and its own value ABI, reserved for the record
-and promise layouts of the records and async streams; until a stream specifies
-a value15 layout, v34 keeps the value13 layouts
+scheduler calls `varta_resume`, and its own value ABI for the record and
+promise layouts of the records and async streams
 ([contract](architecture.md#checked-f64-utf16-v34--pilot-batch-dynamic-records-unknown-and-async)).
-All selectors are registered and admit nothing yet.
+The records stream switched v34 to value layout 15 first
+([contract](architecture.md#value-layout-15-dynamic_values)): value15 keeps
+every value13 layout behind its own value15 readers, JSON schema 15 and
+exception channel v6, and v34 programs behave exactly as under v33.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
-| `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind | M1 | Registered, admits nothing |
-| `recursive_types()` | Records: recursive aliases such as `JsonValue` | M1 | Registered, admits nothing |
-| `wide_records()` | Records: records wider than 32 fields (presence trailer layout) | M1 | Registered, admits nothing |
+| `dynamic_values()` | Records: value layout 15 foundation, value15 readers | M1 | Implemented on `v34-records` |
+| `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind (value15 tag 13) | M1 | Implemented on `v34-records` |
+| `recursive_types()` | Records: recursive aliases and interfaces such as `JsonValue` and trees | M1 | Implemented on `v34-records` |
+| `wide_records()` | Records: records wider than 32 fields, up to `MAX_WIDE_RECORD_FIELDS` (multiword presence, descriptor edge bitmap) | M1 | Implemented on `v34-records` |
 | `unknown_type()` | Unknown: `unknown` with `typeof`/`instanceof`/`Array.isArray`/`in`/guard narrowing | M1, M2 | Registered, admits nothing |
 | `checked_assertions()` | Unknown: `as` as a runtime-checked downcast | M1, M2 | Registered, admits nothing |
 | `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Registered, admits nothing |

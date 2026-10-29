@@ -173,7 +173,11 @@ fn satisfies(
                 return Ok(unions::members(ty, types).iter().all(|member| {
                     matches!(
                         member,
-                        Type::Record(_) | Type::Class(_) | Type::Array(_) | Type::Function(_)
+                        Type::Record(_)
+                            | Type::Dictionary(_)
+                            | Type::Class(_)
+                            | Type::Array(_)
+                            | Type::Function(_)
                     )
                 }));
             }

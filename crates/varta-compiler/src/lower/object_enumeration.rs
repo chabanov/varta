@@ -115,6 +115,11 @@ impl Lower<'_> {
         if let [Type::Array(id)] = present.as_slice() {
             return self.array_enumeration(value, *id, kind, span);
         }
+        if let [Type::Dictionary(_)] = present.as_slice()
+            && matches!(value.ty, Type::Dictionary(_))
+        {
+            return self.dictionary_enumeration(value, matches!(kind, Kind::Keys));
+        }
         let shape = match present.as_slice() {
             [Type::Record(id)] => *id,
             _ => {

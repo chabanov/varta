@@ -38,15 +38,58 @@ fn words<const N: usize>(data: &[u8], ptr: usize) -> Result<[u32; N], wasmtime::
     }
     Ok(words)
 }
+/// A dictionary's storage descriptor: value15, required canonical `keys` and
+/// `values` vector slots in that order.
+fn dictionary_descriptor(data: &[u8], descriptor: usize) -> Result<(), wasmtime::Error> {
+    static_bytes(data, descriptor, descriptor_bytes(DICTIONARY_FIELDS))?;
+    if words::<2>(data, descriptor)? != [DYNAMIC_VALUE_VERSION, DICTIONARY_FIELDS as u32] {
+        return Err(error("dictionary descriptor version or count"));
+    }
+    for (slot, name) in [DICTIONARY_KEYS_FIELD, DICTIONARY_VALUES_FIELD]
+        .into_iter()
+        .enumerate()
+    {
+        let [key, len, raw, kind] = words::<4>(
+            data,
+            descriptor + RECORD_DESCRIPTOR_HEADER + slot * RECORD_DESCRIPTOR_ENTRY,
+        )?;
+        if raw as usize != slot
+            || kind != ValueKind::Array as u32
+            || static_bytes(data, key as usize, len as usize)? != name.as_bytes()
+        {
+            return Err(error("dictionary descriptor disagrees with its layout"));
+        }
+    }
+    Ok(())
+}
 fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> {
     for ty in &schema.types {
+        if let JsonType::Dictionary { descriptor, .. } = ty {
+            dictionary_descriptor(data, *descriptor as usize)?;
+        }
         if let JsonType::Record { descriptor, fields } = ty {
             let descriptor = *descriptor as usize;
-            static_bytes(
-                data,
-                descriptor,
-                RECORD_DESCRIPTOR_HEADER + fields.len() * RECORD_DESCRIPTOR_ENTRY,
-            )?;
+            static_bytes(data, descriptor, descriptor_bytes(fields.len()))?;
+            if is_wide_record(fields.len()) {
+                // The collector traces a wide record through this edge bitmap.
+                let at =
+                    descriptor + RECORD_DESCRIPTOR_HEADER + fields.len() * RECORD_DESCRIPTOR_ENTRY;
+                let edges = read_slot_set(data, at, presence_words(fields.len()))
+                    .ok_or_else(|| error("record edge bitmap"))?;
+                let expected = fields
+                    .iter()
+                    .enumerate()
+                    .fold(0u128, |mask, (slot, field)| {
+                        if schema.types[field.ty as usize].kind().is_reference() {
+                            mask | 1 << slot
+                        } else {
+                            mask
+                        }
+                    });
+                if edges != expected {
+                    return Err(error("record edge bitmap disagrees with schema"));
+                }
+            }
             let [version, count] = words::<2>(data, descriptor)?;
             if !compatible_version(version, schema.value_version())
                 || count as usize != fields.len()
@@ -68,6 +111,7 @@ fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> 
                         | varta_common::json::SPARSE_SCHEMA_VERSION
                         | varta_common::json::BIGINT_SCHEMA_VERSION
                         | varta_common::json::FUNCTION_SCHEMA_VERSION
+                        | varta_common::json::DYNAMIC_SCHEMA_VERSION
                 ) && slot & OPTIONAL_FIELD_FLAG != 0;
                 let slot = if matches!(
                     schema.version,
@@ -78,6 +122,7 @@ fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> 
                         | varta_common::json::SPARSE_SCHEMA_VERSION
                         | varta_common::json::BIGINT_SCHEMA_VERSION
                         | varta_common::json::FUNCTION_SCHEMA_VERSION
+                        | varta_common::json::DYNAMIC_SCHEMA_VERSION
                 ) {
                     slot & !OPTIONAL_FIELD_FLAG
                 } else {
@@ -185,6 +230,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (
             HostOperation::JsonParseV15,
             varta_common::json::BIGINT_SCHEMA_VERSION,
+        ),
+        (
+            HostOperation::JsonParseV16,
+            varta_common::json::DYNAMIC_SCHEMA_VERSION,
         ),
         (
             HostOperation::JsonParseV14,

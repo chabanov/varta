@@ -57,12 +57,16 @@ impl ReferenceBox {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
             return Err(invalid());
         }
         let cell = PrimitiveBox::raw(data, handle)?;
         if cell.kind == ValueKind::BigInt {
-            if !matches!(version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION) {
+            if !matches!(
+                version,
+                BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+            ) {
                 return Err(invalid());
             }
             crate::bigint::BigIntView::read(data, cell.payload)?;
@@ -74,10 +78,13 @@ impl ReferenceBox {
                     | SPARSE_VALUE_VERSION
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
+                    | DYNAMIC_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
             ErrorObject::read_with_version(data, cell.payload, version)?;
+        } else if cell.kind == ValueKind::Dictionary {
+            Dictionary::read(data, cell.payload, version)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
             aggregate(data, cell, version)?;
         } else {
@@ -122,6 +129,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         )
     {
         Vector::read_with_version(data, cell.payload, version)?;
@@ -165,24 +173,26 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
         }
         return Ok(());
     }
-    if count > MAX_RECORD_FIELDS || length != record_bytes(version, count) {
+    if count > max_record_fields(version) || length != record_bytes(version, count) {
         return Err(invalid());
     }
     let descriptor = meta as usize;
     if descriptor
-        .checked_add(RECORD_DESCRIPTOR_HEADER + count * RECORD_DESCRIPTOR_ENTRY)
+        .checked_add(descriptor_bytes(count))
         .is_none_or(|end| end > abi::RESULT_BASE)
         || word(data, descriptor)? != version
         || word(data, descriptor + 4)? as usize != count
     {
         return Err(invalid());
     }
-    let present = word(data, ptr + presence_offset(count))?;
-    if present & !field_mask(count) != 0 {
+    // Value15 wide records keep their presence in several words.
+    let present = read_slot_set(data, ptr + presence_offset(count), presence_words(count))
+        .ok_or_else(invalid)?;
+    if present & !wide_field_mask(count) != 0 {
         return Err(invalid());
     }
-    let mut slots = 0u32;
-    let mut reference_mask = 0u32;
+    let mut slots = 0u128;
+    let mut reference_mask = 0u128;
     let mut names = BTreeSet::new();
     for index in 0..count {
         let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
@@ -192,7 +202,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
         let slot = (raw & !OPTIONAL_FIELD_FLAG) as usize;
         let optional = raw & OPTIONAL_FIELD_FLAG != 0;
         if slot >= count
-            || slots & (1u32 << slot) != 0
+            || slots & (1u128 << slot) != 0
             || len > MAX_RECORD_KEY_BYTES
             || key
                 .checked_add(len)
@@ -217,7 +227,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
         {
             return Err(invalid());
         }
-        let bit = 1u32 << slot;
+        let bit = 1u128 << slot;
         slots |= bit;
         if kind.is_reference() {
             reference_mask |= bit;
@@ -241,18 +251,33 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
             }
         }
     }
-    if slots != field_mask(count) || word(data, header + HEAP_LINK_OFFSET)? != reference_mask {
+    // A wide record's edge mask trails its descriptor; its link word is zero.
+    let (link, mask) = if is_wide_record(count) {
+        let at = descriptor + RECORD_DESCRIPTOR_HEADER + count * RECORD_DESCRIPTOR_ENTRY;
+        (
+            0,
+            read_slot_set(data, at, presence_words(count)).ok_or_else(invalid)?,
+        )
+    } else {
+        (reference_mask as u32, reference_mask)
+    };
+    if slots != wide_field_mask(count)
+        || word(data, header + HEAP_LINK_OFFSET)? != link
+        || mask != reference_mask
+    {
         return Err(invalid());
     }
-    let mut seen = 0u32;
+    let mut seen = 0u128;
     for index in 0..count {
-        let slot = word(data, ptr + presence_offset(count) + 4 + index * 4)?;
+        let slot = word(data, ptr + order_offset(count) + index * 4)?;
         if index < present.count_ones() as usize {
-            if slot as usize >= count || seen & (1u32 << slot) != 0 || present & (1u32 << slot) == 0
+            if slot as usize >= count
+                || seen & (1u128 << slot) != 0
+                || present & (1u128 << slot) == 0
             {
                 return Err(invalid());
             }
-            seen |= 1u32 << slot;
+            seen |= 1u128 << slot;
         } else if slot != 0 {
             return Err(invalid());
         }

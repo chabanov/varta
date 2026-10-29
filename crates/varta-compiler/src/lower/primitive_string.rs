@@ -118,9 +118,9 @@ impl Lower<'_> {
                 kind: E::Host(
                     if self.types.profile.bigint_values() {
                         if number {
-                            Host::PrimitiveNumberV2
+                            self.types.profile.host_operation(Host::PrimitiveNumberV2)
                         } else {
-                            Host::PrimitiveStringV2
+                            self.types.profile.host_operation(Host::PrimitiveStringV2)
                         }
                     } else if number {
                         Host::PrimitiveNumber

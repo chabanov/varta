@@ -17,7 +17,24 @@ pub(super) fn build(
             if let Some(index) = self.indices.get(&ty) {
                 return Ok(*index);
             }
-            let node = match ty {
+            // Schema 15 admits recursive types: reserve the node before its
+            // children so a cycle refers back to it.
+            if self.types.profile.dynamic_values() {
+                let index = self.nodes.len() as u32;
+                self.nodes.push(JsonType::Null);
+                self.indices.insert(ty, index);
+                let node = self.shape(ty)?;
+                self.nodes[index as usize] = node;
+                return Ok(index);
+            }
+            let node = self.shape(ty)?;
+            let index = self.nodes.len() as u32;
+            self.nodes.push(node);
+            self.indices.insert(ty, index);
+            Ok(index)
+        }
+        fn shape(&mut self, ty: Type) -> Result<JsonType> {
+            Ok(match ty {
                 Type::BigInt => JsonType::BigInt,
                 Type::Null => JsonType::Null,
                 Type::Undefined => JsonType::Undefined,
@@ -57,12 +74,16 @@ pub(super) fn build(
                 Type::Array(id) => JsonType::Array {
                     element: self.node(self.types.arrays[id as usize])?,
                 },
+                Type::Dictionary(id) => {
+                    let dictionary = self.types.dictionaries[id as usize];
+                    JsonType::Dictionary {
+                        descriptor: self.layouts
+                            [&records::canonical_layout(dictionary.storage, &self.types.records)],
+                        value: self.node(dictionary.value)?,
+                    }
+                }
                 _ => return Err(CompilerError::Internal("invalid JSON schema type".into())),
-            };
-            let index = self.nodes.len() as u32;
-            self.nodes.push(node);
-            self.indices.insert(ty, index);
-            Ok(index)
+            })
         }
     }
     let mut builder = Builder {
@@ -73,7 +94,9 @@ pub(super) fn build(
     };
     let root = builder.node(root)?;
     JsonSchema {
-        version: if types.profile.bigint_values() {
+        version: if types.profile.dynamic_values() {
+            varta_common::json::DYNAMIC_SCHEMA_VERSION
+        } else if types.profile.bigint_values() {
             varta_common::json::BIGINT_SCHEMA_VERSION
         } else if types.profile.sparse_arrays() {
             varta_common::json::SPARSE_SCHEMA_VERSION

@@ -325,89 +325,109 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             })?)
         },
     )?;
-    linker.func_wrap(
-        "varta",
-        H::PrimitiveStringV2.name(),
-        |mut caller: Caller<'_, RuntimeContext>, cell: i64| -> Result<i32, wasmtime::Error> {
-            let bytes = work(&mut caller, |data, budget| {
-                let value = varta_common::value::ReferenceBox::read_with_version(
-                    data,
-                    cell as u64,
-                    varta_common::value::BIGINT_VALUE_VERSION,
-                )
-                .map_err(|_| Error::InvalidPayload)?;
-                let bytes = if value.kind == varta_common::value::ValueKind::BigInt {
-                    let text =
-                        integer(data, value.payload as i64, budget)?.to_string_radix(10, budget)?;
-                    budget.consume_work(text.len() as u64)?;
-                    varta_common::text::encode(&text)
-                } else {
-                    let length = (value.payload >> 32) as usize;
-                    if value.kind == varta_common::value::ValueKind::String
-                        && length as u64 > budget.remaining_work()
-                    {
-                        return Err(Error::WorkBudget);
-                    }
-                    let bytes = crate::primitive_string::convert(data, cell)
-                        .map_err(|_| Error::InvalidPayload)?;
-                    budget.consume_work(bytes.len() as u64)?;
-                    bytes
-                };
-                Ok(bytes)
-            })?
-            .map_err(wasmtime::Error::new)?;
-            host::result_bytes(&mut caller, &bytes)
-                .map_err(|_| wasmtime::Error::msg("String result transfer"))
-        },
-    )?;
-    linker.func_wrap(
-        "varta",
-        H::PrimitiveNumberV2.name(),
-        |mut caller: Caller<'_, RuntimeContext>, cell: i64| -> Result<f64, wasmtime::Error> {
-            numeric(work(&mut caller, |data, budget| {
-                let value = varta_common::value::ReferenceBox::read_with_version(
-                    data,
-                    cell as u64,
-                    varta_common::value::BIGINT_VALUE_VERSION,
-                )
-                .map_err(|_| Error::InvalidPayload)?;
-                if value.kind == varta_common::value::ValueKind::BigInt {
-                    integer(data, value.payload as i64, budget)?.to_number(budget)
-                } else {
-                    if value.kind == varta_common::value::ValueKind::String {
-                        budget.consume_work(value.payload >> 32)?;
-                    }
-                    crate::primitive_number::convert(data, cell).map_err(|_| Error::InvalidPayload)
-                }
-            })?)
-        },
-    )?;
-    linker.func_wrap(
-        "varta",
-        H::BigIntFromValue.name(),
-        |mut caller: Caller<'_, RuntimeContext>, cell: i64| {
-            let result = work(&mut caller, |data, budget| {
-                use varta_common::value::{BIGINT_VALUE_VERSION, ReferenceBox, ValueKind as K};
-                let value =
-                    ReferenceBox::read_with_version(data, cell as u64, BIGINT_VALUE_VERSION)
-                        .map_err(|_| Error::InvalidPayload)?;
-                let value = match value.kind {
-                    K::BigInt => integer(data, value.payload as i64, budget)?,
-                    K::Float64 => Integer::from_number(f64::from_bits(value.payload), budget)?,
-                    K::Boolean => Integer::from_bool(value.payload != 0, budget)?,
-                    K::String => string_integer(
+    // Value13 and value15 cells share these conversions; each operation reads
+    // exactly the layout version its profile stamps.
+    for (string, number, from_value, version) in [
+        (
+            H::PrimitiveStringV2,
+            H::PrimitiveNumberV2,
+            H::BigIntFromValue,
+            BIGINT_VALUE_VERSION,
+        ),
+        (
+            H::PrimitiveStringV3,
+            H::PrimitiveNumberV3,
+            H::BigIntFromValueV2,
+            varta_common::value::DYNAMIC_VALUE_VERSION,
+        ),
+    ] {
+        linker.func_wrap(
+            "varta",
+            string.name(),
+            move |mut caller: Caller<'_, RuntimeContext>,
+                  cell: i64|
+                  -> Result<i32, wasmtime::Error> {
+                let bytes = work(&mut caller, |data, budget| {
+                    let value = varta_common::value::ReferenceBox::read_with_version(
                         data,
-                        value.payload as u32 as i32,
-                        (value.payload >> 32) as i32,
-                        budget,
-                    )?,
-                    K::Null | K::Undefined => return Err(Error::Type),
-                    _ => return Err(Error::InvalidPayload),
-                };
-                value.to_payload(budget)
-            })?;
-            output(&mut caller, result)
-        },
-    )?;
+                        cell as u64,
+                        version,
+                    )
+                    .map_err(|_| Error::InvalidPayload)?;
+                    let bytes = if value.kind == varta_common::value::ValueKind::BigInt {
+                        let text = integer(data, value.payload as i64, budget)?
+                            .to_string_radix(10, budget)?;
+                        budget.consume_work(text.len() as u64)?;
+                        varta_common::text::encode(&text)
+                    } else {
+                        let length = (value.payload >> 32) as usize;
+                        if value.kind == varta_common::value::ValueKind::String
+                            && length as u64 > budget.remaining_work()
+                        {
+                            return Err(Error::WorkBudget);
+                        }
+                        let bytes = crate::primitive_string::convert(data, cell)
+                            .map_err(|_| Error::InvalidPayload)?;
+                        budget.consume_work(bytes.len() as u64)?;
+                        bytes
+                    };
+                    Ok(bytes)
+                })?
+                .map_err(wasmtime::Error::new)?;
+                host::result_bytes(&mut caller, &bytes)
+                    .map_err(|_| wasmtime::Error::msg("String result transfer"))
+            },
+        )?;
+        linker.func_wrap(
+            "varta",
+            number.name(),
+            move |mut caller: Caller<'_, RuntimeContext>,
+                  cell: i64|
+                  -> Result<f64, wasmtime::Error> {
+                numeric(work(&mut caller, |data, budget| {
+                    let value = varta_common::value::ReferenceBox::read_with_version(
+                        data,
+                        cell as u64,
+                        version,
+                    )
+                    .map_err(|_| Error::InvalidPayload)?;
+                    if value.kind == varta_common::value::ValueKind::BigInt {
+                        integer(data, value.payload as i64, budget)?.to_number(budget)
+                    } else {
+                        if value.kind == varta_common::value::ValueKind::String {
+                            budget.consume_work(value.payload >> 32)?;
+                        }
+                        crate::primitive_number::convert(data, cell)
+                            .map_err(|_| Error::InvalidPayload)
+                    }
+                })?)
+            },
+        )?;
+        linker.func_wrap(
+            "varta",
+            from_value.name(),
+            move |mut caller: Caller<'_, RuntimeContext>, cell: i64| {
+                let result = work(&mut caller, |data, budget| {
+                    let value = ReferenceBox::read_with_version(data, cell as u64, version)
+                        .map_err(|_| Error::InvalidPayload)?;
+                    let value = match value.kind {
+                        K::BigInt => integer(data, value.payload as i64, budget)?,
+                        K::Float64 => Integer::from_number(f64::from_bits(value.payload), budget)?,
+                        K::Boolean => Integer::from_bool(value.payload != 0, budget)?,
+                        K::String => string_integer(
+                            data,
+                            value.payload as u32 as i32,
+                            (value.payload >> 32) as i32,
+                            budget,
+                        )?,
+                        K::Null | K::Undefined => return Err(Error::Type),
+                        _ => return Err(Error::InvalidPayload),
+                    };
+                    value.to_payload(budget)
+                })?;
+                output(&mut caller, result)
+            },
+        )?;
+    }
     Ok(())
 }

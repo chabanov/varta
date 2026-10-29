@@ -283,6 +283,7 @@ pub(crate) mod classes;
 mod completion;
 mod compound_assignments;
 mod declarations;
+mod dictionaries;
 mod errors;
 mod exceptions;
 mod exports;

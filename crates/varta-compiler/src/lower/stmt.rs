@@ -359,6 +359,13 @@ impl Lower<'_> {
         }
         if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left {
             let base = self.write_member_base(member)?;
+            if matches!(base.ty, Type::Dictionary(_)) {
+                return Ok(S::Expr(self.dictionary_write(
+                    member,
+                    base,
+                    &assign.right,
+                )?));
+            }
             if self.types.profile.closures()
                 && let Type::Record(shape) = base.ty
                 && let ast::MemberProp::Computed(key) = &member.prop

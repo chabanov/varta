@@ -279,6 +279,7 @@ impl Lower<'_> {
                             | Type::NativeError(_)
                             | Type::Null
                             | Type::Record(_)
+                            | Type::Dictionary(_)
                             | Type::Class(_)
                             | Type::Array(_) => "object",
                             Type::Number | Type::Float64 => "number",
@@ -371,6 +372,38 @@ impl Lower<'_> {
                     return self.guest_logical(binary.op, left, right?, expression.span());
                 }
                 let right = self.expr(&binary.right)?;
+                if binary.op == ast::BinaryOp::In && matches!(right.ty, Type::Dictionary(_)) {
+                    // `key in d`: own entries plus inherited Object.prototype names.
+                    let span = expression.span();
+                    let (key, dictionary) = (self.hidden(left.ty), self.hidden(right.ty));
+                    let output = self.hidden(Type::Boolean);
+                    let marker = self.hidden(Type::Number);
+                    let local = |slot, ty| Expr {
+                        span,
+                        ty,
+                        kind: E::Local(slot),
+                    };
+                    let (key_ty, dictionary_ty) = (left.ty, right.ty);
+                    let test = self.dictionary_has(
+                        local(dictionary, dictionary_ty),
+                        local(key, key_ty),
+                        true,
+                    )?;
+                    return Ok(Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::ValueBlock {
+                            output,
+                            marker,
+                            roots: vec![key, dictionary],
+                            body: vec![
+                                S::Init(key, left),
+                                S::Init(dictionary, right),
+                                S::Init(output, test),
+                            ],
+                        },
+                    });
+                }
                 if self.types.profile.bigint_values()
                     && matches!(
                         binary.op,
@@ -483,6 +516,7 @@ impl Lower<'_> {
                                 | Type::Error
                                 | Type::NativeError(_)
                                 | Type::Record(_)
+                                | Type::Dictionary(_)
                                 | Type::Class(_)
                                 | Type::Array(_)
                         ) =>

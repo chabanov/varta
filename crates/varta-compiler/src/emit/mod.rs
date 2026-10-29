@@ -47,6 +47,7 @@ struct Emitter<'a> {
     binary64: bool,
     profile: varta_common::language::LanguageProfile,
     records: &'a [ir::RecordShape],
+    dictionaries: &'a [ir::DictionaryType],
     arrays: &'a [Type],
     layouts: &'a BTreeMap<records::LayoutKey, u32>,
     schemas: &'a BTreeMap<Type, (u32, u32)>,
@@ -648,6 +649,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             binary64: program.types.profile.binary64(),
             profile: program.types.profile,
             records: &program.types.records,
+            dictionaries: &program.types.dictionaries,
             arrays: &program.types.arrays,
             layouts: &layout_offsets,
             schemas: &schema_offsets,
@@ -905,6 +907,7 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
             | Type::NativeError(_)
             | Type::String
             | Type::Record(_)
+            | Type::Dictionary(_)
             | Type::Class(_)
             | Type::Generator(_)
             | Type::Array(_)

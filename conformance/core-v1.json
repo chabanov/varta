@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v33",
+  "profile": "checked-f64-utf16-v34",
   "features": [
     {
       "id": "binary64",
@@ -460,6 +460,34 @@
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-error-objects"
+    },
+    {
+      "id": "index-signatures",
+      "title": "String index signatures and Record<string, T> dictionaries",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "recursive-types",
+      "title": "Recursive type aliases and interfaces",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "wide-records",
+      "title": "Closed records wider than 32 fields",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
     }
   ],
   "cases": [
@@ -1800,6 +1828,47 @@
         "varta log: APIError 500",
         "varta log: 1",
         "varta log: TypeError: bad"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "index-signatures",
+      "feature": "index-signatures",
+      "path": "cases/index-signatures.ts",
+      "sha256": "aa094e26b1050b7695209a98c7fd99b3eb8d014ff84f8131dc3e7432a17ba473",
+      "stdout": [
+        "varta log: {\"1\":1,\"2\":1,\"b\":2,\"a\":1}",
+        "varta log: [\"1\",\"2\",\"b\",\"a\"]",
+        "varta log: false 2 undefined",
+        "varta log: [[\"x\",\"ex\"],[\"y\",\"why\"]]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "recursive-json-value",
+      "feature": "recursive-types",
+      "path": "cases/recursive-json-value.ts",
+      "sha256": "b18e491b3d62dfdde53476f0a97b57f45084c837d446ddb4a1b31783414e1bcc",
+      "stdout": [
+        "varta log: 7",
+        "varta log: {\"a\":[1,\"two\",{\"b\":null}],\"c\":true}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "wide-records",
+      "feature": "wide-records",
+      "path": "cases/wide-records.ts",
+      "sha256": "d0746b8cb8a43ad27bec4efd3cd80d6ea7ca8e9a5871f457ef43b47b84f75a3e",
+      "stdout": [
+        "varta log: 41 390",
+        "varta log: false 342"
       ],
       "baseline": {
         "status": "supported"

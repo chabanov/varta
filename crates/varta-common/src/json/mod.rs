@@ -20,6 +20,9 @@ pub const SPARSE_SCHEMA_VERSION: u32 = 12;
 pub const BIGINT_SCHEMA_VERSION: u32 = 13;
 /// Existing JSON types materialize value14 layouts; JSON cannot fabricate callables.
 pub const FUNCTION_SCHEMA_VERSION: u32 = 14;
+/// Value15 layouts (profile v34): JSON types materialize value15 records,
+/// arrays and cells. Later v34 types extend this schema version.
+pub const DYNAMIC_SCHEMA_VERSION: u32 = 15;
 pub const MAX_SCHEMA_BYTES: usize = crate::abi::RESULT_BASE;
 pub const LEGACY_MAX_SCHEMA_TYPES: usize =
     4 + crate::value::MAX_RECORD_SHAPES + crate::value::MAX_ARRAY_TYPES;
@@ -40,14 +43,29 @@ pub enum CheckedJsonError {
 pub enum JsonValue {
     Null,
     Undefined,
-    Union { ty: u32, value: Box<JsonValue> },
+    Union {
+        ty: u32,
+        value: Box<JsonValue>,
+    },
     I32(i32),
     Float64(u64),
     Boolean(bool),
     String(String),
     String16(Vec<u16>),
-    Record { ty: u32, fields: Vec<JsonValue> },
-    Array { ty: u32, values: Vec<JsonValue> },
+    Record {
+        ty: u32,
+        fields: Vec<JsonValue>,
+    },
+    Array {
+        ty: u32,
+        values: Vec<JsonValue>,
+    },
+    /// Schema 15 dictionary entries in own-key order: array-index keys
+    /// ascending, then the remaining keys in input order.
+    Dictionary {
+        ty: u32,
+        entries: Vec<(Vec<u16>, JsonValue)>,
+    },
 }
 
 #[cfg(test)]

@@ -229,6 +229,10 @@ impl<'a> Collected<'a> {
                 self.expression(object, source);
                 self.expression(absent, source);
             }
+            E::IndexKey(key) => {
+                self.helpers.insert(strings::Helper::ArrayIndexKey);
+                self.expression(key, source);
+            }
             E::ArrayStringHasOwn(base, key) => {
                 self.arrays = true;
                 self.helpers.insert(strings::Helper::ArrayStringHasOwn);
@@ -264,7 +268,7 @@ impl<'a> Collected<'a> {
                 self.strings.entry(s.clone()).or_insert((expr.span, source));
             }
             E::Record(fields) | E::OptionalRecord(fields, _) => {
-                if let Type::Record(id) = expr.ty {
+                if let Some(id) = self.types.record_layout(expr.ty) {
                     self.layouts
                         .entry(records::layout_key(id, fields, &self.types.records))
                         .or_insert((expr.span, source));
@@ -408,6 +412,23 @@ impl<'a> Collected<'a> {
             Type::Array(id) => {
                 self.arrays = true;
                 self.schema_type(self.types.arrays[id as usize], location);
+            }
+            Type::Dictionary(id) => {
+                let dictionary = self.types.dictionaries[id as usize];
+                self.arrays = true;
+                self.layouts
+                    .entry(records::canonical_layout(
+                        dictionary.storage,
+                        &self.types.records,
+                    ))
+                    .or_insert(location);
+                for field in &self.types.records[dictionary.storage as usize].fields {
+                    self.strings
+                        .entry(field.name.as_bytes().to_vec())
+                        .or_insert(location);
+                }
+                self.schema_type(dictionary.keys, location);
+                self.schema_type(dictionary.value, location);
             }
             _ => {}
         }

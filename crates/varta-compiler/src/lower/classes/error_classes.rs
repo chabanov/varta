@@ -211,6 +211,7 @@ pub(in crate::lower) fn reaches_instance(ty: Type, types: &ir::ValueTypes) -> bo
                 .iter()
                 .any(|f| visit(f.ty, types, seen)),
             Type::Array(id) => visit(types.arrays[id as usize], types, seen),
+            Type::Dictionary(id) => visit(types.dictionaries[id as usize].value, types, seen),
             Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
                 .iter()
                 .any(|&t| visit(t, types, seen)),

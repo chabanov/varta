@@ -263,6 +263,10 @@ impl Emitter<'_> {
                 bytes,
             } => self.array_reserve(expr.ty, length, *count, *bytes)?,
             E::ArrayHasOwn(base, index) => self.array_has_own(base, index)?,
+            E::IndexKey(key) => {
+                self.expr(key)?;
+                self.string_helper(strings::Helper::ArrayIndexKey)?;
+            }
             E::ArrayStringHasOwn(base, key) => {
                 self.expr(base)?;
                 self.expr(key)?;
@@ -512,6 +516,7 @@ impl Emitter<'_> {
                         | Type::Error
                         | Type::NativeError(_)
                         | Type::Record(_)
+                        | Type::Dictionary(_)
                         | Type::Class(_)
                         | Type::Array(_)
                 ) =>

@@ -24,6 +24,16 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     if !types.profile.unions() {
         return Err(unsupported("union types require checked-f64-utf16-v2"));
     }
+    // A reserved recursive union (empty members) cannot be flattened into
+    // another union before its declaration is resolved.
+    if values
+        .iter()
+        .any(|ty| matches!(ty, Type::ReferenceUnion(id) if types.unions[*id as usize].is_empty()))
+    {
+        return Err(unsupported(
+            "recursive type alias as a direct member of a union; refer to it through an array, record or dictionary",
+        ));
+    }
     let mut values: Vec<_> = values
         .into_iter()
         .flat_map(|ty| members(ty, types))
@@ -43,6 +53,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                 || !primitive(*ty)
                     && !(types.profile.reference_unions()
                         && matches!(ty, Type::Record(_) | Type::Array(_))
+                        || types.profile.index_signatures() && matches!(ty, Type::Dictionary(_))
                         || types.profile.classes() && matches!(ty, Type::Class(_))
                         || types.profile.bigint_values() && *ty == Type::BigInt
                         || (types.profile.errors() && ty.is_error()))
@@ -57,6 +68,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
             ty,
             Type::BigInt
                 | Type::Record(_)
+                | Type::Dictionary(_)
                 | Type::Class(_)
                 | Type::Array(_)
                 | Type::Error
@@ -72,6 +84,11 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
         || values
             .iter()
             .filter(|ty| matches!(ty, Type::Array(_)))
+            .count()
+            > 1
+        || values
+            .iter()
+            .filter(|ty| matches!(ty, Type::Dictionary(_)))
             .count()
             > 1
     {

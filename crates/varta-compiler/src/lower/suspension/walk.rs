@@ -52,6 +52,7 @@ pub(super) fn expression(expr: &Expr, visit: &mut dyn FnMut(&Expr)) {
         | E::ParseJson(value)
         | E::ArrayPop(value)
         | E::ArrayReverse(value)
+        | E::IndexKey(value)
         | E::Length(value) => expression(value, visit),
         E::FunctionCall {
             callee,

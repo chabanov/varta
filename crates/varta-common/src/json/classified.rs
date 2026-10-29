@@ -21,6 +21,9 @@ pub enum JsonInputLimit {
     ArrayElements,
     #[error("string byte")]
     StringBytes,
+    /// Schema 15 dictionaries: more than `value::MAX_DICTIONARY_ENTRIES` keys.
+    #[error("dictionary entry")]
+    DictionaryEntries,
 }
 #[derive(Debug, thiserror::Error)]
 pub enum JsonDecodeError {

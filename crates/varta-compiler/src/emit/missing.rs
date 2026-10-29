@@ -15,11 +15,13 @@ impl Emitter<'_> {
                 "missing delete record shape".into(),
             ));
         };
+        let fields = self.records[shape as usize].fields.len();
+        let (word, bit) = values::presence_bit(fields, slot as usize);
         let presence = wasm_encoder::MemArg {
-            offset: values::presence_offset(self.records[shape as usize].fields.len()) as u64,
+            offset: word as u64,
             ..strings::WORD
         };
-        let order = presence.offset + 4;
+        let order = values::order_offset(fields) as u64;
         let scan = self.local_slots[scan as usize];
         let write = self.local_slots[write as usize];
         let count = self.local_slots[count as usize];
@@ -33,9 +35,9 @@ impl Emitter<'_> {
             I::LocalGet(self.temporary),
             I::LocalGet(self.string_temporary),
             I::I64Store(records::field(slot)),
-            I::LocalGet(self.temporary),
-            I::I32Load(presence),
-            I::I32Popcnt,
+        ]);
+        self.present_count(&[I::LocalGet(self.temporary)], fields);
+        self.code.extend([
             I::LocalSet(count),
             I::I32Const(0),
             I::LocalSet(scan),
@@ -102,7 +104,7 @@ impl Emitter<'_> {
             I::LocalGet(self.temporary),
             I::LocalGet(self.temporary),
             I::I32Load(presence),
-            I::I32Const(!(1u32 << slot) as i32),
+            I::I32Const(!bit as i32),
             I::I32And,
             I::I32Store(presence),
             I::I32Const(1),
@@ -115,14 +117,15 @@ impl Emitter<'_> {
             let Type::Record(id) = value.ty else {
                 return Err(CompilerError::Internal("missing record shape".into()));
             };
-            let offset = values::presence_offset(self.records[id as usize].fields.len());
+            let (offset, bit) =
+                values::presence_bit(self.records[id as usize].fields.len(), slot as usize);
             self.code.extend([
                 I::I32WrapI64,
                 I::I32Load(wasm_encoder::MemArg {
                     offset: offset as u64,
                     ..strings::WORD
                 }),
-                I::I32Const((1u32 << slot) as i32),
+                I::I32Const(bit as i32),
                 I::I32And,
                 I::I32Eqz,
                 I::I32Eqz,
@@ -138,12 +141,12 @@ impl Emitter<'_> {
             return;
         };
         let count = self.records[id as usize].fields.len();
-        let offset = values::presence_offset(count) as u64;
+        let (word, bit) = values::presence_bit(count, slot as usize);
         let presence = wasm_encoder::MemArg {
-            offset,
+            offset: word as u64,
             ..strings::WORD
         };
-        let bit = (1u32 << slot) as i32;
+        let bit = bit as i32;
         self.code.extend([
             I::LocalGet(self.temporary),
             I::I32Load(presence),
@@ -152,11 +155,11 @@ impl Emitter<'_> {
             I::I32Eqz,
             I::If(BlockType::Empty),
             I::LocalGet(self.temporary),
-            I::I32Const(offset as i32 + 4),
+            I::I32Const(values::order_offset(count) as i32),
             I::I32Add,
-            I::LocalGet(self.temporary),
-            I::I32Load(presence),
-            I::I32Popcnt,
+        ]);
+        self.present_count(&[I::LocalGet(self.temporary)], count);
+        self.code.extend([
             I::I32Const(4),
             I::I32Mul,
             I::I32Add,

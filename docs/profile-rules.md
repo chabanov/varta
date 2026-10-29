@@ -2110,8 +2110,8 @@ Contract: [architecture.md](architecture.md#synchronous-generators-generators).
 
 ## Profile v34 (in development)
 
-Inherit v33 under checked-f64-utf16-v34 with every v33 selector, exception
-channel v5 and the v33 JSON selectors, but its own host ABI
+Inherit v33 under checked-f64-utf16-v34 with every v33 selector, but its own
+value layout (exception channel v6, JSON schema 15), its own host ABI
 (`abi::SCHEDULED_FRAMES_VERSION`, the microtask scheduler that drives
 `varta_resume`) and its own value ABI (`value::DYNAMIC_VALUE_VERSION`); never
 map another profile to either. Seven selectors gate the streams and admit
@@ -2120,14 +2120,78 @@ unknown (`unknown_type`, `checked_assertions`) and async (`promises`,
 `async_functions`). Gate every admission on its own selector, keep v33 and
 earlier profiles frozen, and add each stream's rules under its own heading here.
 
-- The value ABI is a reserved identity without layouts. Declare it only in the
-  `varta.values` section (`value_abi`); stamp descriptors, record sizes and
-  capture/frame catalogs with `LanguageProfile::value_layout` (still value13
-  for v34). Never pass value15 to a reader before its layout is specified.
-- A stream that adds a value15 layout or tag switches `value_layout` for v34
-  in the same change and then extends the readers (`ValueKind::supported_by`,
-  `ReferenceBox`, `Vector`, `ErrorObject`, `record_bytes`, the runtime JSON
-  encoder/decoder, capture catalogs and the exception channel) and adds the
-  value/JSON host operations and JSON schema version bound to value15: the
-  value13 operations reject descriptors stamped with any other version. Only
-  one stream does this switch; the others rebase onto it.
+### Value layout 15 (`dynamic_values`)
+
+Contract: [architecture.md](architecture.md#value-layout-15-dynamic_values).
+
+- V34 stamps descriptors, record sizes and capture/frame catalogs with
+  `LanguageProfile::value_layout`, which equals `value_abi` (value15). Value15
+  keeps every value13 tag and layout with its value13 meaning; a new value15
+  layout or tag is added only through its own selector and never changes what
+  an existing tag means.
+- A value-graph reader that accepts value13 accepts value15 by adding
+  `DYNAMIC_VALUE_VERSION` next to `BIGINT_VALUE_VERSION`, never next to
+  `FUNCTION_VALUE_VERSION` alone: value15 has no value14 function tag. Never
+  let a value13 operation read value15 or the reverse.
+- Value-reading host operations are bound to a layout. Add a v34 replacement
+  through `HostOperation::value13_counterpart` (same signature, capability,
+  results and recoverable errors; minimum host ABI
+  `abi::SCHEDULED_FRAMES_VERSION`) and map it in
+  `LanguageProfile::host_operation` for `dynamic_values()` only. Compiler call
+  sites that name a value13 reader directly go through `host_operation`.
+- JSON schema 15 belongs to v34; exception channel v6 reads thrown cells as
+  value15. Keep the schema-13 grammar and channel-v5 contents unchanged.
+- Prove equivalence for every change in this area: the same program under v33
+  and v34 must log identical, Node-pinned output (`varta-runtime`
+  `value15_tests`), and the conformance inventory must report identically
+  under both profiles.
+
+### Wide records (`wide_records`)
+
+Contract: [architecture.md](architecture.md#wide-records-wide_records).
+
+- Read the field ceiling from `ValueTypes::max_record_fields` (value15:
+  `value::MAX_WIDE_RECORD_FIELDS`); never raise `value::MAX_RECORD_FIELDS`,
+  which stays the frozen value13 ceiling of every older profile.
+- Address presence only through `value::presence_bit`, `value::order_offset`
+  and `Emitter::present_count`; never assume one presence word, a fixed `+ 4`
+  order offset or a `u32` slot mask in compiler or runtime code (`u128` slot
+  sets hold any value15 record).
+- A record wider than 32 fields has a zero link word and a descriptor-trailing
+  edge bitmap (`value::descriptor_bytes`); records with at most 32 fields keep
+  the value13 layout byte for byte. Every value15 reader checks the bitmap
+  against the field kinds, and the collector traces it for record blocks only.
+- Lowerings that emit one leaf per field (lookups, enumeration, rest copies)
+  must stay within the per-function body budget for the widest admitted shape;
+  prefer a direct leaf for static keys.
+
+### Index signatures (`index_signatures`)
+
+Contract: [architecture.md](architecture.md#index-signatures-index_signatures).
+
+- A dictionary is `Type::Dictionary(id)` with `ValueTypes::dictionaries[id]`;
+  physically it is its storage record (`ValueTypes::record_layout`). Emit it
+  only through `E::Record` with the `keys`/`values` slots in canonical order;
+  never write a dictionary's vectors except through the lowerings in
+  `lower::dictionaries`, which keep keys distinct and in own-key order.
+- Every value15 reader of the tag goes through `value::Dictionary::read`; add
+  `Type::Dictionary` wherever a lowering lists object types (typeof, truth,
+  identity, guards, union members, catalogs, schemas) rather than relying on a
+  wildcard.
+- Keys are narrowed strings: never add ToPropertyKey coercion or prototype
+  reads; absent inherited names throw, absent `__proto__` writes throw.
+- Keep `value::MAX_DICTIONARY_ENTRIES` equal to the vector element bound and
+  enforce it in insertion, literals and checked JSON.
+
+### Recursive types (`recursive_types`)
+
+Contract: [architecture.md](architecture.md#recursive-types-recursive_types).
+
+- Resolve self-references only through `named::recursive` reservations, and
+  only for non-generic declarations whose body is an object type, interface,
+  index signature or union. Never unroll a declaration or erase a cycle.
+- Any compiler walk over interned types (assignability, literal search, JSON
+  admission, instance reachability, callback search, schema building) must
+  carry a visited set; recursion on `Type` structure without one is a bug.
+- Schema 15 may refer forward; capture and frame catalogs must not, so reject
+  recursive types there with a diagnostic instead of emitting a cycle.

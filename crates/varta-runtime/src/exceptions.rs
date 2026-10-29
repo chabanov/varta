@@ -72,6 +72,7 @@ pub(crate) fn initial(
         (abi::FAMILY_VERSION, abi::FAMILY_CHANNEL_VERSION),
         (abi::BIGINT_VERSION, abi::BIGINT_CHANNEL_VERSION),
         (abi::CLASS_ERROR_VERSION, abi::CLASS_ERROR_CHANNEL_VERSION),
+        (abi::DYNAMIC_VERSION, abi::DYNAMIC_CHANNEL_VERSION),
     ] {
         if let Some(version) = instance.get_global(&mut *store, name)
             && version.get(&mut *store).i32() != Some(expected)
@@ -122,9 +123,14 @@ pub(crate) fn finish(
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| invalid("missing exception memory"))?;
-    let instances = instance
-        .get_global(&mut *store, abi::CLASS_ERROR_VERSION)
+    // Channel v6 (v34) carries the v5 contents in value15 layouts.
+    let dynamic = instance
+        .get_global(&mut *store, abi::DYNAMIC_VERSION)
         .is_some();
+    let instances = dynamic
+        || instance
+            .get_global(&mut *store, abi::CLASS_ERROR_VERSION)
+            .is_some();
     let bigints = instances
         || instance
             .get_global(&mut *store, abi::BIGINT_VERSION)
@@ -134,7 +140,9 @@ pub(crate) fn finish(
             .get_global(&mut *store, abi::FAMILY_VERSION)
             .is_some();
     let errors = families || instance.get_global(&mut *store, abi::VERSION).is_some();
-    let version = if bigints {
+    let version = if dynamic {
+        DYNAMIC_VALUE_VERSION
+    } else if bigints {
         BIGINT_VALUE_VERSION
     } else if families {
         ERROR_FAMILY_VALUE_VERSION

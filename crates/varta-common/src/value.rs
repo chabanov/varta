@@ -20,12 +20,10 @@ pub const SPARSE_VALUE_VERSION: u32 = 12;
 pub const BIGINT_VALUE_VERSION: u32 = 13;
 /// Callable values with module-owned capture metadata; older tags stay frozen.
 pub const FUNCTION_VALUE_VERSION: u32 = 14;
-/// Value ABI identity of pilot batch v34, reserved for dynamic-key records
-/// (index signatures and `Record<string, T>`), records wider than
-/// [`MAX_RECORD_FIELDS`], recursive alias graphs and promise values. It defines
-/// no layout or tag yet: every reader rejects it, and v34 modules stamp the
-/// value13 layouts selected by `LanguageProfile::value_layout` until a stream
-/// defines value15 layouts in the architecture contract.
+/// Value ABI and layout of pilot batch v34 (value15): every value13 tag and
+/// layout with its value13 meaning, plus dictionaries ([`ValueKind::Dictionary`])
+/// and records wider than [`MAX_RECORD_FIELDS`]; reserved for promise values.
+/// Only value15 readers accept it, and they accept nothing older.
 pub const DYNAMIC_VALUE_VERSION: u32 = 15;
 pub const SPARSE_BITMAP_BYTES: usize = MAX_ARRAY_ELEMENTS / u8::BITS as usize;
 pub const HEAP_SPARSE_FLAG: i32 = 1024;
@@ -35,6 +33,20 @@ pub const HEAP_ERROR_FLAG: i32 = 64;
 pub const ERROR_BYTES: usize = 16;
 mod error;
 pub use error::{ErrorClass, ErrorObject};
+/// Value15 dictionaries (v34 `index_signatures`): a dynamic-key record is a
+/// two-slot record block whose canonical slots hold its key vector (`keys`,
+/// slot 0, Strings) and value vector (`values`, slot 1), tagged
+/// [`ValueKind::Dictionary`]. Keys are distinct and in ECMAScript own-key
+/// order: canonical array indices ascending, then insertion order.
+pub const DICTIONARY_KEYS_FIELD: &str = "keys";
+pub const DICTIONARY_VALUES_FIELD: &str = "values";
+pub const DICTIONARY_FIELDS: usize = 2;
+/// Entry ceiling of one dictionary: its vectors share the array element bound.
+pub const MAX_DICTIONARY_ENTRIES: usize = MAX_ARRAY_ELEMENTS;
+/// Largest canonical array index (2^32 - 2); such keys enumerate first.
+pub const MAX_ARRAY_INDEX: u64 = u32::MAX as u64 - 1;
+mod dictionary;
+pub use dictionary::{Dictionary, array_index};
 pub const HEAP_VECTOR_FLAG: i32 = 32;
 pub const VECTOR_BYTES: usize = 16;
 pub const VECTOR_STORAGE_OFFSET: u64 = 8;
@@ -61,6 +73,83 @@ pub fn field_mask(count: usize) -> u32 {
 pub fn presence_offset(count: usize) -> usize {
     RECORD_META_BYTES + count * RECORD_SLOT_BYTES
 }
+/// Value15 wide records (v34 `wide_records`): a record may declare up to this
+/// many fields. It is a layout ceiling of value ABI 15, chosen to cover the
+/// pilot's 60-field interfaces with a margin and to fit one `u128` presence
+/// set; value13 and earlier keep [`MAX_RECORD_FIELDS`].
+pub const MAX_WIDE_RECORD_FIELDS: usize = 128;
+pub const PRESENCE_WORD_BITS: usize = u32::BITS as usize;
+/// The largest record field count a value layout admits.
+#[must_use]
+pub fn max_record_fields(version: u32) -> usize {
+    if version == DYNAMIC_VALUE_VERSION {
+        MAX_WIDE_RECORD_FIELDS
+    } else {
+        MAX_RECORD_FIELDS
+    }
+}
+/// Whether a record of this field count uses the value15 wide layout: a
+/// multiword presence bitmap and a slot-indexed reference bitmap trailing its
+/// static descriptor instead of the heap link-word mask (which stays zero).
+#[must_use]
+pub fn is_wide_record(count: usize) -> bool {
+    count > MAX_RECORD_FIELDS
+}
+/// Presence bitmap words of a record trailer: one for at most 32 fields.
+#[must_use]
+pub fn presence_words(count: usize) -> usize {
+    count.div_ceil(PRESENCE_WORD_BITS).max(1)
+}
+/// Byte offset (from the payload) of the presence word holding `slot`, and
+/// the slot's bit within that word.
+#[must_use]
+pub fn presence_bit(count: usize, slot: usize) -> (usize, u32) {
+    (
+        presence_offset(count) + (slot / PRESENCE_WORD_BITS) * size_of::<u32>(),
+        1u32 << (slot % PRESENCE_WORD_BITS),
+    )
+}
+/// Byte offset (from the payload) of the first insertion-order word.
+#[must_use]
+pub fn order_offset(count: usize) -> usize {
+    presence_offset(count) + presence_words(count) * size_of::<u32>()
+}
+/// Every slot bit of a record with `count` fields.
+#[must_use]
+pub fn wide_field_mask(count: usize) -> u128 {
+    if count >= MAX_WIDE_RECORD_FIELDS {
+        u128::MAX
+    } else {
+        (1u128 << count) - 1
+    }
+}
+/// Read `words` consecutive little-endian presence or mask words at `at` as one
+/// slot-indexed set; `None` if the range is outside `data`.
+#[must_use]
+pub fn read_slot_set(data: &[u8], at: usize, words: usize) -> Option<u128> {
+    if words > MAX_WIDE_RECORD_FIELDS / PRESENCE_WORD_BITS {
+        return None;
+    }
+    let mut set = 0u128;
+    for index in 0..words {
+        let start = at.checked_add(index * size_of::<u32>())?;
+        let bytes: [u8; 4] = data.get(start..start.checked_add(4)?)?.try_into().ok()?;
+        set |= u128::from(u32::from_le_bytes(bytes)) << (index * PRESENCE_WORD_BITS);
+    }
+    Some(set)
+}
+/// Bytes of a static record descriptor: header, entries and, for a wide
+/// record, its slot-indexed reference bitmap.
+#[must_use]
+pub fn descriptor_bytes(count: usize) -> usize {
+    RECORD_DESCRIPTOR_HEADER
+        + count * RECORD_DESCRIPTOR_ENTRY
+        + if is_wide_record(count) {
+            presence_words(count) * size_of::<u32>()
+        } else {
+            0
+        }
+}
 #[must_use]
 pub fn record_bytes(version: u32, count: usize) -> usize {
     presence_offset(count)
@@ -74,8 +163,9 @@ pub fn record_bytes(version: u32, count: usize) -> usize {
                 | SPARSE_VALUE_VERSION
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
         ) {
-            size_of::<u32>() * (count + 1)
+            size_of::<u32>() * (count + presence_words(count))
         } else {
             0
         }
@@ -159,13 +249,16 @@ pub enum ValueKind {
     Error = 10,
     BigInt = 11,
     Function = 12,
+    /// Value15 dynamic-key record (see [`Dictionary`]).
+    Dictionary = 13,
 }
 impl ValueKind {
     #[must_use]
     pub fn is_reference(self) -> bool {
         matches!(
             self,
-            Self::Function
+            Self::Dictionary
+                | Self::Function
                 | Self::BigInt
                 | Self::Error
                 | Self::String
@@ -191,17 +284,20 @@ impl ValueKind {
             10 => Self::Error,
             11 => Self::BigInt,
             12 => Self::Function,
+            13 => Self::Dictionary,
             _ => return None,
         })
     }
     #[must_use]
     pub fn supported_by(self, version: u32) -> bool {
-        // Value15 is a reserved identity without tags (see DYNAMIC_VALUE_VERSION).
         supported_version(version)
-            && version != DYNAMIC_VALUE_VERSION
             && match self {
                 Self::Function => version == FUNCTION_VALUE_VERSION,
-                Self::BigInt => matches!(version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION),
+                Self::Dictionary => version == DYNAMIC_VALUE_VERSION,
+                Self::BigInt => matches!(
+                    version,
+                    BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+                ),
                 Self::Float64 => matches!(
                     version,
                     NUMBER_VALUE_VERSION
@@ -216,6 +312,7 @@ impl ValueKind {
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
                 ),
                 Self::Undefined => matches!(
                     version,
@@ -230,6 +327,7 @@ impl ValueKind {
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
                 ),
                 Self::PrimitiveUnion => {
                     matches!(
@@ -243,6 +341,7 @@ impl ValueKind {
                             | SPARSE_VALUE_VERSION
                             | BIGINT_VALUE_VERSION
                             | FUNCTION_VALUE_VERSION
+                            | DYNAMIC_VALUE_VERSION
                     )
                 }
                 Self::ReferenceUnion => {
@@ -255,6 +354,7 @@ impl ValueKind {
                             | SPARSE_VALUE_VERSION
                             | BIGINT_VALUE_VERSION
                             | FUNCTION_VALUE_VERSION
+                            | DYNAMIC_VALUE_VERSION
                     )
                 }
                 Self::Error => matches!(
@@ -264,6 +364,7 @@ impl ValueKind {
                         | SPARSE_VALUE_VERSION
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
                 ),
                 Self::I32 => matches!(version, LEGACY_VALUE_VERSION | VALUE_VERSION),
                 _ => true,

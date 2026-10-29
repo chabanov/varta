@@ -76,6 +76,9 @@ impl Lower<'_> {
         if matches!(value.ty, Type::Record(_)) {
             return self.record_field(member, value, true);
         }
+        if matches!(value.ty, Type::Dictionary(_)) {
+            return self.dictionary_read(member, value);
+        }
         if matches!(value.ty, Type::Class(_)) {
             return self.class_member(member, value, true);
         }

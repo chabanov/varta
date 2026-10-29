@@ -253,6 +253,16 @@ pub(super) fn note_union(id: u32, types: &mut ir::ValueTypes) -> Result<()> {
     Ok(())
 }
 
+/// Give union `to` the erased form recorded for union `from`; whether one was.
+pub(super) fn copy_erased_union(from: u32, to: u32, types: &mut ir::ValueTypes) -> bool {
+    match types.literals.erased_unions.get(&from).copied() {
+        Some(erased) => {
+            types.literals.erased_unions.insert(to, erased);
+            true
+        }
+        None => false,
+    }
+}
 fn subset(inner: u32, outer: u32, types: &ir::ValueTypes) -> bool {
     inner == outer
         || types
@@ -446,18 +456,30 @@ pub(super) fn refine(
 
 /// Whether a type graph contains a literal set (rejected as external input).
 pub(super) fn contains(ty: Type, types: &ir::ValueTypes) -> bool {
-    match ty {
-        Type::Literal(..) => true,
-        Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
-            .iter()
-            .any(|m| contains(*m, types)),
-        Type::Record(id) => types.records[id as usize]
-            .fields
-            .iter()
-            .any(|f| contains(f.ty, types)),
-        Type::Array(id) => contains(types.arrays[id as usize], types),
-        _ => false,
+    // Recursive types (v34) make the type graph cyclic: visit each type once.
+    fn visit(
+        ty: Type,
+        types: &ir::ValueTypes,
+        seen: &mut std::collections::BTreeSet<Type>,
+    ) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match ty {
+            Type::Literal(..) => true,
+            Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
+                .iter()
+                .any(|m| visit(*m, types, seen)),
+            Type::Record(id) => types.records[id as usize]
+                .fields
+                .iter()
+                .any(|f| visit(f.ty, types, seen)),
+            Type::Array(id) => visit(types.arrays[id as usize], types, seen),
+            Type::Dictionary(id) => visit(types.dictionaries[id as usize].value, types, seen),
+            _ => false,
+        }
     }
+    visit(ty, types, &mut std::collections::BTreeSet::new())
 }
 
 impl Lower<'_> {

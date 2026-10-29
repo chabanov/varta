@@ -32,6 +32,12 @@ pub enum JsonType {
     Array {
         element: u32,
     },
+    /// Schema 15 (v34): a dynamic-key object of `value`, materialized as a
+    /// value15 dictionary whose storage record has this static descriptor.
+    Dictionary {
+        descriptor: u32,
+        value: u32,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +62,7 @@ impl JsonType {
             Self::String => ValueKind::String,
             Self::Record { .. } => ValueKind::Record,
             Self::Array { .. } => ValueKind::Array,
+            Self::Dictionary { .. } => ValueKind::Dictionary,
         }
     }
 }
@@ -98,6 +105,7 @@ impl JsonSchema {
                 | SPARSE_SCHEMA_VERSION
                 | BIGINT_SCHEMA_VERSION
                 | FUNCTION_SCHEMA_VERSION
+                | DYNAMIC_SCHEMA_VERSION
         ) || self.types.is_empty()
             || self.types.len()
                 > if matches!(
@@ -109,6 +117,7 @@ impl JsonSchema {
                         | SPARSE_SCHEMA_VERSION
                         | BIGINT_SCHEMA_VERSION
                         | FUNCTION_SCHEMA_VERSION
+                        | DYNAMIC_SCHEMA_VERSION
                 ) {
                     MAX_SCHEMA_TYPES
                 } else {
@@ -119,6 +128,9 @@ impl JsonSchema {
             return Err(bad("version, root or type count"));
         }
         // Strict backward edges give a bounded DAG without recursive validation.
+        // Schema 15 admits recursive types: any in-range edge, with the input
+        // depth and visit limits enforced while decoding instead.
+        let recursive = self.version == DYNAMIC_SCHEMA_VERSION;
         let mut depths = Vec::new();
         for (index, ty) in self.types.iter().enumerate() {
             if !ty.kind().supported_by(self.value_version()) {
@@ -133,6 +145,7 @@ impl JsonSchema {
                     | SPARSE_SCHEMA_VERSION
                     | BIGINT_SCHEMA_VERSION
                     | FUNCTION_SCHEMA_VERSION
+                    | DYNAMIC_SCHEMA_VERSION
             ) && matches!(
                 ty,
                 JsonType::Undefined
@@ -142,6 +155,9 @@ impl JsonSchema {
                 return Err(bad("extended types require checked schema version"));
             }
             let child_depth = |child: u32| -> Result<usize, CheckedJsonError> {
+                if recursive && (child as usize) < self.types.len() {
+                    return Ok(0);
+                }
                 if child as usize >= index {
                     return Err(bad("cyclic or forward type reference"));
                 }
@@ -149,7 +165,7 @@ impl JsonSchema {
             };
             let depth = match ty {
                 JsonType::Record { fields, .. } => {
-                    if fields.len() > MAX_RECORD_FIELDS
+                    if fields.len() > max_record_fields(self.value_version())
                         || fields.windows(2).any(|pair| pair[0].name >= pair[1].name)
                         || fields
                             .iter()
@@ -169,6 +185,7 @@ impl JsonSchema {
                                     | SPARSE_SCHEMA_VERSION
                                     | BIGINT_SCHEMA_VERSION
                                     | FUNCTION_SCHEMA_VERSION
+                                    | DYNAMIC_SCHEMA_VERSION
                             ) || !self.admits_undefined(field.ty))
                         {
                             return Err(bad(
@@ -179,7 +196,9 @@ impl JsonSchema {
                     }
                     depth
                 }
-                JsonType::Array { element } => child_depth(*element)?,
+                JsonType::Array { element } | JsonType::Dictionary { value: element, .. } => {
+                    child_depth(*element)?
+                }
                 JsonType::PrimitiveUnion { members } | JsonType::ReferenceUnion { members } => {
                     if members.len() < 2 || members.len() > MAX_UNION_MEMBERS {
                         return Err(bad("union member count"));
@@ -197,8 +216,17 @@ impl JsonSchema {
                         }
                         references |= matches!(
                             kind,
-                            ValueKind::BigInt | ValueKind::Record | ValueKind::Array
+                            ValueKind::BigInt
+                                | ValueKind::Record
+                                | ValueKind::Array
+                                | ValueKind::Dictionary
                         );
+                    }
+                    // A JSON object selects the unique object member.
+                    if kinds.contains(&(ValueKind::Record as u32))
+                        && kinds.contains(&(ValueKind::Dictionary as u32))
+                    {
+                        return Err(bad("ambiguous record and dictionary union members"));
                     }
                     if references != matches!(ty, JsonType::ReferenceUnion { .. }) {
                         return Err(bad("union cell kind"));
@@ -228,6 +256,9 @@ impl JsonSchema {
     }
     #[must_use]
     pub fn value_version(&self) -> u32 {
+        if self.version == DYNAMIC_SCHEMA_VERSION {
+            return DYNAMIC_VALUE_VERSION;
+        }
         if self.version == FUNCTION_SCHEMA_VERSION {
             return FUNCTION_VALUE_VERSION;
         }

@@ -216,7 +216,12 @@ impl Walker<'_> {
                 if word(self.data, ptr + 4)? as usize != fields.len() {
                     return Err(invalid());
                 }
-                let present = word(self.data, ptr + value::presence_offset(fields.len()))?;
+                let present = value::read_slot_set(
+                    self.data,
+                    ptr + value::presence_offset(fields.len()),
+                    value::presence_words(fields.len()),
+                )
+                .ok_or_else(invalid)?;
                 for at in 0..fields.len() {
                     let entry = descriptor
                         + value::RECORD_DESCRIPTOR_HEADER
@@ -241,7 +246,7 @@ impl Walker<'_> {
                     {
                         return Err(invalid());
                     }
-                    if present & (1 << slot) != 0 {
+                    if present & (1u128 << slot) != 0 {
                         self.value(field.ty, wide(self.data, ptr + 8 + slot * 8)?, depth + 1)?;
                     }
                 }
@@ -255,6 +260,19 @@ impl Walker<'_> {
                     payload,
                     catalog.value_version,
                 )?;
+                Ok(())
+            }
+            CaptureType::Dictionary { value: element } => {
+                let dictionary =
+                    value::Dictionary::read(self.data, payload, catalog.value_version)?;
+                self.charge(dictionary.keys.capacity as u64 * 8)?;
+                if Some(dictionary.values.kind) != catalog.types[*element as usize].value_kind() {
+                    return Err(invalid());
+                }
+                for index in 0..dictionary.keys.length {
+                    let (_, entry) = dictionary.entry(self.data, index)?;
+                    self.value(*element, entry, depth + 1)?;
+                }
                 Ok(())
             }
             CaptureType::Array { element } => {

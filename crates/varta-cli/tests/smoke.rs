@@ -11303,6 +11303,55 @@ fn suspension_profile_v33_declares_its_host_abi_through_both_binaries() {
 }
 
 #[test]
+fn pilot_profile_v34_runs_dynamic_wide_and_recursive_records_in_dev_and_artifacts() {
+    let fields: String = (0..36).map(|i| format!("f{i}?:number;")).collect();
+    let project = RegressionProject::new(
+        &format!(
+            "type JsonValue=null|boolean|number|string|JsonValue[]|{{[key:string]:JsonValue}};\
+             interface Wide{{{fields}tags:Record<string,string>}}\
+             export function main():void{{\
+             const w:Wide={{tags:{{b:'x'}}}};w.f35=35;w.tags['2']='two';delete w.tags.b;\
+             const doc=varta.json.parse<JsonValue>('{{\"a\":[1,{{\"b\":true}}]}}');\
+             console.log(JSON.stringify(w)+' '+JSON.stringify(doc));}}"
+        ),
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v34");
+    let expected = [r#"varta log: {"tags":{"2":"two"},"f35":35} {"a":[1,{"b":true}]}"#];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for mut command in [varta(), Command::new(runtime_path())] {
+        let output = command
+            .args(["run", "dist/app.wasm"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+    // The same source stays rejected under v33 before any guest effect.
+    project.language_profile("checked-f64-utf16-v33");
+    let old = project.command(&["dev"]);
+    assert!(!old.status.success());
+    let text = combined(&old);
+    assert!(
+        text.contains("object field count exceeds limit")
+            || text.contains("recursive type declaration"),
+        "{text}"
+    );
+}
+
+#[test]
 fn pilot_profile_v34_declares_its_host_and_value_abis_through_both_binaries() {
     use varta_common::{abi, value};
     let project = RegressionProject::new(

@@ -52,7 +52,7 @@ fn register_log(
                 Kind::Boolean => value.payload.to_string(),
                 Kind::Float64 => {
                     let value = f64::from_bits(value.payload);
-                    if matches!(log, Host::ValueLogV7 | Host::ValueLogV8) {
+                    if matches!(log, Host::ValueLogV7 | Host::ValueLogV8 | Host::ValueLogV9) {
                         number::canonical_display(value)
                     } else {
                         number::display(value)
@@ -85,8 +85,12 @@ fn register_log(
                         format!("{}: {message}", object.class.name())
                     }
                 }
-                Kind::Record | Kind::Array => {
-                    if version == varta_common::value::BIGINT_VALUE_VERSION {
+                Kind::Record | Kind::Array | Kind::Dictionary => {
+                    if matches!(
+                        version,
+                        varta_common::value::BIGINT_VALUE_VERSION
+                            | varta_common::value::DYNAMIC_VALUE_VERSION
+                    ) {
                         caller.data().check_budget()?;
                         let fuel = caller.get_fuel()?;
                         let mut budget = varta_bigint::Budget::new(
@@ -184,6 +188,16 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             Host::ValueStrictEqualV7,
             Host::ValueNullishEqualV7,
         ),
+        (
+            varta_common::value::DYNAMIC_VALUE_VERSION,
+            Host::ValueLogV9,
+            Host::ValueTypeOfV8,
+            Host::ValueTruthyV8,
+            Host::ValueNullishV8,
+            Host::ValueIsArrayV8,
+            Host::ValueStrictEqualV8,
+            Host::ValueNullishEqualV8,
+        ),
     ] {
         register_log(linker, version, log)?;
         linker.func_wrap(
@@ -193,7 +207,9 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 caller.data_mut().tick()?;
                 let value = read(&mut caller, value, version)?;
                 let name = match value.kind {
-                    Kind::Error | Kind::Null | Kind::Record | Kind::Array => "object",
+                    Kind::Error | Kind::Null | Kind::Record | Kind::Array | Kind::Dictionary => {
+                        "object"
+                    }
                     Kind::Undefined => "undefined",
                     Kind::String => "string",
                     Kind::Float64 => "number",
@@ -219,7 +235,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     } else {
                         match value.kind {
                             Kind::Null | Kind::Undefined => false,
-                            Kind::Error | Kind::Record | Kind::Array => true,
+                            Kind::Error | Kind::Record | Kind::Array | Kind::Dictionary => true,
                             Kind::BigInt => !varta_common::bigint::BigIntView::read(
                                 data(&mut caller)?,
                                 value.payload,
@@ -297,6 +313,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (
             Host::ValueIsErrorClassV3,
             varta_common::value::BIGINT_VALUE_VERSION,
+        ),
+        (
+            Host::ValueIsErrorClassV4,
+            varta_common::value::DYNAMIC_VALUE_VERSION,
         ),
     ] {
         linker.func_wrap(

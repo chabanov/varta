@@ -3908,3 +3908,89 @@ records, unions, `JSON.stringify`, `console.log`, `typeof` and equality reject
 it. `yield*`, `async function*`, generator methods and expressions, spread or
 `Array.from` over a generator and `yield` inside calls such as `String(yield x)`
 are rejected with a diagnostic.
+
+### `checked-f64-utf16-v34`
+
+V34 (in development) runs every v33 program unchanged; its values use value
+layout 15, which only changes what the runtime reads, not what programs see.
+
+#### Wide records (opt-in v34)
+
+Interfaces, object types, literals and classes may declare up to 128 fields
+(v33 and earlier: 32), enough for generated API models:
+
+```ts
+interface Agent {
+  id: string;
+  name: string;
+  // ... up to 128 fields in total
+  description?: string;
+}
+
+function rename(agent: Agent, name: string): Agent {
+  agent.name = name;
+  delete agent.description;            // optional fields stay deletable
+  return agent;
+}
+```
+
+Presence, key order, `Object.keys`, `JSON.stringify` and checked
+`varta.json.parse<Agent>` work exactly as for small records. Every function
+body still has the same compiled-size budget, so split very large literals and
+destructurings of wide records across helper functions.
+
+#### Index signatures and `Record<string, T>` (opt-in v34)
+
+Objects with arbitrary string keys are typed with an index signature or
+`Record<string, T>`. Reads return `T | undefined`, so narrow before use:
+
+```ts
+type Counts = Record<string, number>;
+
+function tally(words: string[]): Counts {
+  const counts: Counts = {};
+  for (const word of words) {
+    if (word !== undefined) {
+      counts[word] = (counts[word] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
+export function main(): void {
+  const counts = tally(['b', 'a', 'b', '2']);
+  console.log(JSON.stringify(counts));       // {"2":1,"b":2,"a":1}
+  delete counts.a;
+  console.log(String('a' in counts));        // false
+  console.log(Object.keys(counts).length);   // 2
+}
+```
+
+Keys enumerate like JavaScript objects: integer-like keys first in numeric
+order, then the rest in insertion order. `varta.json.parse<Record<string, T>>`
+accepts any keys and rejects duplicates. A type that mixes declared fields
+with an index signature, number keys and `{ ...spread }` are not supported yet.
+
+#### Recursive types (opt-in v34)
+
+A type may refer to itself through an array, an object field or an index
+signature:
+
+```ts
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+interface Tree { name: string; children: Tree[] }
+
+function count(value: JsonValue): number {
+  if (Array.isArray(value)) {
+    return value.length;
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.keys(value).length;
+  }
+  return 1;
+}
+```
+
+`type A = B; type B = A`, `type A = string | A` and recursive generic types are
+rejected. Closures and generator frames cannot hold a value of a recursive type
+yet; pass it as a parameter instead.
