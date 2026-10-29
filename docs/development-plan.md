@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | Commit `bf8c6c2` (2026-10-28): the seven-command gate in [verification.md](verification.md#full-gate) passed 1750 tests on a local host, as recorded in the commit message; not a cross-platform CI result |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); no file compiles yet, M1 not started |
+| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: v31 named types and `.js` specifiers landed; `core/json.ts` links, `generated/models.ts` exceeds the per-file lexical budget |
 
 Next work, in order:
 
@@ -262,7 +262,14 @@ dependencies, and contains no explicit `any`, so it meets the
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
 
-**Verified current behavior (2026-10-28).** `varta check` with profile
+**Verified behavior with v31 (2026-10-28).** Named interface/alias types,
+type-only imports/exports and `./x.js` specifiers are implemented, so
+`core/json.ts` links through `import type { JsonValue } from './core/json.js'`.
+`generated/models.ts` (about 125k tokens) exceeds the per-file lexical budget of
+65,536 tokens, and eight files contain token runs longer than the 256-token
+limit (long literal unions); admitting them requires a budget decision.
+
+**Earlier verified behavior (2026-10-28).** `varta check` with profile
 `checked-f64-utf16-v30` rejects `import type` (`core/resource.ts`), top-level
 `export const` (`generated/meta.ts`), `class` (`core/errors.ts`) and any *use* of an
 interface whose field has a string-literal union type. A file containing only type
@@ -271,8 +278,8 @@ its module graph.
 
 | Requirement | Occurrences | Current Varta |
 | --- | --- | --- |
-| Modules: `import type`, `export *`, `export default`, top-level `export const`, `.js` specifiers resolving to `.ts` | 65 files | Local named-function modules only |
-| Structural interfaces; index signatures and `Record<string, …>` | 1917 interfaces / 38 | Closed records only |
+| Modules: `import type`, `export *`, `export default`, top-level `export const`, `.js` specifiers resolving to `.ts` | 65 files | v31: type-only imports/exports and `.js` specifiers; `export *`, re-exports with `from`, `export default` and `export const` not supported |
+| Named interfaces/aliases; structural assignability; index signatures and `Record<string, …>` | 1917 interfaces / 38 | v31: named closed shapes; no width subtyping, index signatures or `Record` |
 | String-literal types and `as const` | 357 aliases / 357 | Not supported |
 | Records wider than 32 fields (`Agent` 55, `UpdateRuntimeConfigRequest` 60) | 5 | 32-field limit |
 | Classes: `extends`, `protected`, `#private`, getters, `Error` subclasses, `new.target` | 74 classes, 82 `#` members | Not supported |

@@ -18,6 +18,7 @@ pub(super) fn scan(
     source: &Source,
     path: &Path,
     loader: &dyn ModuleLoader,
+    named_types: bool,
 ) -> Result<(Vec<Dependency>, Vec<Export>), CompilerError> {
     let mut imports = Vec::new();
     let mut exports = Vec::new();
@@ -27,27 +28,46 @@ pub(super) fn scan(
         };
         let result = (|| {
             match declaration {
-                ast::ModuleDecl::Import(import) => {
-                    imports.push(import_declaration(import, source, path, loader)?)
-                }
-                ast::ModuleDecl::ExportDecl(export) => {
-                    if let ast::Decl::Fn(function) = &export.decl {
-                        exports.push(Export {
-                            local: function.ident.sym.to_string(),
-                            exported: function.ident.sym.to_string(),
-                            span: function.ident.span,
-                        });
-                    }
-                }
+                ast::ModuleDecl::Import(import) => imports.push(import_declaration(
+                    import,
+                    source,
+                    path,
+                    loader,
+                    named_types,
+                )?),
+                ast::ModuleDecl::ExportDecl(export) => match &export.decl {
+                    ast::Decl::Fn(function) => exports.push(Export {
+                        local: function.ident.sym.to_string(),
+                        exported: function.ident.sym.to_string(),
+                        span: function.ident.span,
+                        type_only: false,
+                    }),
+                    ast::Decl::TsInterface(interface) if named_types => exports.push(Export {
+                        local: interface.id.sym.to_string(),
+                        exported: interface.id.sym.to_string(),
+                        span: interface.id.span,
+                        type_only: true,
+                    }),
+                    ast::Decl::TsTypeAlias(alias) if named_types => exports.push(Export {
+                        local: alias.id.sym.to_string(),
+                        exported: alias.id.sym.to_string(),
+                        span: alias.id.span,
+                        type_only: true,
+                    }),
+                    _ => {}
+                },
                 ast::ModuleDecl::ExportNamed(export) => {
-                    if export.src.is_some() || export.type_only || export.with.is_some() {
+                    if export.src.is_some()
+                        || export.type_only && !named_types
+                        || export.with.is_some()
+                    {
                         return Err(unsupported("re-export or type-only export"));
                     }
                     for specifier in &export.specifiers {
                         let ast::ExportSpecifier::Named(specifier) = specifier else {
                             return Err(unsupported("namespace/default export"));
                         };
-                        if specifier.is_type_only {
+                        if specifier.is_type_only && !named_types {
                             return Err(unsupported("type-only export"));
                         }
                         let local = name(&specifier.orig)?;
@@ -61,6 +81,7 @@ pub(super) fn scan(
                             local,
                             exported,
                             span: specifier.span,
+                            type_only: export.type_only || specifier.is_type_only,
                         });
                     }
                 }
@@ -78,8 +99,9 @@ fn import_declaration(
     source: &Source,
     path: &Path,
     loader: &dyn ModuleLoader,
+    named_types: bool,
 ) -> Result<Dependency, CompilerError> {
-    if import.type_only
+    if import.type_only && !named_types
         || import.with.is_some()
         || import.phase != ast::ImportPhase::Evaluation
         || import.specifiers.is_empty()
@@ -91,7 +113,7 @@ fn import_declaration(
         let ast::ImportSpecifier::Named(specifier) = specifier else {
             return Err(unsupported("default or namespace import"));
         };
-        if specifier.is_type_only {
+        if specifier.is_type_only && !named_types {
             return Err(unsupported("type-only import"));
         }
         let imported = specifier
@@ -104,6 +126,7 @@ fn import_declaration(
             imported,
             local: specifier.local.sym.to_string(),
             span: specifier.span,
+            type_only: import.type_only || specifier.is_type_only,
         });
     }
     let specifier = import

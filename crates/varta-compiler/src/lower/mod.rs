@@ -155,6 +155,15 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     if let ast::TsType::TsTypeLit(literal) = ty {
         return records::type_literal(literal, types);
     }
+    if types.profile.named_types()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && let ast::TsEntityName::Ident(id) = &reference.type_name
+    {
+        if reference.type_params.is_some() {
+            return Err(unsupported("generic type reference"));
+        }
+        return named::resolve(id.sym.as_ref(), types);
+    }
     let ast::TsType::TsKeywordType(keyword) = ty else {
         return Err(unsupported("type annotation"));
     };
@@ -249,6 +258,7 @@ mod logical_assignments;
 mod math;
 mod math_hypot;
 mod missing;
+pub(crate) mod named;
 mod number_format;
 mod number_parse;
 mod number_predicates;

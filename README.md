@@ -131,6 +131,7 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v28` | BigInt scalars |
 | `checked-f64-utf16-v29` | BigInt in records/arrays/unions, primitive coercion, comparisons |
 | `checked-f64-utf16-v30` | Property deletion, `Object.entries`/`is`/`assign`, String own keys |
+| `checked-f64-utf16-v31` | Named interface/alias types, type-only imports/exports, `.js` specifiers |
 <!-- generated:profile-index:end -->
 
 ## Commands

@@ -18,8 +18,14 @@ pub(crate) fn lower(
     };
     let mut next = 0;
     let mut main = None;
-    for path in &graph.order {
+    let mut type_exports: BTreeMap<PathBuf, named::Exports> = BTreeMap::new();
+    for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
+        if profile.named_types() {
+            named::enter(&mut types, module);
+            let exports = named::link_module(graph, path, module, &type_exports, &mut types)?;
+            type_exports.insert(path.clone(), exports);
+        }
         if profile.binary64()
             && let Some(item) = unit
                 .ast
@@ -76,12 +82,13 @@ pub(crate) fn lower(
             entry.ast.span(),
         )
     })?;
-    let scopes = link_bindings(graph, &definitions)?;
+    let scopes = link_bindings(graph, &definitions, &type_exports, &types)?;
     let mut functions = Vec::new();
     let mut generated = BTreeMap::new();
     let mut call_effects = BTreeMap::new();
-    for path in &graph.order {
+    for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
+        named::enter(&mut types, module);
         for declaration in declarations::collect(&unit.ast, &unit.source)? {
             let signature = &definitions[path][declaration.ident.sym.as_ref()];
             functions.push(body(
@@ -113,30 +120,39 @@ pub(crate) fn lower(
     })
 }
 
+/// Function bindings only; type bindings were linked by `named::link_module`.
 fn link_bindings(
     graph: &Graph,
     definitions: &BTreeMap<PathBuf, Symbols>,
+    type_exports: &BTreeMap<PathBuf, named::Exports>,
+    types: &ir::ValueTypes,
 ) -> Result<BTreeMap<PathBuf, Symbols>> {
     let mut scopes = BTreeMap::new();
     let mut exports: BTreeMap<PathBuf, Symbols> = BTreeMap::new();
-    for path in &graph.order {
+    for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
         let mut scope = definitions[path].clone();
         for import in &unit.imports {
             for binding in &import.bindings {
-                let signature = exports
+                let function = exports
                     .get(&import.target)
-                    .and_then(|e| e.get(&binding.imported))
-                    .ok_or_else(|| {
-                        unit.source.locate(
-                            CompilerError::Module(format!(
-                                "module {} does not export function {}",
-                                import.target.display(),
-                                binding.imported
-                            )),
-                            binding.span,
-                        )
-                    })?;
+                    .and_then(|e| e.get(&binding.imported));
+                let is_type = type_exports
+                    .get(&import.target)
+                    .is_some_and(|e| e.contains_key(&binding.imported));
+                if binding.type_only || function.is_none() && is_type {
+                    continue;
+                }
+                let signature = function.ok_or_else(|| {
+                    unit.source.locate(
+                        CompilerError::Module(format!(
+                            "module {} does not export function {}",
+                            import.target.display(),
+                            binding.imported
+                        )),
+                        binding.span,
+                    )
+                })?;
                 if matches!(binding.local.as_str(), "varta" | "console" | "log" | "JSON")
                     || scope
                         .insert(binding.local.clone(), signature.clone())
@@ -154,6 +170,12 @@ fn link_bindings(
         }
         let mut visible = BTreeMap::new();
         for export in &unit.exports {
+            if export.type_only
+                || !scope.contains_key(&export.local)
+                    && named::is_type(types, module, &export.local)
+            {
+                continue;
+            }
             let signature = scope.get(&export.local).ok_or_else(|| {
                 unit.source.locate(
                     CompilerError::Module(format!(

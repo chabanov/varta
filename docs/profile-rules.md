@@ -1586,3 +1586,37 @@ on failure, and forbid replacing it after the execution's first attempt. Never
 recover trusted metadata from guest memory or a global module registry. Sealed
 catalog proofs may skip schema revalidation, but must retain all graph/work and
 payload checks. This does not admit value14 source operations or call authority.
+
+## Named types profile v31
+
+Inherit v30 under checked-f64-utf16-v31 with shared ABI28/value13/schema13 and
+the v30 exception/JSON selectors; rebuild both native companions for the exact
+profile list. `named_types()` admits v31 only; `property_deletion()` and every
+inherited selector include it. Named types are compile-time only: no host import,
+value tag, layout, helper or catalog entry changes, and artifacts carry no names.
+
+The type namespace lives in `ValueTypes.named`, keyed by (module order index,
+name). `named::link_module` records local interface/alias declarations and type
+imports for each module in dependency order before that module's function
+signatures are checked, then computes its type exports. Imports follow
+`Declaration::Imported` chains to the defining entry; resolution lowers the
+declaration body once in its defining module (switching `named.current`) and
+memoizes the interned type. Keep the resolving stack: any cycle fails with
+`recursive type declaration`, never by unrolling. Built-ins (`Array`,
+`VartaResult`, HTTP types, Error families) are matched before named lookup;
+redeclaring an Error family name is rejected. Interfaces reuse the closed
+type-literal rules; reject generics, `extends`, duplicates and unknown names
+with distinct diagnostics.
+
+The module scanner receives the profile. Only v31 admits `import type`,
+`{ type T }`, `export type { … }` and records `export interface/type` as type
+exports; earlier profiles keep their exact messages and silently ignored
+declaration bodies. Function linking skips type-only and type-resolved bindings;
+a missing function binding that is also not a type keeps the existing error.
+The project loader maps `./x.js` to `./x.ts` only for v31 and never reads `.js`
+files; all confinement, no-follow and size rules are unchanged.
+
+Structural subtyping between distinct record shapes, generics, literal types,
+module constants and re-exports are separate pilot-driven work. Do not raise the
+per-file lexical budgets to admit large generated type modules without an
+explicit decision.

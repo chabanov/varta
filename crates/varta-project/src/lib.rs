@@ -77,7 +77,7 @@ impl CheckedProject {
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         let entry_path = base.join(&config.entry).canonicalize()?;
-        let loader = modules::SourceLoader::new(base)?;
+        let loader = modules::SourceLoader::new(base, config.language_profile)?;
         let compilation = varta_compiler::compile_modules_with_profile(
             loader.entry(&entry_path)?,
             &loader,

@@ -127,6 +127,7 @@ pub(crate) struct ValueTypes {
     pub arrays: Vec<Type>,
     pub unions: Vec<Vec<Type>>,
     pub functions: Vec<FunctionType>,
+    pub named: crate::lower::named::NamedTypes,
 }
 impl ValueTypes {
     pub fn value_version(&self) -> u32 {

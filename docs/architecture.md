@@ -151,10 +151,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v28` | 27 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
 | `checked-f64-utf16-v29` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v30` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
+| `checked-f64-utf16-v31` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **28**, value ABI **13**, HTTP contract **1** and **33** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **28**, value ABI **13**, HTTP contract **1** and **34** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -5265,6 +5266,50 @@ existing checked-write guards. Primitive target boxing, descriptors, Symbol and
 general property creation remain future CORE-02 work. ABI/layout versions and
 all production limits remain unchanged.
 
+### `checked-f64-utf16-v31` — Named types
+
+V31 reuses the v30 host, value, schema and exception selectors (see the
+[version matrix](#version-matrix)), inherits every v30 operation and adds named
+type annotations. Earlier profiles keep ignoring interface/alias bodies and keep
+rejecting named references, type-only imports and `.js` specifiers.
+
+- **Declarations.** Top-level `interface` and `type` declarations, exported or
+  not, form a per-module type namespace separate from function bindings. An
+  interface body follows the existing closed type-literal rules (property
+  signatures, `?` optional fields under the presence rules, no readonly/computed/
+  method members, at most `value::MAX_RECORD_FIELDS` fields). An alias may name any
+  admitted type expression, including unions, arrays, function types, Error
+  families and other named types.
+- **Resolution.** A bare identifier reference not claimed by a built-in (`Array`,
+  `VartaResult`, HTTP types, Error families) resolves in the referencing module,
+  following import bindings to the defining declaration. The declaration is
+  lowered once in its defining module and memoized. Declaration order does not
+  matter. Named types are structural aliases: an interface and an identical
+  type literal intern to the same record shape; there is no width or optional-
+  field subtyping between distinct shapes.
+- **Rejected with diagnostics.** Recursive declarations (direct or through other
+  names), type parameters on declarations or references, `interface … extends`,
+  duplicate type names in one module, redeclaring Error family names, unknown
+  names (`unsupported type reference Name`) and type declarations inside function
+  bodies. Generic built-ins such as `Record<K, V>` are rejected as generic type
+  references.
+- **Modules.** `import type { T }`, `import { type T }`, `import { T }` of an
+  exported type, `export interface`/`export type` declarations and
+  `export type { T as U }` / `export { T }` lists of local or imported types are
+  admitted. A type-only import must name an exported type; a type-only export
+  must name a type binding. Type-only bindings never become callable values, and
+  a name may be both an exported function and an exported type. Re-exports with
+  `from`, `export *`, default/namespace imports and side-effect imports remain
+  rejected.
+- **Project specifiers.** With v31 the project loader also accepts relative
+  `./x.js` specifiers and resolves them to the `./x.ts` source (TypeScript's ESM
+  convention); a `.js` file is never read. All other loader rules are unchanged.
+
+Named types are compile-time only: they add no host import, value tag, layout,
+helper or catalog entry, and artifacts carry no type names. All budgets are
+unchanged; in particular the per-file lexical limits still apply to large
+type-only modules.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),
@@ -5275,6 +5320,8 @@ different files do not collide. Imports must name exported functions, and their
 parameter/result types are checked at each call. Duplicate or reserved bindings,
 duplicate exports and unresolved exports fail before emission. Type aliases and
 interfaces retain their existing erased behavior; they are not importable values.
+Profile v31 adds [named types](#checked-f64-utf16-v31--named-types), including
+type-only imports/exports and `./x.js` specifiers for `.ts` sources.
 
 The entry module must declare its own `main(): void` with no parameters. An
 imported binding or an export alias cannot supply the entry point. A dependency

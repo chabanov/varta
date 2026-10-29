@@ -15,12 +15,21 @@ const MAX_SPECIFIER_BYTES: usize = 1024;
 pub(crate) struct SourceLoader {
     root: PathBuf,
     directory: Dir,
+    /// TypeScript's ESM convention: `./x.js` names the `./x.ts` source (v31+).
+    js_specifiers: bool,
 }
 impl SourceLoader {
-    pub(crate) fn new(root: &Path) -> Result<Self> {
+    pub(crate) fn new(
+        root: &Path,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Result<Self> {
         let root = root.canonicalize()?;
         let directory = Dir::open_ambient_dir(&root, cap_std::ambient_authority())?;
-        Ok(Self { root, directory })
+        Ok(Self {
+            root,
+            directory,
+            js_specifiers: profile.named_types(),
+        })
     }
     pub(crate) fn entry(&self, path: &Path) -> Result<ModuleSource> {
         // The entry is explicit host configuration, including legacy layouts
@@ -94,12 +103,26 @@ impl ModuleLoader for SourceLoader {
             || !(specifier.starts_with("./") || specifier.starts_with("../"))
             || specifier.chars().any(|c| c.is_control())
             || specifier.contains(['\\', '?', '#'])
-            || !specifier.ends_with(".ts")
+            || !(specifier.ends_with(".ts") || self.js_specifiers && specifier.ends_with(".js"))
         {
             return Err(CompilerError::Module(
-                "imports require explicit relative .ts paths without URL/query syntax".into(),
+                if self.js_specifiers {
+                    "imports require explicit relative .ts or .js paths without URL/query syntax"
+                } else {
+                    "imports require explicit relative .ts paths without URL/query syntax"
+                }
+                .into(),
             ));
         }
+        // Only the source file is ever loaded; a `.js` specifier never reads `.js`.
+        let source_specifier;
+        let specifier = match specifier.strip_suffix(".js") {
+            Some(stem) => {
+                source_specifier = format!("{stem}.ts");
+                source_specifier.as_str()
+            }
+            None => specifier,
+        };
         let parent = importer
             .parent()
             .ok_or_else(|| CompilerError::Module("importer directory is missing".into()))?;

@@ -862,3 +862,10 @@ declare const varta: {
 // failure preserves earlier writes. Unknown indexed keys retain checked write guards.
 // Primitive target boxing, arbitrary new properties, descriptors and Symbol remain
 // pending. No ABI/layout/ceiling change, and historical source admission stays frozen.
+
+// V31 adds named interface/type alias annotations, resolved per module and across
+// imports. import type / { type T } / export type { T as U } / export interface are
+// admitted; ./x.js specifiers name ./x.ts sources. Named types are exact closed
+// aliases (no width subtyping). Generics, extends, recursion, Record<K,V>,
+// re-exports with from and local type declarations remain rejected. Shared
+// ABI28/value13/schema13; no runtime representation or limit change.

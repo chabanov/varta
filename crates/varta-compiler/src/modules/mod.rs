@@ -35,6 +35,8 @@ pub(crate) struct ImportBinding {
     pub imported: String,
     pub local: String,
     pub span: Span,
+    /// `import type` or `import { type T }`: binds only the type namespace.
+    pub type_only: bool,
 }
 pub(crate) struct Dependency {
     pub target: PathBuf,
@@ -45,6 +47,8 @@ pub(crate) struct Export {
     pub local: String,
     pub exported: String,
     pub span: Span,
+    /// Declared through `export interface/type` or `export type { … }`.
+    pub type_only: bool,
 }
 pub(crate) struct Unit {
     pub source: Source,
@@ -60,6 +64,7 @@ pub(crate) struct Graph {
 
 struct Builder<'a> {
     loader: &'a dyn ModuleLoader,
+    named_types: bool,
     graph: Graph,
     visiting: Vec<PathBuf>,
     bytes: usize,
@@ -71,12 +76,22 @@ const MAX_DEPTH: usize = 32;
 const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 
 impl Graph {
+    #[cfg(test)]
     pub(crate) fn load(
         entry: ModuleSource,
         loader: &dyn ModuleLoader,
     ) -> Result<Self, CompilerError> {
+        Self::load_with_profile(entry, loader, Default::default())
+    }
+    /// Profiles with named types also admit type-only import/export forms.
+    pub(crate) fn load_with_profile(
+        entry: ModuleSource,
+        loader: &dyn ModuleLoader,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Result<Self, CompilerError> {
         let mut builder = Builder {
             loader,
+            named_types: profile.named_types(),
             graph: Self {
                 entry: entry.path.clone(),
                 units: BTreeMap::new(),
@@ -122,7 +137,8 @@ impl Builder<'_> {
         }
         let source = Source::new(&input.path, &input.text);
         let ast = parse::parse_module(&source)?;
-        let (mut imports, exports) = syntax::scan(&ast, &source, &input.path, self.loader)?;
+        let (mut imports, exports) =
+            syntax::scan(&ast, &source, &input.path, self.loader, self.named_types)?;
         self.imports += imports.len();
         if self.imports > MAX_IMPORTS {
             return Err(source.locate(

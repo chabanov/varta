@@ -3328,3 +3328,89 @@ fn public_engine_property_deletion_v30_runs_across_modules() {
         ]
     );
 }
+#[test]
+fn public_engine_links_named_types_across_modules_in_v31() {
+    struct TypeSources;
+    impl ModuleLoader for TypeSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./types.ts" => Ok("types.ts".into()),
+                "./util.ts" => Ok("util.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("types.ts") => "export interface Tag{name:string;weight:number}export type MaybeTag=Tag|null;interface Hidden{x:number}export type { Hidden as Secret };",
+                _ => "import type {Tag,MaybeTag} from './types.ts';export type {MaybeTag};export function label(tag:Tag):string{return tag.name+':'+String(tag.weight);}",
+            }
+            .into())
+        }
+    }
+    let source = "import type {Tag,Secret} from './types.ts';import {type MaybeTag,label} from './util.ts';type Local=Tag[];export function main():void{const tags:Local=[{name:'a',weight:1.5}];const none:MaybeTag=null;const s:Secret={x:2};const first=tags[0];if(first!==undefined){console.log(label(first));}console.log(none===null);console.log(s.x);}";
+    let profile = varta_common::language::LanguageProfile::CheckedF64Utf16V31;
+    let compiled = varta_compiler::compile_modules_with_profile(
+        ModuleSource {
+            path: "entry.ts".into(),
+            text: source.into(),
+        },
+        &TypeSources,
+        profile,
+    )
+    .unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .inspect_module(&compiled.wasm)
+            .unwrap()
+            .language
+            .profile,
+        Some(profile)
+    );
+    assert_eq!(
+        runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap().lines,
+        ["varta log: a:1.5", "varta log: 1", "varta log: 2"]
+    );
+    for (text, expected) in [
+        (
+            "import type {Nope} from './types.ts';export function main():void{}",
+            "does not export type Nope",
+        ),
+        (
+            "import type {Hidden} from './types.ts';export function main():void{}",
+            "does not export type Hidden",
+        ),
+        (
+            "import {label} from './util.ts';export type {label};export function main():void{}",
+            "export label is not a type binding",
+        ),
+    ] {
+        let error = varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: text.into(),
+            },
+            &TypeSources,
+            profile,
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+    let frozen = varta_compiler::compile_modules_with_profile(
+        ModuleSource {
+            path: "entry.ts".into(),
+            text: source.into(),
+        },
+        &TypeSources,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V30,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        frozen.contains("type-only or attributed import"),
+        "{frozen}"
+    );
+}

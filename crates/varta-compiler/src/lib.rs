@@ -93,7 +93,7 @@ pub fn compile_modules_with_profile(
     profile: varta_common::language::LanguageProfile,
 ) -> Result<Compilation, CompilerError> {
     use swc_common::Spanned;
-    let graph = modules::Graph::load(entry, loader)?;
+    let graph = modules::Graph::load_with_profile(entry, loader, profile)?;
     let root = &graph.units[&graph.entry];
     let program = lower::lower(&graph, profile)?;
     let bytes = emit::emit(&program).map_err(|e| root.source.locate(e, root.ast.span()))?;

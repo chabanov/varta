@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v30",
+  "profile": "checked-f64-utf16-v31",
   "features": [
     {
       "id": "binary64",
@@ -374,6 +374,16 @@
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.assign"
+    },
+    {
+      "id": "named-types",
+      "title": "Named interface and type alias annotations",
+      "core": [
+        "CORE-01",
+        "CORE-12"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
     }
   ],
   "cases": [
@@ -1532,6 +1542,21 @@
         "varta log: 1",
         "varta log: 1",
         "varta log: [7,2]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "named-types-structural",
+      "feature": "named-types",
+      "path": "cases/named-types.ts",
+      "sha256": "fb3af09fdcc61df4cdfd17d373daf22d8df52576bf9812a6ae4dd5491d7899dd",
+      "stdout": [
+        "varta log: a:1.5",
+        "varta log: same:3",
+        "varta log: {\"name\":\"json\",\"note\":\"n\",\"score\":2}",
+        "varta log: 0"
       ],
       "baseline": {
         "status": "supported"

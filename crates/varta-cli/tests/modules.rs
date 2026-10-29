@@ -362,3 +362,53 @@ fn dependency_symlinks_are_rejected_at_every_component() {
         );
     }
 }
+
+#[test]
+fn named_types_and_js_specifiers_link_typescript_sources_in_v31() {
+    let main = r#"import type {Tag} from "./types.js";
+import {label} from "./lib.js";
+export function main():void{const t:Tag={name:"pilot",weight:2};console.log(label(t));}"#;
+    let project = Project::new(main);
+    project.write(
+        "varta.config.json",
+        r#"{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-v31","capabilities":{}}"#,
+    );
+    project.write(
+        "src/types.ts",
+        "export interface Tag{name:string;weight:number}",
+    );
+    project.write(
+        "src/lib.ts",
+        r#"import type {Tag} from "./types.js";export function label(t:Tag):string{return t.name+"/"+String(t.weight);}"#,
+    );
+    // A `.js` specifier names the TypeScript source; JavaScript files are never read.
+    project.write("src/lib.js", "PRIVATE_JS_MUST_NOT_BE_READ");
+    assert!(success(project.command(&["dev"])).contains("varta log: pilot/2"));
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains("varta log: pilot/2"));
+
+    // Earlier profiles keep the explicit `.ts` rule and reject type-only imports.
+    let old = Project::new(main);
+    old.write(
+        "varta.config.json",
+        r#"{"entry":"src/main.ts","target":"wasm","out":"dist/app","languageProfile":"checked-f64-utf16-v30","capabilities":{}}"#,
+    );
+    let diagnostic = old.diagnostic();
+    assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
+    let unresolved =
+        Project::new(r#"import {label} from "./lib.js";export function main():void{}"#);
+    unresolved.write(
+        "varta.config.json",
+        r#"{"entry":"src/main.ts","target":"wasm","out":"dist/app","languageProfile":"checked-f64-utf16-v30","capabilities":{}}"#,
+    );
+    let diagnostic = unresolved.diagnostic();
+    assert_eq!(diagnostic["code"], "module_error", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains(".ts paths"),
+        "{diagnostic}"
+    );
+}

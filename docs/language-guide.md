@@ -3409,3 +3409,35 @@ properties on existing objects and general shape-changing storage remain pending
 New target fields are inferred only for plain fresh record literals and statically
 known record sources; indexed sources require declared storage. Unknown checked
 keys retain existing write guards. V29 admission and ABI/layouts are unchanged.
+
+### `checked-f64-utf16-v31`
+
+#### Named interfaces and type aliases (opt-in v31)
+
+Name record shapes, unions, arrays and function types once and reuse them,
+locally or across modules. Declarations may appear in any order:
+
+```ts
+// types.ts
+export interface Tag { name: string; score: number; note?: string }
+export type Tags = Tag[];
+
+// main.ts
+import type { Tag, Tags } from "./types.js"; // resolves to ./types.ts
+type Label = (tag: Tag) => string;
+
+const label: Label = (tag) => tag.name + ":" + String(tag.score);
+
+export function main(): void {
+  const tags: Tags = [{ name: "a", score: 1.5 }];
+  const first = tags[0];
+  if (first !== undefined) console.log(label(first));
+}
+```
+
+`import type { T }`, `import { type T }`, `export interface`, `export type` and
+`export type { T as U }` are supported. A `./x.js` specifier names the `./x.ts`
+source; JavaScript files are never read. Named types are exact closed shapes: a
+value of `{ name; score }` is not assignable where `{ name; score; note? }` is
+expected. Generics, `extends`, recursive types, `Record<K, V>`, re-exports with
+`from` and type declarations inside functions are rejected with a diagnostic.

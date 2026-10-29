@@ -9,17 +9,14 @@ describe the state when it was written. Current status is in the
 [development plan](docs/development-plan.md#status) and current conformance counts
 in [conformance/README.md](conformance/README.md).
 
-### Changed
-
-- Documentation is restructured: a short README orientation page, a
-  [language guide](docs/language-guide.md), per-profile
-  [implementation rules](docs/profile-rules.md), a [history](docs/history.md) of
-  completed increments and a rules-only `CLAUDE.md`. Contract text moved
-  verbatim. The development plan records the research thesis and the uarp-sdk
-  pilot. Version and limit tables in `docs/architecture.md` and the profile indexes
-  are generated from the registries and checked by a workspace test.
-
 ### Added
+
+- Opt-in v31 adds named interface and type alias annotations, resolved per module
+  and across imports, with `import type`, `{ type T }`, `export interface/type`
+  and `export type { … }`. The project loader resolves `./x.js` specifiers to the
+  `./x.ts` source for v31. Recursive, generic and `extends` declarations fail with
+  diagnostics. Layouts, ABIs and limits are unchanged; the inventory adds one
+  named-type case.
 
 - Prepared runtime modules retain immutable verified function catalogs through
   startup, tool invocation and HTTP request execution. Stores own their module's
@@ -323,6 +320,16 @@ in [conformance/README.md](conformance/README.md).
 - Portable Wasm artifacts and native executables with an independent execution-only
   runtime companion, without shipping the TypeScript compiler.
 - Contributor and security policies, an MIT license, and GitHub issue/PR templates.
+
+### Changed
+
+- Documentation is restructured: a short README orientation page, a
+  [language guide](docs/language-guide.md), per-profile
+  [implementation rules](docs/profile-rules.md), a [history](docs/history.md) of
+  completed increments and a rules-only `CLAUDE.md`. Contract text moved
+  verbatim. The development plan records the research thesis and the uarp-sdk
+  pilot. Version and limit tables in `docs/architecture.md` and the profile indexes
+  are generated from the registries and checked by a workspace test.
 
 ### Fixed
 

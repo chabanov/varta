@@ -289,4 +289,5 @@ One line per profile; details in [profile rules](docs/profile-rules.md) and the
 | `checked-f64-utf16-v28` | BigInt scalars (ABI-level BigInt foundation) |
 | `checked-f64-utf16-v29` | BigInt graphs, primitive coercion and comparisons |
 | `checked-f64-utf16-v30` | Object deletion/entries/is/assign, String own keys |
+| `checked-f64-utf16-v31` | Named interface/alias types, type-only imports/exports, `.js` specifiers |
 <!-- generated:profile-index:end -->
