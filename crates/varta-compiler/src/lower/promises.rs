@@ -13,10 +13,15 @@
 use super::*;
 use functions::{LiftContext, intern_full};
 mod async_functions;
+mod async_generators;
 mod combinators;
 mod methods;
 mod values;
 pub(super) use async_functions::AsyncSplit;
+pub(super) use async_generators::{
+    AsyncBody, annotation as async_generator_annotation, named as async_generator_name,
+    rejected as async_generator_rejected,
+};
 use ir::{PromiseType, ScheduleMode};
 use std::collections::BTreeSet;
 use varta_common::scheduler::PromiseState;
@@ -55,6 +60,8 @@ enum Helper {
     TailThrow,
     /// The element job of a promise combinator (v35).
     Combinator(combinators::Combinator),
+    /// An async generator protocol helper or job (v36).
+    AsyncGenerator(async_generators::Operation),
 }
 
 /// Promise lowering state shared by every function of one program.
@@ -64,6 +71,13 @@ pub(crate) struct Asynchrony {
     /// bodies and promise jobs.
     pub scheduled: BTreeSet<usize>,
     helpers: BTreeMap<(Helper, Vec<Type>), usize>,
+    /// Async generator bodies being lowered (v36), by the lowering index of
+    /// their declaration.
+    bodies: BTreeMap<usize, AsyncBody>,
+    /// Split async generator bodies (v36), by function index: the state
+    /// record parameter every suspension publishes, its type and the input
+    /// type of every suspension point (the body's own generator type).
+    pub published: BTreeMap<usize, (u32, Type, Type)>,
 }
 
 pub(super) fn rejected(what: &str) -> CompilerError {
@@ -247,6 +261,9 @@ struct Synthetic {
     shape: ir::ParameterShape,
     capture: Option<Binding>,
     scheduled: bool,
+    /// The function result: `void` for every promise helper and job; an
+    /// async generator request (v36) returns its promise.
+    result: Type,
 }
 
 /// What a promise handler returns: nothing, a value, or a promise to adopt.
@@ -381,7 +398,7 @@ impl Lower<'_> {
             control: Default::default(),
             guard_blocked: Default::default(),
             outer_narrows: Default::default(),
-            result: Type::Void,
+            result: spec.result,
             infer_returns: false,
             entry: self.entry,
             loops: 0,
@@ -418,7 +435,7 @@ impl Lower<'_> {
             source: child.source.clone(),
             span: spec.span,
             params: spec.params,
-            result: Type::Void,
+            result: spec.result,
             locals: (0..child.next)
                 .map(|slot| {
                     child
@@ -443,6 +460,7 @@ impl Lower<'_> {
             params,
             capture: None,
             scheduled,
+            result: Type::Void,
         }
     }
     /// `if (p.state === pending) { settle; trigger reactions; track }`.
@@ -620,6 +638,8 @@ impl Lower<'_> {
     fn await_promise(&mut self, span: swc_common::Span, promise: Expr) -> Result<Expr> {
         let ty = promise.ty;
         let (_, info) = self.promise_info(ty)?;
+        // An async generator body (v36) waits through a relay job frame.
+        let relay = self.relay(span, ty)?;
         let value = stored(info.value);
         let slot = self.hidden(ty);
         let output = self.hidden(value);
@@ -654,6 +674,7 @@ impl Lower<'_> {
                 promise: Box::new(promise),
                 slot,
                 result: Box::new(result),
+                relay,
             },
         })
     }

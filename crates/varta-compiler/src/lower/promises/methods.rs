@@ -164,6 +164,7 @@ impl Lower<'_> {
                     },
                     capture: Some(binding),
                     scheduled: false,
+                    result: Type::Void,
                 },
                 |child, params, captured| {
                     let p = captured

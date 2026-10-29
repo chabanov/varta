@@ -37,6 +37,8 @@ pub use server::{HttpShutdown, RuntimeEvent, RuntimeObserver};
 #[cfg(test)]
 mod array_inference_tests;
 #[cfg(test)]
+mod async_generator_tests;
+#[cfg(test)]
 mod async_method_tests;
 #[cfg(test)]
 mod async_tests;

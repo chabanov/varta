@@ -70,6 +70,7 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
         let mut normalizer =
             normalize::Normalizer::new(&mut function.locals, &namer, &function.source);
         normalizer.awaits = types.asynchrony.scheduled.contains(&index);
+        normalizer.publish = types.asynchrony.published.get(&index).copied();
         let body = normalizer.statements(body)?;
         let liveness = types.profile.frame_liveness();
         let (body, machine) = states::Machine {

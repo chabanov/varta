@@ -152,6 +152,14 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     {
         return generators::annotation(reference, types);
     }
+    if types.profile.async_generators()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && let ast::TsEntityName::Ident(id) = &reference.type_name
+        && promises::async_generator_name(id.sym.as_ref())
+        && !named::declared(types, id.sym.as_ref())
+    {
+        return promises::async_generator_annotation(reference, id.sym.as_ref(), types);
+    }
     if types.profile.generators()
         && let ast::TsType::TsTypeRef(reference) = ty
         && matches!(&reference.type_name, ast::TsEntityName::Ident(id) if id.sym == "IteratorResult")

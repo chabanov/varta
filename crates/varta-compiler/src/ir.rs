@@ -204,6 +204,10 @@ pub(crate) struct Suspendable {
     /// Generator type id of a `function*` (v33): its frame is owned by the
     /// generator object and resumed only by guest code, never by `varta_resume`.
     pub generator: Option<u32>,
+    /// The body of an async generator (v36): the frame's completion cell
+    /// holds the state record from the first suspension on and is never
+    /// cleared, so later suspensions do not publish it again.
+    pub keeps_completion: bool,
     /// A scheduled frame (v34 `promises`/`async_functions`): every suspension
     /// awaits a promise and the runtime scheduler resumes it through
     /// `varta_resume`; the suspension point issues the frame's generation.
@@ -320,6 +324,28 @@ pub(crate) struct GeneratorType {
     /// The resume input; never `void` (an omitted `TNext` is `undefined`).
     pub next: Type,
     pub result: Type,
+    /// `AsyncGenerator<T, TReturn, TNext>` (v36 `async_generators`): objects
+    /// of this type are the frames of the internal body generator type
+    /// `AsyncGeneratorType::body`; no frame has this type itself.
+    pub asynchronous: Option<AsyncGeneratorType>,
+    /// The internal body type of an async generator (v36): every suspension
+    /// publishes the async generator's state record as the frame completion,
+    /// and its step function keeps that cell while the body runs, so the
+    /// protocol finds the state record at any time.
+    pub body: bool,
+}
+/// The private parts of an async generator type (v36 `async_generators`); see
+/// `lower::promises::async_generators`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AsyncGeneratorType {
+    /// The internal body generator type whose frames are the objects.
+    pub body: u32,
+    /// The state record `{ head, queue, state }`.
+    pub state: Type,
+    /// The request record `{ kind, next, promise, returned, thrown }`.
+    pub request: Type,
+    /// `Promise<IteratorResult<T, TReturn>>`, the result of every request.
+    pub promise: u32,
 }
 impl ValueTypes {
     /// Layout version stamped into descriptors and catalogs; see
@@ -747,6 +773,10 @@ pub(crate) enum Expression {
         promise: Box<Expr>,
         slot: u32,
         result: Box<Expr>,
+        /// In an async generator body (v36): the relay job function started
+        /// with the body's own frame (in this local) and the promise right
+        /// before the suspension; it resumes the body once the promise settled.
+        relay: Option<(usize, u32)>,
     },
     /// Create the frame of scheduled function `function` with `args` and start
     /// or enqueue it (v34). A function without a suspension point is called.

@@ -496,8 +496,16 @@ pub(super) fn body(
     lower.reserve_parameters(&plans)?;
     // The async body takes its promise right after the parameters.
     let promise = asynchronous.map(|id| lower.hidden(Type::Promise(id)));
+    // An async generator body takes its state record there (v36).
+    let async_generator = match generator {
+        Some(id) if lower.types.generators[id as usize].asynchronous.is_some() => {
+            Some(lower.begin_async_generator(id)?)
+        }
+        _ => None,
+    };
     let mut prologue = lower.module_constants(constants, &declaration.function)?;
     prologue.extend(lower.initialize_parameters(&plans, signature.receiver.is_some())?);
+    let start = prologue.len();
     let body = declaration
         .function
         .body
@@ -506,6 +514,21 @@ pub(super) fn body(
     prologue.extend(lower.block(&body.stmts, false)?);
     let mut statements = prologue;
     finish_body(&mut lower, &mut statements, declaration.span())?;
+    if let Some(body) = async_generator {
+        let tail = statements.split_off(start);
+        return lower.split_async_generator(
+            super::promises::AsyncSplit::declaration(
+                signature,
+                body.state,
+                signature.index == entry,
+                declaration.span(),
+                source,
+            ),
+            body,
+            statements,
+            tail,
+        );
+    }
     if let Some(promise) = promise {
         return lower.split_async(
             super::promises::AsyncSplit::declaration(

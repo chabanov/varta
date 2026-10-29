@@ -63,12 +63,15 @@ impl Lower<'_> {
         if !self.types.profile.closures() {
             return Err(unsupported("for-of requires checked-f64-utf16-v12"));
         }
-        if statement.is_await && self.types.profile.async_functions() {
+        if statement.is_await
+            && self.types.profile.async_functions()
+            && !self.types.profile.async_generators()
+        {
             return Err(promises::rejected(
                 "for await...of (async iteration is not implemented yet)",
             ));
         }
-        if statement.is_await {
+        if statement.is_await && !self.types.profile.async_generators() {
             return Err(unsupported("for-await-of"));
         }
         self.scopes.push(BTreeMap::new());
@@ -100,6 +103,9 @@ impl Lower<'_> {
         let value = self.headers_iteration(value)?;
         if self.types.profile.refinement_writes() {
             self.flow_for_of_effects(statement);
+        }
+        if statement.is_await {
+            return self.for_await(statement, pattern, mode, value);
         }
         if matches!(value.ty, Type::Generator(_)) {
             return self.for_of_generator(statement, pattern, mode, value);
@@ -194,7 +200,7 @@ impl Lower<'_> {
             )],
         ))
     }
-    fn for_of_source(&mut self, value: Expr) -> Result<(u32, Type, Vec<u32>, Vec<S>)> {
+    pub(super) fn for_of_source(&mut self, value: Expr) -> Result<(u32, Type, Vec<u32>, Vec<S>)> {
         let span = value.span;
         let members = unions::members(value.ty, self.types);
         let present: Vec<_> = members

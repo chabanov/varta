@@ -81,6 +81,9 @@ fn describe(expr: &ast::Expr) -> Construct {
         ),
         ast::Expr::Unary(unary) => (format!("`{}` expression", unary.op.as_str()), false),
         ast::Expr::Cond(_) => ("conditional expression".to_owned(), true),
+        // A v36 async generator `yield` awaits, settles the request and reads
+        // the next one; a synchronous `yield` is a bare suspension point.
+        ast::Expr::Yield(_) => ("yield expression".to_owned(), true),
         ast::Expr::Call(call) if call.args.iter().any(|arg| arg.spread.is_some()) => {
             ("call with spread arguments".to_owned(), false)
         }

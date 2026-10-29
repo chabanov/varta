@@ -68,13 +68,24 @@ pub(super) fn opaque(container: &str) -> CompilerError {
 /// `TReturn` as `void` and an omitted `TNext` as `undefined`, which only
 /// rejects programs that would need `any`. A `void` `TNext` is `undefined`.
 pub(super) fn annotation(reference: &ast::TsTypeRef, types: &mut ir::ValueTypes) -> Result<Type> {
+    let (yielded, returned, next) = arguments(reference, "Generator", types)?;
+    intern(yielded, returned, next, types)
+}
+
+/// The `T`, `TReturn` and `TNext` of a `Generator` or (v36)
+/// `AsyncGenerator`-like annotation named `name`, with the defaults above.
+pub(super) fn arguments(
+    reference: &ast::TsTypeRef,
+    name: &str,
+    types: &mut ir::ValueTypes,
+) -> Result<(Type, Type, Type)> {
     let params = reference
         .type_params
         .as_ref()
         .map(|p| p.params.as_slice())
         .unwrap_or_default();
     if !(1..=3).contains(&params.len()) {
-        return Err(rejected("Generator type argument count"));
+        return Err(rejected(&format!("{name} type argument count")));
     }
     let yielded = keyword_type(&params[0], types)?;
     let returned = params
@@ -103,7 +114,7 @@ pub(super) fn annotation(reference: &ast::TsTypeRef, types: &mut ir::ValueTypes)
     if yielded == Type::Void {
         return Err(rejected("void generator yield type"));
     }
-    intern(yielded, returned, next, types)
+    Ok((yielded, returned, next))
 }
 
 /// `IteratorResult<T>` or `IteratorResult<T, TReturn>`: the closed record
@@ -130,7 +141,11 @@ pub(super) fn iterator_result(
     result_record(yielded, returned, types)
 }
 
-fn result_record(yielded: Type, returned: Type, types: &mut ir::ValueTypes) -> Result<Type> {
+pub(super) fn result_record(
+    yielded: Type,
+    returned: Type,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
     if [yielded, returned]
         .iter()
         .any(|ty| matches!(ty, Type::Generator(_)) || ty.width() > 1)
@@ -164,11 +179,11 @@ fn result_record(yielded: Type, returned: Type, types: &mut ir::ValueTypes) -> R
 }
 
 fn intern(yielded: Type, returned: Type, next: Type, types: &mut ir::ValueTypes) -> Result<Type> {
-    if let Some(id) = types
-        .generators
-        .iter()
-        .position(|g| (g.yielded, g.returned, g.next) == (yielded, returned, next))
-    {
+    if let Some(id) = types.generators.iter().position(|g| {
+        (g.yielded, g.returned, g.next) == (yielded, returned, next)
+            && g.asynchronous.is_none()
+            && !g.body
+    }) {
         return Ok(Type::Generator(id as u32));
     }
     if types.generators.len() >= frame::MAX_GENERATOR_TYPES {
@@ -181,17 +196,19 @@ fn intern(yielded: Type, returned: Type, next: Type, types: &mut ir::ValueTypes)
         returned,
         next,
         result,
+        asynchronous: None,
+        body: false,
     });
     Ok(Type::Generator(id))
 }
 
 /// Whether `ty` accepts the value `undefined` (`void` counts for `TReturn`).
-fn accepts_undefined(ty: Type, types: &ir::ValueTypes) -> bool {
+pub(super) fn accepts_undefined(ty: Type, types: &ir::ValueTypes) -> bool {
     ty == Type::Void || unions::members(ty, types).contains(&Type::Undefined)
 }
 
 /// Field slots of the IteratorResult record: names are sorted, so `done` then `value`.
-fn field(types: &ir::ValueTypes, result: Type, name: &str) -> Result<u32> {
+pub(super) fn field(types: &ir::ValueTypes, result: Type, name: &str) -> Result<u32> {
     let Type::Record(id) = result else {
         return Err(CompilerError::Internal(
             "IteratorResult is not a record".into(),
@@ -229,12 +246,15 @@ impl Lower<'_> {
                 expression.span,
             ));
         };
+        let generator = self.generator_type(id);
+        if generator.asynchronous.is_some() {
+            return self.async_yield(expression, generator);
+        }
         if expression.delegate {
             return Err(self
                 .source
                 .locate(rejected("yield* delegation"), expression.span));
         }
-        let generator = self.generator_type(id);
         let value = match &expression.arg {
             Some(arg) => self.expr_expected(arg, Some(generator.yielded))?,
             None => undefined(expression.span),
@@ -252,6 +272,18 @@ impl Lower<'_> {
     fn running_error(&mut self, span: swc_common::Span) -> Result<S> {
         let error = self.array_error(ErrorClass::TypeError, RUNNING_MESSAGE, span)?;
         Ok(S::Throw(error))
+    }
+    /// `Init(outcome, step)` followed by the re-entry `TypeError`, for other
+    /// protocols over synchronous generators (v36 `for await`).
+    pub(super) fn generator_step(
+        &mut self,
+        span: swc_common::Span,
+        generator: Expr,
+        completion: Completion,
+        value: Expr,
+        outcome: u32,
+    ) -> Result<Vec<S>> {
+        self.step(span, generator, completion, value, outcome)
     }
     /// `Init(outcome, step)` followed by the re-entry `TypeError`.
     fn step(
@@ -342,6 +374,10 @@ impl Lower<'_> {
                 ));
             }
         };
+        if generator.asynchronous.is_some() {
+            // An async generator queues the request and returns its promise (v36).
+            return self.async_generator_request(span, receiver, completion, input);
+        }
         let gen_slot = self.hidden(receiver.ty);
         let input_slot = self.hidden(input.ty);
         let outcome = self.hidden(Type::Number);
@@ -453,6 +489,12 @@ impl Lower<'_> {
             return Err(CompilerError::Internal("missing for-of generator".into()));
         };
         let generator = self.generator_type(id);
+        if generator.asynchronous.is_some() {
+            return Err(self.source.locate(
+                type_error("for-of over an async generator requires for await...of"),
+                value.span,
+            ));
+        }
         if !accepts_undefined(generator.next, self.types)
             || !accepts_undefined(generator.returned, self.types)
         {
