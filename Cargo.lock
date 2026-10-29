@@ -2071,6 +2071,7 @@ dependencies = [
  "thiserror",
  "varta-artifact",
  "varta-common",
+ "varta-compiler",
  "varta-runtime",
 ]
 

@@ -11,6 +11,14 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Runtime admission of the K4.4 frame surface under opt-in v33 (selector
+  `resumable_frames`). Runtime preflight and artifact validation share one rule
+  set: function catalog version 2 is read only for v33, `varta_resume` must be a
+  closed guest function `(i64, i32, i64) -> i32` without tables or indirect
+  calls, and each frame layout must agree with its creator, resume body and
+  binding classes. V32 and earlier profiles reject every piece with a typed
+  error before any guest effect. The runtime does not call the dispatcher yet;
+  frame modules still come only from the test-only compiler hook.
 - K4.4 suspension foundation (block 1), compiler-internal, admitted by no
   profile. It adds evaluation-order normalization of suspension points on IR and
   a resumable state machine over continuation frames, a separate managed kind

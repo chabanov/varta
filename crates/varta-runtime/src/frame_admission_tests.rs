@@ -332,10 +332,9 @@ fn v33_frame_layouts_must_agree_with_the_module() {
     let imported = imported_functions(&bytes);
     let dispatcher = export_index(&bytes, frame::RESUME_EXPORT);
     let main = export_index(&bytes, "_start");
-    let cases: [(
-        Box<dyn Fn(&mut FunctionCatalog)>,
-        fn(&FrameAdmissionError) -> bool,
-    ); 7] = [
+    type Edit = Box<dyn Fn(&mut FunctionCatalog)>;
+    type Expect = fn(&FrameAdmissionError) -> bool;
+    let cases: [(Edit, Expect); 7] = [
         (
             // One more layout than the dispatcher resumes.
             Box::new(|c| {

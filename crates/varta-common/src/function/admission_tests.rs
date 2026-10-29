@@ -77,6 +77,9 @@ fn surface() -> FrameSurface {
         }),
     }
 }
+/// One fixture edit applied to the surface and its catalog.
+type Edit = fn(&mut FrameSurface, &mut FunctionCatalog);
+type Expect = fn(&FrameAdmissionError) -> bool;
 fn check(
     edit: impl FnOnce(&mut FrameSurface, &mut FunctionCatalog),
 ) -> Result<(), FrameAdmissionError> {
@@ -132,7 +135,7 @@ fn resumable_frame_profiles_alone_read_and_admit_the_frame_surface() {
 #[test]
 fn dispatcher_presence_signature_and_closed_calls_are_exact() {
     use FrameAdmissionError as E;
-    let cases: [(fn(&mut FrameSurface, &mut FunctionCatalog), fn(&E) -> bool); 9] = [
+    let cases: [(Edit, Expect); 9] = [
         (
             |s, _| s.resume_export = None,
             |e| matches!(e, E::MissingDispatcher),
@@ -179,7 +182,7 @@ fn dispatcher_presence_signature_and_closed_calls_are_exact() {
 #[test]
 fn every_layout_agrees_with_its_creator_body_and_bindings() {
     use LayoutMismatch as M;
-    let cases: [(fn(&mut FrameSurface, &mut FunctionCatalog), Option<M>); 9] = [
+    let cases: [(Edit, Option<M>); 9] = [
         (
             |s, _| s.dispatcher.as_mut().unwrap().calls = vec![ALLOCATE],
             None,

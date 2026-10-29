@@ -4055,3 +4055,35 @@ fn public_engine_instantiates_generics_across_modules_in_v32() {
     .to_string();
     assert!(frozen.contains("module export form"), "{frozen}");
 }
+
+#[test]
+fn public_engine_admits_resumable_frames_only_under_their_profile() {
+    use varta_common::function::{admission::FrameAdmissionError, frame};
+    use varta_common::language::LanguageProfile;
+    use varta_compiler::suspension_test_hook as hook;
+    const SOURCE: &str = "function task(n: number): number {
+       return __varta_suspend(n) + 1;
+     }
+     export function main(): void { console.log(\"public frames\"); }";
+    let runtime = VartaRuntime::new();
+    let bytes = hook::compile_with_profile(SOURCE, LanguageProfile::CheckedF64Utf16V33).unwrap();
+    let prepared = runtime.prepare_module(&bytes).unwrap();
+    assert!(prepared.module().get_export(frame::RESUME_EXPORT).is_some());
+    let catalog = prepared.function_catalog().unwrap().as_catalog();
+    assert_eq!(catalog.version, frame::FRAME_CATALOG_VERSION);
+    assert_eq!(catalog.frames.len(), 1);
+    let run = runtime.run_wasm_bytes(&bytes, &[]).unwrap();
+    assert_eq!(run.lines, ["varta log: public frames"]);
+    let older = hook::compile_with_profile(SOURCE, LanguageProfile::CheckedF64Utf16V32).unwrap();
+    for result in [
+        runtime.prepare_module(&older).map(|_| ()),
+        runtime.run_wasm_bytes(&older, &[]).map(|_| ()),
+    ] {
+        assert!(matches!(
+            result,
+            Err(varta_runtime::RuntimeError::Frames(
+                FrameAdmissionError::ProfileForbids(_)
+            ))
+        ));
+    }
+}

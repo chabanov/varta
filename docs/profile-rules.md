@@ -2033,7 +2033,33 @@ v5 and the v32 JSON selectors, but its own host ABI
 (`abi::RESUMABLE_FRAMES_VERSION`); never map another profile to that ABI. Two
 selectors gate the K4.4 streams: `resumable_frames` (runtime admission of
 frames, frame catalog v2 in preflight and the `varta_resume` export) and
-`generators` (`function*`, `yield`, `next`/`throw`/`return`). Both admit nothing
-yet. Gate every admission on its own selector, keep v32 and earlier profiles
+`generators` (`function*`, `yield`, `next`/`throw`/`return`). Runtime admission
+is implemented (below); `generators` admits nothing yet. Gate every admission on its own selector, keep v32 and earlier profiles
 frozen (no `varta_resume`, catalog v1 only in preflight), and add each stream's
 rules under its own heading here. A new value tag needs a new value ABI.
+
+### Runtime admission (`resumable_frames`)
+
+Contract: [architecture.md](architecture.md#runtime-admission-resumable_frames).
+
+- One rule set, `varta_common::function::admission`, serves runtime preflight
+  (`varta-runtime` `frames.rs`) and artifact validation (`varta-artifact`
+  `frames.rs`). Each crate only extracts a `FrameSurface` with its own parser;
+  never add a frame rule to one of them alone. Errors stay typed
+  (`FrameAdmissionError`, `RuntimeError::Frames`).
+- Read catalogs through `admission::read_catalog(bytes, profile)`. Keep
+  `FunctionCatalog::from_bytes` and `VerifiedFunctionCatalog::from_bytes`
+  version 1 only; select the version 2 reader by `resumable_frames()`, never by
+  a host ABI number.
+- Keep the dispatcher closed: if the emitter changes `varta_resume`, keep its
+  exact signature, one resume body per layout in layout order, direct calls only
+  and no host import calls, or change the shared rules and their tests in the
+  same commit. Never export a resume body.
+- The runtime must not call `varta_resume` until a scheduler with its own root,
+  generation and budget contract exists. Do not classify the dispatcher as a
+  tool, value ABI or HTTP helper, and do not relax the host-free helper checks
+  for it.
+- The `suspension-test-hook` compiler feature is test-only: enable it only in
+  `[dev-dependencies]` (runtime, launcher). It is inert unless a test enables
+  the hook on its thread, and frame test exports are emitted only then (or in
+  compiler unit tests).

@@ -8,6 +8,8 @@ use std::{
 use varta_common::{Manifest, abi};
 use varta_common::{Result, VartaError};
 
+mod frames;
+
 const MAGIC: &[u8; 8] = b"VARTA3\0\0";
 const FORMAT_VERSION: u32 = 1;
 const FOOTER_BYTES: usize = 32;
@@ -139,7 +141,8 @@ impl Artifact {
         if self.manifest.abi_version != host_abi(&self.wasm)? {
             return Err(invalid("manifest and Wasm host ABI versions differ"));
         }
-        Ok(())
+        // The resumable-frame surface needs a profile that admits it.
+        frames::validate(&self.wasm)
     }
 
     pub fn write_wasm(&self, path: &Path) -> Result<()> {

@@ -170,8 +170,9 @@ impl LanguageProfile {
     }
     /// K4.4 step 1 runtime admission (v33): continuation frames, function
     /// catalog version 2 in preflight and the exported `varta_resume`
-    /// dispatcher, declared by the v33 host ABI. Admits nothing yet; no source
-    /// syntax reaches it before [`Self::generators`].
+    /// dispatcher, declared by the v33 host ABI and checked by
+    /// [`crate::function::admission`]. No source syntax reaches it before
+    /// [`Self::generators`].
     #[must_use]
     pub fn resumable_frames(self) -> bool {
         self == Self::CheckedF64Utf16V33

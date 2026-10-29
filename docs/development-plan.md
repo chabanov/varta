@@ -22,8 +22,9 @@ Next work, in order:
    exception and GC invariants and the closed resume dispatcher are implemented
    compiler-internally and tested in Wasmtime
    ([contract](architecture.md#suspension-foundation-k44-block-1)) and merged
-   on the v32 integration branch. What remains is the runtime-admission
-   versioning step (profile, host ABI, preflight).
+   on the v32 integration branch. Runtime admission under profile v33
+   (`resumable_frames`) is implemented; the runtime does not schedule frames
+   yet.
 2. **Pilot M1–M3**, alongside block 1: review and release the v32 pilot batch
    (both waves are merged on the integration branch), then index signatures and
    wider records, Web types (`Headers`, `AbortSignal`) and the 65-file module
@@ -1426,11 +1427,13 @@ Status: design agreed with the project author on 2026-10-28. Block 1 (step 1
 below) is implemented as a compiler-internal foundation and merged on the v32
 integration branch, where frames also carry v32 class and Error-class instances;
 its contract is in
-[architecture.md](architecture.md#suspension-foundation-k44-block-1). No profile,
-host import, value tag or runtime preflight admits it yet. The frame heap kind,
-frame catalog version 2 and the `varta_resume` export exist only in modules
-produced by the compiler's test-only suspension hook. Steps 2–6 are not
-implemented. Each increment still needs its own versioned contract in
+[architecture.md](architecture.md#suspension-foundation-k44-block-1). Runtime
+preflight and artifact validation admit its frame surface (frame heap kind,
+frame catalog version 2 and the `varta_resume` export) only under profile v33
+([runtime admission](architecture.md#runtime-admission-resumable_frames)); no
+host import or value tag changes. These modules are still produced only by the
+compiler's test-only suspension hook, and the runtime does not call the
+dispatcher. Steps 2–6 are not implemented. Each increment still needs its own versioned contract in
 [architecture.md](architecture.md), positive/negative and resource tests and the
 normal gates before source admission.
 
@@ -1438,8 +1441,8 @@ normal gates before source admission.
 share profile `checked-f64-utf16-v33`, registered with its own host ABI so
 older runtimes reject the `varta_resume` export; the value ABI stays at the v32
 version until the generators stream decides on a value tag. Its selectors
-`resumable_frames()` (step 1 runtime admission) and `generators()` (step 2)
-admit nothing yet; the two streams build on them in parallel
+`resumable_frames()` (step 1 runtime admission, implemented) and `generators()`
+(step 2, admits nothing yet) gate the two streams, which build on them in parallel
 ([contract](architecture.md#checked-f64-utf16-v33--suspension-and-generators)).
 
 One suspension/resumption mechanism serves generators, async functions and async
@@ -1631,12 +1634,17 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    construct-specific diagnostic. **Implemented compiler-internally:**
    `lower::suspension`, `emit::frames` and `function::frame`; the Wasmtime tests
    are in `varta-compiler` `suspension_tests`. Still open for this block:
-   - runtime admission: a new profile and host ABI that declare the
-     `varta_resume` export and the frame catalog, and preflight validation of
-     both. Until then the runtime surface stays test-only. Decided with the
-     project author on 2026-10-29: admit it in its own profile v33 together
-     with step 2 (the first source syntax), rather than adding a runtime
-     surface to the v32 pilot batch that no source can reach.
+   - runtime admission: **implemented** under profile v33 and its host ABI
+     (selector `resumable_frames`). Runtime preflight and artifact validation
+     share `varta_common::function::admission`: catalog version 2 only for v33,
+     the exact closed `varta_resume` signature and body, one resume body per
+     layout, creators and binding classes, typed refusals for every earlier
+     profile. Tests: runtime `frame_admission_tests` (including a forced
+     collection in a runtime-owned store), common `admission_tests` and the
+     launcher's source-free artifact run. Decided with the project author on
+     2026-10-29: admit it in its own profile v33 together with step 2 (the
+     first source syntax), rather than adding a runtime surface to the v32
+     pilot batch that no source can reach.
    - suspension inside `catch`/`finally` bodies, `switch` cases, `do-while`
      conditions and the remaining intrinsic value blocks;
    - host-supplied reference inputs;

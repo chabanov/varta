@@ -14,3 +14,7 @@ varta-common = { path = "../varta-common" }
 varta-runtime = { path = "../varta-runtime" }
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# The test-only hook produces v33 frame artifacts for source-free admission tests.
+varta-compiler = { path = "../varta-compiler", features = ["suspension-test-hook"] }

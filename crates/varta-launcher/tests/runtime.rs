@@ -138,3 +138,88 @@ fn runtime_executes_and_inspects_portable_artifacts_and_fixed_footer_packages() 
     fs::write(&native, data).unwrap();
     assert!(!Command::new(&native).output().unwrap().status.success());
 }
+
+/// K4.4 step 1: a hook-produced v33 frame module is a valid portable artifact
+/// that the source-free runtime runs (without calling the dispatcher); the same
+/// surface under v32 is refused by artifact validation and by the runtime
+/// before any guest output.
+#[test]
+fn resumable_frame_artifacts_run_source_free_only_under_their_profile() {
+    use varta_common::{function::frame, language::LanguageProfile};
+    use varta_compiler::suspension_test_hook as hook;
+    const SOURCE: &str = "function task(n: number): number {
+       const kept = \"ab\".repeat(2);
+       const got = __varta_suspend(n);
+       return got + kept.length;
+     }
+     export function main(): void { console.log(\"v33 frames\"); }";
+    let temp = Temp::new();
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let profile = LanguageProfile::CheckedF64Utf16V33;
+    let wasm = hook::compile_with_profile(SOURCE, profile).unwrap();
+    assert!(
+        wasm.windows(frame::RESUME_EXPORT.len())
+            .any(|window| window == frame::RESUME_EXPORT.as_bytes())
+    );
+    let mut manifest = Manifest::new(&[]);
+    manifest.abi_version = profile.host_abi();
+    let artifact = Artifact { wasm, manifest };
+    let path = temp.0.join("frames.wasm");
+    artifact.write_wasm(&path).unwrap();
+    let read = Artifact::read(&path).unwrap();
+    assert_eq!(read.wasm, artifact.wasm);
+    let native = temp
+        .0
+        .join(format!("frames{}", std::env::consts::EXE_SUFFIX));
+    artifact
+        .write_executable(
+            &native,
+            std::path::Path::new(env!("CARGO_BIN_EXE_varta-runtime")),
+        )
+        .unwrap();
+    for mut command in [
+        {
+            let mut command = runtime();
+            command.arg("run").arg(&path);
+            command
+        },
+        Command::new(&native),
+    ] {
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(logs(&output), ["varta log: v33 frames"]);
+    }
+    let output = runtime().arg("--validate").arg(&path).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let older = LanguageProfile::CheckedF64Utf16V32;
+    let wasm = hook::compile_with_profile(SOURCE, older).unwrap();
+    let mut manifest = Manifest::new(&[]);
+    manifest.abi_version = older.host_abi();
+    let rejected = Artifact { wasm, manifest };
+    let refused = temp.0.join("refused.wasm");
+    assert!(rejected.write_wasm(&refused).is_err());
+    assert!(!refused.exists());
+    // Written around the artifact API, the payload still fails to load and
+    // to run before any guest output.
+    fs::write(&refused, &rejected.wasm).unwrap();
+    fs::write(
+        refused.with_extension("manifest.json"),
+        rejected.manifest.to_bytes().unwrap(),
+    )
+    .unwrap();
+    assert!(Artifact::read(&refused).is_err());
+    let output = runtime().arg("run").arg(&refused).output().unwrap();
+    assert!(!output.status.success());
+    assert!(logs(&output).is_empty(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("does not admit resumable frames"),
+        "{output:?}"
+    );
+}

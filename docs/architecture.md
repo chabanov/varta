@@ -5954,19 +5954,82 @@ frame admission reject v33 modules before compilation or any guest effect, and
 v32 and earlier profiles keep their host ABI. The v33 host ABI adds no host
 import; every operation available under the v32 host ABI keeps its signature.
 
-Two selectors gate the K4.4 work streams, and both admit nothing yet:
+Two selectors gate the K4.4 work streams:
 
 - `resumable_frames()`: runtime admission of the
   [suspension foundation](#suspension-foundation-k44-block-1), that is
   continuation frames, function catalog version 2 in preflight and the
-  `varta_resume` export (K4.4 step 1);
+  `varta_resume` export (K4.4 step 1), specified
+  [below](#runtime-admission-resumable_frames);
 - `generators()`: synchronous `function*`, `yield` and the generator
-  `next`/`throw`/`return` protocol over those frames (K4.4 step 2).
+  `next`/`throw`/`return` protocol over those frames (K4.4 step 2). It admits
+  nothing yet.
 
-Until a stream adds its subsection here, a v33 module compiles and runs exactly
-like a v32 module apart from its declared profile and host ABI, and production
-budgets are unchanged. Whether generators need a new value tag, and therefore a
-new value ABI, is decided by the generators stream.
+No source syntax produces a suspension point yet, so a v33 module compiles and
+runs exactly like a v32 module apart from its declared profile and host ABI, and
+production budgets are unchanged. Whether generators need a new value tag, and
+therefore a new value ABI, is decided by the generators stream.
+
+#### Runtime admission (`resumable_frames`)
+
+V33 is the only profile whose modules may carry the frame surface of the
+[suspension foundation](#suspension-foundation-k44-block-1): function catalog
+version 2 with `frames` rows, the frame heap kind and the exported
+`varta_resume` dispatcher. Runtime preflight and artifact validation extract the
+same facts from the portable payload and apply one shared rule set
+(`varta_common::function::admission`) before compilation, instantiation or any
+guest effect. The runtime reports a failure as the typed
+`RuntimeError::Frames`; artifact I/O reports it as an invalid artifact.
+
+- **Catalog reader.** A `resumable_frames()` profile reads catalog versions 1
+  and 2. Every other profile keeps the version 1 reader, which never accepts
+  version 2; a version 2 catalog under such a profile fails as a profile that
+  does not admit resumable frames. Duplicate catalog sections, unknown fields,
+  out-of-range binding or type ids and the frame budgets (`MAX_FRAME_BINDINGS`
+  slots and `MAX_SUSPENSION_STATES` states per layout, unique resume codes below
+  `MAX_USER_FUNCTIONS`) fail in the reader. The catalog value version must still
+  equal the profile's value ABI.
+- **Earlier profiles.** Under v32 and every earlier profile, a `varta_resume`
+  export of any kind fails, also next to a version 1 catalog, and so do frame
+  layouts.
+- **Presence.** Under v33, frame layouts and the dispatcher occur together:
+  layouts without the export fail, and the export without layouts (no catalog or
+  a version 1 catalog) fails. A v33 module without suspension points has neither.
+- **Dispatcher.** `varta_resume` is a guest-defined function export with exactly
+  `(i64, i32, i64) -> i32`. Its own body contains no `call_indirect`,
+  `return_call_indirect`, `call_ref`, `return_call_ref`, table or element
+  instruction, and each direct call targets a guest-defined function other than
+  the dispatcher itself, never a host import.
+- **Layouts.** The dispatcher's distinct direct call targets with the
+  resume-body signature `(i64, i32, i64) -> ()`, in first-call order, are the
+  resume bodies. Their number equals the number of layouts, and layout id *n*
+  (its row position) is resumed by body *n*. Resume bodies are not exported. A
+  layout's resume code names its creator at function index `imports + code`: a
+  guest-defined function that is neither the dispatcher nor a resume body and
+  returns exactly one `i64` resume token. Yielded and result bindings are
+  single-slot cells. The Return input class matches the result: `Float64`,
+  `Boolean` or `Undefined` for a result of that type, `Undefined` for a void
+  result and none otherwise. Every layout names the same exception binding, a
+  union cell holding the profile's catch union.
+- **Envelope.** The frame constants (five fields, edge mask 28 that excludes the
+  control and status words, at most 8 segments of 32 bindings) are checked when
+  `varta-common` is compiled. Saved cells and envelopes keep their dynamic checks
+  in the dispatcher and in restoration.
+- **Classification.** The dispatcher is effectful executable code. It is not a
+  tool, value ABI, JSON or HTTP helper, so the host-free helper checks and JSON
+  helper purity validation are unchanged and do not apply to it. Admission
+  grants no call authority and never invokes guest code.
+- **No scheduler yet.** The runtime calls only the entry point and the
+  published tool or HTTP exports. It never calls `varta_resume`, and it owns no
+  frame roots or generations. The scheduler-owned root and generation policy
+  comes with the first scheduler; until generators (step 2), an admitted
+  module's own code cannot create a frame.
+- **Test producer.** Frame modules come only from the compiler's test-only
+  lowering hook: compiler unit tests, and the `suspension-test-hook` cargo
+  feature that only the runtime and launcher dev-dependencies enable. While the
+  hook is enabled on a thread, emitted frame modules also export
+  `varta.test.frame.<layout>` creators and `varta.test.collect`; admission gives
+  these names no meaning.
 
 ## Local modules
 
@@ -6862,10 +6925,12 @@ described next; the design is in the
 ### Suspension foundation (K4.4 block 1)
 
 This is the implemented foundation of the agreed K4.4 design. No profile admits
-suspension syntax: the only producer of a suspension point is a `#[cfg(test)]`
-lowering hook in the compiler. No host import, capability, value tag or runtime
-preflight changes, and modules without suspension points compile exactly as
-before (the passes below find nothing to do).
+suspension syntax: the only producer of a suspension point is a test-only
+lowering hook in the compiler. No host import, capability or value tag changes;
+runtime preflight admits the resulting frame surface only under v33
+([runtime admission](#runtime-admission-resumable_frames)). Modules without
+suspension points compile exactly as before (the passes below find nothing to
+do).
 
 **IR and normalization.** `Expression::Suspend { value, state }` yields `value`
 and evaluates to the resume input, whose type is the node's type. After lowering
@@ -6967,13 +7032,15 @@ and canonical Boolean/null/undefined payloads.
 **Metadata and versioning.** Frame-bearing modules emit function catalog version
 **2** with `frames` rows: resume code, saved binding ids and sharing, per-state
 input class and yielded binding, result and Return-input class, and exception
-binding. `FunctionCatalog::from_bytes`, which runtime preflight uses, still
-accepts only version 1 and rejects version 2. `from_frame_bytes` reads both.
+binding. `FunctionCatalog::from_bytes` still accepts only version 1 and rejects
+version 2; `from_frame_bytes` reads both. Runtime preflight selects the reader
+by profile, so only v33 reads version 2.
 Modules without frames keep emitting version 1 unchanged. Test builds also export
 frame creators (`varta.test.frame.<layout>`) and the collector
 (`varta.test.collect`); release builds export only `varta_resume`.
 
-Runtime admission is the next versioning step. A new profile and host ABI must
-declare the `varta_resume` export, the frame flag and layout, frame catalog
-version 2 validation in preflight and a scheduler-owned root and generation
-policy before any source syntax (`yield`, `await`) may produce suspension points.
+Profile v33 and its host ABI declare the `varta_resume` export, the frame flag
+and layout and frame catalog version 2 validation in preflight
+([runtime admission](#runtime-admission-resumable_frames)). A scheduler-owned
+root and generation policy is still required before suspended frames may outlive
+the guest call that created them (Promise jobs and `await`).
