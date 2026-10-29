@@ -542,6 +542,8 @@ mod error_subclass_tests;
 #[cfg(test)]
 mod generic_tests;
 #[cfg(test)]
+mod unknown_tests;
+#[cfg(test)]
 mod v32_cross_stream_tests;
 #[cfg(test)]
 mod v32_wave2_tests;

@@ -341,12 +341,12 @@ its module graph.
 | Named interfaces/aliases; structural assignability; index signatures and `Record<string, …>` | 1917 interfaces / 38 | v31: named closed shapes; v32 (unreleased): `interface … extends` and merging, literal-keyed `Record`; no width subtyping, index signatures or `Record<string, …>` |
 | String-literal types and `as const` | 357 aliases / 357 | v32 (unreleased): literal types and their unions, `as const` on whole initializers |
 | Records wider than 32 fields (`Agent` 55, `UpdateRuntimeConfigRequest` 60) | 5 | 32-field limit |
-| Classes: `extends`, `protected`, `#private`, getters, `Error` subclasses, `new.target` | 74 classes, 82 `#` members | v32 (unreleased): top-level classes with `extends`, `protected`/`private`, getters and static methods, `Error` subclasses and `new.target.name`; `#private` and `unknown` causes not supported |
+| Classes: `extends`, `protected`, `#private`, getters, `Error` subclasses, `new.target` | 74 classes, 82 `#` members | v32 (unreleased): top-level classes with `extends`, `protected`/`private`, getters and static methods, `Error` subclasses and `new.target.name`; v34 (stream branch): `cause?: unknown`; `#private` not supported |
 | Generics: `request<T>`, `pick<T, K extends keyof T>` | 13 in core | v32 (unreleased): generic interfaces, aliases and top-level functions by monomorphization with `keyof`, `T[K]` types and inference; generic methods/classes, async generic functions and computed access with a `keyof` key not supported |
 | `await` / `for await`; async generators, `Symbol.asyncIterator`, `new Promise` | 44 / 22 | Not supported ([suspension design](#k44--suspension-scheduling-and-async-planned)) |
 | Template literals, optional chaining `?.`, object spread | 537 / 27 / 48 | v32 (unreleased): untagged template literals; `?.` and object spread not supported |
 | Already supported: `??` (52), default parameters, `Math.random` (6) | — | v12+, v12+ and v17+ respectively |
-| Type assertions `as T`, non-null `x!`, `unknown` | ~18 / ~4 / 149 | Not supported |
+| Type assertions `as T`, non-null `x!`, `unknown` | ~18 / ~4 / 149 | v34 (stream branch): `unknown` cells with guard narrowing, `unknown` catch bindings and Error causes, runtime-checked `as`/`!`; `JSON.parse(text) as T`, `x is T` predicates and `in` narrowing not supported |
 | fetch, Headers, Response, AbortController, setTimeout, ReadableStream, TextDecoder, FormData, Blob, URLSearchParams, crypto, Date, Set | core | Only `net.get(url): string` |
 
 About 52 KB of unique string literals (API paths, messages) appear in the source;
@@ -428,15 +428,16 @@ scheduler calls `varta_resume`, and its own value ABI, reserved for the record
 and promise layouts of the records and async streams; until a stream specifies
 a value15 layout, v34 keeps the value13 layouts
 ([contract](architecture.md#checked-f64-utf16-v34--pilot-batch-dynamic-records-unknown-and-async)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; the unknown stream's two are implemented on their
+stream branch, the others admit nothing yet.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind | M1 | Registered, admits nothing |
 | `recursive_types()` | Records: recursive aliases such as `JsonValue` | M1 | Registered, admits nothing |
 | `wide_records()` | Records: records wider than 32 fields (presence trailer layout) | M1 | Registered, admits nothing |
-| `unknown_type()` | Unknown: `unknown` with `typeof`/`instanceof`/`Array.isArray`/`in`/guard narrowing | M1, M2 | Registered, admits nothing |
-| `checked_assertions()` | Unknown: `as` as a runtime-checked downcast | M1, M2 | Registered, admits nothing |
+| `unknown_type()` | Unknown: `unknown` cells, `typeof`/`===`/`instanceof` narrowing, caught values and `cause?: unknown` | M1, M2 | Implemented on the stream branch; `in`/`typeof "object"` narrowing to dynamic records, `x is T` predicates and `JSON.parse` into `unknown` wait for the records stream |
+| `checked_assertions()` | Unknown: `x as T` and `x!` as runtime-checked conversions | M1, M2 | Implemented on the stream branch; arrays of non-primitive elements are not checkable assertion targets |
 | `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Registered, admits nothing |
 | `async_functions()` | Async (K4.4 step 4): `async`/`await` on continuation frames | M5 | Registered, admits nothing |
 

@@ -43,6 +43,15 @@ impl Lower<'_> {
     ) -> Result<Expr> {
         let name = if number { "Number" } else { "String" };
         let result_ty = if number { Type::Float64 } else { Type::String };
+        if value.ty == Type::Unknown {
+            if number || !rest.is_empty() {
+                return Err(self.source.locate(
+                    unsupported("Number conversion or extra String arguments of an unknown value; narrow it first"),
+                    value.span,
+                ));
+            }
+            return self.unknown_string(value, span);
+        }
         if value.ty == Type::BigInt {
             let input = self.hidden(Type::BigInt);
             let mut body = vec![S::Init(input, value)];

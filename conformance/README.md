@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 49 feature rows and 88 cases:
-77 pass, 11 are known unsupported, and 9 feature rows have no case. These counts
+executable cases. The current inventory has 51 feature rows and 90 cases:
+77 pass, 13 are known unsupported, and 9 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -184,3 +184,11 @@ unannotated `generator-next` case stays a known gap with a new reviewed
 diagnostic: v33 requires an explicit `Generator<T, TReturn, TNext>` return type
 instead of inferring one. `yield*`, async generators and the iterator protocol
 of other objects remain outside this row.
+
+The v34 unknown stream adds the `unknown-type` and `checked-assertions` feature
+rows with one original case each (`unknown-narrowing.ts`, `checked-assertions.ts`).
+Their manifest stdout matches Node.js v24.20.0. The inventory still pins
+checked-f64-utf16-v33, which rejects `unknown`, `as` and `!`, so both are known
+gaps of the pinned profile; `varta-runtime` `unknown_tests` runs the same sources
+under v34 with the pinned stdout. Moving the pin to v34 should observe both as
+unexpected support before their review and promotion.

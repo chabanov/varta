@@ -575,6 +575,10 @@ impl Lower<'_> {
         let Some(ty) = self.refinements.get(&binding.slot).copied().or(binding.ty) else {
             return Ok(());
         };
+        if ty == Type::Unknown {
+            // The descriptor test proves the class family (v34 `unknown`).
+            return self.refine_with(name, |_, _| yes.then(|| vec![Type::Class(class)]));
+        }
         let member = unions::members(ty, self.types).into_iter().find(
             |member| matches!(member, Type::Class(m) if self.types.classes.descends(*m, class)),
         );
@@ -616,6 +620,7 @@ impl Lower<'_> {
                     slot: self.hidden(Type::Number),
                 }
             }
+            Type::Unknown => return self.unknown_instance_of(value, Type::Class(class), span),
             ty if ty.is_union() => return self.union_instance_of(value, class, span),
             // Class instances never inhabit unrelated classes, records,
             // arrays, primitives or Error values.

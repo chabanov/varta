@@ -80,6 +80,15 @@ impl Lower<'_> {
             ast::Expr::Array(array) => self.array(array, context),
             ast::Expr::Object(object) => self.record(object, context),
             ast::Expr::Paren(paren) => self.expr_contextual(&paren.expr, expected, hints),
+            ast::Expr::TsAs(assertion) if self.types.profile.checked_assertions() => {
+                self.type_assertion(assertion)
+            }
+            ast::Expr::TsNonNull(assertion) if self.types.profile.checked_assertions() => {
+                self.non_null_assertion(assertion)
+            }
+            ast::Expr::TsTypeAssertion(_) if self.types.profile.checked_assertions() => Err(
+                unsupported("angle-bracket type assertion; write a checked `x as T` instead"),
+            ),
             _ => self.expr_inner(expression),
         };
         self.depth -= 1;
@@ -200,7 +209,7 @@ impl Lower<'_> {
                     };
                     // A literal guard may refine a non-union local in place.
                     let retag =
-                        narrow.is_union() || self.types.profile.literal_types() && !ty.is_union();
+                        narrow.is_cell() || self.types.profile.literal_types() && !ty.is_cell();
                     return Ok(if retag {
                         Expr {
                             ty: narrow,
@@ -239,7 +248,7 @@ impl Lower<'_> {
                     return self.bigint_unary(unary.op, value, expression.span());
                 }
                 match unary.op {
-                    ast::UnaryOp::TypeOf if value.ty.is_union() => {
+                    ast::UnaryOp::TypeOf if value.ty.is_cell() => {
                         return Ok(Expr {
                             span: expression.span(),
                             ty: Type::String,
@@ -371,6 +380,22 @@ impl Lower<'_> {
                     return self.guest_logical(binary.op, left, right?, expression.span());
                 }
                 let right = self.expr(&binary.right)?;
+                if (left.ty == Type::Unknown || right.ty == Type::Unknown)
+                    && !matches!(
+                        binary.op,
+                        ast::BinaryOp::EqEq
+                            | ast::BinaryOp::EqEqEq
+                            | ast::BinaryOp::NotEq
+                            | ast::BinaryOp::NotEqEq
+                    )
+                {
+                    return Err(self.source.locate(
+                        type_error(
+                            "operator on an unknown value; narrow it with typeof, instanceof or a checked `as` first",
+                        ),
+                        expression.span(),
+                    ));
+                }
                 if self.types.profile.bigint_values()
                     && matches!(
                         binary.op,
@@ -425,7 +450,7 @@ impl Lower<'_> {
                 if left.ty.is_error() && right.ty.is_error() && left.ty != right.ty {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
-                if left.ty.is_union() || right.ty.is_union() {
+                if left.ty.is_cell() || right.ty.is_cell() {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
                 let (left, right) = classes::common_operands(left, right, self.types);
@@ -815,8 +840,9 @@ impl Lower<'_> {
                     value.span,
                 ));
             }
-            let ty = if value.ty.is_union()
-                && unions::members(value.ty, self.types).contains(&Type::Undefined)
+            let ty = if value.ty == Type::Unknown
+                || value.ty.is_union()
+                    && unions::members(value.ty, self.types).contains(&Type::Undefined)
             {
                 unions::intern(vec![Type::String, Type::Undefined], self.types)?
             } else if value.ty == Type::Undefined {
@@ -932,7 +958,7 @@ impl Lower<'_> {
                     Type::Number | Type::Boolean => Host::LogInt,
                     Type::Float64 => Host::LogFloat,
                     Type::Undefined => Host::LogUndefined,
-                    Type::Union(_) | Type::ReferenceUnion(_) => Host::UnionLog,
+                    Type::Union(_) | Type::ReferenceUnion(_) | Type::Unknown => Host::UnionLog,
                     _ => {
                         return Err(self
                             .source

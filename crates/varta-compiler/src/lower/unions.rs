@@ -31,6 +31,10 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     if values.iter().any(|ty| matches!(ty, Type::Generator(_))) {
         return Err(generators::opaque("a union"));
     }
+    // `unknown` absorbs every other member (v34); `widen` checks admission.
+    if values.contains(&Type::Unknown) {
+        return Ok(Type::Unknown);
+    }
     if types.profile.error_subclasses() {
         values = classes::join_error_classes(values, types);
     }
@@ -103,6 +107,9 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
 }
 pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes) -> Result<Expr> {
     let value = literals::conform(value, expected, types)?;
+    if expected == Some(Type::Unknown) {
+        return unknown::widen(value, types);
+    }
     if let Some(ty @ Type::Class(_)) = expected
         && classes::upcast(types, value.ty, ty)
     {
@@ -165,7 +172,7 @@ impl Lower<'_> {
                 ),
             });
         }
-        if value.ty.is_union() {
+        if value.ty.is_cell() {
             return Ok(Expr {
                 span: value.span,
                 ty: Type::Boolean,

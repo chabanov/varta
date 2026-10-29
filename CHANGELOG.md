@@ -11,6 +11,25 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- `unknown` under opt-in v34 (selector `unknown_type`): a reference-union cell
+  that holds any primitive, BigInt, record, array, native error or class
+  instance (function values are rejected). Unnarrowed values admit only
+  equality, nullish comparison, `typeof`, truthiness and logical operators,
+  `instanceof`, `Array.isArray`, logging, `String`/template conversion and
+  `JSON.stringify`; `typeof`, `=== null/undefined/<literal>` and `instanceof`
+  narrow positive branches. `catch (e)` and `catch (e: unknown)` bindings are
+  `unknown`, rethrowing preserves the caught value, and Error subclasses take
+  `cause?: unknown`. Unknown values are exact GC roots in locals, fields,
+  elements, closures and generator frames (`CaptureType::Unknown`).
+
+- Checked assertions under opt-in v34 (selector `checked_assertions`): `x as T`
+  is free for upcasts and otherwise tests the value by member tag, literal
+  value, exact record descriptor, class family descriptor or primitive array
+  element kind, throwing `TypeError("type assertion to <T> failed")` on
+  mismatch; `x!` throws `TypeError` on `null`/`undefined`. Disjoint targets,
+  distinct record or array types, arrays of non-primitive elements, function
+  types and `<T>x` are rejected at compile time; `as const` is unchanged.
+
 - Opt-in v34 (pilot batch: dynamic records, `unknown` and async, in
   development) is registered. It inherits every v33 feature and declares a new
   host ABI, so runtimes without the microtask scheduler reject its modules, and

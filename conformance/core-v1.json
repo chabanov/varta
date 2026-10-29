@@ -282,6 +282,26 @@
       "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-generatorfunction-objects"
     },
     {
+      "id": "unknown-type",
+      "title": "The unknown type with guard narrowing and caught values",
+      "core": [
+        "CORE-01",
+        "CORE-04"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "checked-assertions",
+      "title": "Runtime-checked type and non-null assertions",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
       "id": "script-realms",
       "title": "Standalone scripts, realms and Test262 harness",
       "core": [
@@ -947,6 +967,48 @@
       ],
       "baseline": {
         "status": "supported"
+      }
+    },
+    {
+      "id": "unknown-narrowing",
+      "feature": "unknown-type",
+      "path": "cases/unknown-narrowing.ts",
+      "sha256": "29b11d5cef5ec8921f4986f3d9df6d510594c5e734e0647e5967a760dcd6b236",
+      "stdout": [
+        "varta log: string a",
+        "varta log: number 2",
+        "varta log: null",
+        "varta log: undefined",
+        "varta log: object",
+        "varta log: failure outer string inner",
+        "varta log: error range",
+        "varta log: number 42",
+        "varta log: true",
+        "varta log: a 1"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Requires the v34 unknown_type and checked_assertions selectors; the inventory pins checked-f64-utf16-v33, which rejects unknown, as and !."
+      }
+    },
+    {
+      "id": "checked-assertions",
+      "feature": "checked-assertions",
+      "path": "cases/checked-assertions.ts",
+      "sha256": "76787f1dec7ee6def636df070568dc8668111238a8160446e3a779df99b119da",
+      "stdout": [
+        "varta log: 4",
+        "varta log: 2",
+        "varta log: 7",
+        "varta log: 3",
+        "varta log: a",
+        "varta log: high"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Requires the v34 unknown_type and checked_assertions selectors; the inventory pins checked-f64-utf16-v33, which rejects unknown, as and !."
       }
     },
     {

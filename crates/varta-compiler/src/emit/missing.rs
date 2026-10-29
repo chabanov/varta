@@ -305,7 +305,7 @@ impl Emitter<'_> {
                 I::I32Add,
                 I::I64Load(strings::ROOT),
             ]);
-            if !element.is_union() {
+            if !element.is_cell() {
                 self.unpack_slot(element);
                 if result != Type::Undefined {
                     self.box_union(element)?;

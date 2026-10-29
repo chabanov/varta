@@ -32,7 +32,7 @@ impl<'a> Collected<'a> {
         result
     }
     fn expression(&mut self, expr: &Expr, source: &'a crate::source::Source) {
-        if expr.ty.is_union() {
+        if expr.ty.is_cell() {
             self.unions = true;
         }
         match &expr.kind {
@@ -283,11 +283,11 @@ impl<'a> Collected<'a> {
                 self.hosts.insert(self.types.profile.json_stringify());
                 if matches!(
                     expr.ty,
-                    Type::String | Type::Union(_) | Type::ReferenceUnion(_)
+                    Type::String | Type::Union(_) | Type::ReferenceUnion(_) | Type::Unknown
                 ) {
                     self.helpers.insert(strings::Helper::Snapshot);
                 }
-                if expr.ty.is_union() {
+                if expr.ty.is_cell() {
                     self.helpers.insert(strings::Helper::Allocate);
                 }
                 self.expression(value, source);
@@ -354,6 +354,7 @@ impl<'a> Collected<'a> {
             }
             E::IsError(a)
             | E::IsClass { value: a, .. }
+            | E::ArrayKind(a, _)
             | E::IsUnionMember(a, _)
             | E::IsNullish(a)
             | E::IsUndefined(a)
@@ -386,6 +387,7 @@ impl<'a> Collected<'a> {
             return;
         }
         match ty {
+            Type::Unknown => self.unions = true,
             Type::Union(id) | Type::ReferenceUnion(id) => {
                 self.unions = true;
                 let members = self.types.unions[id as usize].clone();

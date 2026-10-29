@@ -32,7 +32,7 @@ impl Emitter<'_> {
     pub(super) fn error_pointer(&mut self, value: &Expr) -> Result<()> {
         self.expr(value)?;
         self.code.push(I::I32WrapI64);
-        if value.ty.is_union() {
+        if value.ty.is_cell() {
             self.code
                 .extend([I::I64Load(records::field(0)), I::I32WrapI64]);
         }

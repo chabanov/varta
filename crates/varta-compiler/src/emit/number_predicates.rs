@@ -16,7 +16,7 @@ impl Emitter<'_> {
         self.expr(first)?;
         if first.ty == Type::Float64 {
             self.float_predicate(mode);
-        } else if first.ty.is_union() {
+        } else if first.ty.is_cell() {
             self.code.extend([
                 I::I32WrapI64,
                 I::LocalTee(self.temporary),

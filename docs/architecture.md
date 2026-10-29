@@ -6177,15 +6177,18 @@ v34 to the reserved value ABI in the same change, and then owns the readers,
 JSON schema version and value/JSON host operations bound to it, because those
 operations check the version stamped in every record descriptor.
 
-Seven selectors gate the batch's work streams, and all admit nothing yet:
+Seven selectors gate the batch's work streams. The unknown stream's two are
+implemented ([unknown](#unknown-unknown_type),
+[checked assertions](#checked-assertions-checked_assertions)); the others admit
+nothing yet:
 
 - records stream: `index_signatures()` (`{[k: string]: T}` and
   `Record<string, T>` as a dynamic-key record kind), `recursive_types()`
   (self-referential aliases such as a JSON value union) and `wide_records()`
   (records wider than 32 fields);
 - unknown stream: `unknown_type()` (`unknown`, usable after narrowing by
-  `typeof`, `instanceof`, `Array.isArray`, `in` or a type guard) and
-  `checked_assertions()` (`as` as a runtime-checked downcast, never an
+  `typeof`, `===`, `instanceof` or a checked assertion) and
+  `checked_assertions()` (`as` and `!` as runtime-checked conversions, never an
   unchecked reinterpretation);
 - async stream (K4.4 steps 3 and 4): `promises()` (base `Promise<T>`
   semantics over the microtask scheduler) and `async_functions()`
@@ -6194,6 +6197,125 @@ Seven selectors gate the batch's work streams, and all admit nothing yet:
 Until a stream adds its subsection here, a v34 module compiles and runs exactly
 like a v33 module apart from its declared profile, host ABI and value ABI, and
 production budgets are unchanged.
+
+#### Unknown (`unknown_type`)
+
+Selector `unknown_type()`. V34 admits the `unknown` keyword in every annotation
+position (locals, parameters, results, record and class fields, optional fields,
+array elements, generic arguments). V33 and earlier profiles keep rejecting it
+as `unsupported type annotation`.
+
+- **Representation.** An `unknown` value is a reference-union cell: the same
+  immutable `kind/count/payload` cell, union heap flag and reference mask as a
+  closed reference union, under the profile's value layout. Its slot tag in
+  record descriptors, arrays and capture catalogs is `ReferenceUnion`, and the
+  function catalog names it `CaptureType::Unknown`, which validates any canonical
+  cell through `ReferenceBox` (children are validated by their consumers). No
+  value tag, layout, host import or budget is added, so the stream survives a
+  switch of `value_layout` to another layout version.
+- **Admitted values.** Every value whose kind has a cell tag: Number, String,
+  Boolean, BigInt, `null`, `undefined`, records, arrays, native errors, Error
+  and other class instances, and closed unions of these. Function values (no
+  cell tag in value13), generators and `VartaResult` pairs are rejected
+  (`function value is not assignable to unknown`). Widening boxes a scalar or
+  reference into a fresh cell without copying the referenced object; a closed
+  union keeps its cell. A union with an `unknown` member is `unknown`.
+- **Operations.** As in TypeScript, only operations that accept any value apply
+  to an unnarrowed `unknown`: assignment and passing to `unknown`, `===`/`!==`
+  (the v4 strict-equality host operation: identity for references, content for
+  strings, numeric rules for numbers), `==`/`!=` against `null`/`undefined`,
+  `typeof`, truthiness, `!`, `&&`/`||`/`??` (selecting a whole operand),
+  `instanceof`, `Array.isArray`, `console.log`, template substitution and
+  `String(x)`, and `JSON.stringify` (result `string | undefined`). Property
+  access, indexing, calls, arithmetic, relational operators, `in`,
+  `Object.hasOwn`, `Number(x)`, `switch` and `varta.json.parse<unknown>` are
+  rejected with a diagnostic naming the narrowing to apply. `JSON.stringify` of
+  an `unknown` is rejected when the program declares an Error class, because the
+  cell may hold an Error instance (the v32 rule).
+- **String conversion.** `String(x)` and template substitution convert a
+  primitive member with the v19 primitive conversion, a native error or Error
+  instance with `Error.prototype.toString`, and any other record or class
+  instance as `[object Object]`. An array, and a record of a program whose
+  classes declare a `toString` method, would need user dispatch: they throw
+  `TypeError: String conversion of … held by unknown is not supported`.
+- **Narrowing.** The existing guard and flow analysis narrow a direct local:
+  `typeof x === "string" | "number" | "boolean" | "bigint" | "undefined"`,
+  `x === null`, `x === undefined`, `x === <literal>` (to the literal type),
+  `x instanceof C` for a class (descriptor test of `C` and its subclasses) and
+  `x instanceof Error`/a native family (the native members of the family plus
+  the family's Error-class root when the program declares one). Only positive
+  branches narrow; negated guards, `typeof x === "object"`, `Array.isArray(x)`
+  and truthiness keep `unknown`, because `object`, `any[]` and `{}` have no
+  checked representation. Assignment does not narrow `unknown`, as in
+  TypeScript. User type predicates (`x is T`) remain rejected. A narrowed read
+  unboxes the cell after its tag was tested; reads of record and class
+  members are justified by the descriptor test, never by the tag alone.
+- **Caught values.** A `catch (e)` or `catch (e: unknown)` identifier binding
+  has type `unknown` (TypeScript's `useUnknownInCatchVariables`); the caught
+  cell is reused unchanged. Catch object patterns keep reading the v12 catch
+  union. Earlier profiles keep the catch union and reject the annotation.
+  `throw x` for `x: unknown` is a checked conversion to the catch union: a
+  caught value always passes, so rethrowing preserves the value and identity;
+  another record or array throws
+  `TypeError: thrown value is not a primitive, BigInt or Error value`, because
+  the exception channel carries no plain records.
+- **Error `cause`.** The Error root's `cause` field and the implicit options
+  `{ cause?: unknown }` have type `unknown`, so `super(message, { cause })`
+  accepts any admitted value and `error.cause` reads `unknown`.
+- **Roots and collection.** An `unknown` local, parameter, result, field,
+  element, capture or generator-frame slot is an exact handle root like any
+  union; the collector traces the cell's single masked child, then the record,
+  array, string, BigInt or Error behind it. Numeric payload bits are never
+  edges.
+
+#### Checked assertions (`checked_assertions`)
+
+Selector `checked_assertions()`. V34 admits `x as T` and the non-null assertion
+`x!`; `as const` keeps its v32 meaning and angle-bracket `<T>x` stays rejected
+(`angle-bracket type assertion`). V33 and earlier profiles keep rejecting `as`
+and `!` as `unsupported expression`.
+
+- **Upcasts are free.** When the operand already is a `T` (same type, literal
+  subset, union widening, class upcast or widening into `unknown`), the
+  assertion is the ordinary checked widening and runs no test. An object or
+  array literal operand is typed contextually by `T`, as in TypeScript, so
+  `{ a: 1 } as { a: number; b?: string }` builds the asserted shape.
+- **Admission.** Other assertions must be TypeScript-comparable: some member of
+  `T` must equal or relate to some member of the operand (equal physical type,
+  a literal of the base, related classes, native errors and Error classes), and
+  `unknown` overlaps everything. Disjoint primitives are rejected like
+  TypeScript's TS2352 (`neither type sufficiently overlaps`); distinct closed
+  record or array types are rejected because no value of one can have the
+  other's layout (`build the value at the asserted type`).
+- **Checked targets.** The operand is boxed into a cell when it is not one, held
+  in a rooted hidden local, tested once, then unboxed (non-union `T`) or retagged
+  (union `T`). The test is a short-circuit chain over `T`'s members:
+  primitives, `null`, `undefined`, BigInt and native error classes by member
+  tag (and the native class word); a literal type by tag and comparison with
+  each literal of its set (cost linear in the set, at most
+  `literals::MAX_LITERAL_MEMBERS`); a structural record by its tag and its
+  exact canonical descriptor, so a structurally compatible record of another
+  closed shape fails; a class by its tag and the descriptors of the class and
+  its subclasses; an array whose element type is number, string, boolean,
+  bigint, `null` or `undefined` by its tag and its element-kind word (constant
+  time; the elements are already typed by that kind); `unknown` always. `x as
+  Error` or a native family also accepts the family's Error-class instances and
+  yields the narrowed family union, like `instanceof`. Arrays of records,
+  unions, arrays or `unknown`, function types and generators are rejected with
+  `unsupported type assertion to …`, because the element kind cannot prove
+  them in constant time.
+- **Failure.** A failed test throws a recoverable
+  `TypeError("type assertion to <T> failed")`, where `<T>` is the source text of
+  the asserted type (at most 64 characters). This is a deliberate deviation:
+  TypeScript erases `as`, so Node never throws there; Varta never reinterprets
+  bits instead.
+- **Non-null.** `x!` is free when `x` cannot be `null` or `undefined`; it is
+  rejected when `x` is always nullish; otherwise it tests the cell and throws
+  `TypeError("non-null assertion failed: value is null or undefined")`, and its
+  type is the operand without `null`/`undefined` (`unknown` stays `unknown`).
+- **Evaluation.** The operand runs once, before the test; the test and the
+  conversion allocate nothing except the boxing cell and, on failure, the
+  `TypeError`. No host import, layout or budget is added.
 
 ## Local modules
 

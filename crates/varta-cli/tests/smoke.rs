@@ -11459,6 +11459,57 @@ fn generators_run_through_dev_and_source_free_artifacts() {
 }
 
 #[test]
+fn unknown_and_checked_assertions_run_through_dev_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {AppError,read} from './values.ts';export function main():void{try{throw new AppError('m',{cause:{code:3}});}catch(e){if(e instanceof AppError){console.log(`${e.name} ${(e.cause as {code:number}).code}`);}}const values:unknown[]=['a',2];console.log(read(values,0));try{console.log(read(values,1));}catch(e){if(e instanceof TypeError){console.log(e.message);}}}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/values.ts"),
+        "export class AppError extends Error{constructor(m:string,o?:{cause?:unknown}){super(m,o);this.name='AppError';}}export function read(values:unknown[],i:number):string{return values[i] as string;}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v33");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check).contains("unsupported type annotation"),
+        "{}",
+        combined(&check)
+    );
+    project.language_profile("checked-f64-utf16-v34");
+    let expected =
+        ["AppError 3", "a", "type assertion to string failed"].map(|s| format!("varta log: {s}"));
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
 fn primitive_string_runs_across_modules_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {text} from './string.ts';export function main():void{console.log(text(1e21));console.log(text(true));console.log(text(undefined));console.log(String().length);console.log(String('').length);const s=String('A\\uDFFF\\u0000Z');console.log(s.length);console.log(s.charCodeAt(1));console.log(String(Number.MIN_VALUE));console.log(String(-0));}",

@@ -132,7 +132,7 @@ impl Lower<'_> {
             return Err(invalid("Array.isArray expects one value"));
         }
         let value = self.expr(&call.args[0].expr)?;
-        let kind = if value.ty.is_union() {
+        let kind = if value.ty.is_cell() {
             E::Host(
                 self.types.profile.host_operation(Host::ValueIsArray),
                 vec![value],
@@ -161,7 +161,9 @@ impl Lower<'_> {
     }
     pub(super) fn refine(&mut self, name: &str, matched: Guard, positive: bool) -> Result<()> {
         self.refine_with(name, |ty, types| {
-            if let Guard::Literal(single) = matched {
+            if ty == Type::Unknown {
+                unknown::refine(matched, positive)
+            } else if let Guard::Literal(single) = matched {
                 literals::refine(ty, single, positive, types).map(|refined| vec![refined])
             } else if ty.is_union() {
                 Some(

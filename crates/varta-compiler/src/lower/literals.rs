@@ -444,6 +444,32 @@ pub(super) fn refine(
     unions::intern(refined, types).ok()
 }
 
+/// The constants of a literal set, in canonical order (v34 checked assertions).
+pub(super) fn constants(id: u32, span: swc_common::Span, types: &ir::ValueTypes) -> Vec<Expr> {
+    types
+        .literals
+        .set(id)
+        .iter()
+        .map(|value| match value {
+            LiteralValue::String(bytes) => Expr {
+                span,
+                ty: Type::String,
+                kind: E::String(bytes.clone()),
+            },
+            LiteralValue::Number(bits) => Expr {
+                span,
+                ty: Type::Float64,
+                kind: E::Float64(f64::from_bits(*bits)),
+            },
+            LiteralValue::Boolean(value) => Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Integer(i32::from(*value)),
+            },
+        })
+        .collect()
+}
+
 /// Whether a type graph contains a literal set (rejected as external input).
 pub(super) fn contains(ty: Type, types: &ir::ValueTypes) -> bool {
     match ty {

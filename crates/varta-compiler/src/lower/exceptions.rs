@@ -24,6 +24,15 @@ pub(super) fn exception_union(types: &mut ir::ValueTypes) -> Result<Type> {
     }
     unions::intern(members, types)
 }
+/// The type of an Error class `cause`: `unknown` under v34, otherwise the catch
+/// union of every throwable value.
+pub(super) fn cause_type(types: &mut ir::ValueTypes) -> Result<Type> {
+    if types.profile.unknown_type() {
+        Ok(Type::Unknown)
+    } else {
+        exception_union(types)
+    }
+}
 impl Lower<'_> {
     pub(super) fn exception_type(&mut self) -> Result<Type> {
         exception_union(self.types)
@@ -33,6 +42,9 @@ impl Lower<'_> {
             return Err(unsupported("throw requires checked-f64-utf16-v7"));
         }
         let value = self.expr(&statement.arg)?;
+        if value.ty == Type::Unknown {
+            return Ok(S::Throw(self.thrown_unknown(value)?));
+        }
         Ok(S::Throw(self.thrown(value)?))
     }
     /// Check a thrown value and widen it to the exception-channel union.
@@ -125,11 +137,19 @@ impl Lower<'_> {
         let binding = if let Some(param) = &catch.param {
             let ty = self.exception_type()?;
             if let ast::Pat::Ident(id) = param {
-                if id.type_ann.is_some() {
+                // V34 types a caught value as `unknown` (TypeScript's
+                // `useUnknownInCatchVariables`); the cell is unchanged.
+                let unknown = self.types.profile.unknown_type();
+                if let Some(annotation) = &id.type_ann
+                    && !(unknown
+                        && matches!(&*annotation.type_ann, ast::TsType::TsKeywordType(k)
+                            if k.kind == ast::TsKeywordTypeKind::TsUnknownKeyword))
+                {
                     return Err(self
                         .source
                         .locate(unsupported("catch binding annotation"), id.span()));
                 }
+                let ty = if unknown { Type::Unknown } else { ty };
                 let slot = self.next;
                 self.declare(id.id.sym.as_ref(), Some(ty), true, true)?;
                 Some(slot)

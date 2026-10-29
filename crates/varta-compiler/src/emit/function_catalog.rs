@@ -37,6 +37,7 @@ pub(super) fn build(
                     element: self.node(self.types.arrays[id as usize])?,
                 },
                 Type::Class(_) => CaptureType::Class,
+                Type::Unknown => CaptureType::Unknown,
                 Type::Generator(_) => CaptureType::Generator,
                 Type::Record(id) => {
                     let mut fields = Vec::new();

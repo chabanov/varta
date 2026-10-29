@@ -218,7 +218,7 @@ impl Emitter<'_> {
         }
     }
     fn json_result(&mut self, result: Type) -> Result<()> {
-        if result.is_union() {
+        if result.is_cell() {
             self.code.extend([
                 I::LocalSet(self.temporary),
                 I::GlobalGet(self.result_len),

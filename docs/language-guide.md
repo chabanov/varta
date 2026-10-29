@@ -3908,3 +3908,75 @@ records, unions, `JSON.stringify`, `console.log`, `typeof` and equality reject
 it. `yield*`, `async function*`, generator methods and expressions, spread or
 `Array.from` over a generator and `yield` inside calls such as `String(yield x)`
 are rejected with a diagnostic.
+
+### `checked-f64-utf16-v34`
+
+#### `unknown` values (opt-in v34)
+
+`unknown` holds any primitive, BigInt, record, array, native error or class
+instance. Before using it as something specific, narrow it with `typeof`,
+`===`, `instanceof` or a checked `as`. A caught value is `unknown`, and an Error
+subclass's `cause` is `unknown`:
+
+```ts
+class ApiError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'ApiError';
+  }
+}
+
+function describe(value: unknown): string {
+  if (typeof value === 'string') return `text ${value}`;
+  if (typeof value === 'number') return `number ${value + 1}`;
+  if (value === null || value === undefined) return 'nothing';
+  if (value instanceof Error) return `${value.name}: ${value.message}`;
+  return String(value);                    // '[object Object]' for a record
+}
+
+export function main(): void {
+  try {
+    throw new ApiError('request failed', { cause: 404 });
+  } catch (e) {                            // e: unknown
+    console.log(describe(e));              // ApiError: request failed
+    if (e instanceof ApiError) console.log(describe(e.cause)); // number 405
+  }
+  console.log(describe({ id: 1 }));        // [object Object]
+}
+```
+
+Property access, calls, arithmetic, `in` and `Number(x)` on an unnarrowed
+`unknown` are compile errors. `typeof x === 'object'`, `Array.isArray(x)` and
+truthiness test the value but keep it `unknown`; assert a concrete type to use
+it. Function values cannot be stored in `unknown`, and `String(x)` of an array
+held by `unknown` throws `TypeError`.
+
+#### Checked `as` and `!` (opt-in v34)
+
+`x as T` is checked at run time. Widening (`'a' as string | number`,
+`value as unknown`) costs nothing; narrowing tests the value and throws
+`TypeError` when it does not have type `T`, where Node would silently continue:
+
+```ts
+interface Point { x: number; y: number }
+
+export function main(): void {
+  const values: unknown[] = ['text', { x: 1, y: 2 }, [1, 2, 3]];
+  console.log((values[0] as string).length);    // 4
+  console.log((values[1] as Point).y);          // 2
+  console.log((values[2] as number[]).length);  // 3
+  try {
+    console.log((values[0] as Point).x);
+  } catch (e) {
+    if (e instanceof TypeError) console.log(e.message); // type assertion to Point failed
+  }
+  const name: string | undefined = values.length > 1 ? 'set' : undefined;
+  console.log(name!);                           // throws TypeError if undefined
+}
+```
+
+Checkable targets are primitives, literal types, records (by their exact
+shape), classes (with subclasses), `Error` families, arrays of primitives and
+unions of these. Arrays of records or unions, function types and `<T>x` are
+rejected at compile time; `as const` keeps its meaning.
+

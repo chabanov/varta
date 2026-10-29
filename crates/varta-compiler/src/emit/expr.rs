@@ -138,7 +138,7 @@ impl Emitter<'_> {
             } => self.is_class(value, shapes, *slot)?,
             E::IsError(value) => {
                 self.expr(value)?;
-                if value.ty.is_union() {
+                if value.ty.is_cell() {
                     self.code.extend([
                         I::I32WrapI64,
                         I::I32Load(strings::WORD),
@@ -153,10 +153,19 @@ impl Emitter<'_> {
                 }
             }
             E::IsNullish(value) => self.is_nullish(value)?,
+            E::ArrayKind(value, kind) => {
+                self.expr(value)?;
+                self.code.extend([
+                    I::I32WrapI64,
+                    I::I32Load(strings::WORD),
+                    I::I32Const(*kind as i32),
+                    I::I32Eq,
+                ]);
+            }
             E::IsUnionMember(value, member) => self.is_union_member(value, *member)?,
             E::IsUndefined(value) => {
                 self.expr(value)?;
-                if value.ty.is_union() {
+                if value.ty.is_cell() {
                     self.code.extend([
                         I::I32WrapI64,
                         I::I32Load(strings::WORD),

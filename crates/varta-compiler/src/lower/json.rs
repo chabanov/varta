@@ -23,7 +23,8 @@ impl Lower<'_> {
         }
         fn json_type(ty: Type, types: &ir::ValueTypes, optional: bool) -> bool {
             match ty {
-                Type::Literal(..) => false,
+                // A schema needs a closed type; `unknown` (v34) has none.
+                Type::Literal(..) | Type::Unknown => false,
                 Type::BigInt => types.profile.bigint_values(),
                 // Parsing cannot construct nominal class instances.
                 Type::Error | Type::NativeError(_) | Type::Class(_) => false,

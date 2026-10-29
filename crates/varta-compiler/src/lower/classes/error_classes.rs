@@ -112,8 +112,9 @@ pub(in crate::lower) fn root(
 /// Writable `message`, `name` and `cause` slots and the `(message?, options?)`
 /// initializer signature implicit subclass constructors forward.
 fn base_members(id: u32, types: &mut ir::ValueTypes) -> Result<(Vec<Field>, Signature)> {
-    // The cause holds any throwable value, including other Error instances.
-    let cause = exceptions::exception_union(types)?;
+    // The cause holds any throwable value, including other Error instances,
+    // and any `unknown` value under v34.
+    let cause = exceptions::cause_type(types)?;
     let message = unions::intern(vec![Type::String, Type::Undefined], types)?;
     let options = records::intern(
         vec![ir::RecordField {
@@ -214,6 +215,8 @@ pub(in crate::lower) fn reaches_instance(ty: Type, types: &ir::ValueTypes) -> bo
             Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
                 .iter()
                 .any(|&t| visit(t, types, seen)),
+            // `unknown` (v34) reaches an instance whenever an Error class exists.
+            Type::Unknown => types.classes.error_root(ErrorClass::Error).is_some(),
             _ => false,
         }
     }
@@ -385,7 +388,7 @@ impl Lower<'_> {
     }
     /// InstallErrorCause for a checked options value held in `bag`.
     fn error_cause(&mut self, span: Span, bag: u32, ty: Type) -> Result<Expr> {
-        let target = exceptions::exception_union(self.types)?;
+        let target = exceptions::cause_type(self.types)?;
         let absent = unions::widen(undefined(span), Some(target), self.types)?;
         let members = unions::members(ty, self.types);
         let Some(record) = members
@@ -656,7 +659,7 @@ impl Lower<'_> {
         span: Span,
     ) -> Result<Expr> {
         let root = self.types.classes.error_root(family);
-        if !value.ty.is_union() {
+        if !value.ty.is_cell() {
             return match root {
                 Some(root) => self.class_test(value, root, span),
                 None => Ok(Expr {
@@ -715,6 +718,9 @@ impl Lower<'_> {
         positive: bool,
     ) -> Result<()> {
         self.refine_with(name, |ty, types| {
+            if ty == Type::Unknown {
+                return positive.then(|| unknown::error_family(family, types));
+            }
             if !ty.is_union() {
                 return None;
             }
