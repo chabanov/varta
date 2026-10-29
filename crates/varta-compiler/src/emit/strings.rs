@@ -168,6 +168,7 @@ impl Helper {
         helpers: &BTreeMap<Self, u32>,
         trace_values: bool,
         profile: varta_common::language::LanguageProfile,
+        frames: bool,
     ) -> Function {
         // Emission adds the complete allocator dependency set before indexing.
         match self {
@@ -175,7 +176,7 @@ impl Helper {
             Self::Concat => concat::function(helpers[&Self::Allocate]),
             Self::Compare => compare::function(profile.utf16()),
             Self::Allocate => allocate::function(globals, helpers[&Self::Collect]),
-            Self::Collect => collect::function(globals, trace_values, profile.closures()),
+            Self::Collect => collect::function(globals, trace_values, profile.closures(), frames),
             Self::RootPush => roots::function(globals.roots),
             Self::ArraySearch => array_search::function(
                 helpers[&Self::Compare],

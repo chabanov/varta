@@ -87,6 +87,7 @@ fn fixture(cycle: bool) -> Fixture {
             signature: 7,
             captures: vec![],
         }],
+        frames: vec![],
     };
     if cycle {
         wide(&mut data, f + 16, handle(env, 16));

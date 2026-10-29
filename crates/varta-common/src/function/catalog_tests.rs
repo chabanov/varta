@@ -17,6 +17,7 @@ fn fixture() -> (Vec<u8>, u64, usize, usize, FunctionCatalog) {
             signature: 7,
             captures: vec![19],
         }],
+        frames: vec![],
     };
     (data, root, env, binding, catalog)
 }
@@ -117,6 +118,7 @@ fn capture_catalog_rejects_invalid_metadata_and_deep_bottom_up_type_dags() {
         types: vec![CaptureType::Float64],
         bindings: vec![],
         functions: vec![],
+        frames: vec![],
     };
     for _ in 0..value::MAX_JSON_DEPTH {
         chain.types.push(CaptureType::Array {
@@ -144,6 +146,7 @@ fn capture_catalog_class_leaf_is_record_tagged_and_shares_the_union_record_slot(
             result: false,
         }],
         functions: vec![],
+        frames: vec![],
     };
     let class = catalog(vec![CaptureType::Class]);
     let bytes = class.to_bytes().unwrap();

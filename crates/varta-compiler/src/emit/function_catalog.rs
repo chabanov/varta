@@ -7,6 +7,7 @@ pub(super) fn build(
     program: &ir::Program,
     bindings: &BTreeMap<Type, u32>,
     targets: &BTreeMap<u32, Vec<usize>>,
+    frames: Vec<varta_common::function::FrameLayout>,
 ) -> Result<Vec<u8>> {
     struct Builder<'a> {
         types: &'a ir::ValueTypes,
@@ -105,7 +106,12 @@ pub(super) fn build(
         }
     }
     FunctionCatalog {
-        version: varta_common::function::CATALOG_VERSION,
+        // Frame layouts exist only in the versioned frame catalog.
+        version: if frames.is_empty() {
+            varta_common::function::CATALOG_VERSION
+        } else {
+            varta_common::function::frame::FRAME_CATALOG_VERSION
+        },
         value_version: program.types.value_version(),
         types: builder.nodes,
         bindings: binding_rows
@@ -113,6 +119,7 @@ pub(super) fn build(
             .map(|row| row.ok_or_else(|| CompilerError::Internal("missing capture binding".into())))
             .collect::<Result<_>>()?,
         functions: functions.into_values().collect(),
+        frames,
     }
     .to_bytes()
     .map_err(|e| CompilerError::Invalid(e.to_string()))

@@ -8,6 +8,7 @@ mod errors;
 mod exceptions;
 mod expr;
 mod finally;
+mod frames;
 mod function_catalog;
 mod functions;
 mod labels;
@@ -34,6 +35,8 @@ use swc_ecma_ast::BinaryOp;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 type Result<T> = std::result::Result<T, CompilerError>;
+#[cfg(test)]
+pub(crate) use frames::{TEST_COLLECT, TEST_CREATE_PREFIX};
 #[derive(Clone, Copy)]
 struct Label {
     breakable: bool,
@@ -87,6 +90,8 @@ struct Emitter<'a> {
     binding_types: &'a BTreeMap<Type, u32>,
     environment_functions: &'a BTreeSet<usize>,
     self_functions: &'a BTreeSet<usize>,
+    /// Present only while emitting a suspendable function's resume body.
+    suspension: Option<frames::Resume<'a>>,
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
@@ -102,6 +107,15 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     let constant_roots = (varta_common::abi::STRING_ROOT_BASE + reserved_roots) as u32;
     let reserved_roots =
         program.constants as usize * varta_common::abi::STRING_ROOT_SLOT_BYTES + reserved_roots;
+    // Live continuation frames are retained by a bounded permanent root table.
+    let frame_table = (varta_common::abi::STRING_ROOT_BASE + reserved_roots) as u32;
+    let reserved_roots = reserved_roots
+        + if program.suspendable.is_empty() {
+            0
+        } else {
+            varta_common::function::frame::MAX_LIVE_FRAMES
+                * varta_common::abi::STRING_ROOT_SLOT_BYTES
+        };
     if reserved_roots > varta_common::abi::STRING_ROOT_BYTES {
         return Err(CompilerError::Invalid(
             "module constants exceed root stack capacity".into(),
@@ -135,6 +149,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                     .filter(|(index, function)| {
                         *index != program.main
                             && !program.initializers.contains(index)
+                            && !program.suspendable.contains_key(index)
                             && function.receiver == signature.receiver
                             && function.shape == signature.shape
                             && function.call_params() == signature.physical_params()
@@ -143,6 +158,14 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                     .map(|(index, _)| index)
                     .collect(),
             )
+        })
+        .collect();
+    let frame_layouts: Vec<_> = program
+        .suspendable
+        .iter()
+        .enumerate()
+        .map(|(id, (&index, machine))| {
+            frames::Layout::new(id as u32, index, &program.functions[index], machine)
         })
         .collect();
     let binding_types: BTreeMap<_, _> = program
@@ -154,6 +177,12 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                 .iter()
                 .map(|slot| function.locals[*slot as usize])
         })
+        .chain(frame_layouts.iter().flat_map(|layout| {
+            layout.binding_types(
+                &program.suspendable[&layout.function],
+                program.functions[layout.function].result,
+            )
+        }))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .enumerate()
@@ -289,7 +318,8 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     let function_types: Vec<_> = program
         .functions
         .iter()
-        .map(|f| {
+        .enumerate()
+        .map(|(index, f)| {
             intern((
                 f.params
                     .iter()
@@ -297,10 +327,24 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                     .flat_map(wasm_types)
                     .chain(f.environment.then_some(ValType::I64))
                     .collect(),
-                wasm_types(f.result),
+                // A suspendable function's own index creates its frame.
+                if program.suspendable.contains_key(&index) {
+                    vec![ValType::I64]
+                } else {
+                    wasm_types(f.result)
+                },
             ))
         })
         .collect();
+    let resume_type = (!frame_layouts.is_empty()).then(|| {
+        (
+            intern((vec![ValType::I64, ValType::I32, ValType::I64], vec![])),
+            intern((
+                vec![ValType::I64, ValType::I32, ValType::I64],
+                vec![ValType::I32],
+            )),
+        )
+    });
     let helper_types: BTreeMap<_, _> = helpers
         .iter()
         .map(|helper| (*helper, intern(helper.signature())))
@@ -327,6 +371,12 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     for index in helper_types.values() {
         functions.function(*index);
+    }
+    if let Some((body, dispatcher)) = resume_type {
+        for _ in &frame_layouts {
+            functions.function(body);
+        }
+        functions.function(dispatcher);
     }
     module.section(&functions);
     let mut memory = wasm_encoder::MemorySection::new();
@@ -421,6 +471,21 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     } else {
         None
     };
+    let frame_resources = (!frame_layouts.is_empty()).then(|| {
+        let generation = globals.len();
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &wasm_encoder::ConstExpr::i32_const(0),
+        );
+        frames::Resources {
+            table: frame_table,
+            generation,
+        }
+    });
     module.section(&globals);
     let functions_begin = hosts.len() as u32;
     let helpers: BTreeMap<_, _> = helpers
@@ -433,7 +498,22 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             )
         })
         .collect();
+    // Resume bodies, then the dispatcher, follow the helpers.
+    let frames_begin = functions_begin + program.functions.len() as u32 + helpers.len() as u32;
+    let resume_bodies: Vec<u32> = (0..frame_layouts.len() as u32)
+        .map(|id| frames_begin + id)
+        .collect();
+    let dispatcher = frames_begin + frame_layouts.len() as u32;
     let mut exports = wasm_encoder::ExportSection::new();
+    if !frame_layouts.is_empty() {
+        exports.export(
+            varta_common::function::frame::RESUME_EXPORT,
+            wasm_encoder::ExportKind::Func,
+            dispatcher,
+        );
+        #[cfg(test)]
+        frames::test_exports(&mut exports, &frame_layouts, functions_begin, &helpers);
+    }
     if let Some(index) = error_channel_version {
         exports.export(
             program.types.profile.exception_channel().0,
@@ -510,6 +590,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     module.section(&exports);
     let mut code = wasm_encoder::CodeSection::new();
+    let mut resume_code = Vec::new();
     for (index, function) in program.functions.iter().enumerate() {
         let mut temporary = 0;
         let environment_slot = function.environment.then(|| {
@@ -595,13 +676,19 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             binding_types: &binding_types,
             environment_functions: &environment_functions,
             self_functions: &self_functions,
+            suspension: None,
         };
-        emitter.begin_frame(function)?;
-        emitter.begin_closure(function, environment_slot, index)?;
-        emitter
-            .statements(&function.body)
-            .map_err(|e| function.source.locate(e, function.span))?;
-        emitter.end_frame();
+        let frame_layout = frame_layouts.iter().find(|layout| layout.function == index);
+        if let (Some(layout), Some(resources)) = (frame_layout, frame_resources) {
+            emitter.frame_creator(function, layout, resources)?;
+        } else {
+            emitter.begin_frame(function)?;
+            emitter.begin_closure(function, environment_slot, index)?;
+            emitter
+                .statements(&function.body)
+                .map_err(|e| function.source.locate(e, function.span))?;
+            emitter.end_frame();
+        }
         emitter.resolve_exception_jumps()?;
         let locals = function.locals[function.params.len()..]
             .iter()
@@ -632,6 +719,13 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             ));
         }
         code.function(&body);
+        if let Some(layout) = frame_layout {
+            let resume = frames::Resume {
+                layout,
+                machine: &program.suspendable[&index],
+            };
+            resume_code.push(frames::resume_body(emitter, function, resume, needs_arena)?);
+        }
     }
     for helper in helpers.keys() {
         code.function(&helper.body(
@@ -639,7 +733,22 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             &helpers,
             trace_values,
             program.types.profile,
+            frame_resources.is_some(),
         ));
+    }
+    for body in &resume_code {
+        code.function(body);
+    }
+    if let (Some(resources), Some(exceptions)) = (frame_resources, exception_globals) {
+        code.function(&frames::dispatcher(&frames::Dispatch {
+            layouts: &frame_layouts,
+            machines: &program.suspendable,
+            bodies: &resume_bodies,
+            resources,
+            exceptions,
+            allocate: helpers[&strings::Helper::Allocate],
+            bindings: &binding_types,
+        })?);
     }
     module.section(&code);
     let mut data = wasm_encoder::DataSection::new();
@@ -674,10 +783,23 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         .map_err(|e| CompilerError::Invalid(e.to_string()))?
         .into(),
     });
-    if program.types.profile.property_deletion() && !program.types.functions.is_empty() {
+    if !frame_layouts.is_empty()
+        || program.types.profile.property_deletion() && !program.types.functions.is_empty()
+    {
+        let frames = frame_layouts
+            .iter()
+            .map(|layout| {
+                layout.catalog_row(
+                    &program.suspendable[&layout.function],
+                    program.functions[layout.function].result,
+                    &binding_types,
+                )
+            })
+            .collect();
         module.section(&wasm_encoder::CustomSection {
             name: varta_common::function::CATALOG_SECTION.into(),
-            data: function_catalog::build(program, &binding_types, &function_targets)?.into(),
+            data: function_catalog::build(program, &binding_types, &function_targets, frames)?
+                .into(),
         });
     }
     if !program.tools.is_empty() {

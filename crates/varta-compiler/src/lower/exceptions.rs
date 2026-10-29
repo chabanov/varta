@@ -1,20 +1,24 @@
 use super::*;
+/// The exception-channel union of a profile; also the frame exception completion type.
+pub(super) fn exception_union(types: &mut ir::ValueTypes) -> Result<Type> {
+    let mut members = vec![
+        Type::Float64,
+        Type::Boolean,
+        Type::String,
+        Type::Null,
+        Type::Undefined,
+    ];
+    if types.profile.bigint_values() {
+        members.push(Type::BigInt);
+    }
+    if types.profile.errors() {
+        members.extend(errors::classes(types.profile).map(Type::from_error_class));
+    }
+    unions::intern(members, types)
+}
 impl Lower<'_> {
     pub(super) fn exception_type(&mut self) -> Result<Type> {
-        let mut members = vec![
-            Type::Float64,
-            Type::Boolean,
-            Type::String,
-            Type::Null,
-            Type::Undefined,
-        ];
-        if self.types.profile.bigint_values() {
-            members.push(Type::BigInt);
-        }
-        if self.types.profile.errors() {
-            members.extend(errors::classes(self.types.profile).map(Type::from_error_class));
-        }
-        unions::intern(members, self.types)
+        exception_union(self.types)
     }
     pub(super) fn throw_statement(&mut self, statement: &ast::ThrowStmt) -> Result<S> {
         if !self.types.profile.exceptions() {

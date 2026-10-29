@@ -366,6 +366,10 @@ impl<'a> Collected<'a> {
             | E::ResultField(_, a)
             | E::Field(a, _)
             | E::Length(a) => self.expression(a, source),
+            E::Suspend { value, .. } => {
+                self.helpers.insert(strings::Helper::Allocate);
+                self.expression(value, source);
+            }
             _ => {}
         }
     }

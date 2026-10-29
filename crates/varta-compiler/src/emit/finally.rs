@@ -65,7 +65,9 @@ impl Emitter<'_> {
         Ok(())
     }
     pub(super) fn complete_return(&mut self) -> Result<()> {
-        if self.finalizers.is_empty() {
+        if self.finalizers.is_empty() && self.suspension.is_some() {
+            self.frame_return()
+        } else if self.finalizers.is_empty() {
             self.end_frame();
             self.code.push(I::Return);
             Ok(())

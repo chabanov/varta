@@ -11,6 +11,17 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- K4.4 suspension foundation (block 1), compiler-internal, admitted by no
+  profile. It adds evaluation-order normalization of suspension points on IR and
+  a resumable state machine over continuation frames, a separate managed kind
+  that stores saved bindings in binding cells and shares captured closure cells.
+  Frames have their own budgets and exact GC tracing, the exception channel is
+  empty at every suspension, and the closed `varta_resume` dispatcher checks
+  ownership, generation, reentrancy and inputs. Function catalog version 2
+  carries the frame layouts; the version 1 reader rejects it. Unsupported
+  positions fail with construct-specific diagnostics. Only compiler tests reach
+  it, through a test-only lowering hook; existing modules and profiles are
+  unchanged.
 - Opt-in v32 (pilot batch, in development) adds five composable features for
   the uarp-sdk pilot. V31 and earlier keep rejecting all of them; host imports,
   value tags, layouts, ABIs and production budgets are unchanged; the inventory

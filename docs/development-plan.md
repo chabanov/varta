@@ -19,7 +19,10 @@ Next work, in order:
 
 1. **Suspension foundation** ([K4.4](#k44--suspension-scheduling-and-async-planned)
    block 1): expression normalization, continuation frames over closure cells,
-   exception and GC invariants, closed resume dispatcher.
+   exception and GC invariants and the closed resume dispatcher are implemented
+   compiler-internally and tested in Wasmtime
+   ([contract](architecture.md#suspension-foundation-k44-block-1)). What remains
+   is the runtime-admission versioning step (profile, host ABI, preflight).
 2. **Pilot M1–M3**, alongside block 1: review and release the v32 pilot batch,
    then index signatures and wider records, generics, `Error` subclasses,
    Web types (`Headers`) and the 65-file module graph budgets.
@@ -1386,10 +1389,15 @@ queue and handle lifetime design.
   HTTP handler profile is a delivery increment, not the final language/API ceiling.
 #### K4.4 — Suspension, scheduling and async (planned)
 
-Status: design agreed with the project author on 2026-10-28, **not implemented**. No profile, host import, ABI, value
-tag, heap layout or catalog version below exists yet. Each increment still needs
-its own versioned contract in [architecture.md](architecture.md), positive/negative
-and resource tests and the normal gates before source admission.
+Status: design agreed with the project author on 2026-10-28. Block 1 (step 1
+below) is implemented as a compiler-internal foundation; its contract is in
+[architecture.md](architecture.md#suspension-foundation-k44-block-1). No profile,
+host import, value tag or runtime preflight admits it yet. The frame heap kind,
+frame catalog version 2 and the `varta_resume` export exist only in modules
+produced by the compiler's test-only suspension hook. Steps 2–6 are not
+implemented. Each increment still needs its own versioned contract in
+[architecture.md](architecture.md), positive/negative and resource tests and the
+normal gates before source admission.
 
 One suspension/resumption mechanism serves generators, async functions and async
 generators. The event loop orders work, Promise holds a future result, and
@@ -1577,7 +1585,17 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    exception and GC invariants → closed dispatcher. Exit: a compiler-internal
    suspension point round-trips through a frame with exact roots, a forced
    collection and a pending exception, and every unsupported position fails with a
-   construct-specific diagnostic.
+   construct-specific diagnostic. **Implemented compiler-internally:**
+   `lower::suspension`, `emit::frames` and `function::frame`; the Wasmtime tests
+   are in `varta-compiler` `suspension_tests`. Still open for this block:
+   - runtime admission: a new profile and host ABI that declare the
+     `varta_resume` export and the frame catalog, and preflight validation of
+     both. Until then the runtime surface stays test-only.
+   - suspension inside `catch`/`finally` bodies, `switch` cases, `do-while`
+     conditions and the remaining intrinsic value blocks;
+   - host-supplied reference inputs;
+   - liveness-based frame slots;
+   - a scheduler-owned retention policy for completed frames.
 2. Synchronous generators: `yield`, resumption and `finally`. Exit: `next`/`throw`/
    `return`, re-entry rejection and `finally` ordering match ECMAScript in
    differential tests against Node.

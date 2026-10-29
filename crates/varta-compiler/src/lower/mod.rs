@@ -310,6 +310,7 @@ mod spread;
 mod stmt;
 mod string_enumeration;
 mod strings;
+pub(crate) mod suspension;
 mod templates;
 mod tools;
 mod undefined;

@@ -50,6 +50,10 @@ impl Emitter<'_> {
             ]);
             self.exception_jumps.insert(self.code.len(), handler.target);
             self.code.push(I::Br(0));
+        } else if self.suspension.is_some() {
+            // The dispatcher moves an uncaught exception into the frame.
+            self.end_frame();
+            self.code.push(I::Return);
         } else {
             self.end_frame();
             for ty in wasm_types(self.result) {
