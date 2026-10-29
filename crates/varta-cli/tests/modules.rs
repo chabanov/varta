@@ -497,3 +497,43 @@ export function code():number{return 1;}"#,
         "{diagnostic}"
     );
 }
+
+#[test]
+fn module_constants_link_and_run_from_packaged_artifacts_in_v32() {
+    let main = r#"import {SDK_VERSION,SCOPES} from "./meta.js";
+import {describe} from "./lib.js";
+export function main():void{console.log(SDK_VERSION);console.log(describe());console.log(SCOPES.length);}"#;
+    let project = Project::new(main);
+    project.write(
+        "varta.config.json",
+        r#"{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-v32","capabilities":{}}"#,
+    );
+    project.write(
+        "src/meta.ts",
+        "export const SDK_VERSION='0.12.0';export const SCOPES=['admin','agents:read'] as const;",
+    );
+    project.write(
+        "src/lib.ts",
+        r#"import {SCOPES} from "./meta.js";const SEPARATOR=", ";export function describe():string{return String(SCOPES[0])+SEPARATOR+String(SCOPES[1]);}"#,
+    );
+    let dev = success(project.command(&["dev"]));
+    assert!(dev.contains("varta log: 0.12.0"), "{dev}");
+    assert!(dev.contains("varta log: admin, agents:read"), "{dev}");
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    let packaged = success(project.command(&["run", "dist/app.wasm"]));
+    assert!(
+        packaged.contains("varta log: admin, agents:read"),
+        "{packaged}"
+    );
+    assert!(packaged.contains("varta log: 2"), "{packaged}");
+
+    // Earlier profiles keep rejecting top-level constants with a located diagnostic.
+    let old = Project::new("const LIMIT=3;export function main():void{console.log(LIMIT);}");
+    old.write(
+        "varta.config.json",
+        r#"{"entry":"src/main.ts","target":"wasm","out":"dist/app","languageProfile":"checked-f64-utf16-v31","capabilities":{}}"#,
+    );
+    let diagnostic = old.diagnostic();
+    assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
+}

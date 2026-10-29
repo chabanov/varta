@@ -343,6 +343,12 @@ impl Emitter<'_> {
             E::Integer(n) => self.code.push(I::I32Const(*n)),
             E::Float64(n) => self.code.push(I::F64Const((*n).into())),
             E::Local(slot) => self.read_binding(*slot, expr.ty),
+            E::ModuleConstant(index) => {
+                self.code.extend([
+                    I::I32Const(self.constant_root(*index)),
+                    I::I64Load(strings::ROOT),
+                ]);
+            }
             E::String(s) => {
                 let packed = ((s.len() as u64) << strings::LENGTH_SHIFT) | self.strings[s] as u64;
                 if expr.ty == Type::BigInt {

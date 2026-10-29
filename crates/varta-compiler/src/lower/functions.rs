@@ -373,6 +373,7 @@ impl Lower<'_> {
                 ty: Some(ty),
                 initialized: true,
                 mutable: false,
+                readonly: false,
             };
             child
                 .scopes

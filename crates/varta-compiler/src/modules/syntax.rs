@@ -66,6 +66,25 @@ pub(super) fn scan(
                         type_only: true,
                         from: None,
                     }),
+                    // Module constants (v32) join the value export table; the
+                    // linker rejects destructuring and non-`const` forms.
+                    ast::Decl::Var(var)
+                        if profile.module_constants()
+                            && !var.declare
+                            && var.kind == ast::VarDeclKind::Const =>
+                    {
+                        for declarator in &var.decls {
+                            if let ast::Pat::Ident(binding) = &declarator.name {
+                                exports.push(Export {
+                                    local: binding.id.sym.to_string(),
+                                    exported: binding.id.sym.to_string(),
+                                    span: binding.id.span,
+                                    type_only: false,
+                                    from: None,
+                                });
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 ast::ModuleDecl::ExportNamed(export) => {

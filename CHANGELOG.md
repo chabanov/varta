@@ -24,6 +24,12 @@ in [conformance/README.md](conformance/README.md).
   when named) and chain transitively. Re-export sources are graph dependencies
   under unchanged limits; namespace and default forms stay rejected.
 
+- Profile v32 (in development) admits top-level `const`/`export const` module
+  constants with a pure checked initializer subset and `as const` readonly
+  bindings, imported and exported by name. Scalar constants fold to literals;
+  reference values are evaluated once in dependency order before `main` and held
+  in permanent collector roots. V31 and earlier keep rejecting them.
+
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`
   and `export type { … }`. The project loader resolves `./x.js` specifiers to the

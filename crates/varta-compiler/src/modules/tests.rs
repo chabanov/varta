@@ -221,7 +221,8 @@ fn reexports_forward_functions_and_types_without_binding_them_locally() {
         ),
         (
             "export {nope} from './a.ts';export function main():void{}",
-            "module a.ts does not export function nope",
+            // v32 also has module constants in the value namespace.
+            "module a.ts does not export function or constant nope",
         ),
         (
             "export type {only} from './a.ts';export function main():void{}",

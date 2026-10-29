@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
 type Symbols = BTreeMap<String, Signature>;
+/// Names that no module binding or import may take.
+const RESERVED_BINDINGS: [&str; 4] = ["varta", "console", "log", "JSON"];
 
 pub(crate) fn lower(
     graph: &Graph,
@@ -41,7 +43,7 @@ pub(crate) fn lower(
             ));
         }
         let mut symbols = BTreeMap::new();
-        for declaration in declarations::collect(&unit.ast, &unit.source)? {
+        for declaration in declarations::collect(&unit.ast, &unit.source, profile)? {
             if next >= MAX_FUNCTIONS {
                 return Err(unit.source.locate(
                     invalid("too many functions across modules"),
@@ -63,7 +65,7 @@ pub(crate) fn lower(
                 }
                 main = Some(next);
             }
-            if matches!(name.as_str(), "varta" | "console" | "log" | "JSON")
+            if RESERVED_BINDINGS.contains(&name.as_str())
                 || symbols.insert(name.clone(), signature).is_some()
             {
                 return Err(unit.source.locate(
@@ -82,18 +84,25 @@ pub(crate) fn lower(
             entry.ast.span(),
         )
     })?;
-    let scopes = link_bindings(graph, &definitions, &type_exports, &types)?;
-    let mut functions = Vec::new();
     let mut generated = BTreeMap::new();
     let mut call_effects = BTreeMap::new();
+    let (scopes, constants) = link_values(
+        graph,
+        &definitions,
+        &type_exports,
+        (&mut types, main),
+        (&mut generated, &mut next, &mut call_effects),
+    )?;
+    let mut functions = Vec::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
         named::enter(&mut types, module);
-        for declaration in declarations::collect(&unit.ast, &unit.source)? {
+        let visible = constants.scopes.get(path).cloned().unwrap_or_default();
+        for declaration in declarations::collect(&unit.ast, &unit.source, profile)? {
             let signature = &definitions[path][declaration.ident.sym.as_ref()];
             functions.push(body(
                 declaration,
-                signature,
+                (signature, &visible),
                 &scopes[path],
                 &unit.source,
                 main,
@@ -103,8 +112,25 @@ pub(crate) fn lower(
         }
     }
     functions.extend(generated.into_values());
+    // Initialize stored constants in dependency order before the entry body.
+    functions[main].body.splice(
+        0..0,
+        constants.initializers.iter().map(|index| {
+            S::Expr(Expr {
+                span: entry.ast.span(),
+                ty: Type::Void,
+                kind: E::Call(*index, vec![]),
+            })
+        }),
+    );
     let tools = super::tools::collect(graph, &scopes, &functions, main)?;
     let http = http::collect(graph, &scopes, &mut functions, &mut types, main)?;
+    if constants.stored > 0 && (!tools.is_empty() || http.is_some()) {
+        return Err(entry.source.locate(
+            unsupported("module constants with tool/HTTP entry points; only main initializes them"),
+            entry.ast.span(),
+        ));
+    }
     if profile.binary64() && (!tools.is_empty() || http.is_some()) {
         return Err(entry.source.locate(
             unsupported("tool/HTTP contracts in binary64 profile; adapters are not implemented"),
@@ -117,31 +143,70 @@ pub(crate) fn lower(
         tools,
         http,
         types,
+        constants: constants.stored,
+        initializers: constants.initializers,
     })
 }
 
-/// Function bindings only; type bindings were linked by `named::link_module`.
-fn link_bindings(
+/// One binding of the value namespace, shared by functions and (v32) module
+/// constants: one module cannot export a function and a constant under one
+/// name, and star re-exports compare both kinds as one namespace.
+#[derive(Clone)]
+enum Value {
+    Function(Signature),
+    Constant(module_constants::Constant),
+}
+#[derive(PartialEq, Eq)]
+enum ValueIdentity {
+    /// Function slots are unique across the graph.
+    Function(usize),
+    /// Constant declarations are unique across the graph.
+    Constant(usize),
+}
+
+/// Value bindings, module by module in dependency order: resolve value imports
+/// against dependency export tables, link the module's constants, then compute
+/// its value export table. Type bindings were linked by `named::link_module`.
+fn link_values(
     graph: &Graph,
     definitions: &BTreeMap<PathBuf, Symbols>,
     type_exports: &BTreeMap<PathBuf, named::Exports>,
-    types: &ir::ValueTypes,
-) -> Result<BTreeMap<PathBuf, Symbols>> {
+    (types, entry): (&mut ir::ValueTypes, usize),
+    synthesized: (
+        &mut BTreeMap<usize, ir::Function>,
+        &mut usize,
+        &mut BTreeMap<usize, flow_calls::Impact>,
+    ),
+) -> Result<(BTreeMap<PathBuf, Symbols>, module_constants::Linked)> {
+    let (generated, next, call_effects) = synthesized;
     let mut scopes = BTreeMap::new();
-    let mut exports: BTreeMap<PathBuf, exports::Table<Signature>> = BTreeMap::new();
+    let mut constants = module_constants::Linked::default();
+    let mut tables: BTreeMap<PathBuf, exports::Table<Value>> = BTreeMap::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
+        named::enter(types, module);
         let mut scope = definitions[path].clone();
+        let mut imported = module_constants::Scope::new();
+        let mut function_imports = Vec::new();
         for import in &unit.imports {
-            for binding in &import.bindings {
-                if binding.type_only {
-                    continue;
-                }
-                let function = exports
+            for binding in import.bindings.iter().filter(|b| !b.type_only) {
+                let found = tables
                     .get(&import.target)
-                    .map_or(exports::Lookup::Missing, |e| e.lookup(&binding.imported));
-                let signature = match function {
-                    exports::Lookup::Bound(signature) => signature,
+                    .map_or(exports::Lookup::Missing, |t| t.lookup(&binding.imported));
+                let fresh = match found {
+                    exports::Lookup::Bound(Value::Function(signature)) => {
+                        function_imports.push(binding);
+                        scope
+                            .insert(binding.local.clone(), signature.clone())
+                            .is_none()
+                            && !imported.contains_key(&binding.local)
+                    }
+                    exports::Lookup::Bound(Value::Constant(constant)) => {
+                        !scope.contains_key(&binding.local)
+                            && imported
+                                .insert(binding.local.clone(), constant.clone())
+                                .is_none()
+                    }
                     exports::Lookup::Ambiguous => {
                         return Err(unit.source.locate(
                             exports::ambiguous(&import.target, &binding.imported),
@@ -149,92 +214,124 @@ fn link_bindings(
                         ));
                     }
                     exports::Lookup::Missing => {
-                        other_namespace(type_exports, &import.target, &binding.imported)
+                        other_namespace(type_exports, &import.target, &binding.imported, types)
                             .map_err(|e| unit.source.locate(e, binding.span))?;
                         continue;
                     }
                 };
-                if matches!(binding.local.as_str(), "varta" | "console" | "log" | "JSON")
-                    || scope
-                        .insert(binding.local.clone(), signature.clone())
-                        .is_some()
-                {
+                if !fresh || RESERVED_BINDINGS.contains(&binding.local.as_str()) {
                     return Err(unit.source.locate(
-                        CompilerError::Module(format!(
-                            "duplicate or reserved import binding: {}",
-                            binding.local
-                        )),
+                        duplicate_import(&binding.local),
                         binding.span,
                     ));
                 }
             }
         }
-        let functions = Functions {
-            scope: &scope,
+        module_constants::link_module(
+            (unit, path),
+            &definitions[path],
+            imported,
+            (types, entry),
+            (generated, next, call_effects),
+            &mut constants,
+        )?;
+        let empty = module_constants::Scope::new();
+        let visible = constants.scopes.get(path).unwrap_or(&empty);
+        // A declared constant may not take the name of an imported function.
+        if let Some(binding) = function_imports
+            .iter()
+            .find(|binding| visible.contains_key(&binding.local))
+        {
+            return Err(unit
+                .source
+                .locate(duplicate_import(&binding.local), binding.span));
+        }
+        let values = Values {
+            functions: &scope,
+            constants: visible,
             module,
             types,
             type_exports,
         };
-        let visible = exports::link(unit, &functions, &exports)?;
-        exports.insert(path.clone(), visible);
+        let table = exports::link(unit, &values, &tables)?;
+        tables.insert(path.clone(), table);
         scopes.insert(path.clone(), scope);
     }
-    Ok(scopes)
+    Ok((scopes, constants))
 }
 
-/// A name missing from a dependency's function exports must be one of its types.
+fn duplicate_import(name: &str) -> CompilerError {
+    CompilerError::Module(format!("duplicate or reserved import binding: {name}"))
+}
+
+/// A name missing from a dependency's value exports must be one of its types.
 fn other_namespace(
     type_exports: &BTreeMap<PathBuf, named::Exports>,
     target: &Path,
     name: &str,
+    types: &ir::ValueTypes,
 ) -> Result<()> {
     match type_exports.get(target).map(|e| e.lookup(name)) {
         Some(exports::Lookup::Bound(_)) => Ok(()),
         Some(exports::Lookup::Ambiguous) => Err(exports::ambiguous(target, name)),
         Some(exports::Lookup::Missing) | None => Err(CompilerError::Module(format!(
-            "module {} does not export function {name}",
-            target.display()
+            "module {} does not export function {}{name}",
+            target.display(),
+            if types.profile.module_constants() {
+                "or constant "
+            } else {
+                ""
+            },
         ))),
     }
 }
 
-/// The function namespace of one module for [`exports::link`].
-struct Functions<'a> {
-    scope: &'a Symbols,
+/// The value namespace of one module for [`exports::link`].
+struct Values<'a> {
+    functions: &'a Symbols,
+    constants: &'a module_constants::Scope,
     module: usize,
     types: &'a ir::ValueTypes,
     type_exports: &'a BTreeMap<PathBuf, named::Exports>,
 }
-impl exports::Namespace for Functions<'_> {
-    type Binding = Signature;
-    /// Function slots are unique across the graph.
-    type Identity = usize;
-    fn local(&self, export: &Export) -> Result<Option<Signature>> {
-        if export.type_only
-            || !self.scope.contains_key(&export.local)
-                && named::is_type(self.types, self.module, &export.local)
-        {
+impl exports::Namespace for Values<'_> {
+    type Binding = Value;
+    type Identity = ValueIdentity;
+    fn local(&self, export: &Export) -> Result<Option<Value>> {
+        if export.type_only {
             return Ok(None);
         }
-        let signature = self.scope.get(&export.local).ok_or_else(|| {
-            CompilerError::Module(format!("export {} is not a function binding", export.local))
-        })?;
-        Ok(Some(signature.clone()))
+        if let Some(signature) = self.functions.get(&export.local) {
+            return Ok(Some(Value::Function(signature.clone())));
+        }
+        if let Some(constant) = self.constants.get(&export.local) {
+            return Ok(Some(Value::Constant(constant.clone())));
+        }
+        if named::is_type(self.types, self.module, &export.local) {
+            return Ok(None);
+        }
+        Err(CompilerError::Module(format!(
+            "export {} is not a function binding",
+            export.local
+        )))
     }
     fn admits(&self, export: &Export) -> bool {
         !export.type_only
     }
     fn missing(&self, export: &Export, target: &Path) -> Result<()> {
-        other_namespace(self.type_exports, target, &export.local)
+        other_namespace(self.type_exports, target, &export.local, self.types)
     }
-    fn identity(&self, signature: &Signature) -> usize {
-        signature.index
+    fn identity(&self, value: &Value) -> ValueIdentity {
+        match value {
+            Value::Function(signature) => ValueIdentity::Function(signature.index),
+            Value::Constant(constant) => ValueIdentity::Constant(constant.id()),
+        }
     }
 }
 
 fn body(
     declaration: &ast::FnDecl,
-    signature: &Signature,
+    (signature, constants): (&Signature, &module_constants::Scope),
     functions: &Symbols,
     source: &Source,
     entry: usize,
@@ -302,7 +399,8 @@ fn body(
         Some(lower.source),
     )?;
     lower.reserve_parameters(&plans)?;
-    let mut prologue = lower.initialize_parameters(&plans, signature.receiver.is_some())?;
+    let mut prologue = lower.module_constants(constants, &declaration.function)?;
+    prologue.extend(lower.initialize_parameters(&plans, signature.receiver.is_some())?);
     let body = declaration
         .function
         .body

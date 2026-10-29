@@ -1692,3 +1692,40 @@ the name. Constants then re-export and star-export without scanner changes.
 Namespace re-exports, `export {} from`, `export type *`, attributed forms and
 default names stay rejected; namespace objects and default exports need their
 own contracts.
+
+### Module constants (`module_constants`)
+
+`declarations::collect` skips top-level non-ambient `const` only under the
+selector and names `let`/`var`; earlier profiles keep `unsupported top-level
+declaration`. `module_constants::link` runs in `graph.order` after function
+signatures and before `link_bindings`, which skips constant imports/exports and
+rejects name collisions with them. `check` validates the whole module first
+(identifier bindings, initializer presence, duplicates against functions and
+imports, the pure initializer form, and temporal-dead-zone order), so chunking
+never changes diagnostics. Keep the initializer subset call-free: admitting calls,
+member reads with effects or anything that can observe capabilities needs a new
+evaluation-order design and initialization on tool/HTTP entries first.
+
+Number/boolean/null/undefined constants fold to literals (`fold`); never put a
+non-handle value in a root slot, because the collector treats words at or above
+the heap base as block pointers. Handle-typed constants get a stored index:
+`S::InitModuleConstant` publishes the evaluated local, `E::ModuleConstant` reads
+it, and emit reserves `Program.constants` permanent slots after the exception and
+canonical function roots, starting the root cursor beyond them. Evaluate each
+stored initializer exactly once; never re-evaluate or inline a stored value at a
+use site, which would break identity and shared mutation. Initializers are chunked
+by AST weight (`INITIALIZER_WEIGHT`) to stay under the function body budget, are
+called at the start of `main` in dependency order, and are excluded from
+function-value dispatch targets.
+
+Functions bind only the constants they mention (`referenced`) as hidden immutable
+locals in a scope inserted at `scopes[0]`, after `reserve_parameters`: parameter
+slots must remain the leading Wasm locals, and parameters/locals must shadow
+constants. Arrows reach constants through ordinary immutable captures.
+
+`as const` is stripped only by `const_assertion` for a whole declaration
+initializer and marks `Binding::readonly`. Every member-write gate must call
+`reject_readonly_write`: `write_member_base`, array `push`/`pop`/`reverse`/`fill`
+and the `Object.assign` target. A new mutating operation must add the same check.
+Readonly is binding-level intent, not a type: do not intern readonly array or
+record types without a separate profile decision.

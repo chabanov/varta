@@ -10,6 +10,8 @@ impl Lower<'_> {
                 member.span,
             ));
         }
+        self.reject_readonly_write(&member.obj)
+            .map_err(|e| self.source.locate(e, member.span))?;
         self.expr(&member.obj)
     }
     pub(super) fn numeric_constant(&self, member: &ast::MemberExpr) -> Result<Option<Expr>> {

@@ -79,6 +79,8 @@ struct Emitter<'a> {
     function_targets: &'a BTreeMap<u32, Vec<usize>>,
     function_types: &'a [ir::FunctionType],
     reserved_roots: usize,
+    /// Address of the first permanent module-constant root slot.
+    constant_roots: u32,
     cell_slots: BTreeMap<u32, u32>,
     cell_types: BTreeMap<u32, Type>,
     binding_types: &'a BTreeMap<Type, u32>,
@@ -94,6 +96,16 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         0
     } + collected.canonical_functions.len()
         * varta_common::abi::STRING_ROOT_SLOT_BYTES;
+    // Stored module constants follow the canonical function roots and stay
+    // rooted for the instance lifetime.
+    let constant_roots = (varta_common::abi::STRING_ROOT_BASE + reserved_roots) as u32;
+    let reserved_roots =
+        program.constants as usize * varta_common::abi::STRING_ROOT_SLOT_BYTES + reserved_roots;
+    if reserved_roots > varta_common::abi::STRING_ROOT_BYTES {
+        return Err(CompilerError::Invalid(
+            "module constants exceed root stack capacity".into(),
+        ));
+    }
     let canonical_functions: BTreeMap<_, _> = collected
         .canonical_functions
         .iter()
@@ -121,6 +133,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                     .enumerate()
                     .filter(|(index, function)| {
                         *index != program.main
+                            && !program.initializers.contains(index)
                             && function.receiver == signature.receiver
                             && function.shape == signature.shape
                             && function.call_params() == signature.physical_params()
@@ -165,7 +178,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     let strings = collected.strings;
     let mut helpers = collected.helpers;
-    if program.types.profile.exceptions() {
+    if program.types.profile.exceptions() || program.constants > 0 {
         helpers.insert(strings::Helper::Allocate);
     }
     let layouts = collected.layouts;
@@ -571,6 +584,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             function_targets: &function_targets,
             function_types: &program.types.functions,
             reserved_roots,
+            constant_roots,
             cell_slots,
             cell_types: function
                 .cells
@@ -781,6 +795,12 @@ impl Emitter<'_> {
         for statement in statements {
             match statement {
                 S::Trap => self.code.push(I::Unreachable),
+                S::InitModuleConstant(index, value) => {
+                    self.code.push(I::I32Const(self.constant_root(*index)));
+                    self.expr(value)?;
+                    self.code.push(I::I64Store(strings::ROOT));
+                    self.end_temporaries();
+                }
                 S::RecordEnumerate {
                     source,
                     target,

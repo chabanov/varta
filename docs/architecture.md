@@ -5397,6 +5397,79 @@ ECMAScript linking semantics, applied separately to each binding namespace
 Re-exports are resolved entirely at compile time: no host import, value tag,
 layout or artifact field changes.
 
+#### Module constants (`module_constants()`)
+
+Top-level `const` and `export const` declarations become module-scope immutable
+value bindings. V31 and earlier profiles keep rejecting them (`unsupported
+top-level declaration`) and keep rejecting `as const`.
+
+- **Declarations.** Each declarator binds an identifier, has an initializer and
+  may carry a type annotation; one declaration may hold several declarators.
+  Top-level `let`/`var` (`unsupported top-level let or var declaration`),
+  destructuring and declarations without an initializer are rejected. Constants
+  share one value namespace with the module's functions and value imports: a
+  repeated name fails (`duplicate module binding`, `duplicate binding` or
+  `duplicate or reserved import binding`). Type names stay a separate namespace.
+- **Scope and modules.** A constant is readable from every function of its
+  module, including nested arrows (which capture it like any immutable binding)
+  and parameter defaults; parameters and locals shadow it. Assignment to a
+  constant is rejected like assignment to any `const` binding. `export const`,
+  export lists (`export { X as Y }`, also forwarding an imported constant) and
+  named imports (`import { X as Y } from './m.ts'`) link constants across
+  modules next to functions and v31 types. Re-exports with `from` stay rejected.
+- **Initializer subset.** Initializers are limited to a pure subset: string,
+  number, boolean, null and BigInt literals; unary `-`/`+` on numeric or BigInt
+  literals; `undefined`, `NaN` and `Infinity`; references to constants declared
+  earlier in the module or imported; array literals without holes or spread;
+  object literals with identifier/string keys and shorthand properties; binary
+  `+`; and one outermost `as const`. Other forms fail with `unsupported <construct>
+  in a module constant initializer` (calls and `new`, member access, template
+  literals, functions and classes, assignment, other operators, spread, nested
+  `as const`, references to functions). A reference to a later constant or to the
+  constant itself fails with `binding used before initialization`. The subset has
+  no calls, so initialization cannot run user code, read capabilities or observe
+  another constant before it is initialized; its only effects are allocation and
+  execution budget. Values are checked by the ordinary rules, with the annotation
+  as the expected type; unannotated arrays and records use the v27 inference.
+- **Folded and stored values.** A `number`, `boolean`, `null` or `undefined`
+  constant must be a literal, a negated literal or a reference to another such
+  constant; it is folded and inlined at every use and needs no storage. A
+  non-literal scalar initializer such as `1 + 2` is rejected. Every other constant
+  (strings, BigInts, arrays, records, union values) is *stored*: it is evaluated
+  exactly once per instance and held in a permanent slot of the shadow-root
+  region, placed after the exception root and the canonical function roots. The
+  root cursor starts after these slots, so they reduce the available root stack,
+  and a program whose reservations exceed the region is rejected. The collector
+  traces these slots for the instance lifetime and never moves their values, so
+  every read yields the same identity: mutating a stored array or record (unless
+  readonly) is visible through every reference, as in JavaScript.
+- **Initialization order.** Stored constants are initialized eagerly by
+  synthesized initializer functions that `_start` calls before the first
+  statement of `main`: modules in dependency order (dependencies first, the order
+  of the module metadata), and declarations in source order within a module.
+  Large modules are split into several bounded initializers; each counts toward
+  the user function limit. Initializers are not exported, are not function-value
+  dispatch targets and are omitted for modules whose constants all fold. Tool
+  and HTTP entry points do not run `main`: binary64 profiles already reject tool
+  and HTTP contracts, and a program combining stored constants with tool or HTTP
+  entry points is rejected explicitly.
+- **`as const`.** `as const` is admitted around a whole `const` or `let`
+  initializer, at module scope or inside a function. The value keeps its
+  ordinary element and field types (literal and tuple types are not inferred) and
+  the binding becomes readonly. Writes reached from that binding through member
+  chains are rejected with ``cannot modify readonly `as const` value X``:
+  assignment, compound, logical and update assignment, `delete`, `length` writes,
+  destructuring targets, `push`/`pop`/`reverse`/`fill` and `Object.assign`
+  targets, including inside closures and through imports. Readonly is a static
+  property of the binding, not a runtime freeze: a value passed to a parameter or
+  aliased by another binding follows the ordinary mutation rules, matching
+  JavaScript, where `as const` does not freeze. `as const` elsewhere stays
+  unsupported.
+
+Module constants add no host import, value tag, record or array layout, global,
+helper, export or catalog entry; the reserved permanent root slots are the only
+memory-layout change. All budgets are unchanged.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),
@@ -5419,7 +5492,9 @@ may declare an ordinary function named `main`, with its own signature. Recursion
 within a file is supported; calls to the entry function remain rejected.
 
 The dependency graph is a DAG: cycles, including self-imports, fail with an import
-site diagnostic. There are no top-level execution or initialization semantics.
+site diagnostic. There are no top-level execution or initialization semantics,
+except that v32 initializes [module constants](#module-constants-module_constants)
+in dependency order before `main`.
 Dependencies are visited in sorted path order, once per resolved identity, and
 linked before their dependents. Function slots are then allocated in module order
 and declaration order, independent of import declaration order. Modules are
