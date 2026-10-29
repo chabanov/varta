@@ -374,6 +374,10 @@ review and its merge into `main`.
 | `classes()` | Classes, fields, constructors, methods, `extends`; `Error` subclasses pending | M2 | Merged on the integration branch |
 | `module_reexports()` | `export { x } from`, `export * from`, `export type { T } from` | M3, M7 | Merged on the integration branch |
 | `template_literals()` | Template literal expressions | M3 | Merged on the integration branch |
+| `generics()` | Generic type declarations and functions by monomorphization, `keyof` | M1, M4 |
+| `default_exports()` | `export default` and default imports | M7 |
+| `interface_extends()` | `interface … extends` and declaration merging of interfaces | M1, M7 |
+| `error_subclasses()` | `class X extends Error` | M2 |
 
 ### Deferred external validation scenarios
 

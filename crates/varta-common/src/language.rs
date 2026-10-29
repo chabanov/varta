@@ -146,6 +146,22 @@ impl LanguageProfile {
     pub fn template_literals(self) -> bool {
         self == Self::CheckedF64Utf16V32
     }
+    #[must_use]
+    pub fn generics(self) -> bool {
+        self == Self::CheckedF64Utf16V32
+    }
+    #[must_use]
+    pub fn default_exports(self) -> bool {
+        self == Self::CheckedF64Utf16V32
+    }
+    #[must_use]
+    pub fn interface_extends(self) -> bool {
+        self == Self::CheckedF64Utf16V32
+    }
+    #[must_use]
+    pub fn error_subclasses(self) -> bool {
+        self == Self::CheckedF64Utf16V32
+    }
     /// Named interface/alias annotations and type-only module bindings (v31).
     #[must_use]
     pub fn named_types(self) -> bool {
@@ -1407,6 +1423,10 @@ mod tests {
                 profile.classes(),
                 profile.module_reexports(),
                 profile.template_literals(),
+                profile.generics(),
+                profile.default_exports(),
+                profile.interface_extends(),
+                profile.error_subclasses(),
             ] {
                 assert_eq!(selector, profile == new);
             }
