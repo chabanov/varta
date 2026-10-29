@@ -59,6 +59,8 @@ mod language;
 #[cfg(test)]
 mod language_tests;
 #[cfg(test)]
+mod literal_type_tests;
+#[cfg(test)]
 mod logical_assignment_tests;
 #[cfg(test)]
 mod math_f16_tests;

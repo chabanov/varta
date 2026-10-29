@@ -3441,3 +3441,39 @@ source; JavaScript files are never read. Named types are exact closed shapes: a
 value of `{ name; score }` is not assignable where `{ name; score; note? }` is
 expected. Generics, `extends`, recursive types, `Record<K, V>`, re-exports with
 `from` and type declarations inside functions are rejected with a diagnostic.
+
+### `checked-f64-utf16-v32`
+
+#### Literal types (opt-in v32)
+
+String, number and boolean literal types constrain a primitive to a set of values.
+Wide generated unions such as error-code lists are supported (up to 4096 members
+per set):
+
+```ts
+// models.ts
+export type AuthType = 'none' | 'apiKey';
+export interface Auth { type: AuthType; header?: 'Authorization' }
+
+// main.ts
+import type { Auth, AuthType } from "./models.js";
+
+function parse(text: string): AuthType | null {
+  if (text === 'none' || text === 'apiKey') return text; // narrowed by the guards
+  return null;
+}
+
+export function main(): void {
+  const kind = parse('apiKey');
+  if (kind !== null) {
+    const auth: Auth = { type: kind };
+    console.log(auth.type.length); // a literal reads as its base string
+  }
+}
+```
+
+A plain `string` is not assignable to `AuthType` until a `===`/`!==` guard narrows
+it. Literal types are erased at run time, so values compare and print as their base
+primitive. Records, arrays and callbacks containing literal types are distinct from
+their `string` twins. `varta.json.parse<T>` rejects targets that contain literal
+types; parse a `string` field and narrow it. String `switch` remains unsupported.

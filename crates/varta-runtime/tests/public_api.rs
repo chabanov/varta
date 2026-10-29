@@ -3414,3 +3414,74 @@ fn public_engine_links_named_types_across_modules_in_v31() {
         "{frozen}"
     );
 }
+#[test]
+fn public_engine_checks_literal_types_across_modules_in_v32() {
+    struct LiteralSources;
+    impl ModuleLoader for LiteralSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./codes.ts" => Ok("codes.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Ok("export type Code='NOT_FOUND'|'CONFLICT'|'RATE_LIMITED';export type Status=404|409|429;\
+                export interface Problem{code:Code;status:Status}\
+                export function status(code:Code):Status{if(code==='NOT_FOUND'){return 404;}if(code==='CONFLICT'){return 409;}return 429;}"
+                .into())
+        }
+    }
+    let compile = |text: &str, profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: text.into(),
+            },
+            &LiteralSources,
+            profile,
+        )
+    };
+    let source = "import type {Code,Problem} from './codes.ts';import {status} from './codes.ts';\
+                  function problem(code:Code):Problem{return {code,status:status(code)};}\
+                  export function main():void{const p=problem('CONFLICT');console.log(JSON.stringify(p));\
+                  const codes:Code[]=['NOT_FOUND','RATE_LIMITED'];for(const c of codes){if(c!==undefined){console.log(status(c));}}}";
+    let profile = varta_common::language::LanguageProfile::CheckedF64Utf16V32;
+    let compiled = compile(source, profile).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .inspect_module(&compiled.wasm)
+            .unwrap()
+            .language
+            .profile,
+        Some(profile)
+    );
+    assert_eq!(
+        runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap().lines,
+        [
+            "varta log: {\"code\":\"CONFLICT\",\"status\":409}",
+            "varta log: 404",
+            "varta log: 429"
+        ]
+    );
+    let unchecked = compile(
+        "import type {Code} from './codes.ts';import {status} from './codes.ts';\
+         export function main():void{const s:string='CONFLICT';console.log(status(s));}",
+        profile,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        unchecked.contains("not assignable to literal type"),
+        "{unchecked}"
+    );
+    let frozen = compile(
+        source,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V31,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(frozen.contains("unsupported type annotation"), "{frozen}");
+}

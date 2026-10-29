@@ -26,6 +26,25 @@ impl Lower<'_> {
         expected: Option<Type>,
         hints: Option<references::AggregateHints>,
     ) -> Result<Expr> {
+        let value = self.expr_lowered(expression, expected, hints)?;
+        // Without a literal context a literal-typed value is its base primitive.
+        Ok(if expected.is_none() {
+            literals::erase(value, self.types)
+        } else {
+            value
+        })
+    }
+    /// An expression whose literal type an inferred binding or literal-aware
+    /// assignment target keeps (v32 `literal_types`).
+    pub(super) fn expr_preserving(&mut self, expression: &ast::Expr) -> Result<Expr> {
+        self.expr_lowered(expression, None, None)
+    }
+    fn expr_lowered(
+        &mut self,
+        expression: &ast::Expr,
+        expected: Option<Type>,
+        hints: Option<references::AggregateHints>,
+    ) -> Result<Expr> {
         self.depth += 1;
         if self.depth > 64 {
             return Err(self
@@ -174,7 +193,10 @@ impl Lower<'_> {
                         ty,
                         kind: E::Local(binding.slot),
                     };
-                    return Ok(if narrow.is_union() {
+                    // A literal guard may refine a non-union local in place.
+                    let retag =
+                        narrow.is_union() || self.types.profile.literal_types() && !ty.is_union();
+                    return Ok(if retag {
                         Expr {
                             ty: narrow,
                             ..local

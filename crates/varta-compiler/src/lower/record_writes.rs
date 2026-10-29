@@ -111,7 +111,9 @@ impl Lower<'_> {
         if !fields.is_empty()
             && !fields.iter().any(|field| {
                 let expected = unions::members(field.ty, self.types);
-                actual.iter().any(|ty| expected.contains(ty))
+                actual
+                    .iter()
+                    .any(|ty| literals::member_of(*ty, &expected, self.types))
             })
         {
             return Err(self.source.locate(
@@ -206,7 +208,7 @@ impl Lower<'_> {
         let allowed: Vec<_> = actual
             .iter()
             .copied()
-            .filter(|ty| expected_members.contains(ty))
+            .filter(|ty| literals::member_of(*ty, &expected_members, self.types))
             .collect();
         if allowed.is_empty() {
             return Ok(vec![S::Throw(

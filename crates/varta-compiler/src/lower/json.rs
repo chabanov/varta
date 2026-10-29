@@ -13,8 +13,17 @@ impl Lower<'_> {
         let target = &arguments.params[0];
         let ty =
             keyword_type(target, self.types).map_err(|e| self.source.locate(e, target.span()))?;
+        if literals::contains(ty, self.types) {
+            // The schema ABI cannot express value sets; unchecked members would
+            // otherwise reach literal-typed places.
+            return Err(self.source.locate(
+                unsupported("JSON parsing target with a literal type; parse the base primitive and narrow it"),
+                target.span(),
+            ));
+        }
         fn json_type(ty: Type, types: &ir::ValueTypes, optional: bool) -> bool {
             match ty {
+                Type::Literal(..) => false,
                 Type::BigInt => types.profile.bigint_values(),
                 Type::Error | Type::NativeError(_) => false,
                 Type::Undefined => types.profile.checked_json() && optional,

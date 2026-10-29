@@ -111,13 +111,17 @@ pub(crate) fn lower(
             entry.ast.span(),
         ));
     }
-    Ok(ir::Program {
+    let mut program = ir::Program {
         functions,
         main,
         tools,
         http,
         types,
-    })
+    };
+    if profile.literal_types() {
+        literal_erasure::erase_program(&mut program);
+    }
+    Ok(program)
 }
 
 /// Function bindings only; type bindings were linked by `named::link_module`.

@@ -34,10 +34,41 @@ pub(crate) enum Type {
     Array(u32),
     Union(u32),
     ReferenceUnion(u32),
+    /// Compile-time literal set (v32 `literal_types`): physically its base
+    /// primitive; the id indexes `ValueTypes::literals`. Erased before emission.
+    Literal(LiteralBase, u32),
+}
+
+/// Base primitive of a literal set; it fixes the erased physical representation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum LiteralBase {
+    String,
+    Number,
+    Boolean,
+}
+impl LiteralBase {
+    pub(crate) fn erased(self) -> Type {
+        match self {
+            Self::String => Type::String,
+            Self::Number => Type::Float64,
+            Self::Boolean => Type::Boolean,
+        }
+    }
 }
 
 impl Type {
+    /// The physical type: a literal set erases to its base primitive.
+    pub(crate) fn erased(self) -> Self {
+        if let Self::Literal(base, _) = self {
+            base.erased()
+        } else {
+            self
+        }
+    }
     pub(crate) fn is_handle(self) -> bool {
+        if let Self::Literal(base, _) = self {
+            return base.erased().is_handle();
+        }
         matches!(
             self,
             Self::BigInt
@@ -127,6 +158,7 @@ pub(crate) struct ValueTypes {
     pub arrays: Vec<Type>,
     pub unions: Vec<Vec<Type>>,
     pub functions: Vec<FunctionType>,
+    pub literals: crate::lower::literals::LiteralTypes,
     pub named: crate::lower::named::NamedTypes,
 }
 impl ValueTypes {
@@ -209,6 +241,7 @@ impl Type {
             Self::Array(_) => V::Array,
             Self::Union(_) => V::PrimitiveUnion,
             Self::ReferenceUnion(_) => V::ReferenceUnion,
+            Self::Literal(base, _) => return base.erased().value_kind(),
             _ => return None,
         })
     }
@@ -521,6 +554,9 @@ impl std::fmt::Display for Type {
             Self::Array(_) => "array",
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",
+            Self::Literal(LiteralBase::String, _) => "string literal type",
+            Self::Literal(LiteralBase::Number, _) => "number literal type",
+            Self::Literal(LiteralBase::Boolean, _) => "boolean literal type",
         })
     }
 }

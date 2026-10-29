@@ -82,7 +82,12 @@ impl Lower<'_> {
             let name = binding.id.sym.as_ref();
             let old = self.binding(name)?;
             let value = if let Some(init) = variable.init.as_deref() {
-                self.expr_expected(init, old.ty)?
+                if old.ty.is_none() && self.types.profile.literal_types() {
+                    // An inferred binding keeps a literal-typed initializer's type.
+                    self.expr_preserving(init)?
+                } else {
+                    self.expr_expected(init, old.ty)?
+                }
             } else if self.types.profile.missing()
                 && declaration.kind == ast::VarDeclKind::Let
                 && old

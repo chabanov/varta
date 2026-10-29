@@ -11,6 +11,13 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Opt-in v32 `literal_types` adds string, number and boolean literal types and
+  their unions as compile-time value sets that erase to their base slots, with
+  membership-checked assignability, `===`/`!==`/`||` narrowing and up to 4096
+  members per set; all 356 string-literal aliases of the pilot `models.ts`
+  resolve. `varta.json.parse<T>` rejects literal-typed targets. ABIs, layouts and
+  production budgets are unchanged.
+
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`
   and `export type { … }`. The project loader resolves `./x.js` specifiers to the
