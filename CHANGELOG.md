@@ -11,6 +11,15 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Opt-in v34 (pilot batch: dynamic records, `unknown` and async, in
+  development) is registered. It inherits every v33 feature and declares a new
+  host ABI, so runtimes without the microtask scheduler reject its modules, and
+  a new value ABI reserved for the batch's record and promise layouts; until a
+  stream defines them, v34 keeps the v33 layouts, exception channel and JSON
+  selectors. Its `index_signatures`, `recursive_types`, `wide_records`,
+  `unknown_type`, `checked_assertions`, `promises` and `async_functions`
+  selectors admit nothing yet.
+
 - Synchronous generators under opt-in v33 (selector `generators`, K4.4 step 2):
   annotated top-level and generic `function*` declarations
   (`Generator<T, TReturn, TNext>`, with `void`/`undefined` defaults instead of

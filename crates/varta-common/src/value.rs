@@ -20,6 +20,13 @@ pub const SPARSE_VALUE_VERSION: u32 = 12;
 pub const BIGINT_VALUE_VERSION: u32 = 13;
 /// Callable values with module-owned capture metadata; older tags stay frozen.
 pub const FUNCTION_VALUE_VERSION: u32 = 14;
+/// Value ABI identity of pilot batch v34, reserved for dynamic-key records
+/// (index signatures and `Record<string, T>`), records wider than
+/// [`MAX_RECORD_FIELDS`], recursive alias graphs and promise values. It defines
+/// no layout or tag yet: every reader rejects it, and v34 modules stamp the
+/// value13 layouts selected by `LanguageProfile::value_layout` until a stream
+/// defines value15 layouts in the architecture contract.
+pub const DYNAMIC_VALUE_VERSION: u32 = 15;
 pub const SPARSE_BITMAP_BYTES: usize = MAX_ARRAY_ELEMENTS / u8::BITS as usize;
 pub const HEAP_SPARSE_FLAG: i32 = 1024;
 pub const ERROR_CLASS_SHIFT: u32 = 1;
@@ -101,6 +108,7 @@ pub fn supported_version(version: u32) -> bool {
             | SPARSE_VALUE_VERSION
             | BIGINT_VALUE_VERSION
             | FUNCTION_VALUE_VERSION
+            | DYNAMIC_VALUE_VERSION
     )
 }
 #[must_use]
@@ -188,7 +196,9 @@ impl ValueKind {
     }
     #[must_use]
     pub fn supported_by(self, version: u32) -> bool {
+        // Value15 is a reserved identity without tags (see DYNAMIC_VALUE_VERSION).
         supported_version(version)
+            && version != DYNAMIC_VALUE_VERSION
             && match self {
                 Self::Function => version == FUNCTION_VALUE_VERSION,
                 Self::BigInt => matches!(version, BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION),

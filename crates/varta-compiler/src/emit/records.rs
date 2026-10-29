@@ -86,7 +86,7 @@ impl Emitter<'_> {
         for (_, value) in fields {
             self.expr(value)?;
         }
-        let size = abi::record_bytes(self.profile.value_abi(), fields.len());
+        let size = abi::record_bytes(self.profile.value_layout(), fields.len());
         self.code.push(I::I32Const(size as i32));
         self.string_helper(strings::Helper::Allocate)?;
         self.code.push(I::LocalSet(self.temporary));

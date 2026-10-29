@@ -241,7 +241,7 @@ fn preflight(
                 )?
                 .into_verified()?;
                 if Some(catalog.as_catalog().value_version)
-                    != language.profile.map(|profile| profile.value_abi())
+                    != language.profile.map(|profile| profile.value_layout())
                 {
                     return Err(error("function capture catalog value version mismatch"));
                 }

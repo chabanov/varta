@@ -863,7 +863,13 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     {
         module.section(&wasm_encoder::CustomSection {
             name: varta_common::value::VALUE_SECTION.into(),
-            data: program.types.value_version().to_le_bytes().to_vec().into(),
+            data: program
+                .types
+                .profile
+                .value_abi()
+                .to_le_bytes()
+                .to_vec()
+                .into(),
         });
     }
     if let Some((_, contract)) = &program.http {

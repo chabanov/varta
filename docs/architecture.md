@@ -154,10 +154,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v31` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
+| `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **29**, value ABI **13**, HTTP contract **1** and **36** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **30**, value ABI **15**, HTTP contract **1** and **37** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -6138,6 +6139,61 @@ need no event loop and no new host import; every resumption is a guest call.
   generator types exist per module. Saved bindings are cells, so a program that
   keeps many generators suspended pays for their cells within the ordinary
   memory and fuel limits.
+
+### `checked-f64-utf16-v34` — Pilot batch: dynamic records, unknown and async
+
+V34 is registered and inherits every v33 feature and selector, including
+resumable frames, synchronous generators, exception channel v5 and the v33 JSON
+selectors. It declares two new version identities (see the
+[version matrix](#version-matrix)):
+
+- **Host ABI** `abi::SCHEDULED_FRAMES_VERSION`. The async stream adds a runtime
+  microtask scheduler that calls `varta_resume` for promise jobs and `await`,
+  so a runtime without that scheduler must reject v34 modules before
+  compilation or any guest effect. The v34 host ABI adds no host import yet;
+  every operation available under the v33 host ABI keeps its signature, and v33
+  and earlier profiles keep their host ABI.
+- **Value ABI** `value::DYNAMIC_VALUE_VERSION`, reserved for the value layouts
+  and tags of this batch: dynamic-key records (index signatures and
+  `Record<string, T>`), records wider than `value::MAX_RECORD_FIELDS` (whose
+  presence trailer is a layout), recursive alias graphs and promise values. A
+  v34 module declares it in its `varta.values` section; a module declaring any
+  other value ABI with the v34 profile, a v33 module declaring the v34 value
+  ABI, an unknown value ABI and a missing value section all fail validation
+  before instantiation. Earlier profiles keep value ABI 13.
+
+The reserved value ABI defines no layout or tag yet. `ValueKind::supported_by`
+admits no kind under it and every value reader rejects it, so no value graph can
+be read as value15 until a stream specifies its layout here. Until then
+`LanguageProfile::value_layout` keeps v34 on the value13 layouts: record
+descriptors, record sizes and presence trailers and closure/frame catalogs are
+stamped with value13, the runtime checks a v34 capture catalog against that
+layout version, and the value13 host operations, JSON schema 13
+(`json_stringify_v13`, `json_parse_v15`) and exception channel v5 read them
+unchanged. For every other profile the layout version equals the value ABI.
+
+A stream that introduces a value15 layout or tag switches `value_layout` for
+v34 to the reserved value ABI in the same change, and then owns the readers,
+JSON schema version and value/JSON host operations bound to it, because those
+operations check the version stamped in every record descriptor.
+
+Seven selectors gate the batch's work streams, and all admit nothing yet:
+
+- records stream: `index_signatures()` (`{[k: string]: T}` and
+  `Record<string, T>` as a dynamic-key record kind), `recursive_types()`
+  (self-referential aliases such as a JSON value union) and `wide_records()`
+  (records wider than 32 fields);
+- unknown stream: `unknown_type()` (`unknown`, usable after narrowing by
+  `typeof`, `instanceof`, `Array.isArray`, `in` or a type guard) and
+  `checked_assertions()` (`as` as a runtime-checked downcast, never an
+  unchecked reinterpretation);
+- async stream (K4.4 steps 3 and 4): `promises()` (base `Promise<T>`
+  semantics over the microtask scheduler) and `async_functions()`
+  (`async`/`await` on the continuation frames).
+
+Until a stream adds its subsection here, a v34 module compiles and runs exactly
+like a v33 module apart from its declared profile, host ABI and value ABI, and
+production budgets are unchanged.
 
 ## Local modules
 

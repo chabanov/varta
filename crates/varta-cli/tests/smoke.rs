@@ -11303,6 +11303,112 @@ fn suspension_profile_v33_declares_its_host_abi_through_both_binaries() {
 }
 
 #[test]
+fn pilot_profile_v34_declares_its_host_and_value_abis_through_both_binaries() {
+    use varta_common::{abi, value};
+    let project = RegressionProject::new(
+        "import {label} from './api.ts';export function main():void{console.log(label(34));}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/api.ts"),
+        "class Probe{n:number;constructor(n:number){this.n=n;}}export function label(n:number):string{return JSON.stringify({v:new Probe(n).n});}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v34");
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        let inspect = project.command(&["inspect", artifact, "--json"]);
+        assert!(inspect.status.success(), "{}", combined(&inspect));
+        let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+        assert_eq!(info["language"]["profile"], "checked-f64-utf16-v34");
+        assert_eq!(info["abiVersion"], abi::SCHEDULED_FRAMES_VERSION);
+        assert_eq!(info["valueAbiVersion"], value::DYNAMIC_VALUE_VERSION);
+    }
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), [r#"varta log: {"v":34}"#]);
+    }
+    let wasm = project.0.join("dist/app.wasm");
+    let original = fs::read(&wasm).unwrap();
+    // Rewrites one versioned custom section payload in place.
+    let downgrade = |name: &str, from: u32, to: u32| {
+        let mut bytes = original.clone();
+        let mut section = name.as_bytes().to_vec();
+        section.extend(from.to_le_bytes());
+        let at = bytes
+            .windows(section.len())
+            .position(|window| window == section)
+            .unwrap()
+            + name.len();
+        bytes[at..at + size_of::<u32>()].copy_from_slice(&to.to_le_bytes());
+        bytes
+    };
+    let rejects = |expected: &str| {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            let output = command
+                .args(["run", "dist/app.wasm"])
+                .current_dir(&project.0)
+                .output()
+                .unwrap();
+            assert!(!output.status.success(), "{}", combined(&output));
+            assert!(logs(&output).is_empty(), "{}", combined(&output));
+            assert!(
+                combined(&output).contains(expected),
+                "{}",
+                combined(&output)
+            );
+        }
+    };
+    // A v34 declaration with the v33 value ABI is rejected before guest output.
+    fs::write(
+        &wasm,
+        downgrade(
+            value::VALUE_SECTION,
+            value::DYNAMIC_VALUE_VERSION,
+            value::BIGINT_VALUE_VERSION,
+        ),
+    )
+    .unwrap();
+    rejects("structured value ABI");
+    // Downgrading the Wasm and manifest host ABI to v33 leaves a v34 declaration
+    // without its ABI; both binaries reject it before any guest output.
+    fs::write(
+        &wasm,
+        downgrade(
+            abi::SECTION,
+            abi::SCHEDULED_FRAMES_VERSION,
+            abi::RESUMABLE_FRAMES_VERSION,
+        ),
+    )
+    .unwrap();
+    let manifest_path = project.0.join("dist/app.manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["abiVersion"] = abi::RESUMABLE_FRAMES_VERSION.into();
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    rejects("matching host ABI");
+}
+
+#[test]
 fn generators_run_through_dev_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {pages} from './pages.ts';export function main():void{let total=0;for(const page of pages(3)){if(page===2){break;}total+=page;}const g=pages(1);const first=g.next();const done=g.return();console.log(`total ${total} ${String(first.value)} ${String(done.done)}`);}",

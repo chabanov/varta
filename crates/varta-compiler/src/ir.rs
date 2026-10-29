@@ -231,8 +231,11 @@ pub(crate) struct GeneratorType {
     pub result: Type,
 }
 impl ValueTypes {
+    /// Layout version stamped into descriptors and catalogs; see
+    /// `LanguageProfile::value_layout`. The module's value section declares
+    /// `LanguageProfile::value_abi` instead.
     pub fn value_version(&self) -> u32 {
-        self.profile.value_abi()
+        self.profile.value_layout()
     }
     pub fn number(&self) -> Type {
         if self.profile.binary64() {

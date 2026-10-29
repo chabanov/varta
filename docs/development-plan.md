@@ -418,6 +418,28 @@ V32 is not released: the integration branch awaits review and its merge into
 | `interface_extends()` | `interface … extends` and declaration merging of interfaces | M1, M7 | Merged on the integration branch (second wave); interface/class merging stays rejected |
 | `error_subclasses()` | `class X extends Error`; exception channel v5 | M2 | Merged on the integration branch (second wave) |
 
+### Pilot batch v34 (in development)
+
+Decided with the project author on 2026-10-29: the next pilot batch collects
+uarp-sdk M1–M2 remainders together with K4.4 steps 3–4 in profile
+`checked-f64-utf16-v34`, developed in three parallel streams. V34 inherits every
+v33 feature and declares its own host ABI, because the async stream's runtime
+scheduler calls `varta_resume`, and its own value ABI, reserved for the record
+and promise layouts of the records and async streams; until a stream specifies
+a value15 layout, v34 keeps the value13 layouts
+([contract](architecture.md#checked-f64-utf16-v34--pilot-batch-dynamic-records-unknown-and-async)).
+All selectors are registered and admit nothing yet.
+
+| Selector | Work stream | Pilot step | State |
+| --- | --- | --- | --- |
+| `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind | M1 | Registered, admits nothing |
+| `recursive_types()` | Records: recursive aliases such as `JsonValue` | M1 | Registered, admits nothing |
+| `wide_records()` | Records: records wider than 32 fields (presence trailer layout) | M1 | Registered, admits nothing |
+| `unknown_type()` | Unknown: `unknown` with `typeof`/`instanceof`/`Array.isArray`/`in`/guard narrowing | M1, M2 | Registered, admits nothing |
+| `checked_assertions()` | Unknown: `as` as a runtime-checked downcast | M1, M2 | Registered, admits nothing |
+| `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Registered, admits nothing |
+| `async_functions()` | Async (K4.4 step 4): `async`/`await` on continuation frames | M5 | Registered, admits nothing |
+
 ### Deferred external validation scenarios
 
 | Profile | Example contract operations | Required behavior |
@@ -1446,6 +1468,13 @@ older runtimes reject the `varta_resume` export. Generators add no value tag,
 so the value ABI stays at the v32 version. Its selectors `resumable_frames()`
 (step 1 runtime admission) and `generators()` (step 2) are both implemented
 ([contract](architecture.md#checked-f64-utf16-v33--suspension-and-generators)).
+
+**Profile v34 (in development).** Steps 3 (microtask scheduler and base
+`Promise<T>`) and 4 (`async`/`await`) belong to the
+[v34 pilot batch](#pilot-batch-v34-in-development), decided with the project
+author on 2026-10-29. Its own host ABI makes runtimes without the scheduler
+reject v34 modules; its selectors `promises()` and `async_functions()` admit
+nothing yet.
 
 One suspension/resumption mechanism serves generators, async functions and async
 generators. The event loop orders work, Promise holds a future result, and

@@ -2107,3 +2107,27 @@ Contract: [architecture.md](architecture.md#synchronous-generators-generators).
 - Generator behavior tests compare against pinned Node output
   (`varta-runtime` `generator_cases`); regenerate expectations only from Node,
   never from Varta output.
+
+## Profile v34 (in development)
+
+Inherit v33 under checked-f64-utf16-v34 with every v33 selector, exception
+channel v5 and the v33 JSON selectors, but its own host ABI
+(`abi::SCHEDULED_FRAMES_VERSION`, the microtask scheduler that drives
+`varta_resume`) and its own value ABI (`value::DYNAMIC_VALUE_VERSION`); never
+map another profile to either. Seven selectors gate the streams and admit
+nothing yet: records (`index_signatures`, `recursive_types`, `wide_records`),
+unknown (`unknown_type`, `checked_assertions`) and async (`promises`,
+`async_functions`). Gate every admission on its own selector, keep v33 and
+earlier profiles frozen, and add each stream's rules under its own heading here.
+
+- The value ABI is a reserved identity without layouts. Declare it only in the
+  `varta.values` section (`value_abi`); stamp descriptors, record sizes and
+  capture/frame catalogs with `LanguageProfile::value_layout` (still value13
+  for v34). Never pass value15 to a reader before its layout is specified.
+- A stream that adds a value15 layout or tag switches `value_layout` for v34
+  in the same change and then extends the readers (`ValueKind::supported_by`,
+  `ReferenceBox`, `Vector`, `ErrorObject`, `record_bytes`, the runtime JSON
+  encoder/decoder, capture catalogs and the exception channel) and adds the
+  value/JSON host operations and JSON schema version bound to value15: the
+  value13 operations reject descriptors stamped with any other version. Only
+  one stream does this switch; the others rebase onto it.
