@@ -85,7 +85,7 @@ fn register_log(
                         format!("{}: {message}", object.class.name())
                     }
                 }
-                Kind::Record | Kind::Array => {
+                Kind::Record | Kind::Array | Kind::Dictionary => {
                     if matches!(
                         version,
                         varta_common::value::BIGINT_VALUE_VERSION
@@ -207,7 +207,9 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 caller.data_mut().tick()?;
                 let value = read(&mut caller, value, version)?;
                 let name = match value.kind {
-                    Kind::Error | Kind::Null | Kind::Record | Kind::Array => "object",
+                    Kind::Error | Kind::Null | Kind::Record | Kind::Array | Kind::Dictionary => {
+                        "object"
+                    }
                     Kind::Undefined => "undefined",
                     Kind::String => "string",
                     Kind::Float64 => "number",
@@ -233,7 +235,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     } else {
                         match value.kind {
                             Kind::Null | Kind::Undefined => false,
-                            Kind::Error | Kind::Record | Kind::Array => true,
+                            Kind::Error | Kind::Record | Kind::Array | Kind::Dictionary => true,
                             Kind::BigInt => !varta_common::bigint::BigIntView::read(
                                 data(&mut caller)?,
                                 value.payload,

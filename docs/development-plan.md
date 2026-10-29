@@ -435,8 +435,8 @@ exception channel v6, and v34 programs behave exactly as under v33.
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `dynamic_values()` | Records: value layout 15 foundation, value15 readers | M1 | Implemented on `v34-records` |
-| `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind | M1 | Registered, admits nothing |
-| `recursive_types()` | Records: recursive aliases such as `JsonValue` | M1 | Registered, admits nothing |
+| `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind (value15 tag 13) | M1 | Implemented on `v34-records` |
+| `recursive_types()` | Records: recursive aliases and interfaces such as `JsonValue` and trees | M1 | Implemented on `v34-records` |
 | `wide_records()` | Records: records wider than 32 fields, up to `MAX_WIDE_RECORD_FIELDS` (multiword presence, descriptor edge bitmap) | M1 | Implemented on `v34-records` |
 | `unknown_type()` | Unknown: `unknown` with `typeof`/`instanceof`/`Array.isArray`/`in`/guard narrowing | M1, M2 | Registered, admits nothing |
 | `checked_assertions()` | Unknown: `as` as a runtime-checked downcast | M1, M2 | Registered, admits nothing |

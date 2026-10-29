@@ -43,6 +43,9 @@ pub(crate) enum Type {
     /// Synchronous generator object (v33 `generators`): the handle of its
     /// continuation frame; the id indexes `ValueTypes::generators`.
     Generator(u32),
+    /// Value15 dynamic-key record (v34 `index_signatures`): physically the
+    /// two-slot storage record `ValueTypes::dictionaries[id].storage`.
+    Dictionary(u32),
 }
 
 /// Base primitive of a literal set; it fixes the erased physical representation.
@@ -78,6 +81,7 @@ impl Type {
         matches!(
             self,
             Self::BigInt
+                | Self::Dictionary(_)
                 | Self::Class(_)
                 | Self::Generator(_)
                 | Self::Function(_)
@@ -201,6 +205,16 @@ pub(crate) struct ValueTypes {
     pub classes: crate::lower::classes::Classes,
     pub generics: crate::lower::generics::Generics,
     pub generators: Vec<GeneratorType>,
+    pub dictionaries: Vec<DictionaryType>,
+}
+/// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
+/// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DictionaryType {
+    pub value: Type,
+    pub keys: Type,
+    pub values: Type,
+    pub storage: u32,
 }
 /// What a generator step function reports to the lowered protocol code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,6 +258,14 @@ impl ValueTypes {
             varta_common::value::max_record_fields(self.value_version())
         } else {
             varta_common::value::MAX_RECORD_FIELDS
+        }
+    }
+    /// The record shape that physically lays out a record or dictionary value.
+    pub fn record_layout(&self, ty: Type) -> Option<u32> {
+        match ty {
+            Type::Record(id) => Some(id),
+            Type::Dictionary(id) => Some(self.dictionaries[id as usize].storage),
+            _ => None,
         }
     }
     pub fn number(&self) -> Type {
@@ -322,6 +344,7 @@ impl Type {
             Self::String => V::String,
             // An instance is a genuine record carrying its own class descriptor.
             Self::Record(_) | Self::Class(_) => V::Record,
+            Self::Dictionary(_) => V::Dictionary,
             Self::Array(_) => V::Array,
             Self::Union(_) => V::PrimitiveUnion,
             Self::ReferenceUnion(_) => V::ReferenceUnion,
@@ -538,6 +561,9 @@ pub(crate) enum Expression {
     },
     ArrayHasOwn(Box<Expr>, Box<Expr>),
     ArrayStringHasOwn(Box<Expr>, Box<Expr>),
+    /// Value15 dictionaries (v34): the Number value of a String key that is a
+    /// canonical array index, or -1.
+    IndexKey(Box<Expr>),
     ArrayDelete {
         array: Box<Expr>,
         index: Option<Box<Expr>>,
@@ -668,6 +694,7 @@ impl std::fmt::Display for Type {
             Self::Null => "null",
             Self::Undefined => "undefined",
             Self::Record(_) => "object",
+            Self::Dictionary(_) => "dictionary object",
             Self::Class(_) => "class instance",
             Self::Generator(_) => "generator",
             Self::Array(_) => "array",

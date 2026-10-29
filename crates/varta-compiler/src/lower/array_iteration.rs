@@ -47,7 +47,10 @@ impl Lower<'_> {
         } else {
             value
         };
-        if matches!(value.ty, Type::Record(_) | Type::Class(_) | Type::Array(_)) {
+        if matches!(
+            value.ty,
+            Type::Record(_) | Type::Dictionary(_) | Type::Class(_) | Type::Array(_)
+        ) {
             return Ok(Expr {
                 span: value.span,
                 ty: Type::Boolean,

@@ -75,7 +75,10 @@ impl<'de> DeserializeSeed<'de> for Seed<'_> {
             };
             let member = members
                 .iter()
-                .find(|m| self.schema.types[**m as usize].kind() == kind)
+                .find(|m| {
+                    let member = self.schema.types[**m as usize].kind();
+                    member == kind || kind == ValueKind::Record && member == ValueKind::Dictionary
+                })
                 .ok_or_else(|| de::Error::custom("value type does not match union schema"))?;
             let mut decoder = serde_json::Deserializer::from_str(raw.get());
             let value = Seed {
@@ -109,6 +112,71 @@ impl<'de> DeserializeSeed<'de> for Seed<'_> {
         } else {
             de.deserialize_any(self)
         }
+    }
+}
+impl Seed<'_> {
+    /// Decode a dynamic-key object: distinct keys (after escape decoding),
+    /// bounded entries, own-key order with array indices first.
+    fn dictionary<'de, M: MapAccess<'de>>(
+        self,
+        mut map: M,
+        value: u32,
+    ) -> Result<JsonValue, M::Error> {
+        let mut entries: Vec<(Vec<u16>, JsonValue)> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(key) = map.next_key::<KeySeed>()? {
+            let KeySeed(units) = key;
+            if units.len() > abi::MAX_STRING_BYTES / 2 {
+                self.limit.set(Some(JsonInputLimit::StringBytes));
+                return Err(de::Error::custom("string byte limit"));
+            }
+            if entries.len() == MAX_DICTIONARY_ENTRIES {
+                self.limit.set(Some(JsonInputLimit::DictionaryEntries));
+                return Err(de::Error::custom("dictionary entry limit"));
+            }
+            if !seen.insert(units.clone()) {
+                return Err(de::Error::custom("duplicate object field"));
+            }
+            let entry = map.next_value_seed(Seed {
+                limit: self.limit,
+                schema: self.schema,
+                ty: value,
+                nodes: self.nodes,
+                depth: self.depth + 1,
+            })?;
+            entries.push((units, entry));
+        }
+        // Stable: array-index keys ascend, other keys keep insertion order.
+        entries.sort_by_key(|(key, _)| match array_index(key) {
+            Some(index) => (false, index),
+            None => (true, 0),
+        });
+        Ok(JsonValue::Dictionary {
+            ty: self.ty,
+            entries,
+        })
+    }
+}
+/// A JSON object key as exact UTF-16 units, including escaped lone surrogates.
+struct KeySeed(Vec<u16>);
+impl<'de> Deserialize<'de> for KeySeed {
+    fn deserialize<D: de::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        struct Units;
+        impl Visitor<'_> for Units {
+            type Value = KeySeed;
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an object key")
+            }
+            fn visit_bytes<E: de::Error>(self, bytes: &[u8]) -> Result<KeySeed, E> {
+                crate::text::from_wtf8(bytes)
+                    .map(KeySeed)
+                    .map_err(E::custom)
+            }
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<KeySeed, E> {
+                Ok(KeySeed(value.encode_utf16().collect()))
+            }
+        }
+        de.deserialize_bytes(Units)
     }
 }
 impl<'de> Visitor<'de> for Seed<'_> {
@@ -176,6 +244,9 @@ impl<'de> Visitor<'de> for Seed<'_> {
         Ok(JsonValue::String(value))
     }
     fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<JsonValue, M::Error> {
+        if let JsonType::Dictionary { value, .. } = self.schema.types[self.ty as usize] {
+            return self.dictionary(map, value);
+        }
         let JsonType::Record { fields, .. } = &self.schema.types[self.ty as usize] else {
             return Err(de::Error::custom("object does not match schema"));
         };

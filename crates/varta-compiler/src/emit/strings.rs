@@ -12,6 +12,7 @@ mod array_slice;
 mod collect;
 mod compare;
 mod concat;
+mod index_key;
 mod roots;
 mod sparse;
 mod string_index;
@@ -86,6 +87,8 @@ pub(super) enum Helper {
     ArrayStringHasOwn,
     ArraySetPresent,
     ArrayResize,
+    /// Value15 dictionaries: canonical array index of a key, or -1.
+    ArrayIndexKey,
 }
 impl Helper {
     pub(super) fn string_search(mode: crate::ir::StringSearch) -> Self {
@@ -110,6 +113,7 @@ impl Helper {
             Self::Concat => (vec![ValType::I64; 2], vec![ValType::I64]),
             Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
+            Self::ArrayIndexKey => (vec![ValType::I64], vec![ValType::F64]),
             Self::Collect => (vec![], vec![]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArraySearch | Self::ArrayLastIndex => (
@@ -155,6 +159,7 @@ impl Helper {
             self,
             Self::Compare
                 | Self::ArrayStringHasOwn
+                | Self::ArrayIndexKey
                 | Self::StringIncludes
                 | Self::StringStartsWith
                 | Self::StringEndsWith
@@ -229,6 +234,7 @@ impl Helper {
             Self::ArrayStringHasOwn => array_own_key::function(helpers[&Self::ArrayPresent]),
             Self::ArraySetPresent => sparse::function(true),
             Self::ArrayIndex => array_index::function(profile.resizable_arrays()),
+            Self::ArrayIndexKey => index_key::function(),
         }
     }
 }

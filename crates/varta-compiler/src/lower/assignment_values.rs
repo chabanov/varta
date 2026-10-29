@@ -25,6 +25,9 @@ impl Lower<'_> {
                 .ok_or_else(|| invalid("missing assignment binding"))?,
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) => {
                 let base = self.write_member_base(member)?;
+                if matches!(base.ty, Type::Dictionary(_)) {
+                    return self.dictionary_write(member, base, &assign.right);
+                }
                 if let Type::Record(shape) = base.ty
                     && let ast::MemberProp::Computed(key) = &member.prop
                     && !matches!(

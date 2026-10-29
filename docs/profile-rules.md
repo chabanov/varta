@@ -2164,3 +2164,34 @@ Contract: [architecture.md](architecture.md#wide-records-wide_records).
 - Lowerings that emit one leaf per field (lookups, enumeration, rest copies)
   must stay within the per-function body budget for the widest admitted shape;
   prefer a direct leaf for static keys.
+
+### Index signatures (`index_signatures`)
+
+Contract: [architecture.md](architecture.md#index-signatures-index_signatures).
+
+- A dictionary is `Type::Dictionary(id)` with `ValueTypes::dictionaries[id]`;
+  physically it is its storage record (`ValueTypes::record_layout`). Emit it
+  only through `E::Record` with the `keys`/`values` slots in canonical order;
+  never write a dictionary's vectors except through the lowerings in
+  `lower::dictionaries`, which keep keys distinct and in own-key order.
+- Every value15 reader of the tag goes through `value::Dictionary::read`; add
+  `Type::Dictionary` wherever a lowering lists object types (typeof, truth,
+  identity, guards, union members, catalogs, schemas) rather than relying on a
+  wildcard.
+- Keys are narrowed strings: never add ToPropertyKey coercion or prototype
+  reads; absent inherited names throw, absent `__proto__` writes throw.
+- Keep `value::MAX_DICTIONARY_ENTRIES` equal to the vector element bound and
+  enforce it in insertion, literals and checked JSON.
+
+### Recursive types (`recursive_types`)
+
+Contract: [architecture.md](architecture.md#recursive-types-recursive_types).
+
+- Resolve self-references only through `named::recursive` reservations, and
+  only for non-generic declarations whose body is an object type, interface,
+  index signature or union. Never unroll a declaration or erase a cycle.
+- Any compiler walk over interned types (assignability, literal search, JSON
+  admission, instance reachability, callback search, schema building) must
+  carry a visited set; recursion on `Type` structure without one is a bug.
+- Schema 15 may refer forward; capture and frame catalogs must not, so reject
+  recursive types there with a diagnostic instead of emitting a cycle.

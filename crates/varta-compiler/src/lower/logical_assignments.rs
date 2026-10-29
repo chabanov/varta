@@ -12,6 +12,7 @@ fn always_truthy(ty: Type) -> bool {
     matches!(
         ty,
         Type::Record(_)
+            | Type::Dictionary(_)
             | Type::Class(_)
             | Type::Array(_)
             | Type::Function(_)

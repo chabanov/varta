@@ -16,6 +16,7 @@ impl AggregateHints {
             record: members
                 .iter()
                 .find(|ty| matches!(ty, Type::Record(_)))
+                .or_else(|| members.iter().find(|ty| matches!(ty, Type::Dictionary(_))))
                 .copied(),
         }
     }
@@ -58,6 +59,7 @@ impl Guard {
                     | Type::NativeError(_)
                     | Type::Null
                     | Type::Record(_)
+                    | Type::Dictionary(_)
                     | Type::Class(_)
                     | Type::Array(_)
             ),
@@ -67,6 +69,7 @@ impl Guard {
             Self::Truth(false) => !matches!(
                 ty,
                 Type::Record(_)
+                    | Type::Dictionary(_)
                     | Type::Class(_)
                     | Type::Array(_)
                     | Type::Function(_)
@@ -85,12 +88,26 @@ impl Lower<'_> {
         if !ty.is_union() {
             return Some(ty);
         }
-        unions::members(ty, self.types)
-            .into_iter()
+        let members = unions::members(ty, self.types);
+        members
+            .iter()
+            .copied()
             .find(|ty| match expression {
                 ast::Expr::Object(_) => matches!(ty, Type::Record(_)),
                 ast::Expr::Array(_) => matches!(ty, Type::Array(_)),
                 _ => false,
+            })
+            .or_else(|| {
+                // A union without a record shape gives object literals its
+                // dictionary member (v34).
+                matches!(expression, ast::Expr::Object(_))
+                    .then(|| {
+                        members
+                            .iter()
+                            .copied()
+                            .find(|ty| matches!(ty, Type::Dictionary(_)))
+                    })
+                    .flatten()
             })
     }
     pub(super) fn conditional(

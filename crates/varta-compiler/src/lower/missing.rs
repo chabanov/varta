@@ -60,6 +60,10 @@ impl Lower<'_> {
             return Err(invalid("Object.hasOwn expects two arguments"));
         }
         let value = self.expr(&call.args[0].expr)?;
+        if matches!(value.ty, Type::Dictionary(_)) {
+            let key = self.expr(&call.args[1].expr)?;
+            return self.dictionary_has(value, key, false);
+        }
         if self.types.profile.sparse_arrays() && matches!(value.ty, Type::Array(_)) {
             if let ast::Expr::Lit(ast::Lit::Str(text)) = &*call.args[1].expr {
                 // Literal lookups do not need to materialize an unknown key.
@@ -225,6 +229,7 @@ impl Lower<'_> {
                     Type::Error
                         | Type::NativeError(_)
                         | Type::Record(_)
+                        | Type::Dictionary(_)
                         | Type::Class(_)
                         | Type::Array(_)
                 ))

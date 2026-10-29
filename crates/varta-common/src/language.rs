@@ -225,22 +225,22 @@ impl LanguageProfile {
         self == Self::CheckedF64Utf16V34
     }
     /// Pilot batch v34, records stream: string index signatures
-    /// (`{[k: string]: T}`) and `Record<string, T>` as a dynamic-key record kind
-    /// under the v34 value ABI. Admits nothing yet.
+    /// (`{[k: string]: T}`) and `Record<string, T>` as value15 dictionaries
+    /// ([`crate::value::Dictionary`], tag [`crate::value::ValueKind::Dictionary`]).
     #[must_use]
     pub fn index_signatures(self) -> bool {
         self == Self::CheckedF64Utf16V34
     }
-    /// Pilot batch v34, records stream: recursive type aliases such as a JSON
-    /// value union that refers to itself through arrays and index signatures.
-    /// Admits nothing yet.
+    /// Pilot batch v34, records stream: non-generic recursive aliases and
+    /// interfaces, such as a JSON value union, that refer to themselves through
+    /// record fields, arrays or index signatures; JSON schema 15 refers forward.
     #[must_use]
     pub fn recursive_types(self) -> bool {
         self == Self::CheckedF64Utf16V34
     }
     /// Pilot batch v34, records stream: records wider than
-    /// [`crate::value::MAX_RECORD_FIELDS`], whose presence trailer is a value
-    /// ABI layout. Admits nothing yet.
+    /// [`crate::value::MAX_RECORD_FIELDS`] up to
+    /// [`crate::value::MAX_WIDE_RECORD_FIELDS`] in the value15 wide layout.
     #[must_use]
     pub fn wide_records(self) -> bool {
         self == Self::CheckedF64Utf16V34
@@ -1808,6 +1808,17 @@ mod tests {
         assert_eq!(new.json_parse(), crate::HostOperation::JsonParseV16);
         assert_eq!(new.json_stringify(), crate::HostOperation::JsonStringifyV14);
         for kind in (0..=u32::from(u8::MAX)).filter_map(crate::value::ValueKind::from_tag) {
+            if kind == crate::value::ValueKind::Dictionary {
+                // The one value15-only tag (index signatures).
+                assert!(kind.supported_by(crate::value::DYNAMIC_VALUE_VERSION));
+                assert!(
+                    SUPPORTED_PROFILES
+                        .iter()
+                        .filter(|p| **p != new)
+                        .all(|p| !kind.supported_by(p.value_layout()))
+                );
+                continue;
+            }
             assert_eq!(
                 kind.supported_by(crate::value::DYNAMIC_VALUE_VERSION),
                 kind.supported_by(crate::value::BIGINT_VALUE_VERSION),

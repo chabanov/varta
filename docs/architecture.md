@@ -6262,6 +6262,96 @@ identifier key under v34 lowers to that field's leaf instead of one leaf per
 field, so wide shapes stay within the per-function body budget; computed keys
 keep the full lookup.
 
+#### Index signatures (`index_signatures()`)
+
+V34 admits dynamic-key records: a type literal or interface whose only member
+is `[key: string]: T`, and `Record<string, T>` (string-literal key unions keep
+mapping `Record<K, T>` to closed records). `T` is any value type except
+functions and generators, including unions and recursive aliases. Number or
+symbol keys, readonly or static signatures and a signature combined with
+declared fields (a mixed object type, including through `extends`) fail with a
+diagnostic naming the construct. V33 and earlier keep rejecting index
+signatures (`object type member`) and `Record<string, T>` (`Record with
+non-literal keys`).
+
+**Layout (value15 tag `ValueKind::Dictionary` = 13).** A dictionary is a
+managed two-slot record block, stamped value15, whose canonical slots hold its
+key vector (`value::DICTIONARY_KEYS_FIELD`, slot 0, dense `string[]`) and value
+vector (`value::DICTIONARY_VALUES_FIELD`, slot 1, dense `T[]`), both required
+and present. Keys are distinct and stored in ECMAScript own-key order:
+canonical array indices (`value::array_index`, at most `value::MAX_ARRAY_INDEX`)
+ascending, then the other keys in insertion order. A dictionary holds at most
+`value::MAX_DICTIONARY_ENTRIES` entries, the array element bound of its
+vectors. The tag selects the dictionary meaning; the collector traces the
+block as an ordinary record (both slots are edges) and needs no new heap flag.
+`value::Dictionary::read` validates the record block and descriptor, the two
+vectors, equal lengths within the bound, presence of every entry, distinct
+keys and their order; `ReferenceBox`, the JSON encoder, the value15 log/typeof/
+truthiness readers and capture/frame validation (`CaptureType::Dictionary`)
+use it. Value13 and every older reader reject the tag.
+
+**Operations** lower to ordinary IR over the two vectors inside a rooted value
+block, evaluating the receiver, then the key, then any right-hand side, once:
+
+- `d[k]`, `d.name`, `d["name"]`: the stored value or `undefined`, typed
+  `T | undefined`. An absent key naming an inherited `Object.prototype` member
+  throws `TypeError: Inherited record property access is unsupported`, as for
+  closed computed reads; keys must be narrowed strings (no ToPropertyKey).
+- `d[k] = v` (statement or expression; value `v`): replaces an own entry in
+  place, or inserts at its own-key position (the private `ArrayIndexKey` helper
+  classifies array-index keys without allocation). An absent `__proto__` key
+  throws `TypeError` instead of reaching the prototype setter; an insertion
+  beyond the entry bound throws `RangeError: Dictionary entry limit exceeded`.
+- `delete d[k]` removes an own entry, keeping the order of the rest, and is
+  `true`; `Object.hasOwn(d, k)` tests own keys; `k in d` also answers `true` for
+  inherited `Object.prototype` member names.
+- `Object.keys`, `Object.values` and `Object.entries` return fresh arrays in
+  own-key order; object literals with a dictionary context take static keys
+  (values run in source order, entries are stored in own-key order). Spreads,
+  computed literal keys, compound assignment targets and `for...in` remain
+  rejected.
+- Dictionaries are object values: identity equality, `typeof` `"object"`,
+  always truthy, union members (at most one dictionary per union; an object
+  literal takes the dictionary member when the union has no record shape),
+  `Array.isArray`/`typeof` narrowing, parameters, results, closures and
+  generator frames. `JSON.stringify` writes an object of the entries in stored
+  order and omits `undefined` values.
+
+Lookups are linear in the entry count and run inside the ordinary fuel,
+memory and host-call budgets; no budget changes. **JSON schema 15** adds
+`dictionary` types (`descriptor` of the storage record, `value` type):
+checked parsing accepts any keys (decoded to exact UTF-16), rejects duplicates
+after escape decoding, bounds entries by `value::MAX_DICTIONARY_ENTRIES`
+(`JsonInputLimit::DictionaryEntries`), orders entries as above and builds the
+two vectors and storage record through the guest allocator; the runtime checks
+the storage descriptor's layout first. A union may not contain both a record
+shape and a dictionary (a JSON object would be ambiguous).
+
+#### Recursive types (`recursive_types()`)
+
+V34 resolves non-generic type aliases and interfaces that refer to themselves
+when the cycle passes through a record field, an array element or a dictionary
+value, for example `type JsonValue = null | boolean | number | string |
+JsonValue[] | { [key: string]: JsonValue }`, `interface Tree { children: Tree[] }`
+and `interface Link { next: Link | null }`. When a declaration is reached again
+while it is being resolved, it receives a reserved type of the kind its body
+declares (a record for an interface or object type, a dictionary for an index
+signature, a reference union for a union); references resolve to it, and the
+finished body fills the reservation, so the interned type graph is cyclic but
+finite. Direct cycles without such a step stay rejected with `recursive type
+declaration` (`type A = B; type B = A`), a recursive alias as a direct union
+member is rejected (`type A = string | A`), and recursive generic declarations
+are rejected. V33 and earlier keep rejecting every self-reference.
+
+Recursive graphs are ordinary values: their runtime JSON depth (64) and visit
+(4096) bounds and the encoder's cycle check are unchanged, and the collector is
+already iterative. Checked JSON schema 15 admits forward and self type
+references (decoding enforces the depth and visit bounds instead of static
+schema depth); earlier schemas keep strict backward edges. Compiler type walks
+over the graph visit each type once. Closure capture catalogs and generator
+frame catalogs stay acyclic type DAGs, so capturing a recursive type in a
+closure or keeping it in a generator frame slot fails with a diagnostic.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),

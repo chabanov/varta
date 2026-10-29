@@ -68,6 +68,86 @@ impl Writer {
         }
         Ok(value)
     }
+    /// A dense vector (value9+) or legacy array of already-built payloads.
+    fn vector(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        schema: &JsonSchema,
+        kind: ValueKind,
+        payloads: &[u64],
+    ) -> Result<u64, wasmtime::Error> {
+        let mut data = Vec::with_capacity(ARRAY_META_BYTES + payloads.len() * ARRAY_SLOT_BYTES);
+        data.extend((kind as u32).to_le_bytes());
+        data.extend((payloads.len() as u32).to_le_bytes());
+        for payload in payloads {
+            data.extend(payload.to_le_bytes());
+        }
+        if matches!(
+            schema.value_version(),
+            VECTOR_VALUE_VERSION
+                | ERROR_VALUE_VERSION
+                | ERROR_FAMILY_VALUE_VERSION
+                | SPARSE_VALUE_VERSION
+                | BIGINT_VALUE_VERSION
+                | FUNCTION_VALUE_VERSION
+                | DYNAMIC_VALUE_VERSION
+        ) {
+            let bitmap = ARRAY_META_BYTES + array_capacity(payloads.len()) * ARRAY_SLOT_BYTES;
+            let sparse = matches!(
+                schema.value_version(),
+                SPARSE_VALUE_VERSION
+                    | BIGINT_VALUE_VERSION
+                    | FUNCTION_VALUE_VERSION
+                    | DYNAMIC_VALUE_VERSION
+            );
+            data.resize(bitmap + if sparse { SPARSE_BITMAP_BYTES } else { 0 }, 0);
+            if sparse {
+                for index in 0..payloads.len() {
+                    data[bitmap + index / u8::BITS as usize] |= 1 << (index % u8::BITS as usize);
+                }
+            }
+            let storage = self.owned(
+                caller,
+                &data,
+                HEAP_ARRAY_FLAG
+                    | if matches!(
+                        schema.value_version(),
+                        SPARSE_VALUE_VERSION
+                            | BIGINT_VALUE_VERSION
+                            | FUNCTION_VALUE_VERSION
+                            | DYNAMIC_VALUE_VERSION
+                    ) {
+                        HEAP_SPARSE_FLAG
+                    } else {
+                        0
+                    },
+                u32::from(kind.is_reference()),
+            )?;
+            let mut cell = Vec::with_capacity(VECTOR_BYTES);
+            cell.extend((kind as u32).to_le_bytes());
+            cell.extend((payloads.len() as u32).to_le_bytes());
+            cell.extend(storage.to_le_bytes());
+            self.owned(caller, &cell, HEAP_VECTOR_FLAG, 1)
+        } else {
+            self.owned(
+                caller,
+                &data,
+                HEAP_ARRAY_FLAG
+                    | if matches!(
+                        schema.value_version(),
+                        SPARSE_VALUE_VERSION
+                            | BIGINT_VALUE_VERSION
+                            | FUNCTION_VALUE_VERSION
+                            | DYNAMIC_VALUE_VERSION
+                    ) {
+                        HEAP_SPARSE_FLAG
+                    } else {
+                        0
+                    },
+                u32::from(kind.is_reference()),
+            )
+        }
+    }
     pub fn build(
         &self,
         caller: &mut Caller<'_, RuntimeContext>,
@@ -84,6 +164,7 @@ impl Writer {
                     JsonValue::Boolean(_) => ValueKind::Boolean,
                     JsonValue::String(_) | JsonValue::String16(_) => ValueKind::String,
                     JsonValue::Record { .. } => ValueKind::Record,
+                    JsonValue::Dictionary { .. } => ValueKind::Dictionary,
                     JsonValue::Array { .. } => ValueKind::Array,
                     _ => return Err(error("invalid union member")),
                 };
@@ -116,79 +197,40 @@ impl Writer {
                     return Err(error("array type"));
                 };
                 let kind = schema.types[element as usize].kind();
-                let mut data =
-                    Vec::with_capacity(ARRAY_META_BYTES + values.len() * ARRAY_SLOT_BYTES);
-                data.extend((kind as u32).to_le_bytes());
-                data.extend((values.len() as u32).to_le_bytes());
+                let mut payloads = Vec::with_capacity(values.len());
                 for value in values {
-                    data.extend(self.build(caller, schema, value)?.to_le_bytes());
+                    payloads.push(self.build(caller, schema, value)?);
                 }
-                if matches!(
-                    schema.value_version(),
-                    VECTOR_VALUE_VERSION
-                        | ERROR_VALUE_VERSION
-                        | ERROR_FAMILY_VALUE_VERSION
-                        | SPARSE_VALUE_VERSION
-                        | BIGINT_VALUE_VERSION
-                        | FUNCTION_VALUE_VERSION
-                        | DYNAMIC_VALUE_VERSION
-                ) {
-                    let bitmap = ARRAY_META_BYTES + array_capacity(values.len()) * ARRAY_SLOT_BYTES;
-                    let sparse = matches!(
-                        schema.value_version(),
-                        SPARSE_VALUE_VERSION
-                            | BIGINT_VALUE_VERSION
-                            | FUNCTION_VALUE_VERSION
-                            | DYNAMIC_VALUE_VERSION
-                    );
-                    data.resize(bitmap + if sparse { SPARSE_BITMAP_BYTES } else { 0 }, 0);
-                    if sparse {
-                        for index in 0..values.len() {
-                            data[bitmap + index / u8::BITS as usize] |=
-                                1 << (index % u8::BITS as usize);
-                        }
-                    }
-                    let storage = self.owned(
-                        caller,
-                        &data,
-                        HEAP_ARRAY_FLAG
-                            | if matches!(
-                                schema.value_version(),
-                                SPARSE_VALUE_VERSION
-                                    | BIGINT_VALUE_VERSION
-                                    | FUNCTION_VALUE_VERSION
-                                    | DYNAMIC_VALUE_VERSION
-                            ) {
-                                HEAP_SPARSE_FLAG
-                            } else {
-                                0
-                            },
-                        u32::from(kind.is_reference()),
-                    )?;
-                    let mut cell = Vec::with_capacity(VECTOR_BYTES);
-                    cell.extend((kind as u32).to_le_bytes());
-                    cell.extend((values.len() as u32).to_le_bytes());
-                    cell.extend(storage.to_le_bytes());
-                    self.owned(caller, &cell, HEAP_VECTOR_FLAG, 1)
-                } else {
-                    self.owned(
-                        caller,
-                        &data,
-                        HEAP_ARRAY_FLAG
-                            | if matches!(
-                                schema.value_version(),
-                                SPARSE_VALUE_VERSION
-                                    | BIGINT_VALUE_VERSION
-                                    | FUNCTION_VALUE_VERSION
-                                    | DYNAMIC_VALUE_VERSION
-                            ) {
-                                HEAP_SPARSE_FLAG
-                            } else {
-                                0
-                            },
-                        u32::from(kind.is_reference()),
-                    )
+                self.vector(caller, schema, kind, &payloads)
+            }
+            JsonValue::Dictionary { ty, entries } => {
+                let JsonType::Dictionary { descriptor, value } = schema.types[*ty as usize] else {
+                    return Err(error("dictionary type"));
+                };
+                let mut keys = Vec::with_capacity(entries.len());
+                for (key, _) in entries {
+                    keys.push(self.build(caller, schema, &JsonValue::String16(key.clone()))?);
                 }
+                let keys = self.vector(caller, schema, ValueKind::String, &keys)?;
+                let mut values = Vec::with_capacity(entries.len());
+                for (_, entry) in entries {
+                    values.push(self.build(caller, schema, entry)?);
+                }
+                let kind = schema.types[value as usize].kind();
+                let values = self.vector(caller, schema, kind, &values)?;
+                // The storage record: canonical `keys`/`values` slots, both present.
+                let mut data =
+                    Vec::with_capacity(record_bytes(DYNAMIC_VALUE_VERSION, DICTIONARY_FIELDS));
+                data.extend(descriptor.to_le_bytes());
+                data.extend((DICTIONARY_FIELDS as u32).to_le_bytes());
+                data.extend(keys.to_le_bytes());
+                data.extend(values.to_le_bytes());
+                let both = wide_field_mask(DICTIONARY_FIELDS) as u32;
+                data.extend(both.to_le_bytes());
+                for slot in 0..DICTIONARY_FIELDS as u32 {
+                    data.extend(slot.to_le_bytes());
+                }
+                self.owned(caller, &data, HEAP_RECORD_FLAG, both)
             }
             JsonValue::Record { ty, fields: values } => {
                 let JsonType::Record { descriptor, fields } = &schema.types[*ty as usize] else {

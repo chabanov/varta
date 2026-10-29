@@ -65,6 +65,7 @@ impl Emitter<'_> {
                 Type::String => self.boolean_string(),
                 Type::Null | Type::Undefined => self.code.extend([I::Drop, I::I32Const(0)]),
                 Type::Record(_)
+                | Type::Dictionary(_)
                 | Type::Class(_)
                 | Type::Array(_)
                 | Type::Function(_)

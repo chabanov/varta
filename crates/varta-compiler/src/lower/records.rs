@@ -93,6 +93,11 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     Ok(Type::Record(index))
 }
 pub(super) fn type_literal(literal: &ast::TsTypeLit, types: &mut ir::ValueTypes) -> Result<Type> {
+    if types.profile.index_signatures()
+        && let Some(ty) = dictionaries::signature(literal, types)?
+    {
+        return Ok(ty);
+    }
     let fields = type_fields(&literal.members, types)?;
     intern(fields, types)
 }
@@ -139,6 +144,9 @@ impl Lower<'_> {
         object: &ast::ObjectLit,
         expected: Option<Type>,
     ) -> Result<Expr> {
+        if let Some(Type::Dictionary(id)) = expected {
+            return self.dictionary_literal(object, id);
+        }
         if object.props.len() > self.types.max_record_fields() {
             return Err(invalid("object field count exceeds limit"));
         }

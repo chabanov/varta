@@ -83,6 +83,10 @@ pub enum CaptureType {
     Array {
         element: u32,
     },
+    /// A value15 dictionary (v34 `index_signatures`) of `value`.
+    Dictionary {
+        value: u32,
+    },
     PrimitiveUnion {
         members: Vec<u32>,
     },
@@ -130,6 +134,7 @@ impl CaptureType {
             Self::Error { .. } => ValueKind::Error,
             Self::Record { .. } | Self::Class => ValueKind::Record,
             Self::Array { .. } => ValueKind::Array,
+            Self::Dictionary { .. } => ValueKind::Dictionary,
             Self::PrimitiveUnion { .. } => ValueKind::PrimitiveUnion,
             Self::ReferenceUnion { .. } => ValueKind::ReferenceUnion,
             Self::Function { .. } => ValueKind::Function,
@@ -142,7 +147,7 @@ impl CaptureType {
     fn children(&self) -> Vec<u32> {
         match self {
             Self::Record { fields } => fields.iter().map(|f| f.ty).collect(),
-            Self::Array { element } => vec![*element],
+            Self::Array { element } | Self::Dictionary { value: element } => vec![*element],
             Self::PrimitiveUnion { members } | Self::ReferenceUnion { members } => members.clone(),
             _ => vec![],
         }
@@ -237,6 +242,11 @@ impl FunctionCatalog {
                 CaptureType::Function { signature } if *signature as usize >= MAX_TYPES => {
                     return Err(invalid_catalog());
                 }
+                CaptureType::Dictionary { .. }
+                    if !ValueKind::Dictionary.supported_by(self.value_version) =>
+                {
+                    return Err(invalid_catalog());
+                }
                 CaptureType::Error { class: Some(class) }
                     if value::ErrorClass::from_tag(*class).is_none() =>
                 {
@@ -312,6 +322,7 @@ impl FunctionCatalog {
                                 CaptureType::Record { .. }
                                     | CaptureType::Class
                                     | CaptureType::Array { .. }
+                                    | CaptureType::Dictionary { .. }
                                     | CaptureType::Error { .. }
                                     | CaptureType::BigInt
                             )

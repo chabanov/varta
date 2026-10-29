@@ -22,6 +22,19 @@ impl Lower<'_> {
             ));
         }
         fn json_type(ty: Type, types: &ir::ValueTypes, optional: bool) -> bool {
+            json_visit(ty, types, optional, &mut std::collections::BTreeSet::new())
+        }
+        // Recursive types (v34) make the type graph cyclic: visit each type once.
+        fn json_visit(
+            ty: Type,
+            types: &ir::ValueTypes,
+            optional: bool,
+            seen: &mut std::collections::BTreeSet<(Type, bool)>,
+        ) -> bool {
+            if !seen.insert((ty, optional)) {
+                return true;
+            }
+            let mut json_type = |ty, types, optional| json_visit(ty, types, optional, seen);
             match ty {
                 Type::Literal(..) => false,
                 Type::BigInt => types.profile.bigint_values(),
@@ -39,6 +52,9 @@ impl Lower<'_> {
                     .iter()
                     .all(|f| json_type(f.ty, types, f.optional)),
                 Type::Array(id) => json_type(types.arrays[id as usize], types, false),
+                Type::Dictionary(id) => {
+                    json_type(types.dictionaries[id as usize].value, types, true)
+                }
                 _ => ty.value_kind().is_some(),
             }
         }

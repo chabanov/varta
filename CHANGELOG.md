@@ -35,6 +35,18 @@ in [conformance/README.md](conformance/README.md).
   deletion, enumeration and rest destructuring behave as for narrow records.
   Earlier profiles keep the 32-field ceiling.
 
+- Index signatures under opt-in v34 (selector `index_signatures`):
+  `{ [key: string]: T }` and `Record<string, T>` as value15 dictionaries (tag
+  13) with reads typed `T | undefined`, writes, `delete`, `in`,
+  `Object.hasOwn`/`keys`/`values`/`entries`, literals, JSON stringify and
+  checked parsing (JSON schema 15), ECMAScript own-key order and a
+  `MAX_DICTIONARY_ENTRIES` bound. Mixed fixed/index object types are rejected.
+
+- Recursive types under opt-in v34 (selector `recursive_types`): non-generic
+  aliases and interfaces that refer to themselves through record fields, array
+  elements or dictionary values, such as a `JsonValue` union and trees, with
+  checked JSON parsing; non-productive cycles stay rejected.
+
 - Synchronous generators under opt-in v33 (selector `generators`, K4.4 step 2):
   annotated top-level and generic `function*` declarations
   (`Generator<T, TReturn, TNext>`, with `void`/`undefined` defaults instead of

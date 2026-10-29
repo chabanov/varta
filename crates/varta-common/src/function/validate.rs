@@ -262,6 +262,19 @@ impl Walker<'_> {
                 )?;
                 Ok(())
             }
+            CaptureType::Dictionary { value: element } => {
+                let dictionary =
+                    value::Dictionary::read(self.data, payload, catalog.value_version)?;
+                self.charge(dictionary.keys.capacity as u64 * 8)?;
+                if Some(dictionary.values.kind) != catalog.types[*element as usize].value_kind() {
+                    return Err(invalid());
+                }
+                for index in 0..dictionary.keys.length {
+                    let (_, entry) = dictionary.entry(self.data, index)?;
+                    self.value(*element, entry, depth + 1)?;
+                }
+                Ok(())
+            }
             CaptureType::Array { element } => {
                 let vector =
                     value::Vector::read_with_version(self.data, payload, catalog.value_version)?;

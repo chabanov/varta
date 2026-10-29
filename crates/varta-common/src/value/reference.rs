@@ -83,6 +83,8 @@ impl ReferenceBox {
                 return Err(invalid());
             }
             ErrorObject::read_with_version(data, cell.payload, version)?;
+        } else if cell.kind == ValueKind::Dictionary {
+            Dictionary::read(data, cell.payload, version)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
             aggregate(data, cell, version)?;
         } else {

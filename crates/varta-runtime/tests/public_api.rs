@@ -4147,3 +4147,63 @@ fn public_engine_runs_generic_generators_across_modules_in_v33() {
         "{frozen}"
     );
 }
+
+#[test]
+fn public_engine_links_v34_dynamic_records_across_modules() {
+    // The pilot's generated models: a recursive JSON value alias, index
+    // signatures, Record<string, T> and a record wider than 32 fields, exported
+    // from a models module and parsed/serialized by the entry module.
+    use varta_common::language::LanguageProfile;
+    struct ModelSources;
+    impl ModuleLoader for ModelSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./models.ts" => Ok("models.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            let fields: String = (0..40).map(|i| format!("f{i}?:number;")).collect();
+            match path.to_str() {
+                Some("models.ts") => Ok(format!(
+                    "export type JsonValue=null|boolean|number|string|JsonValue[]|{{[key:string]:JsonValue}};\
+                     export interface Agent{{id:string;metadata:{{[key:string]:string}};config?:Record<string,JsonValue>;{fields}}}"
+                )),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import type {Agent,JsonValue} from './models.ts';\
+                       export function main():void{\
+                       const agent=varta.json.parse<Agent>('{\"id\":\"a\",\"metadata\":{\"team\":\"core\"},\"config\":{\"x\":[1,{\"y\":null}]},\"f39\":39}');\
+                       agent.metadata['seen']='yes';agent.f38=38;\
+                       const config=agent.config;const value:JsonValue=config===undefined?null:config;\
+                       console.log(JSON.stringify(agent));console.log(JSON.stringify(value));}"
+                    .into(),
+            },
+            &ModelSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V34).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            r#"varta log: {"config":{"x":[1,{"y":null}]},"f39":39,"id":"a","metadata":{"team":"core","seen":"yes"},"f38":38}"#,
+            r#"varta log: {"x":[1,{"y":null}]}"#,
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V33)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("recursive type declaration"), "{frozen}");
+}

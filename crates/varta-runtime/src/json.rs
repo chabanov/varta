@@ -438,6 +438,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 self.record(packed, depth)
             }
             ValueKind::Array => self.array(packed, depth),
+            ValueKind::Dictionary => self.dictionary(packed, depth),
             _ => Err(error("noncanonical scalar")),
         }
     }
@@ -553,6 +554,47 @@ impl<'a, 'b> Encoder<'a, 'b> {
             self.value(kind, ((hi as u64) << i32::BITS) | lo as u64, depth + 1)?;
         }
         self.write(b"]")?;
+        self.path.pop();
+        Ok(())
+    }
+    /// A value15 dictionary: an object of its entries in stored own-key order;
+    /// entries whose value is `undefined` are omitted, as for record fields.
+    fn dictionary(&mut self, packed: u64, depth: usize) -> Result<(), wasmtime::Error> {
+        let dictionary =
+            Dictionary::read(self.data, packed, self.version).map_err(wasmtime::Error::new)?;
+        let ptr = packed as u32 as usize;
+        if self.path.contains(&ptr) {
+            return Err(error("cyclic object"));
+        }
+        self.path.push(ptr);
+        self.write(b"{")?;
+        let mut written = false;
+        for index in 0..dictionary.keys.length {
+            let (key, value) = dictionary
+                .entry(self.data, index)
+                .map_err(wasmtime::Error::new)?;
+            let (kind, value) = self.resolve(dictionary.values.kind as u32, value)?;
+            if kind == ValueKind::Undefined as u32 {
+                self.visit(depth + 1)?;
+                if value != 0 {
+                    return Err(error("noncanonical undefined"));
+                }
+                continue;
+            }
+            if written {
+                self.write(b",")?;
+            }
+            written = true;
+            // Dictionary::read checked the key range and UTF-16 length.
+            let start = key as u32 as usize;
+            let units = varta_common::text::units(self.bytes(start, (key >> i32::BITS) as usize)?)
+                .map_err(|_| error("invalid UTF-16 byte length"))?;
+            varta_common::text::write_json(&mut self.output, &units)
+                .map_err(|_| error("output byte limit"))?;
+            self.write(b":")?;
+            self.value(kind, value, depth + 1)?;
+        }
+        self.write(b"}")?;
         self.path.pop();
         Ok(())
     }

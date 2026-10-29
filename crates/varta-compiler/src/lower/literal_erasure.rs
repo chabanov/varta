@@ -267,6 +267,7 @@ impl Eraser {
             | E::ParseJson(value)
             | E::ArrayPop(value)
             | E::ArrayReverse(value)
+            | E::IndexKey(value)
             | E::Length(value) => self.expression(value),
             E::IsUnionMember(value, member) => {
                 *member = self.ty(*member);

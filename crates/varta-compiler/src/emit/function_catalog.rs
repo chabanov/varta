@@ -13,12 +13,20 @@ pub(super) fn build(
         types: &'a ir::ValueTypes,
         nodes: Vec<CaptureType>,
         indices: BTreeMap<Type, u32>,
+        /// Types being described; capture catalogs are acyclic type DAGs.
+        open: BTreeSet<Type>,
     }
     impl Builder<'_> {
         fn node(&mut self, ty: Type) -> Result<u32> {
             let ty = ty.result_value().unwrap_or(ty);
             if let Some(id) = self.indices.get(&ty) {
                 return Ok(*id);
+            }
+            if !self.open.insert(ty) {
+                return Err(CompilerError::Unsupported {
+                    kind: "closure or generator capture".into(),
+                    detail: "a recursive type in a captured binding or frame slot".into(),
+                });
             }
             let node = match ty {
                 Type::Number => CaptureType::I32,
@@ -35,6 +43,9 @@ pub(super) fn build(
                 Type::Function(signature) => CaptureType::Function { signature },
                 Type::Array(id) => CaptureType::Array {
                     element: self.node(self.types.arrays[id as usize])?,
+                },
+                Type::Dictionary(id) => CaptureType::Dictionary {
+                    value: self.node(self.types.dictionaries[id as usize].value)?,
                 },
                 Type::Class(_) => CaptureType::Class,
                 Type::Generator(_) => CaptureType::Generator,
@@ -67,6 +78,7 @@ pub(super) fn build(
                     ));
                 }
             };
+            self.open.remove(&ty);
             let id = self.nodes.len() as u32;
             self.nodes.push(node);
             self.indices.insert(ty, id);
@@ -77,6 +89,7 @@ pub(super) fn build(
         types: &program.types,
         nodes: Vec::new(),
         indices: BTreeMap::new(),
+        open: BTreeSet::new(),
     };
     let mut binding_rows = vec![None; bindings.len()];
     for (&ty, &id) in bindings {

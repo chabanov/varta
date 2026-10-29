@@ -43,14 +43,29 @@ pub enum CheckedJsonError {
 pub enum JsonValue {
     Null,
     Undefined,
-    Union { ty: u32, value: Box<JsonValue> },
+    Union {
+        ty: u32,
+        value: Box<JsonValue>,
+    },
     I32(i32),
     Float64(u64),
     Boolean(bool),
     String(String),
     String16(Vec<u16>),
-    Record { ty: u32, fields: Vec<JsonValue> },
-    Array { ty: u32, values: Vec<JsonValue> },
+    Record {
+        ty: u32,
+        fields: Vec<JsonValue>,
+    },
+    Array {
+        ty: u32,
+        values: Vec<JsonValue>,
+    },
+    /// Schema 15 dictionary entries in own-key order: array-index keys
+    /// ascending, then the remaining keys in input order.
+    Dictionary {
+        ty: u32,
+        entries: Vec<(Vec<u16>, JsonValue)>,
+    },
 }
 
 #[cfg(test)]

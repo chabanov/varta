@@ -20,12 +20,10 @@ pub const SPARSE_VALUE_VERSION: u32 = 12;
 pub const BIGINT_VALUE_VERSION: u32 = 13;
 /// Callable values with module-owned capture metadata; older tags stay frozen.
 pub const FUNCTION_VALUE_VERSION: u32 = 14;
-/// Value ABI identity of pilot batch v34, reserved for dynamic-key records
-/// (index signatures and `Record<string, T>`), records wider than
-/// [`MAX_RECORD_FIELDS`], recursive alias graphs and promise values. It defines
-/// no layout or tag yet: every reader rejects it, and v34 modules stamp the
-/// value13 layouts selected by `LanguageProfile::value_layout` until a stream
-/// defines value15 layouts in the architecture contract.
+/// Value ABI and layout of pilot batch v34 (value15): every value13 tag and
+/// layout with its value13 meaning, plus dictionaries ([`ValueKind::Dictionary`])
+/// and records wider than [`MAX_RECORD_FIELDS`]; reserved for promise values.
+/// Only value15 readers accept it, and they accept nothing older.
 pub const DYNAMIC_VALUE_VERSION: u32 = 15;
 pub const SPARSE_BITMAP_BYTES: usize = MAX_ARRAY_ELEMENTS / u8::BITS as usize;
 pub const HEAP_SPARSE_FLAG: i32 = 1024;
@@ -35,6 +33,20 @@ pub const HEAP_ERROR_FLAG: i32 = 64;
 pub const ERROR_BYTES: usize = 16;
 mod error;
 pub use error::{ErrorClass, ErrorObject};
+/// Value15 dictionaries (v34 `index_signatures`): a dynamic-key record is a
+/// two-slot record block whose canonical slots hold its key vector (`keys`,
+/// slot 0, Strings) and value vector (`values`, slot 1), tagged
+/// [`ValueKind::Dictionary`]. Keys are distinct and in ECMAScript own-key
+/// order: canonical array indices ascending, then insertion order.
+pub const DICTIONARY_KEYS_FIELD: &str = "keys";
+pub const DICTIONARY_VALUES_FIELD: &str = "values";
+pub const DICTIONARY_FIELDS: usize = 2;
+/// Entry ceiling of one dictionary: its vectors share the array element bound.
+pub const MAX_DICTIONARY_ENTRIES: usize = MAX_ARRAY_ELEMENTS;
+/// Largest canonical array index (2^32 - 2); such keys enumerate first.
+pub const MAX_ARRAY_INDEX: u64 = u32::MAX as u64 - 1;
+mod dictionary;
+pub use dictionary::{Dictionary, array_index};
 pub const HEAP_VECTOR_FLAG: i32 = 32;
 pub const VECTOR_BYTES: usize = 16;
 pub const VECTOR_STORAGE_OFFSET: u64 = 8;
@@ -237,13 +249,16 @@ pub enum ValueKind {
     Error = 10,
     BigInt = 11,
     Function = 12,
+    /// Value15 dynamic-key record (see [`Dictionary`]).
+    Dictionary = 13,
 }
 impl ValueKind {
     #[must_use]
     pub fn is_reference(self) -> bool {
         matches!(
             self,
-            Self::Function
+            Self::Dictionary
+                | Self::Function
                 | Self::BigInt
                 | Self::Error
                 | Self::String
@@ -269,6 +284,7 @@ impl ValueKind {
             10 => Self::Error,
             11 => Self::BigInt,
             12 => Self::Function,
+            13 => Self::Dictionary,
             _ => return None,
         })
     }
@@ -277,6 +293,7 @@ impl ValueKind {
         supported_version(version)
             && match self {
                 Self::Function => version == FUNCTION_VALUE_VERSION,
+                Self::Dictionary => version == DYNAMIC_VALUE_VERSION,
                 Self::BigInt => matches!(
                     version,
                     BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION

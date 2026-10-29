@@ -104,8 +104,10 @@ impl Emitter<'_> {
         fields: &[(u32, Expr)],
         present: Option<u128>,
     ) -> Result<()> {
-        let Type::Record(id) = ty else {
-            return Err(CompilerError::Internal("missing object shape".into()));
+        let id = match ty {
+            Type::Record(id) => id,
+            Type::Dictionary(id) => self.dictionaries[id as usize].storage,
+            _ => return Err(CompilerError::Internal("missing object shape".into())),
         };
         for (_, value) in fields {
             self.expr(value)?;

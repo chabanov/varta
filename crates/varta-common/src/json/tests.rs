@@ -562,3 +562,76 @@ fn function_schema14_maps_existing_json_types_without_inventing_callable_values(
     };
     assert_eq!(old.value_version(), BIGINT_VALUE_VERSION);
 }
+
+#[test]
+fn schema15_admits_recursive_dictionaries_and_orders_their_entries() {
+    // JsonValue = null | boolean | number | string | JsonValue[] | {[k]: JsonValue}
+    let schema = JsonSchema {
+        version: DYNAMIC_SCHEMA_VERSION,
+        root: 0,
+        types: vec![
+            JsonType::ReferenceUnion {
+                members: vec![1, 2, 3, 4, 5, 6],
+            },
+            JsonType::Null,
+            JsonType::Boolean,
+            JsonType::Float64,
+            JsonType::String,
+            JsonType::Array { element: 0 },
+            JsonType::Dictionary {
+                descriptor: 0,
+                value: 0,
+            },
+        ],
+    };
+    schema.validate().unwrap();
+    assert_eq!(schema.value_version(), DYNAMIC_VALUE_VERSION);
+    let JsonValue::Union { value, .. } = schema
+        .parse_json(br#"{"b":[1,{"x":null}],"10":true,"a":"s","2":false}"#)
+        .unwrap()
+    else {
+        panic!("union root");
+    };
+    let JsonValue::Dictionary { entries, .. } = *value else {
+        panic!("dictionary member");
+    };
+    let keys: Vec<String> = entries
+        .iter()
+        .map(|(key, _)| String::from_utf16(key).unwrap())
+        .collect();
+    assert_eq!(keys, ["2", "10", "b", "a"]);
+    assert!(schema.parse_json(br#"{"a":1,"a":2}"#).is_err());
+    let deep = format!(
+        "{}{}",
+        "[".repeat(MAX_JSON_DEPTH + 2),
+        "]".repeat(MAX_JSON_DEPTH + 2)
+    );
+    assert!(schema.parse_json(deep.as_bytes()).is_err());
+    // Earlier schemas keep strict backward edges and know no dictionary.
+    for version in [BIGINT_SCHEMA_VERSION, SPARSE_SCHEMA_VERSION] {
+        let old = JsonSchema {
+            version,
+            ..schema.clone()
+        };
+        assert!(old.validate().is_err(), "{version}");
+    }
+    let ambiguous = JsonSchema {
+        version: DYNAMIC_SCHEMA_VERSION,
+        root: 0,
+        types: vec![
+            JsonType::ReferenceUnion {
+                members: vec![1, 2],
+            },
+            JsonType::Record {
+                descriptor: 0,
+                fields: vec![],
+            },
+            JsonType::Dictionary {
+                descriptor: 0,
+                value: 3,
+            },
+            JsonType::Float64,
+        ],
+    };
+    assert!(ambiguous.validate().is_err());
+}

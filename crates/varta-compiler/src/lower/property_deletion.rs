@@ -21,6 +21,9 @@ impl Lower<'_> {
         base: Expr,
         span: swc_common::Span,
     ) -> Result<Expr> {
+        if matches!(base.ty, Type::Dictionary(_)) {
+            return self.dictionary_delete(member, base);
+        }
         if !matches!(base.ty, Type::Record(_) | Type::Array(_)) {
             return Err(type_error(
                 "delete requires a narrowed record or array receiver",

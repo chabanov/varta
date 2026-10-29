@@ -38,8 +38,35 @@ fn words<const N: usize>(data: &[u8], ptr: usize) -> Result<[u32; N], wasmtime::
     }
     Ok(words)
 }
+/// A dictionary's storage descriptor: value15, required canonical `keys` and
+/// `values` vector slots in that order.
+fn dictionary_descriptor(data: &[u8], descriptor: usize) -> Result<(), wasmtime::Error> {
+    static_bytes(data, descriptor, descriptor_bytes(DICTIONARY_FIELDS))?;
+    if words::<2>(data, descriptor)? != [DYNAMIC_VALUE_VERSION, DICTIONARY_FIELDS as u32] {
+        return Err(error("dictionary descriptor version or count"));
+    }
+    for (slot, name) in [DICTIONARY_KEYS_FIELD, DICTIONARY_VALUES_FIELD]
+        .into_iter()
+        .enumerate()
+    {
+        let [key, len, raw, kind] = words::<4>(
+            data,
+            descriptor + RECORD_DESCRIPTOR_HEADER + slot * RECORD_DESCRIPTOR_ENTRY,
+        )?;
+        if raw as usize != slot
+            || kind != ValueKind::Array as u32
+            || static_bytes(data, key as usize, len as usize)? != name.as_bytes()
+        {
+            return Err(error("dictionary descriptor disagrees with its layout"));
+        }
+    }
+    Ok(())
+}
 fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> {
     for ty in &schema.types {
+        if let JsonType::Dictionary { descriptor, .. } = ty {
+            dictionary_descriptor(data, *descriptor as usize)?;
+        }
         if let JsonType::Record { descriptor, fields } = ty {
             let descriptor = *descriptor as usize;
             static_bytes(data, descriptor, descriptor_bytes(fields.len()))?;

@@ -30,6 +30,9 @@ pub(crate) struct NamedTypes {
     /// Resolved declarations by type arguments (empty for non-generic ones).
     resolved: BTreeMap<(Key, Vec<Type>), Type>,
     resolving: Vec<Key>,
+    /// Reserved types of declarations that referred to themselves while being
+    /// resolved (v34 `recursive_types`), filled when their resolution ends.
+    placeholders: BTreeMap<Key, Type>,
 }
 
 /// Exported type names of one module, pointing at the exporting module's entry
@@ -361,6 +364,10 @@ pub(super) fn instantiate(
         return Ok(*ty);
     }
     if types.named.resolving.contains(&key) {
+        if types.profile.recursive_types() && memo.1.is_empty() && params.is_none() {
+            return recursive::placeholder(&key, declaration.as_ref(), types)
+                .map_err(|e| source.locate(e, span));
+        }
         return Err(source.locate(unsupported("recursive type declaration"), span));
     }
     let caller = types.named.current;
@@ -380,7 +387,14 @@ pub(super) fn instantiate(
     };
     types.named.current = caller;
     types.named.resolving.pop();
+    let placeholder = types.named.placeholders.remove(&key);
     let ty = result?;
+    let ty = match placeholder {
+        Some(placeholder) => {
+            recursive::fill(placeholder, ty, types).map_err(|e| source.locate(e, span))?
+        }
+        None => ty,
+    };
     types.named.resolved.insert(memo, ty);
     Ok(ty)
 }
@@ -420,4 +434,128 @@ fn resolve_parameters(
         }
         None => generics::Frame::new(),
     })
+}
+
+/// Recursive named types (v34 `recursive_types`): a declaration that refers to
+/// itself gets a reserved type of the kind its body declares (a record for an
+/// interface or object type, a dictionary for an index signature, a reference
+/// union for a union); references resolve to it, and the finished body fills
+/// it. A cycle must pass through a record field, array element or dictionary
+/// value; `type A = B; type B = A`, `type A = A | string` and recursive generic
+/// declarations stay rejected.
+mod recursive {
+    use super::*;
+    use crate::ir::{DictionaryType, RecordField, RecordShape};
+
+    /// Field name of a reserved record shape; no source key can equal it, so
+    /// structural interning never matches the reservation.
+    const RESERVED: &str = "\u{0}recursive";
+    fn rejected() -> CompilerError {
+        unsupported(
+            "recursive type declaration that is not productive through a record field, array element or dictionary value",
+        )
+    }
+    enum Kind {
+        Record,
+        Dictionary,
+        Union,
+    }
+    fn kind(ty: &ast::TsType) -> Option<Kind> {
+        match ty {
+            ast::TsType::TsParenthesizedType(inner) => kind(&inner.type_ann),
+            ast::TsType::TsTypeLit(literal)
+                if literal
+                    .members
+                    .iter()
+                    .any(|m| matches!(m, ast::TsTypeElement::TsIndexSignature(_))) =>
+            {
+                Some(Kind::Dictionary)
+            }
+            ast::TsType::TsTypeLit(_) => Some(Kind::Record),
+            ast::TsType::TsUnionOrIntersectionType(
+                ast::TsUnionOrIntersectionType::TsUnionType(_),
+            ) => Some(Kind::Union),
+            _ => None,
+        }
+    }
+    pub(super) fn placeholder(
+        key: &Key,
+        declaration: Option<&Declaration>,
+        types: &mut ir::ValueTypes,
+    ) -> Result<Type> {
+        if let Some(ty) = types.named.placeholders.get(key) {
+            return Ok(*ty);
+        }
+        let kind = match declaration {
+            Some(Declaration::Interface(_)) => Kind::Record,
+            Some(Declaration::Local { ty, .. }) => kind(ty).ok_or_else(rejected)?,
+            _ => return Err(rejected()),
+        };
+        let ty = match kind {
+            Kind::Record => {
+                if types.records.len() >= varta_common::value::MAX_RECORD_SHAPES {
+                    return Err(invalid("object shape count exceeds limit"));
+                }
+                types.records.push(RecordShape {
+                    fields: vec![RecordField {
+                        name: RESERVED.into(),
+                        ty: Type::Null,
+                        optional: false,
+                    }],
+                    class: None,
+                });
+                Type::Record(types.records.len() as u32 - 1)
+            }
+            Kind::Dictionary => {
+                types.dictionaries.push(DictionaryType {
+                    value: Type::Void,
+                    keys: Type::Void,
+                    values: Type::Void,
+                    storage: 0,
+                });
+                Type::Dictionary(types.dictionaries.len() as u32 - 1)
+            }
+            Kind::Union => {
+                if types.unions.len() >= varta_common::value::MAX_UNION_TYPES {
+                    return Err(invalid("union type count exceeds limit"));
+                }
+                // An empty member list marks the reservation (see unions::intern).
+                types.unions.push(Vec::new());
+                Type::ReferenceUnion(types.unions.len() as u32 - 1)
+            }
+        };
+        types.named.placeholders.insert(key.clone(), ty);
+        Ok(ty)
+    }
+    /// Copy the resolved body into the reservation; a just-interned duplicate
+    /// that nothing else refers to is dropped.
+    pub(super) fn fill(
+        placeholder: Type,
+        resolved: Type,
+        types: &mut ir::ValueTypes,
+    ) -> Result<Type> {
+        match (placeholder, resolved) {
+            (Type::Record(p), Type::Record(r)) if p != r => {
+                types.records[p as usize] = types.records[r as usize].clone();
+                if r as usize + 1 == types.records.len() {
+                    types.records.pop();
+                }
+            }
+            (Type::Dictionary(p), Type::Dictionary(d)) if p != d => {
+                types.dictionaries[p as usize] = types.dictionaries[d as usize];
+                if d as usize + 1 == types.dictionaries.len() {
+                    types.dictionaries.pop();
+                }
+            }
+            (Type::ReferenceUnion(p), Type::ReferenceUnion(u)) if p != u => {
+                types.unions[p as usize] = types.unions[u as usize].clone();
+                let literal = literals::copy_erased_union(u, p, types);
+                if u as usize + 1 == types.unions.len() && !literal {
+                    types.unions.pop();
+                }
+            }
+            _ => return Err(rejected()),
+        }
+        Ok(placeholder)
+    }
 }
