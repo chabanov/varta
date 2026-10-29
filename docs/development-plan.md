@@ -35,7 +35,9 @@ Next work, in order:
    and merged with the records and unknown streams on `v34-integration-merge`
    ([scheduler](architecture.md#microtask-scheduler-promises),
    [async functions](architecture.md#async-functions-async_functions));
-   timers, I/O and async HTTP (step 5) are next.
+   timers, I/O and async HTTP (step 5) are next. Async generators and
+   `for await` (step 6) are implemented under v36 on `v36-async-generators`
+   ([contract](architecture.md#async-generators-async_generators)).
 
 Completed increment logs, earlier checkpoints and verification records are in
 [history.md](history.md).
@@ -273,6 +275,30 @@ dependencies, and contains no explicit `any`, so it meets the
 [typed-only rule](#research-thesis). Its only library-level `any` entry point is
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
+
+**Verified behavior with v36, async stream (2026-10-29).** The same probe on
+the `v36-async-generators` branch (selector `async_generators` only) under
+`checked-f64-utf16-v36` gives the v35 table unchanged: the records and
+functions streams own its two diagnostics. In a scratch copy with both patched
+as above (`errors?: unknown`, no default for `random`), 59 files stop at
+`core/sse.ts:227` `unsupported type reference ReadableStream` — the parameter
+type of `parseEventStream`, whose `async function*` declaration is now
+admitted — and two files stop outside the async area (`core/errors.ts:136`, a
+`switch` returning on every path that the return check does not accept, and
+`core/util.ts:23`, `sleep`'s `new Promise` without a type argument around
+`setTimeout`). `parseEventStream` itself also needs Web streams
+(`ReadableStream`, `getReader`), `TextDecoder` and `Uint8Array`, `RegExp`
+literals, `Set<string>`, a `switch` on strings, timers (`setTimeout`,
+`ReturnType<typeof setTimeout>`), `Promise.race` over differently typed
+promises and object methods in `makeEvent`; `EventStream` needs
+`[Symbol.asyncIterator]` and `implements AsyncIterable`. `core/pagination.ts`
+compiles with `autoPaginate<T>` instantiated: `collect`'s
+`limit = Number.POSITIVE_INFINITY` default, `(await fetchPage(cursor)) as …`
+and `AsyncIterable<T>` inference were fixed in this stream, and the remaining
+blockers are `new Set<string>()` and `for (const item of items)` over an
+`Array.isArray`-narrowed `unknown` (an `unknown[]` view, records stream); with
+both rewritten in a scratch copy it runs and pages through typed pages as
+Node does.
 
 **Verified behavior with v35 (2026-10-29).** The same probe on the
 `v35-merge` branch with all seven v35 selectors integrated (Web types, mixed
@@ -536,13 +562,14 @@ a v36 module relabelled as v35 fails at its host ABI section, and runtimes that
 do not list v36 reject its declared profile name. The function-fields stream
 owns any value-layout bump (value17)
 ([contract](architecture.md#checked-f64-utf16-v36--pilot-batch-checked-declared-fields-function-fields-async-generators-and-timers)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; `async_generators()` is implemented and the
+others admit nothing yet.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Registered, admits nothing |
 | `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns any value17 bump) | M2, M4 | Registered, admits nothing |
-| `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Registered, admits nothing |
+| `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Implemented on `v36-async-generators` ([contract](architecture.md#async-generators-async_generators)): declarations, generic instantiations and class methods, the queued `next`/`return`/`throw` protocol, `for await` over async generators, arrays and generators; `yield*`, async generator expressions and `Symbol.asyncIterator` open |
 | `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Registered, admits nothing |
 
 ### Deferred external validation scenarios
@@ -1850,6 +1877,24 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    generation-checked late completions and request-scoped cleanup.
 6. Async generators, `for await`, top-level await and compatibility expansion.
    Exit: the uarp-sdk pilot steps M5–M6 compile and pass their tests.
+   **Async generators and `for await` implemented** in v36 (selector
+   `async_generators`, branch `v36-async-generators`,
+   [contract](architecture.md#async-generators-async_generators)): an async
+   generator object is the frame of an internal body generator whose
+   completion cell holds a guest state record (request queue and
+   `[[AsyncGeneratorState]]`); guest helpers implement the ECMAScript
+   Enqueue/Resume/CompleteStep/DrainQueue/AwaitReturn operations, and each
+   `await` in a body is a scheduled relay job that steps the body, so suspended
+   generators hold no live-frame slot and are collected. `for await` covers
+   async generators, arrays and synchronous generators with Node's job counts
+   (`varta-runtime` `async_generator_tests`, Node 24 logs, a collection forced
+   before every job). No host import, value tag or layout is added. Measured
+   with production budgets: about 10.5k fuel per `for await` step, 3.6k per
+   `await` in a body (1.7k in an async function). Open: `yield*`, async
+   generator expressions and object methods, `Symbol.asyncIterator` and other
+   async iterables, top-level `await`, `await` inside intrinsic value blocks
+   other than checked assertions, and a cheaper relay (the per-step cost limits
+   one execution to about 90 `for await` values).
 
 The prepared function-catalog ownership increment, which owns the immutable
 metadata that frame layouts extend, is committed (`bf8c6c2`).

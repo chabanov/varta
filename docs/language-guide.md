@@ -4440,3 +4440,75 @@ export async function main(): Promise<void> {
 also an `Error`; `signal.reason` is `unknown`. `addEventListener`,
 `removeEventListener`, `onabort`, `AbortSignal.timeout`, `AbortSignal.any` and
 `new AbortSignal()` are rejected with a diagnostic.
+
+### `checked-f64-utf16-v36`
+
+Profile v36 (in development) adds async generators and `for await` on top of
+v35, and runs every v35 program unchanged.
+
+#### Async generators and for await (opt-in v36)
+
+An `async function*` (or an `async *method()` of a class) can `await` and
+`yield`; `for await` consumes it, and also arrays and synchronous generators
+whose values may be promises:
+
+```ts
+interface Page {
+  items: string[];
+  next: string | null;
+}
+async function fetchPage(cursor: string): Promise<Page> {
+  await null;                                       // one microtask
+  if (cursor === "") {
+    return { items: ["a", "b"], next: "p2" };
+  }
+  return { items: ["c"], next: null };
+}
+async function* items(): AsyncGenerator<string, void, undefined> {
+  let cursor: string | null = "";
+  while (cursor !== null) {
+    const page = await fetchPage(cursor);
+    for (const item of page.items) {
+      if (item !== undefined) {
+        yield item;
+      }
+    }
+    cursor = page.next;
+  }
+}
+async function* numbered(source: AsyncIterable<string>): AsyncGenerator<string, void, undefined> {
+  let n = 0;
+  try {
+    for await (const item of source) {
+      n++;
+      yield `${n}. ${item}`;
+    }
+  } finally {
+    console.log(`numbered ${n}`);
+  }
+}
+export async function main(): Promise<void> {
+  for await (const line of numbered(items())) {
+    console.log(line);                              // 1. a, 2. b, 3. c
+  }                                                 // numbered 3
+  const it = numbered(items());
+  const first = await it.next();
+  console.log(JSON.stringify(first));               // {"value":"1. a","done":false}
+  const closed = await it.return();                 // numbered 1
+  console.log(JSON.stringify(closed));              // {"done":true}
+  for await (const n of [Promise.resolve(1), 2]) {
+    console.log(String(n));                         // 1, then 2
+  }
+}
+```
+
+The return annotation is required: `AsyncGenerator<T, TReturn, TNext>`, or
+`AsyncIterableIterator<T>`, `AsyncIterable<T>` and `AsyncIterator<T>`, which
+mean the same here. `next()`, `return()` and `throw()` return promises and may
+be called before earlier ones settle; the requests are answered in order.
+`yield` and `return` await their operand, breaking out of a `for await` closes
+the generator after its `finally` blocks, and generic async generators work
+like other generic functions. Not supported yet: `yield*`, async generator
+function expressions, `[Symbol.asyncIterator]` methods and other async
+iterables, and `await` inside an intrinsic call or template (bind it to a
+`const` first). `for await` costs a few microtasks per value, like Node.
