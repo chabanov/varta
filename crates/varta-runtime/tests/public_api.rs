@@ -3763,3 +3763,124 @@ fn public_engine_links_classes_across_modules_in_v32() {
         "{frozen}"
     );
 }
+
+#[test]
+fn public_engine_links_the_v32_pilot_streams_through_one_barrel() {
+    // The pilot's `src/index.ts` shape: module constants, literal types and
+    // classes reach the entry only through explicit and star re-exports.
+    struct PilotSources;
+    impl ModuleLoader for PilotSources {
+        fn resolve(&self, importer: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            let base = importer.parent().unwrap_or(Path::new(""));
+            match (name.strip_prefix("./"), name.strip_prefix("../")) {
+                (Some(rest), _) => Ok(base.join(rest)),
+                (_, Some(rest)) => Ok(base.parent().unwrap_or(Path::new("")).join(rest)),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("generated/meta.ts") => "export const SPEC_VERSION='0.4.0';export const DEFAULT_BASE_URL='https://api.example';\
+                    export const SCOPES=['admin','agents:read'] as const;export type AuthType='none'|'apiKey';\
+                    export const DEFAULT_AUTH:AuthType='apiKey';export function count():number{return SCOPES.length;}",
+                Some("core/limits.ts") => "export const PAGE_LIMIT=3;export const SPEC_VERSION='legacy';\
+                    export {DEFAULT_BASE_URL} from '../generated/meta.ts';",
+                Some("core/resource.ts") => "import {DEFAULT_BASE_URL} from '../generated/meta.ts';\
+                    export class Client{readonly base:string;constructor(base:string){this.base=base;}url(path:string):string{return this.base+path;}}\
+                    export class APIResource{protected client:Client;constructor(client:Client){this.client=client;}}\
+                    export function defaultClient():Client{return new Client(DEFAULT_BASE_URL);}",
+                Some("core/functions.ts") => "export function DEFAULT_AUTH():number{return 1;}",
+                Some("resources/users.ts") => "import {APIResource} from '../core/resource.ts';\
+                    export class Users extends APIResource{list():string{return this.client.url('/users');}}",
+                Some("index.ts") => "export * from './generated/meta.ts';export * from './core/limits.ts';export * from './core/resource.ts';\
+                    export {Users as UsersResource} from './resources/users.ts';export {SPEC_VERSION} from './generated/meta.ts';\
+                    export {PAGE_LIMIT as LIMIT} from './core/limits.ts';",
+                Some("both.ts") => "export * from './generated/meta.ts';export * from './core/limits.ts';",
+                Some("mixed.ts") => "export * from './generated/meta.ts';export * from './core/functions.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |text: &str, profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: text.into(),
+            },
+            &PilotSources,
+            profile,
+        )
+    };
+    let profile = varta_common::language::LanguageProfile::CheckedF64Utf16V32;
+    let source = "import {SPEC_VERSION,DEFAULT_BASE_URL,SCOPES,LIMIT,PAGE_LIMIT,count,defaultClient,UsersResource,Client,DEFAULT_AUTH,type AuthType} from './index.ts';\
+        export function main():void{const users=new UsersResource(defaultClient());const auth:AuthType=DEFAULT_AUTH;\
+        console.log(`${SPEC_VERSION} ${DEFAULT_BASE_URL} ${SCOPES.length} ${LIMIT} ${PAGE_LIMIT} ${count()} ${auth}`);\
+        console.log(users.list());console.log(users instanceof UsersResource);const c:Client=new Client('b');console.log(c.url('/x'));}";
+    let compiled = compile(source, profile).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            // An explicit re-export shadows the ambiguous star name; two stars
+            // forwarding the same constant declaration are not ambiguous.
+            "varta log: 0.4.0 https://api.example 2 3 3 2 apiKey",
+            "varta log: https://api.example/users",
+            "varta log: 1",
+            "varta log: b/x",
+        ]
+    );
+    for (text, expected) in [
+        (
+            "import {SPEC_VERSION} from './both.ts';export function main():void{}",
+            "module both.ts exports SPEC_VERSION ambiguously through export *",
+        ),
+        (
+            "export {SPEC_VERSION as V} from './both.ts';export function main():void{}",
+            "module both.ts exports SPEC_VERSION ambiguously through export *",
+        ),
+        (
+            // A function and a constant share the value namespace.
+            "import {DEFAULT_AUTH} from './mixed.ts';export function main():void{}",
+            "module mixed.ts exports DEFAULT_AUTH ambiguously through export *",
+        ),
+        (
+            "export {NOPE} from './generated/meta.ts';export function main():void{}",
+            "module generated/meta.ts does not export function or constant NOPE",
+        ),
+        (
+            "export type {SCOPES} from './generated/meta.ts';export function main():void{}",
+            "module generated/meta.ts does not export type SCOPES",
+        ),
+        (
+            // A re-exported constant is not bound in the re-exporting module.
+            "export {SCOPES} from './generated/meta.ts';export function main():void{console.log(SCOPES.length);}",
+            "unknown identifier: SCOPES",
+        ),
+        (
+            "export {SCOPES as LIMIT} from './generated/meta.ts';export const LIMIT=1;export function main():void{}",
+            "duplicate export: LIMIT",
+        ),
+        (
+            "import {SCOPES} from './index.ts';export function main():void{SCOPES.push('x');}",
+            "cannot modify readonly `as const` value SCOPES",
+        ),
+        (
+            "import {DEFAULT_AUTH} from './index.ts';const AUTH=DEFAULT_AUTH;export function main():void{const k:'none'=AUTH;}",
+            "is not assignable to literal type 'none'",
+        ),
+    ] {
+        let error = compile(text, profile).err().unwrap().to_string();
+        assert!(error.contains(expected), "{text}\n{error}");
+    }
+    let frozen = compile(
+        source,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V31,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(frozen.contains("module export form"), "{frozen}");
+}

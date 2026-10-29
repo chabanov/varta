@@ -586,3 +586,51 @@ export function label(a:Auth):string{const h=a.header;return a.type+(h===undefin
     let diagnostic = old.diagnostic();
     assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
 }
+
+#[test]
+fn v32_pilot_streams_link_through_a_barrel_in_dev_and_packaged_artifacts() {
+    let main = r#"import {SDK_VERSION,SCOPES,Users,Client,type AuthType} from "./index.js";
+export function main():void{const auth:AuthType='apiKey';const users=new Users(new Client());
+console.log(`${SDK_VERSION} ${SCOPES.length} ${auth}`);console.log(users.list());console.log(users instanceof Users);}"#;
+    let project = Project::new(main);
+    project.write(
+        "varta.config.json",
+        r#"{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-v32","capabilities":{}}"#,
+    );
+    project.write(
+        "src/generated/meta.ts",
+        "export const SDK_VERSION='0.12.0';export const DEFAULT_BASE_URL='https://api.example';\
+         export const SCOPES=['admin','agents:read'] as const;export type AuthType='none'|'apiKey';",
+    );
+    project.write(
+        "src/core/resource.ts",
+        "import {DEFAULT_BASE_URL} from '../generated/meta.js';\
+         export class Client{readonly base:string=DEFAULT_BASE_URL;}\
+         export class APIResource{protected client:Client;constructor(client:Client){this.client=client;}}",
+    );
+    project.write(
+        "src/generated/resources/users.ts",
+        "import {APIResource} from '../../core/resource.js';\
+         export class Users extends APIResource{list():string{return `${this.client.base}/users`;}}",
+    );
+    project.write(
+        "src/index.ts",
+        "export * from './generated/meta.js';export * from './core/resource.js';\
+         export {Users} from './generated/resources/users.js';",
+    );
+    let expected = [
+        "varta log: 0.12.0 2 apiKey",
+        "varta log: https://api.example/users",
+        "varta log: 1",
+    ];
+    let dev = success(project.command(&["dev"]));
+    for line in expected {
+        assert!(dev.contains(line), "{dev}");
+    }
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    let packaged = success(project.command(&["run", "dist/app.wasm"]));
+    for line in expected {
+        assert!(packaged.contains(line), "{packaged}");
+    }
+}

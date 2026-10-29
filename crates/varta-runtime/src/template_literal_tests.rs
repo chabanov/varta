@@ -248,3 +248,30 @@ fn template_literals_stay_rejected_before_v32() {
     assert!(error.contains("parameter needs an annotation"), "{error}");
     run(source, &["a"]);
 }
+
+#[test]
+fn template_text_after_a_substitution_is_not_lexed_as_code_by_the_complexity_check() {
+    // The source-complexity pre-pass must resume template text after each
+    // substitution, as the parser does; otherwise the remaining template text
+    // and later doc comments with backticks count as one long token run (the
+    // pilot's generated resources hit this). Comment words exceed the run limit.
+    let words: Vec<String> = (0..300).map(|i| format!(" * `w{i}` text")).collect();
+    let comment = format!("/**\n{}\n */", words.join("\n"));
+    run(
+        &format!(
+            "function path(id:string):string{{return `/api/${{String(id)}}/x/${{{{a:1}}.a}}${{`in${{id}}`}}`;}}\n\
+             {comment}\nexport function main():void{{console.log(path('7'));}}"
+        ),
+        &["/api/7/x/1in7"],
+    );
+    // Nesting inside substitutions still counts against the delimiter limit.
+    let deep = format!("{}1{}", "(".repeat(70), ")".repeat(70));
+    let error = rejected(
+        &format!("export function main():void{{console.log(`${{{deep}}}`);}}"),
+        P::CheckedF64Utf16V32,
+    );
+    assert!(
+        error.contains("source complexity exceeds compiler limits"),
+        "{error}"
+    );
+}

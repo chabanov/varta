@@ -1,5 +1,6 @@
 use crate::CompilerError;
 use swc_common::Spanned;
+use swc_ecma_parser::input::Tokens;
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 pub(crate) fn parse_module(
     source: &crate::source::Source,
@@ -50,24 +51,47 @@ enum Alias {
     Type(usize),
 }
 
+/// Opens a template substitution; template head and middle tokens end with it.
+const SUBSTITUTION: &str = "${";
+
 fn check_complexity(source: &crate::source::Source) -> Result<(), CompilerError> {
     let fm = &source.file;
-    let tokens = Lexer::new(
+    let mut tokens = Lexer::new(
         Syntax::Typescript(Default::default()),
         Default::default(),
         StringInput::from(&**fm),
         None,
     );
+    let slice = |span: swc_common::Span| {
+        let start = (span.lo.0 - fm.start_pos.0) as usize;
+        let end = (span.hi.0 - fm.start_pos.0) as usize;
+        fm.src.get(start..end).unwrap_or_default()
+    };
     let mut nesting = 0usize;
     let mut run = 0usize;
     let mut delimiters = Vec::new();
     let mut has_angle = false;
     let mut alias = Alias::Outside;
     let mut previous = "";
-    for token in tokens {
-        let start = (token.span.lo.0 - fm.start_pos.0) as usize;
-        let end = (token.span.hi.0 - fm.start_pos.0) as usize;
-        let text = fm.src.get(start..end).unwrap_or_default();
+    while let Some(mut token) = tokens.next() {
+        let mut text = slice(token.span);
+        // A backtick starts a template token that ends at the closing backtick
+        // or at its first substitution.
+        let mut template = text.starts_with('`');
+        if text == "}"
+            && delimiters
+                .last()
+                .is_some_and(|(open, _)| *open == SUBSTITUTION)
+        {
+            // The `}` closing a substitution resumes the template text, which
+            // only a template rescan lexes (as the parser does); otherwise the
+            // rest of the template, and later comments, would lex as code.
+            nesting = nesting.saturating_sub(1);
+            delimiters.pop();
+            token = tokens.rescan_template_token(token.span.lo, false);
+            text = slice(token.span);
+            template = true;
+        }
         if let Alias::Type(depth) = alias
             && (nesting < depth
                 || nesting == depth
@@ -93,7 +117,13 @@ fn check_complexity(source: &crate::source::Source) -> Result<(), CompilerError>
             _ => Alias::Outside,
         };
         match text {
-            "(" | "[" | "{" | "${" => {
+            _ if template => {
+                if text.ends_with(SUBSTITUTION) {
+                    nesting += 1;
+                    delimiters.push((SUBSTITUTION, has_angle));
+                }
+            }
+            "(" | "[" | "{" => {
                 nesting += 1;
                 delimiters.push((text, has_angle));
                 if text == "[" {

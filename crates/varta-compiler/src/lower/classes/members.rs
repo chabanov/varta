@@ -184,7 +184,9 @@ impl Lower<'_> {
         let mut zeros: BTreeMap<Type, u32> = BTreeMap::new();
         let mut defaults = Vec::new();
         for (slot, ty) in field_types.into_iter().enumerate() {
-            let kind = match ty {
+            // A literal-typed field (v32 `literal_types`) takes the placeholder
+            // of its erased base primitive.
+            let kind = match ty.erased() {
                 Type::Float64 => E::Float64(0.0),
                 Type::String => E::String(Vec::new()),
                 _ if !ty.is_handle() => E::Integer(0),

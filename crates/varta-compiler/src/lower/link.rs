@@ -243,10 +243,9 @@ fn link_values(
                     }
                 };
                 if !fresh || RESERVED_BINDINGS.contains(&binding.local.as_str()) {
-                    return Err(unit.source.locate(
-                        duplicate_import(&binding.local),
-                        binding.span,
-                    ));
+                    return Err(unit
+                        .source
+                        .locate(duplicate_import(&binding.local), binding.span));
                 }
             }
         }
