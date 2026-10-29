@@ -5,7 +5,7 @@ const WORD_BYTES: usize = size_of::<u32>();
 impl Emitter<'_> {
     pub(super) fn is_nullish(&mut self, value: &Expr) -> Result<()> {
         self.expr(value)?;
-        if value.ty.is_union() {
+        if value.ty.is_cell() {
             self.code.extend([
                 I::I32WrapI64,
                 I::LocalTee(self.temporary),

@@ -27,6 +27,10 @@ fn reference(ty: Type) -> bool {
     )
 }
 fn choose_right(op: ast::BinaryOp, ty: Type) -> Option<bool> {
+    // `unknown` (v34) may hold any member, so neither operand is fixed.
+    if ty == Type::Unknown {
+        return None;
+    }
     match op {
         ast::BinaryOp::NullishCoalescing => Some(nullish(ty)),
         ast::BinaryOp::LogicalAnd if nullish(ty) || reference(ty) => Some(reference(ty)),

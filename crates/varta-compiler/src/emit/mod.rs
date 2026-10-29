@@ -912,7 +912,8 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
             | Type::Generator(_)
             | Type::Array(_)
             | Type::Union(_)
-            | Type::ReferenceUnion(_) => vec![ValType::I64],
+            | Type::ReferenceUnion(_)
+            | Type::Unknown => vec![ValType::I64],
             Type::Void => vec![],
             _ => vec![ValType::I32],
         }

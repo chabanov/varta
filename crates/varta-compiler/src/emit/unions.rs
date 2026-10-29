@@ -2,7 +2,7 @@ use super::*;
 use varta_common::value as values;
 impl Emitter<'_> {
     pub(super) fn is_union_member(&mut self, value: &Expr, member: Type) -> Result<()> {
-        if !value.ty.is_union() {
+        if !value.ty.is_cell() {
             return Err(CompilerError::Internal(
                 "member check requires a union".into(),
             ));

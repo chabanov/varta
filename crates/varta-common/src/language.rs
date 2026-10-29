@@ -245,15 +245,17 @@ impl LanguageProfile {
     pub fn wide_records(self) -> bool {
         self == Self::CheckedF64Utf16V34
     }
-    /// Pilot batch v34, unknown stream: the `unknown` type, usable only after
-    /// narrowing by `typeof`, `instanceof`, `Array.isArray`, `in` or a type
-    /// guard. Admits nothing yet.
+    /// Pilot batch v34, unknown stream: the `unknown` type, a reference-union
+    /// cell holding any value with a cell tag, usable after narrowing by
+    /// `typeof`, `===`, `instanceof` or a checked assertion; caught values and
+    /// Error `cause` are `unknown`. Adds no value tag, layout or host import.
     #[must_use]
     pub fn unknown_type(self) -> bool {
         self == Self::CheckedF64Utf16V34
     }
-    /// Pilot batch v34, unknown stream: `as` as a runtime-checked downcast that
-    /// throws on mismatch; never an unchecked reinterpretation. Admits nothing yet.
+    /// Pilot batch v34, unknown stream: `x as T` and `x!` as runtime-checked
+    /// conversions that throw `TypeError` on mismatch (upcasts are free); never
+    /// an unchecked reinterpretation.
     #[must_use]
     pub fn checked_assertions(self) -> bool {
         self == Self::CheckedF64Utf16V34

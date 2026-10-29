@@ -252,6 +252,11 @@ impl Walker<'_> {
                 }
                 Ok(())
             }
+            // `unknown` admits any canonical cell; consumers validate children.
+            CaptureType::Unknown => {
+                value::ReferenceBox::read_with_version(self.data, payload, catalog.value_version)?;
+                Ok(())
+            }
             // Class field types are nominal and compile-time checked.
             CaptureType::Class => {
                 value::validate_aggregate(

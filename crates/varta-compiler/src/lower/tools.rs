@@ -295,6 +295,7 @@ fn expression(
         | E::BoxUnion(a)
         | E::IsError(a)
         | E::IsClass { value: a, .. }
+        | E::ArrayKind(a, _)
         | E::IsUnionMember(a, _)
         | E::IsUndefined(a)
         | E::IsNullish(a)

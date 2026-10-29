@@ -192,7 +192,7 @@ impl Lower<'_> {
                 {
                     // A literal guard may refine a non-union local in place;
                     // the read operand is its base primitive.
-                    if self.types.profile.literal_types() && !target.ty.is_union() {
+                    if self.types.profile.literal_types() && !target.ty.is_cell() {
                         literals::erase(value, self.types)
                     } else if ty.is_union() {
                         Expr { ty, ..value }

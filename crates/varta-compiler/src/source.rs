@@ -21,6 +21,11 @@ impl Source {
         }
     }
 
+    /// The source text of `span`, for messages that quote a construct.
+    pub(crate) fn text(&self, span: Span) -> Option<String> {
+        swc_common::SourceMapper::span_to_snippet(&*self.map, span).ok()
+    }
+
     pub(crate) fn locate(&self, error: CompilerError, span: Span) -> CompilerError {
         if error.diagnostic().is_some() {
             return error;

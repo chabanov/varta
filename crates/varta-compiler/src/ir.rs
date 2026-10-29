@@ -46,6 +46,9 @@ pub(crate) enum Type {
     /// Value15 dynamic-key record (v34 `index_signatures`): physically the
     /// two-slot storage record `ValueTypes::dictionaries[id].storage`.
     Dictionary(u32),
+    /// `unknown` (v34 `unknown_type`): a reference-union cell whose member may
+    /// be any admitted value kind; only checked guards and assertions extract it.
+    Unknown,
 }
 
 /// Base primitive of a literal set; it fixes the erased physical representation.
@@ -92,7 +95,12 @@ impl Type {
                 | Self::Array(_)
                 | Self::Union(_)
                 | Self::ReferenceUnion(_)
+                | Self::Unknown
         )
+    }
+    /// A managed union cell: a closed union or `unknown` (v34).
+    pub(crate) fn is_cell(self) -> bool {
+        self.is_union() || self == Self::Unknown
     }
     pub(crate) fn from_error_class(class: varta_common::value::ErrorClass) -> Self {
         if class == varta_common::value::ErrorClass::Error {
@@ -347,7 +355,7 @@ impl Type {
             Self::Dictionary(_) => V::Dictionary,
             Self::Array(_) => V::Array,
             Self::Union(_) => V::PrimitiveUnion,
-            Self::ReferenceUnion(_) => V::ReferenceUnion,
+            Self::ReferenceUnion(_) | Self::Unknown => V::ReferenceUnion,
             Self::Literal(base, _) => return base.erased().value_kind(),
             _ => return None,
         })
@@ -500,6 +508,9 @@ pub(crate) enum Expression {
         slot: u32,
     },
     IsNullish(Box<Expr>),
+    /// Whether an array's element kind tag is this kind (v34 checked
+    /// assertions); the element type itself is proven by that tag.
+    ArrayKind(Box<Expr>, varta_common::value::ValueKind),
     Conditional(Box<Expr>, Box<Expr>, Box<Expr>),
     UnionLogical(BinaryOp, Box<Expr>, Box<Expr>),
     Integer(i32),
@@ -700,6 +711,7 @@ impl std::fmt::Display for Type {
             Self::Array(_) => "array",
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",
+            Self::Unknown => "unknown",
             Self::Literal(LiteralBase::String, _) => "string literal type",
             Self::Literal(LiteralBase::Number, _) => "number literal type",
             Self::Literal(LiteralBase::Boolean, _) => "boolean literal type",

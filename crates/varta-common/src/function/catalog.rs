@@ -97,6 +97,9 @@ pub enum CaptureType {
     /// A generator object (v33): an opaque frame handle with no value tag; it
     /// may be saved in frames but never crosses a typed value boundary.
     Generator,
+    /// An `unknown` binding (v34): a reference-union cell whose member may be
+    /// any kind the catalog's value version admits in a cell.
+    Unknown,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -136,7 +139,7 @@ impl CaptureType {
             Self::Array { .. } => ValueKind::Array,
             Self::Dictionary { .. } => ValueKind::Dictionary,
             Self::PrimitiveUnion { .. } => ValueKind::PrimitiveUnion,
-            Self::ReferenceUnion { .. } => ValueKind::ReferenceUnion,
+            Self::ReferenceUnion { .. } | Self::Unknown => ValueKind::ReferenceUnion,
             Self::Function { .. } => ValueKind::Function,
             Self::Generator => return None,
         })
@@ -395,7 +398,7 @@ impl FunctionCatalog {
     }
     fn contains_undefined(&self, id: u32) -> bool {
         match &self.types[id as usize] {
-            CaptureType::Undefined => true,
+            CaptureType::Undefined | CaptureType::Unknown => true,
             CaptureType::PrimitiveUnion { members } | CaptureType::ReferenceUnion { members } => {
                 members
                     .iter()

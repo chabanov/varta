@@ -36,7 +36,8 @@ impl Lower<'_> {
             }
             let mut json_type = |ty, types, optional| json_visit(ty, types, optional, seen);
             match ty {
-                Type::Literal(..) => false,
+                // A schema needs a closed type; `unknown` (v34) has none.
+                Type::Literal(..) | Type::Unknown => false,
                 Type::BigInt => types.profile.bigint_values(),
                 // Parsing cannot construct nominal class instances.
                 Type::Error | Type::NativeError(_) | Type::Class(_) => false,

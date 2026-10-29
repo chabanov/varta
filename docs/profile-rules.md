@@ -2195,3 +2195,57 @@ Contract: [architecture.md](architecture.md#recursive-types-recursive_types).
   carry a visited set; recursion on `Type` structure without one is a bug.
 - Schema 15 may refer forward; capture and frame catalogs must not, so reject
   recursive types there with a diagnostic instead of emitting a cycle.
+- The value ABI is a reserved identity without layouts. Declare it only in the
+  `varta.values` section (`value_abi`); stamp descriptors, record sizes and
+  capture/frame catalogs with `LanguageProfile::value_layout` (still value13
+  for v34). Never pass value15 to a reader before its layout is specified.
+- A stream that adds a value15 layout or tag switches `value_layout` for v34
+  in the same change and then extends the readers (`ValueKind::supported_by`,
+  `ReferenceBox`, `Vector`, `ErrorObject`, `record_bytes`, the runtime JSON
+  encoder/decoder, capture catalogs and the exception channel) and adds the
+  value/JSON host operations and JSON schema version bound to value15: the
+  value13 operations reject descriptors stamped with any other version. Only
+  one stream does this switch; the others rebase onto it.
+
+### Unknown (`unknown_type`)
+
+Contract: [architecture.md](architecture.md#unknown-unknown_type).
+
+- `Type::Unknown` is a reference-union cell (`Type::is_cell`); never give it a
+  value tag, layout or host import of its own. Emitter paths that test or unbox
+  cells use `is_cell()`; lowering keeps `is_union()` for closed member sets, so
+  every operation on `unknown` is an explicit decision (`lower::unknown`).
+- Admit into `unknown` only types with a cell tag (`unknown::admissible`);
+  widen through `unions::widen`, which boxes or retags. A union with an
+  `unknown` member interns to `unknown`.
+- Narrow only by tag-exact positive guards, class descriptor tests and the
+  family rule of `instanceof Error`; never refine `unknown` to `object`, an
+  array of unknown element type or by assignment. A refinement that unboxes a
+  record or class must be proven by a descriptor test, never by the tag alone.
+- Keep property access, indexing, calls, arithmetic, `in`, `Object.hasOwn`,
+  `Number(x)` and typed JSON parsing rejected on `unknown`; the records stream
+  owns `typeof x === "object"` narrowing to dynamic records.
+- Only identifier catch bindings become `unknown`; catch patterns, the frame
+  exception binding and the exception channel keep the closed catch union, and
+  `throw` of an `unknown` is a checked conversion to it.
+- Capture and frame catalogs describe `unknown` as `CaptureType::Unknown`.
+- Behaviour tests pin Node 24 output of `varta-runtime/src/unknown_cases`;
+  regenerate expectations only from Node, never from Varta output.
+
+### Checked assertions (`checked_assertions`)
+
+Contract: [architecture.md](architecture.md#checked-assertions-checked_assertions).
+
+- `x as T` is an upcast (ordinary widening, no test) or a tested conversion:
+  hold the operand in a rooted hidden cell local, run `cell_test`, throw the
+  `TypeError` on failure, then unbox or retag. Never emit an unchecked unbox of
+  an asserted value.
+- Admit a tested assertion only when TypeScript would (comparable members) and
+  the target is checkable exactly: primitive and literal tags/values, exact
+  record descriptors, class family descriptors and primitive-element array
+  kinds. Reject other targets with `unsupported type assertion to …` instead of
+  approximating them (no element-wise array scans, no structural record match).
+- `x!` is free on non-nullable operands and tested otherwise; `as const` keeps
+  its v32 path; `<T>x` stays rejected.
+- Failure messages quote the asserted type's source text; tests pin them,
+  because Node erases assertions and never throws there.

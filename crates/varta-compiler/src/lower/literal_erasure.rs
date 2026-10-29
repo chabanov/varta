@@ -254,6 +254,7 @@ impl Eraser {
             | E::IsUndefined(value)
             | E::IsError(value)
             | E::IsClass { value, .. }
+            | E::ArrayKind(value, _)
             | E::IsNullish(value)
             | E::Undefined(value)
             | E::Negative(value)

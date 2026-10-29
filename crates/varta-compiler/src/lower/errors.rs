@@ -112,10 +112,12 @@ impl Lower<'_> {
         {
             return Err(unsupported("instanceof operand type"));
         }
-        if self.has_error_instances(value.ty) {
+        if self.has_error_instances(value.ty)
+            || value.ty == Type::Unknown && self.types.profile.error_subclasses()
+        {
             return self.error_instance_test(value, class, binary.span);
         }
-        let kind = if value.ty.is_union() {
+        let kind = if value.ty.is_cell() {
             if self.types.profile.error_families() {
                 E::Host(
                     self.types.profile.host_operation(Host::ValueIsErrorClass),

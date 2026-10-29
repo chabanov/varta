@@ -4207,3 +4207,67 @@ fn public_engine_links_v34_dynamic_records_across_modules() {
         .to_string();
     assert!(frozen.contains("recursive type declaration"), "{frozen}");
 }
+
+#[test]
+fn public_engine_links_unknown_causes_and_checked_assertions_in_v34() {
+    // The pilot's error module shape: `cause?: unknown` through an imported
+    // Error subclass, a caught `unknown` and checked assertions across modules.
+    use varta_common::language::LanguageProfile;
+    struct ErrorSources;
+    impl ModuleLoader for ErrorSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./errors.ts" => Ok("errors.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("errors.ts") => "export class UarpError extends Error{\
+                    constructor(message:string,options?:{cause?:unknown}){super(message,options);this.name=new.target.name;}}\
+                    export interface Detail{code:number}\
+                    export function describe(error:unknown):string{\
+                    if(error instanceof UarpError){const detail=error.cause as Detail;return error.name+' '+String(detail.code);}\
+                    return error instanceof Error?error.message:String(error);}",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {UarpError,describe} from './errors.ts';\
+                       function attempt(kind:number):string{try{\
+                       if(kind===0){throw new UarpError('wrapped',{cause:{code:7}});}\
+                       if(kind===1){throw new RangeError('range');}throw 'text';}\
+                       catch(e){return describe(e);}}\
+                       export function main():void{console.log(attempt(0));console.log(attempt(1));console.log(attempt(2));\
+                       try{console.log(describe(new UarpError('bad',{cause:'no detail'})));}\
+                       catch(e){if(e instanceof TypeError){console.log(e.message);}}}"
+                    .into(),
+            },
+            &ErrorSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V34).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: UarpError 7",
+            "varta log: range",
+            "varta log: text",
+            "varta log: type assertion to Detail failed",
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V33)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("unsupported type annotation"), "{frozen}");
+}

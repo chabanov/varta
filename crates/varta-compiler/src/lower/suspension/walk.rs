@@ -38,6 +38,7 @@ pub(super) fn expression(expr: &Expr, visit: &mut dyn FnMut(&Expr)) {
         | E::IsUndefined(value)
         | E::IsError(value)
         | E::IsClass { value, .. }
+        | E::ArrayKind(value, _)
         | E::IsNullish(value)
         | E::IsUnionMember(value, _)
         | E::Undefined(value)

@@ -222,6 +222,7 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
         ast::TsKeywordTypeKind::TsUndefinedKeyword if types.profile.has_undefined() => {
             Type::Undefined
         }
+        ast::TsKeywordTypeKind::TsUnknownKeyword if types.profile.unknown_type() => Type::Unknown,
         _ => return Err(unsupported("type annotation")),
     })
 }
@@ -350,6 +351,7 @@ mod tools;
 mod type_operators;
 mod undefined;
 mod unions;
+mod unknown;
 mod updates;
 
 impl Lower<'_> {

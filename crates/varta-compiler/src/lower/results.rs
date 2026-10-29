@@ -39,6 +39,12 @@ impl Lower<'_> {
             return self.new_target_member(member);
         }
         let value = self.expr(&member.obj)?;
+        if value.ty == Type::Unknown {
+            return Err(self.source.locate(
+                type_error("property access on an unknown value; narrow it with typeof, instanceof or a checked `as` first"),
+                member.obj.span(),
+            ));
+        }
         if self.error_value(value.ty) {
             return self.error_field(member, value);
         }

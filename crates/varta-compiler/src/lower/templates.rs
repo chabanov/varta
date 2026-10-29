@@ -62,6 +62,10 @@ impl Lower<'_> {
         if value.ty == Type::String {
             return Ok(value);
         }
+        if value.ty == Type::Unknown {
+            let span = value.span;
+            return self.unknown_string(value, span);
+        }
         let bigint = self.types.profile.bigint_values();
         if let Some(object) = unions::members(value.ty, self.types)
             .into_iter()

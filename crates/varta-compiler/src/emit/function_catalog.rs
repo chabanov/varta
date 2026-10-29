@@ -48,6 +48,7 @@ pub(super) fn build(
                     value: self.node(self.types.dictionaries[id as usize].value)?,
                 },
                 Type::Class(_) => CaptureType::Class,
+                Type::Unknown => CaptureType::Unknown,
                 Type::Generator(_) => CaptureType::Generator,
                 Type::Record(id) => {
                     let mut fields = Vec::new();

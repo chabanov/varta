@@ -200,7 +200,7 @@ impl Emitter<'_> {
                 I::LocalGet(self.string_temporary),
             ]);
         }
-        if !element.is_union() {
+        if !element.is_cell() {
             self.unpack_slot(element);
             if result != Type::Undefined {
                 self.box_union(element)?;
@@ -237,7 +237,7 @@ impl Emitter<'_> {
         self.expr(value)?;
         if value.ty == Type::Undefined {
             self.code.extend([I::Drop, I::F64Const(default.into())]);
-        } else if value.ty.is_union() {
+        } else if value.ty.is_cell() {
             self.code.extend([
                 I::I32WrapI64,
                 I::LocalTee(self.temporary),
