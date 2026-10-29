@@ -15,6 +15,7 @@ use wasmparser::{ExternalKind, Parser, Payload};
 
 const V33: LanguageProfile = LanguageProfile::CheckedF64Utf16V33;
 const V32: LanguageProfile = LanguageProfile::CheckedF64Utf16V32;
+const V35: LanguageProfile = LanguageProfile::CheckedF64Utf16V35;
 const LOG: &str = "varta log: frames admitted";
 const EXIT: i32 = 33;
 /// Layout 0 retains a string, an array and an Error across its suspension
@@ -80,8 +81,11 @@ fn custom_section(bytes: &[u8], name: &str, data: Option<&[u8]>) -> Vec<u8> {
         }
     })
 }
+/// The cell (version 2) or v35 liveness (version 3) frame catalog.
 fn frame_catalog(bytes: &[u8]) -> FunctionCatalog {
-    FunctionCatalog::from_frame_bytes(section(bytes, varta_common::function::CATALOG_SECTION))
+    let data = section(bytes, varta_common::function::CATALOG_SECTION);
+    FunctionCatalog::from_frame_bytes(data)
+        .or_else(|_| FunctionCatalog::from_liveness_bytes(data))
         .unwrap()
 }
 /// Rewrite the catalog without re-validating it, as a hostile producer could.
@@ -438,9 +442,81 @@ fn v33_frame_layouts_must_agree_with_the_module() {
     assert!(VartaRuntime::new().validate_module(&duplicate).is_err());
 }
 
+/// V35 frames (`frame_liveness`) carry catalog version 3 liveness layouts; a
+/// relabelled module of either layout fails before instantiation.
+#[test]
+fn liveness_frame_layouts_are_admitted_only_under_v35() {
+    use FrameAdmissionError as E;
+    let v34 = LanguageProfile::CheckedF64Utf16V34;
+    let bytes = compile(V35);
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let catalog = frame_catalog(&bytes);
+    assert_eq!(catalog.version, frame::FRAME_LIVENESS_CATALOG_VERSION);
+    assert!(catalog.frames.iter().all(|layout| layout.liveness()));
+    let runtime = VartaRuntime::new();
+    let prepared = runtime.prepare_module(&bytes).unwrap();
+    assert_eq!(
+        prepared.function_catalog().unwrap().as_catalog().frames,
+        catalog.frames
+    );
+    let run = runtime.run_wasm_bytes(&bytes, &grants()).unwrap();
+    assert_eq!(
+        (run.lines.as_slice(), run.exit_code),
+        (&[LOG.to_owned()][..], EXIT)
+    );
+    // V35 bytes relabelled as v34 or v33, and v34 bytes relabelled as v35.
+    for profile in [v34, V33] {
+        assert!(matches!(
+            rejected(&declare(&bytes, profile)),
+            E::FrameLayoutVersion {
+                expected: frame::FRAME_CATALOG_VERSION,
+                found: frame::FRAME_LIVENESS_CATALOG_VERSION
+            }
+        ));
+    }
+    assert!(matches!(
+        rejected(&declare(&compile(v34), V35)),
+        E::FrameLayoutVersion {
+            expected: frame::FRAME_LIVENESS_CATALOG_VERSION,
+            found: frame::FRAME_CATALOG_VERSION
+        }
+    ));
+    assert!(matches!(
+        rejected(&declare(&bytes, V32)),
+        E::ProfileForbids(FramePiece::LivenessCatalog)
+    ));
+    // Tampered liveness rows fail in the catalog reader.
+    type Edit = fn(&mut FunctionCatalog);
+    let edits: [Edit; 4] = [
+        |c| c.version = frame::FRAME_CATALOG_VERSION,
+        |c| c.frames[0].capacity = None,
+        |c| c.frames[0].capacity = Some(frame::MAX_FRAME_BINDINGS as u32 + 1),
+        |c| {
+            let widest = c.frames[0]
+                .states
+                .iter()
+                .map(|s| s.saved.len())
+                .max()
+                .unwrap();
+            c.frames[0].capacity = Some(widest as u32 - 1);
+        },
+    ];
+    for edit in edits {
+        assert!(matches!(
+            rejected(&edit_catalog(&bytes, edit)),
+            E::Catalog(_)
+        ));
+    }
+}
+
 #[test]
 fn suspended_frames_keep_exact_roots_across_a_forced_collection_in_a_runtime_store() {
-    let bytes = compile(V33);
+    for profile in [V33, V35] {
+        suspended_frames_keep_exact_roots_in(profile);
+    }
+}
+fn suspended_frames_keep_exact_roots_in(profile: LanguageProfile) {
+    let bytes = compile(profile);
     let runtime = VartaRuntime::new();
     let prepared = runtime.prepare_module(&bytes).unwrap();
     let mut execution = execution::Execution::new(&runtime.engine, &grants(), None).unwrap();

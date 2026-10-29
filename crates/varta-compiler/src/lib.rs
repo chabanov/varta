@@ -9,6 +9,8 @@ pub use modules::{Compilation, ModuleLoader, ModuleSource};
 #[cfg(test)]
 mod array_tests;
 #[cfg(test)]
+mod frame_liveness_tests;
+#[cfg(test)]
 mod generator_tests;
 #[cfg(test)]
 mod http_tests;

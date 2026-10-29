@@ -18,7 +18,8 @@ pub struct FunctionCatalog {
     pub types: Vec<CaptureType>,
     pub bindings: Vec<CaptureBinding>,
     pub functions: Vec<CaptureFunction>,
-    /// Continuation-frame layouts; present only in [`frame::FRAME_CATALOG_VERSION`].
+    /// Continuation-frame layouts; present only in [`frame::FRAME_CATALOG_VERSION`]
+    /// (cell layouts) and [`frame::FRAME_LIVENESS_CATALOG_VERSION`] (liveness layouts).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frames: Vec<FrameLayout>,
 }
@@ -28,7 +29,14 @@ pub struct FunctionCatalog {
 #[serde(deny_unknown_fields)]
 pub struct FrameLayout {
     pub code: u32,
+    /// Cell layouts (version 2): every saved binding, one frame-owned or
+    /// shared cell each. Liveness layouts (version 3): the bindings the
+    /// creator saves for state 0 (the parameters), in entry order.
     pub slots: Vec<FrameSlot>,
+    /// Liveness layouts only: saved entries the frame's segments hold, at least
+    /// the entries of every state and at most [`frame::MAX_FRAME_BINDINGS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<u32>,
     /// Suspension points 1..=n in state order; state 0 is the initial state.
     pub states: Vec<FrameState>,
     /// Binding id of a returned completion value, absent for void results.
@@ -57,6 +65,24 @@ pub struct FrameState {
     pub input: frame::FrameInput,
     /// Binding id of the yielded value stored in the completion slot.
     pub yielded: u32,
+    /// Liveness layouts only: the bindings live across this suspension point,
+    /// saved in entry order. A shared slot takes one entry (its closure cell),
+    /// an unshared two-slot (`result`) binding two and every other binding one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub saved: Vec<FrameSlot>,
+}
+impl FrameSlot {
+    /// Saved entries of this slot in a liveness layout.
+    pub fn entries(&self, catalog: &FunctionCatalog) -> Option<usize> {
+        let binding = catalog.bindings.get(self.binding as usize)?;
+        Some(if binding.result && !self.shared { 2 } else { 1 })
+    }
+}
+impl FrameLayout {
+    /// Whether this row describes a liveness layout (catalog version 3).
+    pub fn liveness(&self) -> bool {
+        self.capacity.is_some()
+    }
 }
 /// `Class` is a nominal class instance (v32): a record carrying its own class
 /// descriptor. Its fields are fixed by the class declaration and may form
@@ -161,21 +187,29 @@ impl CaptureType {
     }
 }
 impl FunctionCatalog {
-    /// Read a version 1 catalog. Frame catalogs (version 2) are rejected here, so
-    /// existing artifacts and runtimes keep exactly their earlier contract.
+    /// Read a version 1 catalog. Frame catalogs (versions 2 and 3) are rejected
+    /// here, so existing artifacts and runtimes keep exactly their earlier contract.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ValueAbiError> {
-        Self::read(bytes, CATALOG_VERSION)
+        Self::read(bytes, &[CATALOG_VERSION])
     }
-    /// Read a version 1 or frame-bearing version 2 catalog.
+    /// Read a version 1 or cell-layout version 2 catalog; version 3 is rejected.
     pub fn from_frame_bytes(bytes: &[u8]) -> Result<Self, ValueAbiError> {
-        Self::read(bytes, frame::FRAME_CATALOG_VERSION)
+        Self::read(bytes, &[CATALOG_VERSION, frame::FRAME_CATALOG_VERSION])
     }
-    fn read(bytes: &[u8], newest: u32) -> Result<Self, ValueAbiError> {
+    /// Read a version 1 or liveness-layout version 3 catalog (v35
+    /// `frame_liveness`); cell layouts (version 2) are rejected.
+    pub fn from_liveness_bytes(bytes: &[u8]) -> Result<Self, ValueAbiError> {
+        Self::read(
+            bytes,
+            &[CATALOG_VERSION, frame::FRAME_LIVENESS_CATALOG_VERSION],
+        )
+    }
+    fn read(bytes: &[u8], accepted: &[u32]) -> Result<Self, ValueAbiError> {
         if bytes.len() > abi::MAX_WASM_BYTES {
             return Err(invalid_catalog());
         }
         let value: Self = serde_json::from_slice(bytes).map_err(|_| invalid_catalog())?;
-        if value.version > newest {
+        if !accepted.contains(&value.version) {
             return Err(invalid_catalog());
         }
         value.validate()?;
@@ -190,7 +224,10 @@ impl FunctionCatalog {
         Ok(bytes)
     }
     pub fn validate(&self) -> Result<(), ValueAbiError> {
-        let frames = self.version == frame::FRAME_CATALOG_VERSION;
+        let frames = matches!(
+            self.version,
+            frame::FRAME_CATALOG_VERSION | frame::FRAME_LIVENESS_CATALOG_VERSION
+        );
         if !(self.version == CATALOG_VERSION || frames)
             || frames == self.frames.is_empty()
             || !matches!(
@@ -390,12 +427,43 @@ impl FunctionCatalog {
             for id in layout
                 .slots
                 .iter()
+                .chain(layout.states.iter().flat_map(|state| &state.saved))
                 .map(|slot| slot.binding)
                 .chain(layout.states.iter().map(|state| state.yielded))
                 .chain(layout.result)
                 .chain([layout.exception])
             {
                 binding(id)?;
+            }
+            self.validate_liveness(layout)?;
+        }
+        Ok(())
+    }
+    /// Version 2 rows carry no liveness fields; version 3 rows declare a
+    /// bounded capacity that holds the saved entries of every state.
+    fn validate_liveness(&self, layout: &FrameLayout) -> Result<(), ValueAbiError> {
+        if self.version != frame::FRAME_LIVENESS_CATALOG_VERSION {
+            return if layout.liveness() || layout.states.iter().any(|s| !s.saved.is_empty()) {
+                Err(invalid_catalog())
+            } else {
+                Ok(())
+            };
+        }
+        let capacity = layout
+            .capacity
+            .map(|capacity| capacity as usize)
+            .filter(|capacity| *capacity <= frame::MAX_FRAME_BINDINGS)
+            .ok_or_else(invalid_catalog)?;
+        let entries = |slots: &[FrameSlot]| -> Result<usize, ValueAbiError> {
+            slots.iter().try_fold(0usize, |total, slot| {
+                slot.entries(self)
+                    .map(|entries| total + entries)
+                    .ok_or_else(invalid_catalog)
+            })
+        };
+        for slots in std::iter::once(&layout.slots).chain(layout.states.iter().map(|s| &s.saved)) {
+            if entries(slots)? > capacity {
+                return Err(invalid_catalog());
             }
         }
         Ok(())

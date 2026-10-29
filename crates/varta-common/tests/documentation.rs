@@ -227,6 +227,16 @@ fn limits() -> String {
             scheduler::MAX_PROMISE_SERIALS.to_string(),
             "scheduler::MAX_PROMISE_SERIALS",
         ),
+        (
+            "Unhandled-rejection reasons kept / units per field / bytes each",
+            format!(
+                "{} / {} / {}",
+                scheduler::MAX_RETAINED_REJECTION_REASONS,
+                scheduler::MAX_REJECTION_REASON_UNITS,
+                scheduler::MAX_REJECTION_REASON_BYTES
+            ),
+            "scheduler::MAX_*REJECTION_REASON*",
+        ),
     ];
     let mut lines = vec![
         "| Resource | Limit | Source constant |".to_owned(),

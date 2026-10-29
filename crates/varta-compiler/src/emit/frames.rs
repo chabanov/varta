@@ -10,7 +10,7 @@ use varta_common::function::{self as layout, frame};
 use varta_common::scheduler::PromiseState;
 
 /// Physical parameters of a resume body: `(frame:i64, completion:i32, value:i64)`.
-const FRAME_PARAM: u32 = 0;
+pub(super) const FRAME_PARAM: u32 = 0;
 const COMPLETION_PARAM: u32 = 1;
 const VALUE_PARAM: u32 = 2;
 pub(super) const RESUME_PARAMS: u32 = 3;
@@ -26,19 +26,46 @@ pub(super) struct Slot {
 pub(super) struct Layout {
     pub id: u32,
     pub function: usize,
+    /// Cell layout: every saved local. Liveness layout (v35): the parameters
+    /// the creator saves for state 0.
     pub slots: Vec<Slot>,
+    /// Liveness layout (v35 `frame_liveness`): the saved slots of state `n` at
+    /// index `n - 1`, see `frame_slots`.
+    pub states: Option<Vec<Vec<Slot>>>,
     /// Generator type id of a `function*` frame (v33).
     pub generator: Option<u32>,
 }
 impl Layout {
     /// Every physical local is saved except the state, completion and input
-    /// locals, which each resumption re-initializes from the dispatcher.
+    /// locals, which each resumption re-initializes from the dispatcher. A
+    /// liveness layout saves only the locals live across each point.
     pub(super) fn new(
         id: u32,
         function: usize,
         ir: &ir::Function,
         machine: &ir::Suspendable,
     ) -> Self {
+        let slot = |local: u32| Slot {
+            local,
+            ty: ir.locals[local as usize],
+            shared: ir.cells.contains(&local),
+        };
+        if let Some(live) = &machine.live {
+            return Self {
+                id,
+                function,
+                slots: (0..ir.params.len() as u32)
+                    .filter(|local| ir.locals[*local as usize].width() > 0)
+                    .map(slot)
+                    .collect(),
+                states: Some(
+                    live.iter()
+                        .map(|saved| saved.iter().copied().map(slot).collect())
+                        .collect(),
+                ),
+                generator: machine.generator,
+            };
+        }
         let entry: BTreeSet<u32> = [machine.state, machine.completion]
             .into_iter()
             .chain(machine.inputs.values().copied())
@@ -58,19 +85,30 @@ impl Layout {
             id,
             function,
             slots,
+            states: None,
             generator: machine.generator,
         }
     }
-    fn segments(&self) -> Vec<usize> {
+    /// Entries per segment: one per saved binding of a cell layout, the
+    /// capacity of a liveness layout.
+    pub(super) fn segments(&self) -> Vec<usize> {
+        if self.states.is_some() {
+            let capacity = self.capacity();
+            return (0..capacity)
+                .step_by(frame::SEGMENT_BINDINGS)
+                .map(|start| (capacity - start).min(frame::SEGMENT_BINDINGS))
+                .collect();
+        }
         self.slots
             .chunks(frame::SEGMENT_BINDINGS)
             .map(<[Slot]>::len)
             .collect()
     }
-    /// Every type a frame cell of this layout may hold.
+    /// Every type a frame cell or catalog slot of this layout may hold.
     pub(super) fn binding_types(&self, machine: &ir::Suspendable, result: Type) -> Vec<Type> {
         self.slots
             .iter()
+            .chain(self.states.iter().flatten().flatten())
             .map(|slot| slot.ty)
             .chain(machine.points.iter().map(|point| point.yielded))
             .chain((result != Type::Void).then_some(result))
@@ -90,22 +128,31 @@ impl Layout {
             Type::Undefined | Type::Void => frame::FrameInput::Undefined,
             _ => frame::FrameInput::Float64,
         };
-        layout::FrameLayout {
-            code: self.function as u32,
-            slots: self
-                .slots
+        let rows = |slots: &[Slot]| -> Vec<layout::FrameSlot> {
+            slots
                 .iter()
                 .map(|slot| layout::FrameSlot {
                     binding: bindings[&slot.ty],
                     shared: slot.shared,
                 })
-                .collect(),
+                .collect()
+        };
+        layout::FrameLayout {
+            code: self.function as u32,
+            slots: rows(&self.slots),
+            capacity: self.states.as_ref().map(|_| self.capacity() as u32),
             states: machine
                 .points
                 .iter()
-                .map(|point| layout::FrameState {
+                .enumerate()
+                .map(|(index, point)| layout::FrameState {
                     input: input(point.input),
                     yielded: bindings[&point.yielded],
+                    saved: self
+                        .states
+                        .as_ref()
+                        .and_then(|states| states.get(index))
+                        .map_or_else(Vec::new, |saved| rows(saved)),
                 })
                 .collect(),
             result: (result != Type::Void).then(|| bindings[&result]),
@@ -129,7 +176,7 @@ pub(super) struct Resume<'a> {
     pub machine: &'a ir::Suspendable,
 }
 
-fn word(field: u32, high: bool) -> wasm_encoder::MemArg {
+pub(super) fn word(field: u32, high: bool) -> wasm_encoder::MemArg {
     wasm_encoder::MemArg {
         offset: records::field(field).offset + if high { HIGH_WORD } else { 0 },
         ..strings::WORD
@@ -138,11 +185,19 @@ fn word(field: u32, high: bool) -> wasm_encoder::MemArg {
 fn table_end(resources: Resources) -> i32 {
     (resources.table as usize + frame::MAX_LIVE_FRAMES * abi::STRING_ROOT_SLOT_BYTES) as i32
 }
-fn binding_bytes(ty: Type) -> usize {
+pub(super) fn binding_bytes(ty: Type) -> usize {
     value::RECORD_META_BYTES + ty.width() as usize * abi::STRING_ROOT_SLOT_BYTES
 }
-fn segment_bytes(count: usize) -> usize {
+pub(super) fn segment_bytes(count: usize) -> usize {
     value::RECORD_META_BYTES + count * abi::STRING_ROOT_SLOT_BYTES
+}
+/// Canonical payload ceiling of a saved scalar's first word, if it has one.
+pub(super) fn ceiling(ty: Type) -> Option<i64> {
+    match ty.result_value().unwrap_or(ty) {
+        Type::Boolean => Some(1),
+        Type::Null | Type::Undefined | Type::Void => Some(0),
+        _ => None,
+    }
 }
 /// Generations start above zero, so zeroed memory never names a live frame.
 const GENERATION_STEP: i32 = 1;
@@ -199,7 +254,7 @@ impl<'a> Emitter<'a> {
             .ok_or_else(|| CompilerError::Internal("suspension outside a resume body".into()))
     }
     /// Push the segment pointer holding saved slot `index` of the frame in `frame`.
-    fn segment(&mut self, frame: u32, index: usize) {
+    pub(super) fn segment(&mut self, frame: u32, index: usize) {
         self.code.extend([
             I::LocalGet(frame),
             I::I32WrapI64,
@@ -209,11 +264,11 @@ impl<'a> Emitter<'a> {
             I::I32WrapI64,
         ]);
     }
-    fn entry(index: usize) -> wasm_encoder::MemArg {
+    pub(super) fn entry(index: usize) -> wasm_encoder::MemArg {
         records::field((index % frame::SEGMENT_BINDINGS) as u32)
     }
     /// Allocate a block and write its managed header; `self.temporary` holds it.
-    fn frame_block(
+    pub(super) fn frame_block(
         &mut self,
         bytes: usize,
         flags: i32,
@@ -227,7 +282,7 @@ impl<'a> Emitter<'a> {
         self.initialize_value(strings::ALLOCATED | flags, link, meta, count);
         Ok(())
     }
-    fn zero_fields(&mut self, count: usize) {
+    pub(super) fn zero_fields(&mut self, count: usize) {
         self.code.extend([
             I::LocalGet(self.temporary),
             I::I32Const(value::RECORD_META_BYTES as i32),
@@ -293,7 +348,7 @@ impl<'a> Emitter<'a> {
         }
         self.expr(value)?;
         self.store_completion(value.ty)?;
-        self.save_frame()?;
+        self.save_frame(state)?;
         if let Some(globals) = self.exceptions {
             self.code.push(I::GlobalGet(globals.pending));
             self.trap_if();
@@ -341,7 +396,7 @@ impl<'a> Emitter<'a> {
             slot(promise_fields::TRACKED)?,
             slot(promise_fields::HANDLED)?,
         );
-        self.save_frame()?;
+        self.save_frame(state)?;
         if let Some(globals) = self.exceptions {
             self.code.push(I::GlobalGet(globals.pending));
             self.trap_if();
@@ -472,8 +527,11 @@ impl<'a> Emitter<'a> {
         }
         Ok(())
     }
-    fn save_frame(&mut self) -> Result<()> {
+    fn save_frame(&mut self, state: u32) -> Result<()> {
         let resume = self.resume()?;
+        if resume.layout.states.is_some() {
+            return self.save_slots(resume.layout, state);
+        }
         for (index, slot) in resume.layout.slots.iter().enumerate() {
             if slot.shared {
                 self.segment(FRAME_PARAM, index);
@@ -507,7 +565,7 @@ impl<'a> Emitter<'a> {
     }
     /// Exact binding checks before any restored value is used: allocation,
     /// flags, reference mask, private type id, width and canonical payload.
-    fn checked_cell(&mut self, physical: u32, ty: Type) {
+    pub(super) fn checked_cell(&mut self, physical: u32, ty: Type) {
         self.managed_guard(
             physical,
             binding_bytes(ty),
@@ -516,12 +574,7 @@ impl<'a> Emitter<'a> {
         );
         self.assert_word(layout::SIGNATURE_OFFSET, self.binding_types[&ty] as i32);
         self.assert_word(layout::RESERVED_OFFSETS[0], ty.width() as i32);
-        let limit = match ty.result_value().unwrap_or(ty) {
-            Type::Boolean => Some(1),
-            Type::Null | Type::Undefined | Type::Void => Some(0),
-            _ => None,
-        };
-        if let Some(limit) = limit {
+        if let Some(limit) = ceiling(ty) {
             self.code.extend([
                 I::LocalGet(self.temporary),
                 I::I64Load(records::field(0)),
@@ -587,13 +640,20 @@ impl<'a> Emitter<'a> {
     pub(super) fn begin_resume(&mut self, function: &ir::Function) -> Result<()> {
         let resume = self.resume()?;
         self.begin_frame(function)?;
-        self.restore_frame()?;
         let machine = resume.machine;
+        if resume.layout.states.is_some() {
+            // A liveness frame restores the saved set of its target state.
+            self.restore_states(resume.layout, machine)?;
+        } else {
+            self.restore_frame()?;
+            self.code.extend([
+                I::LocalGet(FRAME_PARAM),
+                I::I32WrapI64,
+                I::I32Load(word(frame::CONTROL_FIELD, true)),
+                I::LocalSet(self.local_slots[machine.state as usize]),
+            ]);
+        }
         self.code.extend([
-            I::LocalGet(FRAME_PARAM),
-            I::I32WrapI64,
-            I::I32Load(word(frame::CONTROL_FIELD, true)),
-            I::LocalSet(self.local_slots[machine.state as usize]),
             I::LocalGet(COMPLETION_PARAM),
             I::LocalSet(self.local_slots[machine.completion as usize]),
         ]);
@@ -686,6 +746,55 @@ impl<'a> Emitter<'a> {
             self.code
                 .push(I::I64Store(records::field(frame::ENVIRONMENT_FIELD)));
         }
+        if layout.states.is_some() {
+            self.create_slots(layout)?;
+        } else {
+            self.create_cells(function, layout, &segments)?;
+        }
+        self.code
+            .extend([I::LocalGet(self.string_temporary), I::I32WrapI64]);
+        self.code.extend(next_generation(resources));
+        self.code.extend([
+            I::GlobalSet(resources.generation),
+            I::GlobalGet(resources.generation),
+            I::I32Store(word(frame::STATUS_FIELD, true)),
+        ]);
+        if layout.generator.is_some() {
+            // A generator frame belongs to its generator object: the table
+            // slot rooted it only while the creator allocated its cells. It
+            // leaves the table, so `varta_resume` can never reach it.
+            self.code.extend(release_slot(
+                resources,
+                self.temporary,
+                self.string_temporary,
+            ));
+            self.end_frame();
+            self.code
+                .extend([I::LocalGet(self.string_temporary), I::Return]);
+            return Ok(());
+        }
+        self.end_frame();
+        self.code.extend([
+            I::LocalGet(self.string_temporary),
+            I::I64Const(i64::from(u32::MAX)),
+            I::I64And,
+            I::GlobalGet(resources.generation),
+            I::I64ExtendI32U,
+            I::I64Const(i64::from(u32::BITS)),
+            I::I64Shl,
+            I::I64Or,
+            I::Return,
+        ]);
+        Ok(())
+    }
+    /// Cell layout (v33 and v34): full-mask segments of binding cells, one
+    /// frame-owned cell per unshared local and per shared parameter.
+    fn create_cells(
+        &mut self,
+        function: &ir::Function,
+        layout: &Layout,
+        segments: &[usize],
+    ) -> Result<()> {
         for (index, count) in segments.iter().copied().enumerate() {
             let bytes = segment_bytes(count);
             self.frame_block(
@@ -744,40 +853,6 @@ impl<'a> Emitter<'a> {
             self.pack_value(bytes);
             self.code.push(I::I64Store(Self::entry(index)));
         }
-        self.code
-            .extend([I::LocalGet(self.string_temporary), I::I32WrapI64]);
-        self.code.extend(next_generation(resources));
-        self.code.extend([
-            I::GlobalSet(resources.generation),
-            I::GlobalGet(resources.generation),
-            I::I32Store(word(frame::STATUS_FIELD, true)),
-        ]);
-        if layout.generator.is_some() {
-            // A generator frame belongs to its generator object: the table
-            // slot rooted it only while the creator allocated its cells. It
-            // leaves the table, so `varta_resume` can never reach it.
-            self.code.extend(release_slot(
-                resources,
-                self.temporary,
-                self.string_temporary,
-            ));
-            self.end_frame();
-            self.code
-                .extend([I::LocalGet(self.string_temporary), I::Return]);
-            return Ok(());
-        }
-        self.end_frame();
-        self.code.extend([
-            I::LocalGet(self.string_temporary),
-            I::I64Const(i64::from(u32::MAX)),
-            I::I64And,
-            I::GlobalGet(resources.generation),
-            I::I64ExtendI32U,
-            I::I64Const(i64::from(u32::BITS)),
-            I::I64Shl,
-            I::I64Or,
-            I::Return,
-        ]);
         Ok(())
     }
 }

@@ -5,25 +5,33 @@ use super::*;
 use varta_common::language::LanguageProfile;
 
 const V34: LanguageProfile = LanguageProfile::CheckedF64Utf16V34;
+/// Every program runs with the v34 cell frames and the v35 liveness frames
+/// (`frame_liveness`); both must produce the pinned Node output.
+pub(crate) const FRAME_PROFILES: [LanguageProfile; 2] = [V34, LanguageProfile::CheckedF64Utf16V35];
 
 pub(crate) fn compile(source: &str) -> Vec<u8> {
-    varta_compiler::compile_typescript_with_profile(source, V34)
+    compile_with(source, V34)
+}
+pub(crate) fn compile_with(source: &str, profile: LanguageProfile) -> Vec<u8> {
+    varta_compiler::compile_typescript_with_profile(source, profile)
         .unwrap_or_else(|e| panic!("{e}\n{source}"))
 }
 pub(crate) fn run(source: &str, expected: &[&str]) {
-    let bytes = compile(source);
-    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
-    assert_eq!(
-        VartaRuntime::new()
-            .run_wasm_bytes(&bytes, &[])
-            .unwrap_or_else(|e| panic!("{e:?}\n{source}"))
-            .lines,
-        expected
-            .iter()
-            .map(|s| format!("varta log: {s}"))
-            .collect::<Vec<_>>(),
-        "{source}"
-    );
+    for profile in FRAME_PROFILES {
+        let bytes = compile_with(source, profile);
+        wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&bytes, &[])
+                .unwrap_or_else(|e| panic!("{profile:?} {e:?}\n{source}"))
+                .lines,
+            expected
+                .iter()
+                .map(|s| format!("varta log: {s}"))
+                .collect::<Vec<_>>(),
+            "{profile:?}\n{source}"
+        );
+    }
 }
 
 /// Fuel a program consumes through its whole checkpoint (debug helper).
@@ -118,11 +126,26 @@ fn scheduler_imports_require_the_v34_host_abi_and_no_capability() {
     assert!(error.contains("unknown host import"), "{error}");
 }
 
+/// The v34 failure; the v35 liveness build must fail with the same diagnostic.
 fn failure(source: &str) -> RuntimeError {
-    let bytes = compile(source);
-    VartaRuntime::new()
-        .run_wasm_bytes(&bytes, &[])
-        .expect_err("the execution must terminate")
+    let [v34, v35] = FRAME_PROFILES.map(|profile| {
+        VartaRuntime::new()
+            .run_wasm_bytes(&compile_with(source, profile), &[])
+            .expect_err("the execution must terminate")
+    });
+    // Wasm backtraces name code offsets, which differ between the layouts.
+    let message = |error: &RuntimeError| {
+        let text = error.to_string();
+        const FRAME: &str = "<wasm function";
+        match text.rfind(FRAME) {
+            Some(at) => text[at..]
+                .split_once('>')
+                .map_or(text.clone(), |(_, rest)| rest.to_owned()),
+            None => text,
+        }
+    };
+    assert_eq!(message(&v34), message(&v35), "{source}");
+    v34
 }
 
 /// Node 24 terminates with `ERR_UNHANDLED_REJECTION` for the reason "second",
@@ -164,6 +187,90 @@ export function main(): void {
         error
             .to_string()
             .starts_with("unhandled promise rejection: RangeError: \"main failed\""),
+        "{error}"
+    );
+}
+
+/// Varta-specific resource bounds: a reason is copied out of guest memory
+/// only up to `MAX_REJECTION_REASON_UNITS` per string field and the
+/// diagnostic marks the cut, however long the rejected string is.
+#[test]
+fn unhandled_rejection_reasons_are_copied_and_reported_within_bounds() {
+    use varta_common::scheduler::{
+        MAX_REJECTION_REASON_BYTES, MAX_REJECTION_REASON_UNITS, REJECTION_TRUNCATION_MARKER,
+        RejectionReason, SchedulerError,
+    };
+    for source in [
+        "export function main(): void {\n  Promise.reject<number>(\"x\".repeat(200000));\n}",
+        "export async function main(): Promise<void> {\n  await null;\n  throw new Error(\"y\".repeat(200000));\n}",
+    ] {
+        let error = failure(source);
+        let RuntimeError::Scheduler(SchedulerError::UnhandledRejection {
+            count: 1,
+            reason: RejectionReason::Retained { text, truncated },
+        }) = &error
+        else {
+            panic!("{error:?}");
+        };
+        assert!(*truncated, "{text}");
+        assert!(text.len() <= MAX_REJECTION_REASON_BYTES);
+        // The copied prefix is exactly the unit bound.
+        let cut = text.chars().filter(|c| matches!(c, 'x' | 'y')).count();
+        assert_eq!(cut, MAX_REJECTION_REASON_UNITS, "{text}");
+        let message = error.to_string();
+        assert!(message.contains(REJECTION_TRUNCATION_MARKER), "{message}");
+        assert!(message.len() < 2 * MAX_REJECTION_REASON_BYTES, "{message}");
+    }
+}
+
+/// Varta-specific: only the first `MAX_RETAINED_REJECTION_REASONS`
+/// outstanding reports keep their reason. Here every kept report is handled
+/// by a later job, so the earliest remaining report is named without its
+/// reason; the count and the termination are unchanged.
+#[test]
+fn reports_beyond_the_retained_reasons_keep_only_their_tracking() {
+    use varta_common::scheduler::{
+        MAX_RETAINED_REJECTION_REASONS, REJECTION_NOT_RETAINED, RejectionReason, SchedulerError,
+    };
+    let total = MAX_RETAINED_REJECTION_REASONS + 6;
+    let left = 4;
+    let source = format!(
+        "function spread(n: number): void {{
+  const p = Promise.reject<number>(n);
+  if (n > 1) {{
+    spread(n - 1);
+  }}
+  if (n > {left}) {{
+    Promise.resolve(0).then(() => {{
+      p.catch(() => 0);
+    }});
+  }}
+}}
+export function main(): void {{
+  spread({total});
+}}"
+    );
+    let error = failure(&source);
+    assert!(
+        matches!(
+            &error,
+            RuntimeError::Scheduler(SchedulerError::UnhandledRejection {
+                count,
+                reason: RejectionReason::NotRetained,
+            }) if *count == left as u64
+        ),
+        "{error:?}"
+    );
+    assert!(
+        error.to_string().contains(REJECTION_NOT_RETAINED),
+        "{error}"
+    );
+    // With fewer reports than the bound, the earliest keeps its reason.
+    let error = failure(&source.replace(&format!("spread({total})"), "spread(6)"));
+    assert!(
+        error
+            .to_string()
+            .starts_with("unhandled promise rejection: 4 (4 rejected promise(s)"),
         "{error}"
     );
 }

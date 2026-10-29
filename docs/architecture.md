@@ -5984,9 +5984,10 @@ guest effect. The runtime reports a failure as the typed
 `RuntimeError::Frames`; artifact I/O reports it as an invalid artifact.
 
 - **Catalog reader.** A `resumable_frames()` profile reads catalog versions 1
-  and 2. Every other profile keeps the version 1 reader, which never accepts
-  version 2; a version 2 catalog under such a profile fails as a profile that
-  does not admit resumable frames. Duplicate catalog sections, unknown fields,
+  and 2 (v35, a `frame_liveness()` profile, reads versions 1 and 3 instead, see
+  [frame liveness](#frame-liveness-frame_liveness)). Every other profile keeps
+  the version 1 reader, which never accepts versions 2 or 3; a frame catalog
+  under such a profile fails as a profile that does not admit resumable frames. Duplicate catalog sections, unknown fields,
   out-of-range binding or type ids and the frame budgets (`MAX_FRAME_BINDINGS`
   slots and `MAX_SUSPENSION_STATES` states per layout, unique resume codes below
   `MAX_USER_FUNCTIONS`) fail in the reader. The catalog value version must still
@@ -6542,17 +6543,14 @@ trap before any effect.
   budget exists to bound effects and host work per call, which these imports
   do not have — they reach no capability, OS call or guest-controlled host
   allocation beyond the named scheduler tables, and each is a constant or
-  logarithmic table update (`promise_unhandled` additionally copies one
-  thrown value with the bounded uncaught-exception readers). Every await loop
+  logarithmic table update (`promise_unhandled` additionally copies a bounded
+  prefix of one thrown value, see below). Every await loop
   stays bounded without them: each iteration resumes guest code through
   `varta_resume`, which consumes fuel; epoch interruption enforces the
   deadline inside guest code and each import checks it again; and the
-  per-execution job count is bounded below. One cost is bounded only
-  indirectly: each unhandled report retains its rendered reason (a String
-  reason up to the 1 MiB value limit) in host memory until it is withdrawn,
-  so the host memory held by reports is limited by the tracking-id bound and
-  by the fuel each rejection costs (on the order of a few hundred units per
-  `Promise.reject`), not by the guest memory limit. Held tokens (queue and
+  per-execution job count is bounded below. The host memory held by
+  unhandled reports is bounded by named constants, independently of fuel
+  and guest input (see the bullet below). Held tokens (queue and
   reactions together), jobs per
   execution, and serials and tracking ids per execution are bounded by the
   scheduler rows of the [limits table](#resource-limits); the live-frame table
@@ -6560,12 +6558,27 @@ trap before any effect.
   deadline terminates the execution; a fatal trap or exhaustion inside a job
   is never converted into a rejection.
 - **Unhandled rejections.** Rejecting a promise that has no handler reports
-  its reason, which the runtime copies out of guest memory at once with the
+  its reason, which the runtime validates and renders at once with the
   uncaught-exception readers; adding a handler later in the checkpoint
   withdraws the report (HostPromiseRejectionTracker). If reports remain after
   the checkpoint, the execution terminates with
   `SchedulerError::UnhandledRejection`, naming the earliest remaining reason
   and the count; the CLI exits nonzero, as Node does.
+- **Bounded reports.** The readers copy at most
+  `MAX_REJECTION_REASON_UNITS` UTF-16 code units of each string field of a
+  reason (a String reason, an Error message, a class instance's `name` and
+  `message`; a BigInt is rendered from its own bounded payload) and the
+  rendered text keeps at most `MAX_REJECTION_REASON_BYTES` bytes; a cut
+  reason ends with `REJECTION_TRUNCATION_MARKER` (` [reason truncated]`) in
+  the diagnostic. At most `MAX_RETAINED_REJECTION_REASONS` outstanding
+  reports keep their rendered reason; every report keeps one tracking bit
+  per issued id (at most `MAX_PROMISE_SERIALS` bits), so withdrawal and the
+  count stay exact. When the earliest remaining report was made while the
+  retained reasons were full, the diagnostic names it as
+  `<reason not retained>`. These bounds change no guest-observable behaviour
+  (the same reports are made and withdrawn, and the same executions
+  terminate), only the diagnostic text, so they apply to every scheduler
+  profile (v34 and v35). Values are in the [limits table](#resource-limits).
 - **Entry points.** Only `main` gets a checkpoint. Tool and HTTP contracts are
   rejected in every binary64 profile, so async tool handlers and HTTP adapters
   cannot be declared; a request-scoped isolate with its own checkpoint is the
@@ -6692,7 +6705,8 @@ maximum). Each ABI is bumped at most once per batch: the first stream that needs
 it owns the bump and the others rebase onto it. V34 and earlier profiles keep
 their host ABI, value ABI and layouts.
 
-Seven selectors gate the batch's work streams, and all admit nothing yet:
+Seven selectors gate the batch's work streams; `frame_liveness()` is implemented
+and the others admit nothing yet:
 
 - Web stream: `web_headers()` (an engine-provided typed `Headers` class,
   implemented in the guest and requiring no capability) and `abort_signals()`
@@ -6712,8 +6726,102 @@ Seven selectors gate the batch's work streams, and all admit nothing yet:
   for v35 only).
 
 Until a stream adds its subsection here, a v35 module compiles and runs exactly
-like a v34 module apart from its declared profile, and production budgets of
-every profile are unchanged.
+like a v34 module apart from its declared profile and the
+[frame liveness](#frame-liveness-frame_liveness) layout below, and production
+budgets of every profile are unchanged.
+
+#### Frame liveness (`frame_liveness`)
+
+Every frame-bearing v35 module (generators, async bodies, promise jobs and
+the test hook's frames) uses liveness layouts instead of the cell layouts of
+the [suspension foundation](#suspension-foundation-k44-block-1). No source
+form, host import, value tag or ABI changes; guest-observable behaviour is
+identical (the generator, promise and async suites run under both v33/v34 and
+v35 against the same pinned Node logs). Earlier profiles keep the cell
+layout, and their modules and catalogs are byte-identical to those produced
+before this change (pinned by module digests in `varta-runtime`
+`frame_liveness_tests`).
+
+- **Saved sets.** After normalization and state numbering, a backward
+  dataflow analysis over the structured body computes, for each suspension
+  point, the locals that may be read after resumption before they are
+  written: through the normal continuation, the exception continuation (a
+  `Throw` completion is raised at the point, so the innermost handler's or
+  finalizer's live-in is included) and the return continuation (a `Return`
+  completion runs enclosing finalizers). Loops are iterated to a fixed
+  point; `break`, `continue` and labelled branches reach their target's
+  live-in, through every enclosing finalizer. The analysis only
+  over-approximates: a statement-level `Init`/`Set` of an unshared local is
+  the only kill; a write inside an expression is a use; every statement may
+  throw; a finalizer may continue to any enclosing target and keeps its
+  completion, exception and result locals live; a closure-shared local is
+  never killed and every mention of it is a use, so its closure cell is
+  always the saved binding. A local mentioned only inside one statement
+  operand (call, value-block or helper scratch) is never live across a point,
+  because operands are evaluated whole after normalization. The state
+  machine adds the hidden locals its resumption path reads itself: the
+  selected case of a suspending `switch` and the kept completion of a
+  suspending finalizer, for the states they cover. State 0 saves the
+  parameters the creator binds.
+- **Segments.** A liveness frame keeps the frame envelope and its segment
+  table (kind 1) and holds saved values directly in segments of kind
+  `FRAME_SLOT_SEGMENT_KIND` (3), at most 32 entries each and
+  `MAX_FRAME_SEGMENTS` per frame. A state's saved locals occupy entries from
+  zero in local order: one entry per one-slot value or closure cell, two for
+  a two-slot value (its second entry is the `u32` status word). States reuse
+  the same entries, so the frame holds the widest state, and no frame cell is
+  allocated for an unshared value. Shared parameters still get a closure
+  cell from the creator.
+- **Exact GC maps.** A segment's edge mask is the GC map of the state the
+  frame is suspended at: the bits of the entries holding a managed reference
+  (a handle or a closure cell). Saving stores the entries, then the masks;
+  resumption validates and restores the target state's entries and clears
+  the masks before the body runs, so a running or completed frame retains
+  nothing through its segments (only its completion cell), and dead values of
+  other states are never traced. Nothing allocates between storing entries and
+  publishing or clearing masks. The creator publishes the state-0 map before
+  it allocates any shared parameter's cell.
+- **Restoration checks.** The resume body selects the target state's saved
+  set with one `br_table`; any other state traps. Before using an entry it
+  checks every segment the state touches: handle length, allocation bounds,
+  flags, kind, entry count and an edge mask equal to that state's map. Saved
+  Booleans must be 0 or 1, `null`/`undefined` 0, status words below 2^32, and
+  a restored closure cell passes the binding-cell checks of the cell layout.
+- **Budgets.** `MAX_FRAME_BINDINGS` bounds the entries of the widest state
+  (parameters included) rather than every local of the function; the state,
+  generator-type and live-frame budgets are unchanged.
+- **Catalog version 3.** Liveness rows (`frame::FRAME_LIVENESS_CATALOG_VERSION`)
+  add `capacity` (entries the segments hold, at most `MAX_FRAME_BINDINGS` and
+  at least every state's entries) and, per state, `saved` (the saved slots in
+  entry order, each a binding id and whether it is a shared cell); `slots`
+  lists the creator's state-0 parameters. `FunctionCatalog::from_liveness_bytes`
+  reads versions 1 and 3 only, `from_frame_bytes` versions 1 and 2 only, and a
+  version 2 row with liveness fields is invalid. Runtime preflight and
+  artifact validation pick the reader by profile
+  (`admission::frame_catalog_version`): v35 requires version 3 for frame
+  layouts, v33 and v34 require version 2, and earlier profiles refuse both.
+  A v35 module relabelled as v33/v34, or a v34 module relabelled as v35, fails
+  with `FrameAdmissionError::FrameLayoutVersion`; relabelled as v32 it fails
+  with `ProfileForbids(LivenessCatalog)`. Runtimes that predate liveness
+  frames read v35 catalogs with the version 2 reader and reject version 3
+  before any guest effect, so no host ABI bump is needed: the runtime never
+  interprets frame memory, and the dispatcher, resume-body and creator
+  signatures are unchanged.
+- **Completed frames.** A completed frame leaves the live-frame table as
+  before and, with its masks cleared, retains only its completion cell until
+  it becomes unreachable. A scheduler-owned retention policy beyond that is
+  still pending.
+- **Measured costs.** Guest fuel under the production budgets, from
+  `varta-runtime` `frame_liveness_tests` (marginal cost of ten more units;
+  deterministic, not wall-clock):
+
+  | Workload | v34 cell frames | v35 liveness frames |
+  | --- | --- | --- |
+  | `await i` in a loop, per `await` | 3002 | 1637 |
+  | string loop with an `await`, per iteration | 6395 | 3005 |
+  | `yield` in a `for...of` loop, per `yield` | 1805 | 1109 |
+  | creating and suspending a generator holding two strings | 9634 | 4751 |
+  | such generators suspended at once within 1M fuel | 57 | 141 |
 
 ## Local modules
 
@@ -7377,6 +7485,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Pending microtask continuations (v34) | 64 | `scheduler::MAX_PENDING_CONTINUATIONS` |
 | Microtasks per execution (v34) | 65536 | `scheduler::MAX_EXECUTION_JOBS` |
 | Promise serials / rejection ids per execution (v34) | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
+| Unhandled-rejection reasons kept / units per field / bytes each | 16 / 256 / 2048 | `scheduler::MAX_*REJECTION_REASON*` |
 <!-- generated:limits:end -->
 
 Limits that are derived from several constants or enforced outside `abi`:
@@ -7723,7 +7832,9 @@ and canonical Boolean/null/undefined payloads.
 input class and yielded binding, result and Return-input class, and exception
 binding. `FunctionCatalog::from_bytes` still accepts only version 1 and rejects
 version 2; `from_frame_bytes` reads both. Runtime preflight selects the reader
-by profile, so only v33 reads version 2.
+by profile, so only v33 and v34 read version 2; v35 frames use liveness
+layouts and catalog version 3 instead
+([frame liveness](#frame-liveness-frame_liveness)).
 Modules without frames keep emitting version 1 unchanged. Test builds also export
 frame creators (`varta.test.frame.<layout>`) and the collector
 (`varta.test.collect`); release builds export only `varta_resume`.

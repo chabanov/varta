@@ -8,6 +8,7 @@ mod errors;
 mod exceptions;
 mod expr;
 mod finally;
+mod frame_slots;
 mod frames;
 mod function_catalog;
 mod functions;

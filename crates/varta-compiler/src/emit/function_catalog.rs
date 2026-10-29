@@ -156,9 +156,15 @@ pub(super) fn build(
         }
     }
     FunctionCatalog {
-        // Frame layouts exist only in the versioned frame catalog.
+        // Frame layouts exist only in the versioned frame catalogs: cell
+        // layouts in version 2, liveness layouts (v35) in version 3.
         version: if frames.is_empty() {
             varta_common::function::CATALOG_VERSION
+        } else if frames
+            .iter()
+            .any(varta_common::function::FrameLayout::liveness)
+        {
+            varta_common::function::frame::FRAME_LIVENESS_CATALOG_VERSION
         } else {
             varta_common::function::frame::FRAME_CATALOG_VERSION
         },

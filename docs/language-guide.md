@@ -4139,7 +4139,11 @@ export function main(): void {
 argument or the context (`Promise.reject<number>(e)`). A rejection that still
 has no handler when the microtasks are done terminates the program with
 `unhandled promise rejection: <reason>`; a handler attached by a later
-microtask is in time.
+microtask is in time. A long reason is cut and ends with `[reason truncated]`.
+
+Under v35 the same programs keep only the values live across each `await` or
+`yield` in their suspended frames, so a suspension costs about half the fuel
+it costs under v34; nothing changes in the source.
 
 A promise lives in locals, parameters, results and closures and compares by
 identity; arrays, records, unions, `JSON.stringify`, `console.log` and

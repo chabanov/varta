@@ -442,9 +442,11 @@ under value15 descriptors and recursive values may be held in frames
 (`varta-runtime` `v34_cross_stream_tests`). Pending: `JSON.parse` and
 `varta.json.parse<unknown>` producing `unknown` (they need an internal
 recursive JSON value type), narrowing `unknown` to dictionaries by
-`typeof`/`in`, `await` inside dictionary reads and writes (an intrinsic value
-block), and a decision on bounding the host memory retained by unhandled
-rejection reports.
+`typeof`/`in` and `await` inside dictionary reads and writes (an intrinsic value
+block). The host memory retained by unhandled rejection reports is now bounded
+by named constants for every scheduler profile (decided on the `v35-frames`
+branch: it changes only the diagnostic text, see
+[bounded reports](architecture.md#microtask-scheduler-promises)).
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
@@ -469,7 +471,8 @@ ABI/layout 15 with v34; the declared profile name alone makes runtimes that do
 not list v35 reject its modules. A stream that adds a host import or a value tag
 bumps the corresponding ABI for v35 itself
 ([contract](architecture.md#checked-f64-utf16-v35--pilot-batch-web-types-mixed-records-async-methods-and-frame-liveness)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; `frame_liveness()` is implemented and the others
+admit nothing yet.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
@@ -479,7 +482,7 @@ All selectors are registered and admit nothing yet.
 | `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Registered, admits nothing |
 | `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Registered, admits nothing |
 | `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Registered, admits nothing |
-| `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Registered, admits nothing |
+| `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Implemented on `v35-frames` ([contract](architecture.md#frame-liveness-frame_liveness)): per-state saved sets, direct liveness segments with exact per-state GC maps, frame catalog version 3; about half the fuel per `await`/`yield` of v34 |
 
 ### Deferred external validation scenarios
 
@@ -1727,8 +1730,21 @@ artifact execution and a documented contract in [architecture.md](architecture.m
      **implemented** with step 2; `switch` case tests, `do-while` conditions
      and the remaining intrinsic value blocks stay rejected by name;
    - host-supplied reference inputs;
-   - liveness-based frame slots;
-   - a scheduler-owned retention policy for completed frames.
+   - liveness-based frame slots: **implemented** under v35 (selector
+     `frame_liveness`, branch `v35-frames`,
+     [contract](architecture.md#frame-liveness-frame_liveness)): each point
+     saves only the locals live across it, directly in liveness segments
+     whose edge masks are the exact GC map of the suspended state, described
+     by frame catalog version 3 and admitted for v35 only; v33/v34 keep their
+     byte-identical cell layout. Measured with production budgets: about 1.6k
+     instead of 3.0k fuel per `await`, 1.1k instead of 1.8k per `yield`, and
+     141 instead of 57 suspended generators per execution (`varta-runtime`
+     `frame_liveness_tests`);
+   - a scheduler-owned retention policy for completed frames: partly
+     addressed by liveness frames, which clear their GC maps on resumption so
+     a completed frame retains only its completion cell; an explicit policy
+     (for example releasing that cell once the scheduler consumed it) is
+     still open.
 2. Synchronous generators: `yield`, resumption and `finally`. Exit: `next`/`throw`/
    `return`, re-entry rejection and `finally` ordering match ECMAScript in
    differential tests against Node. **Implemented** in v33 (selector

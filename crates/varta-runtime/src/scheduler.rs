@@ -11,10 +11,10 @@
 use crate::{RuntimeContext, RuntimeError, exceptions::Channel};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use varta_common::HostOperation;
-use varta_common::exceptions::ThrownValue;
 use varta_common::function::frame::{self, Completion, Outcome};
 use varta_common::scheduler::{
-    MAX_EXECUTION_JOBS, MAX_PENDING_CONTINUATIONS, MAX_PROMISE_SERIALS, SchedulerError,
+    MAX_EXECUTION_JOBS, MAX_PENDING_CONTINUATIONS, MAX_PROMISE_SERIALS, MAX_REJECTION_REASON_UNITS,
+    MAX_RETAINED_REJECTION_REASONS, RejectionReason, SchedulerError,
 };
 use wasmtime::{Caller, Extern, Instance, Linker, Store};
 
@@ -28,10 +28,16 @@ pub(crate) struct Scheduler {
     held: BTreeSet<i64>,
     next_serial: u64,
     dispatched: u64,
-    /// Rejections without a handler by tracking id, with their rendered reason.
-    unhandled: BTreeMap<u64, ThrownValue>,
+    /// Rejections without a handler: one bit per tracking id issued, so the
+    /// bookkeeping never exceeds `MAX_PROMISE_SERIALS` bits.
+    outstanding: Vec<u64>,
+    unhandled: u64,
+    /// Rendered reasons of at most `MAX_RETAINED_REJECTION_REASONS`
+    /// outstanding reports, each bounded by the `RejectionReason` limits.
+    reasons: BTreeMap<u64, RejectionReason>,
     next_tracking: u64,
 }
+const TRACKING_WORD_BITS: u64 = u64::BITS as u64;
 
 /// A guest serial must be zero or a nonnegative integer the runtime issued.
 fn serial(value: f64, issued: u64) -> Result<u64, SchedulerError> {
@@ -92,20 +98,53 @@ impl Scheduler {
         self.queue.push_back(token);
         Ok(())
     }
-    pub(crate) fn unhandled(&mut self, reason: ThrownValue) -> Result<f64, SchedulerError> {
+    /// Track a rejection without a handler. Its reason is kept only while
+    /// fewer than `MAX_RETAINED_REJECTION_REASONS` reasons are kept.
+    pub(crate) fn unhandled(&mut self, reason: RejectionReason) -> Result<f64, SchedulerError> {
         if self.next_tracking >= MAX_PROMISE_SERIALS {
             return Err(SchedulerError::SerialBudget);
         }
         self.next_tracking += 1;
-        self.unhandled.insert(self.next_tracking, reason);
-        Ok(self.next_tracking as f64)
+        let id = self.next_tracking;
+        let (word, bit) = Self::tracking(id);
+        if self.outstanding.len() <= word {
+            self.outstanding.resize(word + 1, 0);
+        }
+        self.outstanding[word] |= bit;
+        self.unhandled += 1;
+        if self.reasons.len() < MAX_RETAINED_REJECTION_REASONS {
+            self.reasons.insert(id, reason);
+        }
+        Ok(id as f64)
+    }
+    /// Whether the next report's rendered reason would be kept.
+    pub(crate) fn retains_reason(&self) -> bool {
+        self.reasons.len() < MAX_RETAINED_REJECTION_REASONS
     }
     pub(crate) fn handled(&mut self, value: f64) -> Result<(), SchedulerError> {
         let id = serial(value, self.next_tracking)?;
-        self.unhandled
-            .remove(&id)
-            .map(|_| ())
-            .ok_or(SchedulerError::UnknownSerial)
+        let (word, bit) = Self::tracking(id);
+        match self.outstanding.get_mut(word) {
+            Some(bits) if *bits & bit != 0 => *bits &= !bit,
+            _ => return Err(SchedulerError::UnknownSerial),
+        }
+        self.unhandled -= 1;
+        self.reasons.remove(&id);
+        Ok(())
+    }
+    fn tracking(id: u64) -> (usize, u64) {
+        (
+            (id / TRACKING_WORD_BITS) as usize,
+            1 << (id % TRACKING_WORD_BITS),
+        )
+    }
+    /// The earliest outstanding tracking id.
+    fn earliest(&self) -> Option<u64> {
+        self.outstanding
+            .iter()
+            .enumerate()
+            .find(|(_, bits)| **bits != 0)
+            .map(|(word, bits)| word as u64 * TRACKING_WORD_BITS + u64::from(bits.trailing_zeros()))
     }
     /// The next microtask, counted against the per-execution job budget.
     pub(crate) fn next(&mut self) -> Result<Option<i64>, SchedulerError> {
@@ -121,10 +160,14 @@ impl Scheduler {
     }
     /// The termination diagnostic for rejections still without a handler.
     pub(crate) fn unhandled_rejection(&self) -> Option<SchedulerError> {
-        let (_, reason) = self.unhandled.first_key_value()?;
+        let earliest = self.earliest()?;
         Some(SchedulerError::UnhandledRejection {
-            count: self.unhandled.len() as u64,
-            reason: reason.clone(),
+            count: self.unhandled,
+            reason: self
+                .reasons
+                .get(&earliest)
+                .cloned()
+                .unwrap_or(RejectionReason::NotRetained),
         })
     }
 }
@@ -177,21 +220,27 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         HostOperation::PromiseUnhandled.name(),
         |mut caller: Caller<'_, RuntimeContext>, reason: i64| -> Result<f64, wasmtime::Error> {
             deadline(caller.data())?;
-            // Render the reason now, with the uncaught-exception readers, so the
-            // diagnostic never needs a guest reference later.
+            // Validate and render the reason now, with the uncaught-exception
+            // readers bounded per string field, so the diagnostic never needs a
+            // guest reference later and no host copy grows with guest text.
             let channel =
                 Channel::detect(|name| matches!(caller.get_export(name), Some(Extern::Global(_))));
             let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
                 return Err(wasmtime::Error::msg("missing exception memory"));
             };
-            let rendered = channel
-                .render(memory.data(&caller), reason as u64)
+            let (value, truncated) = channel
+                .render_bounded(
+                    memory.data(&caller),
+                    reason as u64,
+                    MAX_REJECTION_REASON_UNITS,
+                )
                 .map_err(|error| wasmtime::Error::msg(error.to_string()))?;
-            caller
-                .data_mut()
-                .scheduler
-                .unhandled(rendered)
-                .map_err(fatal)
+            let reason = if caller.data().scheduler.retains_reason() {
+                RejectionReason::render(&value, truncated)
+            } else {
+                RejectionReason::NotRetained
+            };
+            caller.data_mut().scheduler.unhandled(reason).map_err(fatal)
         },
     )?;
     linker.func_wrap(
@@ -243,6 +292,7 @@ pub(crate) fn checkpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use varta_common::exceptions::ThrownValue;
 
     #[test]
     fn reactions_queue_in_registration_order_and_serials_are_checked() {
@@ -298,25 +348,84 @@ mod tests {
         scheduler.enqueue(5).unwrap();
         assert_eq!(scheduler.next(), Err(SchedulerError::JobBudget));
         let mut tracking = Scheduler::default();
-        let id = tracking
-            .unhandled(ThrownValue::Number(1.0f64.to_bits()))
-            .unwrap();
-        tracking.unhandled(ThrownValue::Null).unwrap();
-        assert!(matches!(
+        let number = RejectionReason::render(&ThrownValue::Number(1.0f64.to_bits()), false);
+        let id = tracking.unhandled(number.clone()).unwrap();
+        let null = RejectionReason::render(&ThrownValue::Null, false);
+        tracking.unhandled(null.clone()).unwrap();
+        assert_eq!(
             tracking.unhandled_rejection(),
             Some(SchedulerError::UnhandledRejection {
                 count: 2,
-                reason: ThrownValue::Number(_)
+                reason: number
             })
-        ));
+        );
         tracking.handled(id).unwrap();
         assert_eq!(tracking.handled(id), Err(SchedulerError::UnknownSerial));
-        assert!(matches!(
+        assert_eq!(
             tracking.unhandled_rejection(),
             Some(SchedulerError::UnhandledRejection {
                 count: 1,
-                reason: ThrownValue::Null
+                reason: null
+            })
+        );
+        // Ids never issued and ids beyond the tracked words are unknown.
+        assert_eq!(tracking.handled(5.0), Err(SchedulerError::UnknownSerial));
+    }
+
+    /// Host memory held by unhandled reports is bounded by count and bytes:
+    /// at most `MAX_RETAINED_REJECTION_REASONS` rendered reasons, and one
+    /// tracking bit per id for every other report.
+    #[test]
+    fn unhandled_reports_retain_bounded_reasons() {
+        let mut scheduler = Scheduler::default();
+        let reason =
+            |n: u32| RejectionReason::render(&ThrownValue::Number(f64::from(n).to_bits()), false);
+        let reports = (MAX_RETAINED_REJECTION_REASONS * 4) as u32;
+        let ids: Vec<f64> = (0..reports)
+            .map(|n| {
+                let kept = scheduler.retains_reason();
+                let reason = if kept {
+                    reason(n)
+                } else {
+                    RejectionReason::NotRetained
+                };
+                scheduler.unhandled(reason).unwrap()
+            })
+            .collect();
+        assert_eq!(scheduler.reasons.len(), MAX_RETAINED_REJECTION_REASONS);
+        assert_eq!(scheduler.unhandled, u64::from(reports));
+        assert_eq!(
+            scheduler.outstanding.len(),
+            (u64::from(reports) / TRACKING_WORD_BITS + 1) as usize
+        );
+        // Withdrawing a kept report frees room for a later one.
+        scheduler.handled(ids[1]).unwrap();
+        assert!(scheduler.retains_reason());
+        // The earliest remaining report is still named with its reason.
+        let Some(SchedulerError::UnhandledRejection {
+            count,
+            reason: first,
+        }) = scheduler.unhandled_rejection()
+        else {
+            panic!("unhandled");
+        };
+        assert_eq!((count, first), (u64::from(reports) - 1, reason(0)));
+        // Once every kept report is withdrawn, the earliest remaining one has
+        // only its tracking bit.
+        for id in &ids[..MAX_RETAINED_REJECTION_REASONS] {
+            let _ = scheduler.handled(*id);
+        }
+        assert!(matches!(
+            scheduler.unhandled_rejection(),
+            Some(SchedulerError::UnhandledRejection {
+                reason: RejectionReason::NotRetained,
+                ..
             })
         ));
+        for id in &ids[MAX_RETAINED_REJECTION_REASONS..] {
+            scheduler.handled(*id).unwrap();
+        }
+        assert_eq!(scheduler.unhandled_rejection(), None);
+        assert!(scheduler.reasons.is_empty());
     }
 }
