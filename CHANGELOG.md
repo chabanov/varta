@@ -85,6 +85,12 @@ in [conformance/README.md](conformance/README.md).
     `stack`, JSON serialization of instances and `Error`-annotated instances
     remain rejected.
 
+- Opt-in v33 (suspension and generators, in development) is registered. It
+  inherits every v32 feature and declares a new host ABI, so runtimes without
+  frame admission reject its modules; the value ABI, exception channel and JSON
+  selectors are those of v32. Its `resumable_frames` and `generators` selectors
+  admit nothing yet.
+
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`
   and `export type { … }`. The project loader resolves `./x.js` specifiers to the

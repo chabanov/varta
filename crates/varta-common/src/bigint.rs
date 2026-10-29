@@ -357,6 +357,6 @@ mod tests {
         assert!(value::ValueKind::BigInt.supported_by(value::BIGINT_VALUE_VERSION));
         assert!(value::supported_version(13));
         assert!(abi::supported(27));
-        assert_eq!(crate::language::SUPPORTED_PROFILES.len(), 35);
+        assert_eq!(crate::language::SUPPORTED_PROFILES.len(), 36);
     }
 }

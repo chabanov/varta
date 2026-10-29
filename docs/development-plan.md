@@ -1434,6 +1434,14 @@ implemented. Each increment still needs its own versioned contract in
 [architecture.md](architecture.md), positive/negative and resource tests and the
 normal gates before source admission.
 
+**Profile v33 (in development).** Runtime admission of block 1 and step 2
+share profile `checked-f64-utf16-v33`, registered with its own host ABI so
+older runtimes reject the `varta_resume` export; the value ABI stays at the v32
+version until the generators stream decides on a value tag. Its selectors
+`resumable_frames()` (step 1 runtime admission) and `generators()` (step 2)
+admit nothing yet; the two streams build on them in parallel
+([contract](architecture.md#checked-f64-utf16-v33--suspension-and-generators)).
+
 One suspension/resumption mechanism serves generators, async functions and async
 generators. The event loop orders work, Promise holds a future result, and
 async/await and generators compile to resumable state machines. Suspension never
@@ -1625,10 +1633,10 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    are in `varta-compiler` `suspension_tests`. Still open for this block:
    - runtime admission: a new profile and host ABI that declare the
      `varta_resume` export and the frame catalog, and preflight validation of
-     both. Until then the runtime surface stays test-only. Open decision: admit
-     it in its own profile after v32 together with step 2 (the first source
-     syntax), rather than adding a runtime surface to the v32 pilot batch that
-     no source can reach.
+     both. Until then the runtime surface stays test-only. Decided with the
+     project author on 2026-10-29: admit it in its own profile v33 together
+     with step 2 (the first source syntax), rather than adding a runtime
+     surface to the v32 pilot batch that no source can reach.
    - suspension inside `catch`/`finally` bodies, `switch` cases, `do-while`
      conditions and the remaining intrinsic value blocks;
    - host-supplied reference inputs;

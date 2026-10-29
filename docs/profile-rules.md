@@ -2025,3 +2025,15 @@ No profile admits suspension. Contract:
   Uncaught exceptions become the frame completion; traps stay fatal.
 - Modules without suspension points must not change: no frame flag in the
   collector, catalog version 1, no `varta_resume` export.
+
+## Profile v33 (in development)
+
+Inherit v32 under checked-f64-utf16-v33 with value13/schema13, exception channel
+v5 and the v32 JSON selectors, but its own host ABI
+(`abi::RESUMABLE_FRAMES_VERSION`); never map another profile to that ABI. Two
+selectors gate the K4.4 streams: `resumable_frames` (runtime admission of
+frames, frame catalog v2 in preflight and the `varta_resume` export) and
+`generators` (`function*`, `yield`, `next`/`throw`/`return`). Both admit nothing
+yet. Gate every admission on its own selector, keep v32 and earlier profiles
+frozen (no `varta_resume`, catalog v1 only in preflight), and add each stream's
+rules under its own heading here. A new value tag needs a new value ABI.

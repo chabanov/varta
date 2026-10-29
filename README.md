@@ -133,6 +133,7 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v30` | Property deletion, `Object.entries`/`is`/`assign`, String own keys |
 | `checked-f64-utf16-v31` | Named interface/alias types, type-only imports/exports, `.js` specifiers |
 | `checked-f64-utf16-v32` | Pilot batch (integration, unreleased): module constants and `as const`, literal types, classes, re-exports and `export *`, template literals, default exports, interface extends and merging, generics, Error subclasses |
+| `checked-f64-utf16-v33` | Suspension frames and sync generators (in development) |
 <!-- generated:profile-index:end -->
 
 ## Commands

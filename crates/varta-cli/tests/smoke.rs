@@ -11224,6 +11224,85 @@ fn template_literals_v32_run_modules_and_source_free_artifacts() {
 }
 
 #[test]
+fn suspension_profile_v33_declares_its_host_abi_through_both_binaries() {
+    use varta_common::abi;
+    let project = RegressionProject::new(
+        "import {label} from './api.ts';export function main():void{console.log(label(33));}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/api.ts"),
+        "class Probe{n:number;constructor(n:number){this.n=n;}}export function label(n:number):string{return `v${new Probe(n).n}`;}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v33");
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        let inspect = project.command(&["inspect", artifact, "--json"]);
+        assert!(inspect.status.success(), "{}", combined(&inspect));
+        let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+        assert_eq!(info["language"]["profile"], "checked-f64-utf16-v33");
+        assert_eq!(info["abiVersion"], abi::RESUMABLE_FRAMES_VERSION);
+    }
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), ["varta log: v33"]);
+    }
+    // Downgrading the Wasm and manifest host ABI to v32 leaves a v33 declaration
+    // without its ABI; both binaries reject it before any guest output.
+    let wasm = project.0.join("dist/app.wasm");
+    let mut bytes = fs::read(&wasm).unwrap();
+    let mut section = abi::SECTION.as_bytes().to_vec();
+    section.extend(abi::RESUMABLE_FRAMES_VERSION.to_le_bytes());
+    let at = bytes
+        .windows(section.len())
+        .position(|window| window == section)
+        .unwrap()
+        + abi::SECTION.len();
+    bytes[at..at + section.len() - abi::SECTION.len()]
+        .copy_from_slice(&abi::BIGINT_VALUES_VERSION.to_le_bytes());
+    fs::write(&wasm, bytes).unwrap();
+    let manifest_path = project.0.join("dist/app.manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["abiVersion"] = abi::BIGINT_VALUES_VERSION.into();
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    for mut command in [varta(), Command::new(runtime_path())] {
+        let output = command
+            .args(["run", "dist/app.wasm"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{}", combined(&output));
+        assert!(logs(&output).is_empty(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("matching host ABI"),
+            "{}",
+            combined(&output)
+        );
+    }
+}
+
+#[test]
 fn primitive_string_runs_across_modules_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {text} from './string.ts';export function main():void{console.log(text(1e21));console.log(text(true));console.log(text(undefined));console.log(String().length);console.log(String('').length);const s=String('A\\uDFFF\\u0000Z');console.log(s.length);console.log(s.charCodeAt(1));console.log(String(Number.MIN_VALUE));console.log(String(-0));}",

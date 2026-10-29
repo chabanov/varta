@@ -179,3 +179,81 @@ fn legacy_invalid_integer_division_keeps_trapping_instead_of_producing_js_number
         }
     }
 }
+
+fn host_abi(bytes: &[u8], version: Option<u32>) -> Vec<u8> {
+    rewrite(bytes, |id, data| {
+        if id == 0 && custom(data, abi::SECTION) {
+            version.map_or_else(Vec::new, |version| {
+                let mut section = data[..1 + abi::SECTION.len()].to_vec();
+                section.extend(version.to_le_bytes());
+                vec![section]
+            })
+        } else {
+            vec![data.to_vec()]
+        }
+    })
+}
+
+#[test]
+fn suspension_profile_v33_requires_its_own_host_abi_before_guest_effects() {
+    use varta_common::language::{LanguageContract, SCHEMA_VERSION};
+    let source = r#"
+class Probe{n:number;constructor(n:number){this.n=n;}}
+export function main():void{console.log(`${new Probe(33).n}`);varta.process.exit(77);}
+"#;
+    let v33 = LanguageProfile::CheckedF64Utf16V33;
+    let v32 = LanguageProfile::CheckedF64Utf16V32;
+    let bytes = varta_compiler::compile_typescript_with_profile(source, v33).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let runtime = VartaRuntime::new();
+    let inspection = runtime.inspect_module(&bytes).unwrap();
+    assert_eq!(inspection.language.profile, Some(v33));
+    assert_eq!(inspection.language.origin, LanguageOrigin::Declared);
+    assert_eq!(v33.host_abi(), abi::RESUMABLE_FRAMES_VERSION);
+    let grants = [varta_common::CapabilityGrant {
+        id: "process.exit".into(),
+        value: varta_common::CapabilityValue::Boolean(true),
+    }];
+    let run = runtime.run_wasm_bytes(&bytes, &grants).unwrap();
+    assert_eq!(
+        (run.lines.as_slice(), run.exit_code),
+        (&["varta log: 33".to_string()][..], 77)
+    );
+    let older = varta_compiler::compile_typescript_with_profile(source, v32).unwrap();
+    runtime.validate_module(&older).unwrap();
+    assert_eq!(
+        runtime.inspect_module(&older).unwrap().language.profile,
+        Some(v32)
+    );
+    let declared = |profile: LanguageProfile| {
+        LanguageContract {
+            schema_version: SCHEMA_VERSION,
+            profile,
+        }
+        .to_bytes()
+        .unwrap()
+    };
+    let cases = [
+        // V33 metadata downgraded to the v32 host ABI.
+        host_abi(&bytes, Some(abi::BIGINT_VALUES_VERSION)),
+        // V32 metadata paired with the v33 host ABI, rewritten from either side.
+        host_abi(&older, Some(abi::RESUMABLE_FRAMES_VERSION)),
+        replace(&bytes, &declared(v32)),
+        // V33 metadata without a host ABI section.
+        host_abi(&bytes, None),
+        // The v33 host ABI without a declared profile is not legacy input.
+        legacy(&bytes),
+    ];
+    for changed in cases {
+        assert!(matches!(
+            runtime.validate_module(&changed),
+            Err(RuntimeError::Language(_))
+        ));
+        assert!(runtime.inspect_module(&changed).is_err());
+        // No log line or exit code is observable: the run fails before instantiation.
+        assert!(matches!(
+            runtime.run_wasm_bytes(&changed, &grants),
+            Err(RuntimeError::Language(_))
+        ));
+    }
+}

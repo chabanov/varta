@@ -291,4 +291,5 @@ One line per profile; details in [profile rules](docs/profile-rules.md) and the
 | `checked-f64-utf16-v30` | Object deletion/entries/is/assign, String own keys |
 | `checked-f64-utf16-v31` | Named interface/alias types, type-only imports/exports, `.js` specifiers |
 | `checked-f64-utf16-v32` | Pilot batch (unreleased): module constants, literal types, classes, re-exports, template literals, default exports, interface extends, generics, Error subclasses |
+| `checked-f64-utf16-v33` | Suspension frames and sync generators (in development) |
 <!-- generated:profile-index:end -->

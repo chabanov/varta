@@ -153,10 +153,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v30` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v31` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
+| `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **28**, value ABI **13**, HTTP contract **1** and **35** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **29**, value ABI **13**, HTTP contract **1** and **36** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -5941,6 +5942,31 @@ native error keeps `class extends a built-in Error class`.
 
 Error subclasses add no host import, value tag, heap layout or budget. The
 version matrix records the channel selector; all other v31 versions are shared.
+
+### `checked-f64-utf16-v33` — Suspension and generators
+
+V33 is registered and inherits every v32 feature and selector, including
+exception channel v5 and the v32 JSON selectors; its value and schema versions
+are those of v32 (see the [version matrix](#version-matrix)). It is the first
+profile with its own host ABI after v29: the K4.4 design admits the exported
+`varta_resume` dispatcher only under a new host ABI, so runtimes that predate
+frame admission reject v33 modules before compilation or any guest effect, and
+v32 and earlier profiles keep their host ABI. The v33 host ABI adds no host
+import; every operation available under the v32 host ABI keeps its signature.
+
+Two selectors gate the K4.4 work streams, and both admit nothing yet:
+
+- `resumable_frames()`: runtime admission of the
+  [suspension foundation](#suspension-foundation-k44-block-1), that is
+  continuation frames, function catalog version 2 in preflight and the
+  `varta_resume` export (K4.4 step 1);
+- `generators()`: synchronous `function*`, `yield` and the generator
+  `next`/`throw`/`return` protocol over those frames (K4.4 step 2).
+
+Until a stream adds its subsection here, a v33 module compiles and runs exactly
+like a v32 module apart from its declared profile and host ABI, and production
+budgets are unchanged. Whether generators need a new value tag, and therefore a
+new value ABI, is decided by the generators stream.
 
 ## Local modules
 

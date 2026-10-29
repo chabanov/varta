@@ -28,6 +28,9 @@ pub const NUMBER_FORMAT_VERSION: u32 = 25;
 pub const NUMBER_PARSE_VERSION: u32 = 26;
 pub const BIGINT_VERSION: u32 = 27;
 pub const BIGINT_VALUES_VERSION: u32 = 28;
+/// K4.4 resumable frames (v33): declares the `varta_resume` export and frame
+/// catalog version 2, so runtimes without frame admission reject the module.
+pub const RESUMABLE_FRAMES_VERSION: u32 = 29;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -60,6 +63,7 @@ pub fn supported(version: u32) -> bool {
             | NUMBER_PARSE_VERSION
             | BIGINT_VERSION
             | BIGINT_VALUES_VERSION
+            | RESUMABLE_FRAMES_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";
