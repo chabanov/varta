@@ -43,6 +43,9 @@ pub(crate) enum Type {
     /// Synchronous generator object (v33 `generators`): the handle of its
     /// continuation frame; the id indexes `ValueTypes::generators`.
     Generator(u32),
+    /// Promise object (v34 `promises`): a guest-heap record with private
+    /// fields and no value tag; the id indexes `ValueTypes::promises`.
+    Promise(u32),
 }
 
 /// Base primitive of a literal set; it fixes the erased physical representation.
@@ -80,6 +83,7 @@ impl Type {
             Self::BigInt
                 | Self::Class(_)
                 | Self::Generator(_)
+                | Self::Promise(_)
                 | Self::Function(_)
                 | Self::Error
                 | Self::NativeError(_)
@@ -182,6 +186,10 @@ pub(crate) struct Suspendable {
     /// Generator type id of a `function*` (v33): its frame is owned by the
     /// generator object and resumed only by guest code, never by `varta_resume`.
     pub generator: Option<u32>,
+    /// A scheduled frame (v34 `promises`/`async_functions`): every suspension
+    /// awaits a promise and the runtime scheduler resumes it through
+    /// `varta_resume`; the suspension point issues the frame's generation.
+    pub scheduled: bool,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct SuspensionPoint {
@@ -201,6 +209,25 @@ pub(crate) struct ValueTypes {
     pub classes: crate::lower::classes::Classes,
     pub generics: crate::lower::generics::Generics,
     pub generators: Vec<GeneratorType>,
+    pub promises: Vec<PromiseType>,
+    /// Promise lowering state (v34): synthesized helpers and scheduled frames.
+    pub asynchrony: crate::lower::promises::Asynchrony,
+}
+/// `Promise<T>` (v34): the value type and the private record shape of its
+/// objects; see `lower::promises`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PromiseType {
+    /// The fulfillment value type; `void` for `Promise<void>`.
+    pub value: Type,
+    pub shape: u32,
+}
+/// How `Expression::Schedule` runs the frame its creator returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScheduleMode {
+    /// Run the body now, until its first suspension (an async call or `then`).
+    Start,
+    /// Queue the start as a microtask (promise adoption).
+    Enqueue,
 }
 /// What a generator step function reports to the lowered protocol code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -561,6 +588,29 @@ pub(crate) enum Expression {
     /// The yielded or returned value in a generator frame's completion cell,
     /// read only directly after the step that produced it.
     GeneratorValue(Box<Expr>),
+    /// `await` (v34): evaluates `promise` into hidden local `slot`, suspends
+    /// until the scheduler resumes the frame after the promise settled, then
+    /// evaluates `result` (which reads the settled promise in `slot`).
+    /// Normalization turns it into the canonical suspension point.
+    Await {
+        promise: Box<Expr>,
+        slot: u32,
+        result: Box<Expr>,
+    },
+    /// Create the frame of scheduled function `function` with `args` and start
+    /// or enqueue it (v34). A function without a suspension point is called.
+    Schedule {
+        function: usize,
+        args: Vec<Expr>,
+        mode: ScheduleMode,
+    },
+    /// The same managed handle viewed as another internal type: a promise
+    /// and its private record (v34). Emits nothing.
+    Reinterpret(Box<Expr>),
+    /// The all-zero bit pattern of the node's type (v34): the unset value and
+    /// reason slots of a pending promise. The collector skips zero handles,
+    /// and lowering reads those slots only after the promise settled.
+    Zero,
 }
 
 pub(crate) use varta_common::HostOperation as Host;
@@ -660,6 +710,7 @@ impl std::fmt::Display for Type {
             Self::Record(_) => "object",
             Self::Class(_) => "class instance",
             Self::Generator(_) => "generator",
+            Self::Promise(_) => "promise",
             Self::Array(_) => "array",
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",

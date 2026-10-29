@@ -93,6 +93,10 @@ pub enum CaptureType {
     /// A generator object (v33): an opaque frame handle with no value tag; it
     /// may be saved in frames but never crosses a typed value boundary.
     Generator,
+    /// A promise object (v34): a guest-heap record handle with private fields
+    /// and no value tag; it may be saved in frames and closure cells but never
+    /// crosses a typed value boundary.
+    Promise,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -133,7 +137,7 @@ impl CaptureType {
             Self::PrimitiveUnion { .. } => ValueKind::PrimitiveUnion,
             Self::ReferenceUnion { .. } => ValueKind::ReferenceUnion,
             Self::Function { .. } => ValueKind::Function,
-            Self::Generator => return None,
+            Self::Generator | Self::Promise => return None,
         })
     }
     pub fn reference(&self) -> bool {

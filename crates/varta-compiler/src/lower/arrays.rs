@@ -5,6 +5,9 @@ pub(super) fn intern(element: Type, types: &mut ir::ValueTypes) -> Result<Type> 
     if matches!(element, Type::Generator(_)) {
         return Err(generators::opaque("an array"));
     }
+    if matches!(element, Type::Promise(_)) {
+        return Err(promises::opaque("an array"));
+    }
     if element.value_kind().is_none() || element == Type::BigInt && !types.profile.bigint_values() {
         return Err(unsupported("array element type"));
     }

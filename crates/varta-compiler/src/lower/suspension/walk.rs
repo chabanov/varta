@@ -11,7 +11,14 @@ pub(super) fn expression(expr: &Expr, visit: &mut dyn FnMut(&Expr)) {
         | E::Local(_)
         | E::Status
         | E::ModuleConstant(_)
+        | E::Zero
         | E::FunctionRef { .. } => {}
+        E::Await {
+            promise, result, ..
+        } => [promise, result]
+            .into_iter()
+            .for_each(|v| expression(v, visit)),
+        E::Schedule { args, .. } => args.iter().for_each(|value| expression(value, visit)),
         E::Assignment { value, body, .. } => {
             expression(value, visit);
             statements(body, visit);
@@ -24,6 +31,7 @@ pub(super) fn expression(expr: &Expr, visit: &mut dyn FnMut(&Expr)) {
             .for_each(|v| expression(v, visit)),
         E::FunctionCheck { value, .. }
         | E::GeneratorValue(value)
+        | E::Reinterpret(value)
         | E::Suspend { value, .. }
         | E::StringTrim { value, .. }
         | E::ArrayEnumerate { value, .. }
@@ -204,14 +212,19 @@ fn statement(statement: &S, visit: &mut dyn FnMut(&Expr)) {
     }
 }
 
+/// A suspension point, or an `await` (v34) that normalization turns into one.
+pub(super) fn point(expr: &Expr) -> bool {
+    matches!(expr.kind, E::Suspend { .. } | E::Await { .. })
+}
+
 pub(super) fn suspends(expr: &Expr) -> bool {
     let mut found = false;
-    expression(expr, &mut |e| found |= matches!(e.kind, E::Suspend { .. }));
+    expression(expr, &mut |e| found |= point(e));
     found
 }
 
 pub(super) fn body_suspends(body: &[S]) -> bool {
     let mut found = false;
-    statements(body, &mut |e| found |= matches!(e.kind, E::Suspend { .. }));
+    statements(body, &mut |e| found |= point(e));
     found
 }

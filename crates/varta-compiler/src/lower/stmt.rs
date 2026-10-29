@@ -112,7 +112,11 @@ impl Lower<'_> {
                         )?);
                     }
                 }
-                if value.as_ref().map_or(Type::Void, |e| e.ty) != self.result {
+                // An async body may also return a promise to adopt (v34).
+                let adopted = self
+                    .asynchronous
+                    .is_some_and(|id| value.as_ref().is_some_and(|v| v.ty == Type::Promise(id)));
+                if !adopted && value.as_ref().map_or(Type::Void, |e| e.ty) != self.result {
                     return Err(self.source.locate(
                         type_error(format!(
                             "return type mismatch: expected {}, found {}",

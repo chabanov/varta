@@ -80,6 +80,8 @@ struct Lower<'a> {
     guarded: std::collections::BTreeSet<u32>,
     /// Generator type id while lowering a `function*` body (v33).
     generator: Option<u32>,
+    /// Promise type id of the async function whose body is lowered (v34).
+    asynchronous: Option<u32>,
 }
 
 pub(crate) use link::lower;
@@ -135,6 +137,13 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     }
     if let ast::TsType::TsFnOrConstructorType(ast::TsFnOrConstructorType::TsFnType(function)) = ty {
         return functions::type_annotation(function, types);
+    }
+    if types.profile.promises()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && matches!(&reference.type_name, ast::TsEntityName::Ident(id) if id.sym == "Promise")
+        && !named::declared(types, "Promise")
+    {
+        return promises::annotation(reference, types);
     }
     if types.profile.generators()
         && let ast::TsType::TsTypeRef(reference) = ty
@@ -331,6 +340,7 @@ mod primitive_builtins;
 mod primitive_comparison;
 mod primitive_string;
 mod primitive_unary;
+pub(crate) mod promises;
 mod property_deletion;
 mod record_reads;
 mod record_writes;

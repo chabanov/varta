@@ -38,6 +38,7 @@ pub(super) fn build(
                 },
                 Type::Class(_) => CaptureType::Class,
                 Type::Generator(_) => CaptureType::Generator,
+                Type::Promise(_) => CaptureType::Promise,
                 Type::Record(id) => {
                     let mut fields = Vec::new();
                     for field in self.types.records[id as usize].fields.clone() {

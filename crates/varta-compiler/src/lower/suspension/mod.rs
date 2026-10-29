@@ -20,6 +20,13 @@ const DETAIL: &str = "the suspension foundation does not admit it yet";
 fn rejected(construct: &str) -> CompilerError {
     unsupported_suspension(format!("point inside {construct}"))
 }
+/// The same rejection for a point the source spells differently (`await`).
+fn unsupported_suspension_as(point: &str, construct: &str) -> CompilerError {
+    CompilerError::Unsupported {
+        kind: format!("{point} inside {construct}"),
+        detail: DETAIL.into(),
+    }
+}
 fn unsupported_suspension(what: String) -> CompilerError {
     CompilerError::Unsupported {
         kind: format!("suspension {what}"),
@@ -59,8 +66,10 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
         }
         let namer = construct::Namer::new(graph, &function.source);
         let body = std::mem::take(&mut function.body);
-        let body = normalize::Normalizer::new(&mut function.locals, &namer, &function.source)
-            .statements(body)?;
+        let mut normalizer =
+            normalize::Normalizer::new(&mut function.locals, &namer, &function.source);
+        normalizer.awaits = types.asynchrony.scheduled.contains(&index);
+        let body = normalizer.statements(body)?;
         let (body, machine) = states::Machine {
             locals: &mut function.locals,
             types: &*types,
@@ -68,6 +77,7 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
             exception,
             result: function.result,
             generator,
+            scheduled: types.asynchrony.scheduled.contains(&index),
         }
         .build(function.span, body)?;
         // State, completion and input locals are re-initialized, never saved.

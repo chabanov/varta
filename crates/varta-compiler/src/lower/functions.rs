@@ -217,6 +217,9 @@ impl Lower<'_> {
     }
     pub(super) fn arrow(&mut self, arrow: &ast::ArrowExpr, expected: Option<Type>) -> Result<Expr> {
         required(self.types)?;
+        if arrow.is_async && self.types.profile.async_functions() {
+            return Err(promises::rejected("async arrow function"));
+        }
         if arrow.is_async || arrow.is_generator || arrow.type_params.is_some() {
             return Err(unsupported("async/generic/generator arrow"));
         }
@@ -359,6 +362,7 @@ impl Lower<'_> {
             cells: Default::default(),
             guarded: Default::default(),
             generator: None,
+            asynchronous: None,
         };
         if let Some(ty) = receiver {
             child.declare("this", Some(ty), true, false)?;
@@ -473,7 +477,7 @@ impl Lower<'_> {
 impl Lower<'_> {
     /// Materialize a transitive capture once per activation; stable identities
     /// distinguish shadowed bindings even when their source names coincide.
-    fn capture_binding(&mut self, binding: &Binding) -> Result<u32> {
+    pub(super) fn capture_binding(&mut self, binding: &Binding) -> Result<u32> {
         if !self.types.profile.closures() {
             return Err(unsupported(
                 "arrow capture of an outer binding requires checked-f64-utf16-v12",

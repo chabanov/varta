@@ -94,6 +94,13 @@ struct Emitter<'a> {
     suspension: Option<frames::Resume<'a>>,
     /// Step function of each generator type id (v33).
     generator_steps: &'a [u32],
+    /// The exported dispatcher, present when a frame layout exists.
+    dispatcher: Option<u32>,
+    /// Functions whose own index is a frame creator.
+    frame_functions: &'a BTreeMap<usize, ir::Suspendable>,
+    frame_resources: Option<frames::Resources>,
+    /// `Promise<T>` types (v34) by id: value type and private record shape.
+    promises: &'a [ir::PromiseType],
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
@@ -696,6 +703,10 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             self_functions: &self_functions,
             suspension: None,
             generator_steps: &generator_steps,
+            dispatcher: (!frame_layouts.is_empty()).then_some(dispatcher),
+            frame_functions: &program.suspendable,
+            frame_resources,
+            promises: &program.types.promises,
         };
         let frame_layout = frame_layouts.iter().find(|layout| layout.function == index);
         if let (Some(layout), Some(resources)) = (frame_layout, frame_resources) {
@@ -907,6 +918,7 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
             | Type::Record(_)
             | Type::Class(_)
             | Type::Generator(_)
+            | Type::Promise(_)
             | Type::Array(_)
             | Type::Union(_)
             | Type::ReferenceUnion(_) => vec![ValType::I64],

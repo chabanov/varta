@@ -25,7 +25,8 @@ pub(super) fn check(
     if generator && function.is_async {
         return Err(unsupported("async generator function"));
     }
-    if function.is_async
+    let asynchronous = function.is_async && types.profile.async_functions();
+    if function.is_async && !asynchronous
         || function.is_generator && !generator
         || function.type_params.is_some()
         || !function.decorators.is_empty()
@@ -60,6 +61,24 @@ pub(super) fn check(
         .return_type
         .as_ref()
         .map_or(declaration.ident.span, |a| a.type_ann.span());
+    if asynchronous && receiver.is_some() {
+        return Err(source.locate(
+            promises::rejected("async function with a this parameter"),
+            declaration.ident.span,
+        ));
+    }
+    if asynchronous && shape.extended() {
+        return Err(source.locate(
+            promises::rejected("async function with optional or rest parameters"),
+            declaration.ident.span,
+        ));
+    }
+    if asynchronous && function.return_type.is_none() {
+        return Err(source.locate(
+            type_error("async function requires a Promise<T> return annotation"),
+            result_span,
+        ));
+    }
     if generator && function.return_type.is_none() {
         return Err(source.locate(
             type_error(
@@ -81,6 +100,14 @@ pub(super) fn check(
         return Err(source.locate(
             type_error(format!(
                 "generator function must return Generator<T, TReturn, TNext>, not {result}"
+            )),
+            result_span,
+        ));
+    }
+    if asynchronous && !matches!(result, Type::Promise(_)) {
+        return Err(source.locate(
+            type_error(format!(
+                "async function must return Promise<T>, not {result}"
             )),
             result_span,
         ));

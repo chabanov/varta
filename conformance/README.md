@@ -1,6 +1,6 @@
 # Checked core compatibility inventory
 
-This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v33** profile
+This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v34** profile
 and the **checked-ts-main-v1** source model. Its original cases are checked
 TypeScript programs with a Varta `main` entry point and observable runtime output.
 Feature rows identify their CORE work streams and either an ECMAScript section or
@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 49 feature rows and 88 cases:
-77 pass, 11 are known unsupported, and 9 feature rows have no case. These counts
+executable cases. The current inventory has 49 feature rows and 91 cases:
+81 pass, 10 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -184,3 +184,17 @@ unannotated `generator-next` case stays a known gap with a new reviewed
 diagnostic: v33 requires an explicit `Generator<T, TReturn, TNext>` return type
 instead of inferring one. `yield*`, async generators and the iterator protocol
 of other objects remain outside this row.
+
+The v34 async increment moves the pinned profile from v33 to v34; every
+earlier case keeps its status. The unchanged `async-function` case was observed
+as unexpected support with its pinned source hash and expected output before
+review and promotion. Three original cases are added: `promise-jobs` (the first
+case of the promise-jobs row: FIFO reactions, interleaved chains and the two
+extra jobs of adopting a returned promise), `promise-resolution` (synchronous
+executor, one-time resolution, executor exceptions, the self-resolution
+`TypeError` and `finally` pass-through and override) and `async-await-errors`
+(`try`/`catch`/`finally` across `await` and rejection propagation). All outputs
+match Node.js v24.20.0 type stripping. `promise-resolve` stays a known gap with
+a new reason: v34 promises have no value tag, so `typeof` rejects them.
+Thenables other than internal promises and the combinators remain outside
+these rows.

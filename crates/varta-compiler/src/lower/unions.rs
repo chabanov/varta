@@ -31,6 +31,9 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     if values.iter().any(|ty| matches!(ty, Type::Generator(_))) {
         return Err(generators::opaque("a union"));
     }
+    if values.iter().any(|ty| matches!(ty, Type::Promise(_))) {
+        return Err(promises::opaque("a union"));
+    }
     if types.profile.error_subclasses() {
         values = classes::join_error_classes(values, types);
     }

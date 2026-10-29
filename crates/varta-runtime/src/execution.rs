@@ -39,6 +39,7 @@ impl Execution {
                 http_control: None,
                 function_catalog: None,
                 random: crate::random::RandomSource::default(),
+                scheduler: crate::scheduler::Scheduler::default(),
                 deadline: Instant::now() + Duration::from_secs(abi::DEADLINE_SECONDS),
             },
         );

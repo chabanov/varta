@@ -12,6 +12,7 @@ pub mod language;
 pub mod launcher;
 mod manifest;
 mod module;
+pub mod scheduler;
 pub mod text;
 mod tool;
 pub mod value;

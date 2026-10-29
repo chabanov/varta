@@ -6022,11 +6022,11 @@ guest effect. The runtime reports a failure as the typed
   tool, value ABI, JSON or HTTP helper, so the host-free helper checks and JSON
   helper purity validation are unchanged and do not apply to it. Admission
   grants no call authority and never invokes guest code.
-- **No scheduler yet.** The runtime calls only the entry point and the
-  published tool or HTTP exports. It never calls `varta_resume`, and it owns no
-  frame roots or generations. The scheduler-owned root and generation policy
-  comes with the first scheduler. Generator frames, the only frames source code
-  creates, are resumed by guest code alone and never through `varta_resume`.
+- **No scheduler in v33.** Under v33 the runtime calls only the entry point
+  and the published tool or HTTP exports. It never calls `varta_resume`, and it
+  owns no frame roots or generations; generator frames are resumed by guest
+  code alone. The v34 [microtask scheduler](#microtask-scheduler-promises) is
+  the first caller of `varta_resume`.
 - **Test producer.** Besides generators, frame modules come from the
   compiler's test-only lowering hook: compiler unit tests, and the
   `suspension-test-hook` cargo
@@ -6150,9 +6150,10 @@ selectors. It declares two new version identities (see the
 - **Host ABI** `abi::SCHEDULED_FRAMES_VERSION`. The async stream adds a runtime
   microtask scheduler that calls `varta_resume` for promise jobs and `await`,
   so a runtime without that scheduler must reject v34 modules before
-  compilation or any guest effect. The v34 host ABI adds no host import yet;
-  every operation available under the v33 host ABI keeps its signature, and v33
-  and earlier profiles keep their host ABI.
+  compilation or any guest effect. The v34 host ABI adds the five
+  [scheduler imports](#microtask-scheduler-promises); every operation
+  available under the v33 host ABI keeps its signature, and v33 and earlier
+  profiles keep their host ABI.
 - **Value ABI** `value::DYNAMIC_VALUE_VERSION`, reserved for the value layouts
   and tags of this batch: dynamic-key records (index signatures and
   `Record<string, T>`), records wider than `value::MAX_RECORD_FIELDS` (whose
@@ -6177,7 +6178,8 @@ v34 to the reserved value ABI in the same change, and then owns the readers,
 JSON schema version and value/JSON host operations bound to it, because those
 operations check the version stamped in every record descriptor.
 
-Seven selectors gate the batch's work streams, and all admit nothing yet:
+Seven selectors gate the batch's work streams. The records and unknown
+selectors admit nothing yet; the async selectors are specified below:
 
 - records stream: `index_signatures()` (`{[k: string]: T}` and
   `Record<string, T>` as a dynamic-key record kind), `recursive_types()`
@@ -6191,9 +6193,161 @@ Seven selectors gate the batch's work streams, and all admit nothing yet:
   semantics over the microtask scheduler) and `async_functions()`
   (`async`/`await` on the continuation frames).
 
-Until a stream adds its subsection here, a v34 module compiles and runs exactly
-like a v33 module apart from its declared profile, host ABI and value ABI, and
-production budgets are unchanged.
+Apart from the subsections below, a v34 module compiles and runs exactly like a
+v33 module apart from its declared profile, host ABI and value ABI, and
+production budgets are unchanged. Promises add no value tag, so they keep v34
+on the value13 layouts.
+
+#### Microtask scheduler (`promises`)
+
+The runtime owns one explicit, bounded microtask queue per execution; one
+execution is one isolate (Wasm instance, Store, memory, globals and queue). A
+queue entry is the resume token of a live continuation frame and nothing else:
+every promise job is a scheduled frame (see
+[promise objects](#promise-objects-promises)), and the runtime runs a job only
+by calling the exported `varta_resume` with the token, a `Normal` completion
+and the `undefined` input. The dispatcher's ownership, envelope, status and
+generation checks therefore reject a late, duplicate or forged token with a
+trap before any effect.
+
+- **Turn order.** The entry point is the one task of an execution. After
+  `_start` returns with an empty exception channel, the runtime runs the
+  microtask checkpoint: it takes jobs in FIFO order, including jobs queued
+  while it drains, until the queue is empty. Reactions of one promise are
+  queued in registration order when it settles; a reaction registered on a
+  settled promise is queued at once. This is the ECMAScript Jobs order, so
+  event logs match Node for the same program. There are no timers or I/O
+  tasks yet (K4.4 step 5), so the checkpoint ends the execution.
+- **Imports.** Five internal imports exist only under the v34 host ABI
+  (minimum `SCHEDULED_FRAMES_VERSION`), take no capability, are never callable
+  from source and are matched by exact name and signature:
+  `promise_react (serial:f64, token:i64) -> f64` registers a reaction of a
+  pending promise and returns its serial (allocating one for serial zero);
+  `promise_settle (serial:f64) -> ()` queues that promise's reactions;
+  `scheduler_enqueue (token:i64) -> ()` queues one job;
+  `promise_unhandled (reason:i64) -> f64` records a rejection without a
+  handler and returns its tracking id; `promise_handled (id:f64) -> ()`
+  withdraws it. The runtime keys reactions by the serials it issued and never
+  retains a guest reference. Unknown or non-integer serials and ids, a token
+  held twice and every bound below are fatal `SchedulerError`s.
+- **Roots and generations.** A token names a frame in the live-frame table,
+  the external root table of the
+  [suspension foundation](#suspension-foundation-k44-block-1). Frames stay
+  rooted while they are suspended, queued or registered as reactions, and
+  leave the table when they complete. A scheduled frame issues its next
+  generation at the suspension point, before it registers its token, so the
+  registered token is the only one that can resume that suspension; the
+  dispatcher issues no further generation for scheduled layouts.
+- **Budgets.** The per-execution fuel, deadline, memory and host-call ceilings
+  apply to the whole execution, including every job, and are never renewed by
+  `await` or the checkpoint. Scheduler imports are bookkeeping, not host
+  effects: they consume guest fuel and check the deadline but are not charged
+  to the host-call budget. Held tokens (queue and reactions together), jobs per
+  execution, and serials and tracking ids per execution are bounded by the
+  scheduler rows of the [limits table](#resource-limits); the live-frame table
+  bounds the frames pending at once. Exceeding any bound, the fuel or the
+  deadline terminates the execution; a fatal trap or exhaustion inside a job
+  is never converted into a rejection.
+- **Unhandled rejections.** Rejecting a promise that has no handler reports
+  its reason, which the runtime copies out of guest memory at once with the
+  uncaught-exception readers; adding a handler later in the checkpoint
+  withdraws the report (HostPromiseRejectionTracker). If reports remain after
+  the checkpoint, the execution terminates with
+  `SchedulerError::UnhandledRejection`, naming the earliest remaining reason
+  and the count; the CLI exits nonzero, as Node does.
+- **Entry points.** Only `main` gets a checkpoint. Tool and HTTP contracts are
+  rejected in every binary64 profile, so async tool handlers and HTTP adapters
+  cannot be declared; a request-scoped isolate with its own checkpoint is the
+  next step for HTTP.
+
+#### Promise objects (`promises`)
+
+`Promise<T>` is a built-in parametric type: an opaque handle (one `i64` slot,
+no value tag) to a guest-heap record with private fields `handled`, `locked`,
+`reason`, `serial`, `state`, `tracked` and `value`, interned per `T`. Like a
+generator object it may be held in locals, parameters, results, closure cells
+and frames (capture type `promise`) and compared by identity with `===`;
+arrays, records, unions, `typeof`, logging, JSON and tool/HTTP signatures
+reject it (`unsupported promise inside an array`, ...). `T` is any one-slot
+value type or `void`; `Promise<Promise<T>>` and function, generator and
+`VartaResult` values are rejected, and literal types erase to their base
+primitive.
+
+- **Resolution.** `new Promise<T>(executor)` (a type argument or a
+  `Promise<T>` context is required) runs the executor synchronously with
+  resolve and reject closures that share the promise's one-time `locked` flag;
+  an exception from the executor rejects unless the promise already resolved.
+  `resolve` takes `T` (optionally nothing for `Promise<void>`); `reject` takes
+  any throwable value. `Promise.resolve(v)` returns an internal promise
+  unchanged and otherwise creates a fulfilled one; `Promise.reject(e)` creates
+  a rejected one (its type argument or context selects `T`, else `void`).
+- **Reactions.** `then(f, r)`, `catch(r)` and `finally(f)` create the derived
+  promise and start a synthesized job frame that awaits the receiver; when it
+  resumes it calls the handler and settles the derived promise. A handler
+  result fulfills, an exception rejects, and a returned promise is adopted. A
+  missing handler (absent, `undefined` or `null`) passes the value or reason
+  through. The derived type joins both handler results (`void` contributes
+  `undefined`; results that do not form one checked union are rejected), and
+  handlers that return promises must return the derived type. `finally`
+  follows ECMAScript: the derived promise adopts
+  `PromiseResolve(f()).then(() => value)` or
+  `PromiseResolve(f()).then(() => { throw reason; })`, so a throwing or
+  rejecting callback overrides the original outcome.
+- **Adoption.** Resolving a promise with an internal promise queues an
+  adoption job (NewPromiseResolveThenableJob) that awaits the source and
+  settles the target alike: two extra jobs, as in Node. Resolving a promise
+  with itself rejects it with
+  `TypeError("Chaining cycle detected for promise #<Promise>")`. Arbitrary
+  structural thenables, getters, subclassing and `Promise.withResolvers` are
+  not admitted; neither are the combinators `Promise.all`, `allSettled`,
+  `race` and `any`, which need promises inside arrays (a value tag) and fail
+  by name.
+- **Representation.** Field slots are read and written by ordinary record
+  operations. The unset `value` and `reason` slots of a pending promise hold
+  zero bits, which the collector skips and lowering never reads before the
+  promise settled. Every frame that awaits a promise roots it. The settle,
+  adopt and resolve helpers and the job frames are synthesized once per
+  promise or handler type, for at most the compiler's `MAX_PROMISE_TYPES`
+  promise types per module.
+
+#### Async functions (`async_functions`)
+
+- **Declarations.** Top-level `async function` declarations, exported or not,
+  including generic ones (each instantiation is its own async function), with
+  a required `Promise<T>` return annotation; `async function main():
+  Promise<void>` is an entry point. The body returns `T`, or a `Promise<T>` to
+  adopt. Async arrows, function expressions and methods, a `this` parameter,
+  optional and rest parameters, `for await`, async generators and top-level
+  `await` fail with construct-specific diagnostics (async iteration is K4.4
+  step 6).
+- **Split.** The declaration's own function index becomes a wrapper: it
+  creates the promise, starts the body frame through the dispatcher (the body
+  runs synchronously until its first `await`) and returns the promise, so
+  calls and function values of the async function reach the wrapper. The body
+  takes the promise as an extra parameter. Its statements run inside a
+  labelled block whose `return` stores the value and leaves the block, so
+  enclosing `finally` blocks run first; then the promise is fulfilled or
+  adopts the returned promise, and an uncaught exception rejects it. A body
+  without `await` is called directly.
+- **`await`.** `await e` evaluates `e`, wraps a non-promise in a fulfilled
+  promise (PromiseResolve: one job either way) and suspends. The suspension
+  point marks the promise handled, withdraws its unhandled report and
+  registers the frame's token as a reaction or queues it. On resumption the
+  frame reads the settled promise from its saved local: a rejection is thrown
+  at the `await`, so `try`/`catch`/`finally` work across it; a fulfillment is
+  the value (`undefined` for `Promise<void>`). `await` appears in every
+  normalized position of the
+  [suspension foundation](#suspension-foundation-k44-block-1); inside an
+  intrinsic value block (string concatenation, template literals, `String(...)`
+  and other intrinsic calls) it fails as `unsupported await inside <construct>`.
+  For write-aware refinements an `await` is an unknown reentry that may write
+  captured mutable bindings.
+- **Frames.** Async bodies and promise jobs are frame catalog rows with
+  `generator: false`, an `Undefined` input for every state and no result
+  binding; `varta_resume` reaches them. Their dispatcher branches trap if an
+  exception escaped (the body catches every one) and report the outcome
+  without issuing a generation. The scheduler sends only `Normal` completions
+  with `undefined`.
 
 ## Local modules
 
@@ -6853,6 +7007,10 @@ a denied exit returns a failed `VartaResult<void>`.
 | JSON depth / visited values | 64 / 4096 | `value::MAX_JSON_*` |
 | JSON schema types (legacy / current) | 260 / 389 | `json::*MAX_SCHEMA_TYPES` |
 | Language metadata | 1024 bytes | `language::MAX_METADATA_BYTES` |
+| Live continuation frames | 64 | `frame::MAX_LIVE_FRAMES` |
+| Pending microtask continuations (v34) | 64 | `scheduler::MAX_PENDING_CONTINUATIONS` |
+| Microtasks per execution (v34) | 65536 | `scheduler::MAX_EXECUTION_JOBS` |
+| Promise serials / rejection ids per execution (v34) | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
 <!-- generated:limits:end -->
 
 Limits that are derived from several constants or enforced outside `abi`:
@@ -7206,6 +7364,7 @@ frame creators (`varta.test.frame.<layout>`) and the collector
 
 Profile v33 and its host ABI declare the `varta_resume` export, the frame flag
 and layout and frame catalog version 2 validation in preflight
-([runtime admission](#runtime-admission-resumable_frames)). A scheduler-owned
-root and generation policy is still required before suspended frames may outlive
-the guest call that created them (Promise jobs and `await`).
+([runtime admission](#runtime-admission-resumable_frames)). Profile v34 adds the
+scheduler-owned token, root and generation policy that lets suspended frames
+outlive the guest call that created them
+([microtask scheduler](#microtask-scheduler-promises)).

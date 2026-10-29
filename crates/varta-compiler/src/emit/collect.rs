@@ -29,6 +29,18 @@ impl<'a> Collected<'a> {
         for function in &program.functions {
             result.statements(&function.body, &function.source);
         }
+        // Scheduled suspension points register their tokens (v34).
+        if program
+            .suspendable
+            .values()
+            .any(|machine| machine.scheduled)
+        {
+            result.hosts.extend([
+                Host::PromiseReact,
+                Host::SchedulerEnqueue,
+                Host::PromiseHandled,
+            ]);
+        }
         result
     }
     fn expression(&mut self, expr: &Expr, source: &'a crate::source::Source) {
@@ -377,7 +389,15 @@ impl<'a> Collected<'a> {
                 self.expression(generator, source);
                 self.expression(value, source);
             }
-            E::GeneratorValue(value) => self.expression(value, source),
+            E::GeneratorValue(value) | E::Reinterpret(value) => self.expression(value, source),
+            E::Schedule { args, mode, .. } => {
+                if *mode == ir::ScheduleMode::Enqueue {
+                    self.hosts.insert(Host::SchedulerEnqueue);
+                }
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
             _ => {}
         }
     }

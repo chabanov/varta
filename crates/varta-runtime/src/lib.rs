@@ -37,6 +37,8 @@ pub use server::{HttpShutdown, RuntimeEvent, RuntimeObserver};
 #[cfg(test)]
 mod array_inference_tests;
 #[cfg(test)]
+mod async_tests;
+#[cfg(test)]
 mod bitwise_compound_tests;
 #[cfg(test)]
 mod bitwise_tests;
@@ -130,6 +132,8 @@ mod primitive_string;
 #[cfg(test)]
 mod primitive_string_tests;
 #[cfg(test)]
+mod promise_tests;
+#[cfg(test)]
 mod property_deletion_tests;
 mod random;
 #[cfg(test)]
@@ -140,6 +144,7 @@ mod record_compound_tests;
 mod record_tests;
 #[cfg(test)]
 mod reduce_right_tests;
+mod scheduler;
 #[cfg(test)]
 mod truth_guard_tests;
 #[cfg(test)]
@@ -173,6 +178,8 @@ pub enum RuntimeError {
     ToolContract(#[from] varta_common::ToolContractError),
     #[error(transparent)]
     Policy(#[from] varta_common::VartaError),
+    #[error(transparent)]
+    Scheduler(#[from] varta_common::scheduler::SchedulerError),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
 }
@@ -192,6 +199,7 @@ pub(crate) struct RuntimeContext {
     deadline: Instant,
     http_control: Option<(String, HttpShutdown)>,
     random: random::RandomSource,
+    scheduler: scheduler::Scheduler,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
 }
 
@@ -384,8 +392,23 @@ impl VartaRuntime {
                 start.call(&mut *store, &[], &mut [])?;
             }
             exceptions::finish(&instance, store)?;
+            scheduler::checkpoint(&instance, store)?;
             Ok::<(), RuntimeError>(())
         })();
+        // Scheduler failures inside guest calls keep their typed error.
+        let result = result.map_err(|error| match error {
+            RuntimeError::Execution(source)
+                if source
+                    .downcast_ref::<varta_common::scheduler::SchedulerError>()
+                    .is_some() =>
+            {
+                match source.downcast::<varta_common::scheduler::SchedulerError>() {
+                    Ok(error) => RuntimeError::Scheduler(error),
+                    Err(source) => RuntimeError::Execution(source),
+                }
+            }
+            other => other,
+        });
         let store = &mut execution.store;
         let exited = result.is_err();
         if let Err(error) = result {

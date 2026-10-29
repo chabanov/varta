@@ -31,7 +31,11 @@ Next work, in order:
    (both waves are merged on the integration branch), then index signatures and
    wider records, Web types (`Headers`, `AbortSignal`) and the 65-file module
    graph budgets.
-3. Promise jobs, then async/await (K4.4 steps 3–4).
+3. Promise jobs, then async/await (K4.4 steps 3–4): implemented under v34
+   on the `v34-async` branch
+   ([scheduler](architecture.md#microtask-scheduler-promises),
+   [async functions](architecture.md#async-functions-async_functions));
+   timers, I/O and async HTTP (step 5) are next.
 
 Completed increment logs, earlier checkpoints and verification records are in
 [history.md](history.md).
@@ -437,8 +441,8 @@ All selectors are registered and admit nothing yet.
 | `wide_records()` | Records: records wider than 32 fields (presence trailer layout) | M1 | Registered, admits nothing |
 | `unknown_type()` | Unknown: `unknown` with `typeof`/`instanceof`/`Array.isArray`/`in`/guard narrowing | M1, M2 | Registered, admits nothing |
 | `checked_assertions()` | Unknown: `as` as a runtime-checked downcast | M1, M2 | Registered, admits nothing |
-| `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Registered, admits nothing |
-| `async_functions()` | Async (K4.4 step 4): `async`/`await` on continuation frames | M5 | Registered, admits nothing |
+| `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Implemented on the `v34-async` branch |
+| `async_functions()` | Async (K4.4 step 4): `async`/`await` on continuation frames | M5 | Implemented on the `v34-async` branch |
 
 ### Deferred external validation scenarios
 
@@ -1457,7 +1461,9 @@ frame catalog version 2 and the `varta_resume` export) only under profile v33
 ([runtime admission](architecture.md#runtime-admission-resumable_frames)); no
 host import or value tag changes. Step 2 (synchronous generators) is the first
 source producer of frames; generator frames are resumed only by guest code, and
-the runtime still does not call the dispatcher. Steps 3–6 are not implemented.
+the v33 runtime still does not call the dispatcher. Steps 3–4 (promises and
+async functions) are implemented under v34, where the runtime scheduler is the
+dispatcher's first caller; steps 5–6 are not implemented.
 Each increment still needs its own versioned contract in
 [architecture.md](architecture.md), positive/negative and resource tests and the
 normal gates before source admission.
@@ -1473,8 +1479,12 @@ so the value ABI stays at the v32 version. Its selectors `resumable_frames()`
 `Promise<T>`) and 4 (`async`/`await`) belong to the
 [v34 pilot batch](#pilot-batch-v34-in-development), decided with the project
 author on 2026-10-29. Its own host ABI makes runtimes without the scheduler
-reject v34 modules; its selectors `promises()` and `async_functions()` admit
-nothing yet.
+reject v34 modules. Its selectors `promises()` and `async_functions()` are
+implemented on the `v34-async` branch
+([scheduler](architecture.md#microtask-scheduler-promises),
+[promises](architecture.md#promise-objects-promises),
+[async functions](architecture.md#async-functions-async_functions)): the
+runtime owns the microtask queue and is the first caller of `varta_resume`.
 
 One suspension/resumption mechanism serves generators, async functions and async
 generators. The event loop orders work, Promise holds a future result, and
@@ -1700,8 +1710,28 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    unions (needs a value tag) and the iterator protocol of other objects.
 3. Microtask queue and base Promise semantics. Exit: `then` chains, thenable
    adoption, self-resolution TypeError and FIFO job order match Node event logs.
+   **Implemented** in v34 (selector `promises`, branch `v34-async`): a
+   runtime-owned bounded FIFO queue per execution of generation-checked resume
+   tokens, drained after `main` only through `varta_resume`; promises are
+   guest-heap records without a value tag; every reaction, adoption and
+   `finally` step is a scheduled job frame of a synthesized function, so job
+   counts and order match Node (`varta-runtime` `promise_tests` pin Node 24
+   logs). Five scheduler imports join the v34 host ABI; unhandled rejections
+   terminate the execution with their reason. Decided in this increment:
+   resolve functions take `T` only (adoption goes through `then` and async
+   returns), and scheduler bookkeeping is bounded by its own limits instead of
+   the host-call budget. Open: structural thenables, the combinators and
+   promises in aggregates (they need a value tag), `Promise.withResolvers`.
 4. async/await over the same frames. Exit: `await` in normalized expression
    positions, try/catch/finally across `await` and unhandled-rejection policy.
+   **Implemented** in v34 (selector `async_functions`): annotated top-level and
+   generic `async function` declarations including async `main`, `await` in
+   normalized positions, `try`/`catch`/`finally` across `await` and
+   returned-promise adoption (`async_tests`, Node 24 logs). Open: `await`
+   inside intrinsic value blocks (string concatenation, template literals,
+   intrinsic calls), async arrows/methods/expressions, optional parameters,
+   per-await fuel cost (frames save every local; liveness-based slots are the
+   planned fix) and request-scoped isolates for async HTTP (step 5).
 5. Timers, asynchronous I/O, cancellation and shutdown. Exit: separate budgets,
    generation-checked late completions and request-scoped cleanup.
 6. Async generators, `for await`, top-level await and compatibility expansion.

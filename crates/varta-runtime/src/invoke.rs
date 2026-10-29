@@ -174,6 +174,7 @@ fn execution_error(error: wasmtime::Error) -> Error {
 fn runtime_error(error: RuntimeError) -> Error {
     match error {
         RuntimeError::Uncaught(error) => Error::ExecutionFailed(error.to_string()),
+        RuntimeError::Scheduler(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Policy(error) => Error::InvalidPolicy(error.to_string()),
         RuntimeError::Execution(error) => execution_error(error),
         RuntimeError::ToolContract(error) => Error::InvalidArtifact(error.to_string()),
