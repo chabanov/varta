@@ -416,6 +416,96 @@ unsupported constructs keep failing with clear diagnostics. Measurements for the
 research record: share of files and SDK tests passing, artifact size, startup time
 and memory compared with Node, Deno and Bun.
 
+#### Program-size limits measurement (2026-10-29)
+
+Measurement only; no limit changed. Before deciding whether v36 raises the
+structural [limits](architecture.md#resource-limits), the pinned SDK was counted
+statically with the TypeScript 6.0 checker (structural interning approximating
+Varta's) and synthetic v36 programs were compiled at commit `8ccdb12` with a
+temporary, uncommitted build that raised the count limits and relaxed the size
+checks. Production runtime budgets were used except where a row states a
+test-only fuel budget.
+
+Census of the full `UarpClient` graph (what Varta lowers today: every declaration
+of every reached module, no dead-code elimination) and of a minimal use
+(construct the client and await one resource call, method-granular reachability):
+
+| Entity | Full graph | Minimal use |
+| --- | --- | --- |
+| Function-likes (functions / methods / constructors+accessors / closures) | 1008 (30 / 907 / 15 / 56) | 40 |
+| Async functions / async generators | 10 / 3 | 5 / 0 |
+| Generic instances (`request<T>` / `pick` / `autoPaginate`) | 857 (671 / 155 / 31) | 1 |
+| Declared interfaces / reachable structural record shapes / classes | 1917 / 1885 / 64 | 1917 / 25 / 62 |
+| Array element types / unions (literal-aware) / `Promise<T>` types | 337 / 420 / 620 | 5 / 8 / 6 |
+| Physical Wasm signatures | 36 | 19 |
+| String literals (UTF-8 bytes; 356 enum-value constants in `models.ts`) | 29.9 KB | 0.8 KB |
+
+Calibration against the compiler's own counts: sync functions, methods and
+generic instances cost exactly one Wasm function; a closure costs one function
+and about 3.9 KB; an async function costs 3 functions, 1 frame and about 4 KB, and
+a new `Promise<T>` adds 5 functions, a frame, 2 record shapes and about 5.4 KB.
+Over the 2090 model types that compile alone, compiler/census ratios are 1.01
+for record shapes, 1.09 for array types and 1.38 for unions. Static strings take
+2 bytes per UTF-16 unit; a checked `as T` schema takes about 85 bytes per field
+plus a 16-byte-per-field layout. The 356 enum constants alone cost 30 KB of static
+data and 390 K fuel at startup, and startup fuel grows by about 1 unit per static
+byte even when nothing is used.
+
+Synthetic pilot mimic (classes of resource methods, each returning
+`request<Model>()`, a generic async function doing `JSON.parse(text) as T`; one
+method per model), production walls in the order they are reached:
+
+| Limit | Per async method | Reached at |
+| --- | --- | --- |
+| `abi::MAX_USER_FUNCTIONS` (Wasm function section) | 9.0 functions | 27 methods |
+| `value::MAX_RECORD_SHAPES` | ~2 shapes plus models | ~55 |
+| `promises::MAX_PROMISE_TYPES` (compiler-local, not in the limits table) | 1 type | 62 |
+| 64 KiB static page (compiler and runtime JSON metadata check) | ~0.96 KB | ~70–89 |
+| `value::MAX_UNION_TYPES` (each optional reference field is a union) | ~1.2 per model | ~100 |
+| Frame catalog (bounded by `abi::MAX_USER_FUNCTIONS`) | 2 frames | 126 |
+| `abi::MAX_WASM_FUNCTION_BODY_BYTES` (`varta_resume` is a linear chain, ~125 B/frame) | 252 B | ~260 |
+| `abi::MAX_WASM_BYTES` | 10.9 KB | ~385 |
+| `abi::FUEL` (startup ≈ static bytes, plus ~10 K per call) | ~0.9–1.3 K | ~1000 |
+
+Scaling with the raised build (N models, M methods; test-only fuel budget):
+
+| N / M | Compile | Wasm functions | Shapes / unions / promises | Wasm | Static | Largest body | Wasmtime compile | Fuel (start + 1 call) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 128 / 128 | 0.6 s | 1177 | 266 / 160 / 129 | 1.3 MiB | 114 KiB | 32 KiB | 0.7 s | 150 K |
+| 1024 / 512 | 4.4 s | 4657 | 1563 / 1231 / 514 | 5.3 MiB | 463 KiB | 126 KiB | 2.8 s | ≥506 K |
+| 1900 / 900 | 7.5 s | 8165 | 2844 / 2277 / 902 | 9.3 MiB | 748 KiB | 221 KiB | 5.5 s | ≥816 K |
+| 4096 / 2048 | 20.7 s | 18545 | 6236 / 4903 / 2050 | 21.4 MiB | 1.9 MiB | 505 KiB | 10.2 s | traps |
+
+Rows past the static page run only until checked JSON rejects metadata outside
+static memory. Shape-only programs (4096 shapes, one function) and sync-only
+programs (4096 functions or methods) stay small: at most 0.75 MiB Wasm, 0.4 s
+Wasmtime compile and 18–24 K fuel.
+
+Estimated full-graph requirements of the SDK: about 6.5–7 K Wasm functions,
+2.5–2.7 K record shapes (including promise records), 0.5–0.7 K unions, ~370 array
+types, 620–700 promise types, ~35 generator types, ~1.3 K frames, 0.45–0.8 MB
+static data, 7–20 MB Wasm, a `varta_resume` body of 0.17–0.4 MB and 1.0–1.6 M fuel
+for startup plus one call (error bars: ±10–20 % on counts, ×1–3 on code size
+because the real `request` body has more suspension states than the mimic).
+Signatures (≤ 40), function types (≤ 30), memory (1.2 MiB used) and the deadline
+(< 0.2 s per run) are not limiting. With dead-code elimination the minimal use
+would need about 80 functions and 95 shapes, but the 356 constants remain unless
+module constants are pruned too.
+
+Candidate v36 ceilings for the owner's decision (≥ 2× headroom): user functions
+16384; record shapes and classes 8192; unions 4096; array types 1024; promise
+types 2048 (moved into the `varta-common` registry); generator types 256; Wasm
+file 32 MiB. Moving together: JSON schema and capture type counts (derived),
+runtime function-section, catalog and frame checks, artifact/launcher Wasm
+readers. Not a constant change: the static page needs a multi-page static region
+(a new memory layout: `RESULT_BASE`, which also serves as the page divisor of
+`MAX_MEMORY_BYTES`, every runtime metadata bound and possibly a larger memory
+budget), `varta_resume` needs a table dispatch instead of a larger body limit, and
+startup fuel needs either a larger budget or startup cost independent of static
+size and constants. All ceilings are global constants checked by the runtime for
+every profile today, so raising them must make them profile-dependent to keep
+v1–v35 artifacts frozen. Scripts and raw results are kept outside the repository.
+
 ### Pilot batch v32 (in development)
 
 Profile `checked-f64-utf16-v32` collects pilot M1–M3 features developed in
