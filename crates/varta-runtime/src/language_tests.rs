@@ -418,10 +418,11 @@ export function main():void{
         // sees an unregistered successor exactly as a v34 runtime sees v35.
         replace(
             &bytes,
-            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v37"}"#,
+            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v38"}"#,
         ),
-        // V35 metadata with the v36, v34 or v33 host ABI or without a host
-        // ABI section.
+        // V35 metadata with the v37, v36, v34 or v33 host ABI or without a
+        // host ABI section.
+        host_abi(&bytes, Some(abi::NET_REQUEST_VERSION)),
         host_abi(&bytes, Some(abi::TIMERS_VERSION)),
         host_abi(&bytes, Some(abi::SCHEDULED_FRAMES_VERSION)),
         host_abi(&bytes, Some(abi::RESUMABLE_FRAMES_VERSION)),
@@ -518,21 +519,128 @@ export function main():void{
         // sees an unregistered successor exactly as a v35 runtime sees v36.
         replace(
             &bytes,
-            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v37"}"#,
+            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v38"}"#,
         ),
         // A v36 module relabelled as v35 keeps host ABI 32 and fails at its
         // host ABI section; v35 metadata paired with host ABI 32 from the
         // other side fails the same way.
         replace(&bytes, &declared(v35)),
         host_abi(&older, Some(abi::TIMERS_VERSION)),
-        // V36 metadata with the v35 or v34 host ABI or without a host ABI
-        // section.
+        // V36 metadata with the v37, v35 or v34 host ABI or without a host
+        // ABI section.
+        host_abi(&bytes, Some(abi::NET_REQUEST_VERSION)),
         host_abi(&bytes, Some(abi::PROMISE_VALUES_VERSION)),
         host_abi(&bytes, Some(abi::SCHEDULED_FRAMES_VERSION)),
         host_abi(&bytes, None),
         // The v36 host ABI without a declared profile is not legacy input.
         legacy(&bytes),
         // V36 declaring the value16, value15, value13 or function value codec
+        // version.
+        value_abi(&bytes, Some(value::PROMISE_VALUE_VERSION)),
+        value_abi(&bytes, Some(value::DYNAMIC_VALUE_VERSION)),
+        value_abi(&bytes, Some(value::BIGINT_VALUE_VERSION)),
+        value_abi(&bytes, Some(value::FUNCTION_VALUE_VERSION)),
+    ];
+    for changed in cases {
+        assert!(matches!(
+            runtime.validate_module(&changed),
+            Err(RuntimeError::Language(_))
+        ));
+        assert!(runtime.inspect_module(&changed).is_err());
+        // No log line or exit code is observable: the run fails before instantiation.
+        assert!(matches!(
+            runtime.run_wasm_bytes(&changed, &grants),
+            Err(RuntimeError::Language(_))
+        ));
+    }
+    for changed in [
+        value_abi(&bytes, Some(value::FUNCTION_FIELD_VALUE_VERSION + 1)),
+        value_abi(&bytes, None),
+    ] {
+        assert!(runtime.validate_module(&changed).is_err());
+        assert!(runtime.inspect_module(&changed).is_err());
+        assert!(runtime.run_wasm_bytes(&changed, &grants).is_err());
+    }
+}
+
+#[test]
+fn pilot_profile_v37_declares_host_abi_33_with_value17_and_fails_where_unknown() {
+    use varta_common::language::{LanguageContract, SCHEMA_VERSION};
+    use varta_common::value;
+    // Classes, generators, dictionaries, checked JSON, promise values and the
+    // scheduler: v37 runs every inherited v36 feature unchanged under its own
+    // host ABI and value layout 17.
+    let source = r#"
+class Probe{n:number;constructor(n:number){this.n=n;}}
+function* digits():Generator<number,void,undefined>{yield 3;yield 7;}
+async function later(n:number):Promise<number>{return n;}
+export function main():void{
+ let text="";
+ for(const digit of digits()){text=text+String(digit);}
+ const scores:Record<string,number>={v:new Probe(37).n};
+ console.log(`${text}:${JSON.stringify(scores)}`);
+ const pending:Promise<number>[]=[later(37)];
+ Promise.all(pending).then((ns:number[]):void=>{console.log(`async ${ns[0]}`);varta.process.exit(77);});
+}
+"#;
+    let v37 = LanguageProfile::CheckedF64Utf16V37;
+    let v36 = LanguageProfile::CheckedF64Utf16V36;
+    let bytes = varta_compiler::compile_typescript_with_profile(source, v37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let runtime = VartaRuntime::new();
+    let inspection = runtime.inspect_module(&bytes).unwrap();
+    assert_eq!(inspection.language.profile, Some(v37));
+    assert_eq!(inspection.language.origin, LanguageOrigin::Declared);
+    assert_eq!(
+        inspection.value_abi_version,
+        Some(value::FUNCTION_FIELD_VALUE_VERSION)
+    );
+    assert_eq!(v37.host_abi(), abi::NET_REQUEST_VERSION);
+    assert_eq!(
+        (v36.host_abi(), v36.value_abi()),
+        (abi::TIMERS_VERSION, value::FUNCTION_FIELD_VALUE_VERSION)
+    );
+    let grants = [varta_common::CapabilityGrant {
+        id: "process.exit".into(),
+        value: varta_common::CapabilityValue::Boolean(true),
+    }];
+    let logs = [
+        r#"varta log: 37:{"v":37}"#.to_string(),
+        "varta log: async 37".to_string(),
+    ];
+    let run = runtime.run_wasm_bytes(&bytes, &grants).unwrap();
+    assert_eq!((run.lines.as_slice(), run.exit_code), (&logs[..], 77));
+    let older = varta_compiler::compile_typescript_with_profile(source, v36).unwrap();
+    let run = runtime.run_wasm_bytes(&older, &grants).unwrap();
+    assert_eq!((run.lines.as_slice(), run.exit_code), (&logs[..], 77));
+    let declared = |profile: LanguageProfile| {
+        LanguageContract {
+            schema_version: SCHEMA_VERSION,
+            profile,
+        }
+        .to_bytes()
+        .unwrap()
+    };
+    let cases = [
+        // A runtime that does not list a profile rejects its name: this runtime
+        // sees an unregistered successor exactly as a v36 runtime sees v37.
+        replace(
+            &bytes,
+            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v38"}"#,
+        ),
+        // A v37 module relabelled as v36 keeps host ABI 33 and fails at its
+        // host ABI section; v36 metadata paired with host ABI 33 from the
+        // other side fails the same way.
+        replace(&bytes, &declared(v36)),
+        host_abi(&older, Some(abi::NET_REQUEST_VERSION)),
+        // V37 metadata with the v36 or v35 host ABI or without a host ABI
+        // section.
+        host_abi(&bytes, Some(abi::TIMERS_VERSION)),
+        host_abi(&bytes, Some(abi::PROMISE_VALUES_VERSION)),
+        host_abi(&bytes, None),
+        // The v37 host ABI without a declared profile is not legacy input.
+        legacy(&bytes),
+        // V37 declaring the value16, value15, value13 or function value codec
         // version.
         value_abi(&bytes, Some(value::PROMISE_VALUE_VERSION)),
         value_abi(&bytes, Some(value::DYNAMIC_VALUE_VERSION)),

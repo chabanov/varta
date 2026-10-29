@@ -2772,3 +2772,36 @@ Contract: [architecture.md](architecture.md#async-generators-async_generators).
   `async_generator_cases`, `async_generator_tests`, which also force a
   collection before every job and record the fuel figures of the contract);
   regenerate expectations only from Node, never from Varta output.
+
+## Profile v37 (in development)
+
+Inherit v36 under checked-f64-utf16-v37 with every v36 selector, value layout
+17 and the value17 host operations, exception channel v8, JSON schema 17, the
+scheduler, frame catalog version 3, async generators and the timer operations.
+V37 has its own host ABI `abi::NET_REQUEST_VERSION` (33) and shares value
+ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`) with v36; v36 keeps host
+ABI 32. Five selectors gate the streams and admit nothing yet: language core
+(`language_core`), class generics (`class_generics`), collections and binary
+text (`collections`), RegExp (`regexp`) and network requests (`net_request`).
+Gate every admission on its own selector, keep v36 and earlier profiles
+frozen, and add each stream's rules under its own heading here.
+
+- A v36 rule or binding stated "for v36 only" (value17 readers, timer
+  operations, preludes, async generators) extends to v37 through the inherited
+  selectors; never widen it to v35 or earlier.
+- Every host import the batch adds takes `abi::NET_REQUEST_VERSION` as its
+  minimum ABI in the `HostOperation` registry; do not add another host ABI
+  constant in this batch. Add its `.d.ts`, linker, validation and denial tests
+  in the same change.
+- The collections stream owns the batch's value-layout bump (value 18) and
+  lands it first as a foundation commit: a new `value` constant,
+  `value_abi`/`value_layout` for v37, value18 variants of every layout-bound
+  reader (minimum ABI 33) and the launcher value maximum. Value17 readers stay
+  frozen for v36. The other streams rebase onto it.
+- `net.request` is a new exact capability operation, denied by default and
+  checked before any socket is opened; never let `net.fetch`, `net.get` or
+  `net.listen` grants authorize it.
+- Tests that assert v37 equals v36 apart from its host ABI
+  (`pilot_v37_inherits_v36_…` in `varta-common` `language`, the v37 runtime
+  language test and the v37 CLI smoke test) change in the stream that
+  introduces the difference.

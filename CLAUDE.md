@@ -299,4 +299,5 @@ One line per profile; details in [profile rules](docs/profile-rules.md) and the
 | `checked-f64-utf16-v34` | Pilot batch (in development): index signatures, recursive and wide records, `unknown` and checked `as`, Promise and async/await |
 | `checked-f64-utf16-v35` | Pilot batch in development: Web types, mixed records, async methods, frame liveness |
 | `checked-f64-utf16-v36` | Pilot batch in development: checked declared fields, function fields, async generators, timers |
+| `checked-f64-utf16-v37` | Pilot batch in development: language core, class generics, collections and binary text, RegExp, net.request |
 <!-- generated:profile-index:end -->

@@ -634,6 +634,29 @@ the [v36 measurement](#pilot-acceptance-package-uarp-sdk) lists the next ones.
 | `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Implemented ([contract](architecture.md#async-generators-async_generators)): declarations, generic instantiations and class methods, the queued `next`/`return`/`throw` protocol, `yield*` over async generators, `for await` over async generators, arrays and generators; async generator expressions and `Symbol.asyncIterator` open |
 | `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Implemented ([contract](architecture.md#timers-timers)): `setTimeout`/`setInterval`/clears, sleep pattern, `AbortSignal.timeout` (with v36 abort listeners), exact `time.timer` grant |
 
+### Pilot batch v37 (in development)
+
+The next pilot batch targets the blockers of the
+[v36 measurement](#pilot-acceptance-package-uarp-sdk) in profile
+`checked-f64-utf16-v37`, developed in five parallel streams: language-core
+gaps, class generics, collections and binary text, RegExp and the asynchronous
+network request capability. V37 inherits every v36 feature with value
+ABI/layout 17 and declares its own host ABI 33 (`abi::NET_REQUEST_VERSION`),
+under which every host import of the batch is added; a v37 module relabelled
+as v36 fails at its host ABI section, and runtimes that do not list v37 reject
+its declared profile name. The collections stream owns any value-layout bump
+(value 18) and lands it as an early foundation commit
+([contract](architecture.md#checked-f64-utf16-v37--pilot-batch-language-core-class-generics-collections-and-binary-text-regexp-and-netrequest)).
+All selectors are registered and admit nothing yet.
+
+| Selector | Work stream | Pilot step | State |
+| --- | --- | --- | --- |
+| `language_core()` | Language core: TDZ-safe closure capture before declaration, deferred `let x: T;` initialization, dense `for…of` typing, property-path narrowing, `switch` on strings, function assignability fixes | M3, M4 | Registered, admits nothing |
+| `class_generics()` | Classes: generic methods and classes, interface method signatures, `implements`, `#private` | M4, M5 | Registered, admits nothing |
+| `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owns any value18 bump) | M4, M6 | Registered, admits nothing |
+| `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Registered, admits nothing |
+| `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Registered, admits nothing |
+
 ### Platform targets and application model
 
 **Status: design accepted by the owner on 2026-10-29

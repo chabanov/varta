@@ -11,6 +11,15 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Opt-in v37 (pilot batch: language core, class generics, collections and
+  binary text, RegExp and `net.request`, in development) is registered. It
+  inherits every v36 feature, shares value ABI/layout 17 with v36 and declares
+  its own host ABI 33 (`NET_REQUEST_VERSION`) without a new import yet; the
+  launcher advertises host ABI 33. A v37 module relabelled as v36 fails at its
+  host ABI section, and runtimes that do not list v37 reject its declared
+  profile name before any guest effect. Its `language_core`, `class_generics`,
+  `collections`, `regexp` and `net_request` selectors admit nothing yet.
+
 - Checked declared fields under opt-in v36 (selector
   `checked_declared_fields`). A mixed record indexed by `unknown` may declare
   fields of any type a JSON value can describe, such as the pilot's

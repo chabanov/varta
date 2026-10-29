@@ -160,10 +160,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 | `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
+| `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **32**, value ABI **17**, HTTP contract **1** and **39** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **33**, value ABI **17**, HTTP contract **1** and **40** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -5988,7 +5989,7 @@ guest effect. The runtime reports a failure as the typed
 `RuntimeError::Frames`; artifact I/O reports it as an invalid artifact.
 
 - **Catalog reader.** A `resumable_frames()` profile reads catalog versions 1
-  and 2 (v35 and v36, the `frame_liveness()` profiles, read versions 1 and 3 instead, see
+  and 2 (v35 to v37, the `frame_liveness()` profiles, read versions 1 and 3 instead, see
   [frame liveness](#frame-liveness-frame_liveness)). Every other profile keeps
   the version 1 reader, which never accepts versions 2 or 3; a frame catalog
   under such a profile fails as a profile that does not admit resumable frames. Duplicate catalog sections, unknown fields,
@@ -6583,7 +6584,7 @@ trap before any effect.
   `<reason not retained>`. These bounds change no guest-observable behaviour
   (the same reports are made and withdrawn, and the same executions
   terminate), only the diagnostic text, so they apply to every scheduler
-  profile (v34 to v36). Values are in the [limits table](#resource-limits).
+  profile (v34 to v37). Values are in the [limits table](#resource-limits).
 - **Entry points.** Only `main` gets a checkpoint. Tool and HTTP contracts are
   rejected in every binary64 profile, so async tool handlers and HTTP adapters
   cannot be declared; a request-scoped isolate with its own checkpoint is the
@@ -7875,6 +7876,64 @@ iteration is not implemented yet)`) and the annotations below.
   value that is not an async generator are compile-time errors rather than
   rejected promises. Behaviour tests pin Node 24 logs (`varta-runtime`
   `async_generator_cases`).
+
+### `checked-f64-utf16-v37` — Pilot batch: language core, class generics, collections and binary text, RegExp and net.request
+
+V37 is registered and inherits every v36 feature and selector, including value
+layout 17 (`function_fields()`) with the value17 host readers, exception
+channel v8, JSON schema 17 (`json_stringify_v16`, `json_parse_v18`), the
+microtask scheduler, frame catalog version 3 (`frame_liveness()`), async
+generators and the timer operations with their `time.timer` grant. Wherever a
+v36 subsection above admits a feature, layout or binding for v36 only, it
+applies to v36 and v37; v35 and earlier profiles stay frozen. V37 declares one
+version identity of its own (see the [version matrix](#version-matrix)):
+
+- **Host ABI** `abi::NET_REQUEST_VERSION` (33), for v37 alone. It adds no host
+  import yet: every v36 operation, including the value17 readers and the timer
+  operations, keeps its signature, binding and minimum ABI, and no registered
+  operation requires host ABI 33. Host imports added in this batch (the
+  asynchronous `net.request` operations behind `fetch` first) use host ABI 33
+  as their minimum.
+- **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17),
+  shared with v36. V37 adds no value tag or layout yet;
+  `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
+  catalogs, frames and exception cells are stamped and read exactly as under
+  v36.
+
+An older runtime that does not list v37 rejects the unknown profile name in
+`varta.language` validation, before compilation or any guest effect. A v37
+module relabelled as v36 declares host ABI 33 against v36's 32 and fails at its
+host ABI section before instantiation; as for every profile, a v37 declaration
+with a downgraded or missing host ABI section, a value ABI other than value17
+or a missing value section fails validation before any guest effect.
+
+Each ABI is bumped at most once per batch. The host ABI bump is already made at
+registration and every stream adds its imports under it. The collections
+stream owns any value-layout bump (value 18: a new `value` constant,
+`value_abi`, `value_layout`, value18 variants of every layout-bound reader with
+their minimum host ABI 33, and the launcher maximum) and lands it as an early
+foundation commit; the other streams rebase onto it. V36 and earlier profiles
+keep their host ABI, value ABI and layouts.
+
+Five selectors gate the batch's work streams, and all admit nothing yet:
+
+- language-core stream: `language_core()` (TDZ-safe closure capture before
+  declaration, deferred `let x: T;` initialization, dense `for…of` typing,
+  property-path narrowing, `switch` on strings and function assignability
+  fixes);
+- class-generics stream: `class_generics()` (generic methods and classes,
+  interface method signatures, `implements` and `#private` members);
+- collections stream: `collections()` (`Map`/`Set`, tuples, `Array.join`,
+  `String.fromCharCode`, a `Date` subset, `Uint8Array`,
+  `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` and base64);
+- RegExp stream: `regexp()` (`RegExp` and the regex string methods);
+- net-request stream: `net_request()` (asynchronous `fetch`, `Request`,
+  `Response`, `Headers`, `URL` and `ReadableStream` over the exact
+  `net.request` capability, and `Symbol.asyncIterator` for async iterables).
+
+Until a stream adds its subsection here, a v37 module compiles and runs exactly
+like a v36 module apart from its declared profile and host ABI, and production
+budgets of every profile are unchanged.
 
 ## Local modules
 

@@ -42,6 +42,12 @@ pub const PROMISE_VALUES_VERSION: u32 = 31;
 /// `setTimeout`/`clearTimeout`. No import requires it yet; it binds v36 alone,
 /// so a v36 module relabelled as v35 fails at its host ABI section.
 pub const TIMERS_VERSION: u32 = 32;
+/// Pilot batch v37 (language core, class generics, collections, RegExp and
+/// the async network request capability): the minimum host ABI of every
+/// import the batch adds, such as the `net.request` operations behind
+/// `fetch`. No import requires it yet; it binds v37 alone, so a v37 module
+/// relabelled as v36 fails at its host ABI section.
+pub const NET_REQUEST_VERSION: u32 = 33;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -78,6 +84,7 @@ pub fn supported(version: u32) -> bool {
             | SCHEDULED_FRAMES_VERSION
             | PROMISE_VALUES_VERSION
             | TIMERS_VERSION
+            | NET_REQUEST_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";
