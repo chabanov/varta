@@ -569,7 +569,11 @@ pub(super) fn finish_body(
         )?;
         statements.push(S::Return(Some(value)));
     }
-    if lower.result != Type::Void && !returns(statements) {
+    if lower.result != Type::Void
+        && !returns(statements)
+        && !(lower.types.profile.checked_declared_fields()
+            && completion::exits_function_through_switches(statements))
+    {
         return Err(lower.source.locate(
             invalid("value-returning function must return on every path"),
             span,

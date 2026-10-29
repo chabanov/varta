@@ -4489,6 +4489,74 @@ fn public_engine_links_mixed_records_and_json_to_unknown_in_v35() {
 }
 
 #[test]
+fn public_engine_links_checked_declared_fields_across_modules_in_v36() {
+    // The pilot's problem documents (v36): a declared array of optional
+    // records next to `[key: string]: unknown`, converted from JSON on the
+    // first declared read, held by an Error subclass and read by a getter.
+    use varta_common::language::LanguageProfile;
+    struct ProblemSources;
+    impl ModuleLoader for ProblemSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./errors.ts" => Ok("errors.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("errors.ts") => "export interface ProblemDocument{title?:string;status?:number;\
+                    errors?:Array<{field?:string;message?:string}>;[key:string]:unknown}\
+                    export class ApiError extends Error{readonly problem:ProblemDocument;readonly reason?:string;\
+                    constructor(problem:ProblemDocument){super(problem.title??'failed');this.problem=problem;\
+                    this.reason=typeof problem.reason==='string'?problem.reason:undefined;}\
+                    get validationErrors():Array<{field?:string;message?:string}>{return this.problem.errors??[];}}\
+                    export function parseProblem(text:string):ProblemDocument{let parsed:unknown;\
+                    try{parsed=JSON.parse(text);}catch{return {title:text};}\
+                    if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){\
+                    const body=parsed as Record<string,unknown>;return body as ProblemDocument;}\
+                    return {status:0};}",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: r#"import {ApiError,parseProblem} from './errors.ts';
+                       export function main():void{
+                       const error=new ApiError(parseProblem('{"title":"Invalid","reason":"r","errors":[{"field":"a"},{"message":"b"}]}'));
+                       const list=error.validationErrors;let text='';
+                       for(const item of list){if(item!==undefined){text+=String(item.field)+'/'+String(item.message)+';';}}
+                       console.log(error.message+' '+String(error.reason)+' '+text+' '+String(list===error.validationErrors));
+                       console.log(JSON.stringify(Object.keys(error.problem)));}"#
+                    .into(),
+            },
+            &ProblemSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V36).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: Invalid r a/undefined;undefined/b; true",
+            r#"varta log: ["title","reason","errors"]"#,
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V35)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("not checkable from it"), "{frozen}");
+}
+
+#[test]
 fn public_engine_shares_v35_web_types_across_modules_without_listing_preludes() {
     // The pilot's transport shape: an errors module reads numeric headers and
     // the entry module owns an AbortController. Both modules name the engine

@@ -116,6 +116,9 @@ impl Lower<'_> {
         expected: Option<Type>,
         hints: Option<AggregateHints>,
     ) -> Result<Expr> {
+        if let Some(narrowed) = self.narrowed_path_conditional(branch, expected)? {
+            return Ok(narrowed);
+        }
         let test = self.condition(&branch.test)?;
         let saved = self.flow_snapshot();
         self.guard(&branch.test, true)?;

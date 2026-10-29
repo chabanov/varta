@@ -2096,6 +2096,23 @@
       }
     },
     {
+      "id": "checked-declared-fields",
+      "feature": "mixed-index-records",
+      "path": "cases/checked-declared-fields.ts",
+      "sha256": "39a510eae32bada2a3224f4e71e7e5503420529f8c97fdc735b1d3dd94ed22a8",
+      "stdout": [
+        "varta log: built a=undefined undefined=pushed m1 -",
+        "varta log: parsed b=x - v true",
+        "varta log: {\"title\":\"parsed\",\"errors\":[{\"message\":\"x\",\"field\":\"b\"}],\"labels\":{\"k\":\"v\"},\"extra\":1}",
+        "varta log: parsed b=x - v"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Under the v35 pin a declared array, record or dictionary next to an unknown index signature is not checkable; v36 checked declared fields convert them."
+      }
+    },
+    {
       "id": "json-parse-unknown",
       "feature": "unknown-json",
       "path": "cases/json-parse-unknown.ts",

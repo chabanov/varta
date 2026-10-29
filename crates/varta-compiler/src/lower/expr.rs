@@ -380,6 +380,7 @@ impl Lower<'_> {
                     )
                 {
                     let saved = self.flow_snapshot();
+                    let context = self.fallback_context(binary, left.ty);
                     let right = (|| {
                         if self.types.profile.truth_guards() {
                             match binary.op {
@@ -388,7 +389,10 @@ impl Lower<'_> {
                                 _ => self.nullish_guard(&binary.left)?,
                             }
                         }
-                        self.expr(&binary.right)
+                        match context {
+                            Some(context) => self.expr_expected(&binary.right, Some(context)),
+                            None => self.expr(&binary.right),
+                        }
                     })();
                     self.flow_restore(&saved);
                     return self.guest_logical(binary.op, left, right?, expression.span());

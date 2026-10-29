@@ -536,14 +536,30 @@ a v36 module relabelled as v35 fails at its host ABI section, and runtimes that
 do not list v36 reject its declared profile name. The function-fields stream
 owns any value-layout bump (value17)
 ([contract](architecture.md#checked-f64-utf16-v36--pilot-batch-checked-declared-fields-function-fields-async-generators-and-timers)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; the records stream is implemented on its branch.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
-| `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Registered, admits nothing |
+| `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Implemented ([contract](architecture.md#checked-declared-fields-checked_declared_fields)): convertible declared fields with exact-or-built reads and write-back, checked parsing and assertions converting JSON graphs, any-layout record descriptors, dictionary destructuring, `typeof` property-path conditionals, `??`/`\|\|` literal fallbacks, `let x: unknown;`, exhaustive `switch` returns |
 | `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns any value17 bump) | M2, M4 | Registered, admits nothing |
 | `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Registered, admits nothing |
 | `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Registered, admits nothing |
+
+Records-stream measurement (branch `v36-declared-fields`, per-file first
+diagnostic of the pilot's 65 modules under v36): `core/errors.ts` now compiles
+(5 modules compile, up from 4); the 60 dependents of `core/util.ts` stop at its
+defaulted function-typed parameter (functions stream). With that parameter
+patched in a scratch copy, 59 modules stop at `core/sse.ts`'s async generator
+(async stream) and `core/util.ts` at optional chaining (`signal?.aborted`).
+Pending in the records stream: optional chaining (`a?.b`, `a?.m()`,
+`a?.[k]`), general property-path narrowing beyond the `typeof` conditional,
+`for…of` and index reads of record arrays typed without `| undefined`
+(sparse profiles type items `T | undefined`), `switch` over strings and
+`typeof`, the `object` annotation, rest elements of dictionary patterns,
+`JSON.stringify` of `unknown`-holding values in programs that declare Error
+classes (the v32 rule), mixed records nested inside checked-parse targets,
+and the identity of empty arrays across declared reads (see the contract's
+deviations).
 
 ### Deferred external validation scenarios
 

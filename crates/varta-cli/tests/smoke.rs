@@ -11683,6 +11683,55 @@ fn pilot_profile_v35_runs_mixed_records_and_json_to_unknown_in_dev_and_artifacts
 }
 
 #[test]
+fn pilot_profile_v36_runs_checked_declared_fields_in_dev_and_artifacts() {
+    // A declared array of optional records next to `[key: string]: unknown`:
+    // checked parsing converts it, a plain JSON object converts on its first
+    // declared read, and both runs agree in dev and in the packaged artifact.
+    let project = RegressionProject::new(
+        "interface Problem{title?:string;errors?:Array<{field?:string;message?:string}>;[key:string]:unknown}\
+         function fields(p:Problem):string{let out='';for(const e of p.errors??[]){\
+         if(e!==undefined){out+=String(e.field)+'='+String(e.message)+';';}}return out;}\
+         export function main():void{\
+         const text='{\"title\":\"Bad\",\"errors\":[{\"field\":\"a\",\"message\":\"m\"},{\"field\":\"b\"}],\"trace\":1}';\
+         const parsed=JSON.parse(text) as Problem;\
+         const plain=JSON.parse(text) as Record<string,unknown> as Problem;\
+         const list=plain.errors;if(list!==undefined){list.push({message:'added'});}\
+         console.log(fields(parsed)+' '+fields(plain)+' '+String(plain.errors===list));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v36");
+    let expected = ["varta log: a=m;b=undefined; a=m;b=undefined;undefined=added; true"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for mut command in [varta(), Command::new(runtime_path())] {
+        let output = command
+            .args(["run", "dist/app.wasm"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+    // V35 keeps rejecting the declared array before any guest effect.
+    project.language_profile("checked-f64-utf16-v35");
+    let old = project.command(&["dev"]);
+    assert!(!old.status.success());
+    let text = combined(&old);
+    assert!(text.contains("not checkable from it"), "{text}");
+    assert!(logs(&old).is_empty(), "{text}");
+}
+
+#[test]
 fn pilot_profile_v35_runs_web_types_in_dev_and_source_free_artifacts() {
     // Two modules name Headers, AbortController and DOMException without
     // importing them; no capability is granted or needed.

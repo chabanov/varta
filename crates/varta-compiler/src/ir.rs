@@ -238,6 +238,9 @@ pub(crate) struct ValueTypes {
     /// Shared dictionary operation functions (v35), by operation and plain
     /// dictionary type id; see `lower::dictionary_helpers`.
     pub dictionary_helpers: std::collections::BTreeMap<(DictionaryHelper, u32), usize>,
+    /// Checked declared-field conversion functions (v36), by kind and target
+    /// type; see `lower::declared_fields`.
+    pub converters: std::collections::BTreeMap<(Converter, Type), usize>,
     pub promises: Vec<PromiseType>,
     /// Promise lowering state (v34): synthesized helpers and scheduled frames.
     pub asynchrony: crate::lower::promises::Asynchrony,
@@ -266,6 +269,21 @@ pub(crate) enum DictionaryHelper {
     Set,
     /// `(d, key) -> boolean`.
     Delete,
+}
+/// A conversion of an `unknown` cell to a declared type lowered once per
+/// target type into a shared function (v36 `checked_declared_fields`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Converter {
+    /// `(array: T[]) -> boolean`: whether the array's static type provably
+    /// is `T[]`, so the stored array itself may be returned.
+    Exact,
+    /// `(cell: unknown, message: string) -> T`: a fresh `T` built from the
+    /// JSON-graph form of the cell, or a `TypeError(message)`.
+    Build,
+    /// `(d: Record<string, unknown>, key, wrong, missing) -> T`: the declared
+    /// read of a mixed record's field of type `T`, which stores a built value
+    /// back under the key.
+    Read,
 }
 /// The declared fields of a mixed index record (v35 `mixed_index_records`),
 /// sorted by name, or the keys an `in` guard proved on an `object` (v35

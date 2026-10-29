@@ -67,7 +67,12 @@ pub(super) fn intern(
                 field.name, field.ty
             )));
         }
-        if !unknown::checkable(value, field.ty, types) {
+        // V36 (`checked_declared_fields`) converts every declared type that
+        // a JSON value graph can describe from an `unknown` index type.
+        let convertible = types.profile.checked_declared_fields()
+            && value == Type::Unknown
+            && declared_fields::convertible(field.ty, types);
+        if !convertible && !unknown::checkable(value, field.ty, types) {
             return Err(unsupported(&format!(
                 "declared property {} of a mixed object type: its reads are checked against \
                  the index type {value}, and {} is not checkable from it",
@@ -168,9 +173,21 @@ impl Lower<'_> {
         key: Expr,
         field: &RecordField,
     ) -> Result<Expr> {
+        let wrong = format!("property {} does not hold its declared type", field.name);
+        let missing = format!("declared property {} is missing", field.name);
+        if let Type::Dictionary(id) = value.ty
+            && declared_fields::applies(
+                self.types.dictionaries[id as usize].value,
+                field.ty,
+                self.types,
+            )
+        {
+            // V36: one shared read function per declared type converts the
+            // entry and stores a built value back.
+            return self.declared_call(span, value, key, field.ty, &wrong, &missing);
+        }
         let (found, index, mut block) = self.dictionary_lookup(value, key)?;
         let output = self.hidden(field.ty);
-        let wrong = format!("property {} does not hold its declared type", field.name);
         let converted = self.assert_value(found, field.ty, &field.name, &wrong, span)?;
         let absent = if admits_undefined(field.ty, self.types) {
             let undefined = Expr {
@@ -183,11 +200,7 @@ impl Lower<'_> {
                 unions::widen(undefined, Some(field.ty), self.types)?,
             )
         } else {
-            S::Throw(self.array_error(
-                ErrorClass::TypeError,
-                &format!("declared property {} is missing", field.name),
-                span,
-            )?)
+            S::Throw(self.array_error(ErrorClass::TypeError, &missing, span)?)
         };
         block
             .body
