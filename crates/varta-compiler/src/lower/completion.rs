@@ -35,13 +35,22 @@ impl Flow {
     }
 }
 pub(super) fn normal(body: &[S]) -> bool {
-    completions(body).kinds & NORMAL != 0
+    completions(body, false).kinds & NORMAL != 0
 }
 pub(super) fn exits_function(body: &[S]) -> bool {
-    let flow = completions(body);
+    exits(body, false)
+}
+/// [`exits_function`] with exhaustive switches (v36): a `switch` with a
+/// `default` clause completes normally only through a `break` or by falling
+/// off its last clause, as TypeScript's return analysis decides.
+pub(super) fn exits_function_through_switches(body: &[S]) -> bool {
+    exits(body, true)
+}
+fn exits(body: &[S], switches: bool) -> bool {
+    let flow = completions(body, switches);
     flow.kinds & (NORMAL | BREAK | CONTINUE) == 0 && flow.branches.is_empty()
 }
-fn completions(body: &[S]) -> Flow {
+fn completions(body: &[S], switches: bool) -> Flow {
     let mut flow = Flow::new(NORMAL);
     for statement in body {
         if flow.kinds & NORMAL == 0 {
@@ -54,13 +63,13 @@ fn completions(body: &[S]) -> Flow {
             S::Continue => Flow::new(CONTINUE),
             S::BreakLabel(id) => Flow::branch(Branch::Break(*id)),
             S::ContinueLabel(id) => Flow::branch(Branch::Continue(*id)),
-            S::Block(body) | S::Scope(_, body) => completions(body),
+            S::Block(body) | S::Scope(_, body) => completions(body, switches),
             S::Label {
                 id,
                 iteration,
                 body,
             } => {
-                let mut inner = completions(body);
+                let mut inner = completions(body, switches);
                 if inner.branches.remove(&Branch::Break(*id)) {
                     inner.kinds |= NORMAL;
                 }
@@ -69,15 +78,15 @@ fn completions(body: &[S]) -> Flow {
                 }
                 inner
             }
-            S::If(_, yes, no) => completions(yes)
-                .union(completions(no))
+            S::If(_, yes, no) => completions(yes, switches)
+                .union(completions(no, switches))
                 .union(Flow::new(THROW)),
             S::TryCatch { body, handler, .. } => {
-                let mut inner = completions(body);
+                let mut inner = completions(body, switches);
                 let thrown = inner.kinds & THROW != 0;
                 inner.kinds &= !THROW;
                 if thrown {
-                    inner.union(completions(handler))
+                    inner.union(completions(handler, switches))
                 } else {
                     inner
                 }
@@ -85,16 +94,16 @@ fn completions(body: &[S]) -> Flow {
             S::TryFinally {
                 body, finalizer, ..
             } => {
-                let mut finalizer = completions(finalizer);
+                let mut finalizer = completions(finalizer, switches);
                 if finalizer.kinds & NORMAL != 0 {
                     finalizer.kinds &= !NORMAL;
-                    finalizer.union(completions(body))
+                    finalizer.union(completions(body, switches))
                 } else {
                     finalizer
                 }
             }
             S::DoWhile(_, body) => {
-                let mut inner = completions(body);
+                let mut inner = completions(body, switches);
                 inner.kinds = (inner.kinds & (RETURN | THROW))
                     | if inner.kinds & (NORMAL | BREAK | CONTINUE) != 0 {
                         NORMAL | THROW
@@ -104,15 +113,31 @@ fn completions(body: &[S]) -> Flow {
                 inner
             }
             S::While(_, body) | S::For(_, _, _, body) => {
-                let mut inner = completions(body);
+                let mut inner = completions(body, switches);
                 inner.kinds = NORMAL | THROW | (inner.kinds & RETURN);
                 inner
+            }
+            S::Switch { cases, .. } if switches => {
+                let exhaustive = cases.iter().any(|(test, _)| test.is_none());
+                let mut flow = Flow::new(THROW);
+                let mut ends = !exhaustive || cases.is_empty();
+                for (index, (_, body)) in cases.iter().enumerate() {
+                    let mut inner = completions(body, switches);
+                    let last = index + 1 == cases.len();
+                    ends |= inner.kinds & BREAK != 0 || last && inner.kinds & NORMAL != 0;
+                    inner.kinds &= RETURN | THROW | CONTINUE;
+                    flow = flow.union(inner);
+                }
+                if ends {
+                    flow.kinds |= NORMAL;
+                }
+                flow
             }
             S::Switch { cases, .. } => {
                 cases
                     .iter()
                     .fold(Flow::new(NORMAL | THROW), |flow, (_, body)| {
-                        let mut inner = completions(body);
+                        let mut inner = completions(body, switches);
                         inner.kinds &= RETURN | THROW | CONTINUE;
                         flow.union(inner)
                     })

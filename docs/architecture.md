@@ -7336,12 +7336,12 @@ swapped readers and channels are rejected before guest effects, that a
 value16-stamped descriptor fails under v36, and that value16 readers reject a
 function cell that value17 readers accept, while tampered closure envelopes
 fail.
-
 Four selectors gate the batch's work streams:
 
 - records stream: `checked_declared_fields()` (declared fields of mixed
   records that are checkable from `unknown`, for example arrays of optional
-  records, so checked assertions and JSON narrowing reach them);
+  records, so checked assertions and JSON narrowing reach them; see
+  [checked declared fields](#checked-declared-fields-checked_declared_fields));
 - functions stream: `function_fields()` (function-valued record and class
   fields, and optional or defaulted function-typed parameters);
 - async stream: `async_generators()` (`async function*` generators and
@@ -7459,6 +7459,102 @@ a listener is `() => void` and `options` is `boolean` (capture) or
   Node reports it as uncaught after the dispatch. `dispatchEvent` stays
   pending; `AbortSignal.timeout` and `AbortSignal.any` belong to the timers
   stream.
+
+#### Checked declared fields (`checked_declared_fields()`)
+
+Selector `checked_declared_fields()`. V36 admits every declared field of a
+mixed record indexed by `unknown` whose type is *convertible*, converts such
+values for declared reads, checked parsing and checked assertions from
+`unknown`, and completes the record operations the pilot's problem documents
+use. It adds no value tag, layout, host import, JSON schema version or budget;
+v35 and earlier keep their diagnostics (`declared property … is not checkable
+from it` and the others listed below).
+
+- **Convertible types.** Primitives, literal types, `null`, `undefined`,
+  BigInt, native errors, class instances, `unknown`, and structural records,
+  arrays (dense or resizable), dictionaries, mixed records and closed unions
+  whose members are convertible, recursively (recursive types included).
+  Functions, generators, promises and `object` views are not; TypeScript's
+  TS2411 rule already rejects them next to `[key: string]: unknown`. Mixed
+  records of another index type `T` keep v35's rule (a declared field is a
+  member of `T`, proven by its tag).
+- **Exact values.** A conversion first tests whether the stored `unknown` cell
+  provably holds a value whose static type is the declared type; that value is
+  then returned itself, so identity and mutation are those of JavaScript.
+  Primitives, literals, errors and class instances are proven by their tag
+  (and value set or class family); a structural record by its tag and any
+  descriptor of its shape (a record literal keeps its source key order in its
+  layout, so a shape may have several descriptors; v35 and earlier keep the
+  canonical-descriptor test); a dictionary or mixed record by its storage
+  descriptor. An array of primitives is proven by its element kind. An array
+  of records, dictionaries or arrays is proven only when its element kind
+  matches, it is non-empty, it has no holes and every element is exact. An
+  empty array, or an array of union cells, does not record its element type
+  (`Other[]`, `unknown[]` and `T[]` share the representation), and returning
+  it as `T[]` would let a write through one alias break the other alias's
+  element type, so it is never exact.
+- **Built values.** Otherwise the cell is converted from its JSON-graph form
+  into a fresh value: a `Record<string, unknown>` dictionary becomes a
+  structural record (each key must be a declared field, as in checked
+  parsing; values are converted to the field types and stored in the
+  dictionary's key order, which JSON stringify preserves; required fields must
+  be present) or a dictionary of the target value type (keys in order, values
+  converted); an array whose element kind is a union cell or one of the
+  target element's kinds becomes a fresh dense array of converted elements
+  (exact elements are shared, holes read as `undefined`). A union target
+  dispatches on the cell's tag to its array member or, for a dictionary, to
+  its dictionary member and else its record member. A mixed record target is
+  built as the dictionary of its index type; its declared fields stay a
+  checked view. Anything else throws `TypeError(message)`.
+- **Declared reads.** `p.errors` (and `p["errors"]`, destructuring and the
+  update operators) looks the key up and converts the entry as above. A built
+  value is written back under the same key (the entry keeps its position), so
+  later declared reads return it and mutations through it persist. Failures
+  throw `TypeError: property <name> does not hold its declared type`, an
+  absent required field `TypeError: declared property <name> is missing`. Each
+  declared type has one shared read function (`(d, key, wrong, missing) -> T`)
+  so a function may read many declared fields within the body budget.
+- **Checked parsing.** `varta.json.parse<M>` and `JSON.parse(text) as M`
+  accept every convertible declared field of a root `M` indexed by `unknown`;
+  after parsing, each such field is converted and written back, and a mismatch
+  throws the checked-schema `TypeError` (`JSON value does not match the checked
+  schema`). Mixed records nested inside a parse target remain rejected.
+- **Checked assertions.** `x as T` for `x: unknown` and a target with a
+  record, array or dictionary member converts as above (no write-back: the
+  result is the exact value or a fresh one). `x as M` from a plain
+  `Record<string, T>` to a mixed record `M` of the same storage, which
+  TypeScript admits as comparable, is a free retag (declared reads are
+  checked).
+- **Writes, deletes, literals, spreads.** As in v35: declared writes and
+  object-literal values are typed by the declaration and stored as `unknown`;
+  `delete` admits optional declared fields; spreads copy entries. Class
+  fields, getters and subclasses hold mixed records like any value.
+- **Record completions.** Object binding patterns over dictionaries and mixed
+  records (`const { error, message } = body`) read each key as `d[key]` does,
+  declared keys through their checked read; rest elements stay rejected, and
+  `object` views keep rejecting patterns. `typeof a.b === "string" ? a.b : x`
+  (and `!==` with the path in the alternate) narrows a record or dictionary
+  property path: the property is read once, tested by its tag and read
+  narrowed (records and dictionaries have no accessors, so one read is
+  indistinguishable from JavaScript's two). `a ?? []` and `a || {}` type the
+  literal by `a`'s one array or object member. `let x: unknown;` starts as
+  `undefined`. A value-returning function may end in a `switch` with a
+  `default` clause when no clause breaks and the last clause does not fall off
+  the end.
+- **Costs.** An exact array of records costs a descriptor test per element on
+  each read; a build is linear in the size of the converted value; both are
+  ordinary guest work bounded by fuel and memory, and the JSON depth and
+  entry limits bound parsed inputs. Each array, record and dictionary target
+  synthesizes at most three functions (build, exactness, read), counted
+  against the user-function limit.
+- **Deviations from Node.** TypeScript erases these types, so Node returns
+  whatever is stored and never throws at a read or `as`. Varta instead throws
+  the `TypeError`s above for values that do not fit (including extra keys of a
+  converted record, which checked parsing also rejects); two reads of an empty
+  array (or another non-exact value) return different arrays; the first
+  declared read of a JSON value replaces the entry, so a reference taken
+  earlier through a plain `Record<string, unknown>` alias is no longer the
+  stored value; and assertions of JSON graphs return fresh values.
 
 ## Local modules
 

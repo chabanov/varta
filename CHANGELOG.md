@@ -11,6 +11,21 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Checked declared fields under opt-in v36 (selector
+  `checked_declared_fields`). A mixed record indexed by `unknown` may declare
+  fields of any type a JSON value can describe, such as the pilot's
+  `errors?: Array<{ field?: string; message?: string }>`, nested records,
+  dictionaries, unions and nested mixed records. A declared read returns the
+  stored value when its static type is proven (descriptors, element kinds, and
+  non-empty exact arrays) and otherwise converts the JSON graph into a fresh
+  value that it stores back; checked parsing and assertions from `unknown`
+  convert the same way, and a plain `Record<string, T>` asserts to a mixed
+  record of the same storage. Structural record assertions accept every key
+  order of a shape. V36 also destructures dictionaries, narrows
+  `typeof a.b === "string" ? a.b : x`, types `a ?? []` by `a`, admits
+  `let x: unknown;` and exhaustive `switch` returns. No value tag, layout,
+  host import or budget changes; v35 keeps its diagnostics.
+
 - Opt-in v36 (pilot batch: checked declared fields, function fields, async
   generators and timers, in development) is registered. It inherits every v35
   feature, shares value ABI/layout 16 with v35 and declares its own host ABI 32

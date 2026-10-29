@@ -2620,3 +2620,39 @@ Contract: [architecture.md](architecture.md#function-fields-function_fields).
   driver for closures reached only through containers, descriptor-tag
   tampering, v35 rejection and frozen-digest tests, the public API and CLI
   smoke tests and the v35-pinned conformance gaps.
+
+### Checked declared fields (`checked_declared_fields`)
+
+Contract: [architecture.md](architecture.md#checked-declared-fields-checked_declared_fields).
+
+- All conversions live in `lower::declared_fields`. `convertible` admits a
+  declared type of a mixed record indexed by `unknown`; `applies` selects the
+  conversion (source `unknown`, a record, array or dictionary member) for
+  declared reads, checked parsing (`json::validate_declared`) and assertions
+  (`unknown::assert_value`). Other sources and targets keep the v35 tests.
+- Return a stored value only when `exact_test` proves its static type. Never
+  treat an empty array, an array with holes or an array of union cells as
+  exact, and never prove an array of class instances by its elements: another
+  alias may hold the same array at another element type. Structural records
+  are proven by any layout descriptor of their shape (`IsClass` in v36);
+  classes by their family.
+- Builds start from the JSON-graph forms only (`Record<string, unknown>`
+  storage, arrays of cells or of the target's element kinds). Records accept
+  exactly their declared keys, in the dictionary's order, through `SetField`
+  so presence and order trailers stay exact. Root every handle local of a
+  synthesized function in its value block; built values are published only
+  after every child converted.
+- Synthesized functions (`Converter::{Exact, Build, Read}`) are keyed by the
+  target type in `ValueTypes::converters` and registered before their body is
+  lowered, so recursive types recurse. Use `reserve_function` and
+  `define_function`; do not inline conversions at each read (the per-function
+  body budget).
+- Declared reads write a built value back through the shared dictionary `Set`
+  helper under the found key; parse validation calls the same read. Do not
+  write back from assertions.
+- The completions (dictionary binding patterns, `typeof` property-path
+  conditionals, `??`/`||` literal fallbacks, `let x: unknown;`, exhaustive
+  `switch` returns through `completion::exits_function_through_switches`) are
+  gated on this selector; keep their v35 diagnostics.
+- Pin behavior to Node 24 output of `varta-runtime/src/v36_cases`; pin the
+  checked deviations (`checked_conversions_deviate_from_node`) separately.

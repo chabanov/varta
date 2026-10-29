@@ -232,6 +232,18 @@ pub(super) struct Block {
     pub(super) body: Vec<S>,
 }
 impl Block {
+    /// The evaluated receiver, held in a rooted local of the block.
+    pub(super) fn receiver(&self) -> Expr {
+        self.source()
+    }
+    /// The evaluated key, held in a rooted local of the block.
+    pub(super) fn key_value(&self) -> Expr {
+        self.key()
+    }
+    /// Keep `slot` rooted for the rest of the block.
+    pub(super) fn root(&mut self, slot: u32) {
+        self.roots.push(slot);
+    }
     fn source(&self) -> Expr {
         local(self.span, self.source, self.ty)
     }

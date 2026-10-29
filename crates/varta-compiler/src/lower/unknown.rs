@@ -337,6 +337,23 @@ impl Lower<'_> {
         if !admissible(source) || !admissible(target) {
             return Err(unsupported(&format!("type assertion to {name}")));
         }
+        // V36: a downcast between dictionaries of one storage (a plain
+        // `Record<string, T>` asserted to a mixed record of `T`) is
+        // comparable in TypeScript and a free retag, because declared reads
+        // are checked.
+        if self.types.profile.checked_declared_fields()
+            && matches!(target, Type::Dictionary(_))
+            && dictionaries::converts(source, target, self.types)
+            && !self
+                .types
+                .declared(target)
+                .is_some_and(|members| members.object)
+        {
+            return Ok(Expr {
+                ty: target,
+                ..value
+            });
+        }
         let sources = unions::members(source, self.types);
         let targets = unions::members(target, self.types);
         if !targets
@@ -354,6 +371,10 @@ impl Lower<'_> {
                 "type assertion from {source} to {name}: neither type sufficiently overlaps \
                  the other; assert through unknown first"
             )));
+        }
+        // V36 converts JSON-graph values to records, arrays and dictionaries.
+        if declared_fields::applies(source, target, self.types) {
+            return self.converted_value(value, target, message, span);
         }
         let cell_ty = if source.is_cell() {
             source
@@ -402,7 +423,7 @@ impl Lower<'_> {
     /// member tags, exact literal values, the record descriptor of a structural
     /// shape, a class family's descriptors, or the element kind of a primitive
     /// array. Other targets are rejected rather than tested approximately.
-    fn cell_test(
+    pub(super) fn cell_test(
         &mut self,
         span: Span,
         slot: u32,

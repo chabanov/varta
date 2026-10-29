@@ -72,13 +72,54 @@ impl Lower<'_> {
         params: Vec<Type>,
         result: Type,
     ) -> Result<usize> {
+        let index = self.reserve_function("too many functions including dictionary operations")?;
+        self.define_function(index, span, params, result, |child, arguments| {
+            let mut arguments = arguments.into_iter();
+            let mut argument = || {
+                arguments
+                    .next()
+                    .ok_or_else(|| invalid("missing dictionary helper argument"))
+            };
+            let value = match helper {
+                DictionaryHelper::Get => {
+                    let (receiver, key) = (argument()?, argument()?);
+                    child.dictionary_get_inline(receiver, key)?
+                }
+                DictionaryHelper::Set => {
+                    let (receiver, key, value) = (argument()?, argument()?, argument()?);
+                    let block = child.dictionary_block(receiver, key)?;
+                    child.dictionary_store(block, value, result)?
+                }
+                DictionaryHelper::Delete => {
+                    let (receiver, key) = (argument()?, argument()?);
+                    child.dictionary_delete_inline(receiver, key)?
+                }
+            };
+            Ok(vec![S::Return(Some(value))])
+        })?;
+        Ok(index)
+    }
+    /// Reserve the next function index for a synthesized function; `limit` is
+    /// the diagnostic when the user-function ceiling is reached.
+    pub(super) fn reserve_function(&mut self, limit: &str) -> Result<usize> {
         let index = *self.next_function;
         if index >= varta_common::abi::MAX_USER_FUNCTIONS {
-            return Err(invalid(
-                "too many functions including dictionary operations",
-            ));
+            return Err(invalid(limit));
         }
         *self.next_function += 1;
+        Ok(index)
+    }
+    /// Lower the body of the synthesized function `index` with its own locals:
+    /// `body` receives one hidden local per parameter (in order) and returns
+    /// the statements; the function is then inserted into the program.
+    pub(super) fn define_function(
+        &mut self,
+        index: usize,
+        span: swc_common::Span,
+        params: Vec<Type>,
+        result: Type,
+        body: impl FnOnce(&mut Lower<'_>, Vec<Expr>) -> Result<Vec<S>>,
+    ) -> Result<()> {
         let mut child = Lower {
             source: self.source,
             types: self.types,
@@ -120,15 +161,12 @@ impl Lower<'_> {
             asynchronous: None,
         };
         let slots: Vec<u32> = params.iter().map(|ty| child.hidden(*ty)).collect();
-        let argument = |position: usize| local(span, slots[position], params[position]);
-        let value = match helper {
-            DictionaryHelper::Get => child.dictionary_get_inline(argument(0), argument(1))?,
-            DictionaryHelper::Set => {
-                let block = child.dictionary_block(argument(0), argument(1))?;
-                child.dictionary_store(block, argument(2), result)?
-            }
-            DictionaryHelper::Delete => child.dictionary_delete_inline(argument(0), argument(1))?,
-        };
+        let arguments = slots
+            .iter()
+            .zip(&params)
+            .map(|(slot, ty)| local(span, *slot, *ty))
+            .collect();
+        let body = body(&mut child, arguments)?;
         let function = ir::Function {
             shape: ir::ParameterShape::fixed(params.len()),
             self_slot: None,
@@ -150,9 +188,9 @@ impl Lower<'_> {
                         .unwrap_or(Type::Number)
                 })
                 .collect(),
-            body: vec![S::Return(Some(value))],
+            body,
         };
         child.generated.insert(index, function);
-        Ok(index)
+        Ok(())
     }
 }

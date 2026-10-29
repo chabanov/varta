@@ -68,6 +68,13 @@ fn json_visit(
 /// their tag) and, under `unknown`, the dictionary of `unknown` that a JSON
 /// object becomes.
 fn parse_stable(field: Type, value: Type, types: &ir::ValueTypes) -> bool {
+    // V36 converts the parsed JSON graph to any convertible declared type.
+    if types.profile.checked_declared_fields()
+        && value == Type::Unknown
+        && declared_fields::convertible(field, types)
+    {
+        return true;
+    }
     let members = unions::members(value, types);
     unions::members(field, types).into_iter().all(|member| {
         member == value
@@ -231,6 +238,9 @@ impl Lower<'_> {
         span: swc_common::Span,
     ) -> Result<Expr> {
         let ty = parsed.ty;
+        let Type::Dictionary(dictionary) = ty else {
+            return Err(invalid("missing dictionary type"));
+        };
         let output = self.hidden(ty);
         let marker = self.hidden(Type::Number);
         let mut body = vec![S::Init(output, parsed)];
@@ -246,6 +256,24 @@ impl Lower<'_> {
                 ty,
                 kind: E::Local(output),
             };
+            if declared_fields::applies(
+                self.types.dictionaries[dictionary as usize].value,
+                field.ty,
+                self.types,
+            ) {
+                // V36: convert the entry and store the result back, so the
+                // parsed value already holds the declared type.
+                let read = self.declared_call(
+                    span,
+                    receiver,
+                    key,
+                    field.ty,
+                    SCHEMA_MISMATCH,
+                    SCHEMA_MISMATCH,
+                )?;
+                body.push(S::Expr(read));
+                continue;
+            }
             let (found, index, mut block) = self.dictionary_lookup(receiver, key)?;
             let converted =
                 self.assert_value(found, field.ty, &field.name, SCHEMA_MISMATCH, span)?;

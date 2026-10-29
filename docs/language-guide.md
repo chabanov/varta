@@ -4445,8 +4445,8 @@ also an `Error`; `signal.reason` is `unknown`. `addEventListener`,
 
 Profile v36 (in development) runs every v35 program unchanged and adds, so
 far, function values in fields, elements and unions, optional and defaulted
-function-typed parameters, optional chains, abort listeners and
-`Promise.withResolvers`.
+function-typed parameters, optional chains, abort listeners,
+`Promise.withResolvers` and checked declared fields of mixed records.
 
 #### Function fields (opt-in v36)
 
@@ -4508,3 +4508,51 @@ no event argument, and a logged function prints `[Function (anonymous)]`.
 Rejected: two function types in one union, a field whose function type has a
 `this` parameter called as `obj.f()`, a function-valued `toJSON` field under
 `JSON.stringify`, `x as () => void` on `unknown`, and `resolve(promise)`.
+
+#### Checked declared fields (opt-in v36)
+
+Next to `[key: string]: unknown`, a declared field may have any type that a
+JSON value can describe: arrays of (optional) records, nested records,
+dictionaries, unions of them and nested mixed records. Values built in the
+program are returned as they are; JSON values are converted on the first
+declared read and stored back:
+
+```ts
+interface ProblemDocument {
+  title?: string;
+  errors?: Array<{ field?: string; message?: string }>;
+  [key: string]: unknown;
+}
+
+function fields(problem: ProblemDocument): string {
+  let out = "";
+  for (const error of problem.errors ?? []) {
+    if (error !== undefined) out += String(error.field) + ";";
+  }
+  return out;
+}
+
+export function main(): void {
+  const built: ProblemDocument = { errors: [{ field: "a" }] };
+  const parsed: unknown = JSON.parse('{"title":"Bad","errors":[{"field":"name"}],"trace":1}');
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const problem = parsed as Record<string, unknown> as ProblemDocument;
+    const list = problem.errors;                          // converted once, stored back
+    if (list !== undefined) list.push({ field: "added" });
+    console.log(fields(problem) + " " + fields(built));  // name;added; a;
+    console.log(String(problem.errors === list));         // true
+    const { title, trace } = problem;                     // string | undefined, unknown
+    const reason = typeof problem.reason === "string" ? problem.reason : "none";
+    console.log(String(title) + " " + String(trace) + " " + reason); // Bad 1 none
+  }
+  const checked = JSON.parse('{"errors":[{"message":"m"}]}') as ProblemDocument;
+  console.log(fields(checked));                           // undefined;
+}
+```
+
+A value that does not fit the declared type throws `TypeError` at the read
+(TypeScript erases the types, so Node would return it); a converted record
+accepts exactly its declared keys. Two reads of an empty array return
+different arrays, and `x as Item[]` from a JSON array builds a fresh array.
+`a ?? []` takes its element type from `a`, `let x: unknown;` starts as
+`undefined`, and a function may end in a `switch` whose `default` returns.

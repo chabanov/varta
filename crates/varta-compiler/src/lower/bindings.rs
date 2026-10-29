@@ -97,9 +97,11 @@ impl Lower<'_> {
                 }
             } else if self.types.profile.missing()
                 && declaration.kind == ast::VarDeclKind::Let
-                && old
-                    .ty
-                    .is_some_and(|ty| unions::members(ty, self.types).contains(&Type::Undefined))
+                && old.ty.is_some_and(|ty| {
+                    unions::members(ty, self.types).contains(&Type::Undefined)
+                        // `let x: unknown;` (v36) starts as `undefined`, as in TypeScript.
+                        || ty == Type::Unknown && self.types.profile.checked_declared_fields()
+                })
             {
                 unions::widen(
                     Expr {

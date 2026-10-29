@@ -293,6 +293,7 @@ pub(crate) mod classes;
 mod completion;
 mod compound_assignments;
 mod declarations;
+mod declared_fields;
 mod dictionaries;
 mod dictionary_helpers;
 mod dictionary_spread;

@@ -418,7 +418,9 @@ impl LanguageProfile {
     }
     /// Pilot batch v36, records stream: declared fields of mixed records that
     /// are checkable from `unknown` (for example arrays of optional records),
-    /// so checked assertions and JSON narrowing reach them. Admits nothing yet.
+    /// converted from JSON graphs by declared reads, checked parsing and
+    /// checked assertions, plus dictionary destructuring and related record
+    /// completions. Adds no value tag, layout or host import.
     #[must_use]
     pub fn checked_declared_fields(self) -> bool {
         self == Self::CheckedF64Utf16V36

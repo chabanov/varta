@@ -13,14 +13,30 @@ impl Emitter<'_> {
             I::I32Load(strings::WORD),
             I::LocalSet(descriptor),
         ]);
-        let offsets: Vec<u32> = shapes
-            .iter()
-            .filter_map(|shape| {
-                self.layouts
-                    .get(&records::canonical_layout(*shape, self.records))
-                    .copied()
-            })
-            .collect();
+        // A structural record literal keeps its source key order in its
+        // layout, so one shape may have several descriptors. V36
+        // (`checked_declared_fields`) accepts every layout of the shapes;
+        // earlier profiles keep the canonical-layout test.
+        let offsets: Vec<u32> = if self.profile.checked_declared_fields() {
+            let mut offsets: Vec<u32> = self
+                .layouts
+                .iter()
+                .filter(|(key, _)| shapes.contains(&key.0))
+                .map(|(_, offset)| *offset)
+                .collect();
+            offsets.sort_unstable();
+            offsets.dedup();
+            offsets
+        } else {
+            shapes
+                .iter()
+                .filter_map(|shape| {
+                    self.layouts
+                        .get(&records::canonical_layout(*shape, self.records))
+                        .copied()
+                })
+                .collect()
+        };
         self.code.push(I::I32Const(0));
         for offset in offsets {
             self.code.extend([
