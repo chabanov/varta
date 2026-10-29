@@ -198,6 +198,7 @@ impl FunctionCatalog {
                 value::BIGINT_VALUE_VERSION
                     | value::FUNCTION_VALUE_VERSION
                     | value::DYNAMIC_VALUE_VERSION
+                    | value::PROMISE_VALUE_VERSION
             )
             || self.types.len() > MAX_CAPTURE_TYPES
             || self.bindings.len() > MAX_CAPTURE_TYPES

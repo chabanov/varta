@@ -4145,4 +4145,109 @@ A promise lives in locals, parameters, results and closures and compares by
 identity; arrays, records, unions, `JSON.stringify`, `console.log` and
 `typeof` reject it, and so do `Promise.all`, `Promise.race`, `allSettled` and
 `any` for now. Async arrows, function expressions and class methods, `for
-await`, async generators and top-level `await` are rejected with a diagnostic.
+await`, async generators and top-level `await` are rejected with a diagnostic
+(v35 admits async methods and closures).
+
+### `checked-f64-utf16-v35`
+
+#### Async methods and closures (opt-in v35)
+
+Class methods, arrows and function expressions may be `async`. A method keeps
+`this` across `await`, overrides and `super.m()` work as for other methods,
+and an async closure shares the bindings it captures with the code around it:
+
+```ts
+class Client {
+  base: string;
+  constructor(base: string) {
+    this.base = base;
+  }
+  async request(path: string, retries?: number): Promise<string> {
+    await null;                                   // one microtask
+    return `${this.base}${path} (retries ${retries ?? 0})`;
+  }
+}
+class Pages {
+  client: Client;
+  constructor(client: Client) {
+    this.client = client;
+  }
+  async list(page?: number): Promise<string> {
+    return await this.client.request(`/pages/${page ?? 1}`);
+  }
+}
+async function withRetry<T>(run: () => Promise<T>, attempts: number): Promise<T> {
+  for (let i = 1; i < attempts; i++) {
+    try {
+      return await run();
+    } catch (error) {
+      console.log(`attempt ${i} failed`);
+    }
+  }
+  return await run();
+}
+export async function main(): Promise<void> {
+  const pages = new Pages(new Client("api"));
+  console.log(await pages.list());                // api/pages/1 (retries 0)
+  let calls = 0;
+  const text = await withRetry(async () => {
+    calls++;                                      // shared with main across await
+    if (calls < 2) {
+      throw new Error("busy");
+    }
+    return pages.list(calls);
+  }, 3);                                          // attempt 1 failed
+  console.log(`${text} after ${calls} calls`);    // api/pages/2 (retries 0) after 2 calls
+}
+```
+
+An async arrow takes its `Promise<T>` from an annotation or its context; an
+unannotated one infers `T` from what it returns. Optional, default and rest
+parameters work in every async function. Generic methods remain unsupported.
+
+#### Promise values and combinators (opt-in v35)
+
+Promises can be kept in arrays, records, dictionaries, unions and `unknown`,
+and combined with `Promise.all`, `Promise.race`, `Promise.any` and
+`Promise.allSettled`:
+
+```ts
+interface Download {
+  name: string;
+  done: Promise<number>;
+}
+async function fetchSize(name: string, ticks: number): Promise<number> {
+  for (let i = 0; i < ticks; i++) {
+    await null;
+  }
+  if (name === "broken") {
+    throw new Error(`cannot fetch ${name}`);
+  }
+  return name.length * 100;
+}
+export async function main(): Promise<void> {
+  const downloads: Download[] = [
+    { name: "a", done: fetchSize("a", 2) },
+    { name: "bb", done: fetchSize("bb", 1) },
+  ];
+  const pending: Promise<number>[] = [];
+  for (let i = 0; i < downloads.length; i++) {
+    pending.push(downloads[i]!.done);
+  }
+  console.log(pending[0]);                        // Promise { <pending> }
+  const sizes = await Promise.all(pending);
+  console.log(`${sizes[0]} ${sizes[1]}`);         // 100 200
+  const fastest = await Promise.race([fetchSize("slow", 3), fetchSize("quick", 1)]);
+  console.log(fastest);                           // 500
+  const results = await Promise.allSettled([fetchSize("ok", 0), fetchSize("broken", 0)]);
+  console.log(JSON.stringify(results));           // [{"status":"fulfilled","value":200},{"status":"rejected","reason":{}}]
+  const cached: Promise<number> | number = sizes[0]!;
+  console.log(await cached);                      // 100
+}
+```
+
+`await` of `T | Promise<T>` waits for the promise when there is one.
+`Promise.any` rejects with an `Error("All promises were rejected")` (there is
+no `AggregateError`), an `allSettled` result's `value` is typed
+`T | undefined`, and awaiting a promise hidden in `unknown` throws a
+`TypeError`: keep promises typed as `Promise<T>`.

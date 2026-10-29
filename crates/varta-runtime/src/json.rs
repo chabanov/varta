@@ -1,6 +1,7 @@
 //! Pure bounded serialization of the versioned guest value ABI. No OS access,
 //! native pointers, eval, arbitrary object hooks or host authority are involved.
 mod presence;
+mod promise;
 use crate::{RuntimeContext, host};
 use std::{collections::BTreeSet, io::Write};
 use varta_common::{abi, value::*};
@@ -105,6 +106,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (
             varta_common::HostOperation::JsonStringifyV14,
             DYNAMIC_VALUE_VERSION,
+        ),
+        (
+            varta_common::HostOperation::JsonStringifyV15,
+            PROMISE_VALUE_VERSION,
         ),
     ] {
         linker.func_wrap(
@@ -264,6 +269,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
             ) {
                 return Err(error("incompatible reference union"));
             }
@@ -290,6 +296,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         ) {
             return Err(error("incompatible primitive union"));
         }
@@ -430,7 +437,10 @@ impl<'a, 'b> Encoder<'a, 'b> {
             ValueKind::Record => {
                 if matches!(
                     self.version,
-                    BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+                    BIGINT_VALUE_VERSION
+                        | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
+                        | PROMISE_VALUE_VERSION
                 ) {
                     validate_aggregate(self.data, ValueKind::Record, packed, self.version)
                         .map_err(wasmtime::Error::new)?;
@@ -439,6 +449,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             }
             ValueKind::Array => self.array(packed, depth),
             ValueKind::Dictionary => self.dictionary(packed, depth),
+            ValueKind::Promise => self.promise(packed, depth),
             _ => Err(error("noncanonical scalar")),
         }
     }
@@ -466,6 +477,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         ) {
             HEAP_ERROR_FLAG as u32
         } else {
@@ -481,6 +493,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
             ) {
                 HEAP_VECTOR_FLAG as u32
             } else {
@@ -497,6 +510,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
             ) {
                 HEAP_UNION_FLAG as u32
             } else {
@@ -525,6 +539,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         ) {
             return self.vector(packed, depth);
         }
@@ -641,6 +656,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         ) {
             return self.record_present(packed, depth);
         }

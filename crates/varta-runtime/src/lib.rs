@@ -37,6 +37,8 @@ pub use server::{HttpShutdown, RuntimeEvent, RuntimeObserver};
 #[cfg(test)]
 mod array_inference_tests;
 #[cfg(test)]
+mod async_method_tests;
+#[cfg(test)]
 mod async_tests;
 #[cfg(test)]
 mod bitwise_compound_tests;
@@ -133,6 +135,8 @@ mod primitive_string;
 mod primitive_string_tests;
 #[cfg(test)]
 mod promise_tests;
+#[cfg(test)]
+mod promise_value_tests;
 #[cfg(test)]
 mod property_deletion_tests;
 mod random;
@@ -576,6 +580,8 @@ mod v32_wave2_tests;
 mod v34_cross_stream_tests;
 #[cfg(test)]
 mod value15_tests;
+#[cfg(test)]
+mod value16_tests;
 #[cfg(test)]
 mod wide_record_tests;
 

@@ -11458,7 +11458,7 @@ fn pilot_profile_v34_declares_its_host_and_value_abis_through_both_binaries() {
 }
 
 #[test]
-fn pilot_profile_v35_shares_the_v34_abis_through_both_binaries() {
+fn pilot_profile_v35_declares_value16_and_host_abi_31_through_both_binaries() {
     use varta_common::{abi, value};
     const PROFILE: &str = "checked-f64-utf16-v35";
     // An unregistered successor of the same length: every binary sees it as a
@@ -11481,8 +11481,8 @@ fn pilot_profile_v35_shares_the_v34_abis_through_both_binaries() {
         assert!(inspect.status.success(), "{}", combined(&inspect));
         let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
         assert_eq!(info["language"]["profile"], PROFILE);
-        assert_eq!(info["abiVersion"], abi::SCHEDULED_FRAMES_VERSION);
-        assert_eq!(info["valueAbiVersion"], value::DYNAMIC_VALUE_VERSION);
+        assert_eq!(info["abiVersion"], abi::PROMISE_VALUES_VERSION);
+        assert_eq!(info["valueAbiVersion"], value::PROMISE_VALUE_VERSION);
     }
     fs::remove_dir_all(project.0.join("src")).unwrap();
     fs::remove_file(project.0.join("varta.config.json")).unwrap();
@@ -11562,6 +11562,58 @@ fn generators_run_through_dev_and_source_free_artifacts() {
     );
     project.language_profile("checked-f64-utf16-v33");
     let expected = ["closed 3", "closed 1", "total 1 0 true"].map(|s| format!("varta log: {s}"));
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn async_methods_and_promise_values_run_through_dev_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {Api,Pages} from './api.ts';export async function main():Promise<void>{const api:Api=new Pages('svc');let calls=0;const fetchPage=async(n:number):Promise<string>=>{calls++;return api.get('/p',n);};const pages:Promise<string>[]=[fetchPage(1),fetchPage(2)];console.log(pages[0]);const all=await Promise.all(pages);console.log(`${all[0]} ${all[1]} ${calls}`);const first=await Promise.race([api.get('/r'),fetchPage(3)]);console.log(first);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/api.ts"),
+        "export class Api{base:string;constructor(base:string){this.base=base;}async get(path:string,page?:number):Promise<string>{await null;return `${this.base}${path}#${page??1}`;}}export class Pages extends Api{async get(path:string,page?:number):Promise<string>{const raw=await super.get(path,page);return raw+'!';}}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v34");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check).contains("unsupported async class method"),
+        "{}",
+        combined(&check)
+    );
+    project.language_profile("checked-f64-utf16-v35");
+    // Node 24 prints the same three lines for this program.
+    let expected = ["Promise { <pending> }", "svc/p#1! svc/p#2! 2", "svc/r#1!"]
+        .map(|s| format!("varta log: {s}"));
     let logs = |output: &std::process::Output| {
         String::from_utf8_lossy(&output.stdout)
             .lines()

@@ -94,7 +94,9 @@ pub(super) fn build(
     };
     let root = builder.node(root)?;
     JsonSchema {
-        version: if types.profile.dynamic_values() {
+        version: if types.profile.promise_values() {
+            varta_common::json::PROMISE_SCHEMA_VERSION
+        } else if types.profile.dynamic_values() {
             varta_common::json::DYNAMIC_SCHEMA_VERSION
         } else if types.profile.bigint_values() {
             varta_common::json::BIGINT_SCHEMA_VERSION

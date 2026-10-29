@@ -155,11 +155,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
-| `checked-f64-utf16-v35` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
+| `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **30**, value ABI **15**, HTTP contract **1** and **38** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **31**, value ABI **16**, HTTP contract **1** and **38** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -6662,37 +6662,30 @@ primitive.
 
 ### `checked-f64-utf16-v35` — Pilot batch: Web types, mixed records, async methods and frame liveness
 
-V35 is registered and inherits every v34 feature and selector, including value
-layout 15 (`dynamic_values()`), the value15 host operations, exception channel
-v6, the v34 JSON selectors (`json_stringify_v14`, `json_parse_v16`), the
-microtask scheduler and the frame catalog. At registration it declares no new
-version identity (see the [version matrix](#version-matrix)):
+V35 is registered and inherits every v34 feature and selector, including the
+value15 layouts (`dynamic_values()`), the microtask scheduler and the frame
+catalog. It declares two version identities of its own (see the
+[version matrix](#version-matrix)), both introduced by the async stream's
+[value layout 16](#value-layout-16-promise_values):
 
-- **Host ABI** `abi::SCHEDULED_FRAMES_VERSION`, shared with v34. V35 adds no
-  host import yet, and every v34 operation keeps its signature and binding.
-- **Value ABI and layout** `value::DYNAMIC_VALUE_VERSION` (value15), shared
-  with v34. V35 adds no value tag or layout yet; `LanguageProfile::value_layout`
-  equals `value_abi`, so descriptors, catalogs and exception cells are stamped
-  and read exactly as under v34.
+- **Host ABI** `abi::PROMISE_VALUES_VERSION`: the value16 readers are new
+  imports. Every other v34 operation keeps its signature and binding.
+- **Value ABI and layout** `value::PROMISE_VALUE_VERSION` (value16), value15
+  plus the promise tag; `LanguageProfile::value_layout` equals `value_abi`.
 
-The declared `varta.language` profile is therefore v35's only distinction from
-v34 at registration. An older runtime that does not list v35 rejects the
-unknown profile name in `varta.language` validation, before compilation or any
-guest effect, so v35 modules never run under v34 semantics there. As for every
-profile, a v35 declaration with a downgraded or missing host ABI section, a
-value ABI other than value15 or a missing value section fails validation before
-instantiation.
+An older runtime that does not list v35 rejects the unknown profile name in
+`varta.language` validation, before compilation or any guest effect. As for
+every profile, a v35 declaration with a downgraded or missing host ABI section,
+a value ABI other than value16 or a missing value section fails validation
+before instantiation.
 
-A stream that adds a host import bumps the host ABI for v35 in the same change
-(a new `abi` constant, `LanguageProfile::host_abi`, the import's minimum ABI,
-the launcher maximum and the version matrix); a stream that adds a value tag or
-layout bumps the value ABI for v35 the same way (a new `value` constant,
-`value_abi`, `value_layout`, every reader bound to it and the launcher
-maximum). Each ABI is bumped at most once per batch: the first stream that needs
-it owns the bump and the others rebase onto it. V34 and earlier profiles keep
-their host ABI, value ABI and layouts.
+Each ABI is bumped at most once per batch: the async stream owns both v35
+bumps and the other streams rebase onto them, adding value16 variants of any
+layout-bound operation they need. V34 and earlier profiles keep their host ABI,
+value ABI and layouts.
 
-Seven selectors gate the batch's work streams, and all admit nothing yet:
+Seven selectors gate the batch's work streams (subsections below specify the
+implemented ones):
 
 - Web stream: `web_headers()` (an engine-provided typed `Headers` class,
   implemented in the guest and requiring no capability) and `abort_signals()`
@@ -6712,8 +6705,157 @@ Seven selectors gate the batch's work streams, and all admit nothing yet:
   for v35 only).
 
 Until a stream adds its subsection here, a v35 module compiles and runs exactly
-like a v34 module apart from its declared profile, and production budgets of
-every profile are unchanged.
+like a v34 module apart from its declared profile and value layout 16, and
+production budgets of every profile are unchanged.
+
+#### Value layout 16 (`promise_values`)
+
+V35 stamps and reads the value16 layouts: record descriptors, record sizes,
+presence trailers, closure and frame catalogs and exception cells carry version
+16, and the runtime checks a v35 capture catalog against it. Value16 keeps every
+value15 layout and tag with exactly its value15 meaning (dictionaries, wide
+records and recursive graphs included; `value::dynamic_layout` names the
+family) and adds one tag, `ValueKind::Promise` = 14, specified with
+[promise values](#promise-values-promise_values). Value15 readers stay frozen:
+they reject descriptors, catalogs and cells stamped 16 and the promise tag, and
+the value16 readers reject 15.
+
+V35 binds its own pure, capability-free operations to value16. Each is one
+more row of the runtime's per-layout registration tables, mirroring its value15
+counterpart's signature, result convention, budgets and recoverable errors
+(`HostOperation::value15_counterpart`), and requires host ABI
+`abi::PROMISE_VALUES_VERSION`:
+
+| Value16 import | Value15 counterpart |
+| --- | --- |
+| `value_log_v10` | `value_log_v9` |
+| `value_typeof_v9`, `value_truthy_v9`, `value_nullish_v9`, `value_strict_equal_v9`, `value_nullish_equal_v9`, `value_is_array_v9` | the `_v8` operations |
+| `value_is_error_class_v5` | `value_is_error_class_v4` |
+| `json_stringify_v15`, `json_parse_v17` | `json_stringify_v14`, `json_parse_v16` |
+| `primitive_to_string_v4`, `primitive_to_number_v4`, `bigint_from_value_v3` | `primitive_to_string_v3`, `primitive_to_number_v3`, `bigint_from_value_v2` |
+
+`LanguageProfile::host_operation` maps every value15 reader (and the value13
+reader it replaced) to its value16 replacement for v35 only, so the runtime
+rejects a v35 module importing a value15 reader and a v34 module importing a
+value16 reader (whose minimum host ABI also exceeds v34's). `json_parse_v17`
+reads **JSON schema 16** (`json::PROMISE_SCHEMA_VERSION`), the schema-15
+grammar materializing value16 graphs; JSON never produces a promise. Thrown
+values use **exception channel v7** (`varta.exception.version_v7` = 7): the
+channel-v6 contents read as value16 cells, records and Error objects; a promise
+is never thrown.
+
+The switch changes no observable behaviour: `varta-runtime` `value16_tests`
+compile the value15, unknown, generator and promise cases under v34 and v35 and
+require identical output, and check that v35 imports only value16 readers and
+exports channel v7, that swapped readers and channels are rejected before guest
+effects and that a value15-stamped descriptor fails under v35.
+
+#### Async methods and closures (`async_methods`)
+
+V35 admits `async` on class instance methods (including overrides in
+subclasses and `super.m()` calls), on async arrows and on async function
+expressions, named ones included. V34 already compiled `static async` methods
+as receiver-free async functions; v35 keeps that. Every such function has an
+explicit `Promise<T>` result or one fixed by its context (a typed binding, a
+parameter such as `() => Promise<T>`, or a `then`/`catch` handler). Without
+either, an expression-bodied async arrow takes `T` from its value (a promise
+value is adopted) and a block-bodied one infers `T` like other callbacks,
+where a returned `Promise<U>` contributes `U`. Async functions, methods and
+closures of v35 also admit optional, default and rest parameters: callers pad
+and gather them as for synchronous calls, and defaults run in the body before
+its first `await`, so an exception there rejects the promise. A `Promise<T>`
+parameter pattern of a generic function now infers `T` from a promise
+argument. Generic methods and generic classes stay rejected as for every
+method; async generators, `for await` and top-level `await` stay rejected.
+
+- **Split.** Each one is split like an async function declaration: the
+  wrapper keeps the source function's index, receiver, self binding, captures
+  and parameter shape, so calls, virtual dispatch, `super` calls and function
+  values reach it; it creates the promise, starts the body frame and returns
+  the promise. The body takes the wrapper's physical parameters (a method's
+  `this` is its first, plain parameter) followed by the promise, and settles
+  the promise on every completion.
+- **Closure frames.** The body of an async closure is itself an environment
+  function with the closure's captures. The wrapper forwards its own
+  environment to it (the only new emission path, `Schedule` of an environment
+  function), and the frame creator stores each captured binding cell in the
+  frame as a shared slot. Captured bindings are therefore the very cells the
+  enclosing function and other closures use: writes on either side of an
+  `await` are seen by both, as in JavaScript. Frame slot allocation, the
+  dispatcher and the frame catalog format are unchanged; the body frame is an
+  ordinary scheduled frame (`generator: false`, `undefined` inputs).
+- **Roots.** A method's receiver, an async closure's captured cells and every
+  saved local are frame slots, rooted while the frame is suspended, queued or
+  registered as a reaction; `varta-runtime` `async_method_tests` forces a
+  collection before every job and checks the logs.
+- **Budgets.** Async methods and closures draw on the one execution budget
+  like every job: `await` never renews fuel, deadline or host calls, and
+  exhaustion inside their jobs is fatal, never a rejection. A rejected promise
+  nobody handles terminates the execution after the checkpoint.
+
+#### Promise values (`promise_values`)
+
+Under value layout 16 a promise is a tagged value (`ValueKind::Promise` = 14)
+whose payload is the handle of its private record block. V35 therefore admits
+`Promise<T>` as an array element, a record, interface or class field, a
+dictionary value, a union member (at most one promise type per union, like
+record shapes) and an `unknown` value. Promises compare by identity (`===`,
+`includes`, `indexOf`; `Object.is` stays rejected); `typeof` is `"object"`;
+they are truthy; a promise in a
+union or `unknown` cell carries the promise tag, which the value16 readers
+validate as a record block. `JSON.stringify` writes `{}` (a promise has no own
+enumerable properties). `console.log` prints `Promise { <pending> }`,
+`Promise { value }` or `Promise { <rejected> reason }`, with the settled value
+in the notation of logged aggregates (a string prints `"x"` where Node prints
+`'x'`). An element read `xs[i]` of a `Promise<T>[]` is `Promise<T> | undefined`,
+as for every reference element. Checked JSON parsing, `Array.isArray`,
+`instanceof` and checked assertions do not accept promise types, and earlier
+profiles keep every v34 rejection.
+
+- **Awaiting and resolving cells.** `await x` and `Promise.resolve(x)` of a
+  union holding one promise member and one other member test the cell's tag:
+  the promise member is awaited or returned itself (PromiseResolve), the other
+  member through a fulfilled promise, so `await` takes exactly one job either
+  way and yields the join of `T` and the other member. `Promise.resolve`
+  requires the other member to be a `T`. A union with several non-promise
+  members must be narrowed first. `Promise<T>` whose `T` may hold a promise is
+  rejected (a promise never fulfills with a promise).
+- **Unknown.** A promise held by `unknown` has no static `T`. Awaiting it,
+  `Promise.resolve` of it and fulfilling a `Promise<unknown>` with it throw a
+  recoverable `TypeError("a promise held by unknown cannot be adopted; keep it
+  typed as Promise<T>")` instead of silently keeping the promise as a value.
+  This is a documented deviation: JavaScript would adopt it.
+- **Executor resolve.** `resolve` of `new Promise<T>` keeps its v34 type
+  `(value: T) => void`, so resolver values stored in typed bindings keep
+  working; resolving with a promise is a type error (`Promise.resolve(p)` or
+  returning `p` from a handler or async function adopts it).
+- **Combinators.** `Promise.all`, `allSettled`, `race` and `any` take one
+  array of `Promise<T>` (an array literal of promises of one type, or a
+  `Promise<T>[]` value; iterables, tuples of different types and non-promise
+  elements are rejected). The call snapshots the array, creates the result
+  promise and starts one synthesized job frame per element in index order;
+  each job awaits its element, which registers one reaction as the
+  combinator's `then` does in ECMAScript, and updates a private state record
+  (`items`, `remaining`, `result`), so job order matches Node. `all` fulfills
+  with `T[]` when the last element fulfills and rejects with the first
+  rejection; `race` settles like the first element to settle; `any` fulfills
+  with the first fulfillment and, when every element rejected, rejects with a
+  native `Error("All promises were rejected")` — Varta has no `AggregateError`
+  class (documented deviation: no `errors` property, `instanceof
+  AggregateError` is unavailable); `allSettled` fulfills with records
+  `{ status: string; value?: T; reason?: unknown }` whose present fields match
+  Node's results (`value` absent when rejected, `reason` absent when
+  fulfilled), so reading `r.value` is typed `T | undefined`. Over an empty
+  array `all` and `allSettled` fulfill at once with `[]`, `any` rejects at once
+  and `race` stays pending. `Promise.withResolvers` is not admitted: its result
+  holds functions in record fields, which records do not admit.
+- **Roots and budgets.** Promise slots of arrays, records, dictionaries and
+  cells are managed edges like any reference; the combinators' state records
+  and every element job frame root the promises until they settle.
+  `varta-runtime` `promise_value_tests` forces a collection before every job.
+  The combinators add no host import and draw on the one execution budget;
+  each element costs one live frame and one reaction, within the scheduler
+  bounds.
 
 ## Local modules
 

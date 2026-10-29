@@ -22,9 +22,19 @@ pub const BIGINT_VALUE_VERSION: u32 = 13;
 pub const FUNCTION_VALUE_VERSION: u32 = 14;
 /// Value ABI and layout of pilot batch v34 (value15): every value13 tag and
 /// layout with its value13 meaning, plus dictionaries ([`ValueKind::Dictionary`])
-/// and records wider than [`MAX_RECORD_FIELDS`]; reserved for promise values.
-/// Only value15 readers accept it, and they accept nothing older.
+/// and records wider than [`MAX_RECORD_FIELDS`]. Only value15 readers accept
+/// it, and they accept nothing older.
 pub const DYNAMIC_VALUE_VERSION: u32 = 15;
+/// Value ABI and layout of pilot batch v35 (value16): every value15 tag and
+/// layout with its value15 meaning, plus promise values
+/// ([`ValueKind::Promise`]). Only value16 readers accept it.
+pub const PROMISE_VALUE_VERSION: u32 = 16;
+/// Whether `version` is a layout of the dynamic-value family (value15 and its
+/// value16 extension), which share the dictionary and wide-record layouts.
+#[must_use]
+pub fn dynamic_layout(version: u32) -> bool {
+    matches!(version, DYNAMIC_VALUE_VERSION | PROMISE_VALUE_VERSION)
+}
 pub const SPARSE_BITMAP_BYTES: usize = MAX_ARRAY_ELEMENTS / u8::BITS as usize;
 pub const HEAP_SPARSE_FLAG: i32 = 1024;
 pub const ERROR_CLASS_SHIFT: u32 = 1;
@@ -82,7 +92,7 @@ pub const PRESENCE_WORD_BITS: usize = u32::BITS as usize;
 /// The largest record field count a value layout admits.
 #[must_use]
 pub fn max_record_fields(version: u32) -> usize {
-    if version == DYNAMIC_VALUE_VERSION {
+    if dynamic_layout(version) {
         MAX_WIDE_RECORD_FIELDS
     } else {
         MAX_RECORD_FIELDS
@@ -164,6 +174,7 @@ pub fn record_bytes(version: u32, count: usize) -> usize {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         ) {
             size_of::<u32>() * (count + presence_words(count))
         } else {
@@ -199,6 +210,7 @@ pub fn supported_version(version: u32) -> bool {
             | BIGINT_VALUE_VERSION
             | FUNCTION_VALUE_VERSION
             | DYNAMIC_VALUE_VERSION
+            | PROMISE_VALUE_VERSION
     )
 }
 #[must_use]
@@ -251,6 +263,9 @@ pub enum ValueKind {
     Function = 12,
     /// Value15 dynamic-key record (see [`Dictionary`]).
     Dictionary = 13,
+    /// Value16 promise (v35 `promise_values`): the payload is the handle of
+    /// the promise's private record block.
+    Promise = 14,
 }
 impl ValueKind {
     #[must_use]
@@ -258,6 +273,7 @@ impl ValueKind {
         matches!(
             self,
             Self::Dictionary
+                | Self::Promise
                 | Self::Function
                 | Self::BigInt
                 | Self::Error
@@ -285,6 +301,7 @@ impl ValueKind {
             11 => Self::BigInt,
             12 => Self::Function,
             13 => Self::Dictionary,
+            14 => Self::Promise,
             _ => return None,
         })
     }
@@ -293,10 +310,14 @@ impl ValueKind {
         supported_version(version)
             && match self {
                 Self::Function => version == FUNCTION_VALUE_VERSION,
-                Self::Dictionary => version == DYNAMIC_VALUE_VERSION,
+                Self::Dictionary => dynamic_layout(version),
+                Self::Promise => version == PROMISE_VALUE_VERSION,
                 Self::BigInt => matches!(
                     version,
-                    BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+                    BIGINT_VALUE_VERSION
+                        | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
+                        | PROMISE_VALUE_VERSION
                 ),
                 Self::Float64 => matches!(
                     version,
@@ -313,6 +334,7 @@ impl ValueKind {
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
+                        | PROMISE_VALUE_VERSION
                 ),
                 Self::Undefined => matches!(
                     version,
@@ -328,6 +350,7 @@ impl ValueKind {
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
+                        | PROMISE_VALUE_VERSION
                 ),
                 Self::PrimitiveUnion => {
                     matches!(
@@ -342,6 +365,7 @@ impl ValueKind {
                             | BIGINT_VALUE_VERSION
                             | FUNCTION_VALUE_VERSION
                             | DYNAMIC_VALUE_VERSION
+                            | PROMISE_VALUE_VERSION
                     )
                 }
                 Self::ReferenceUnion => {
@@ -355,6 +379,7 @@ impl ValueKind {
                             | BIGINT_VALUE_VERSION
                             | FUNCTION_VALUE_VERSION
                             | DYNAMIC_VALUE_VERSION
+                            | PROMISE_VALUE_VERSION
                     )
                 }
                 Self::Error => matches!(
@@ -365,6 +390,7 @@ impl ValueKind {
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
+                        | PROMISE_VALUE_VERSION
                 ),
                 Self::I32 => matches!(version, LEGACY_VALUE_VERSION | VALUE_VERSION),
                 _ => true,

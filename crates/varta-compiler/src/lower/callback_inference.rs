@@ -46,17 +46,27 @@ fn visit(body: &mut [S], visitor: &mut impl FnMut(&mut S) -> Result<()>) -> Resu
 }
 
 impl Lower<'_> {
+    /// `promised` infers an async callback's `T` (v35): a returned
+    /// `Promise<U>` contributes `U` and stays a promise to adopt.
     pub(super) fn infer_callback_returns(
         &mut self,
         body: &mut [S],
         span: swc_common::Span,
+        promised: bool,
     ) -> Result<()> {
         let mut values = Vec::new();
         let mut bare = false;
+        let promises = &self.types.promises;
         visit(body, &mut |statement| {
             if let S::Return(value) = statement {
                 if let Some(value) = value {
-                    values.push((value.ty, value.span));
+                    let ty = match value.ty {
+                        Type::Promise(id) if promised => {
+                            promises::stored(promises[id as usize].value)
+                        }
+                        ty => ty,
+                    };
+                    values.push((ty, value.span));
                 } else {
                     bare = true;
                 }
@@ -81,6 +91,9 @@ impl Lower<'_> {
         }
         self.result = result;
         self.infer_returns = false;
+        let adopted = promised
+            .then(|| promises::intern(result, self.types))
+            .transpose()?;
         visit(body, &mut |statement| {
             if let S::Return(value) = statement {
                 let value = value.take().unwrap_or(Expr {
@@ -88,6 +101,21 @@ impl Lower<'_> {
                     ty: Type::Undefined,
                     kind: E::Integer(0),
                 });
+                if let Type::Promise(_) = value.ty
+                    && promised
+                {
+                    if Some(value.ty) != adopted {
+                        return Err(self.source.locate(
+                            type_error(
+                                "async callback returns promises of another result type; \
+                                 annotate its Promise<T> result",
+                            ),
+                            value.span,
+                        ));
+                    }
+                    *statement = S::Return(Some(value));
+                    return Ok(());
+                }
                 *statement = S::Return(Some(unions::widen(value, Some(result), self.types)?));
             }
             // Finally lowering deferred the physical saved-return type. Allocate

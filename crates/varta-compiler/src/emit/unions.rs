@@ -8,7 +8,7 @@ impl Emitter<'_> {
             ));
         }
         let tag = member
-            .value_kind()
+            .profile_kind(self.profile)
             .ok_or_else(|| CompilerError::Internal("member check requires a value type".into()))?;
         self.expr(value)?;
         self.code.extend([
@@ -51,7 +51,7 @@ impl Emitter<'_> {
         self.string_helper(strings::Helper::Allocate)?;
         self.code.push(I::LocalSet(self.temporary));
         let tag = ty
-            .value_kind()
+            .profile_kind(self.profile)
             .ok_or_else(|| CompilerError::Internal("missing union member tag".into()))?;
         self.initialize_value(
             strings::ALLOCATED | values::HEAP_UNION_FLAG,
@@ -74,7 +74,7 @@ impl Emitter<'_> {
             I::LocalTee(self.temporary),
             I::I32Load(strings::WORD),
             I::I32Const(
-                ty.value_kind()
+                ty.profile_kind(self.profile)
                     .ok_or_else(|| CompilerError::Internal("missing narrowed tag".into()))?
                     as i32,
             ),

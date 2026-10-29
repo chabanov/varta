@@ -388,6 +388,31 @@ impl Type {
         })
     }
 }
+impl Type {
+    /// The value tag of this type under `profile`: value16 (v35
+    /// `promise_values`) also tags promises, which earlier layouts leave
+    /// untagged and keep out of every aggregate.
+    pub(crate) fn profile_kind(
+        self,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Option<varta_common::value::ValueKind> {
+        match self {
+            Self::Promise(_) if profile.promise_values() => {
+                Some(varta_common::value::ValueKind::Promise)
+            }
+            _ => self.value_kind(),
+        }
+    }
+    /// The value tag of this type in a descriptor of value layout `version`.
+    pub(crate) fn layout_kind(self, version: u32) -> Option<varta_common::value::ValueKind> {
+        match self {
+            Self::Promise(_) if version == varta_common::value::PROMISE_VALUE_VERSION => {
+                Some(varta_common::value::ValueKind::Promise)
+            }
+            _ => self.value_kind(),
+        }
+    }
+}
 pub(crate) struct Function {
     pub shape: ParameterShape,
     pub self_slot: Option<u32>,

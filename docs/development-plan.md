@@ -469,7 +469,10 @@ ABI/layout 15 with v34; the declared profile name alone makes runtimes that do
 not list v35 reject its modules. A stream that adds a host import or a value tag
 bumps the corresponding ABI for v35 itself
 ([contract](architecture.md#checked-f64-utf16-v35--pilot-batch-web-types-mixed-records-async-methods-and-frame-liveness)).
-All selectors are registered and admit nothing yet.
+The async stream switched v35 to value layout 16 (value15 plus the promise
+tag) with host ABI 31 for its value16 readers
+([contract](architecture.md#value-layout-16-promise_values)); the other
+streams rebase onto it.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
@@ -477,8 +480,8 @@ All selectors are registered and admit nothing yet.
 | `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Registered, admits nothing |
 | `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Registered, admits nothing |
 | `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Registered, admits nothing |
-| `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Registered, admits nothing |
-| `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Registered, admits nothing |
+| `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Implemented on `v35-async`; generic methods stay rejected with all generic methods |
+| `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Implemented on `v35-async` (value ABI 16, host ABI 31); no `AggregateError` class, `Promise.withResolvers` and executor `resolve(promise)` not admitted |
 | `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Registered, admits nothing |
 
 ### Deferred external validation scenarios

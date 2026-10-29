@@ -12,12 +12,34 @@ in [conformance/README.md](conformance/README.md).
 ### Added
 
 - Opt-in v35 (pilot batch: Web types, mixed records, async methods and frame
-  liveness, in development) is registered. It inherits every v34 feature and
-  shares host ABI 30 and value ABI/layout 15 with v34; runtimes that do not list
-  v35 reject its declared profile name before any guest effect. Its
-  `web_headers`, `abort_signals`, `mixed_index_records`, `unknown_json`,
-  `async_methods`, `promise_values` and `frame_liveness` selectors admit nothing
-  yet.
+  liveness, in development) is registered. It inherits every v34 feature;
+  runtimes that do not list v35 reject its declared profile name before any
+  guest effect. Its selectors are `web_headers`, `abort_signals`,
+  `mixed_index_records`, `unknown_json`, `async_methods`, `promise_values` and
+  `frame_liveness`.
+
+- Async class methods, async arrows and async function expressions under
+  opt-in v35 (selector `async_methods`): instance methods with overrides and
+  awaited `super.m()` calls, async closures that share their captured bindings
+  across `await`, contextual or inferred `Promise<T>` results, optional,
+  default and rest parameters in every async function, and `Promise<T>`
+  inference in generic calls. Receivers and captured cells are exact frame
+  roots; job order matches Node.
+
+- Promise values under opt-in v35 (selector `promise_values`): promises in
+  arrays, records, class fields, dictionaries, unions and `unknown`, compared
+  by identity, `typeof` `"object"`, logged as `Promise { … }` and stringified
+  as `{}`; `await` and `Promise.resolve` of `T | Promise<T>`; and
+  `Promise.all`, `allSettled`, `race` and `any` over arrays of promises with
+  Node's job order. `Promise.any` rejects with an `Error` (no
+  `AggregateError`); a promise held by `unknown` is never adopted silently.
+
+- Value layout 16 for v35 (`promise_values` foundation): value ABI 16 adds the
+  promise value tag to every value15 layout, read by thirteen value16 host
+  operations that mirror their value15 counterparts (host ABI 31), exception
+  channel v7 and JSON schema 16. V35 programs behave exactly as under v34; v34
+  modules keep host ABI 30, value15 and their imports, and swapped readers,
+  channels or descriptor stamps are rejected before guest effects.
 
 - `unknown` under opt-in v34 (selector `unknown_type`): a reference-union cell
   that holds any primitive, BigInt, record, array, native error or class

@@ -77,13 +77,15 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     if value.ty == Type::Unknown {
         return Ok(value);
     }
-    if matches!(value.ty, Type::Promise(_)) {
+    if matches!(value.ty, Type::Promise(_)) && !types.profile.promise_values() {
         return Err(type_error(
             "promise value is not assignable to unknown; promises carry no value tag, \
              so await the promise or keep it typed as Promise<T>",
         ));
     }
-    if !admissible(value.ty) {
+    // Value16 promises (v35) are tagged cells; the check above rejects them
+    // for earlier profiles.
+    if !admissible(value.ty) && !matches!(value.ty, Type::Promise(_)) {
         return Err(type_error(format!(
             "{} value is not assignable to unknown; unknown holds primitives, BigInt, \
              records, dictionaries, arrays and Error or class instances",

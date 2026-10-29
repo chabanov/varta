@@ -93,6 +93,24 @@ impl Emitter<'_> {
         environment: Option<u32>,
         index: usize,
     ) -> Result<()> {
+        self.load_environment(function, environment, index)?;
+        for slot in 0..function.params.len() as u32 {
+            if function.cells.contains(&slot) {
+                let ty = function.params[slot as usize];
+                self.scratch_get(slot, ty);
+                self.write_binding(slot, ty, true)?;
+            }
+        }
+        Ok(())
+    }
+    /// Check the self value and the environment of a closure and load each
+    /// captured binding cell into its cell local.
+    pub(super) fn load_environment(
+        &mut self,
+        function: &ir::Function,
+        environment: Option<u32>,
+        index: usize,
+    ) -> Result<()> {
         if let Some(slot) = function.self_slot {
             let Type::Function(signature) = function.locals[slot as usize] else {
                 return Err(CompilerError::Internal("missing self signature".into()));
@@ -180,13 +198,6 @@ impl Emitter<'_> {
                     }
                     self.store_root(*slot);
                 }
-            }
-        }
-        for slot in 0..function.params.len() as u32 {
-            if function.cells.contains(&slot) {
-                let ty = function.params[slot as usize];
-                self.scratch_get(slot, ty);
-                self.write_binding(slot, ty, true)?;
             }
         }
         Ok(())

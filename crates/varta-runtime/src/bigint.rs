@@ -325,7 +325,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             })?)
         },
     )?;
-    // Value13 and value15 cells share these conversions; each operation reads
+    // Value13, value15 and value16 cells share these conversions; each operation reads
     // exactly the layout version its profile stamps.
     for (string, number, from_value, version) in [
         (
@@ -339,6 +339,12 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             H::PrimitiveNumberV3,
             H::BigIntFromValueV2,
             varta_common::value::DYNAMIC_VALUE_VERSION,
+        ),
+        (
+            H::PrimitiveStringV4,
+            H::PrimitiveNumberV4,
+            H::BigIntFromValueV3,
+            varta_common::value::PROMISE_VALUE_VERSION,
         ),
     ] {
         linker.func_wrap(

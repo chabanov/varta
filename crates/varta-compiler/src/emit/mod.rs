@@ -91,6 +91,9 @@ struct Emitter<'a> {
     binding_types: &'a BTreeMap<Type, u32>,
     environment_functions: &'a BTreeSet<usize>,
     self_functions: &'a BTreeSet<usize>,
+    /// The Wasm local holding this function's own closure environment, which
+    /// an async closure forwards to its scheduled body (v35).
+    environment_param: Option<u32>,
     /// Present only while emitting a suspendable function's resume body.
     suspension: Option<frames::Resume<'a>>,
     /// Step function of each generator type id (v33).
@@ -703,6 +706,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             binding_types: &binding_types,
             environment_functions: &environment_functions,
             self_functions: &self_functions,
+            environment_param: environment_slot,
             suspension: None,
             generator_steps: &generator_steps,
             dispatcher: (!frame_layouts.is_empty()).then_some(dispatcher),
@@ -712,7 +716,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         };
         let frame_layout = frame_layouts.iter().find(|layout| layout.function == index);
         if let (Some(layout), Some(resources)) = (frame_layout, frame_resources) {
-            emitter.frame_creator(function, layout, resources)?;
+            emitter.frame_creator(function, layout, resources, (environment_slot, index))?;
         } else {
             emitter.begin_frame(function)?;
             emitter.begin_closure(function, environment_slot, index)?;

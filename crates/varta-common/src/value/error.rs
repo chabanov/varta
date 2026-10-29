@@ -41,6 +41,7 @@ impl ErrorObject {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
         ) || (version == ERROR_VALUE_VERSION && class != ErrorClass::Error)
         {
             return Err(invalid());

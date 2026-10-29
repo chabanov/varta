@@ -1,0 +1,1 @@
+export async function main():Promise<void>{let hits=0;const hit=async(by:number):Promise<number>=>{hits=hits+by;await null;return hits*10;};const p=hit(1);hits=hits+5;const first=await p;const twice=async function(n:number):Promise<number>{return n*2;};const second=await twice(first);console.log(`${first} ${second} ${hits}`);}

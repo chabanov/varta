@@ -259,7 +259,9 @@ fn field(
     if matches!(ty, Type::Function(_)) {
         return Err(unsupported("function-valued class field"));
     }
-    if ty.value_kind().is_none() || ty == Type::BigInt && !types.profile.bigint_values() {
+    if ty.profile_kind(types.profile).is_none()
+        || ty == Type::BigInt && !types.profile.bigint_values()
+    {
         return Err(unsupported("class field value type"));
     }
     Ok((
@@ -293,7 +295,10 @@ fn method(
         ast::MethodKind::Method if method.function.this_param.is_some() => {
             Some("explicit this parameter on a class method")
         }
-        ast::MethodKind::Method if method.function.is_async => Some("async class method"),
+        // Async instance methods are split like async functions (v35).
+        ast::MethodKind::Method if method.function.is_async && !types.profile.async_methods() => {
+            Some("async class method")
+        }
         ast::MethodKind::Method => None,
     };
     if let Some(kind) = unsupported_kind {

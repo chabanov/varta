@@ -34,6 +34,9 @@ pub const RESUMABLE_FRAMES_VERSION: u32 = 29;
 /// Pilot batch v34: the runtime microtask scheduler drives `varta_resume` for
 /// promise jobs and `await`, so runtimes without the scheduler reject the module.
 pub const SCHEDULED_FRAMES_VERSION: u32 = 30;
+/// Pilot batch v35: the value16 readers (`HostOperation::value15_counterpart`)
+/// bound to value layout 16, which adds promise values.
+pub const PROMISE_VALUES_VERSION: u32 = 31;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -68,6 +71,7 @@ pub fn supported(version: u32) -> bool {
             | BIGINT_VALUES_VERSION
             | RESUMABLE_FRAMES_VERSION
             | SCHEDULED_FRAMES_VERSION
+            | PROMISE_VALUES_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";

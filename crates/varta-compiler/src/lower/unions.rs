@@ -41,7 +41,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     if values.iter().any(|ty| matches!(ty, Type::Generator(_))) {
         return Err(generators::opaque("a union"));
     }
-    if values.iter().any(|ty| matches!(ty, Type::Promise(_))) {
+    if values.iter().any(|ty| matches!(ty, Type::Promise(_))) && !types.profile.promise_values() {
         return Err(promises::opaque("a union"));
     }
     // `unknown` absorbs every other member (v34); `widen` checks admission.
@@ -63,6 +63,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                         || types.profile.index_signatures() && matches!(ty, Type::Dictionary(_))
                         || types.profile.classes() && matches!(ty, Type::Class(_))
                         || types.profile.bigint_values() && *ty == Type::BigInt
+                        || types.profile.promise_values() && matches!(ty, Type::Promise(_))
                         || (types.profile.errors() && ty.is_error()))
         })
     {
@@ -78,6 +79,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                 | Type::Dictionary(_)
                 | Type::Class(_)
                 | Type::Array(_)
+                | Type::Promise(_)
                 | Type::Error
                 | Type::NativeError(_)
         )
@@ -98,9 +100,14 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
             .filter(|ty| matches!(ty, Type::Dictionary(_)))
             .count()
             > 1
+        || values
+            .iter()
+            .filter(|ty| matches!(ty, Type::Promise(_)))
+            .count()
+            > 1
     {
         return Err(unsupported(
-            "multiple record shapes or array element types in one union",
+            "multiple record shapes, array element types or promise types in one union",
         ));
     }
     if values.len() == 1 {

@@ -2309,14 +2309,12 @@ Contracts: [scheduler](architecture.md#microtask-scheduler-promises),
 
 ## Profile v35 (in development)
 
-Inherit v34 under checked-f64-utf16-v35 with every v34 selector, value layout
-15, the value15 host operations, exception channel v6, the v34 JSON selectors
-and the scheduler. At registration v35 shares host ABI 30
-(`abi::SCHEDULED_FRAMES_VERSION`) and value ABI/layout 15
-(`value::DYNAMIC_VALUE_VERSION`) with v34; the declared profile name is its only
-distinction, and runtimes that do not list v35 reject that name before any
-guest effect. Seven selectors gate the streams and admit nothing yet: Web
-(`web_headers`, `abort_signals`), records (`mixed_index_records`,
+Inherit v34 under checked-f64-utf16-v35 with every v34 selector and the
+scheduler. The async stream owns the batch's ABI bumps: v35 declares host ABI
+`abi::PROMISE_VALUES_VERSION` and value ABI/layout `value::PROMISE_VALUE_VERSION`
+(value16), read by the value16 host operations, exception channel v7 and JSON
+schema 16; v34 keeps host ABI 30 and value15. Seven selectors gate the streams:
+Web (`web_headers`, `abort_signals`), records (`mixed_index_records`,
 `unknown_json`), async (`async_methods`, `promise_values`) and frames
 (`frame_liveness`). Gate every admission on its own selector, keep v34 and
 earlier profiles frozen, and add each stream's rules under its own heading here.
@@ -2336,3 +2334,62 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   change the runtime reads is admitted for v35 alone.
 - `web_headers` and `abort_signals` are guest-implemented engine types with no
   capability and no host I/O; `AbortSignal` has no timers until a later batch.
+
+### Value layout 16 (`promise_values`)
+
+- Value16 is value15 plus the promise tag (`ValueKind::Promise`). Every reader
+  that accepts value15 accepts value16 through the same code path: extend a
+  version pattern with `PROMISE_VALUE_VERSION` (or use `value::dynamic_layout`,
+  `json::dynamic_schema`), never copy a reader. Value15 readers keep rejecting
+  value16 stamps and the promise tag, and value16 readers reject value15.
+- Each value16 host operation mirrors its value15 counterpart
+  (`HostOperation::value15_counterpart`): same signature, result convention,
+  capability (none) and budgets, minimum host ABI `PROMISE_VALUES_VERSION`.
+  Register it as one more row of the existing per-layout tables; select it only
+  through `LanguageProfile::host_operation`, which maps every value15 reader to
+  value16 for v35 alone.
+- A stream that needs another layout-bound operation or tag under v35 rebases
+  onto this layout and adds the value16 variant only; it does not bump the
+  value or host ABI again in this batch.
+
+### Async methods and closures (`async_methods`)
+
+- Split every async method, arrow and function expression through
+  `AsyncSplit` (`lower::promises::async_functions`): the wrapper keeps the
+  source function's index, receiver, self slot, captures and shape; the body
+  takes the wrapper's physical parameters plus the promise, which must be the
+  slot right after them. Never give the body a receiver or a self slot.
+- An async closure's body is an environment function with the closure's
+  captures; `Schedule` forwards the wrapper's environment
+  (`Emitter::environment_param`) and the frame creator stores captured cells as
+  shared slots. Do not copy captured values into the body: mutable captures
+  must stay one cell. `suspension::admissible` admits environment functions only
+  for v35 scheduled bodies; generator closures and self slots stay rejected.
+- Keep v34 frozen: async instance methods, async arrows and function
+  expressions, async optional/rest parameters and `Promise<T>` inference in
+  generic calls are gated on `async_methods()`; v34 keeps its diagnostics.
+- Tests compare against pinned Node logs (`varta-runtime`
+  `async_method_tests`, `async_method_cases`); GC tests force a collection
+  before every job with the test hook, paying collections from a test-only
+  fuel refill, never by raising a production budget.
+
+### Promise values (`promise_values`)
+
+- Promise tags exist only in value16: lowering admits a promise in an
+  aggregate through `Type::profile_kind` and emission writes its tag through
+  `profile_kind`/`layout_kind`; `Type::value_kind` stays untagged so v34 and
+  earlier keep every rejection (arrays, records, unions, dictionaries,
+  `unknown`, `typeof`, logging, `JSON.stringify`, the combinators by name).
+- At most one promise type per union; `Promise<T>` never admits a `T` that may
+  hold a promise. Await and resolve a cell by its tag (`promises::values`), so
+  a promise member keeps the one-job PromiseResolve path; never box or copy a
+  promise into a new promise.
+- A promise inside `unknown` is never adopted silently: every path that would
+  adopt one without a static `T` throws the documented `TypeError`.
+- Combinators are guest code: one memoized job frame per combinator and
+  element type, a private state record and ordinary helpers. Add no host
+  import and no scheduler bound; keep the element snapshot and index-order
+  starts so job order matches Node.
+- The runtime reads a promise only through the value16 readers: its record
+  block is validated like a record, and logging locates `state`, `value` and
+  `reason` by the shared `scheduler::PROMISE_*_FIELD` names.

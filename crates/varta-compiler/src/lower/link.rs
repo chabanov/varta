@@ -508,13 +508,13 @@ pub(super) fn body(
     finish_body(&mut lower, &mut statements, declaration.span())?;
     if let Some(promise) = promise {
         return lower.split_async(
-            super::promises::AsyncSplit {
+            super::promises::AsyncSplit::declaration(
                 signature,
                 promise,
-                entry: signature.index == entry,
-                span: declaration.span(),
+                signature.index == entry,
+                declaration.span(),
                 source,
-            },
+            ),
             statements,
         );
     }

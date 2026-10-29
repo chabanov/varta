@@ -436,6 +436,13 @@ impl<'a> Emitter<'a> {
         for arg in args {
             self.expr(arg)?;
         }
+        if self.environment_functions.contains(&function) {
+            // An async closure starts its body with its own environment.
+            let environment = self.environment_param.ok_or_else(|| {
+                CompilerError::Internal("scheduled closure body without an environment".into())
+            })?;
+            self.code.push(I::LocalGet(environment));
+        }
         let index = self.functions_begin + function as u32;
         if !self.frame_functions.contains_key(&function) {
             if mode == ir::ScheduleMode::Enqueue {
@@ -618,8 +625,12 @@ impl<'a> Emitter<'a> {
         function: &ir::Function,
         layout: &Layout,
         resources: Resources,
+        (environment, index): (Option<u32>, usize),
     ) -> Result<()> {
         self.begin_frame(function)?;
+        // An async closure body (v35) validates its environment like any
+        // closure; its captured cells then become shared frame slots.
+        self.load_environment(function, environment, index)?;
         self.frame_block(
             frame::FRAME_BYTES,
             frame::FRAME_FLAG,
@@ -709,6 +720,13 @@ impl<'a> Emitter<'a> {
         for (index, slot) in layout.slots.iter().enumerate() {
             let parameter = slot.local < parameters;
             if slot.shared && !parameter {
+                if function.captures.contains(&slot.local) {
+                    self.segment(self.string_temporary, index);
+                    self.code.extend([
+                        I::LocalGet(self.cell_slots[&slot.local]),
+                        I::I64Store(Self::entry(index)),
+                    ]);
+                }
                 continue;
             }
             let bytes = binding_bytes(slot.ty);
@@ -1180,6 +1198,8 @@ pub(super) fn resume_body<'a>(
         exception_jumps: BTreeMap::new(),
         cell_slots,
         suspension: Some(resume),
+        // A resume body reaches its captured cells through the frame.
+        environment_param: None,
         ..creator
     };
     emitter.begin_resume(function)?;
