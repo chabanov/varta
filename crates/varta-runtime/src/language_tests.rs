@@ -365,3 +365,88 @@ export function main():void{
         assert!(runtime.run_wasm_bytes(&changed, &grants).is_err());
     }
 }
+
+#[test]
+fn pilot_profile_v35_shares_the_v34_abis_and_its_name_fails_where_it_is_unknown() {
+    use varta_common::value;
+    // Classes, generators, value15 dictionaries, checked JSON and the
+    // scheduler: v35 runs every inherited v34 feature unchanged.
+    let source = r#"
+class Probe{n:number;constructor(n:number){this.n=n;}}
+function* digits():Generator<number,void,undefined>{yield 3;yield 5;}
+async function later(n:number):Promise<number>{return n;}
+export function main():void{
+ let text="";
+ for(const digit of digits()){text=text+String(digit);}
+ const scores:Record<string,number>={v:new Probe(35).n};
+ console.log(`${text}:${JSON.stringify(scores)}`);
+ later(35).then((n:number):void=>{console.log(`async ${n}`);varta.process.exit(77);});
+}
+"#;
+    let v35 = LanguageProfile::CheckedF64Utf16V35;
+    let v34 = LanguageProfile::CheckedF64Utf16V34;
+    let bytes = varta_compiler::compile_typescript_with_profile(source, v35).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let runtime = VartaRuntime::new();
+    let inspection = runtime.inspect_module(&bytes).unwrap();
+    assert_eq!(inspection.language.profile, Some(v35));
+    assert_eq!(inspection.language.origin, LanguageOrigin::Declared);
+    assert_eq!(
+        inspection.value_abi_version,
+        Some(value::DYNAMIC_VALUE_VERSION)
+    );
+    assert_eq!(v35.host_abi(), abi::SCHEDULED_FRAMES_VERSION);
+    assert_eq!(
+        (v35.host_abi(), v35.value_abi()),
+        (v34.host_abi(), v34.value_abi())
+    );
+    let grants = [varta_common::CapabilityGrant {
+        id: "process.exit".into(),
+        value: varta_common::CapabilityValue::Boolean(true),
+    }];
+    let logs = [
+        r#"varta log: 35:{"v":35}"#.to_string(),
+        "varta log: async 35".to_string(),
+    ];
+    let run = runtime.run_wasm_bytes(&bytes, &grants).unwrap();
+    assert_eq!((run.lines.as_slice(), run.exit_code), (&logs[..], 77));
+    let older = varta_compiler::compile_typescript_with_profile(source, v34).unwrap();
+    let run = runtime.run_wasm_bytes(&older, &grants).unwrap();
+    assert_eq!((run.lines.as_slice(), run.exit_code), (&logs[..], 77));
+    let cases = [
+        // A runtime that does not list a profile rejects its name: this runtime
+        // sees an unregistered successor exactly as a v34 runtime sees v35.
+        replace(
+            &bytes,
+            br#"{"schemaVersion":1,"profile":"checked-f64-utf16-v36"}"#,
+        ),
+        // V35 metadata with the v33 host ABI or without a host ABI section.
+        host_abi(&bytes, Some(abi::RESUMABLE_FRAMES_VERSION)),
+        host_abi(&bytes, None),
+        // The v35 host ABI without a declared profile is not legacy input.
+        legacy(&bytes),
+        // V35 declaring the value13 ABI or the function value codec version.
+        value_abi(&bytes, Some(value::BIGINT_VALUE_VERSION)),
+        value_abi(&bytes, Some(value::FUNCTION_VALUE_VERSION)),
+    ];
+    for changed in cases {
+        assert!(matches!(
+            runtime.validate_module(&changed),
+            Err(RuntimeError::Language(_))
+        ));
+        assert!(runtime.inspect_module(&changed).is_err());
+        // No log line or exit code is observable: the run fails before instantiation.
+        assert!(matches!(
+            runtime.run_wasm_bytes(&changed, &grants),
+            Err(RuntimeError::Language(_))
+        ));
+    }
+    for changed in [
+        value_abi(&bytes, Some(value::DYNAMIC_VALUE_VERSION + 1)),
+        value_abi(&bytes, None),
+    ] {
+        assert!(runtime.validate_module(&changed).is_err());
+        assert!(runtime.inspect_module(&changed).is_err());
+        assert!(runtime.run_wasm_bytes(&changed, &grants).is_err());
+    }
+}

@@ -2114,7 +2114,7 @@ Inherit v33 under checked-f64-utf16-v34 with every v33 selector, but its own
 value layout (exception channel v6, JSON schema 15), its own host ABI
 (`abi::SCHEDULED_FRAMES_VERSION`, the microtask scheduler that drives
 `varta_resume`) and its own value ABI (`value::DYNAMIC_VALUE_VERSION`); never
-map another profile to either. Eight selectors gate the streams, all
+map another profile to either except v35, which inherits them. Eight selectors gate the streams, all
 specified below: the value layout (`dynamic_values`), records
 (`index_signatures`, `recursive_types`, `wide_records`), unknown
 (`unknown_type`, `checked_assertions`) and async (`promises`,
@@ -2306,3 +2306,33 @@ Contracts: [scheduler](architecture.md#microtask-scheduler-promises),
 - Behavior tests compare against pinned Node output (`varta-runtime`
   `promise_cases`, `promise_tests`, `async_tests`); regenerate expectations
   only from Node, never from Varta output.
+
+## Profile v35 (in development)
+
+Inherit v34 under checked-f64-utf16-v35 with every v34 selector, value layout
+15, the value15 host operations, exception channel v6, the v34 JSON selectors
+and the scheduler. At registration v35 shares host ABI 30
+(`abi::SCHEDULED_FRAMES_VERSION`) and value ABI/layout 15
+(`value::DYNAMIC_VALUE_VERSION`) with v34; the declared profile name is its only
+distinction, and runtimes that do not list v35 reject that name before any
+guest effect. Seven selectors gate the streams and admit nothing yet: Web
+(`web_headers`, `abort_signals`), records (`mixed_index_records`,
+`unknown_json`), async (`async_methods`, `promise_values`) and frames
+(`frame_liveness`). Gate every admission on its own selector, keep v34 and
+earlier profiles frozen, and add each stream's rules under its own heading here.
+
+- A stream that adds a host import adds a new `abi` constant and maps only v35
+  to it in `LanguageProfile::host_abi` in the same change, with the import's
+  minimum ABI, the launcher maximum, the version matrix and the v35 ABI tests.
+  A stream that adds a value tag or layout does the same for `value_abi` and
+  `value_layout` and binds new readers to the new version; v34 readers stay
+  frozen. Bump each ABI once per batch: the first stream owns the bump and the
+  others rebase onto it.
+- Tests that assert v35 equals v34 (`pilot_v35_inherits_v34_…` in
+  `varta-common` `language`, the v35 runtime language test and the v35 CLI
+  smoke test) change in the stream that introduces the difference.
+- `frame_liveness` changes the frame layout of v35 modules only. V34 and
+  earlier modules keep their frame slots and dispatcher bytes; any catalog
+  change the runtime reads is admitted for v35 alone.
+- `web_headers` and `abort_signals` are guest-implemented engine types with no
+  capability and no host I/O; `AbortSignal` has no timers until a later batch.

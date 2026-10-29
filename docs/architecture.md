@@ -155,10 +155,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
+| `checked-f64-utf16-v35` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **30**, value ABI **15**, HTTP contract **1** and **37** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **30**, value ABI **15**, HTTP contract **1** and **38** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -6658,6 +6659,61 @@ primitive.
   exception escaped (the body catches every one) and report the outcome
   without issuing a generation. The scheduler sends only `Normal` completions
   with `undefined`.
+
+### `checked-f64-utf16-v35` — Pilot batch: Web types, mixed records, async methods and frame liveness
+
+V35 is registered and inherits every v34 feature and selector, including value
+layout 15 (`dynamic_values()`), the value15 host operations, exception channel
+v6, the v34 JSON selectors (`json_stringify_v14`, `json_parse_v16`), the
+microtask scheduler and the frame catalog. At registration it declares no new
+version identity (see the [version matrix](#version-matrix)):
+
+- **Host ABI** `abi::SCHEDULED_FRAMES_VERSION`, shared with v34. V35 adds no
+  host import yet, and every v34 operation keeps its signature and binding.
+- **Value ABI and layout** `value::DYNAMIC_VALUE_VERSION` (value15), shared
+  with v34. V35 adds no value tag or layout yet; `LanguageProfile::value_layout`
+  equals `value_abi`, so descriptors, catalogs and exception cells are stamped
+  and read exactly as under v34.
+
+The declared `varta.language` profile is therefore v35's only distinction from
+v34 at registration. An older runtime that does not list v35 rejects the
+unknown profile name in `varta.language` validation, before compilation or any
+guest effect, so v35 modules never run under v34 semantics there. As for every
+profile, a v35 declaration with a downgraded or missing host ABI section, a
+value ABI other than value15 or a missing value section fails validation before
+instantiation.
+
+A stream that adds a host import bumps the host ABI for v35 in the same change
+(a new `abi` constant, `LanguageProfile::host_abi`, the import's minimum ABI,
+the launcher maximum and the version matrix); a stream that adds a value tag or
+layout bumps the value ABI for v35 the same way (a new `value` constant,
+`value_abi`, `value_layout`, every reader bound to it and the launcher
+maximum). Each ABI is bumped at most once per batch: the first stream that needs
+it owns the bump and the others rebase onto it. V34 and earlier profiles keep
+their host ABI, value ABI and layouts.
+
+Seven selectors gate the batch's work streams, and all admit nothing yet:
+
+- Web stream: `web_headers()` (an engine-provided typed `Headers` class,
+  implemented in the guest and requiring no capability) and `abort_signals()`
+  (the `AbortController`/`AbortSignal` data model, without timers);
+- records stream: `mixed_index_records()` (interfaces and object types that
+  combine declared fields with a string index signature, plus `for…in`,
+  compound assignment and spread on dictionaries) and `unknown_json()`
+  (`JSON.parse` and checked parsing that produce `unknown`, and narrowing
+  `unknown` to dictionaries);
+- async stream: `async_methods()` (async class methods, async arrow functions
+  and async function expressions) and `promise_values()` (promises as tagged
+  values in arrays, unions and `unknown`, and
+  `Promise.all`/`allSettled`/`race`/`any`);
+- frames stream: `frame_liveness()` (liveness-based continuation frame slots,
+  an internal change of the frame layout of v35 modules; v34 and earlier frames
+  keep their layout, and any frame catalog change the runtime reads is admitted
+  for v35 only).
+
+Until a stream adds its subsection here, a v35 module compiles and runs exactly
+like a v34 module apart from its declared profile, and production budgets of
+every profile are unchanged.
 
 ## Local modules
 

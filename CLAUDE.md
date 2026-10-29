@@ -293,4 +293,5 @@ One line per profile; details in [profile rules](docs/profile-rules.md) and the
 | `checked-f64-utf16-v32` | Pilot batch (unreleased): module constants, literal types, classes, re-exports, template literals, default exports, interface extends, generics, Error subclasses |
 | `checked-f64-utf16-v33` | Suspension frames and sync generators (in development) |
 | `checked-f64-utf16-v34` | Pilot batch (in development): index signatures, recursive and wide records, `unknown` and checked `as`, Promise and async/await |
+| `checked-f64-utf16-v35` | Pilot batch in development: Web types, mixed records, async methods, frame liveness |
 <!-- generated:profile-index:end -->

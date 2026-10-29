@@ -457,6 +457,30 @@ rejection reports.
 | `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Merged on `v34-integration-merge` |
 | `async_functions()` | Async (K4.4 step 4): `async`/`await` on continuation frames | M5 | Merged on `v34-integration-merge` |
 
+### Pilot batch v35 (in development)
+
+Decided with the project author on 2026-10-29: the next pilot batch targets the
+first diagnostics of the [v34 measurement](#pilot-acceptance-package-uarp-sdk)
+(`Headers` in 60 files, `AbortSignal` in `core/util.ts`, then the mixed
+`ProblemDocument` object type) together with the async and frame follow-ups, in
+profile `checked-f64-utf16-v35`, developed in four parallel streams. V35
+inherits every v34 feature and, at registration, shares host ABI 30 and value
+ABI/layout 15 with v34; the declared profile name alone makes runtimes that do
+not list v35 reject its modules. A stream that adds a host import or a value tag
+bumps the corresponding ABI for v35 itself
+([contract](architecture.md#checked-f64-utf16-v35--pilot-batch-web-types-mixed-records-async-methods-and-frame-liveness)).
+All selectors are registered and admit nothing yet.
+
+| Selector | Work stream | Pilot step | State |
+| --- | --- | --- | --- |
+| `web_headers()` | Web: engine-provided typed `Headers` class, guest-implemented, no capability | M2, M5 | Registered, admits nothing |
+| `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Registered, admits nothing |
+| `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Registered, admits nothing |
+| `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Registered, admits nothing |
+| `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Registered, admits nothing |
+| `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Registered, admits nothing |
+| `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Registered, admits nothing |
+
 ### Deferred external validation scenarios
 
 | Profile | Example contract operations | Required behavior |
