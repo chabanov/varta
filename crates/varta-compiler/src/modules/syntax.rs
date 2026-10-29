@@ -66,6 +66,17 @@ pub(super) fn scan(
                         type_only: true,
                         from: None,
                     }),
+                    // Classes (v32) live in the type namespace; their value is
+                    // resolved from it, so re-exports forward both.
+                    ast::Decl::Class(class) if profile.classes() && !class.declare => {
+                        exports.push(Export {
+                            local: class.ident.sym.to_string(),
+                            exported: class.ident.sym.to_string(),
+                            span: class.ident.span,
+                            type_only: false,
+                            from: None,
+                        })
+                    }
                     // Module constants (v32) join the value export table; the
                     // linker rejects destructuring and non-`const` forms.
                     ast::Decl::Var(var)

@@ -13,6 +13,8 @@ enum Declaration {
         span: swc_common::Span,
     },
     Imported(Key),
+    /// A v32 class: its instance type is nominal and needs no lazy resolution.
+    Class(u32),
 }
 type Key = (usize, String);
 
@@ -32,6 +34,9 @@ pub(super) type Exports = exports::Table<Key>;
 pub(super) fn enter(types: &mut ir::ValueTypes, module: usize) {
     types.named.current = module;
 }
+pub(super) fn current(types: &ir::ValueTypes) -> usize {
+    types.named.current
+}
 
 /// Record local declarations and type imports of `path`, then return its type
 /// exports. Dependencies precede dependents in `graph.order`.
@@ -45,6 +50,22 @@ pub(super) fn link_module(
     let unit = &graph.units[path];
     let source = &unit.source;
     for item in &unit.ast.body {
+        // Exported classes are scanned as module exports and linked below.
+        if let Some((name, id)) = classes::register(item, module, source, types)? {
+            let key = (module, name.clone());
+            if types
+                .named
+                .declarations
+                .insert(key.clone(), Declaration::Class(id))
+                .is_some()
+            {
+                return Err(source.locate(
+                    invalid(format!("duplicate type declaration: {name}")),
+                    types.classes.span(id),
+                ));
+            }
+            continue;
+        }
         let declaration = match item {
             ast::ModuleItem::Stmt(ast::Stmt::Decl(decl)) => decl,
             ast::ModuleItem::ModuleDecl(ast::ModuleDecl::ExportDecl(export)) => &export.decl,
@@ -193,6 +214,18 @@ pub(super) fn declared(types: &ir::ValueTypes, name: &str) -> bool {
     is_type(types, types.named.current, name)
 }
 
+/// The class named `name` in the current module's type namespace, if any.
+pub(super) fn class(types: &ir::ValueTypes, name: &str) -> Option<u32> {
+    let mut key = (types.named.current, name.to_owned());
+    while let Some(Declaration::Imported(target)) = types.named.declarations.get(&key) {
+        key = target.clone();
+    }
+    match types.named.declarations.get(&key) {
+        Some(Declaration::Class(id)) => Some(*id),
+        _ => None,
+    }
+}
+
 /// Resolve a non-generic named reference in the current module.
 pub(super) fn resolve(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
     let mut key = (types.named.current, name.to_owned());
@@ -203,6 +236,9 @@ pub(super) fn resolve(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
     }
     if let Some(ty) = types.named.resolved.get(&key) {
         return Ok(*ty);
+    }
+    if let Some(Declaration::Class(id)) = types.named.declarations.get(&key) {
+        return Ok(Type::Class(*id));
     }
     let Some(Declaration::Local { ty, source, span }) = types.named.declarations.get(&key).cloned()
     else {

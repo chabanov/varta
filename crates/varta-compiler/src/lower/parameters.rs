@@ -30,7 +30,7 @@ fn needs_initialization(plans: &[Parameter]) -> bool {
             .iter()
             .any(|p| p.default.is_some() || p.name.is_none())
 }
-fn literal(expr: &ast::Expr, types: &ir::ValueTypes) -> Option<Type> {
+pub(super) fn literal(expr: &ast::Expr, types: &ir::ValueTypes) -> Option<Type> {
     match expr {
         ast::Expr::Paren(p) => literal(&p.expr, types),
         ast::Expr::Lit(ast::Lit::Num(_)) => Some(types.number()),

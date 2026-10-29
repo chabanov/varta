@@ -238,6 +238,7 @@ impl Eraser {
             | E::UnboxUnion(value)
             | E::IsUndefined(value)
             | E::IsError(value)
+            | E::IsClass { value, .. }
             | E::IsNullish(value)
             | E::Undefined(value)
             | E::Negative(value)

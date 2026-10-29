@@ -37,6 +37,9 @@ pub(crate) enum Type {
     /// Compile-time literal set (v32 `literal_types`): physically its base
     /// primitive; the id indexes `ValueTypes::literals`. Erased before emission.
     Literal(LiteralBase, u32),
+    /// Nominal class instance (v32): a record block whose static descriptor
+    /// identifies the most-derived class; see `lower::classes`.
+    Class(u32),
 }
 
 /// Base primitive of a literal set; it fixes the erased physical representation.
@@ -72,6 +75,7 @@ impl Type {
         matches!(
             self,
             Self::BigInt
+                | Self::Class(_)
                 | Self::Function(_)
                 | Self::Error
                 | Self::NativeError(_)
@@ -164,6 +168,7 @@ pub(crate) struct ValueTypes {
     pub functions: Vec<FunctionType>,
     pub literals: crate::lower::literals::LiteralTypes,
     pub named: crate::lower::named::NamedTypes,
+    pub classes: crate::lower::classes::Classes,
 }
 impl ValueTypes {
     pub fn value_version(&self) -> u32 {
@@ -227,6 +232,8 @@ pub(crate) struct RecordField {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RecordShape {
     pub fields: Vec<RecordField>,
+    /// Private instance layout of a class; never shared with structural shapes.
+    pub class: Option<u32>,
 }
 
 impl Type {
@@ -241,7 +248,8 @@ impl Type {
             Self::Float64 => V::Float64,
             Self::Boolean => V::Boolean,
             Self::String => V::String,
-            Self::Record(_) => V::Record,
+            // An instance is a genuine record carrying its own class descriptor.
+            Self::Record(_) | Self::Class(_) => V::Record,
             Self::Array(_) => V::Array,
             Self::Union(_) => V::PrimitiveUnion,
             Self::ReferenceUnion(_) => V::ReferenceUnion,
@@ -385,6 +393,13 @@ pub(crate) enum Expression {
     /// Exact member of a statically known union; shape/array IDs are proven by lowering.
     IsUnionMember(Box<Expr>, Type),
     IsError(Box<Expr>),
+    /// Whether a class instance's descriptor names one of these class shapes;
+    /// `slot` is a hidden i32 local holding the loaded descriptor offset.
+    IsClass {
+        value: Box<Expr>,
+        shapes: Vec<u32>,
+        slot: u32,
+    },
     IsNullish(Box<Expr>),
     Conditional(Box<Expr>, Box<Expr>, Box<Expr>),
     UnionLogical(BinaryOp, Box<Expr>, Box<Expr>),
@@ -559,6 +574,7 @@ impl std::fmt::Display for Type {
             Self::Null => "null",
             Self::Undefined => "undefined",
             Self::Record(_) => "object",
+            Self::Class(_) => "class instance",
             Self::Array(_) => "array",
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",

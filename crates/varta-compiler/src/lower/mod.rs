@@ -250,6 +250,7 @@ mod bigint_values;
 mod bindings;
 mod bitwise;
 mod callback_inference;
+pub(crate) mod classes;
 mod completion;
 mod compound_assignments;
 mod declarations;

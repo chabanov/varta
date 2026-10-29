@@ -124,6 +124,11 @@ impl Emitter<'_> {
                 self.box_union(value.ty)?;
             }
             E::UnboxUnion(value) => self.unbox_union(value, expr.ty)?,
+            E::IsClass {
+                value,
+                shapes,
+                slot,
+            } => self.is_class(value, shapes, *slot)?,
             E::IsError(value) => {
                 self.expr(value)?;
                 if value.ty.is_union() {
@@ -500,6 +505,7 @@ impl Emitter<'_> {
                         | Type::Error
                         | Type::NativeError(_)
                         | Type::Record(_)
+                        | Type::Class(_)
                         | Type::Array(_)
                 ) =>
             {

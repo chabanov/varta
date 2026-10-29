@@ -5,7 +5,7 @@ use crate::modules::{Export, Graph};
 use std::path::{Path, PathBuf};
 
 const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
-type Symbols = BTreeMap<String, Signature>;
+pub(super) type Symbols = BTreeMap<String, Signature>;
 /// Names that no module binding or import may take.
 const RESERVED_BINDINGS: [&str; 4] = ["varta", "console", "log", "JSON"];
 
@@ -75,7 +75,13 @@ pub(crate) fn lower(
             }
             next += 1;
         }
+        if profile.classes() {
+            classes::layout_module(module, &symbols, &mut types, &mut next)?;
+        }
         definitions.insert(path.clone(), symbols);
+    }
+    if profile.classes() {
+        classes::dispatchers(&mut types, &mut next)?;
     }
     let entry = &graph.units[&graph.entry];
     let main = main.ok_or_else(|| {
@@ -110,6 +116,19 @@ pub(crate) fn lower(
                 (&mut generated, &mut next, &mut call_effects),
             )?);
         }
+        if profile.classes() {
+            classes::bodies(
+                module,
+                (&scopes[path], &visible),
+                main,
+                &mut types,
+                &mut functions,
+                (&mut generated, &mut next, &mut call_effects),
+            )?;
+        }
+    }
+    if profile.classes() {
+        classes::dispatch_bodies(&types, &mut functions)?;
     }
     functions.extend(generated.into_values());
     // Initialize stored constants in dependency order before the entry body.
@@ -333,7 +352,7 @@ impl exports::Namespace for Values<'_> {
     }
 }
 
-fn body(
+pub(super) fn body(
     declaration: &ast::FnDecl,
     (signature, constants): (&Signature, &module_constants::Scope),
     functions: &Symbols,

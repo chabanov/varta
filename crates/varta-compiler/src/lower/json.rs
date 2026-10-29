@@ -25,7 +25,8 @@ impl Lower<'_> {
             match ty {
                 Type::Literal(..) => false,
                 Type::BigInt => types.profile.bigint_values(),
-                Type::Error | Type::NativeError(_) => false,
+                // Parsing cannot construct nominal class instances.
+                Type::Error | Type::NativeError(_) | Type::Class(_) => false,
                 Type::Undefined => types.profile.checked_json() && optional,
                 Type::Union(id) | Type::ReferenceUnion(id) => {
                     types.profile.checked_json()

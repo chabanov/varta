@@ -17,7 +17,12 @@ fn nullish(ty: Type) -> bool {
 fn reference(ty: Type) -> bool {
     matches!(
         ty,
-        Type::Record(_) | Type::Array(_) | Type::Function(_) | Type::Error | Type::NativeError(_)
+        Type::Record(_)
+            | Type::Class(_)
+            | Type::Array(_)
+            | Type::Function(_)
+            | Type::Error
+            | Type::NativeError(_)
     )
 }
 fn choose_right(op: ast::BinaryOp, ty: Type) -> Option<bool> {

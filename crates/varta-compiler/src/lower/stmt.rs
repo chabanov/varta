@@ -60,6 +60,9 @@ impl Lower<'_> {
             ast::Stmt::Throw(t) => self.throw_statement(t)?,
             ast::Stmt::Try(t) => self.try_statement(t)?,
             ast::Stmt::Decl(ast::Decl::Var(var)) => S::Block(self.variables(var)?),
+            ast::Stmt::Decl(ast::Decl::Class(_)) if self.types.profile.classes() => {
+                return Err(unsupported("class declaration outside module top level"));
+            }
             ast::Stmt::Block(block) => S::Block(self.block(&block.stmts, true)?),
             ast::Stmt::Expr(statement) => {
                 if let ast::Expr::Assign(assign) = unparen(&statement.expr) {

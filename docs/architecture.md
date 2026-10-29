@@ -5533,6 +5533,129 @@ memory-layout change. All budgets are unchanged.
   `unsupported type annotation` and keep the 16-member union limit; unused
   declarations remain ignored.
 
+#### Classes (`classes()`)
+
+Top-level class declarations with nominal instances, single inheritance and
+closed-world method dispatch. The slice targets the pilot's `APIResource` and
+generated resource classes; Error subclasses remain pending (see the end of this
+subsection).
+
+- **Declarations.** A top-level `class` (exported or not) registers its name in
+  the v31 per-module type namespace, so it is usable in annotations and in
+  `import`/`import type`/`export { C }` lists like an interface. The same name is
+  the class value for `new C(...)`, `instanceof C` and `extends C` unless a
+  lexical binding shadows it. A class may not share its name with a module
+  function, another type or a built-in (`Array`, `VartaResult`, HTTP types,
+  `Object`/`Math`/`Number`/`String`/`Boolean`/`BigInt`, Error families).
+- **Members.** Instance fields with a type annotation or a literal initializer
+  (whose literal type is the field type), optionally `readonly` and
+  `public`/`protected`/`private`; methods; `get` accessors; static methods; at
+  most one constructor; `extends` of another declared class (in any module of the graph);
+  `super(...)` and `super.m(...)`. Field types follow record field rules (no
+  function-valued fields) and may name other classes, including the class itself
+  through a union such as `List | null`.
+- **Layout.** Each class owns one private record shape (`RecordShape.class`),
+  never interned with structural shapes and counted against
+  `value::MAX_RECORD_SHAPES`. Its slots list the inherited fields first, then the
+  own fields in declaration order (at most `value::MAX_RECORD_FIELDS`), so every
+  subclass instance is slot-compatible with each ancestor. An instance is an
+  ordinary managed record block (heap record flag, per-instance reference mask,
+  all-present presence trailer) whose static descriptor is the canonical layout
+  of its most-derived class. The collector traces the instance by its own header,
+  so subclass-only reference fields are traced exactly whatever the static type.
+  No heap flag, value tag, host import, helper or value/host ABI version is added.
+- **Identity and `instanceof`.** The descriptor offset of the most-derived class
+  is the class identity. `v instanceof C` folds to true (after evaluating `v`)
+  when the static class of `v` is `C` or a subclass, compares the descriptor
+  against `C` and its descendants when `C` is a proper subclass of the static
+  class, and folds to false for unrelated classes and non-class values. On a union
+  with a class member it tests the union tag, then the descriptor. A class that is
+  never constructed has no descriptor and never matches.
+- **Subtyping and unions.** Class types are nominal. A subclass instance widens
+  to an ancestor class (or to a union holding one) in every contextual position
+  with the payload unchanged; there is no compatibility with structural records
+  or interfaces and no implicit downcast. A class is a record-tagged union member:
+  a union holds at most one record or class member. `instanceof C` narrows a union
+  binding to its class member when that member is `C` or a subclass; a downcast
+  test does not narrow. Identity comparison of related classes uses their common
+  ancestor; `typeof` is `"object"` and instances are truthy.
+- **Construction.** `new C(args)` checks the arguments against `C`'s initializer
+  signature, allocates the instance with placeholder slots (zero handles, which
+  the collector skips, zero scalars and empty strings) and calls the initializer
+  `(this: C, ...params) => void`. A base initializer runs the own field
+  initializers in declaration order, then the constructor body. A derived
+  constructor runs the statements before its `super(...)` statement, the base
+  initializer, its own field initializers and then the rest of its body. An
+  omitted constructor is `constructor() {}` for a base class and forwards the base
+  initializer's fixed and optional parameters for a derived class; a base with a
+  rest parameter requires an explicit derived constructor.
+- **Definite initialization.** No placeholder is ever observable. In constructor
+  bodies, `this` may only write declared fields and read fields already
+  definitely assigned: fields with initializers, inherited fields after
+  `super(...)`, and fields assigned by an earlier top-level `this.f = …`
+  statement. It may not escape, be captured by an arrow, receive a method or
+  getter call, or reach `super.m`, because an override could observe a subclass
+  placeholder. Statements before `super(...)`, parameter defaults and field
+  initializers cannot use `this`; field initializers cannot name constructor
+  parameters or top-level constructor bindings. A derived constructor has exactly
+  one top-level `super(...)` statement. Every own field without an initializer
+  must be assigned by a top-level `this.f = …` statement; assignments inside
+  branches or loops are writes but do not count. `return` and `new.target` in a
+  constructor are rejected.
+- **Methods and dispatch.** A method is a function whose receiver is its class
+  (the v12 typed-receiver ABI: the first physical parameter); calls evaluate the
+  receiver and then the arguments once, in source order. An override keeps the
+  inherited parameter types, optional/rest shape, result, accessibility and member
+  kind; private members cannot be overridden. Classes form a closed world over
+  the module graph: after every module is laid out, each root method that a
+  descendant overrides gets one synthesized dispatcher that tests the receiver's
+  descriptor against each implementation's classes and forwards all physical
+  parameter slots. Methods without overrides, `super.m(...)` and `super(...)` are
+  direct calls. A getter has no parameters and a non-void result, is invoked by a
+  property read and dispatches like a method; it is not an own data property, so
+  JSON omits it. A static method has no receiver (`this` is rejected inside it)
+  and is called directly as `C.m(...)`; subclasses inherit and may redeclare
+  statics, and the call resolves statically against the named class.
+- **Access.** `private` members are accessible only inside the declaring class
+  body (including nested closures), `protected` members inside the declaring class
+  and its subclasses through receivers of the enclosing class or its subclasses,
+  and `readonly` fields are written only by the declaring class's constructor
+  through `this`. These are compile-time checks with no runtime representation.
+- **Value operations.** `JSON.stringify` serializes the runtime instance's own
+  fields through its descriptor in slot order; JSON parsing into a type containing
+  a class is rejected because parsing cannot construct nominal instances. Record
+  operations (`Object.keys`/`values`/`entries`/`assign`/`hasOwn`, spread,
+  destructuring, deletion, dynamic keys), logging, structural assignment from
+  object literals and method values without a call are rejected.
+- **Effects.** Constructors, methods and getters are user code. A member call
+  whose method name is declared by any class is no longer treated as a native
+  effect-free intrinsic by guard flow analysis, `new` of a class counts as an
+  unknown call there, and calls whose parameters can carry function values widen
+  captured-cell writes. Class fields cannot hold function values, so receivers do
+  not carry callbacks.
+- **Capture catalog.** A captured class-typed binding is catalogued as the
+  record-tagged `class` leaf of the [typed private capture
+  catalog](#typed-private-capture-catalog); its fields are compile-time checked,
+  so class field cycles never become catalog cycles.
+- **Rejected with diagnostics.** Generic, abstract, decorated (parser) and
+  `implements` classes; index signatures; `static` fields, blocks and
+  accessors; static method values without a call; setters; `#private` fields and methods; auto-accessors; constructor parameter
+  properties; optional, definite (`!`), `declare` and overriding fields;
+  function-valued fields; `toJSON` methods; explicit `this` parameters on methods;
+  private/protected constructors and overloads; class expressions and class
+  declarations inside functions; `extends` of non-class expressions, undeclared
+  names or Error families; recursive inheritance; and unions with more than one
+  record or class member.
+
+Profiles before v32 keep rejecting class declarations (`unsupported top-level
+declaration`), class expressions and nested class statements with their previous
+messages. Production budgets are unchanged: each class uses one record shape, one
+initializer function and one function per method, plus one dispatcher per
+overridden root method, all within `abi::MAX_USER_FUNCTIONS`. Pending for the
+pilot: `class … extends Error` (Error-channel identity, `message`/`name`/`cause`,
+`unknown` options, `new.target.name`), `#private` fields (excluded from JSON),
+static fields (module-level state) and setters.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),
@@ -6364,7 +6487,9 @@ A typed inspector consumes immutable catalog data plus a borrowed guest memory
 snapshot. It validates exact binding masks/types/widths/status, primitive payloads,
 canonical BigInt/Error objects and typed aggregate/union children. Record fields
 must match their compiler slot identities as well as names/kinds/optionality;
-serialized descriptor entry order may vary. Sparse arrays preserve holes and
+serialized descriptor entry order may vary. A v32 `class` node is a record-tagged
+leaf validated as a record aggregate; it counts as the record member of a
+reference union and cannot appear in a primitive union. Sparse arrays preserve holes and
 validate their exact element type. Code/signature catalog membership is checked
 before function memoization so aliases cannot bypass a type mismatch. Recursive
 closures are legal and work/node/depth allowances remain bounded. Actual callable

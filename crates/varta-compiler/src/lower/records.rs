@@ -75,7 +75,10 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     }) {
         return Err(unsupported("object field value type"));
     }
-    let shape = RecordShape { fields };
+    let shape = RecordShape {
+        fields,
+        class: None,
+    };
     if let Some(index) = types.records.iter().position(|record| record == &shape) {
         return Ok(Type::Record(index as u32));
     }

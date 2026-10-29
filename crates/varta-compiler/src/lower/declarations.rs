@@ -72,6 +72,8 @@ pub(super) fn collect<'a>(
                     ));
                 }
             }
+            // Classes are laid out and lowered by `classes` (v32).
+            ast::Decl::Class(class) if profile.classes() && !class.declare => {}
             ast::Decl::Var(var) if var.declare => {
                 for declaration in &var.decls {
                     let ast::Pat::Ident(binding) = &declaration.name else {

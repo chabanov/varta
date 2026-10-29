@@ -1762,3 +1762,37 @@ facts for non-union declarations. `either_guard` joins the states of `a || b`; a
 join that cannot intern keeps the unrefined state. `varta.json.parse<T>` rejects
 any target containing a literal set (`literals::contains`); admitting it requires a
 schema version that validates membership before allocation.
+
+### Classes (`classes()`)
+
+Class instances are records with a private `RecordShape.class` shape: inherited
+slots first, never interned with structural shapes. Identity is the canonical
+descriptor of the most-derived class; never add a hidden field, heap flag or
+value tag for it, and keep construction in canonical slot order so the allocated
+layout key equals `canonical_layout`. `Type::Class` must stay distinct from
+`Type::Record`: record operations are admitted for classes only by deliberate
+decision (subclass instances carry more slots and a different presence trailer
+than the static shape). Widen subclasses to ancestors only by retyping; a union
+holds at most one record-or-class member, and union cells keep the record tag.
+
+Classes register in the v31 type namespace (`named::Declaration::Class`) during
+`link_module`, are laid out per module after its function signatures (parents
+first, cycle-checked) and allocate initializer/method indices in that order;
+dispatchers are allocated after all modules and their bodies are pushed after the
+last module, before lifted closures. Function vector positions must equal the
+allocated indices. Every overridden root method uses one dispatcher shared by
+all descendants; never inline per-call dispatch or call an override directly
+through an ancestor-typed receiver.
+
+Placeholders must stay unobservable: keep the syntactic constructor discipline
+(field-only `this`, top-level definite assignment, single top-level `super`, no
+escape/capture/method calls/returns/`new.target`, `this`-free initializers and
+parameter defaults) unless a flow analysis proves the same property. Readonly
+writes are allowed only in the declaring class's initializer through `this`;
+private/protected checks use `classes.context`. Class calls are user code: keep
+`flow::native` false for names declared by any class method and treat class
+`new` as an unknown call in guard effects. Captured class bindings use the
+catalog's `class` leaf. Static methods are receiver-free direct calls resolved
+against the named class (no dispatch). Error subclasses, `#private`, static
+fields and setters need their own design; keep them rejected with
+construct-specific diagnostics.

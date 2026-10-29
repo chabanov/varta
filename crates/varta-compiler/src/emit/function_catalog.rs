@@ -35,6 +35,7 @@ pub(super) fn build(
                 Type::Array(id) => CaptureType::Array {
                     element: self.node(self.types.arrays[id as usize])?,
                 },
+                Type::Class(_) => CaptureType::Class,
                 Type::Record(id) => {
                     let mut fields = Vec::new();
                     for field in self.types.records[id as usize].fields.clone() {

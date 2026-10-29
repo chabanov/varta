@@ -3677,3 +3677,89 @@ fn public_engine_checks_literal_types_across_modules_in_v32() {
     .to_string();
     assert!(frozen.contains("unsupported type annotation"), "{frozen}");
 }
+
+#[test]
+fn public_engine_links_classes_across_modules_in_v32() {
+    struct ClassSources;
+    impl ModuleLoader for ClassSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./core.ts" => Ok("core.ts".into()),
+                "./users.ts" => Ok("users.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("core.ts") => "export class Client{readonly base:string;constructor(base:string){this.base=base;}get(path:string):string{return this.base+path;}}\
+                    export class Resource{protected readonly client:Client;constructor(client:Client){this.client=client;}name():string{return 'resource';}}\
+                    export function describe(r:Resource):string{return r.name();}class Hidden{}",
+                _ => "import {Resource,Client} from './core.ts';export class Users extends Resource{list():string{return this.client.get('/users');}name():string{return 'users';}}",
+            }
+            .into())
+        }
+    }
+    // A base-module function dispatches to an override declared in a dependent
+    // module: classes form one closed world across the module graph.
+    let source = "import {Client,describe} from './core.ts';import type {Resource} from './core.ts';import {Users} from './users.ts';\
+        export function main():void{const users=new Users(new Client('https://api'));console.log(users.list());const r:Resource=users;\
+        console.log(describe(r));console.log(r instanceof Users);console.log(JSON.stringify(users));}";
+    let profile = varta_common::language::LanguageProfile::CheckedF64Utf16V32;
+    let compile = |text: &str, profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: text.into(),
+            },
+            &ClassSources,
+            profile,
+        )
+    };
+    let compiled = compile(source, profile).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .inspect_module(&compiled.wasm)
+            .unwrap()
+            .language
+            .profile,
+        Some(profile)
+    );
+    assert_eq!(
+        runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap().lines,
+        [
+            "varta log: https://api/users",
+            "varta log: users",
+            "varta log: 1",
+            "varta log: {\"client\":{\"base\":\"https://api\"}}",
+        ]
+    );
+    for (text, expected) in [
+        (
+            "import {Hidden} from './core.ts';export function main():void{}",
+            "does not export function or constant Hidden",
+        ),
+        (
+            "import {Users} from './users.ts';export function main():void{const u=new Users();}",
+            "class Users constructor expects 1 arguments",
+        ),
+        (
+            "import {Client} from './core.ts';export function main():void{const c=new Client('a');c.base='b';}",
+            "cannot assign to readonly class field base",
+        ),
+    ] {
+        let error = compile(text, profile).err().unwrap().to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+    let frozen = compile(
+        source,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V31,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        frozen.contains("unsupported top-level declaration"),
+        "{frozen}"
+    );
+}

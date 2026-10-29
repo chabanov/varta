@@ -11,7 +11,12 @@ fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
 fn always_truthy(ty: Type) -> bool {
     matches!(
         ty,
-        Type::Record(_) | Type::Array(_) | Type::Function(_) | Type::Error | Type::NativeError(_)
+        Type::Record(_)
+            | Type::Class(_)
+            | Type::Array(_)
+            | Type::Function(_)
+            | Type::Error
+            | Type::NativeError(_)
     )
 }
 fn skipped_member(ty: Type, op: ast::AssignOp) -> bool {

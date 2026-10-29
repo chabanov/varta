@@ -274,6 +274,7 @@ impl Lower<'_> {
                             | Type::NativeError(_)
                             | Type::Null
                             | Type::Record(_)
+                            | Type::Class(_)
                             | Type::Array(_) => "object",
                             Type::Number | Type::Float64 => "number",
                             Type::BigInt => "bigint",
@@ -317,9 +318,25 @@ impl Lower<'_> {
             {
                 return self.bigint_new(new);
             }
-            ast::Expr::New(new) => return self.new_error(new),
+            ast::Expr::New(new) => {
+                if let Some(class) = self.class_callee(&new.callee) {
+                    return self.class_new(new, class);
+                }
+                return self.new_error(new);
+            }
             ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::InstanceOf => {
+                if let Some(class) = self.class_callee(&binary.right) {
+                    return self.class_instance_of(binary, class);
+                }
                 return self.instance_of_error(binary);
+            }
+            ast::Expr::Class(_) if self.types.profile.classes() => {
+                return Err(unsupported("class expression"));
+            }
+            ast::Expr::SuperProp(_) if self.types.profile.classes() => {
+                return Err(unsupported(
+                    "super property read; only super.method(...) calls",
+                ));
             }
             ast::Expr::Bin(binary) => {
                 let left = self.expr(&binary.left)?;
@@ -403,6 +420,7 @@ impl Lower<'_> {
                 if left.ty.is_union() || right.ty.is_union() {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
+                let (left, right) = classes::common_operands(left, right, self.types);
                 let (left, right) = if self.types.profile.has_undefined() {
                     match super::undefined::binary(binary.op, left, right, expression.span()) {
                         super::undefined::Binary::Folded(value) => return Ok(value),
@@ -457,6 +475,7 @@ impl Lower<'_> {
                                 | Type::Error
                                 | Type::NativeError(_)
                                 | Type::Record(_)
+                                | Type::Class(_)
                                 | Type::Array(_)
                         ) =>
                     {
@@ -508,6 +527,26 @@ impl Lower<'_> {
                 return Err(unsupported("spread to a JSON intrinsic"));
             }
             return self.parse_json(call);
+        }
+        if self.types.profile.classes() {
+            if matches!(call.callee, ast::Callee::Super(_)) {
+                return self.super_call(call);
+            }
+            if let ast::Callee::Expr(callee) = &call.callee {
+                if let ast::Expr::SuperProp(property) = stmt::unparen(callee) {
+                    return self.super_method_call(call, property);
+                }
+                if let ast::Expr::Member(member) = stmt::unparen(callee)
+                    && let Some(class) = self.class_callee(&member.obj)
+                {
+                    return self.class_static_call(call, member, class);
+                }
+                if let ast::Expr::Member(member) = stmt::unparen(callee)
+                    && self.class_receiver(&member.obj, 0).is_some()
+                {
+                    return self.class_method_call(call, member, None);
+                }
+            }
         }
         if call.type_args.is_some() {
             return Err(unsupported("generic call"));
@@ -699,6 +738,12 @@ impl Lower<'_> {
         }
         if let Some(class) = self.error_callee(callee) {
             return self.error_constructor(class, &call.args, call.type_args.is_some(), call.span);
+        }
+        if let ast::Expr::Member(member) = &**callee
+            && self.class_late_receiver(member)
+        {
+            let value = self.expr(&member.obj)?;
+            return self.class_method_call(call, member, Some(value));
         }
         if let ast::Expr::Member(member) = &**callee
             && matches!(&member.prop,ast::MemberProp::Ident(id) if id.sym=="toString")

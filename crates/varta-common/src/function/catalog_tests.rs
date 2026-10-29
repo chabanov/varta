@@ -133,6 +133,50 @@ fn capture_catalog_rejects_invalid_metadata_and_deep_bottom_up_type_dags() {
     assert!(FunctionCatalog::from_bytes(&serde_json::to_vec(&json).unwrap()).is_err());
     assert!(FunctionCatalog::from_bytes(b"{}").is_err());
 }
+#[test]
+fn capture_catalog_class_leaf_is_record_tagged_and_shares_the_union_record_slot() {
+    let catalog = |types| FunctionCatalog {
+        version: CATALOG_VERSION,
+        value_version: value::BIGINT_VALUE_VERSION,
+        types,
+        bindings: vec![CaptureBinding {
+            ty: 0,
+            result: false,
+        }],
+        functions: vec![],
+    };
+    let class = catalog(vec![CaptureType::Class]);
+    let bytes = class.to_bytes().unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("\"kind\":\"class\""));
+    let class = FunctionCatalog::from_bytes(&bytes).unwrap();
+    assert_eq!(class.types[0].value_kind(), Some(value::ValueKind::Record));
+    assert!(class.types[0].reference());
+    catalog(vec![
+        CaptureType::Undefined,
+        CaptureType::Class,
+        CaptureType::ReferenceUnion {
+            members: vec![0, 1],
+        },
+    ])
+    .validate()
+    .unwrap();
+    for members in [
+        CaptureType::PrimitiveUnion {
+            members: vec![0, 1],
+        },
+        CaptureType::ReferenceUnion {
+            members: vec![1, 2],
+        },
+    ] {
+        let bad = catalog(vec![
+            CaptureType::Undefined,
+            CaptureType::Class,
+            CaptureType::Record { fields: vec![] },
+            members,
+        ]);
+        assert!(bad.validate().is_err());
+    }
+}
 
 #[test]
 fn verified_capture_catalog_keeps_metadata_and_graph_work_checks() {

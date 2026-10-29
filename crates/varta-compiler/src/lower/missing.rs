@@ -202,6 +202,7 @@ impl Lower<'_> {
         match value.ty {
             Type::Error | Type::NativeError(_) => Err(unsupported("Error property mutation")),
             Type::Record(_) => self.record_field(member, value, false),
+            Type::Class(_) => self.class_member(member, value, false),
             Type::Array(_) => self.array_member(member, value, false),
             _ => Err(unsupported(
                 "assignment to immutable result property or array length",
@@ -221,7 +222,11 @@ impl Lower<'_> {
             && !(self.types.profile.reference_unions()
                 && matches!(
                     element,
-                    Type::Error | Type::NativeError(_) | Type::Record(_) | Type::Array(_)
+                    Type::Error
+                        | Type::NativeError(_)
+                        | Type::Record(_)
+                        | Type::Class(_)
+                        | Type::Array(_)
                 ))
         {
             return Err(unsupported(
