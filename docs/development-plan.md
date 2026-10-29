@@ -9,20 +9,20 @@ and does not claim full ECMAScript, Node or npm compatibility.
 
 | Item | Current state |
 | --- | --- |
-| Profiles | Default `checked-i32-utf8-v1`; latest opt-in `checked-f64-utf16-v30`. Versions of every profile: [version matrix](architecture.md#version-matrix) |
+| Profiles | Default `checked-i32-utf8-v1`; latest released opt-in `checked-f64-utf16-v31`; `checked-f64-utf16-v32` is the [pilot batch](#pilot-batch-v32-in-development), merged on the `v32-integration` branch and not released. Versions of every profile: [version matrix](architecture.md#version-matrix) |
 | Last full gate | Commit `bf8c6c2` (2026-10-28): the seven-command gate in [verification.md](verification.md#full-gate) passed 1750 tests on a local host, as recorded in the commit message; not a cross-platform CI result |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: v31 named types and `.js` specifiers landed; `core/json.ts` links; `generated/models.ts` parses and stops at top-level `export const` |
+| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the v32 integration branch `generated/meta.ts`, `generated/models.ts` and `core/json.ts` compile and validate; the other files stop at `Headers`, generics, async or the import limit ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 
 Next work, in order:
 
 1. **Suspension foundation** ([K4.4](#k44--suspension-scheduling-and-async-planned)
    block 1): expression normalization, continuation frames over closure cells,
    exception and GC invariants, closed resume dispatcher.
-2. **Pilot M1–M3**, alongside block 1: type-level modules and literal types,
-   classes and Error subclasses, inheritance, template literals and the 65-file
-   module graph.
+2. **Pilot M1–M3**, alongside block 1: review and release the v32 pilot batch,
+   then index signatures and wider records, generics, `Error` subclasses,
+   Web types (`Headers`) and the 65-file module graph budgets.
 3. Synchronous generators, then Promise jobs, then async/await (K4.4 steps 2–4).
 
 Completed increment logs, earlier checkpoints and verification records are in
@@ -262,6 +262,28 @@ dependencies, and contains no explicit `any`, so it meets the
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
 
+**Verified behavior with v32 on the integration branch (2026-10-28).** Each of
+the 65 source files of the pinned tarball was compiled under
+`checked-f64-utf16-v32` as the only `export *` source of a probe entry, so the
+file and all its dependencies form the graph; production budgets were unchanged.
+The first diagnostic per file:
+
+| First diagnostic | Files |
+| --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts` | 3 |
+| `core/errors.ts:121` `unsupported type reference Headers` (reached through `core/resource.ts`, `core/transport.ts`, `core/sse.ts` and most resources) | 36 |
+| `core/pagination.ts:3` `unsupported generic type declaration` (`CursorPage<T>`, reached by paginated resources) | 23 |
+| `core/util.ts:8` generic function `pick<T, K extends keyof T>` | 1 |
+| `generated/resources/index.ts`: module graph exceeds the import-declaration limit | 1 |
+| `index.ts:54` `export default` | 1 |
+
+With `Headers` stubbed, `core/errors.ts` next stops at an index signature in
+`ProblemDocument`; its `class … extends Error` hierarchy is the M2 blocker after
+that. The measurement first exposed a false `source complexity` rejection: the
+complexity pre-pass lexed template text after a substitution, and the doc comments
+after it, as code. The integration branch fixes the pre-pass to rescan template
+text like the parser.
+
 **Verified behavior with v31 (2026-10-28).** Named interface/alias types,
 type-only imports/exports and `./x.js` specifiers are implemented, so
 `core/json.ts` links through `import type { JsonValue } from './core/json.js'`.
@@ -280,14 +302,14 @@ its module graph.
 
 | Requirement | Occurrences | Current Varta |
 | --- | --- | --- |
-| Modules: `import type`, `export *`, `export default`, top-level `export const`, `.js` specifiers resolving to `.ts` | 65 files | v31: type-only imports/exports and `.js` specifiers; `export *`, re-exports with `from`, `export default` and `export const` not supported |
+| Modules: `import type`, `export *`, `export default`, top-level `export const`, `.js` specifiers resolving to `.ts` | 65 files | v31: type-only imports/exports and `.js` specifiers; v32 (unreleased): `export const`, `export { … } from` and `export *`; `export default` not supported; the 65-file graph exceeds the import-declaration limit |
 | Named interfaces/aliases; structural assignability; index signatures and `Record<string, …>` | 1917 interfaces / 38 | v31: named closed shapes; no width subtyping, index signatures or `Record` |
-| String-literal types and `as const` | 357 aliases / 357 | Not supported |
+| String-literal types and `as const` | 357 aliases / 357 | v32 (unreleased): literal types and their unions, `as const` on whole initializers |
 | Records wider than 32 fields (`Agent` 55, `UpdateRuntimeConfigRequest` 60) | 5 | 32-field limit |
-| Classes: `extends`, `protected`, `#private`, getters, `Error` subclasses, `new.target` | 74 classes, 82 `#` members | Not supported |
+| Classes: `extends`, `protected`, `#private`, getters, `Error` subclasses, `new.target` | 74 classes, 82 `#` members | v32 (unreleased): top-level classes with `extends`, `protected`/`private`, getters and static methods; `#private`, `Error` subclasses and `new.target` not supported |
 | Generics: `request<T>`, `pick<T, K extends keyof T>` | 13 in core | Not supported |
 | `await` / `for await`; async generators, `Symbol.asyncIterator`, `new Promise` | 44 / 22 | Not supported ([suspension design](#k44--suspension-scheduling-and-async-planned)) |
-| Template literals, optional chaining `?.`, object spread | 537 / 27 / 48 | Not supported |
+| Template literals, optional chaining `?.`, object spread | 537 / 27 / 48 | v32 (unreleased): untagged template literals; `?.` and object spread not supported |
 | Already supported: `??` (52), default parameters, `Math.random` (6) | — | v12+, v12+ and v17+ respectively |
 | Type assertions `as T`, non-null `x!`, `unknown` | ~18 / ~4 / 149 | Not supported |
 | fetch, Headers, Response, AbortController, setTimeout, ReadableStream, TextDecoder, FormData, Blob, URLSearchParams, crypto, Date, Set | core | Only `net.get(url): string` |
@@ -337,18 +359,21 @@ and memory compared with Node, Deno and Bun.
 ### Pilot batch v32 (in development)
 
 Profile `checked-f64-utf16-v32` collects pilot M1–M3 features developed in
-parallel, one work stream per selector. Each stream lands on its own branch with
-its own tests, contract subsection, profile rules and conformance cases, and is
-merged after review; v32 is not considered released until every stream merges
-and the full gate passes on the merged result.
+parallel, one work stream per selector. Each stream landed on its own branch with
+its own tests, contract subsection and profile rules. All five streams are merged
+on the `v32-integration` branch together with their cross-stream integration
+(constants and classes through re-exports, literal-typed class fields and
+template substitutions, class bodies reading constants) and one conformance
+case per executable stream. V32 is not released: the integration branch awaits
+review and its merge into `main`.
 
-| Selector | Work stream | Pilot step |
-| --- | --- | --- |
-| `module_constants()` | Top-level `const`/`export const` with checked initializers and `as const` | M1 |
-| `literal_types()` | String/number/boolean literal types and wide literal unions | M1 |
-| `classes()` | Classes, fields, constructors, methods, `extends`, `Error` subclasses | M2 |
-| `module_reexports()` | `export { x } from`, `export * from`, `export type { T } from` | M3, M7 |
-| `template_literals()` | Template literal expressions | M3 |
+| Selector | Work stream | Pilot step | State |
+| --- | --- | --- | --- |
+| `module_constants()` | Top-level `const`/`export const` with checked initializers and `as const` | M1 | Merged on the integration branch |
+| `literal_types()` | String/number/boolean literal types and wide literal unions | M1 | Merged on the integration branch |
+| `classes()` | Classes, fields, constructors, methods, `extends`; `Error` subclasses pending | M2 | Merged on the integration branch |
+| `module_reexports()` | `export { x } from`, `export * from`, `export type { T } from` | M3, M7 | Merged on the integration branch |
+| `template_literals()` | Template literal expressions | M3 | Merged on the integration branch |
 
 ### Deferred external validation scenarios
 

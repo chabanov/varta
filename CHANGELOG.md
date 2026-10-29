@@ -11,39 +11,38 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
-- Opt-in v32 adds untagged template literals: substitutions are evaluated once,
-  left to right, converted with primitive ToString (canonical Number text, BigInt
-  decimal text) and joined by guest concatenation with exact UTF-16 parts.
-  Non-primitive substitutions, tagged templates and `String.raw` fail with
-  diagnostics. No host import, layout or limit changes.
-
-- Opt-in v32 adds module re-exports: `export { x as y } from`, `export type { … }
-  from`, `export { type T } from` and `export * from` forward functions and named
-  types without local bindings. Star exports follow ECMAScript rules (no
-  `default`, explicit exports win, ambiguous names excluded and rejected only
-  when named) and chain transitively. Re-export sources are graph dependencies
-  under unchanged limits; namespace and default forms stay rejected.
-
-- Profile v32 (in development) admits top-level `const`/`export const` module
-  constants with a pure checked initializer subset and `as const` readonly
-  bindings, imported and exported by name. Scalar constants fold to literals;
-  reference values are evaluated once in dependency order before `main` and held
-  in permanent collector roots. V31 and earlier keep rejecting them.
-
-- Opt-in v32 `literal_types` adds string, number and boolean literal types and
-  their unions as compile-time value sets that erase to their base slots, with
-  membership-checked assignability, `===`/`!==`/`||` narrowing and up to 4096
-  members per set; all 356 string-literal aliases of the pilot `models.ts`
-  resolve. `varta.json.parse<T>` rejects literal-typed targets. ABIs, layouts and
-  production budgets are unchanged.
-
-- Pilot batch v32 (`classes()`) adds top-level classes: typed and `readonly`
-  fields, `public`/`protected`/`private` checks, constructors with a definite-
-  initialization discipline, methods, getters, static methods, `extends` with
-  `super(...)` and `super.m(...)`, nominal subtyping, `instanceof` and
-  closed-world override dispatch. Instances are records with per-class descriptors and exact tracing;
-  class names work across modules through the type namespace. Error subclasses,
-  `#private`, static fields and setters remain rejected.
+- Opt-in v32 (pilot batch, in development) adds five composable features for
+  the uarp-sdk pilot. V31 and earlier keep rejecting all of them; host imports,
+  value tags, layouts, ABIs and production budgets are unchanged; the inventory
+  adds one case per feature.
+  - Module constants: top-level `const`/`export const` with a pure checked
+    initializer subset and `as const` readonly bindings. Scalar constants fold to
+    literals; reference values are evaluated once in dependency order before
+    `main` and held in permanent collector roots.
+  - Literal types: string, number and boolean literal types and their unions as
+    compile-time value sets that erase to their base slots, with
+    membership-checked assignability, `===`/`!==`/`||` narrowing and up to 4096
+    members per set; all 356 string-literal aliases of the pilot `models.ts`
+    resolve. `varta.json.parse<T>` rejects literal-typed targets.
+  - Classes: typed and `readonly` fields, `public`/`protected`/`private` checks,
+    constructors with a definite-initialization discipline, methods, getters,
+    static methods, `extends` with `super(...)` and `super.m(...)`, nominal
+    subtyping, `instanceof` and closed-world override dispatch. Instances are
+    records with per-class descriptors and exact tracing. Error subclasses,
+    `#private`, static fields and setters remain rejected.
+  - Module re-exports: `export { x as y } from`, `export type { … } from`,
+    `export { type T } from` and `export * from` forward functions, constants,
+    named types and classes without local bindings. Functions and constants share
+    one value namespace; star exports follow ECMAScript rules (no `default`,
+    explicit exports win, ambiguous names excluded and rejected only when named)
+    and chain transitively. Namespace and default forms stay rejected.
+  - Template literals: substitutions are evaluated once, left to right, converted
+    with primitive ToString (canonical Number text, BigInt decimal text; literal
+    types as their base) and joined by guest concatenation with exact UTF-16
+    parts. Non-primitive substitutions (including class instances), tagged
+    templates and `String.raw` fail with diagnostics. The source-complexity
+    pre-pass rescans template text after each substitution, so template text and
+    later doc comments no longer trip a false complexity error.
 
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`

@@ -1631,7 +1631,11 @@ loop). Expression `|`, call arguments and anything after `<` keep counting. An
 alias context ends at `;`, an enclosing close or a line break that does not
 continue the union. The former 65,536-token per-file count was removed by
 explicit decision (2026-10-28); byte limits bound total size. Never make a
-separator a reset unless its AST is a flat list in every context.
+separator a reset unless its AST is a flat list in every context. SWC's lexer
+returns `}` after a template substitution and leaves the template text to the
+parser: the check must call `rescan_template_token` at the `}` that closes a
+`${` delimiter (as the parser does), or template text and later doc comments
+with backticks are counted as one long code run.
 
 ## Pilot batch profile v32
 
@@ -1640,66 +1644,18 @@ the v31 exception/JSON selectors. Each pilot work stream has exactly one selecto
 (`module_constants`, `literal_types`, `classes`, `module_reexports`,
 `template_literals`); gate every new admission on its own selector, keep v31 and
 earlier profiles frozen, and add rules for the stream under its own heading here.
+The streams compose; the rules for their interactions are in
+[cross-stream integration](#cross-stream-integration-v32).
 
-### Template literals (v32)
-
-`template_literals()` gates `ast::Expr::Tpl` and the tagged-template diagnostic in
-`expr_inner`, plus the `string` inference for an unannotated template parameter
-default; without it both keep the exact `unsupported expression` / annotation
-errors. `lower/templates.rs` lowers a template to a left fold of
-`E::Binary(Add)` string concatenations, so it inherits the `+` operand roots,
-source order and 1 MiB value limit; never add a separate join helper without an
-ownership/budget contract. Lower each substitution with `self.expr` and convert it
-before lowering the next one. `string` passes through; every other admitted
-primitive goes through `primitive_convert` (the shared body of `String(x)`, which
-caches the value in a rooted ValueBlock and snapshots the host result), so
-Number text stays the v18 canonical display and BigInt uses `bigint_text`. Check
-members before conversion and reject any non-primitive member at the
-substitution span; adding ToPrimitive (classes, records, arrays, Errors) is a
-separate decision. Cooked parts reuse the string-literal WTF-8 to UTF-16 encoding
-(lone surrogates exact); empty parts emit nothing; a missing cooked value is an
-invalid program. Tagged templates and `String.raw` stay rejected. No host import,
-layout or budget change; `encodeURIComponent` remains a separate builtin.
-
-### Module re-exports (v32)
-
-`module_reexports()` gates the scanner forms only; earlier profiles keep the
-exact `re-export or type-only export` / `module export form` messages. The scanner
-records `export { … } from` as an `Export` with `from: Some(target)` and
-`export * from` as a `Unit.stars` entry, and adds each source as a `Dependency`
-with no bindings, so cycles, ordering, metadata and limits come from the existing
-graph walk. Never bind a re-exported name in the re-exporter's function scope or
-type namespace.
-
-Export tables live in `lower/exports.rs`: `Table<V>` holds bound names plus the
-set of ambiguous star names, and `exports::link` applies the shared rules
-(explicit exports first with duplicate detection, then stars filtered by
-`default` and every explicit exported name, merged by binding identity). Each
-binding namespace implements `exports::Namespace`: functions (`link.rs`, identity
-= function slot) and named types (`named.rs`, identity = defining declaration
-after following `Declaration::Imported`). Type tables are linked per module
-before function signatures; function tables after all signatures, so the
-function namespace decides cross-namespace "missing" errors. Import resolution in
-every namespace must treat `Lookup::Ambiguous` as `exports::ambiguous`.
-
-Extension point for module constants (or any new value kind): keep one
-`Table<V>` per module in dependency order, implement `Namespace` with a stable
-identity (for example the global slot), call `exports::link` after the module's
-local bindings exist, and extend the "missing in this namespace" checks so that
-an explicit value re-export or import is accepted when any value namespace binds
-the name. Constants then re-export and star-export without scanner changes.
-
-Namespace re-exports, `export {} from`, `export type *`, attributed forms and
-default names stay rejected; namespace objects and default exports need their
-own contracts.
-
-### Module constants (`module_constants`)
+### Module constants (`module_constants()`)
 
 `declarations::collect` skips top-level non-ambient `const` only under the
 selector and names `let`/`var`; earlier profiles keep `unsupported top-level
-declaration`. `module_constants::link` runs in `graph.order` after function
-signatures and before `link_bindings`, which skips constant imports/exports and
-rejects name collisions with them. `check` validates the whole module first
+declaration`. `link::link_values` visits `graph.order` after all function
+signatures: it resolves the module's value imports through the value export
+tables, calls `module_constants::link_module` with the imported constants, and
+then links the module's value export table, so constants import, export and
+re-export through the same rules as functions. `check` validates the whole module first
 (identifier bindings, initializer presence, duplicates against functions and
 imports, the pure initializer form, and temporal-dead-zone order), so chunking
 never changes diagnostics. Keep the initializer subset call-free: admitting calls,
@@ -1730,7 +1686,7 @@ and the `Object.assign` target. A new mutating operation must add the same check
 Readonly is binding-level intent, not a type: do not intern readonly array or
 record types without a separate profile decision.
 
-### Literal types (`literal_types`)
+### Literal types (`literal_types()`)
 
 `Type::Literal(LiteralBase, id)` indexes `ValueTypes::literals`, interned by base
 and value set. Annotation interning fails at `MAX_LITERAL_MEMBERS` and
@@ -1776,7 +1732,8 @@ than the static shape). Widen subclasses to ancestors only by retyping; a union
 holds at most one record-or-class member, and union cells keep the record tag.
 
 Classes register in the v31 type namespace (`named::Declaration::Class`) during
-`link_module`, are laid out per module after its function signatures (parents
+`link_module` (`export class` is a scanned `Export`, so classes join the type
+export tables and re-exports), are laid out per module after its function signatures (parents
 first, cycle-checked) and allocate initializer/method indices in that order;
 dispatchers are allocated after all modules and their bodies are pushed after the
 last module, before lifted closures. Function vector positions must equal the
@@ -1796,3 +1753,80 @@ catalog's `class` leaf. Static methods are receiver-free direct calls resolved
 against the named class (no dispatch). Error subclasses, `#private`, static
 fields and setters need their own design; keep them rejected with
 construct-specific diagnostics.
+
+### Module re-exports (`module_reexports()`)
+
+`module_reexports()` gates the scanner forms only; earlier profiles keep the
+exact `re-export or type-only export` / `module export form` messages. The scanner
+records `export { … } from` as an `Export` with `from: Some(target)` and
+`export * from` as a `Unit.stars` entry, and adds each source as a `Dependency`
+with no bindings, so cycles, ordering, metadata and limits come from the existing
+graph walk. Never bind a re-exported name in the re-exporter's function scope or
+type namespace.
+
+Export tables live in `lower/exports.rs`: `Table<V>` holds bound names plus the
+set of ambiguous star names, and `exports::link` applies the shared rules
+(explicit exports first with duplicate detection, then stars filtered by
+`default` and every explicit exported name, merged by binding identity). Each
+binding namespace implements `exports::Namespace`: values (`link.rs` `Values`,
+binding `Value::Function` or `Value::Constant`, identity = function slot or
+`Constant::id`, a graph-unique declaration counter) and named types
+(`named.rs`, identity = defining declaration after following
+`Declaration::Imported`; classes are type declarations). Type tables are linked
+per module before function signatures; value tables in `link_values` after
+all signatures and after each module's constants, so the value namespace
+decides cross-namespace "missing" errors. Import resolution in
+every namespace must treat `Lookup::Ambiguous` as `exports::ambiguous`.
+
+Extension point: a new value kind becomes a `link::Value` variant with its own
+identity, so functions, constants and it stay one namespace (a function and a
+constant of one name from different stars are ambiguous); never give a value
+kind its own table. A new type-like kind registers in `named` declarations.
+Local `export` declarations of a new kind must be recorded as scanned `Export`s
+under its selector, as `export const` and `export class` are.
+
+Namespace re-exports, `export {} from`, `export type *`, attributed forms and
+default names stay rejected; namespace objects and default exports need their
+own contracts.
+
+### Template literals (`template_literals()`)
+
+`template_literals()` gates `ast::Expr::Tpl` and the tagged-template diagnostic in
+`expr_inner`, plus the `string` inference for an unannotated template parameter
+default; without it both keep the exact `unsupported expression` / annotation
+errors. `lower/templates.rs` lowers a template to a left fold of
+`E::Binary(Add)` string concatenations, so it inherits the `+` operand roots,
+source order and 1 MiB value limit; never add a separate join helper without an
+ownership/budget contract. Lower each substitution with `self.expr` and convert it
+before lowering the next one. `string` passes through; every other admitted
+primitive goes through `primitive_convert` (the shared body of `String(x)`, which
+caches the value in a rooted ValueBlock and snapshots the host result), so
+Number text stays the v18 canonical display and BigInt uses `bigint_text`. Check
+members before conversion and reject any non-primitive member at the
+substitution span; adding ToPrimitive (classes, records, arrays, Errors) is a
+separate decision. Cooked parts reuse the string-literal WTF-8 to UTF-16 encoding
+(lone surrogates exact); empty parts emit nothing; a missing cooked value is an
+invalid program. Tagged templates and `String.raw` stay rejected. No host import,
+layout or budget change; `encodeURIComponent` remains a separate builtin.
+
+### Cross-stream integration (v32)
+
+- Constants and functions share `link::Value`; constant imports resolve in
+  `link_values` before `module_constants::link_module`, and a declared constant
+  may not take the name of an imported function (checked after the module's
+  constants exist).
+- Class initializer and method bodies receive the module's constant scope
+  through `classes::bodies`, exactly like `link::body` for functions.
+- Literal erasure is exhaustive over IR forms: `E::ModuleConstant`,
+  `S::InitModuleConstant` and `E::IsClass` erase their children there. Class
+  record shapes erase with the record table; class construction picks the
+  placeholder of `ty.erased()`, so a literal field gets its base slot.
+- Assignability combines `literals::assignable`/`member_of` with
+  `classes::upcast`/`union_upcast` in `arguments::accepts` and `unions::widen`;
+  literal conformance runs before the class upcast.
+- The constant initializer subset stays call-free, so `new` (and therefore class
+  instances) stays outside it. Template literals are also still rejected there
+  (`unsupported template literal in a module constant initializer`); they are a
+  candidate for the subset, like `+`, but need their own decision.
+- Template substitutions treat literal-typed values as their base primitive;
+  class instances need ToPrimitive and stay rejected.

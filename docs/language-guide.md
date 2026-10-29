@@ -3444,29 +3444,36 @@ expected. Generics, `extends`, recursive types, `Record<K, V>`, re-exports with
 
 ### `checked-f64-utf16-v32`
 
-#### Template literals (opt-in v32)
+#### Module constants (opt-in v32)
 
-Template literals build strings from primitive values. Each substitution runs once,
-left to right, and is converted like `String(value)`:
+Top-level `const` declarations are module constants. Their initializers are a pure
+subset (literals, other constants, arrays, object literals, `+` and one outer
+`as const`), so they run once before `main` and cannot call code:
 
 ```ts
-type Options = { userAgent: string };
+// meta.ts
+export const SDK_VERSION = '0.12.0';
+export const DEFAULT_BASE_URL = 'https://api.example';
+export const SCOPES = ['admin', 'agents:read'] as const;
+const PAGE_LIMIT = 50;
 
-function activatePath(agentId: number): string {
-  return `/api/v1/agents/${String(agentId)}/activate`;
+export function pageLimit(): number {
+  return PAGE_LIMIT;
 }
 
+// main.ts
+import { SDK_VERSION, SCOPES, pageLimit } from "./meta.js";
+
 export function main(): void {
-  const defaults: Options = { userAgent: `varta/${0.5}` };
-  console.log(activatePath(42)); // /api/v1/agents/42/activate
-  console.log(`${defaults.userAgent} ${undefined} ${10n ** 20n}`);
+  console.log(SDK_VERSION);              // 0.12.0
+  console.log(SCOPES.includes('admin')); // 1
+  console.log(pageLimit());              // 50
 }
 ```
 
-Substitutions may be strings, numbers, booleans, `null`, `undefined`, BigInt
-values or unions of these. Records, arrays, functions and Error values need an
-explicit conversion (for example `JSON.stringify(value)` or `error.message`);
-tagged templates and `String.raw` are rejected with a diagnostic.
+`as const` makes the binding readonly: `SCOPES.push('x')` is rejected, also in
+importing modules. Top-level `let`/`var`, calls (including `new`), member reads and
+template literals in initializers are rejected with a diagnostic.
 
 #### Literal types (opt-in v32)
 
@@ -3501,3 +3508,111 @@ it. Literal types are erased at run time, so values compare and print as their b
 primitive. Records, arrays and callbacks containing literal types are distinct from
 their `string` twins. `varta.json.parse<T>` rejects targets that contain literal
 types; parse a `string` field and narrow it. String `switch` remains unsupported.
+
+#### Classes (opt-in v32)
+
+Top-level classes have typed fields, constructors, methods, getters, static
+methods, single inheritance and nominal `instanceof`. Overridden methods dispatch
+on the runtime class:
+
+```ts
+class Client {
+  readonly baseUrl: string;
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl;
+  }
+  url(path: string): string {
+    return this.baseUrl + path;
+  }
+}
+
+class APIResource {
+  protected client: Client;
+  constructor(client: Client) {
+    this.client = client;
+  }
+  name(): string {
+    return 'resource';
+  }
+}
+
+class Agents extends APIResource {
+  name(): string {
+    return 'agents';
+  }
+  list(): string {
+    return this.client.url('/agents');
+  }
+}
+
+export function main(): void {
+  const agents = new Agents(new Client('https://api.example'));
+  const resource: APIResource = agents;    // a subclass widens to its base
+  console.log(resource.name());            // agents (dispatches to the override)
+  console.log(resource instanceof Agents); // 1
+  console.log(agents.list());              // https://api.example/agents
+}
+```
+
+Constructors must assign every field without an initializer through a top-level
+`this.field = …` statement before anything else can see `this`. Instances are not
+structural records: an object literal is not assignable to a class type.
+`extends Error`, `#private` members, static fields, setters, generic and abstract
+classes are rejected with a diagnostic.
+
+#### Module re-exports (opt-in v32)
+
+A barrel module forwards functions, constants, types and classes without binding
+them locally:
+
+```ts
+// generated/meta.ts
+export const SDK_VERSION = '0.12.0';
+export type AuthType = 'none' | 'apiKey';
+
+// core/client.ts
+export class Client {
+  readonly baseUrl: string = 'https://api.example';
+}
+
+// index.ts
+export * from './generated/meta.js';
+export { Client as UARPClient } from './core/client.js';
+
+// main.ts
+import { SDK_VERSION, UARPClient, type AuthType } from "./index.js";
+
+export function main(): void {
+  const auth: AuthType = 'apiKey';
+  const client = new UARPClient();
+  console.log(`${SDK_VERSION} ${auth} ${client.baseUrl}`); // 0.12.0 apiKey https://api.example
+}
+```
+
+A name that two `export *` sources provide with different bindings is left out;
+importing it is an error until an explicit `export { name } from` picks one.
+`export * as ns from`, `export {} from` and default exports are rejected.
+
+#### Template literals (opt-in v32)
+
+Template literals build strings from primitive values. Each substitution runs once,
+left to right, and is converted like `String(value)`:
+
+```ts
+type Options = { userAgent: string };
+
+function activatePath(agentId: number): string {
+  return `/api/v1/agents/${String(agentId)}/activate`;
+}
+
+export function main(): void {
+  const defaults: Options = { userAgent: `varta/${0.5}` };
+  console.log(activatePath(42)); // /api/v1/agents/42/activate
+  console.log(`${defaults.userAgent} ${undefined} ${10n ** 20n}`);
+}
+```
+
+Substitutions may be strings, numbers, booleans, `null`, `undefined`, BigInt
+values or unions of these. Records, arrays, functions and Error values need an
+explicit conversion (for example `JSON.stringify(value)` or `error.message`);
+tagged templates and `String.raw` are rejected with a diagnostic.

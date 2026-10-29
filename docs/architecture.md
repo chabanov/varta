@@ -221,7 +221,10 @@ and at most 256 consecutive chain tokens without a sibling separator, because
 operator, member and unary chains build nested AST nodes. Flat sibling lists do
 not deepen the AST and reset the run: commas inside `[...]`/`{...}` (call
 arguments keep the chain budget) and `|`/`&` members at the top level of a
-`type` alias outside generic angle syntax. There is no per-file token count;
+`type` alias outside generic angle syntax. Template text is one token per head,
+middle or tail, and each substitution is one nesting level; the check rescans
+template text after a substitution like the parser, so template contents and
+later comments never count as code. There is no per-file token count;
 overall size is bounded by the per-file and per-graph byte limits. Static strings occupy at most
 one 64 KiB page shared with object descriptors. Parse errors retain source line/column positions.
 
@@ -5323,79 +5326,12 @@ unchanged.
 V32 reuses the v31 host, value, schema and exception selectors (see the
 [version matrix](#version-matrix)) and inherits every v31 feature. It collects the
 [uarp-sdk pilot](development-plan.md#pilot-acceptance-package-uarp-sdk) M1–M3
-features, each gated by its own `LanguageProfile` selector. Until a feature's
-subsection below exists, v32 admits nothing beyond v31.
-
-#### Template literals
-
-Selector `template_literals()`. V32 admits untagged template literal expressions
-`` `head${a}middle${b}tail` ``; v31 and earlier profiles keep rejecting every
-template with `unsupported expression`.
-
-- **Type.** A template literal is a `string` value in every expression context
-  (bindings, arguments, returns, record fields, array elements, comparisons,
-  conditions). An unannotated parameter whose default is a template infers
-  `string`, like a string literal default.
-- **Evaluation.** Substitutions are evaluated exactly once, left to right. Each
-  value is converted with ECMAScript ToString immediately after it is evaluated
-  and before the next substitution runs, so a throwing or exiting substitution
-  aborts before any later substitution. Strings pass through unchanged. Number,
-  Boolean, `null`, `undefined` (including void calls) and closed primitive unions
-  use the [v19 primitive String conversion](#checked-f64-utf16-v19--primitive-string-conversion)
-  through the profile's existing `primitive_to_string_v2` import (canonical v18
-  Number text); BigInt values use the existing decimal BigInt text operation.
-  The parts are then joined with guest string concatenation, which shares the
-  checked heap, exact roots and the 1 MiB per-value limit of `+`; exceeding the
-  limit traps exactly like an oversized concatenation.
-- **Text parts.** Cooked template text is encoded like string literals: escapes
-  (`\u{…}`, `\x…`, `\``, `\${`, line continuations) are exact, a raw CR LF or CR
-  line terminator cooks to LF, and lone surrogates are kept as single UTF-16 code
-  units. Empty parts emit no concatenation.
-- **Rejected with diagnostics.** A substitution whose type has a non-primitive
-  member (records, arrays, functions, Error values, reference unions and, later,
-  class instances) fails with a type error at the substitution: it would need
-  ToPrimitive, which is not admitted. Tagged templates, including `String.raw`,
-  fail with `unsupported tagged template literal (including String.raw)`.
-
-Template literals add no host import, value tag, layout, helper or catalog entry;
-artifacts are indistinguishable from the equivalent `String(…)` and `+` program.
-All budgets are unchanged.
-
-#### Module re-exports
-
-Gated by `module_reexports()`. V32 admits re-export declarations with
-ECMAScript linking semantics, applied separately to each binding namespace
-(functions and named types; module constants join through the same tables).
-
-- **Explicit re-exports.** `export { x } from "./m.ts"`, `export { x as y } from`,
-  `export type { T } from` and `export { type T } from` forward an export of the
-  dependency under the given name. A value form forwards every namespace in which
-  the source exports the name and must find it in at least one
-  (`module m.ts does not export function x`); a type-only form forwards only a
-  type (`module m.ts does not export type T`). Re-exported names are **not**
-  bound in the re-exporting module: calling or annotating with them there, or
-  listing them in a local `export { … }`, fails like any unknown name.
-- **Star re-exports.** `export * from "./m.ts"` forwards every export of the
-  dependency except `default`, transitively through chained stars. Explicit
-  exports of the module (local or re-exported, in any namespace) shadow star
-  names. A name that several star sources provide with distinct bindings is
-  ambiguous and excluded; two sources providing the same original binding (the
-  same function slot or defining type declaration) are not ambiguous. Ambiguity
-  is never an error by itself: only an import or explicit re-export naming the
-  ambiguous name fails (`module m.ts exports x ambiguously through export *`),
-  and ambiguity propagates through further star re-exports.
-- **Graph.** Every re-export source is a graph dependency: it is resolved by the
-  loader, visited in sorted order, linked before the re-exporter, included in the
-  module metadata, subject to cycle detection, and counted against the module,
-  depth and import-declaration limits, which are unchanged.
-- **Rejected with diagnostics.** `export * as ns from` (namespace re-export),
-  `export {} from` (side-effect re-export), `default` names in re-export lists,
-  `export type * from`, attributed re-exports, and default exports. V31 and
-  earlier keep `re-export or type-only export` for `export … from` and
-  `module export form` for `export *`.
-
-Re-exports are resolved entirely at compile time: no host import, value tag,
-layout or artifact field changes.
+features, each gated by its own `LanguageProfile` selector: module constants,
+literal types, classes, module re-exports and template literals. The features
+compose: constants and classes link through re-exports, literal types apply to
+class fields, constants and template substitutions, and class bodies read
+module constants. None of them adds a host import, value tag, layout field or
+ABI version, and production budgets are unchanged.
 
 #### Module constants (`module_constants()`)
 
@@ -5416,7 +5352,11 @@ top-level declaration`) and keep rejecting `as const`.
   constant is rejected like assignment to any `const` binding. `export const`,
   export lists (`export { X as Y }`, also forwarding an imported constant) and
   named imports (`import { X as Y } from './m.ts'`) link constants across
-  modules next to functions and v31 types. Re-exports with `from` stay rejected.
+  modules next to functions and v31 types. Constants and functions form one
+  value namespace, so [re-exports](#module-re-exports-module_reexports)
+  (`export { X } from`, `export { X as Y } from`, `export *`) forward constants
+  under the same rules; a re-exported constant keeps its stored identity and
+  `as const` readonly marking.
 - **Initializer subset.** Initializers are limited to a pure subset: string,
   number, boolean, null and BigInt literals; unary `-`/`+` on numeric or BigInt
   literals; `undefined`, `NaN` and `Infinity`; references to constants declared
@@ -5425,7 +5365,10 @@ top-level declaration`) and keep rejecting `as const`.
   `+`; and one outermost `as const`. Other forms fail with `unsupported <construct>
   in a module constant initializer` (calls and `new`, member access, template
   literals, functions and classes, assignment, other operators, spread, nested
-  `as const`, references to functions). A reference to a later constant or to the
+  `as const`, references to functions). Because `new` is a call, no constant can
+  hold a class instance; a class-typed constant may only hold `null` or
+  `undefined` through a union annotation. Constructors, methods, getters and
+  field initializers read module constants like function bodies. A reference to a later constant or to the
   constant itself fails with `binding used before initialization`. The subset has
   no calls, so initialization cannot run user code, read capabilities or observe
   another constant before it is initialized; its only effects are allocation and
@@ -5470,7 +5413,7 @@ Module constants add no host import, value tag, record or array layout, global,
 helper, export or catalog entry; the reserved permanent root slots are the only
 memory-layout change. All budgets are unchanged.
 
-#### Literal types (`literal_types`)
+#### Literal types (`literal_types()`)
 
 - **Forms.** String, number (including `-n`) and boolean literal types and unions
   of them, written inline or through named aliases, interface fields, imports,
@@ -5507,6 +5450,11 @@ memory-layout change. All budgets are unchanged.
   concatenation and `JSON.stringify` see the base. An unannotated `let`/`const`
   keeps the literal type of a literal-typed initializer; a fresh constant
   (`const s = 'a'`) infers the base type.
+- **Classes and templates.** Class fields, constructor and method parameters
+  and results may have literal types; class shapes erase like record shapes, a
+  literal field takes its base placeholder before construction and is checked on
+  every write, and `===` guards on a field read narrow a local copy. A
+  literal-typed template substitution is converted as its base primitive.
 - **Composite types.** Records, arrays, unions and function types that contain
   literal sets are distinct from their base twins and compared exactly:
   `{ type: Kind }` and `{ type: string }` are not assignable to each other, nor are
@@ -5544,7 +5492,12 @@ subsection).
   the v31 per-module type namespace, so it is usable in annotations and in
   `import`/`import type`/`export { C }` lists like an interface. The same name is
   the class value for `new C(...)`, `instanceof C` and `extends C` unless a
-  lexical binding shadows it. A class may not share its name with a module
+  lexical binding shadows it. Because the value is resolved through the type
+  namespace, `export class`, export lists and
+  [re-exports](#module-re-exports-module_reexports) (`export { C as D } from`,
+  `export *`) forward the type and the value together. Known gap: a class
+  reached only through `import type`/`export type` is still usable as a value,
+  which TypeScript rejects; the program semantics are unaffected. A class may not share its name with a module
   function, another type or a built-in (`Array`, `VartaResult`, HTTP types,
   `Object`/`Math`/`Number`/`String`/`Boolean`/`BigInt`, Error families).
 - **Members.** Instance fields with a type annotation or a literal initializer
@@ -5656,6 +5609,82 @@ pilot: `class … extends Error` (Error-channel identity, `message`/`name`/`caus
 `unknown` options, `new.target.name`), `#private` fields (excluded from JSON),
 static fields (module-level state) and setters.
 
+#### Module re-exports (`module_reexports()`)
+
+Gated by `module_reexports()`. V32 admits re-export declarations with
+ECMAScript linking semantics, applied separately to each binding namespace:
+the value namespace (functions and module constants) and the type namespace
+(named types and classes, whose value follows the type binding).
+
+- **Explicit re-exports.** `export { x } from "./m.ts"`, `export { x as y } from`,
+  `export type { T } from` and `export { type T } from` forward an export of the
+  dependency under the given name. A value form forwards every namespace in which
+  the source exports the name and must find it in at least one
+  (`module m.ts does not export function or constant x`); a type-only form
+  forwards only a type (`module m.ts does not export type T`). Re-exported names
+  are **not** bound in the re-exporting module: calling, reading or annotating
+  with them there, or listing them in a local `export { … }`, fails like any
+  unknown name.
+- **Star re-exports.** `export * from "./m.ts"` forwards every export of the
+  dependency except `default`, transitively through chained stars. Explicit
+  exports of the module (local or re-exported, in any namespace) shadow star
+  names. A name that several star sources provide with distinct bindings is
+  ambiguous and excluded; two sources providing the same original binding (the
+  same function slot, constant declaration or defining type declaration) are
+  not ambiguous; a function and a constant of one name from different stars
+  are ambiguous, because they share the value namespace. Ambiguity
+  is never an error by itself: only an import or explicit re-export naming the
+  ambiguous name fails (`module m.ts exports x ambiguously through export *`),
+  and ambiguity propagates through further star re-exports.
+- **Graph.** Every re-export source is a graph dependency: it is resolved by the
+  loader, visited in sorted order, linked before the re-exporter, included in the
+  module metadata, subject to cycle detection, and counted against the module,
+  depth and import-declaration limits, which are unchanged.
+- **Rejected with diagnostics.** `export * as ns from` (namespace re-export),
+  `export {} from` (side-effect re-export), `default` names in re-export lists,
+  `export type * from`, attributed re-exports, and default exports. V31 and
+  earlier keep `re-export or type-only export` for `export … from` and
+  `module export form` for `export *`.
+
+Re-exports are resolved entirely at compile time: no host import, value tag,
+layout or artifact field changes.
+
+#### Template literals (`template_literals()`)
+
+Selector `template_literals()`. V32 admits untagged template literal expressions
+`` `head${a}middle${b}tail` ``; v31 and earlier profiles keep rejecting every
+template with `unsupported expression`.
+
+- **Type.** A template literal is a `string` value in every expression context
+  (bindings, arguments, returns, record fields, array elements, comparisons,
+  conditions). An unannotated parameter whose default is a template infers
+  `string`, like a string literal default.
+- **Evaluation.** Substitutions are evaluated exactly once, left to right. Each
+  value is converted with ECMAScript ToString immediately after it is evaluated
+  and before the next substitution runs, so a throwing or exiting substitution
+  aborts before any later substitution. Strings pass through unchanged. Number,
+  Boolean, `null`, `undefined` (including void calls) and closed primitive unions
+  use the [v19 primitive String conversion](#checked-f64-utf16-v19--primitive-string-conversion)
+  through the profile's existing `primitive_to_string_v2` import (canonical v18
+  Number text); BigInt values use the existing decimal BigInt text operation.
+  The parts are then joined with guest string concatenation, which shares the
+  checked heap, exact roots and the 1 MiB per-value limit of `+`; exceeding the
+  limit traps exactly like an oversized concatenation.
+- **Text parts.** Cooked template text is encoded like string literals: escapes
+  (`\u{…}`, `\x…`, `\``, `\${`, line continuations) are exact, a raw CR LF or CR
+  line terminator cooks to LF, and lone surrogates are kept as single UTF-16 code
+  units. Empty parts emit no concatenation.
+- **Rejected with diagnostics.** A substitution whose type has a non-primitive
+  member (records, arrays, functions, Error values, reference unions and class
+  instances) fails with a type error at the substitution: it would need
+  ToPrimitive, which is not admitted. Literal-typed values are primitives and
+  convert as their base type. Tagged templates, including `String.raw`,
+  fail with `unsupported tagged template literal (including String.raw)`.
+
+Template literals add no host import, value tag, layout, helper or catalog entry;
+artifacts are indistinguishable from the equivalent `String(…)` and `+` program.
+All budgets are unchanged.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),
@@ -5668,9 +5697,9 @@ duplicate exports and unresolved exports fail before emission. Type aliases and
 interfaces retain their existing erased behavior; they are not importable values.
 Profile v31 adds [named types](#checked-f64-utf16-v31--named-types), including
 type-only imports/exports and `./x.js` specifiers for `.ts` sources. Profile v32
-adds [re-exports](#module-re-exports): `export { … } from` and `export * from`
-forward functions and types without binding them locally; their sources are
-ordinary graph dependencies.
+adds [re-exports](#module-re-exports-module_reexports): `export { … } from` and
+`export * from` forward functions, module constants, named types and classes
+without binding them locally; their sources are ordinary graph dependencies.
 
 The entry module must declare its own `main(): void` with no parameters. An
 imported binding or an export alias cannot supply the entry point. A dependency
