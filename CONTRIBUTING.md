@@ -6,7 +6,8 @@ development tools; application-specific features belong in separate TS/JS projec
 
 ## Development setup
 
-CI uses Rust **1.98.0**, with `rustfmt` and `clippy`, on Linux and macOS. Install
+CI uses Rust **1.98.0**, with `rustfmt` and `clippy`, on Linux and macOS. The
+workspace declares `rust-version = "1.95.0"`, but CI does not test that minimum. Install
 Rust through rustup and provide the native compiler/linker tools for your platform.
 Windows and cross-target native packaging are not yet verified.
 
@@ -60,6 +61,8 @@ deadlines or memory limits to make a failing regression pass.
 - Update the [architecture contract](docs/architecture.md) when ABI, capabilities
   or configuration change. Keep the README, roadmap and changelog accurate.
 - Use clear imperative commit messages.
+- Do not reference agent sessions or add AI co-author/attribution lines
+  (for example `Co-Authored-By: Claude …`) in commits or PR descriptions.
 
 ## Pull requests
 

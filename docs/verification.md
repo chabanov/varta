@@ -19,7 +19,8 @@ python3 scripts/verify.py --plan full
 
 `--plan` prints commands without running or verifying anything. Local checks run
 Cargo check for all targets of one crate, then that crate's tests, optionally
-filtered. Project/CLI/launcher checks build the companion first. Feature checks
+filtered. Project, CLI (package `varta`) and launcher checks build the companion after
+the Cargo check and before their tests. Feature checks
 build the companion, then select matching runtime unit tests, public engine API
 tests and CLI smoke tests. Each selected suite must execute passing tests; a typo
 that matches zero tests fails. Where names differ, run explicit Cargo commands

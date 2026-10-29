@@ -2,10 +2,22 @@
 
 ## Unreleased
 
-The workspace currently uses package version `0.1.0`. These entries describe the
-development snapshot; they do not announce a published release.
-The [2026-10-28 checkpoint](docs/development-plan.md#development-checkpoint--2026-10-28)
-records the current core stage, completed increments, validation and next work.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
+workspace uses package version `0.1.0`; these entries describe the development
+snapshot and do not announce a published release. Counts quoted in an entry
+describe the state when it was written. Current status is in the
+[development plan](docs/development-plan.md#status) and current conformance counts
+in [conformance/README.md](conformance/README.md).
+
+### Changed
+
+- Documentation is restructured: a short README orientation page, a
+  [language guide](docs/language-guide.md), per-profile
+  [implementation rules](docs/profile-rules.md), a [history](docs/history.md) of
+  completed increments and a rules-only `CLAUDE.md`. Contract text moved
+  verbatim. The development plan records the research thesis and the uarp-sdk
+  pilot. Version and limit tables in `docs/architecture.md` and the profile indexes
+  are generated from the registries and checked by a workspace test.
 
 ### Added
 
@@ -42,7 +54,7 @@ records the current core stage, completed increments, validation and next work.
   arithmetic/conversions, compound assignments and numeric updates, owned BigInt exceptions and recoverable JSON TypeError.
   ABI28/value13/schema13/channel4 preserve old profiles and exact roots; array
   searches use BigInt value equality and malformed graphs/resources stay fatal.
-  The current reviewed inventory pins v30 with 78 cases (67 supported, 11 known gaps),
+  The reviewed inventory then pinned v30 with 78 cases (67 supported, 11 known gaps),
   after promoting the unchanged coercive-width gap; primitive width/radix
   coercions preserve ToIndex/ToBigInt order and recoverable error classes.
   Primitive update ToNumeric preserves converted postfix values, NaN/presence
@@ -84,7 +96,7 @@ records the current core stage, completed increments, validation and next work.
   inventory with source/dependency digests, isolated default-budget workers,
   bounded protocols and explicit pass/gap/regression/infrastructure/untested
   reporting. CI checks the reviewed baseline; strict mode exposes remaining gaps.
-  The current suite records 28 passes, 12 known unsupported cases and 7 untested
+  The suite then recorded 28 passes, 12 known unsupported cases and 7 untested
   feature rows. Full Test262/script support remains planned CORE-15 work.
 
 - Opt-in v26 adds checked Array.reduceRight with seeded/unseeded accumulator
@@ -322,7 +334,7 @@ records the current core stage, completed increments, validation and next work.
 - Preserve U+0085 in trim/trimStart/trimEnd: it is not ECMAScript WhiteSpace or a
   LineTerminator. Tests cover all 25 admitted whitespace/line-terminator units.
 - Restore v13 rejection of writable length/deletion and fatal indexed extension
-  checks, remove the temporary .bak file and add source-free regression coverage.
+  checks and add source-free regression coverage.
 
 ### Compatibility and limits
 
@@ -335,5 +347,5 @@ records the current core stage, completed increments, validation and next work.
 - Full ECMAScript/TypeScript and Node/npm compatibility, asynchronous execution,
   MCP bridges and artifact signing remain planned.
 
-See the [README](README.md) for supported features and the
+See the [language guide](docs/language-guide.md) for supported features and the
 [development plan](docs/development-plan.md) for remaining work.

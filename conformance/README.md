@@ -133,11 +133,7 @@ The v30 object-operation increment adds optional-record deletion, primitive dele
 keys and Object.entries snapshots for closed records and typed arrays. Five new
 pinned cases cover key order, side effects, sparse presence and shared child
 identity and match Node.js v24.20.0. Required checked-field deletion, descriptors
-and general object coercion remain outside this increment. The String enumeration increment adds two further cases
-for UTF16 units and primitive-union dispatch.
-Both reviewed reports agree at 78 cases / 67 passes / 11 known gaps, with no
-unexpected support, regressions or infrastructure failures and seven untested
-feature rows. Strict mode continues to fail for declared incomplete coverage.
+and general object coercion remain outside this increment.
 
 The String enumeration increment pins UTF16 surrogate behavior and six-primitive
 union dispatch in two more original cases. Both match Node.js v24.20.0; production

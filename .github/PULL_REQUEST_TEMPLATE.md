@@ -27,4 +27,5 @@ use the private process in [SECURITY.md](https://github.com/chabanov/varta/blob/
 ## Documentation
 
 - [ ] `docs/architecture.md` updated when required
-- [ ] README, development plan and changelog updated when relevant
+- [ ] Language guide, profile rules, development plan and changelog updated when relevant
+- [ ] Generated documentation blocks refreshed if registries changed (`cargo test -p varta-common --test documentation`)
