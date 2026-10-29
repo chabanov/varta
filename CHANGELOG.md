@@ -397,6 +397,12 @@ in [conformance/README.md](conformance/README.md).
 
 ### Changed
 
+- The module graph admits 256 unique modules (was 64) and 2048 import and
+  re-export declarations (was 256) in every profile. The active-path depth, the
+  per-file and aggregate source byte limits and the user-function limit are
+  unchanged. The pilot package has 65 modules and about 370 relative
+  declarations, so its entry graph exceeded the earlier limits.
+
 - Source complexity limits bound recursion instead of width: the per-file token
   count is removed (byte limits remain), and list commas in `[...]`/`{...}` and
   top-level union/intersection members of a type alias no longer count toward

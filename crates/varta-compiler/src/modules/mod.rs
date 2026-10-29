@@ -80,8 +80,8 @@ struct Builder<'a> {
     bytes: usize,
     imports: usize,
 }
-const MAX_MODULES: usize = 64;
-const MAX_IMPORTS: usize = 256;
+const MAX_MODULES: usize = 256;
+const MAX_IMPORTS: usize = 2048;
 const MAX_DEPTH: usize = 32;
 const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 

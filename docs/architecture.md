@@ -5992,7 +5992,7 @@ Profile v32 also adds [default exports](#default-exports-default_exports):
 `export default` declarations and bindings, `import x from` and `default` in
 export and re-export lists, linked as the name `default`.
 
-Limits: 64 unique modules including the entry, 256 import declarations, 32 modules
+Limits: 256 unique modules including the entry, 2048 import declarations, 32 modules
 on the active dependency path, 1 MiB per source, 4 MiB aggregate source and 256
 user functions across the graph. Re-export declarations (v32) count as import
 declarations. Existing per-file lexical/semantic complexity
