@@ -182,12 +182,55 @@ impl Channel {
         data: &[u8],
         value: u64,
     ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
+        self.read(data, value, &mut Limit::default())
+    }
+    /// Like [`Self::render`], but copy at most `units` UTF-16 code units of
+    /// each string field; reports whether any field was cut. The whole value
+    /// is still validated, and no host copy grows with longer guest text.
+    pub(crate) fn render_bounded(
+        self,
+        data: &[u8],
+        value: u64,
+        units: usize,
+    ) -> Result<(varta_common::exceptions::ThrownValue, bool), RuntimeError> {
+        let mut limit = Limit {
+            units: Some(units),
+            truncated: false,
+        };
+        let value = self.read(data, value, &mut limit)?;
+        Ok((value, limit.truncated))
+    }
+    fn read(
+        self,
+        data: &[u8],
+        value: u64,
+        limit: &mut Limit,
+    ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
         let Self {
             instances,
             errors,
             version,
         } = self;
-        thrown(data, value, instances, errors, version)
+        thrown(data, value, instances, errors, version, limit)
+    }
+}
+/// An optional per-field bound on copied UTF-16 text.
+#[derive(Default)]
+struct Limit {
+    units: Option<usize>,
+    truncated: bool,
+}
+impl Limit {
+    /// The prefix of validated, even-length UTF-16 bytes within the bound.
+    fn units(&mut self, bytes: &[u8]) -> Result<Vec<u16>, ()> {
+        let bytes = match self.units {
+            Some(units) if bytes.len() > units * size_of::<u16>() => {
+                self.truncated = true;
+                &bytes[..units * size_of::<u16>()]
+            }
+            _ => bytes,
+        };
+        varta_common::text::units(bytes).map_err(|_| ())
     }
 }
 fn thrown(
@@ -196,6 +239,7 @@ fn thrown(
     instances: bool,
     errors: bool,
     version: u32,
+    limit: &mut Limit,
 ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
     let cell = if errors {
         ReferenceBox::read_with_version(data, value, version)?
@@ -223,7 +267,8 @@ fn thrown(
             let len = (cell.payload >> i32::BITS) as usize;
             // PrimitiveBox checked the complete even byte range and size bound.
             V::String(
-                varta_common::text::units(&data[start..start + len])
+                limit
+                    .units(&data[start..start + len])
                     .map_err(|_| invalid("invalid thrown UTF-16 value"))?,
             )
         }
@@ -231,7 +276,8 @@ fn thrown(
             let object = ErrorObject::read_with_version(data, cell.payload, version)?;
             let start = object.message as u32 as usize;
             let len = (object.message >> i32::BITS) as usize;
-            let message = varta_common::text::units(&data[start..start + len])
+            let message = limit
+                .units(&data[start..start + len])
                 .map_err(|_| invalid("invalid Error message"))?;
             if object.class == ErrorClass::Error {
                 V::Error {
@@ -246,7 +292,7 @@ fn thrown(
                 }
             }
         }
-        ValueKind::Record if instances => error_instance(data, cell.payload)?,
+        ValueKind::Record if instances => error_instance(data, cell.payload, limit)?,
         _ => return Err(invalid("unsupported thrown value kind")),
     };
     Ok(value)
@@ -262,6 +308,7 @@ const INSTANCE_MESSAGE: &str = "message";
 fn error_instance(
     data: &[u8],
     record: u64,
+    limit: &mut Limit,
 ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
     let word = |at: usize| {
         at.checked_add(size_of::<u32>())
@@ -300,7 +347,8 @@ fn error_instance(
             .and_then(|end| data.get(start..end))
             .ok_or_else(|| invalid("invalid thrown Error instance field"))?;
         fields[position] = Some(
-            varta_common::text::units(bytes)
+            limit
+                .units(bytes)
                 .map_err(|_| invalid("invalid thrown Error instance field"))?,
         );
     }
@@ -362,12 +410,31 @@ mod tests {
     #[test]
     fn thrown_instances_copy_name_and_message_fields() {
         assert_eq!(
-            error_instance(&instance(), handle()).unwrap(),
+            error_instance(&instance(), handle(), &mut Limit::default()).unwrap(),
             ThrownValue::ErrorInstance {
                 name: "Ab".encode_utf16().collect(),
                 message: Vec::new(),
             }
         );
+        // A bounded copy keeps a prefix of each field and reports the cut.
+        let mut limit = Limit {
+            units: Some(1),
+            truncated: false,
+        };
+        assert_eq!(
+            error_instance(&instance(), handle(), &mut limit).unwrap(),
+            ThrownValue::ErrorInstance {
+                name: "A".encode_utf16().collect(),
+                message: Vec::new(),
+            }
+        );
+        assert!(limit.truncated);
+        let mut exact = Limit {
+            units: Some(2),
+            truncated: false,
+        };
+        error_instance(&instance(), handle(), &mut exact).unwrap();
+        assert!(!exact.truncated);
     }
 
     #[test]
@@ -387,11 +454,14 @@ mod tests {
         for (at, word) in corruptions {
             let mut data = instance();
             put(&mut data, at, word);
-            assert!(error_instance(&data, handle()).is_err(), "{at}");
+            assert!(
+                error_instance(&data, handle(), &mut Limit::default()).is_err(),
+                "{at}"
+            );
         }
         // Descriptor entries past the end of memory fail instead of panicking.
         let mut data = instance();
         put(&mut data, RECORD, u32::MAX - 8);
-        assert!(error_instance(&data, handle()).is_err());
+        assert!(error_instance(&data, handle(), &mut Limit::default()).is_err());
     }
 }

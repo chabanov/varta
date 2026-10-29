@@ -2393,3 +2393,53 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
 - The runtime reads a promise only through the value16 readers: its record
   block is validated like a record, and logging locates `state`, `value` and
   `reason` by the shared `scheduler::PROMISE_*_FIELD` names.
+
+### Frame liveness (`frame_liveness`)
+
+Contract: [frame liveness](architecture.md#frame-liveness-frame_liveness).
+
+- `lower::suspension::liveness` computes the saved set of every state on the
+  normalized body after `Machine::number` and before the state machine is
+  built; `emit::frame_slots` emits liveness segments, per-state saves, the
+  `br_table` restoration and the creator. `Suspendable::live` is `Some` only
+  under `frame_liveness()`; every other profile takes the unchanged cell path,
+  and `frame_liveness_tests` pins their module digests. Never touch the cell
+  path's instruction sequence for a liveness need.
+- The analysis may over-approximate, never under-approximate. Kill only on a
+  statement-level `Init`/`Set` of an unshared local; count every other mention
+  (expression-level writes, hidden statement slots, closure captures) as a
+  use; never kill a closure-shared local. Add the exception continuation
+  before every statement and both completion continuations at every point.
+  A new IR statement or expression that names a local must be added to the
+  liveness visitors (`node_mentions`, `statement_fields`, `operands`,
+  `substatements`) and to `Liveness::statement`; an unknown branch target
+  falls back to every local.
+- A hidden local the state machine reads on the resumption path (today the
+  `switch` case index and the finalizer's kept completion) is recorded in
+  `Machine::resumed` with the states it covers.
+- Saved entries are packed from zero per state; two-slot values take two
+  entries and shared locals one (their closure cell). Publish a state's edge
+  masks only after its entries are stored, clear them at resumption after the
+  values are restored and rooted, and never allocate in between. The creator
+  publishes the state-0 masks before allocating shared parameter cells.
+- Restoration validates every touched segment (handle length, flags, kind,
+  count, the state's exact mask) and canonical scalar payloads before use;
+  keep the default `br_table` target a trap.
+- Liveness rows exist only in catalog version 3 and are admitted only for
+  v35 (`admission::frame_catalog_version`); test relabelled modules in both
+  directions and tampered rows (`admission_tests`, runtime
+  `frame_admission_tests`). Existing suspension suites run under v35 too
+  (`promise_tests::FRAME_PROFILES`, `generator_tests::run`,
+  `suspension_tests::behaviour_holds_with_liveness_frames`).
+- Record fuel figures only from `frame_liveness_tests` (deterministic fuel
+  under production budgets) and update the table in the contract when the
+  frame or scheduler path changes.
+
+### Unhandled-rejection reports (all scheduler profiles)
+
+- Copy reasons only through `Channel::render_bounded` with
+  `MAX_REJECTION_REASON_UNITS`, keep at most
+  `MAX_RETAINED_REJECTION_REASONS` rendered reasons and one tracking bit per id
+  otherwise. Never store a host value whose size follows guest input; never
+  change which reports are made or withdrawn, because the bound applies to v34
+  as well.

@@ -358,7 +358,9 @@ impl LanguageProfile {
     }
     /// Pilot batch v35, frames stream: liveness-based continuation frame slots,
     /// an internal frame layout change for v35 modules only; earlier profiles
-    /// keep their frame layout. Admits nothing yet.
+    /// keep their frame layout. Implemented: v35 frames save only the locals
+    /// live across each point in liveness segments described by frame catalog
+    /// version 3 ([`crate::function::admission::frame_catalog_version`]).
     #[must_use]
     pub fn frame_liveness(self) -> bool {
         self == Self::CheckedF64Utf16V35

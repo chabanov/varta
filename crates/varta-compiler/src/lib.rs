@@ -11,6 +11,8 @@ mod array_tests;
 #[cfg(test)]
 mod async_method_tests;
 #[cfg(test)]
+mod frame_liveness_tests;
+#[cfg(test)]
 mod generator_tests;
 #[cfg(test)]
 mod http_tests;

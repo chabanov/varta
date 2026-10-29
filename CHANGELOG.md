@@ -41,6 +41,20 @@ in [conformance/README.md](conformance/README.md).
   modules keep host ABI 30, value15 and their imports, and swapped readers,
   channels or descriptor stamps are rejected before guest effects.
 
+- Liveness-based continuation frames under opt-in v35 (selector
+  `frame_liveness`): each `await`, `yield` and test-hook suspension point saves
+  only the locals live across it (through the normal, throw and return
+  continuations, closure-shared cells, handlers and finalizers), directly in
+  frame segments of kind 3 without per-value frame cells; states reuse the same
+  entries, and each segment's edge mask is the exact GC map of the state the
+  frame is suspended at (zero while running and after completion). Frame
+  catalog version 3 describes the per-state saved slots and the entry
+  capacity; only v35 reads it, v33/v34 keep version 2 and their modules stay
+  byte-identical, and a module relabelled across the two layouts fails
+  admission. No host or value ABI changes. Measured with production budgets,
+  an `await` costs about 1.6k fuel instead of 3.0k, a `yield` 1.1k instead of
+  1.8k, and 141 instead of 57 suspended generators fit in one execution.
+
 - `unknown` under opt-in v34 (selector `unknown_type`): a reference-union cell
   that holds any primitive, BigInt, record, array, native error or class
   instance (function values are rejected). Unnarrowed values admit only
@@ -543,6 +557,16 @@ in [conformance/README.md](conformance/README.md).
 - Contributor and security policies, an MIT license, and GitHub issue/PR templates.
 
 ### Changed
+
+- Unhandled-rejection reports (v34 and v35 scheduler) hold bounded host
+  memory: each reason is copied out of guest memory only up to 256 UTF-16 code
+  units per string field and rendered to at most 2048 bytes, at most 16
+  outstanding reports keep a rendered reason and every other report keeps one
+  tracking bit. The termination diagnostic marks a cut reason with
+  `[reason truncated]` and names an earliest remaining report whose reason was
+  not kept as `<reason not retained>`; `SchedulerError::UnhandledRejection`
+  carries a `RejectionReason`. Guest-observable behaviour and the termination
+  itself are unchanged.
 
 - The module graph admits 256 unique modules (was 64) and 2048 import and
   re-export declarations (was 256) in every profile. The active-path depth, the

@@ -6,24 +6,28 @@ use varta_common::language::LanguageProfile;
 
 const V33: LanguageProfile = LanguageProfile::CheckedF64Utf16V33;
 
-fn compile(source: &str) -> Vec<u8> {
-    varta_compiler::compile_typescript_with_profile(source, V33)
+fn compile_with(source: &str, profile: LanguageProfile) -> Vec<u8> {
+    varta_compiler::compile_typescript_with_profile(source, profile)
         .unwrap_or_else(|e| panic!("{e}\n{source}"))
 }
+/// Every program runs with the v33 cell frames and the v35 liveness frames
+/// (`frame_liveness`); both must produce the pinned Node output.
 fn run(source: &str, expected: &[&str]) {
-    let bytes = compile(source);
-    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
-    assert_eq!(
-        VartaRuntime::new()
-            .run_wasm_bytes(&bytes, &[])
-            .unwrap_or_else(|e| panic!("{e:?}\n{source}"))
-            .lines,
-        expected
-            .iter()
-            .map(|s| format!("varta log: {s}"))
-            .collect::<Vec<_>>(),
-        "{source}"
-    );
+    for profile in [V33, LanguageProfile::CheckedF64Utf16V35] {
+        let bytes = compile_with(source, profile);
+        wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&bytes, &[])
+                .unwrap_or_else(|e| panic!("{profile:?} {e:?}\n{source}"))
+                .lines,
+            expected
+                .iter()
+                .map(|s| format!("varta log: {s}"))
+                .collect::<Vec<_>>(),
+            "{profile:?}\n{source}"
+        );
+    }
 }
 
 // Pinned Node 24 outputs (generated).

@@ -154,11 +154,13 @@ fn layout(code: u32) -> FrameLayout {
         states: vec![FrameState {
             input: FrameInput::Boolean,
             yielded: 0,
+            saved: vec![],
         }],
         result: Some(0),
         return_input: Some(FrameInput::Float64),
         exception: 0,
         generator: false,
+        capacity: None,
     }
 }
 fn generator_layout(code: u32) -> FrameLayout {
@@ -166,6 +168,7 @@ fn generator_layout(code: u32) -> FrameLayout {
         states: vec![FrameState {
             input: FrameInput::Guest,
             yielded: 0,
+            saved: vec![],
         }],
         return_input: Some(FrameInput::Guest),
         generator: true,
@@ -248,4 +251,65 @@ fn generator_frame_rows_take_only_guest_inputs() {
             "invalid generator row"
         );
     }
+}
+
+/// A v35 liveness frame: one segment of kind 3 holding two raw entries under
+/// the given edge mask.
+fn liveness_fixture(mask: u32) -> (Vec<u8>, usize) {
+    let (mut data, frame) = fixture();
+    let segment = frame + FRAME_BYTES + 16 + 16 + 16;
+    block(&mut data, segment, SEGMENT_BYTES, ENVIRONMENT_FLAG, mask);
+    put(&mut data, segment, FRAME_SLOT_SEGMENT_KIND as u32);
+    put64(&mut data, segment + 16, 7);
+    (data, frame)
+}
+
+#[test]
+fn liveness_frame_views_read_raw_entries_and_partial_masks() {
+    for mask in [0, 1, 2, 3] {
+        let (data, frame) = liveness_fixture(mask);
+        let view = FrameView::read_envelope(&data, frame as u32).unwrap();
+        assert!(view.direct);
+        assert_eq!(view.edges, [mask]);
+        assert_eq!(view.bindings.len(), 2);
+        assert_eq!(view.bindings[1], 7, "entries are raw values, not cells");
+    }
+    // A mask naming entries beyond the segment fails, and so does a cell
+    // segment with a partial mask.
+    let (data, frame) = liveness_fixture(4);
+    assert!(FrameView::read_envelope(&data, frame as u32).is_err());
+    let (mut data, frame) = liveness_fixture(1);
+    let segment = frame + FRAME_BYTES + 16 + 16 + 16;
+    put(&mut data, segment, FRAME_SEGMENT_KIND as u32);
+    assert!(FrameView::read_envelope(&data, frame as u32).is_err());
+    // Cell frames report no liveness masks.
+    let (data, frame) = fixture();
+    let view = FrameView::read_envelope(&data, frame as u32).unwrap();
+    assert!(!view.direct && view.edges.is_empty());
+}
+
+#[test]
+fn liveness_catalog_rows_round_trip_only_in_version_3() {
+    let mut row = layout(4);
+    row.capacity = Some(1);
+    row.states[0].saved = row.slots.clone();
+    let bytes = catalog(FRAME_LIVENESS_CATALOG_VERSION, vec![row.clone()])
+        .to_bytes()
+        .unwrap();
+    assert!(FunctionCatalog::from_bytes(&bytes).is_err());
+    assert!(FunctionCatalog::from_frame_bytes(&bytes).is_err());
+    assert_eq!(
+        FunctionCatalog::from_liveness_bytes(&bytes).unwrap().frames,
+        [row]
+    );
+    let cells = catalog(FRAME_CATALOG_VERSION, vec![layout(4)])
+        .to_bytes()
+        .unwrap();
+    assert!(FunctionCatalog::from_liveness_bytes(&cells).is_err());
+    // Version 2 serialization is unchanged: no liveness fields appear.
+    let text = String::from_utf8_lossy(&cells);
+    assert!(
+        !text.contains("capacity") && !text.contains("saved"),
+        "{text}"
+    );
 }

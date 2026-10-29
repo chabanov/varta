@@ -202,6 +202,10 @@ pub(crate) struct Suspendable {
     /// awaits a promise and the runtime scheduler resumes it through
     /// `varta_resume`; the suspension point issues the frame's generation.
     pub scheduled: bool,
+    /// Liveness layout (v35 `frame_liveness`): the locals saved at state `n`
+    /// are `live[n - 1]`, sorted. `None` keeps the cell layout that saves
+    /// every local at every point (v33 and v34, and the test hook before v35).
+    pub live: Option<Vec<Vec<u32>>>,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct SuspensionPoint {

@@ -52,6 +52,8 @@ mod default_export_tests;
 mod exit_flow_tests;
 #[cfg(test)]
 mod frame_admission_tests;
+#[cfg(test)]
+mod frame_liveness_tests;
 mod frames;
 #[cfg(test)]
 mod generator_tests;
