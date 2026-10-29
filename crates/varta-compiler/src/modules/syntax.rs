@@ -13,15 +13,24 @@ fn name(name: &ast::ModuleExportName) -> Result<String, CompilerError> {
     }
 }
 
+pub(super) struct Scan {
+    pub imports: Vec<Dependency>,
+    pub exports: Vec<Export>,
+    pub stars: Vec<PathBuf>,
+}
+
 pub(super) fn scan(
     module: &ast::Module,
     source: &Source,
     path: &Path,
     loader: &dyn ModuleLoader,
-    named_types: bool,
-) -> Result<(Vec<Dependency>, Vec<Export>), CompilerError> {
+    profile: varta_common::language::LanguageProfile,
+) -> Result<Scan, CompilerError> {
+    let named_types = profile.named_types();
+    let reexports = profile.module_reexports();
     let mut imports = Vec::new();
     let mut exports = Vec::new();
+    let mut stars = Vec::new();
     for item in &module.body {
         let ast::ModuleItem::ModuleDecl(declaration) = item else {
             continue;
@@ -41,28 +50,44 @@ pub(super) fn scan(
                         exported: function.ident.sym.to_string(),
                         span: function.ident.span,
                         type_only: false,
+                        from: None,
                     }),
                     ast::Decl::TsInterface(interface) if named_types => exports.push(Export {
                         local: interface.id.sym.to_string(),
                         exported: interface.id.sym.to_string(),
                         span: interface.id.span,
                         type_only: true,
+                        from: None,
                     }),
                     ast::Decl::TsTypeAlias(alias) if named_types => exports.push(Export {
                         local: alias.id.sym.to_string(),
                         exported: alias.id.sym.to_string(),
                         span: alias.id.span,
                         type_only: true,
+                        from: None,
                     }),
                     _ => {}
                 },
                 ast::ModuleDecl::ExportNamed(export) => {
-                    if export.src.is_some()
+                    if export.src.is_some() && !reexports
                         || export.type_only && !named_types
                         || export.with.is_some()
                     {
                         return Err(unsupported("re-export or type-only export"));
                     }
+                    let from = match &export.src {
+                        Some(src) => {
+                            reexport_specifiers(&export.specifiers)?;
+                            let target = dependency(src, source, path, loader)?;
+                            imports.push(Dependency {
+                                target: target.clone(),
+                                bindings: Vec::new(),
+                                span: src.span,
+                            });
+                            Some(target)
+                        }
+                        None => None,
+                    };
                     for specifier in &export.specifiers {
                         let ast::ExportSpecifier::Named(specifier) = specifier else {
                             return Err(unsupported("namespace/default export"));
@@ -82,8 +107,21 @@ pub(super) fn scan(
                             exported,
                             span: specifier.span,
                             type_only: export.type_only || specifier.is_type_only,
+                            from: from.clone(),
                         });
                     }
+                }
+                ast::ModuleDecl::ExportAll(all) if reexports => {
+                    if all.type_only || all.with.is_some() {
+                        return Err(unsupported("type-only or attributed star re-export"));
+                    }
+                    let target = dependency(&all.src, source, path, loader)?;
+                    imports.push(Dependency {
+                        target: target.clone(),
+                        bindings: Vec::new(),
+                        span: all.src.span,
+                    });
+                    stars.push(target);
                 }
                 _ => return Err(unsupported("module export form")),
             }
@@ -91,7 +129,45 @@ pub(super) fn scan(
         })();
         result.map_err(|e| source.locate(e, declaration.span()))?;
     }
-    Ok((imports, exports))
+    Ok(Scan {
+        imports,
+        exports,
+        stars,
+    })
+}
+
+/// `export { … } from` (v32) admits only named specifiers; namespace and
+/// default re-export forms keep explicit diagnostics.
+fn reexport_specifiers(specifiers: &[ast::ExportSpecifier]) -> Result<(), CompilerError> {
+    if specifiers.is_empty() {
+        return Err(unsupported("side-effect re-export without names"));
+    }
+    match specifiers
+        .iter()
+        .find(|s| !matches!(s, ast::ExportSpecifier::Named(_)))
+    {
+        Some(ast::ExportSpecifier::Namespace(_)) => {
+            Err(unsupported("namespace re-export (export * as name from)"))
+        }
+        Some(_) => Err(unsupported("default re-export")),
+        None => Ok(()),
+    }
+}
+
+/// Resolve a module specifier through the host loader at its source span.
+fn dependency(
+    src: &ast::Str,
+    source: &Source,
+    path: &Path,
+    loader: &dyn ModuleLoader,
+) -> Result<PathBuf, CompilerError> {
+    let specifier = src
+        .value
+        .as_str()
+        .ok_or_else(|| unsupported("non-UTF-8 import path"))?;
+    loader
+        .resolve(path, specifier)
+        .map_err(|e| source.locate(e, src.span))
 }
 
 fn import_declaration(
@@ -129,15 +205,8 @@ fn import_declaration(
             type_only: import.type_only || specifier.is_type_only,
         });
     }
-    let specifier = import
-        .src
-        .value
-        .as_str()
-        .ok_or_else(|| unsupported("non-UTF-8 import path"))?;
     Ok(Dependency {
-        target: loader
-            .resolve(path, specifier)
-            .map_err(|e| source.locate(e, import.src.span))?,
+        target: dependency(&import.src, source, path, loader)?,
         bindings,
         span: import.src.span,
     })

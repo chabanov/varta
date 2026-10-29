@@ -412,3 +412,88 @@ export function main():void{const t:Tag={name:"pilot",weight:2};console.log(labe
         "{diagnostic}"
     );
 }
+
+#[test]
+fn reexports_and_star_exports_link_a_barrel_module_in_v32() {
+    const V32: &str = r#"{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-v32","capabilities":{}}"#;
+    let main = r#"import {describe,code,DEFAULT_BASE_URL,type Problem} from "./index.js";
+export function main():void{const p:Problem={status:404,title:"Not Found"};console.log(describe(p)+" "+DEFAULT_BASE_URL()+" "+String(code()));}"#;
+    let project = Project::new(main);
+    project.write("varta.config.json", V32);
+    project.write(
+        "src/index.ts",
+        r#"export * from "./core/errors.js";
+export * from "./core/legacy.js";
+export {code} from "./core/errors.js";
+export {baseUrl as DEFAULT_BASE_URL} from "./generated/meta.js";
+export type {ProblemDocument as Problem} from "./core/errors.js";"#,
+    );
+    project.write(
+        "src/core/errors.ts",
+        r#"export interface ProblemDocument{status:number;title:string}
+export function describe(p:ProblemDocument):string{return String(p.status)+" "+p.title;}
+export function code():number{return 1;}"#,
+    );
+    project.write(
+        "src/core/legacy.ts",
+        "export function code():number{return 2;}",
+    );
+    project.write(
+        "src/generated/meta.ts",
+        r#"export function baseUrl():string{return "https://example.test";}"#,
+    );
+    let expected = "varta log: 404 Not Found https://example.test 1";
+    assert!(success(project.command(&["dev"])).contains(expected));
+    let checked = success(project.command(&["check", "--json"]));
+    assert!(checked.contains("generated/meta.ts"), "{checked}");
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains(expected));
+
+    // Naming a star export that two sources provide differently is an error.
+    let ambiguous =
+        Project::new(r#"import {code} from "./index.js";export function main():void{}"#);
+    ambiguous.write("varta.config.json", V32);
+    ambiguous.write(
+        "src/index.ts",
+        r#"export * from "./a.js";export * from "./b.js";"#,
+    );
+    ambiguous.write("src/a.ts", "export function code():number{return 1;}");
+    ambiguous.write("src/b.ts", "export function code():number{return 2;}");
+    let diagnostic = ambiguous.diagnostic();
+    assert_eq!(diagnostic["code"], "module_error", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("exports code ambiguously through export *"),
+        "{diagnostic}"
+    );
+
+    // v31 keeps rejecting both re-export forms with its existing messages.
+    let old = Project::new(main);
+    old.write(
+        "varta.config.json",
+        &V32.replace("checked-f64-utf16-v32", "checked-f64-utf16-v31"),
+    );
+    old.write("src/index.ts", r#"export {code} from "./a.js";"#);
+    old.write("src/a.ts", "export function code():number{return 1;}");
+    let diagnostic = old.diagnostic();
+    assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("re-export or type-only export"),
+        "{diagnostic}"
+    );
+    old.write("src/index.ts", r#"export * from "./a.js";"#);
+    let diagnostic = old.diagnostic();
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("module export form"),
+        "{diagnostic}"
+    );
+}

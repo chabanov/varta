@@ -5361,6 +5361,42 @@ Template literals add no host import, value tag, layout, helper or catalog entry
 artifacts are indistinguishable from the equivalent `String(…)` and `+` program.
 All budgets are unchanged.
 
+#### Module re-exports
+
+Gated by `module_reexports()`. V32 admits re-export declarations with
+ECMAScript linking semantics, applied separately to each binding namespace
+(functions and named types; module constants join through the same tables).
+
+- **Explicit re-exports.** `export { x } from "./m.ts"`, `export { x as y } from`,
+  `export type { T } from` and `export { type T } from` forward an export of the
+  dependency under the given name. A value form forwards every namespace in which
+  the source exports the name and must find it in at least one
+  (`module m.ts does not export function x`); a type-only form forwards only a
+  type (`module m.ts does not export type T`). Re-exported names are **not**
+  bound in the re-exporting module: calling or annotating with them there, or
+  listing them in a local `export { … }`, fails like any unknown name.
+- **Star re-exports.** `export * from "./m.ts"` forwards every export of the
+  dependency except `default`, transitively through chained stars. Explicit
+  exports of the module (local or re-exported, in any namespace) shadow star
+  names. A name that several star sources provide with distinct bindings is
+  ambiguous and excluded; two sources providing the same original binding (the
+  same function slot or defining type declaration) are not ambiguous. Ambiguity
+  is never an error by itself: only an import or explicit re-export naming the
+  ambiguous name fails (`module m.ts exports x ambiguously through export *`),
+  and ambiguity propagates through further star re-exports.
+- **Graph.** Every re-export source is a graph dependency: it is resolved by the
+  loader, visited in sorted order, linked before the re-exporter, included in the
+  module metadata, subject to cycle detection, and counted against the module,
+  depth and import-declaration limits, which are unchanged.
+- **Rejected with diagnostics.** `export * as ns from` (namespace re-export),
+  `export {} from` (side-effect re-export), `default` names in re-export lists,
+  `export type * from`, attributed re-exports, and default exports. V31 and
+  earlier keep `re-export or type-only export` for `export … from` and
+  `module export form` for `export *`.
+
+Re-exports are resolved entirely at compile time: no host import, value tag,
+layout or artifact field changes.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),
@@ -5372,7 +5408,10 @@ parameter/result types are checked at each call. Duplicate or reserved bindings,
 duplicate exports and unresolved exports fail before emission. Type aliases and
 interfaces retain their existing erased behavior; they are not importable values.
 Profile v31 adds [named types](#checked-f64-utf16-v31--named-types), including
-type-only imports/exports and `./x.js` specifiers for `.ts` sources.
+type-only imports/exports and `./x.js` specifiers for `.ts` sources. Profile v32
+adds [re-exports](#module-re-exports): `export { … } from` and `export * from`
+forward functions and types without binding them locally; their sources are
+ordinary graph dependencies.
 
 The entry module must declare its own `main(): void` with no parameters. An
 imported binding or an export alias cannot supply the entry point. A dependency
@@ -5403,10 +5442,12 @@ this does not expand the boundary for discovered dependencies.
 
 Limits: 64 unique modules including the entry, 256 import declarations, 32 modules
 on the active dependency path, 1 MiB per source, 4 MiB aggregate source and 256
-user functions across the graph. Existing per-file lexical/semantic complexity
+user functions across the graph. Re-export declarations (v32) count as import
+declarations. Existing per-file lexical/semantic complexity
 limits still apply. Default, namespace, side-effect, type-only and attributed
-imports, export-from/export-star/default exports and dynamic imports fail
-explicitly. Unused imports still resolve and validate their dependency.
+imports, export-from/export-star before v32, namespace re-exports, default
+exports and dynamic imports fail explicitly. Unused imports and re-exports still
+resolve and validate their dependency.
 
 Embeddings use `compile_modules(ModuleSource, &dyn ModuleLoader)`. The loader
 separates stable identity resolution from bounded text loading and owns its

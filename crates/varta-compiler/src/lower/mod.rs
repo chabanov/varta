@@ -247,6 +247,7 @@ mod compound_assignments;
 mod declarations;
 mod errors;
 mod exceptions;
+mod exports;
 mod expr;
 mod flow;
 mod flow_call_ast;

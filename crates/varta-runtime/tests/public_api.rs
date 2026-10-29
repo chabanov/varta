@@ -3414,3 +3414,100 @@ fn public_engine_links_named_types_across_modules_in_v31() {
         "{frozen}"
     );
 }
+
+#[test]
+fn public_engine_links_reexports_and_star_exports_in_v32() {
+    // The shape of the pilot's `src/index.ts` barrel, with functions standing
+    // in for module constants.
+    struct BarrelSources;
+    impl ModuleLoader for BarrelSources {
+        fn resolve(&self, importer: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            let base = importer.parent().unwrap_or(Path::new(""));
+            match name.strip_prefix("./") {
+                Some(rest) => Ok(base.join(rest)),
+                None => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("core/errors.ts") => "export interface ProblemDocument{status:number;title:string}export function describe(p:ProblemDocument):string{return String(p.status)+' '+p.title;}export function code():number{return 1;}",
+                Some("core/legacy.ts") => "export function code():number{return 2;}export function legacy():string{return 'legacy';}",
+                Some("generated/meta.ts") => "export type Scope=string;export function baseUrl():string{return 'https://example.test';}export function specVersion():string{return '0.4.0';}function hidden():number{return 0;}",
+                Some("index.ts") => "export * from './core/errors.ts';export * from './core/legacy.ts';export {baseUrl as DEFAULT_BASE_URL,specVersion,type Scope} from './generated/meta.ts';export type {ProblemDocument as Problem} from './core/errors.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |text: &str, profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: text.into(),
+            },
+            &BarrelSources,
+            profile,
+        )
+    };
+    let profile = varta_common::language::LanguageProfile::CheckedF64Utf16V32;
+    let source = "import {describe,legacy,DEFAULT_BASE_URL,specVersion,type Problem,type ProblemDocument,type Scope} from './index.ts';export function main():void{const p:Problem={status:404,title:'Not Found'};const same:ProblemDocument=p;const s:Scope='read';console.log(describe(same));console.log(legacy());console.log(DEFAULT_BASE_URL()+'/'+specVersion()+'/'+s);}";
+    let compiled = compile(source, profile).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .inspect_module(&compiled.wasm)
+            .unwrap()
+            .language
+            .profile,
+        Some(profile)
+    );
+    assert_eq!(
+        runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap().lines,
+        [
+            "varta log: 404 Not Found",
+            "varta log: legacy",
+            "varta log: https://example.test/0.4.0/read"
+        ]
+    );
+    let index = compiled
+        .modules
+        .iter()
+        .find(|m| m.path == Path::new("index.ts"))
+        .unwrap();
+    assert_eq!(
+        index.imports,
+        ["core/errors.ts", "core/legacy.ts", "generated/meta.ts"].map(PathBuf::from)
+    );
+    for (text, expected) in [
+        (
+            "import {code} from './index.ts';export function main():void{}",
+            "module index.ts exports code ambiguously through export *",
+        ),
+        (
+            "import {hidden} from './index.ts';export function main():void{}",
+            "module index.ts does not export function hidden",
+        ),
+        (
+            "import {baseUrl} from './index.ts';export function main():void{}",
+            "module index.ts does not export function baseUrl",
+        ),
+        (
+            "export * as ns from './index.ts';export function main():void{}",
+            "namespace re-export",
+        ),
+    ] {
+        let error = compile(text, profile).err().unwrap().to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+    let frozen = compile(
+        source,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V31,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        frozen.contains("index.ts") && frozen.contains("module export form"),
+        "{frozen}"
+    );
+}
