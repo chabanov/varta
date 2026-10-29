@@ -36,8 +36,17 @@ pub struct Case {
     pub path: String,
     pub sha256: String,
     pub stdout: Vec<String>,
+    /// Reviewed boolean capability grants the case runs with (also the host
+    /// ceiling); only [`CASE_GRANTS`] are admitted, and an omitted list runs
+    /// the case without any grant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<String>,
     pub baseline: Baseline,
 }
+/// Capabilities a case may be granted: the v36 `time.timer` grant only arms
+/// timers on the runtime event loop, has no OS effect beyond waiting and is
+/// bounded by the execution deadline.
+pub const CASE_GRANTS: &[&str] = &[varta_common::scheduler::TIMER_CAPABILITY];
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Baseline {
@@ -66,6 +75,8 @@ pub enum CompileCode {
 pub(crate) struct Request {
     pub profile: LanguageProfile,
     pub source: String,
+    #[serde(default)]
+    pub grants: Vec<String>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(

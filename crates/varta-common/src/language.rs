@@ -2519,6 +2519,59 @@ mod tests {
         assert_eq!(new.host_operation(H::LogString), H::LogString16);
     }
 
+    /// The v36 batch's host ABI 32 operations are the value17 readers (the
+    /// function-fields stream) and the timer operations (the timers stream):
+    /// disjoint, each at exactly host ABI 32, bound only by v36, within the
+    /// launcher's advertised maxima, and never selected for v35.
+    #[test]
+    fn v36_streams_share_host_abi_32_without_overlap() {
+        use crate::HostOperation as H;
+        let new = LanguageProfile::CheckedF64Utf16V36;
+        let old = LanguageProfile::CheckedF64Utf16V35;
+        let value17 = [
+            H::ValueLogV11,
+            H::ValueTypeOfV10,
+            H::ValueTruthyV10,
+            H::ValueNullishV10,
+            H::ValueStrictEqualV10,
+            H::ValueNullishEqualV10,
+            H::ValueIsArrayV10,
+            H::ValueIsErrorClassV6,
+            H::JsonParseV18,
+            H::JsonStringifyV16,
+            H::PrimitiveStringV5,
+            H::PrimitiveNumberV5,
+            H::BigIntFromValueV4,
+        ];
+        let timers = [H::TimerStart, H::TimerClear, H::TimerTake, H::TimerUncaught];
+        let launcher = crate::launcher::LauncherInfo::current();
+        let mut names = std::collections::BTreeSet::new();
+        for operation in value17.iter().chain(&timers) {
+            assert_eq!(operation.minimum_abi(), crate::abi::TIMERS_VERSION);
+            assert!(operation.minimum_abi() <= launcher.host_abi);
+            assert!(operation.minimum_abi() > old.host_abi());
+            assert_eq!(new.host_operation(*operation), *operation);
+            assert!(names.insert(operation.name()), "{operation:?}");
+            assert_eq!(H::from_name(operation.name()), Some(*operation));
+        }
+        for operation in value17 {
+            assert!(!operation.timer() && operation.value16_counterpart().is_some());
+            // V35 keeps the value16 reader the value17 one replaces.
+            let value16 = operation.value16_counterpart().unwrap();
+            assert_eq!(old.host_operation(value16), value16);
+            assert!(value16.minimum_abi() <= old.host_abi());
+        }
+        for operation in timers {
+            assert!(operation.timer() && operation.value16_counterpart().is_none());
+        }
+        assert_eq!(launcher.host_abi, new.host_abi());
+        assert_eq!(launcher.value_abi, new.value_abi());
+        for &profile in SUPPORTED_PROFILES {
+            assert!(profile.host_abi() <= launcher.host_abi, "{profile:?}");
+            assert!(profile.value_abi() <= launcher.value_abi, "{profile:?}");
+        }
+    }
+
     #[test]
     fn value16_operations_mirror_value15_and_bind_only_to_v35() {
         use crate::HostOperation as H;

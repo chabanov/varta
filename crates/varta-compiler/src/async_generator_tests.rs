@@ -91,6 +91,39 @@ fn async_generators_validate_and_catalogue_generator_and_relay_frames() {
     }
 }
 
+/// The state and request records of an async generator hold promise fields.
+/// Under v36's value layout 17 a promise field keeps the promise tag of value
+/// layout 16 (and a function field gains the function tag), so the records'
+/// descriptors carry exact reference edges for the collector and validate
+/// under the value17 readers; layouts before 16 leave promises untagged.
+#[test]
+fn async_generator_promise_fields_are_tagged_in_value_layout_17() {
+    use crate::ir::Type;
+    use varta_common::value::{self, ValueKind};
+    assert_eq!(V36.value_layout(), value::FUNCTION_FIELD_VALUE_VERSION);
+    let promise = Type::Promise(0);
+    let function = Type::Function(0);
+    for version in [value::PROMISE_VALUE_VERSION, V36.value_layout()] {
+        assert_eq!(promise.layout_kind(version), Some(ValueKind::Promise));
+        assert_eq!(promise.profile_kind(V36), Some(ValueKind::Promise));
+    }
+    assert_eq!(
+        promise.layout_kind(value::PROMISE_VALUE_VERSION - 1),
+        promise.value_kind()
+    );
+    assert_eq!(
+        function.layout_kind(V36.value_layout()),
+        Some(ValueKind::Function)
+    );
+    assert_eq!(function.layout_kind(value::PROMISE_VALUE_VERSION), None);
+    assert_eq!(function.profile_kind(V35), None);
+    // The async generator program's descriptors validate in Wasmtime and
+    // carry value17 stamps (checked by the runtime's value17 readers in
+    // `varta-runtime` `v36_cross_stream_tests`).
+    let bytes = compile(&program(GENERATORS), V36).unwrap_or_else(|e| panic!("{e}"));
+    Module::new(&Engine::default(), &bytes).unwrap();
+}
+
 #[test]
 fn v35_keeps_rejecting_async_generators_and_for_await() {
     for (body, expected) in [

@@ -64,13 +64,21 @@ in [conformance/README.md](conformance/README.md).
   `Symbol.asyncIterator` remain unsupported. Logs match Node 24.
 
 - Opt-in v36 (pilot batch: checked declared fields, function fields, async
-  generators and timers, in development) is registered. It inherits every v35
-  feature, shares value ABI/layout 16 with v35 and declares its own host ABI 32
-  (`TIMERS_VERSION`) without a new import yet; the launcher advertises host ABI
-  32. A v36 module relabelled as v35 fails at its host ABI section, and
-  runtimes that do not list v36 reject its declared profile name before any
-  guest effect. Its `checked_declared_fields`, `function_fields`,
-  `async_generators` and `timers` selectors admit nothing yet.
+  generators and timers, in development) integrates its four streams. It
+  inherits every v35 feature and declares its own host ABI 32
+  (`TIMERS_VERSION`: the value17 readers and the timer operations) and value
+  ABI/layout 17; the launcher advertises both. A v36 module relabelled as v35
+  fails validation before any guest effect, and runtimes that do not list v36
+  reject its declared profile name. The streams work together: timer callbacks
+  and abort listeners may be held in function fields (rooted across
+  collections), `for await` consumes async generators that sleep on timers,
+  async generators yield function values, and declared reads of mixed records
+  take optional chains (`varta-runtime` `v36_cross_stream_tests`, Node 24
+  logs). `AbortSignal.any` joins the v36 abort prelude with DOM dependent-signal
+  order, so `AbortSignal.any([signal, AbortSignal.timeout(ms)])` and the pilot's
+  abortable sleep work. The conformance inventory pins v36: six v36 cases pass,
+  the timer case with a reviewed per-case `time.timer` grant (the runner's new
+  `grants` field, which admits no other capability).
 
 - Function fields under opt-in v36 (`function_fields`): function values in
   record, interface and class fields, arrays, dictionaries, unions (one
@@ -84,7 +92,7 @@ in [conformance/README.md](conformance/README.md).
   the v36 abort prelude's `addEventListener`/`removeEventListener`/`onabort`
   (registration order, `once`, capture identity). V35 programs compile to
   unchanged bytes (pinned digests); the conformance inventory gains three
-  v35-pinned gap cases.
+  cases.
 
 - Value ABI and layout 17 (`FUNCTION_FIELD_VALUE_VERSION`) for v36, owned by
   the function-fields stream: every value16 tag and layout keeps its meaning

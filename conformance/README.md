@@ -1,6 +1,6 @@
 # Checked core compatibility inventory
 
-This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v35** profile
+This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v36** profile
 and the **checked-ts-main-v1** source model. Its original cases are checked
 TypeScript programs with a Varta `main` entry point and observable runtime output.
 Feature rows identify their CORE work streams and either an ECMAScript section or
@@ -17,7 +17,7 @@ cargo run -p varta-conformance --locked -- --require-supported
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
 executable cases. The current inventory has 62 feature rows and 110 cases:
-95 pass, 15 are known unsupported, and 8 feature rows have no case. These counts
+101 pass, 9 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -31,7 +31,11 @@ package version, dependency-lock digest, worker timeout, runtime budgets, OS and
 results remain separate from the overall baseline check.
 
 Every case runs in a fresh process with a cleared environment, a fresh runtime and
-empty requested/ceiling grants. Compilation, validation and execution have a
+empty requested/ceiling grants, unless its manifest row lists reviewed `grants`:
+those are then both the requested grants and the host ceiling. Only `time.timer`
+(v36 timers, which wait on the runtime event loop within the execution deadline
+and have no other effect) is admitted; any other, duplicate or unsorted grant
+fails inventory loading. Compilation, validation and execution have a
 15-second wall limit (configurable to 1–60000 milliseconds with `--timeout-ms`).
 The guest retains ordinary production fuel, deadline, memory and host-call limits.
 Workers accept source snapshots over bounded stdin; concurrent pipe drains keep a
@@ -235,39 +239,26 @@ with their pinned hashes and expected output under the v35 pin before review
 and promotion. Abort listeners, timers and live header iterators remain outside
 these rows.
 
-The v36 function-fields stream adds the `function-fields` and
-`optional-chains` rows (CORE-03) with one case each, and an `abort-listeners`
-case under the existing `abort-signals` row. All three are known gaps under the
-v35 pin (`unsupported_syntax`: v35 has no function-valued fields, function
-members of unions or abort listeners) and produce their expected output, which
-matches Node.js v24.20.0 type stripping, under `checked-f64-utf16-v36`; they are
-expected to be observed as unexpected support when the pin moves to v36.
+The v36 batch moves the pin to `checked-f64-utf16-v36`. Its streams add:
 
-The v36 records stream adds `checked-declared-fields` on the
-`mixed-index-records` row while the pin stays at v35: declared arrays, records
-and dictionaries next to `[key: string]: unknown`, built by literals and
-converted from JSON. Under the v35 pin it is a known gap with the reviewed
-`unsupported_syntax` diagnostic; its expected output matches Node.js v24.20.0
-type stripping and the v36 compiler, so moving the pin to v36 should observe it
-as unexpected support before review and promotion.
+- the functions stream's `function-fields` and `optional-chains` rows (CORE-03)
+  with one case each, and an `abort-listeners` case under the existing
+  `abort-signals` row;
+- the records stream's `checked-declared-fields` case on the
+  `mixed-index-records` row (declared arrays, records and dictionaries next to
+  `[key: string]: unknown`, built by literals and converted from JSON);
+- the timers stream's `timers` row (CORE-09, a Varta contract) with
+  `timers-event-loop` (main and its microtasks before any timer, equal delays in
+  creation order, each timer's microtasks before the next, a cleared timer and
+  the sleep pattern), the first case with a reviewed `time.timer` grant;
+- the async stream's `async-generators` row (CORE-03, CORE-09) with
+  `async-generator-iteration` (requests queued before the first settles,
+  `yield await`, a string `TReturn`, and `for await` closing through `finally`
+  on `break`).
 
-The v36 timers stream adds the `timers` row (CORE-09, a Varta contract) with
-one original case, `timers-event-loop` (main and its microtasks before any
-timer, equal delays in creation order, each timer's microtasks before the next,
-a cleared timer and the sleep pattern); its output matches Node.js v24.20.0
-type stripping, and the v36 runtime tests run the same source with a
-`time.timer` grant. Under the v35 pin it is a known gap (`unsupported_syntax`
-for the `setTimeout` call). Moving the pin to v36 will not promote it by itself:
-the runner executes every case without grants, so a timer case needs a reviewed
-per-case grant in the inventory (a runner change) before it can pass.
-
-The v36 async stream keeps the pin at `checked-f64-utf16-v35`, so every case
-keeps its status. It adds the `async-generators` feature row (CORE-03, CORE-09)
-with one original case, `async-generator-iteration` (requests queued before
-the first settles, `yield await`, a string `TReturn`, and `for await` closing
-through `finally` on `break`), whose output matches Node.js v24.20.0 type
-stripping. Under the v35 pin it is a known gap with the reviewed
-`unsupported_syntax` diagnostic, because async generators are admitted from
-v36; `varta-runtime` `async_generator_tests` runs the same source under v36
-against the same output. It is promoted when the inventory moves its pin to
-v36.
+Each case was a reviewed `unsupported_syntax` gap under the v35 pin; under the
+v36 pin the five compile-time gaps were observed as unexpected support with
+their pinned hashes and expected output, which matches Node.js v24.20.0 type
+stripping, and were promoted. The timer case was observed as a denied runtime
+failure without a grant, and passes with its reviewed grant. Earlier-profile
+rejections stay covered by the compiler/runtime/CLI regression tests.

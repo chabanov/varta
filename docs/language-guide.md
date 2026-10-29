@@ -4439,14 +4439,18 @@ export async function main(): Promise<void> {
 `abort()` without a reason uses a `DOMException` named `AbortError`, which is
 also an `Error`; `signal.reason` is `unknown`. `addEventListener`,
 `removeEventListener`, `onabort`, `AbortSignal.timeout`, `AbortSignal.any` and
-`new AbortSignal()` are rejected with a diagnostic.
+`new AbortSignal()` are rejected with a diagnostic (v36 admits all but the
+constructor, see [abort listeners](#function-fields-opt-in-v36) and
+[timers](#timers-opt-in-v36)).
 
 ### `checked-f64-utf16-v36`
 
-Profile v36 (in development) runs every v35 program unchanged and adds, so
-far, function values in fields, elements and unions, optional and defaulted
+Profile v36 (in development) runs every v35 program unchanged and adds
+function values in fields, elements and unions, optional and defaulted
 function-typed parameters, optional chains, abort listeners,
-`Promise.withResolvers` and checked declared fields of mixed records.
+`AbortSignal.any`, `Promise.withResolvers`, checked declared fields of mixed
+records, timers (including `AbortSignal.timeout`), async generators and
+`for await`. Its values use value layout 17.
 
 #### Function fields (opt-in v36)
 
@@ -4557,14 +4561,6 @@ different arrays, and `x as Item[]` from a JSON array builds a fresh array.
 `a ?? []` takes its element type from `a`, `let x: unknown;` starts as
 `undefined`, and a function may end in a `switch` whose `default` returns.
 
-`new AbortSignal()` are rejected with a diagnostic (v36 admits
-`AbortSignal.timeout`, see [timers](#timers-opt-in-v36)).
-
-### `checked-f64-utf16-v36`
-
-Profile v36 (in development) inherits every v35 feature. Its first stream adds
-timers.
-
 #### Timers (opt-in v36)
 
 `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval` and
@@ -4640,8 +4636,44 @@ from Node:
 - A callback must accept the extra arguments it is given; parameters without
   an argument must be optional.
 
-Profile v36 (in development) adds async generators and `for await` on top of
-v35, and runs every v35 program unchanged.
+`AbortSignal.timeout` signals combine with abort listeners and
+`AbortSignal.any`, so an abortable sleep with a deadline is ordinary code:
+
+```ts
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    let timer = 0;
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+export async function main(): Promise<void> {
+  const user = new AbortController();
+  const deadline = AbortSignal.any([user.signal, AbortSignal.timeout(30)]);
+  await sleep(10, deadline);                     // resolves
+  try {
+    await sleep(100, deadline);
+  } catch (reason) {
+    if (reason instanceof DOMException) console.log(reason.name); // TimeoutError
+  }
+}
+```
+
+An `AbortSignal.any` signal takes its reason from the first source that
+aborts; as in Node, it is aborted before that source's listeners run and its
+own listeners run after them.
 
 #### Async generators and for await (opt-in v36)
 

@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v35",
+  "profile": "checked-f64-utf16-v36",
   "features": [
     {
       "id": "binary64",
@@ -1182,9 +1182,7 @@
         "varta log: 9"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Async generators and for await are admitted from checked-f64-utf16-v36; the inventory pins v35."
+        "status": "supported"
       }
     },
     {
@@ -2161,9 +2159,7 @@
         "varta log: parsed b=x - v"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Under the v35 pin a declared array, record or dictionary next to an unknown index signature is not checkable; v36 checked declared fields convert them."
+        "status": "supported"
       }
     },
     {
@@ -2222,9 +2218,7 @@
         "varta log: 6 3 function {}"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Function-valued fields and function members of unions need value layout 17 (v36 function_fields); the v35 pin rejects the defaulted function-typed parameter."
+        "status": "supported"
       }
     },
     {
@@ -2238,9 +2232,7 @@
         "varta log: undefined 3"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Optional chains and optional function fields are v36 function_fields features; the v35 pin rejects the optional function-valued field."
+        "status": "supported"
       }
     },
     {
@@ -2252,9 +2244,7 @@
         "varta log: [\"first true\",\"once\"]"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Abort listeners need function-valued fields (v36 abort prelude); the v35 Web types keep them pending."
+        "status": "supported"
       }
     },
     {
@@ -2271,10 +2261,11 @@
         "varta log: slept 5",
         "varta log: slept 1"
       ],
+      "grants": [
+        "time.timer"
+      ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Timers are a v36 feature (timers, host ABI 32) that also needs the exact time.timer grant; the inventory pins v35 and runs every case without grants."
+        "status": "supported"
       }
     }
   ]

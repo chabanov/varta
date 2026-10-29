@@ -584,6 +584,8 @@ mod v34_cross_stream_tests;
 #[cfg(test)]
 mod v35_cross_stream_tests;
 #[cfg(test)]
+mod v36_cross_stream_tests;
+#[cfg(test)]
 mod value15_tests;
 #[cfg(test)]
 mod value16_tests;

@@ -1,8 +1,10 @@
 // Engine prelude of checked-f64-utf16-v36 (`abort_signals` with
 // `function_fields`): the v35 `AbortController`/`AbortSignal` data model and
 // `DOMException` plus abort listeners (`addEventListener`,
-// `removeEventListener`, `onabort`), implemented in typed guest code with no
-// host import, no capability and no timers. V35 programs keep the v35 prelude
+// `removeEventListener`, `onabort`) and `AbortSignal.any`, implemented in
+// typed guest code with no host import, no capability and no timers
+// (`AbortSignal.timeout` is the separate timers prelude abort_timeout.ts,
+// loaded only when called, which aborts through this module's controller). V35 programs keep the v35 prelude
 // (prelude/abort.ts). The compiler adds it to a program only when a module
 // names `AbortController`, `AbortSignal` or `DOMException`; see
 // docs/architecture.md (Web types, abort listeners).
@@ -93,15 +95,42 @@ function captureOption(options?: ListenerOptions | boolean): boolean {
 
 // Shared state of one signal. It is not exported, so a program can neither
 // construct a signal directly nor change its state except through its
-// controller.
+// controller (or, for an `AbortSignal.any` signal, its sources).
 class AbortState {
   aborted: boolean;
   reason: unknown;
   listeners: ListenerEntry[];
+  // DOM "dependent" signals (`AbortSignal.any`): a dependent signal lists its
+  // non-dependent sources, and every source lists the dependent signals it
+  // aborts.
+  dependent: boolean;
+  sources: AbortState[];
+  dependents: DependentSignal[];
   constructor(aborted: boolean, reason: unknown) {
     this.aborted = aborted;
     this.reason = reason;
     this.listeners = [];
+    this.dependent = false;
+    this.sources = [];
+    this.dependents = [];
+  }
+}
+
+// A dependent signal with its state, so that a source can abort it.
+class DependentSignal {
+  signal: AbortSignal;
+  state: AbortState;
+  constructor(signal: AbortSignal, state: AbortState) {
+    this.signal = signal;
+    this.state = state;
+  }
+}
+
+// Make `source` a source of the dependent signal `entry` once (DOM sets).
+function addSource(entry: DependentSignal, source: AbortState): void {
+  if (entry.state.sources.indexOf(source) < 0) {
+    entry.state.sources.push(source);
+    source.dependents.push(entry);
   }
 }
 
@@ -140,6 +169,41 @@ export class AbortSignal {
 
   static abort(reason?: unknown): AbortSignal {
     return new AbortSignal(new AbortState(true, abortReason(reason)));
+  }
+
+  // DOM "create a dependent abort signal": aborted with the reason of the
+  // first aborted signal, otherwise a dependent of every non-dependent signal
+  // (the sources of a dependent signal stand for it).
+  static any(signals: AbortSignal[]): AbortSignal {
+    const state = new AbortState(false, undefined);
+    const result = new AbortSignal(state);
+    for (let i = 0; i < signals.length; i++) {
+      const signal = signals[i];
+      if (signal !== undefined && signal.state.aborted) {
+        state.aborted = true;
+        state.reason = signal.state.reason;
+        return result;
+      }
+    }
+    state.dependent = true;
+    const entry = new DependentSignal(result, state);
+    for (let i = 0; i < signals.length; i++) {
+      const signal = signals[i];
+      if (signal === undefined) {
+        continue;
+      }
+      if (!signal.state.dependent) {
+        addSource(entry, signal.state);
+        continue;
+      }
+      for (let j = 0; j < signal.state.sources.length; j++) {
+        const source = signal.state.sources[j];
+        if (source !== undefined) {
+          addSource(entry, source);
+        }
+      }
+    }
+    return result;
   }
 
   get aborted(): boolean {
@@ -199,6 +263,34 @@ function dispatchAbort(signal: AbortSignal, state: AbortState): void {
   }
 }
 
+// DOM "signal abort": the signal and its dependent signals that are not
+// aborted yet take the reason first; then the signal's `abort` event is
+// dispatched, followed by each such dependent signal's, in the order they
+// became dependent.
+function signalAbort(signal: AbortSignal, state: AbortState, reason: unknown): void {
+  if (state.aborted) {
+    return;
+  }
+  state.reason = reason;
+  state.aborted = true;
+  const dependents: DependentSignal[] = [];
+  for (let i = 0; i < state.dependents.length; i++) {
+    const entry = state.dependents[i];
+    if (entry !== undefined && !entry.state.aborted) {
+      entry.state.reason = reason;
+      entry.state.aborted = true;
+      dependents.push(entry);
+    }
+  }
+  dispatchAbort(signal, state);
+  for (let i = 0; i < dependents.length; i++) {
+    const entry = dependents[i];
+    if (entry !== undefined) {
+      dispatchAbort(entry.signal, entry.state);
+    }
+  }
+}
+
 export class AbortController {
   private readonly state: AbortState;
   readonly signal: AbortSignal;
@@ -210,10 +302,6 @@ export class AbortController {
   }
 
   abort(reason?: unknown): void {
-    if (!this.state.aborted) {
-      this.state.reason = abortReason(reason);
-      this.state.aborted = true;
-      dispatchAbort(this.signal, this.state);
-    }
+    signalAbort(this.signal, this.state, abortReason(reason));
   }
 }

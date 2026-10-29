@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v35-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts` and `core/pagination.ts` compile and validate; `Headers` and `AbortSignal` resolve, and the other files stop at `ProblemDocument.errors` or a defaulted function-typed parameter ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 
 Next work, in order:
 
@@ -35,12 +35,11 @@ Next work, in order:
    and merged with the records and unknown streams on `v34-integration-merge`
    ([scheduler](architecture.md#microtask-scheduler-promises),
    [async functions](architecture.md#async-functions-async_functions));
-   step 5's timers are implemented under v36 (`timers`,
-   [contract](architecture.md#timers-timers)); I/O and async HTTP are next.
-
-   timers, I/O and async HTTP (step 5) are next. Async generators and
-   `for await` (step 6) are implemented under v36 on `v36-async-generators`
-   ([contract](architecture.md#async-generators-async_generators)).
+   step 5's timers and step 6's async generators and `for await` are
+   implemented under v36 and integrated on `v36-merge`
+   ([timers](architecture.md#timers-timers),
+   [async generators](architecture.md#async-generators-async_generators));
+   I/O and async HTTP are next.
 
 Completed increment logs, earlier checkpoints and verification records are in
 [history.md](history.md).
@@ -278,6 +277,57 @@ dependencies, and contains no explicit `any`, so it meets the
 [typed-only rule](#research-thesis). Its only library-level `any` entry point is
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
+
+**Verified behavior with v36 (2026-10-29).** The same probe on the
+`v36-merge` branch with all four v36 streams integrated (checked declared
+fields, function fields with value layout 17, timers and async generators,
+host ABI 32), under `checked-f64-utf16-v36` with production budgets unchanged.
+The first diagnostic per file, with the v35 result from the same binary:
+
+| First diagnostic under v36 | Files | Under v35 |
+| --- | --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts`, `core/errors.ts` | 5 | 4 (all but `core/errors.ts`) |
+| `core/sse.ts:227` `unsupported type reference ReadableStream` (the parameter type of `parseEventStream`; reached by `core/sse.ts`, `core/transport.ts`, `core/resource.ts`, `index.ts` and the 55 resource modules) | 59 | `core/errors.ts:4` declared property `errors` not checkable from `unknown` |
+| `core/util.ts:28` `unsupported capture before binding initialization` (`sleep`'s timer callback names `onAbort`, a `const` declared after it) | 1 | `core/util.ts:125` defaulted function-typed parameter |
+
+Both v35 blockers are gone: `ProblemDocument.errors` is a checked declared
+field and `streamBackoffDelay`'s `random: () => number = Math.random`
+compiles. In a scratch copy (sources outside this repository, each step
+patched minimally, then the module checked again), the next blockers in order
+are:
+
+1. `core/util.ts`: the TDZ capture above (with `onAbort` first and
+   `let timer = 0`, the pilot's abortable `sleep` with `setTimeout`, abort
+   listeners and optional chains compiles); `globalThis.crypto` and
+   `Uint8Array` (`randomId`); `TextEncoder`, then `String.fromCharCode` and
+   regular expressions (`encodeQueryComponent`); `for…of` over an
+   `Array.isArray`-narrowed `unknown` (an `unknown[]` view); `Object.entries`
+   pairs typing `[key, value]`'s `key` as `unknown` (no tuple types);
+   `JSON.stringify` of `unknown` in a program that loads a Web prelude;
+   `Array.prototype.join`; `RegExp` and `String.replace` (`joinUrl`);
+   `Date.now()`/`Date.parse` (`parseRetryAfter`). With these stubbed,
+   `core/util.ts` compiles.
+2. `core/sse.ts`: Web streams (`ReadableStream`, `getReader`,
+   `ReadableStreamReadResult`, `TextDecoder`) and `Response`; method
+   signatures in interfaces (the generic `json<T>()` of `UarpEvent`);
+   `implements AsyncIterable`; `#private` fields; a class field typed by its
+   `new` initializer; `Set<string>`; a union of several record shapes
+   (`StreamState`); `[Symbol.asyncIterator]`; `Array.prototype.join`; a
+   `() => void reader.cancel()` arrow (result `undefined`) where a
+   `() => void` listener is expected (reported as `expected function, found
+   function`); `let x: T;` assigned later; `ReturnType<typeof setTimeout>`;
+   `Promise.race` over differently typed promises; regular expressions; a
+   `switch` on strings; an object spread with an extra method; property-path
+   narrowing (`response.body`, `event.retry`); a constructor closure capturing
+   `this`; an uninitialized `string | undefined` class field; `Date.now` as a
+   function value; and finally `parseEventStream`'s body exceeds the resume
+   compilation budget (production budgets unchanged). With these patched and
+   that body stubbed, `core/sse.ts` compiles: the `EventStream` class with its
+   reconnecting async generator method, abortable backoff sleeps and abort
+   listeners.
+3. `core/transport.ts:300`: the Fetch surface (`ReadableStream`, `Response`,
+   `Request`, `URL`, `URLSearchParams`, `Blob`, `FormData`) and `#private`
+   fields.
 
 **Verified behavior with v36, async stream (2026-10-29).** The same probe on
 the `v36-async-generators` branch (selector `async_generators` only) under
@@ -562,16 +612,14 @@ generators and timers (`AbortSignal.timeout`, backoff delays), in profile
 v35 feature and declares its own host ABI 32 (`abi::TIMERS_VERSION`), under
 which every host import of the batch is added, and its own value ABI/layout 17
 (function values as tagged values, introduced by the function-fields stream);
-a v36 module relabelled as v35 fails at its host ABI section, and runtimes that
-do not list v36 reject its declared profile name
+a v36 module relabelled as v35 fails validation before any guest effect, and
+runtimes that do not list v36 reject its declared profile name
 ([contract](architecture.md#checked-f64-utf16-v36--pilot-batch-checked-declared-fields-function-fields-async-generators-and-timers)).
-All four streams are implemented and integrated on `v36-merge`.
-With the functions stream, `core/util.ts` passes its v35 blocker (the defaulted
-`random: () => number = Math.random` of `streamBackoffDelay`, line 125) and the
-abort-listener and optional-chain code of `sleep`; its next blockers are
-`setTimeout`/`clearTimeout` (timers stream), a closure capturing a `const`
-declared after it (`onAbort` in `sleep`, a TDZ capture), `globalThis.crypto`
-with `Uint8Array`, `TextEncoder` and regular expressions.
+All four streams are implemented and integrated on `v36-merge`, with
+cross-stream tests (`varta-runtime` `v36_cross_stream_tests`), `AbortSignal.any`
+in the v36 abort prelude and the conformance pin at v36 (the timer case runs
+with a reviewed per-case `time.timer` grant). Both v35 pilot blockers are gone;
+the [v36 measurement](#pilot-acceptance-package-uarp-sdk) lists the next ones.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
@@ -579,22 +627,6 @@ with `Uint8Array`, `TextEncoder` and regular expressions.
 | `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns the value17 bump) | M2, M4 | Implemented ([contract](architecture.md#function-fields-function_fields)): value layout 17, function fields/elements/unions/`unknown`, optional and defaulted function parameters, optional chains, `Math.random` as a value, abort listeners, `Promise.withResolvers`; `resolve(promise)` and checked `as` to function types pending |
 | `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Implemented ([contract](architecture.md#async-generators-async_generators)): declarations, generic instantiations and class methods, the queued `next`/`return`/`throw` protocol, `yield*` over async generators, `for await` over async generators, arrays and generators; async generator expressions and `Symbol.asyncIterator` open |
 | `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Implemented ([contract](architecture.md#timers-timers)): `setTimeout`/`setInterval`/clears, sleep pattern, `AbortSignal.timeout` (with v36 abort listeners), exact `time.timer` grant |
-
-Records-stream measurement (branch `v36-declared-fields`, per-file first
-diagnostic of the pilot's 65 modules under v36): `core/errors.ts` now compiles
-(5 modules compile, up from 4); the 60 dependents of `core/util.ts` stop at its
-defaulted function-typed parameter (functions stream). With that parameter
-patched in a scratch copy, 59 modules stop at `core/sse.ts`'s async generator
-(async stream) and `core/util.ts` at optional chaining (`signal?.aborted`).
-Pending in the records stream: optional chaining (`a?.b`, `a?.m()`,
-`a?.[k]`), general property-path narrowing beyond the `typeof` conditional,
-`for…of` and index reads of record arrays typed without `| undefined`
-(sparse profiles type items `T | undefined`), `switch` over strings and
-`typeof`, the `object` annotation, rest elements of dictionary patterns,
-`JSON.stringify` of `unknown`-holding values in programs that declare Error
-classes (the v32 rule), mixed records nested inside checked-parse targets,
-and the identity of empty arrays across declared reads (see the contract's
-deviations).
 
 ### Deferred external validation scenarios
 

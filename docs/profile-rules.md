@@ -2555,21 +2555,11 @@ scheduler and frame catalog version 3. V36 has its own host ABI
 `abi::TIMERS_VERSION` (32) and its own value ABI/layout 17
 (`value::FUNCTION_FIELD_VALUE_VERSION`) with the value17 host operations,
 exception channel v8 and JSON schema 17; v35 keeps host ABI 31 and value16.
-Four selectors gate the streams: records (`checked_declared_fields`),
-functions (`function_fields`), async (`async_generators`) and timers
-
-`abi::TIMERS_VERSION` (32) and shares value ABI/layout 16
-(`value::PROMISE_VALUE_VERSION`) with v35; v35 keeps host ABI 31. Four selectors
-gate the streams: records (`checked_declared_fields`), functions
-(`function_fields`), async (`async_generators`, implemented below) and timers
-(`timers`). Gate every admission on its own selector, keep v35 and earlier
-
-`abi::TIMERS_VERSION` (32) and shares value ABI/layout 16
-(`value::PROMISE_VALUE_VERSION`) with v35; v35 keeps host ABI 31. Four selectors
-gate the streams: records (`checked_declared_fields`), functions
-(`function_fields`), async (`async_generators`) and timers (`timers`,
-implemented below). Gate every admission on its own selector, keep v35 and earlier
-profiles frozen, and add each stream's rules under its own heading here.
+Four selectors gate the streams, all implemented: records
+(`checked_declared_fields`), functions (`function_fields`), async
+(`async_generators`) and timers (`timers`). Gate every admission on its own
+selector, keep v35 and earlier profiles frozen, and add each stream's rules
+under its own heading here.
 
 - A v35 rule or binding stated "for v35 only" (value16 readers, liveness
   frames, preludes, mixed records) extends to v36 through the inherited
@@ -2593,6 +2583,20 @@ profiles frozen, and add each stream's rules under its own heading here.
 - Timers are scheduled by the runtime, never by guest busy-waiting; keep
   production fuel, deadline and scheduler limits unchanged and pin timer
   ordering against Node output.
+- Cross-stream behavior is pinned in `varta-runtime` `v36_cross_stream_tests`
+  (Node 24 logs, virtual clock, a collection forced before every job): every
+  stream's programs validate under value17 and import only value17 readers;
+  timer callbacks and abort listeners held in function fields stay rooted;
+  `for await` over generators that sleep on timers; declared reads under
+  optional chains. Add a case there when a change spans two streams.
+- `AbortSignal.any` lives in the v36 abort prelude
+  (`prelude/abort_listeners.ts`) with the listeners; `AbortSignal.timeout` stays
+  in its own prelude (`prelude/abort_timeout.ts`), loaded only where called, so
+  no other program imports a timer operation or needs `time.timer`. Keep
+  `prelude/abort.ts` (v35) byte-identical.
+- The conformance inventory pins v36. A case that needs a capability lists it
+  in its reviewed `grants` (only `time.timer` is admitted); never grant a
+  capability to turn a denial into a pass.
 
 ### Function fields (`function_fields`)
 

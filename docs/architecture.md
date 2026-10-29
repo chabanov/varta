@@ -7226,12 +7226,9 @@ dispatch, rooting and diagnostics for each type.
   them needs a value-layout change, which v36 makes
   ([abort listeners](#abort-listeners-abort_signals-with-function_fields)).
   `AbortSignal.timeout` and `AbortSignal.any` are rejected as well: v35 has no
-  timers and no listeners.
-
-  them needs a value-layout change. `AbortSignal.timeout` and `AbortSignal.any`
-  are rejected as well: v35 has no timers and no listeners. V36 admits
-  `AbortSignal.timeout` (see [Timers](#timers-timers)); `AbortSignal.any`
-  stays pending.
+  timers and no listeners. V36 admits `AbortSignal.timeout` (see
+  [Timers](#timers-timers)) and `AbortSignal.any` (see
+  [abort listeners](#abort-listeners-abort_signals-with-function_fields)).
 - **Value operations.** `JSON.stringify` of a value that may reach an engine
   Web type instance (including `unknown` in a program that loads a prelude) is
   rejected, because the instances keep private state where JavaScript has no
@@ -7251,7 +7248,7 @@ dispatch, rooting and diagnostics for each type.
 
 ### `checked-f64-utf16-v36` — Pilot batch: checked declared fields, function fields, async generators and timers
 
-V36 is registered and inherits every v35 feature and selector, including the
+V36 inherits every v35 feature and selector, including the
 promise tag of value layout 16 (`promise_values()`), the microtask scheduler
 and frame catalog version 3 (`frame_liveness()`). Wherever a v35 subsection
 above admits a feature, layout or binding for v35 only, it applies to v35 and
@@ -7261,26 +7258,22 @@ earlier profiles stay frozen. V36 declares two version identities of its own
 
 - **Host ABI** `abi::TIMERS_VERSION` (32), for v36 alone. Every v35 operation
   other than the value16 readers keeps its signature, binding and minimum ABI.
-  Host imports added in this batch, including the value17 readers, use host
-  ABI 32 as their minimum.
+  The batch's host imports, the thirteen value17 readers
+  ([value layout 17](#value-layout-17-function_fields)) and the four
+  [timer operations](#timers-timers), all have host ABI 32 as their minimum;
+  they are disjoint, and v35 binds none of them.
 - **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17), for
   v36 alone; `LanguageProfile::value_layout` equals `value_abi`, so
   descriptors, catalogs, frames and exception cells are stamped 17
-  ([value layout 17](#value-layout-17-function_fields)).
-
-- **Host ABI** `abi::TIMERS_VERSION` (32), for v36 alone. It adds no host
-  import of its own: every v35 operation keeps its signature, binding and
-  minimum ABI. Host imports added in this batch use host ABI 32 as their
-  minimum; the [timer operations](#timers-timers) are the first.
-- **Value ABI and layout** `value::PROMISE_VALUE_VERSION` (value16), shared
-  with v35. V36 adds no value tag or layout yet; `LanguageProfile::value_layout`
-  equals `value_abi`, so descriptors, catalogs, frames and exception cells are
-  stamped and read exactly as under v35.
+  ([value layout 17](#value-layout-17-function_fields)). Every stream's
+  records use it, including the async generators' state and request records,
+  whose promise fields keep the value16 promise tag.
 
 An older runtime that does not list v36 rejects the unknown profile name in
 `varta.language` validation, before compilation or any guest effect. A v36
-module relabelled as v35 declares host ABI 32 against v35's 31 and fails at its
-host ABI section before instantiation; as for every profile, a v36 declaration
+module relabelled as v35 fails before instantiation: at its value17 capture
+catalog, record descriptors or value section, or at its host ABI section
+(host ABI 32 against v35's 31) when it has none of those; as for every profile, a v36 declaration
 with a downgraded or missing host ABI section, a value ABI other than value17
 or a missing value section fails validation before any guest effect.
 
@@ -7366,12 +7359,13 @@ nothing yet:
 - async stream: `async_generators()` (`async function*` generators and
   `for await…of`), specified [below](#async-generators-async_generators);
 - timers stream: `timers()` (`setTimeout`/`clearTimeout` and timer-driven
-  promises), implemented: see [Timers](#timers-timers).
+  promises), specified in [Timers](#timers-timers).
 
-Until a stream adds its subsection here, its features stay rejected and a v36
-module compiles and runs like a v35 module apart from its declared profile,
-host ABI and value layout 17; production budgets of every profile are
-unchanged.
+All four streams are implemented; the subsections below specify them, and
+the cross-stream combinations (timer callbacks and abort listeners held in
+function fields, `for await` over generators that sleep on timers, declared
+reads under optional chains) need no further rule. Production budgets of every
+profile are unchanged.
 
 #### Function fields (`function_fields`)
 
@@ -7441,7 +7435,10 @@ admitted:
   promise and the same resolve/reject closures that `new Promise` passes to its
   executor; the type argument is required. Resolving with another promise
   (`resolve(promise)`) stays outside the subset, for the executor as for
-  `withResolvers`.
+  `withResolvers`. A promise of a function (`Promise<() => void>`, also as an
+  async function result or an async generator's `TReturn`) stays rejected
+  (`unsupported Promise value type function`); records with function fields
+  may still be promised and yielded by async generators.
 
 Physical representation, collection and safety are unchanged from v12
 closures: a field, element or cell holds the closure's packed handle, its slot
@@ -7476,8 +7473,22 @@ a listener is `() => void` and `options` is `boolean` (capture) or
   listeners, while Node runs it at the position of its first assignment among
   them; an exception thrown by a listener propagates out of `abort()`, while
   Node reports it as uncaught after the dispatch. `dispatchEvent` stays
-  pending; `AbortSignal.timeout` and `AbortSignal.any` belong to the timers
-  stream.
+  pending.
+- `AbortSignal.any(signals)` (`signals: AbortSignal[]`) follows the DOM
+  "create a dependent abort signal" steps that Node 24 implements: the result
+  is already aborted with the reason of the first aborted signal in the list;
+  otherwise it is a *dependent* signal of every listed signal that is not
+  itself dependent, and of the sources of every listed dependent signal (so
+  nesting `any` never chains dependents). When a source aborts, its dependent
+  signals that are not aborted take the same reason first, then the source's
+  `onabort` and listeners run, then each such dependent signal's, in the order
+  the dependents were created. A dependent signal has no controller; sources
+  keep their dependents reachable (Node holds them weakly, which is not
+  observable without collection).
+- `AbortSignal.timeout(ms)` ([timers](#timers-timers)) is a separate prelude
+  module loaded only where it is called; it aborts through a controller of this
+  prelude, so its signal works with listeners and `AbortSignal.any`. Programs
+  that do not call it import no timer operation and need no grant.
 
 #### Checked declared fields (`checked_declared_fields()`)
 
@@ -7706,8 +7717,9 @@ diagnostic there.
   deadline error). The prelude calls the prelude-only intrinsic
   `varta.web.unrefTimeout(callback, ms)`; in program modules that name is an
   ordinary unknown call. Programs that do not name `AbortSignal.timeout`
-  load no timer code, so they need no `time.timer` grant. `AbortSignal.any`
-  and abort listeners stay pending (function fields).
+  load no timer code, so they need no `time.timer` grant. The signal runs its
+  abort listeners and aborts its `AbortSignal.any` dependents like any other
+  ([abort listeners](#abort-listeners-abort_signals-with-function_fields)).
 - **Entry points and isolation.** Only `main` gets the event loop, so
   timers are tied to one execution: they never outlive its store, and a
   guest exit (`process.exit` inside a callback) or any fatal error ends the
@@ -8655,7 +8667,10 @@ separate origins and map to CORE IDs; feature case counts do not assert complete
 feature semantics or produce a global completion percentage.
 
 A child process compiles each source, validates it through the runtime API and
-runs with empty grants/host ceiling and ordinary fuel/memory/deadline limits.
+runs with empty grants/host ceiling and ordinary fuel/memory/deadline limits,
+unless the case's manifest row lists reviewed `grants`; those are then both the
+requested grants and the host ceiling, and only `time.timer` is admitted (any
+other grant fails inventory loading).
 The parent clears the worker environment, writes and drains bounded protocol
 pipes on independent threads, polls a bounded wall deadline, and kills/reaps failed
 workers. Internal compiler, transport, output, process and timeout faults are

@@ -175,6 +175,14 @@ fn validate(i: &Inventory) -> Result<(), Error> {
         if c.stdout.len() > 128 || c.stdout.iter().map(String::len).sum::<usize>() > 16 * 1024 {
             return Err(invalid("expected output exceeds inventory bounds"));
         }
+        if c.grants.len() > CASE_GRANTS.len()
+            || !c.grants.is_sorted_by(|a, b| a < b)
+            || c.grants.iter().any(|g| !CASE_GRANTS.contains(&g.as_str()))
+        {
+            return Err(invalid(
+                "case grants must be sorted, unique and admitted case grants",
+            ));
+        }
         match c.baseline.status {
             BaselineStatus::Supported => {
                 if c.baseline.diagnostic.is_some() || c.baseline.reason.is_some() {

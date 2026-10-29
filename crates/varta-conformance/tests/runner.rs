@@ -211,6 +211,52 @@ fn runtime_exceptions_and_fuel_exhaustion_are_failures() {
         assert_eq!(report["cases"][0]["observation"]["category"], category);
     }
 }
+/// A case runs with exactly its reviewed grants (package request and host
+/// ceiling): the v36 timer case passes with `time.timer` and is a denied
+/// runtime failure without it; any other, unsorted or duplicate grant fails
+/// inventory loading.
+#[test]
+fn reviewed_case_grants_are_exact_and_limited_to_timers() {
+    let mut fixture = Fixture::new(
+        "export async function main():Promise<void>{await new Promise<void>((resolve)=>setTimeout(resolve,1));console.log(2);}",
+    );
+    fixture.value["profile"] = json!("checked-f64-utf16-v36");
+    fixture.save();
+    let (output, report) = fixture.run(&[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report["cases"][0]["observation"]["kind"], "runtime_failed");
+    assert!(
+        report["cases"][0]["observation"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("time.timer")
+    );
+    fixture.value["cases"][0]["grants"] = json!(["time.timer"]);
+    fixture.save();
+    let (output, report) = fixture.run(&["--require-supported"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(report["counts"]["passed"], 1);
+    for grants in [
+        json!(["time.now"]),
+        json!(["fs.read"]),
+        json!(["process.exit"]),
+        json!(["time.timer", "time.timer"]),
+        json!(["unknown"]),
+        json!([""]),
+    ] {
+        let mut v = fixture.value.clone();
+        v["cases"][0]["grants"] = grants.clone();
+        fs::write(fixture.root.join("suite.json"), v.to_string()).unwrap();
+        assert!(
+            varta_conformance::LoadedSuite::load(&fixture.root.join("suite.json")).is_err(),
+            "{grants}"
+        );
+    }
+}
 #[test]
 fn host_access_is_denied_and_parent_environment_is_not_disclosed() {
     let mut fixture = Fixture::new(

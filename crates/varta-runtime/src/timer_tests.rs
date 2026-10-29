@@ -38,7 +38,7 @@ fn run(source: &str, expected: &[&str]) {
 /// The log written before the execution ended, and how it ended. With
 /// `collect`, the program is built with the test-only collector export and a
 /// full collection is forced before every job.
-fn observe(
+pub(super) fn observe(
     source: &str,
     grants: &[CapabilityGrant],
     collect: bool,
@@ -481,7 +481,13 @@ fn timer_imports_require_the_v36_host_abi() {
         .validate_module(&relabelled)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("invalid host signature: timer_"), "{error}");
+    // Under value layout 17 the relabelled module's value17 capture catalog is
+    // refused first; either refusal precedes instantiation.
+    assert!(
+        error.contains("invalid host signature: timer_")
+            || error.contains("capture catalog value version mismatch"),
+        "{error}"
+    );
     let unknown = patched(&bytes, b"timer_start", b"timer_stary");
     let error = runtime.validate_module(&unknown).unwrap_err().to_string();
     assert!(error.contains("unknown host import"), "{error}");
@@ -606,7 +612,7 @@ fn timer_calls_outside_the_subset_are_rejected_by_name() {
 }
 
 /// Replace one byte string by another of the same length.
-fn patched(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+pub(super) fn patched(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
     assert_eq!(from.len(), to.len());
     let at = bytes
         .windows(from.len())

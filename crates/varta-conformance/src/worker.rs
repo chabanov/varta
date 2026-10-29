@@ -1,4 +1,5 @@
-//! Compile the exact snapshot and run it with fresh default limits and no grants.
+//! Compile the exact snapshot and run it with fresh default limits and only
+//! the case's reviewed grants (none unless the inventory lists them).
 use crate::{inventory::MAX_SOURCE_BYTES, model::*};
 use varta_common::DiagnosticCode;
 use varta_compiler::CompilerError;
@@ -52,7 +53,18 @@ pub(crate) fn execute(request: Request) -> Observation {
                 };
             }
         };
-    match varta_runtime::VartaRuntime::new().run_wasm_bytes_with_policy(&bytes, &[], &[]) {
+    // The reviewed case grants are both the package request and the host
+    // ceiling; every other capability stays denied.
+    let grants: Vec<_> = request
+        .grants
+        .iter()
+        .filter(|id| CASE_GRANTS.contains(&id.as_str()))
+        .map(|id| varta_common::CapabilityGrant {
+            id: id.clone(),
+            value: varta_common::CapabilityValue::Boolean(true),
+        })
+        .collect();
+    match varta_runtime::VartaRuntime::new().run_wasm_bytes_with_policy(&bytes, &grants, &grants) {
         Ok(output) => Observation::Executed {
             lines: output.lines,
             exit_code: output.exit_code,
