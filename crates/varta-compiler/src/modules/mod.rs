@@ -49,12 +49,18 @@ pub(crate) struct Export {
     pub span: Span,
     /// Declared through `export interface/type` or `export type { … }`.
     pub type_only: bool,
+    /// `export { local as exported } from` (v32): `local` names an export of
+    /// this dependency and is not bound in the re-exporting module.
+    pub from: Option<PathBuf>,
 }
 pub(crate) struct Unit {
     pub source: Source,
     pub ast: ast::Module,
+    /// Import and re-export dependencies; re-export entries have no bindings.
     pub imports: Vec<Dependency>,
     pub exports: Vec<Export>,
+    /// `export * from` sources (v32), in source order.
+    pub stars: Vec<PathBuf>,
 }
 pub(crate) struct Graph {
     pub entry: PathBuf,
@@ -64,7 +70,7 @@ pub(crate) struct Graph {
 
 struct Builder<'a> {
     loader: &'a dyn ModuleLoader,
-    named_types: bool,
+    profile: varta_common::language::LanguageProfile,
     graph: Graph,
     visiting: Vec<PathBuf>,
     bytes: usize,
@@ -83,7 +89,8 @@ impl Graph {
     ) -> Result<Self, CompilerError> {
         Self::load_with_profile(entry, loader, Default::default())
     }
-    /// Profiles with named types also admit type-only import/export forms.
+    /// Profiles with named types also admit type-only import/export forms;
+    /// profiles with module re-exports admit `export … from` and `export *`.
     pub(crate) fn load_with_profile(
         entry: ModuleSource,
         loader: &dyn ModuleLoader,
@@ -91,7 +98,7 @@ impl Graph {
     ) -> Result<Self, CompilerError> {
         let mut builder = Builder {
             loader,
-            named_types: profile.named_types(),
+            profile,
             graph: Self {
                 entry: entry.path.clone(),
                 units: BTreeMap::new(),
@@ -137,8 +144,11 @@ impl Builder<'_> {
         }
         let source = Source::new(&input.path, &input.text);
         let ast = parse::parse_module(&source)?;
-        let (mut imports, exports) =
-            syntax::scan(&ast, &source, &input.path, self.loader, self.named_types)?;
+        let syntax::Scan {
+            mut imports,
+            exports,
+            stars,
+        } = syntax::scan(&ast, &source, &input.path, self.loader, self.profile)?;
         self.imports += imports.len();
         if self.imports > MAX_IMPORTS {
             return Err(source.locate(
@@ -183,6 +193,7 @@ impl Builder<'_> {
                 ast,
                 imports,
                 exports,
+                stars,
             },
         );
         Ok(())

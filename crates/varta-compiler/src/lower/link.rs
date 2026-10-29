@@ -1,8 +1,8 @@
 //! Assign global function slots, then resolve module-local bindings against
 //! dependency exports. Function bodies are lowered with their own source/scope.
 use super::*;
-use crate::modules::Graph;
-use std::path::PathBuf;
+use crate::modules::{Export, Graph};
+use std::path::{Path, PathBuf};
 
 const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
 type Symbols = BTreeMap<String, Signature>;
@@ -128,31 +128,32 @@ fn link_bindings(
     types: &ir::ValueTypes,
 ) -> Result<BTreeMap<PathBuf, Symbols>> {
     let mut scopes = BTreeMap::new();
-    let mut exports: BTreeMap<PathBuf, Symbols> = BTreeMap::new();
+    let mut exports: BTreeMap<PathBuf, exports::Table<Signature>> = BTreeMap::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
         let mut scope = definitions[path].clone();
         for import in &unit.imports {
             for binding in &import.bindings {
-                let function = exports
-                    .get(&import.target)
-                    .and_then(|e| e.get(&binding.imported));
-                let is_type = type_exports
-                    .get(&import.target)
-                    .is_some_and(|e| e.contains_key(&binding.imported));
-                if binding.type_only || function.is_none() && is_type {
+                if binding.type_only {
                     continue;
                 }
-                let signature = function.ok_or_else(|| {
-                    unit.source.locate(
-                        CompilerError::Module(format!(
-                            "module {} does not export function {}",
-                            import.target.display(),
-                            binding.imported
-                        )),
-                        binding.span,
-                    )
-                })?;
+                let function = exports
+                    .get(&import.target)
+                    .map_or(exports::Lookup::Missing, |e| e.lookup(&binding.imported));
+                let signature = match function {
+                    exports::Lookup::Bound(signature) => signature,
+                    exports::Lookup::Ambiguous => {
+                        return Err(unit.source.locate(
+                            exports::ambiguous(&import.target, &binding.imported),
+                            binding.span,
+                        ));
+                    }
+                    exports::Lookup::Missing => {
+                        other_namespace(type_exports, &import.target, &binding.imported)
+                            .map_err(|e| unit.source.locate(e, binding.span))?;
+                        continue;
+                    }
+                };
                 if matches!(binding.local.as_str(), "varta" | "console" | "log" | "JSON")
                     || scope
                         .insert(binding.local.clone(), signature.clone())
@@ -168,37 +169,67 @@ fn link_bindings(
                 }
             }
         }
-        let mut visible = BTreeMap::new();
-        for export in &unit.exports {
-            if export.type_only
-                || !scope.contains_key(&export.local)
-                    && named::is_type(types, module, &export.local)
-            {
-                continue;
-            }
-            let signature = scope.get(&export.local).ok_or_else(|| {
-                unit.source.locate(
-                    CompilerError::Module(format!(
-                        "export {} is not a function binding",
-                        export.local
-                    )),
-                    export.span,
-                )
-            })?;
-            if visible
-                .insert(export.exported.clone(), signature.clone())
-                .is_some()
-            {
-                return Err(unit.source.locate(
-                    CompilerError::Module(format!("duplicate export: {}", export.exported)),
-                    export.span,
-                ));
-            }
-        }
+        let functions = Functions {
+            scope: &scope,
+            module,
+            types,
+            type_exports,
+        };
+        let visible = exports::link(unit, &functions, &exports)?;
         exports.insert(path.clone(), visible);
         scopes.insert(path.clone(), scope);
     }
     Ok(scopes)
+}
+
+/// A name missing from a dependency's function exports must be one of its types.
+fn other_namespace(
+    type_exports: &BTreeMap<PathBuf, named::Exports>,
+    target: &Path,
+    name: &str,
+) -> Result<()> {
+    match type_exports.get(target).map(|e| e.lookup(name)) {
+        Some(exports::Lookup::Bound(_)) => Ok(()),
+        Some(exports::Lookup::Ambiguous) => Err(exports::ambiguous(target, name)),
+        Some(exports::Lookup::Missing) | None => Err(CompilerError::Module(format!(
+            "module {} does not export function {name}",
+            target.display()
+        ))),
+    }
+}
+
+/// The function namespace of one module for [`exports::link`].
+struct Functions<'a> {
+    scope: &'a Symbols,
+    module: usize,
+    types: &'a ir::ValueTypes,
+    type_exports: &'a BTreeMap<PathBuf, named::Exports>,
+}
+impl exports::Namespace for Functions<'_> {
+    type Binding = Signature;
+    /// Function slots are unique across the graph.
+    type Identity = usize;
+    fn local(&self, export: &Export) -> Result<Option<Signature>> {
+        if export.type_only
+            || !self.scope.contains_key(&export.local)
+                && named::is_type(self.types, self.module, &export.local)
+        {
+            return Ok(None);
+        }
+        let signature = self.scope.get(&export.local).ok_or_else(|| {
+            CompilerError::Module(format!("export {} is not a function binding", export.local))
+        })?;
+        Ok(Some(signature.clone()))
+    }
+    fn admits(&self, export: &Export) -> bool {
+        !export.type_only
+    }
+    fn missing(&self, export: &Export, target: &Path) -> Result<()> {
+        other_namespace(self.type_exports, target, &export.local)
+    }
+    fn identity(&self, signature: &Signature) -> usize {
+        signature.index
+    }
 }
 
 fn body(

@@ -1,8 +1,8 @@
 //! Named interface/alias annotations (v31). Declarations are resolved lazily in
 //! their defining module and memoized; a cycle is rejected rather than unrolled.
 use super::*;
-use crate::modules::Graph;
-use std::path::PathBuf;
+use crate::modules::{Export, Graph};
+use std::path::{Path, PathBuf};
 
 /// A type namespace entry: a local declaration or a binding to another module's.
 #[derive(Clone)]
@@ -25,8 +25,9 @@ pub(crate) struct NamedTypes {
     resolving: Vec<Key>,
 }
 
-/// Exported type names of one module, pointing at the exporting module's entry.
-pub(super) type Exports = BTreeMap<String, Key>;
+/// Exported type names of one module, pointing at the exporting module's entry
+/// (or, for a re-export, at the source module's exported entry).
+pub(super) type Exports = exports::Table<Key>;
 
 pub(super) fn enter(types: &mut ir::ValueTypes, module: usize) {
     types.named.current = module;
@@ -96,18 +97,21 @@ pub(super) fn link_module(
     for import in &unit.imports {
         let dependency = &exports[&import.target];
         for binding in &import.bindings {
-            let Some(key) = dependency.get(&binding.imported) else {
-                if binding.type_only {
+            let key = match dependency.lookup(&binding.imported) {
+                exports::Lookup::Bound(key) => key,
+                exports::Lookup::Ambiguous => {
                     return Err(source.locate(
-                        CompilerError::Module(format!(
-                            "module {} does not export type {}",
-                            import.target.display(),
-                            binding.imported
-                        )),
+                        exports::ambiguous(&import.target, &binding.imported),
                         binding.span,
                     ));
                 }
-                continue;
+                exports::Lookup::Missing if binding.type_only => {
+                    return Err(source.locate(
+                        missing_type(&import.target, &binding.imported),
+                        binding.span,
+                    ));
+                }
+                exports::Lookup::Missing => continue,
             };
             let local = (module, binding.local.clone());
             if types
@@ -123,26 +127,55 @@ pub(super) fn link_module(
             }
         }
     }
-    let mut visible = Exports::new();
-    for export in &unit.exports {
-        let key = (module, export.local.clone());
-        if !types.named.declarations.contains_key(&key) {
-            if export.type_only {
-                return Err(source.locate(
-                    CompilerError::Module(format!("export {} is not a type binding", export.local)),
-                    export.span,
-                ));
-            }
-            continue;
-        }
-        if visible.insert(export.exported.clone(), key).is_some() {
-            return Err(source.locate(
-                CompilerError::Module(format!("duplicate export: {}", export.exported)),
-                export.span,
-            ));
+    exports::link(unit, &Types { module, types }, exports)
+}
+
+fn missing_type(target: &Path, name: &str) -> CompilerError {
+    CompilerError::Module(format!(
+        "module {} does not export type {name}",
+        target.display()
+    ))
+}
+
+/// The type namespace of one module for [`exports::link`].
+struct Types<'a> {
+    module: usize,
+    types: &'a ir::ValueTypes,
+}
+impl exports::Namespace for Types<'_> {
+    type Binding = Key;
+    /// The defining declaration after following import bindings.
+    type Identity = Key;
+    fn local(&self, export: &Export) -> Result<Option<Key>> {
+        let key = (self.module, export.local.clone());
+        if self.types.named.declarations.contains_key(&key) {
+            Ok(Some(key))
+        } else if export.type_only {
+            Err(CompilerError::Module(format!(
+                "export {} is not a type binding",
+                export.local
+            )))
+        } else {
+            Ok(None)
         }
     }
-    Ok(visible)
+    fn admits(&self, _: &Export) -> bool {
+        true
+    }
+    fn missing(&self, export: &Export, target: &Path) -> Result<()> {
+        // A value re-export may name a function; function linking checks it.
+        if export.type_only {
+            return Err(missing_type(target, &export.local));
+        }
+        Ok(())
+    }
+    fn identity(&self, key: &Key) -> Key {
+        let mut key = key;
+        while let Some(Declaration::Imported(target)) = self.types.named.declarations.get(key) {
+            key = target;
+        }
+        key.clone()
+    }
 }
 
 /// Whether `name` is a type visible in the current module (used to accept type

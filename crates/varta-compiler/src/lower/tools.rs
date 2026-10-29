@@ -48,7 +48,11 @@ pub(super) fn collect(
                     ));
                 }
                 let (name, description, handler) = declaration(call, &unit.source)?;
-                if !unit.exports.iter().any(|export| export.local == handler) {
+                if !unit
+                    .exports
+                    .iter()
+                    .any(|export| export.from.is_none() && export.local == handler)
+                {
                     return Err(invalid(
                         "tool handler must be an explicitly exported function binding",
                     ));

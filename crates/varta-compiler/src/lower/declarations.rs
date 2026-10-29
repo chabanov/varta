@@ -13,7 +13,10 @@ pub(super) fn collect<'a>(
             ast::ModuleItem::ModuleDecl(ast::ModuleDecl::ExportDecl(export)) => &export.decl,
             ast::ModuleItem::Stmt(ast::Stmt::Empty(_)) => continue,
             ast::ModuleItem::ModuleDecl(
-                ast::ModuleDecl::Import(_) | ast::ModuleDecl::ExportNamed(_),
+                ast::ModuleDecl::Import(_)
+                | ast::ModuleDecl::ExportNamed(_)
+                // Admitted by the module scanner only under `module_reexports`.
+                | ast::ModuleDecl::ExportAll(_),
             ) => continue,
             _ => {
                 return Err(source.locate(

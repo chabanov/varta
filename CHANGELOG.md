@@ -11,6 +11,13 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Opt-in v32 adds module re-exports: `export { x as y } from`, `export type { … }
+  from`, `export { type T } from` and `export * from` forward functions and named
+  types without local bindings. Star exports follow ECMAScript rules (no
+  `default`, explicit exports win, ambiguous names excluded and rejected only
+  when named) and chain transitively. Re-export sources are graph dependencies
+  under unchanged limits; namespace and default forms stay rejected.
+
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`
   and `export type { … }`. The project loader resolves `./x.js` specifiers to the

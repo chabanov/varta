@@ -1640,3 +1640,35 @@ the v31 exception/JSON selectors. Each pilot work stream has exactly one selecto
 (`module_constants`, `literal_types`, `classes`, `module_reexports`,
 `template_literals`); gate every new admission on its own selector, keep v31 and
 earlier profiles frozen, and add rules for the stream under its own heading here.
+
+### Module re-exports (v32)
+
+`module_reexports()` gates the scanner forms only; earlier profiles keep the
+exact `re-export or type-only export` / `module export form` messages. The scanner
+records `export { … } from` as an `Export` with `from: Some(target)` and
+`export * from` as a `Unit.stars` entry, and adds each source as a `Dependency`
+with no bindings, so cycles, ordering, metadata and limits come from the existing
+graph walk. Never bind a re-exported name in the re-exporter's function scope or
+type namespace.
+
+Export tables live in `lower/exports.rs`: `Table<V>` holds bound names plus the
+set of ambiguous star names, and `exports::link` applies the shared rules
+(explicit exports first with duplicate detection, then stars filtered by
+`default` and every explicit exported name, merged by binding identity). Each
+binding namespace implements `exports::Namespace`: functions (`link.rs`, identity
+= function slot) and named types (`named.rs`, identity = defining declaration
+after following `Declaration::Imported`). Type tables are linked per module
+before function signatures; function tables after all signatures, so the
+function namespace decides cross-namespace "missing" errors. Import resolution in
+every namespace must treat `Lookup::Ambiguous` as `exports::ambiguous`.
+
+Extension point for module constants (or any new value kind): keep one
+`Table<V>` per module in dependency order, implement `Namespace` with a stable
+identity (for example the global slot), call `exports::link` after the module's
+local bindings exist, and extend the "missing in this namespace" checks so that
+an explicit value re-export or import is accepted when any value namespace binds
+the name. Constants then re-export and star-export without scanner changes.
+
+Namespace re-exports, `export {} from`, `export type *`, attributed forms and
+default names stay rejected; namespace objects and default exports need their
+own contracts.
