@@ -10,7 +10,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Item | Current state |
 | --- | --- |
 | Profiles | Default `checked-i32-utf8-v1`; latest released opt-in `checked-f64-utf16-v31`; `checked-f64-utf16-v32` is the [pilot batch](#pilot-batch-v32-in-development), merged on the `v32-integration` branch and not released. Versions of every profile: [version matrix](architecture.md#version-matrix) |
-| Last full gate | Commit `bf8c6c2` (2026-10-28): the seven-command gate in [verification.md](verification.md#full-gate) passed 1750 tests on a local host, as recorded in the commit message; not a cross-platform CI result |
+| Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration`: commit `27d11ae` (2026-10-28), 1826 tests. Both are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
 | Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the v32 integration branch `generated/meta.ts`, `generated/models.ts` and `core/json.ts` compile and validate; the other files stop at `Headers`, generics, async or the import limit ([measurement](#pilot-acceptance-package-uarp-sdk)) |
