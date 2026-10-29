@@ -98,12 +98,14 @@ the wrong kind (a boolean id needs exactly `enabled`, every other id exactly
 **Capability** column of the [host operation table](#host-operations). Each id has
 one grant kind:
 
+<!-- generated:embedding-grant-kinds:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Grant kind | Wire form | Ids |
 | --- | --- | --- |
-| Boolean | `"enabled": true \| false` | `time.now`, `process.exit` |
-| Name/path patterns | `"patterns": [...]` | `env.has`, `env.get`, `env.print`, `fs.read`, `fs.print` |
+| Boolean | `"enabled": true \| false` | `process.exit`, `time.now`, `time.timer` |
+| Name/path patterns | `"patterns": [...]` | `env.get`, `env.has`, `env.print`, `fs.print`, `fs.read` |
 | URL patterns | `"patterns": [...]` | `net.fetch`, `net.get` |
 | Listen endpoints | `"patterns": ["127.0.0.1:8080"]` | `net.listen` |
+<!-- generated:embedding-grant-kinds:end -->
 
 Policy complexity is capped at 128 grants and 256 patterns in total, and at most
 64 patterns per grant. Empty lists and `false` are explicit denials; an omitted id
@@ -371,6 +373,22 @@ diagnostic). Each line costs its UTF-8 byte length plus one against
 | `env_print*` | `varta env: <name>=<value>` |
 | `fs_print*` | The file content, unprefixed |
 | Failure diagnostic | `varta log: ` followed by `<capability denied: <label>> (<target>)` (label `env` for every `env.*` id, otherwise the id), `<invalid host input>`, `<result too large>` or `<host I/O error: <text>>` |
+
+The `<target>` of a capability denial is:
+
+| Capability | `<target>` | Outcome |
+| --- | --- | --- |
+| `env.has`, `env.get`, `env.print` | The variable name (label `env`) | Status 1 |
+| `fs.read`, `fs.print` | The path as the guest passed it | Status 1 |
+| `net.fetch`, `net.get` | The URL as the guest passed it | Status 1 |
+| `net.listen` (`http_stop`) | The requested endpoint | Status 1 |
+| `time.now` | `clock` | Status 1 |
+| `process.exit` | `process` | Status 1 |
+| `time.timer` (`timer_start`) | — | **Fatal**: the execution ends with the timer diagnostic of the [timer table](#timers) |
+
+So a denied clock read emits `varta log: <capability denied: time.now> (clock)`.
+These targets are runtime constants today, not registry data; see
+[Proposed changes](#proposed-changes).
 
 A host that presents output differently MUST still charge these texts, so budget
 exhaustion happens at the same call as in the reference host. The I/O error text
@@ -789,6 +807,66 @@ be empty. When the queue is empty, any outstanding unhandled rejection fails the
 execution. Scheduler imports are not charged to the host-call budget but still
 observe the deadline.
 
+### Timers
+
+Profiles that admit the `timer_*` imports (see **Admitted under**) extend the
+microtask checkpoint into an **event loop**. The guest implements `setTimeout`,
+`setInterval`, `clearTimeout`/`clearInterval` and `AbortSignal.timeout` on top of
+four imports; a host implements only the bookkeeping below. Every violation is a
+fatal scheduler error.
+
+<!-- generated:embedding-timers:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
+| Item | Value | Source constant |
+| --- | --- | --- |
+| Capability | `time.timer` (boolean) | `scheduler::TIMER_CAPABILITY` |
+| `timer_start` flag: interval | 1 | `scheduler::TIMER_INTERVAL` |
+| `timer_start` flag: unref | 2 | `scheduler::TIMER_UNREF` |
+| Delay range in ms (others become the minimum) | 1 to 2147483647 | `scheduler::TIMER_MIN_DELAY_MS`, `scheduler::TIMER_MAX_DELAY_MS` |
+| Timers armed or awaiting their take at once | 32 | `scheduler::MAX_PENDING_TIMERS` |
+| Denied `timer_start` (fatal) diagnostic | `<capability denied: time.timer> (setTimeout and setInterval require an exact time.timer grant)` | `scheduler::SchedulerError::TimerDenied` |
+<!-- generated:embedding-timers:end -->
+
+- **`timer_start(serial, delay, flags) → id`** is a counted host call. It first
+  requires an exact `time.timer` grant (boolean, package and ceiling); a denial is
+  **fatal**, not a status. `flags` may contain only the interval and unref bits.
+  `serial` must be an issued serial of a pending promise that has **exactly one**
+  registered reaction (the timer frame) and no timer yet. At most
+  `scheduler::MAX_PENDING_TIMERS` timers may exist at once (armed or fired but not
+  yet taken); ids are 1, 2, … per execution, at most
+  `scheduler::MAX_PROMISE_SERIALS`. The delay is normalized as in Node: a value
+  that is not a number from the minimum to the maximum delay (NaN, zero, negative,
+  too large) becomes the minimum; fractions are kept. The timer is armed with due
+  time = loop time + delay and the next value of a per-execution sequence counter.
+  An unset interval bit makes a timeout.
+- **`timer_clear(id)`** ignores an id that is not an integer naming an armed
+  timer. Otherwise it disarms the timer, marks it cleared and moves the promise's
+  registered reactions to the end of the microtask queue (waking the frame). An
+  interval cleared from its own callback has no reaction at that moment; when its
+  frame next calls `promise_react` on that serial, the host queues the token at
+  once instead of registering it.
+- **`timer_take(serial) → 1 | 0`** is called by a woken timer frame: 1 if the
+  timer fired, 0 if it was cleared; any other state is fatal. A fired timeout and a
+  cleared timer are then forgotten (their id no longer exists); a fired interval
+  that is not cleared stays.
+- **`timer_uncaught(reason)`** ends the execution as an uncaught exception with
+  that boxed value, exactly like one escaping `_start`.
+- **Loop.** Loop time is in milliseconds, starts at 0 when the execution starts
+  and only moves forward. After `_start`: (1) drain the microtask queue; (2) fail on
+  any outstanding unhandled rejection; (3) if no armed timer **without** the unref
+  bit exists, end the execution (unref timers alone never keep it alive); (4) take
+  the armed timer with the smallest (due time, sequence); if its due time is at or
+  beyond the execution deadline (in ms), fail at once with the timer-deadline
+  error; (5) wait until the wall clock is at least execution start + due time, then
+  check the deadline; (6) set loop time to the maximum of itself and the due time,
+  mark the timer fired, move its promise's reactions to the microtask queue (a
+  fired timer without a registered reaction is fatal); an interval is re-armed at
+  due time + its delay with a new sequence and expects a new reaction under the
+  same serial; then repeat from (1).
+- **Budgets.** `timer_start` counts against the host-call budget; the other three
+  are bookkeeping that observe the deadline like the promise imports. Every pending
+  timer also holds a token counted against `scheduler::MAX_PENDING_CONTINUATIONS`.
+  The whole loop runs within the one execution deadline.
+
 ## Function and frame catalogs
 
 Profiles with entries in the **`varta.functions` versions** column of the
@@ -810,9 +888,39 @@ but tokens the guest itself handed over.
    v33/v34, 3 with liveness layouts in v35/v36) with a non-empty `frames` array.
    Version 1 never carries frames.
 3. `value_version` equals the profile's value ABI.
-4. Array lengths stay within the reference bounds (`types` and `bindings` at most
+4. Array lengths stay within the bounds of the
+   [entry-point limits](#entry-point-limits) (`types` and `bindings` at most
    `function::MAX_CAPTURE_TYPES`, `functions` and `frames` at most
-   `abi::MAX_USER_FUNCTIONS`), and every `ty`/`binding` index is in range.
+   `abi::MAX_USER_FUNCTIONS`), and exactly these fields are indices that MUST be in
+   range:
+
+   | Field | Indexes |
+   | --- | --- |
+   | `bindings[].ty` | `types` |
+   | `types[].fields[].ty` (`record`), `types[].element` (`array`), `types[].value` (`dictionary`), `types[].members[]` (`primitiveUnion`, `referenceUnion`) | `types` |
+   | `functions[].captures[]` | `bindings` |
+   | `frames[].slots[].binding`, `frames[].states[].saved[].binding`, `frames[].states[].yielded`, `frames[].result` (when not `null`), `frames[].exception` | `bindings` |
+
+   Other numeric fields are **not** catalog indices: `functions[].code` and
+   `frames[].code` are user-function indices below `abi::MAX_USER_FUNCTIONS` (each
+   unique within its array), `functions[].signature` and `types[].signature`
+   (`function`) are signature numbers below `function::MAX_TYPES`, `types[].class`
+   (`error`) is a native error class tag or `null`, and `frames[].capacity` is a
+   liveness entry count at most `frame::MAX_FRAME_BINDINGS`.
+
+**Catalog field names.** Top level: `version`, `value_version`, `types`,
+`bindings`, `functions`, `frames`. A type is an object with `kind` (`i32`,
+`float64`, `boolean`, `string`, `null`, `undefined`, `bigInt`, `error`,
+`function`, `record`, `array`, `dictionary`, `primitiveUnion`, `referenceUnion`,
+`class`, `generator`, `unknown`, `promise`) and its kind's fields: `class`
+(`error`), `signature` (`function`), `fields` of `{name, ty, optional}`
+(`record`), `element` (`array`), `value` (`dictionary`), `members` (unions). A
+binding is `{ty, result}`; a function is `{code, signature, captures}`. A frame
+layout is `{code, slots, capacity?, states, result, return_input, exception,
+generator?}` with slots `{binding, shared}` and states `{input, yielded,
+saved?}`; `input` and `return_input` are `float64`, `boolean`, `undefined`,
+`guest` or `null`. Optional members (`capacity`, `generator`, `saved`, `frames`)
+may be absent; `result` and `return_input` may be `null`.
 
 The remaining structural rules (type graph, capture and liveness entries, binding
 classes per layout) are defined by `varta_common::function::{catalog, validate,
@@ -832,9 +940,11 @@ reduced catalog validation.
    targets a guest-defined function other than itself.
 4. The distinct direct call targets with signature `(i64, i32, i64) → ()` (resume
    bodies) number exactly as many as the frame layouts; no resume body is exported.
-5. Each layout's `code` plus the number of imported functions names a
-   guest-defined function that is neither the dispatcher nor a resume body and
-   returns exactly one `i64`.
+5. For each layout `frames[i]`, the creator is the function with index
+   `frames[i].code` + the number of imported functions. It is guest-defined, is
+   neither the dispatcher nor a resume body and returns exactly one `i64`. Layout
+   `i` pairs with the `i`-th distinct resume body in the dispatcher's call order,
+   which must not be exported.
 
 Rules 1–5 need only the export, type, function and import sections plus a decode of
 the dispatcher's own body. The host calls `varta_resume` only with tokens it
@@ -982,6 +1092,129 @@ validates the whole batch before applying any operation; an unknown opcode, code
 id or nonzero padding invalidates it. An event record is the fixed header below
 followed by the `key` and `value` strings.
 
+**Draft v0 decisions.** These settle the applier questions raised by the first
+browser applier; they are part of the unstable draft and change only with the
+draft.
+
+- **Strings.** Every L0 string is UTF-16LE text without lone surrogates and without
+  U+0000; a batch containing either is invalid. The native renderer shapes UTF-8
+  text and cannot represent lone surrogates, so the subset excludes them on every
+  renderer. Strings the host writes into event records are well-formed too: the host
+  replaces each lone surrogate a platform input produced with U+FFFD.
+- **Browser root.** The browser applier MUST render into a **closed** shadow root
+  attached to its own host element, with `:host { all: initial }` and the
+  component stylesheets adopted only there. Guest `id` values therefore cannot
+  clobber page globals or reach page elements, page styles do not leak in (beyond
+  what `all: initial` resets) and component styles do not leak out.
+- **Node operations.** `create_text` creates a text node; `set_text` applies
+  **only to text nodes** (an element target invalidates the batch). Attributes,
+  classes, styles, listeners and commands apply only to elements.
+- **Listeners.** A second `listen` for the same node and event, and an `unlisten`
+  without a listener, invalidate the batch; to change a handler, `unlisten` and then
+  `listen` again, in the same batch if wanted.
+- **Bubbling.** A DOM event travels from its target through each ancestor up to
+  the root. **Every** node on that path with a listener for the event kind gets
+  its own event record, in path order (target first), until a listener whose
+  options include `stopPropagation` has been delivered; that one is the last. The
+  host performs `preventDefault` if any delivered listener asked for it. The
+  records of one DOM event are queued consecutively, and each is one turn.
+- **Navigation.** An `a` element never navigates: the applier always prevents
+  activation and only delivers `click`. `submit` is always prevented as well.
+- **Edit counter (`seq`).** Each `input`, `textarea`, `select` and checkable `input`
+  has an edit counter that starts at **0** when the element is created. Only local
+  user edits increment it, by one per edit (each IME composition step, each toggle
+  of a checkbox or radio, each selection change); see **Increments seq** in the
+  event table. `change` records carry the current counter without incrementing
+  it. `set_value` and `set_checked` both follow the rule: the host applies them only
+  when their base equals the current counter, otherwise drops them as stale; an
+  equal value is a no-op that keeps the caret. A `select` takes its value through
+  `set_value` (an option's `value`).
+- **Attributes.** The [attribute table](#view-protocol-draft-v0-unstable) lists
+  the elements and value grammar of each attribute; any other element or value
+  invalidates the batch. Boolean attributes are true when present, with an empty
+  value; there is no `"false"` value (remove the attribute instead). `value` is an
+  attribute only of `option` and `progress`; the live value of `input`, `textarea`
+  and `select` exists only through `set_value`. `button` defaults to `submit`,
+  which only matters inside a `form`.
+- **URLs.** The applier never learns allowed origins or resource locations from
+  the guest. The embedder passes them at start: the **asset base** (where bundled
+  resources are served: a path inside the bundle in the browser, the shell's custom
+  protocol natively) and, from v1.1, the **allowed origins**, computed by the host
+  from the `net.request` grant patterns (scheme, host and port of each pattern) and
+  intersected with the host ceiling. In v0, `src` is a bundled resource path
+  (`[A-Za-z0-9._-]` segments separated by `/`, no `..`, no leading `/`) resolved
+  against the asset base, and `href` is an internal route: `#` + fragment, or `/` +
+  path with optional `?query` and `#fragment`, where the path does not start with a
+  second `/`, every character is an unreserved or sub-delimiter URL character, `:`,
+  `@`, `/` or a `%` followed by two hex digits, and nothing is whitespace, a control
+  character or `\`.
+- **Commands.** The [command table](#view-protocol-draft-v0-unstable) gives the
+  elements of each command; the argument must be 0 except for `scroll_to`, whose
+  argument is a finite nonnegative top offset. `scroll_to` on an element that does
+  not scroll is a no-op.
+- **Stylesheets.** Stylesheet ids are a **separate namespace** from node ids
+  (nonzero `u32`). `stylesheet` replaces that sheet's text; empty text removes the
+  sheet. The cascade orders sheets by ascending id, then rules by source order;
+  specificity is the number of classes and pseudo-classes in the selector; inline
+  `set_style` values win over every sheet; there is no `!important`.
+- **Pending events.** The pending-event queue belongs to the **host** (the
+  scheduler that runs turns: the Worker host in the browser, the shell natively),
+  not the applier, which forwards records at once. A coalescible record (see the
+  event table) replaces a pending record of the same kind for the same listener,
+  so a burst of edits or scrolls costs one turn. Coalescing makes **gaps in `seq`
+  normal**: the counter is a version, compared only for equality with the latest
+  value; the guest MUST NOT assume consecutive values. Overflow of the pending
+  limit by a non-coalescible record is fatal for the instance.
+
+**Stylesheet grammar.** Whitespace may separate any tokens; comments are not
+allowed.
+
+```text
+stylesheet     = { rule | media-block }
+media-block    = "@media" condition { "and" condition } "{" { rule } "}"
+condition      = "(" ( "prefers-color-scheme" ":" ( "light" | "dark" )
+                     | ( "min-width" | "max-width" ) ":" length ) ")"
+rule           = selector { "," selector } "{" [ declaration { ";" declaration } [ ";" ] ] "}"
+selector       = ":root" | class { class } { pseudo-class }
+class          = "." ident
+pseudo-class   = ":hover" | ":active" | ":focus-visible" | ":disabled" | ":checked"
+declaration    = property ":" value | "--" ident ":" custom-value
+ident          = [A-Za-z_] { [A-Za-z0-9_-] }
+custom-value   = one or more tokens of the property value grammar, without ";", "{", "}"
+```
+
+`:root` matches the root container (node 1) and is meant for custom properties. A
+`property` is a name of the CSS property table and its `value` follows that
+property's grammar; custom properties exist only in stylesheets in v0 (`set_style`
+has no custom-property code) and are referenced through `var()`. The following
+tokens and characters are forbidden anywhere in stylesheet text and in `set_style`
+values:
+
+<!-- generated:view-stylesheet-tokens:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Item | Values |
+| --- | --- |
+| Pseudo-classes | `:hover`, `:active`, `:focus-visible`, `:disabled`, `:checked` |
+| Media features | `prefers-color-scheme`, `min-width`, `max-width` |
+| Forbidden anywhere | `\`, `<`, `>`, `/*`, `@import`, `!important`, `url(`, `image-set(`, `expression(` |
+| Forbidden in `set_style` values | `;`, `{`, `}` |
+<!-- generated:view-stylesheet-tokens:end -->
+
+**CSS value types.** The per-property grammars below use these types:
+
+<!-- generated:view-css-values:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Type | Definition |
+| --- | --- |
+| `<number>` | `-`? digits [`.` digits], or `.` digits; no exponent |
+| `<integer>` | `-`? digits |
+| `<length>` | <number>`px` \| <number>`rem` \| `0` |
+| `<percentage>` | <number>`%` |
+| `<length-percentage>` | <length> \| <percentage> |
+| `<color>` | `#rgb` \| `#rrggbb` \| `#rrggbbaa` \| `rgb(` <integer>`,` <integer>`,` <integer> `)` \| `rgba(` <integer>`,` <integer>`,` <integer>`,` <number> `)` \| `transparent` \| `currentcolor` |
+| `<time>` | <number>`ms` \| <number>`s` |
+| `<track>` | <length-percentage> \| <number>`fr` \| `auto` \| `minmax(` <track>`,` <track> `)` \| `repeat(` <integer>`,` <track>+ `)` |
+| `<var>` | `var(--`name`)` or `var(--`name`,` fallback`)`, allowed wherever a whole component value is expected |
+<!-- generated:view-css-values:end -->
+
 <!-- generated:view-layout:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
 | Item | Value |
 | --- | --- |
@@ -1082,141 +1315,141 @@ followed by the `key` and `value` strings.
 **Attributes.**
 
 <!-- generated:view-attributes:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
-| Code | Name |
-| --- | --- |
-| 1 | `id` |
-| 2 | `type` |
-| 3 | `name` |
-| 4 | `value` |
-| 5 | `placeholder` |
-| 6 | `disabled` |
-| 7 | `readonly` |
-| 8 | `maxlength` |
-| 9 | `autofocus` |
-| 10 | `selected` |
-| 11 | `for` |
-| 12 | `href` |
-| 13 | `src` |
-| 14 | `alt` |
-| 15 | `tabindex` |
-| 16 | `max` |
-| 17 | `role` |
-| 18 | `aria-label` |
-| 19 | `aria-labelledby` |
-| 20 | `aria-describedby` |
-| 21 | `aria-live` |
-| 22 | `aria-expanded` |
-| 23 | `aria-selected` |
-| 24 | `aria-current` |
-| 25 | `aria-busy` |
-| 26 | `aria-invalid` |
-| 27 | `aria-hidden` |
+| Code | Attribute | Elements | Value |
+| --- | --- | --- | --- |
+| 1 | `id` | all | ident: `[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters |
+| 2 | `type` | `input`, `button` | input: `text` \| `password` \| `number` \| `search` \| `checkbox` \| `radio`; button: `button` \| `submit` (default `submit`) |
+| 3 | `name` | `input`, `select`, `textarea` | text |
+| 4 | `value` | `option`, `progress` | text |
+| 5 | `placeholder` | `input`, `textarea` | text |
+| 6 | `disabled` | `button`, `input`, `select`, `textarea`, `option` | boolean: present with an empty value; remove to make false |
+| 7 | `readonly` | `input`, `textarea` | boolean: present with an empty value; remove to make false |
+| 8 | `maxlength` | `input`, `textarea` | count: `0` or a positive integer without sign or leading zeros |
+| 9 | `autofocus` | `button`, `input`, `select`, `textarea` | boolean: present with an empty value; remove to make false |
+| 10 | `selected` | `option` | boolean: present with an empty value; remove to make false |
+| 11 | `for` | `label` | ident: `[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters |
+| 12 | `href` | `a` | internal route: `#fragment` or `/path[?query][#fragment]`, never `//` |
+| 13 | `src` | `img` | bundled resource path |
+| 14 | `alt` | `img` | text |
+| 15 | `tabindex` | all | `0` \| `-1` |
+| 16 | `max` | `progress` | finite nonnegative number |
+| 17 | `role` | all | `table` \| `row` \| `cell` \| `columnheader` \| `dialog` \| `alert` \| `status` \| `navigation` \| `list` \| `listitem` \| `tab` \| `tablist` \| `tabpanel` |
+| 18 | `aria-label` | all | text |
+| 19 | `aria-labelledby` | all | space-separated ident list |
+| 20 | `aria-describedby` | all | space-separated ident list |
+| 21 | `aria-live` | all | `off` \| `polite` \| `assertive` |
+| 22 | `aria-expanded` | all | `true` \| `false` |
+| 23 | `aria-selected` | all | `true` \| `false` |
+| 24 | `aria-current` | all | `page` \| `step` \| `location` \| `date` \| `time` \| `true` \| `false` |
+| 25 | `aria-busy` | all | `true` \| `false` |
+| 26 | `aria-invalid` | all | `true` \| `false` |
+| 27 | `aria-hidden` | all | `true` \| `false` |
 <!-- generated:view-attributes:end -->
 
 **CSS properties.**
 
 <!-- generated:view-css-properties:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
-| Code | Name |
-| --- | --- |
-| 1 | `display` |
-| 2 | `width` |
-| 3 | `height` |
-| 4 | `min-width` |
-| 5 | `min-height` |
-| 6 | `max-width` |
-| 7 | `max-height` |
-| 8 | `margin` |
-| 9 | `margin-top` |
-| 10 | `margin-right` |
-| 11 | `margin-bottom` |
-| 12 | `margin-left` |
-| 13 | `padding` |
-| 14 | `padding-top` |
-| 15 | `padding-right` |
-| 16 | `padding-bottom` |
-| 17 | `padding-left` |
-| 18 | `gap` |
-| 19 | `row-gap` |
-| 20 | `column-gap` |
-| 21 | `flex-direction` |
-| 22 | `flex-wrap` |
-| 23 | `justify-content` |
-| 24 | `align-items` |
-| 25 | `align-self` |
-| 26 | `flex-grow` |
-| 27 | `flex-shrink` |
-| 28 | `flex-basis` |
-| 29 | `grid-template-columns` |
-| 30 | `grid-template-rows` |
-| 31 | `grid-column` |
-| 32 | `grid-row` |
-| 33 | `position` |
-| 34 | `top` |
-| 35 | `right` |
-| 36 | `bottom` |
-| 37 | `left` |
-| 38 | `z-index` |
-| 39 | `overflow` |
-| 40 | `border` |
-| 41 | `border-width` |
-| 42 | `border-style` |
-| 43 | `border-color` |
-| 44 | `border-radius` |
-| 45 | `background-color` |
-| 46 | `color` |
-| 47 | `opacity` |
-| 48 | `outline` |
-| 49 | `outline-width` |
-| 50 | `outline-style` |
-| 51 | `outline-color` |
-| 52 | `outline-offset` |
-| 53 | `font-family` |
-| 54 | `font-size` |
-| 55 | `font-weight` |
-| 56 | `font-style` |
-| 57 | `line-height` |
-| 58 | `text-align` |
-| 59 | `text-decoration` |
-| 60 | `white-space` |
-| 61 | `text-overflow` |
-| 62 | `overflow-wrap` |
-| 63 | `cursor` |
-| 64 | `transform` |
-| 65 | `transition-property` |
-| 66 | `transition-duration` |
-| 67 | `transition-timing-function` |
-| 68 | `transition-delay` |
+| Code | Property | Values |
+| --- | --- | --- |
+| 1 | `display` | `block \| flex \| grid \| none \| inline` |
+| 2 | `width` | `auto \| <length-percentage>` |
+| 3 | `height` | `auto \| <length-percentage>` |
+| 4 | `min-width` | `auto \| <length-percentage>` |
+| 5 | `min-height` | `auto \| <length-percentage>` |
+| 6 | `max-width` | `none \| <length-percentage>` |
+| 7 | `max-height` | `none \| <length-percentage>` |
+| 8 | `margin` | `[auto \| <length-percentage>]{1,4}` |
+| 9 | `margin-top` | `auto \| <length-percentage>` |
+| 10 | `margin-right` | `auto \| <length-percentage>` |
+| 11 | `margin-bottom` | `auto \| <length-percentage>` |
+| 12 | `margin-left` | `auto \| <length-percentage>` |
+| 13 | `padding` | `<length-percentage>{1,4} (nonnegative)` |
+| 14 | `padding-top` | `<length-percentage> (nonnegative)` |
+| 15 | `padding-right` | `<length-percentage> (nonnegative)` |
+| 16 | `padding-bottom` | `<length-percentage> (nonnegative)` |
+| 17 | `padding-left` | `<length-percentage> (nonnegative)` |
+| 18 | `gap` | `<length-percentage>{1,2}` |
+| 19 | `row-gap` | `<length-percentage>` |
+| 20 | `column-gap` | `<length-percentage>` |
+| 21 | `flex-direction` | `row \| row-reverse \| column \| column-reverse` |
+| 22 | `flex-wrap` | `nowrap \| wrap \| wrap-reverse` |
+| 23 | `justify-content` | `start \| end \| flex-start \| flex-end \| center \| space-between \| space-around \| space-evenly` |
+| 24 | `align-items` | `stretch \| start \| end \| flex-start \| flex-end \| center \| baseline` |
+| 25 | `align-self` | `auto \| stretch \| start \| end \| flex-start \| flex-end \| center \| baseline` |
+| 26 | `flex-grow` | `<number> (nonnegative)` |
+| 27 | `flex-shrink` | `<number> (nonnegative)` |
+| 28 | `flex-basis` | `auto \| <length-percentage>` |
+| 29 | `grid-template-columns` | `none \| <track>+` |
+| 30 | `grid-template-rows` | `none \| <track>+` |
+| 31 | `grid-column` | `<line> [/ <line>]? where <line> = auto \| <integer> \| span <integer>` |
+| 32 | `grid-row` | `<line> [/ <line>]? where <line> = auto \| <integer> \| span <integer>` |
+| 33 | `position` | `static \| relative \| absolute \| fixed` |
+| 34 | `top` | `auto \| <length-percentage>` |
+| 35 | `right` | `auto \| <length-percentage>` |
+| 36 | `bottom` | `auto \| <length-percentage>` |
+| 37 | `left` | `auto \| <length-percentage>` |
+| 38 | `z-index` | `auto \| <integer>` |
+| 39 | `overflow` | `visible \| hidden \| auto` |
+| 40 | `border` | `none \| [<length> \|\| solid \|\| <color>]` |
+| 41 | `border-width` | `<length>` |
+| 42 | `border-style` | `none \| solid` |
+| 43 | `border-color` | `<color>` |
+| 44 | `border-radius` | `<length-percentage>{1,4}` |
+| 45 | `background-color` | `<color>` |
+| 46 | `color` | `<color>` |
+| 47 | `opacity` | `<number> (0 to 1)` |
+| 48 | `outline` | `none \| [<length> \|\| solid \|\| <color>]` |
+| 49 | `outline-width` | `<length>` |
+| 50 | `outline-style` | `none \| solid` |
+| 51 | `outline-color` | `<color>` |
+| 52 | `outline-offset` | `<length>` |
+| 53 | `font-family` | `[<string> \| <ident> \| sans-serif \| serif \| monospace \| system-ui]# (artifact or generic families)` |
+| 54 | `font-size` | `<length-percentage>` |
+| 55 | `font-weight` | `normal \| bold \| 400 \| 500 \| 600 \| 700` |
+| 56 | `font-style` | `normal \| italic` |
+| 57 | `line-height` | `normal \| <number> \| <length-percentage>` |
+| 58 | `text-align` | `left \| center \| right` |
+| 59 | `text-decoration` | `none \| underline` |
+| 60 | `white-space` | `normal \| nowrap \| pre-wrap` |
+| 61 | `text-overflow` | `clip \| ellipsis` |
+| 62 | `overflow-wrap` | `normal \| anywhere` |
+| 63 | `cursor` | `default \| pointer \| text \| not-allowed` |
+| 64 | `transform` | `none \| [translate(<length-percentage>[, <length-percentage>]) \| translateX(<length-percentage>) \| translateY(<length-percentage>) \| scale(<number>[, <number>])]+` |
+| 65 | `transition-property` | `none \| all \| [opacity \| color \| background-color \| transform]#` |
+| 66 | `transition-duration` | `<time>#` |
+| 67 | `transition-timing-function` | `[linear \| ease \| ease-in \| ease-out \| ease-in-out]#` |
+| 68 | `transition-delay` | `<time>#` |
 <!-- generated:view-css-properties:end -->
 
 **Events.**
 
 <!-- generated:view-events:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
-| Code | Name |
-| --- | --- |
-| 1 | `click` |
-| 2 | `input` |
-| 3 | `change` |
-| 4 | `submit` |
-| 5 | `keydown` |
-| 6 | `focusin` |
-| 7 | `focusout` |
-| 8 | `scroll` |
-| 9 | `cancel` |
-| 10 | `close` |
+| Code | Event | Coalescible | Increments seq |
+| --- | --- | --- | --- |
+| 1 | `click` | — | — |
+| 2 | `input` | yes | yes |
+| 3 | `change` | — | — |
+| 4 | `submit` | — | — |
+| 5 | `keydown` | — | — |
+| 6 | `focusin` | — | — |
+| 7 | `focusout` | — | — |
+| 8 | `scroll` | yes | — |
+| 9 | `cancel` | — | — |
+| 10 | `close` | — | — |
 <!-- generated:view-events:end -->
 
 **Commands.**
 
 <!-- generated:view-commands:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
-| Code | Name |
-| --- | --- |
-| 1 | `focus` |
-| 2 | `blur` |
-| 3 | `select` |
-| 4 | `scroll_into_view` |
-| 5 | `scroll_to` |
-| 6 | `show_modal` |
-| 7 | `close` |
+| Code | Command | Elements | Argument |
+| --- | --- | --- | --- |
+| 1 | `focus` | focusable elements | must be 0 |
+| 2 | `blur` | focusable elements | must be 0 |
+| 3 | `select` | `input`, `textarea` | must be 0 |
+| 4 | `scroll_into_view` | all | must be 0 |
+| 5 | `scroll_to` | all | finite nonnegative top offset (CSS px) |
+| 6 | `show_modal` | `dialog` | must be 0 |
+| 7 | `close` | `dialog` | must be 0 |
 <!-- generated:view-commands:end -->
 
 ## Entry-point limits
@@ -1235,6 +1468,10 @@ followed by the `key` and `value` strings.
 | HTTP headers / header bytes / target bytes / body bytes | 32 / 4096 / 1024 / 8192 | `http::MAX_*` |
 | HTTP header / connection timeout | 2 s / 10 s | `http::HEADER_SECONDS`, `http::CONNECTION_SECONDS` |
 | Live continuation frames | 64 | `frame::MAX_LIVE_FRAMES` |
+| Catalog types / bindings | 672 / 672 | `function::MAX_CAPTURE_TYPES` |
+| Catalog function signature index bound (exclusive) | 128 | `function::MAX_TYPES` |
+| Catalog captures per function | 32 | `function::MAX_CAPTURES` |
+| Frame slots per layout / suspension states per layout | 256 / 256 | `frame::MAX_FRAME_BINDINGS`, `frame::MAX_SUSPENSION_STATES` |
 <!-- generated:embedding-entry-limits:end -->
 
 ## Security obligations
@@ -1287,7 +1524,8 @@ accepts that the format may change in a later profile:
 - HTTP service v1 for third-party hosts;
 - diagnostic and log text, and the order of validation failures;
 - the [view protocol draft v0](#view-protocol-draft-v0-unstable) and every other
-  planned interface: long-lived instances, host-to-guest events, timers, async I/O
+  planned interface: long-lived instances, host-to-guest events, timers outside
+  one execution's event loop (the [v36 timers](#timers) are specified), async I/O
   and browser capability mappings.
 
 Tool invocation ABI v1, the status codes, the string handle and host-buffer rules
@@ -1305,3 +1543,5 @@ Not normative yet; each needs its own change to the engine, CLI or contract.
 | Runtime companion failure envelope | No `diagnostics` member | Same envelope as the development CLI, with `"diagnostics":[]` | `varta-launcher` JSON error output and its tests |
 | `varta.functions` structure | Normative minimum here; full rules only in code | Publish the full catalog schema and structural rules in this document, generated from the registry | Documentation and a drift test only |
 | Approximated Math results | Platform `f64` library, last bits host-dependent | Bit-identical results on every host by linking one pure-Rust implementation into the guest (the accepted thin-host decision) | A new profile whose Math imports are guest code |
+| Denial targets | Runtime constants (`clock`, `process`, otherwise the guest input), documented by hand | Move each operation's denial target into the `HostOperation` registry so the target table is generated | `varta-common` registry data read by the runtime handlers; no observable change |
+| Denied `timer_start` | Fatal for the execution | Keep it fatal, or reject the timer's promise so the guest can recover; needs a decision | Runtime scheduler and the timer prelude, in a new profile if changed |

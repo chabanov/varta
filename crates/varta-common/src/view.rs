@@ -504,6 +504,356 @@ pub const EVENT_HEADER_BYTES: usize = 48;
 /// Strings following the event header, in wire order.
 pub const EVENT_STRINGS: &[&str] = &["key", "value"];
 
+/// The elements an attribute or command applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tags {
+    /// Every element of the subset.
+    All,
+    /// Elements that take focus: `button`, `input`, `select`, `textarea`, `a`
+    /// and any element with a `tabindex`.
+    Focusable,
+    Only(&'static [Tag]),
+}
+
+/// `type` values of `input` in the subset.
+pub const INPUT_TYPES: &[&str] = &["text", "password", "number", "search", "checkbox", "radio"];
+/// `type` values of `button`; the default is `submit`, which matters only inside a `form`.
+pub const BUTTON_TYPES: &[&str] = &["button", "submit"];
+/// Values of the `role` attribute in the subset.
+pub const ROLES: &[&str] = &[
+    "table",
+    "row",
+    "cell",
+    "columnheader",
+    "dialog",
+    "alert",
+    "status",
+    "navigation",
+    "list",
+    "listitem",
+    "tab",
+    "tablist",
+    "tabpanel",
+];
+
+/// The value grammar of an attribute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttributeValue {
+    /// `[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters, unique in the tree.
+    Ident,
+    /// Space-separated `Ident` references.
+    IdentList,
+    /// Any well-formed text.
+    Text,
+    /// Present means true; the value must be empty. `remove_attribute` means false.
+    Boolean,
+    /// `0` or a positive decimal integer without sign or leading zeros.
+    Count,
+    /// A finite nonnegative decimal number.
+    Number,
+    /// One of the listed keywords, exactly.
+    Keywords(&'static [&'static str]),
+    /// `input`: [`INPUT_TYPES`]; `button`: [`BUTTON_TYPES`].
+    ElementType,
+    /// Internal route: `#fragment`, or `/path` (not `//`) with optional `?query`
+    /// and `#fragment`; never a scheme or authority.
+    InternalHref,
+    /// A path of a bundled artifact resource, resolved against the asset base.
+    Resource,
+}
+impl AttributeValue {
+    #[must_use]
+    pub fn describe(self) -> String {
+        match self {
+            Self::Ident => "ident: `[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters".into(),
+            Self::IdentList => "space-separated ident list".into(),
+            Self::Text => "text".into(),
+            Self::Boolean => "boolean: present with an empty value; remove to make false".into(),
+            Self::Count => "count: `0` or a positive integer without sign or leading zeros".into(),
+            Self::Number => "finite nonnegative number".into(),
+            Self::Keywords(words) => words
+                .iter()
+                .map(|word| format!("`{word}`"))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            Self::ElementType => format!(
+                "input: {}; button: {} (default `submit`)",
+                INPUT_TYPES
+                    .iter()
+                    .map(|word| format!("`{word}`"))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                BUTTON_TYPES
+                    .iter()
+                    .map(|word| format!("`{word}`"))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
+            Self::InternalHref => {
+                "internal route: `#fragment` or `/path[?query][#fragment]`, never `//`".into()
+            }
+            Self::Resource => "bundled resource path".into(),
+        }
+    }
+}
+
+const BOOLEAN_STATE: &[&str] = &["true", "false"];
+const LIVE_REGIONS: &[&str] = &["off", "polite", "assertive"];
+const CURRENT: &[&str] = &["page", "step", "location", "date", "time", "true", "false"];
+const TABINDEX: &[&str] = &["0", "-1"];
+
+impl Attribute {
+    /// Elements that may carry the attribute; any other element invalidates the batch.
+    #[must_use]
+    pub fn tags(self) -> Tags {
+        use Tag as T;
+        match self {
+            Self::Id
+            | Self::Tabindex
+            | Self::Role
+            | Self::AriaLabel
+            | Self::AriaLabelledby
+            | Self::AriaDescribedby
+            | Self::AriaLive
+            | Self::AriaExpanded
+            | Self::AriaSelected
+            | Self::AriaCurrent
+            | Self::AriaBusy
+            | Self::AriaInvalid
+            | Self::AriaHidden => Tags::All,
+            Self::Type => Tags::Only(&[T::Input, T::Button]),
+            Self::Name => Tags::Only(&[T::Input, T::Select, T::Textarea]),
+            Self::Value => Tags::Only(&[T::Option, T::Progress]),
+            Self::Placeholder | Self::Readonly | Self::Maxlength => {
+                Tags::Only(&[T::Input, T::Textarea])
+            }
+            Self::Disabled => Tags::Only(&[T::Button, T::Input, T::Select, T::Textarea, T::Option]),
+            Self::Autofocus => Tags::Only(&[T::Button, T::Input, T::Select, T::Textarea]),
+            Self::Selected => Tags::Only(&[T::Option]),
+            Self::For => Tags::Only(&[T::Label]),
+            Self::Href => Tags::Only(&[T::A]),
+            Self::Src | Self::Alt => Tags::Only(&[T::Img]),
+            Self::Max => Tags::Only(&[T::Progress]),
+        }
+    }
+    #[must_use]
+    pub fn value(self) -> AttributeValue {
+        use AttributeValue as V;
+        match self {
+            Self::Id | Self::For => V::Ident,
+            Self::AriaLabelledby | Self::AriaDescribedby => V::IdentList,
+            Self::Type => V::ElementType,
+            Self::Name | Self::Placeholder | Self::Alt | Self::AriaLabel | Self::Value => V::Text,
+            Self::Disabled | Self::Readonly | Self::Autofocus | Self::Selected => V::Boolean,
+            Self::Maxlength => V::Count,
+            Self::Max => V::Number,
+            Self::Href => V::InternalHref,
+            Self::Src => V::Resource,
+            Self::Tabindex => V::Keywords(TABINDEX),
+            Self::Role => V::Keywords(ROLES),
+            Self::AriaLive => V::Keywords(LIVE_REGIONS),
+            Self::AriaCurrent => V::Keywords(CURRENT),
+            Self::AriaExpanded
+            | Self::AriaSelected
+            | Self::AriaBusy
+            | Self::AriaInvalid
+            | Self::AriaHidden => V::Keywords(BOOLEAN_STATE),
+        }
+    }
+}
+
+impl Command {
+    #[must_use]
+    pub fn tags(self) -> Tags {
+        match self {
+            Self::Focus | Self::Blur => Tags::Focusable,
+            Self::Select => Tags::Only(&[Tag::Input, Tag::Textarea]),
+            Self::ScrollIntoView | Self::ScrollTo => Tags::All,
+            Self::ShowModal | Self::Close => Tags::Only(&[Tag::Dialog]),
+        }
+    }
+    /// Only `scroll_to` takes its argument (a finite nonnegative top offset in
+    /// CSS pixels); every other command requires the argument 0.
+    #[must_use]
+    pub fn takes_argument(self) -> bool {
+        self == Self::ScrollTo
+    }
+}
+
+impl EventKind {
+    /// Pending records of a coalescible kind are replaced by a newer record for
+    /// the same listener; other kinds are never merged.
+    #[must_use]
+    pub fn coalescible(self) -> bool {
+        matches!(self, Self::Input | Self::Scroll)
+    }
+    /// Whether the event increments the target field's edit counter.
+    #[must_use]
+    pub fn edits(self) -> bool {
+        self == Self::Input
+    }
+}
+
+/// Primitive CSS value types used by [`CssProperty::grammar`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CssValue {
+    Number,
+    Integer,
+    Length,
+    Percentage,
+    LengthPercentage,
+    Color,
+    Time,
+    Track,
+    Var,
+}
+impl CssValue {
+    pub const ALL: &[Self] = &[
+        Self::Number,
+        Self::Integer,
+        Self::Length,
+        Self::Percentage,
+        Self::LengthPercentage,
+        Self::Color,
+        Self::Time,
+        Self::Track,
+        Self::Var,
+    ];
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Number => "<number>",
+            Self::Integer => "<integer>",
+            Self::Length => "<length>",
+            Self::Percentage => "<percentage>",
+            Self::LengthPercentage => "<length-percentage>",
+            Self::Color => "<color>",
+            Self::Time => "<time>",
+            Self::Track => "<track>",
+            Self::Var => "<var>",
+        }
+    }
+    #[must_use]
+    pub fn definition(self) -> &'static str {
+        match self {
+            Self::Number => "`-`? digits [`.` digits], or `.` digits; no exponent",
+            Self::Integer => "`-`? digits",
+            Self::Length => "<number>`px` | <number>`rem` | `0`",
+            Self::Percentage => "<number>`%`",
+            Self::LengthPercentage => "<length> | <percentage>",
+            Self::Color => {
+                "`#rgb` | `#rrggbb` | `#rrggbbaa` | `rgb(` <integer>`,` <integer>`,` <integer> `)` | `rgba(` <integer>`,` <integer>`,` <integer>`,` <number> `)` | `transparent` | `currentcolor`"
+            }
+            Self::Time => "<number>`ms` | <number>`s`",
+            Self::Track => {
+                "<length-percentage> | <number>`fr` | `auto` | `minmax(` <track>`,` <track> `)` | `repeat(` <integer>`,` <track>+ `)`"
+            }
+            Self::Var => {
+                "`var(--`name`)` or `var(--`name`,` fallback`)`, allowed wherever a whole component value is expected"
+            }
+        }
+    }
+}
+
+impl CssProperty {
+    /// Value definition in CSS value-definition syntax over [`CssValue`] types.
+    /// `a | b` is a choice, `a{1,4}` repetition, `a || b` any order, `a#` a comma list.
+    #[must_use]
+    pub fn grammar(self) -> &'static str {
+        match self {
+            Self::Display => "block | flex | grid | none | inline",
+            Self::Width | Self::Height | Self::MinWidth | Self::MinHeight => {
+                "auto | <length-percentage>"
+            }
+            Self::MaxWidth | Self::MaxHeight => "none | <length-percentage>",
+            Self::Margin => "[auto | <length-percentage>]{1,4}",
+            Self::MarginTop | Self::MarginRight | Self::MarginBottom | Self::MarginLeft => {
+                "auto | <length-percentage>"
+            }
+            Self::Padding => "<length-percentage>{1,4} (nonnegative)",
+            Self::PaddingTop | Self::PaddingRight | Self::PaddingBottom | Self::PaddingLeft => {
+                "<length-percentage> (nonnegative)"
+            }
+            Self::Gap => "<length-percentage>{1,2}",
+            Self::RowGap | Self::ColumnGap => "<length-percentage>",
+            Self::FlexDirection => "row | row-reverse | column | column-reverse",
+            Self::FlexWrap => "nowrap | wrap | wrap-reverse",
+            Self::JustifyContent => {
+                "start | end | flex-start | flex-end | center | space-between | space-around | space-evenly"
+            }
+            Self::AlignItems => "stretch | start | end | flex-start | flex-end | center | baseline",
+            Self::AlignSelf => {
+                "auto | stretch | start | end | flex-start | flex-end | center | baseline"
+            }
+            Self::FlexGrow | Self::FlexShrink => "<number> (nonnegative)",
+            Self::FlexBasis => "auto | <length-percentage>",
+            Self::GridTemplateColumns | Self::GridTemplateRows => "none | <track>+",
+            Self::GridColumn | Self::GridRow => {
+                "<line> [/ <line>]? where <line> = auto | <integer> | span <integer>"
+            }
+            Self::Position => "static | relative | absolute | fixed",
+            Self::Top | Self::Right | Self::Bottom | Self::Left => "auto | <length-percentage>",
+            Self::ZIndex => "auto | <integer>",
+            Self::Overflow => "visible | hidden | auto",
+            Self::Border | Self::Outline => "none | [<length> || solid || <color>]",
+            Self::BorderWidth | Self::OutlineWidth | Self::OutlineOffset => "<length>",
+            Self::BorderStyle | Self::OutlineStyle => "none | solid",
+            Self::BorderColor | Self::OutlineColor | Self::BackgroundColor | Self::Color => {
+                "<color>"
+            }
+            Self::BorderRadius => "<length-percentage>{1,4}",
+            Self::Opacity => "<number> (0 to 1)",
+            Self::FontFamily => {
+                "[<string> | <ident> | sans-serif | serif | monospace | system-ui]# (artifact or generic families)"
+            }
+            Self::FontSize => "<length-percentage>",
+            Self::FontWeight => "normal | bold | 400 | 500 | 600 | 700",
+            Self::FontStyle => "normal | italic",
+            Self::LineHeight => "normal | <number> | <length-percentage>",
+            Self::TextAlign => "left | center | right",
+            Self::TextDecoration => "none | underline",
+            Self::WhiteSpace => "normal | nowrap | pre-wrap",
+            Self::TextOverflow => "clip | ellipsis",
+            Self::OverflowWrap => "normal | anywhere",
+            Self::Cursor => "default | pointer | text | not-allowed",
+            Self::Transform => {
+                "none | [translate(<length-percentage>[, <length-percentage>]) | translateX(<length-percentage>) | translateY(<length-percentage>) | scale(<number>[, <number>])]+"
+            }
+            Self::TransitionProperty => {
+                "none | all | [opacity | color | background-color | transform]#"
+            }
+            Self::TransitionDuration | Self::TransitionDelay => "<time>#",
+            Self::TransitionTimingFunction => "[linear | ease | ease-in | ease-out | ease-in-out]#",
+        }
+    }
+}
+
+/// Pseudo-classes a stylesheet selector may use.
+pub const PSEUDO_CLASSES: &[&str] = &[
+    ":hover",
+    ":active",
+    ":focus-visible",
+    ":disabled",
+    ":checked",
+];
+/// Media features of `@media` conditions.
+pub const MEDIA_FEATURES: &[&str] = &["prefers-color-scheme", "min-width", "max-width"];
+/// Text that invalidates a stylesheet or a `set_style` value wherever it occurs
+/// (ASCII case-insensitive), besides any function the grammar does not name.
+pub const FORBIDDEN_CSS: &[&str] = &[
+    "\\",
+    "<",
+    ">",
+    "/*",
+    "@import",
+    "!important",
+    "url(",
+    "image-set(",
+    "expression(",
+];
+/// Characters that are structural in stylesheets and invalid in `set_style` values.
+pub const FORBIDDEN_STYLE_VALUE: &[&str] = &[";", "{", "}"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,5 +949,54 @@ mod tests {
             );
         }
         assert_eq!(ROOT_NODE, NO_NODE + 1);
+    }
+
+    #[test]
+    fn attribute_and_command_rules_name_subset_elements() {
+        for &attribute in Attribute::ALL {
+            if let Tags::Only(tags) = attribute.tags() {
+                assert!(!tags.is_empty(), "{}", attribute.name());
+            }
+            if let AttributeValue::Keywords(words) = attribute.value() {
+                assert!(!words.is_empty(), "{}", attribute.name());
+                unique_names(words.iter().copied());
+            }
+            assert!(!attribute.value().describe().is_empty());
+        }
+        unique_names(ROLES.iter().copied());
+        unique_names(INPUT_TYPES.iter().copied());
+        assert_eq!(
+            Command::ALL
+                .iter()
+                .filter(|command| command.takes_argument())
+                .count(),
+            1
+        );
+        assert_eq!(Command::ShowModal.tags(), Tags::Only(&[Tag::Dialog]));
+    }
+
+    #[test]
+    fn css_grammars_and_value_types_are_defined() {
+        for &property in CssProperty::ALL {
+            assert!(!property.grammar().is_empty(), "{}", property.name());
+        }
+        unique_names(CssValue::ALL.iter().map(|value| value.name()));
+        for &value in CssValue::ALL {
+            assert!(!value.definition().is_empty());
+        }
+        for forbidden in FORBIDDEN_CSS.iter().chain(FORBIDDEN_STYLE_VALUE) {
+            assert!(!forbidden.is_empty());
+        }
+    }
+
+    #[test]
+    fn only_input_edits_and_only_input_and_scroll_coalesce() {
+        for &kind in EventKind::ALL {
+            assert_eq!(kind.edits(), kind == EventKind::Input);
+            assert_eq!(
+                kind.coalescible(),
+                matches!(kind, EventKind::Input | EventKind::Scroll)
+            );
+        }
     }
 }
