@@ -24,12 +24,17 @@ pub(super) struct Interface {
     name: String,
     source: Source,
     parts: Vec<Part>,
+    /// Type parameters of a generic (v32 `generics()`) interface. A generic
+    /// interface has exactly one declaration.
+    params: Option<Box<ast::TsTypeParamDecl>>,
 }
 
 /// Interfaces of one module by name.
 pub(super) type Merged = BTreeMap<String, Interface>;
 
-/// Add one (non-generic) interface declaration of the module to `merged`.
+/// Add one interface declaration of the module to `merged`. Declaration
+/// merging of generic interfaces is rejected: TypeScript requires identical
+/// type parameter lists, which this subset does not compare.
 pub(super) fn collect(
     merged: &mut Merged,
     interface: &ast::TsInterfaceDecl,
@@ -47,7 +52,14 @@ pub(super) fn collect(
         name: name.clone(),
         source: source.clone(),
         parts: Vec::new(),
+        params: interface.type_params.clone(),
     });
+    if !entry.parts.is_empty() && (entry.params.is_some() || interface.type_params.is_some()) {
+        return Err(source.locate(
+            unsupported(&format!("declaration merging of generic interface {name}")),
+            interface.id.span,
+        ));
+    }
     if entry.parts.iter().any(|p| p.exported != exported) {
         return Err(source.locate(
             invalid(format!(
@@ -67,6 +79,26 @@ impl Interface {
     pub(super) fn source(&self) -> &Source {
         &self.source
     }
+    pub(super) fn params(&self) -> Option<&ast::TsTypeParamDecl> {
+        self.params.as_deref()
+    }
+    /// Type parameters, the type literal of the own members and each base
+    /// reference (`A<T>`), used to infer generic call arguments through a
+    /// generic interface with bases.
+    pub(super) fn generic_patterns(&self) -> Option<(Box<ast::TsTypeParamDecl>, Vec<ast::TsType>)> {
+        let params = self.params.clone()?;
+        let members = self.parts.iter().flat_map(|p| p.members.clone()).collect();
+        let mut patterns = vec![ast::TsType::TsTypeLit(ast::TsTypeLit {
+            span: self.span(),
+            members,
+        })];
+        for base in self.parts.iter().flat_map(|p| &p.extends) {
+            if let ast::Expr::Ident(id) = &*base.expr {
+                patterns.push(base_reference(base, id));
+            }
+        }
+        Some((params, patterns))
+    }
     /// A single declaration without `extends` keeps the v31 representation: a
     /// type literal resolved by the ordinary annotation rules.
     pub(super) fn plain(&self) -> Option<ast::TsType> {
@@ -79,7 +111,9 @@ impl Interface {
         }
     }
 
-    /// The combined closed record type. Runs in the declaring module.
+    /// The combined closed record type. Runs in the declaring module, with the
+    /// type parameters of a generic interface bound in the current frame, so
+    /// own members and base arguments (`extends A<T>`) see them.
     pub(super) fn resolve(&self, types: &mut ir::ValueTypes) -> Result<Type> {
         let own = self.own_fields(types)?;
         let mut inherited: Vec<(RecordField, String)> = Vec::new();
@@ -163,11 +197,7 @@ impl Interface {
             ));
         };
         // Resolve `A<…>` exactly like the annotation `A<…>` would be.
-        let reference = ast::TsType::TsTypeRef(ast::TsTypeRef {
-            span: base.span,
-            type_name: ast::TsEntityName::Ident(id.clone()),
-            type_params: base.type_args.clone(),
-        });
+        let reference = base_reference(base, id);
         let name = id.sym.to_string();
         match keyword_type(&reference, types)? {
             Type::Record(record) => Ok((name, types.records[record as usize].fields.clone())),
@@ -206,6 +236,15 @@ impl Interface {
         }
         Ok(())
     }
+}
+
+/// The annotation `A<…>` equivalent to the `extends A<…>` entry `base`.
+fn base_reference(base: &ast::TsExprWithTypeArgs, id: &ast::Ident) -> ast::TsType {
+    ast::TsType::TsTypeRef(ast::TsTypeRef {
+        span: base.span,
+        type_name: ast::TsEntityName::Ident(id.clone()),
+        type_params: base.type_args.clone(),
+    })
 }
 
 #[cfg(test)]

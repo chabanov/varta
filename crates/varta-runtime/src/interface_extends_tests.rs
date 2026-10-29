@@ -161,8 +161,9 @@ fn interface_extends_rejects_incompatible_and_unsupported_bases() {
             "type reference Missing",
         ),
         (
+            // Generic bases follow the v32 generics rules after integration.
             "interface G{v:number}interface A extends G<number>{}function f(a:A):void{}",
-            "generic type reference",
+            "type G is not generic and takes no type arguments",
         ),
         (
             "interface Resources{a:number}interface Client extends Resources{}class Client{}",

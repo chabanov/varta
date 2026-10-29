@@ -169,6 +169,7 @@ pub(crate) struct ValueTypes {
     pub literals: crate::lower::literals::LiteralTypes,
     pub named: crate::lower::named::NamedTypes,
     pub classes: crate::lower::classes::Classes,
+    pub generics: crate::lower::generics::Generics,
 }
 impl ValueTypes {
     pub fn value_version(&self) -> u32 {

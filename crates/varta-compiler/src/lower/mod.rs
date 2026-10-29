@@ -104,6 +104,11 @@ fn annotation(ann: Option<&ast::TsTypeAnn>, types: &mut ir::ValueTypes) -> Resul
     Ok(Some(keyword_type(&ann.type_ann, types)?))
 }
 fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
+    if types.profile.generics()
+        && let Some(ty) = generics::parameter(ty, types)
+    {
+        return Ok(ty);
+    }
     if types.profile.named_types()
         && let ast::TsType::TsTypeRef(reference) = ty
         && reference.type_params.is_none()
@@ -176,9 +181,17 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
         && let ast::TsEntityName::Ident(id) = &reference.type_name
     {
         if reference.type_params.is_some() {
+            if types.profile.generics() {
+                return type_operators::reference(reference, types);
+            }
             return Err(unsupported("generic type reference"));
         }
         return named::resolve(id.sym.as_ref(), types);
+    }
+    if types.profile.generics()
+        && let Some(ty) = type_operators::operator(ty, types)?
+    {
+        return Ok(ty);
     }
     let ast::TsType::TsKeywordType(keyword) = ty else {
         return Err(unsupported("type annotation"));
@@ -267,6 +280,8 @@ mod flow_parameters;
 mod for_of;
 mod function_expressions;
 mod functions;
+mod generic_calls;
+pub(crate) mod generics;
 mod guest_logical;
 mod http;
 mod interfaces;
@@ -313,6 +328,7 @@ mod string_enumeration;
 mod strings;
 mod templates;
 mod tools;
+mod type_operators;
 mod undefined;
 mod unions;
 mod updates;

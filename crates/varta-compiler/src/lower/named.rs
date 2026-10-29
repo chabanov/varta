@@ -11,6 +11,8 @@ enum Declaration {
         ty: Box<ast::TsType>,
         source: Source,
         span: swc_common::Span,
+        /// Type parameters of a v32 generic declaration.
+        params: Option<Box<ast::TsTypeParamDecl>>,
     },
     Imported(Key),
     /// A v32 class: its instance type is nominal and needs no lazy resolution.
@@ -25,7 +27,8 @@ pub(crate) struct NamedTypes {
     /// Index of the module whose annotations are being lowered.
     current: usize,
     declarations: BTreeMap<Key, Declaration>,
-    resolved: BTreeMap<Key, Type>,
+    /// Resolved declarations by type arguments (empty for non-generic ones).
+    resolved: BTreeMap<(Key, Vec<Type>), Type>,
     resolving: Vec<Key>,
 }
 
@@ -74,10 +77,10 @@ pub(super) fn link_module(
             ast::ModuleItem::ModuleDecl(ast::ModuleDecl::ExportDecl(export)) => &export.decl,
             _ => continue,
         };
-        let (name, span, ty) =
+        let (name, span, ty, params) =
             match declaration {
                 ast::Decl::TsInterface(interface) => {
-                    if interface.type_params.is_some() {
+                    if interface.type_params.is_some() && !types.profile.generics() {
                         return Err(source
                             .locate(unsupported("generic type declaration"), interface.id.span));
                     }
@@ -94,15 +97,25 @@ pub(super) fn link_module(
                         span: interface.body.span,
                         members: interface.body.body.clone(),
                     });
-                    (&interface.id, interface.span, literal)
+                    (
+                        &interface.id,
+                        interface.span,
+                        literal,
+                        interface.type_params.clone(),
+                    )
                 }
                 ast::Decl::TsTypeAlias(alias) => {
-                    if alias.type_params.is_some() {
+                    if alias.type_params.is_some() && !types.profile.generics() {
                         return Err(
                             source.locate(unsupported("generic type declaration"), alias.id.span)
                         );
                     }
-                    (&alias.id, alias.span, (*alias.type_ann).clone())
+                    (
+                        &alias.id,
+                        alias.span,
+                        (*alias.type_ann).clone(),
+                        alias.type_params.clone(),
+                    )
                 }
                 _ => continue,
             };
@@ -110,6 +123,7 @@ pub(super) fn link_module(
             ty: Box::new(ty),
             source: source.clone(),
             span,
+            params,
         };
         if types
             .named
@@ -176,6 +190,7 @@ fn declare_interface(
             ty: Box::new(ty),
             source: source.clone(),
             span,
+            params: interface.params().cloned().map(Box::new),
         },
         None => Declaration::Interface(Box::new(interface)),
     };
@@ -268,26 +283,83 @@ pub(super) fn class(types: &ir::ValueTypes, name: &str) -> Option<u32> {
     }
 }
 
-/// Resolve a non-generic named reference in the current module.
+/// The defining module, type parameters and body patterns of the generic
+/// declaration `name` visible in the current module (v32 inference through
+/// named types). An interface with bases yields its own members and each base
+/// reference; inferred arguments are checked against the instantiated type.
+pub(super) fn generic_declaration(
+    types: &ir::ValueTypes,
+    name: &str,
+) -> Option<(usize, Box<ast::TsTypeParamDecl>, Vec<ast::TsType>)> {
+    let mut key = (types.named.current, name.to_owned());
+    while let Some(Declaration::Imported(target)) = types.named.declarations.get(&key) {
+        key = target.clone();
+    }
+    match types.named.declarations.get(&key)? {
+        Declaration::Local {
+            ty,
+            params: Some(params),
+            ..
+        } => Some((key.0, params.clone(), vec![(**ty).clone()])),
+        Declaration::Interface(interface) => interface
+            .generic_patterns()
+            .map(|(params, bodies)| (key.0, params, bodies)),
+        _ => None,
+    }
+}
+
+/// Resolve a named reference without type arguments in the current module.
 pub(super) fn resolve(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
+    instantiate(name, None, types)
+}
+
+/// Resolve a named reference in the current module; v32 type arguments are
+/// lowered here, in the referencing module, and bound in the defining one.
+pub(super) fn instantiate(
+    name: &str,
+    args: Option<&ast::TsTypeParamInstantiation>,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
     let mut key = (types.named.current, name.to_owned());
     // Follow import bindings to the defining declaration; exports point at
     // already-linked modules, so the chain is acyclic and finite.
     while let Some(Declaration::Imported(target)) = types.named.declarations.get(&key) {
         key = target.clone();
     }
-    if let Some(ty) = types.named.resolved.get(&key) {
-        return Ok(*ty);
-    }
     if let Some(Declaration::Class(id)) = types.named.declarations.get(&key) {
+        if args.is_some() {
+            return Err(unsupported("generic class type reference"));
+        }
         return Ok(Type::Class(*id));
     }
     let declaration = types.named.declarations.get(&key).cloned();
-    let (source, span) = match &declaration {
-        Some(Declaration::Local { source, span, .. }) => (source.clone(), *span),
-        Some(Declaration::Interface(interface)) => (interface.source().clone(), interface.span()),
+    let (source, span, params) = match &declaration {
+        Some(Declaration::Local {
+            source,
+            span,
+            params,
+            ..
+        }) => (source.clone(), *span, params.as_deref().cloned()),
+        Some(Declaration::Interface(interface)) => (
+            interface.source().clone(),
+            interface.span(),
+            interface.params().cloned(),
+        ),
         _ => return Err(unsupported(&format!("type reference {name}"))),
     };
+    if args.is_some() && params.is_none() {
+        return Err(type_error(format!(
+            "type {name} is not generic and takes no type arguments"
+        )));
+    }
+    let arguments = match args {
+        Some(args) => generics::arguments(args, types)?,
+        None => Vec::new(),
+    };
+    let memo = (key.clone(), arguments);
+    if let Some(ty) = types.named.resolved.get(&memo) {
+        return Ok(*ty);
+    }
     if types.named.resolving.contains(&key) {
         return Err(source.locate(unsupported("recursive type declaration"), span));
     }
@@ -295,14 +367,57 @@ pub(super) fn resolve(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
     types.named.resolving.push(key.clone());
     types.named.current = key.0;
     let result = match &declaration {
-        Some(Declaration::Interface(interface)) => interface.resolve(types),
-        Some(Declaration::Local { ty, .. }) => keyword_type(ty, types),
+        Some(Declaration::Interface(interface)) => {
+            resolve_parameters((params.as_ref(), &memo.1), name, &source, types).and_then(|frame| {
+                generics::with_frame(types, frame, |t| interface.resolve(t))
+                    .map_err(|e| source.locate(e, span))
+            })
+        }
+        Some(Declaration::Local { ty, .. }) => {
+            resolve_local((params.as_ref(), &memo.1), name, ty, (&source, span), types)
+        }
         _ => Err(unsupported(&format!("type reference {name}"))),
-    }
-    .map_err(|e| source.locate(e, span));
+    };
     types.named.current = caller;
     types.named.resolving.pop();
     let ty = result?;
-    types.named.resolved.insert(key, ty);
+    types.named.resolved.insert(memo, ty);
     Ok(ty)
+}
+
+/// Bind type parameters (errors stay at the reference), then lower the body
+/// in the defining module with only those parameters visible.
+fn resolve_local(
+    (params, args): (Option<&ast::TsTypeParamDecl>, &[Type]),
+    name: &str,
+    body: &ast::TsType,
+    (source, span): (&Source, swc_common::Span),
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    let frame = resolve_parameters((params, args), name, source, types)?;
+    generics::declaration_body(frame, body, types).map_err(|e| source.locate(e, span))
+}
+
+/// Bind the type parameters of a named declaration (none for a non-generic one).
+fn resolve_parameters(
+    (params, args): (Option<&ast::TsTypeParamDecl>, &[Type]),
+    name: &str,
+    source: &Source,
+    types: &mut ir::ValueTypes,
+) -> Result<generics::Frame> {
+    Ok(match params {
+        Some(params) => {
+            let args: Vec<_> = args.iter().copied().map(Some).collect();
+            let what = format!("type {name}");
+            generics::bind(
+                params,
+                &args,
+                &what,
+                generics::Missing::Reference,
+                source,
+                types,
+            )?
+        }
+        None => generics::Frame::new(),
+    })
 }

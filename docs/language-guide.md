@@ -3656,3 +3656,56 @@ Substitutions may be strings, numbers, booleans, `null`, `undefined`, BigInt
 values or unions of these. Records, arrays, functions and Error values need an
 explicit conversion (for example `JSON.stringify(value)` or `error.message`);
 tagged templates and `String.raw` are rejected with a diagnostic.
+
+#### Generics (opt-in v32)
+
+Generic interfaces, type aliases and top-level functions are specialized for
+each distinct set of type arguments at compile time. Type arguments are written
+explicitly or inferred from the call's arguments:
+
+```ts
+interface CursorPage<T> {
+  items: T[];
+  cursor: string | null;
+  has_more?: boolean;
+}
+interface Agent {
+  id: string;
+  name: string;
+}
+type AgentKey = keyof Agent; // 'id' | 'name'
+
+function collect<T>(pages: CursorPage<T>[]): T[] {
+  const out: T[] = [];
+  for (const page of pages) {
+    if (page === undefined) continue;
+    for (const item of page.items) if (item !== undefined) out.push(item);
+  }
+  return out;
+}
+
+export function main(): void {
+  const pages: CursorPage<Agent>[] = [
+    { items: [{ id: 'a1', name: 'Ada' }], cursor: 'next' },
+    { items: [{ id: 'a2', name: 'Lin' }], cursor: null },
+  ];
+  const agents = collect(pages); // T = Agent, inferred
+  console.log(agents.length); // 2
+  const ids = collect<string>([{ items: ['x', 'y'], cursor: null }]);
+  console.log(JSON.stringify(ids)); // ["x","y"]
+  const key: AgentKey = 'name';
+  console.log(key);
+  const flags: Record<'read' | 'write', boolean> = { read: true, write: false };
+  const patch: Partial<Agent> = { name: 'renamed' };
+  console.log(JSON.stringify(flags) + JSON.stringify(patch));
+}
+```
+
+Constraints (`K extends keyof T`, `T extends object`) and defaults
+(`type Pair<A, B = A>`) are checked at each use. When an argument cannot
+determine a type parameter on its own (an empty array, a literal record whose
+`null` field should be `string | null`), pass the type arguments explicitly.
+`Readonly<T>`, `ReadonlyArray<T>`, `Partial<T>` and `Record<'a' | 'b', V>` map
+onto closed types; `Record<string, V>`, `Promise<T>`, generic classes, methods
+and arrows, and generic functions used as values are rejected with a diagnostic.
+A generic function that is never called produces no code.

@@ -531,7 +531,11 @@ mod catch_pattern_tests;
 #[cfg(test)]
 mod class_tests;
 #[cfg(test)]
+mod generic_tests;
+#[cfg(test)]
 mod v32_cross_stream_tests;
+#[cfg(test)]
+mod v32_wave2_tests;
 
 #[cfg(test)]
 mod string_range_tests;

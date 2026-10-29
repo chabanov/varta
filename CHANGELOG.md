@@ -52,6 +52,13 @@ in [conformance/README.md](conformance/README.md).
   Class bases, interface/class merging (the pilot `UarpClient` pattern) and
   namespace imports are rejected with diagnostics; v31 and earlier are unchanged.
 
+  - Generics: generic interfaces, aliases and top-level functions by
+    monomorphization, with defaults, `extends` constraints, explicit or inferred
+    type arguments, `keyof`, `R[K]`, `Readonly`, `ReadonlyArray`, `Partial` and
+    literal-keyed `Record`; one function per distinct instantiation within the
+    existing function and body budgets. `Record<string, V>`, `Promise<T>` and
+    generic classes, methods and arrows stay rejected with reasons.
+
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`
   and `export type { … }`. The project loader resolves `./x.js` specifiers to the
