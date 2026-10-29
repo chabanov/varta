@@ -11,6 +11,12 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Opt-in v32 adds untagged template literals: substitutions are evaluated once,
+  left to right, converted with primitive ToString (canonical Number text, BigInt
+  decimal text) and joined by guest concatenation with exact UTF-16 parts.
+  Non-primitive substitutions, tagged templates and `String.raw` fail with
+  diagnostics. No host import, layout or limit changes.
+
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`
   and `export type { … }`. The project loader resolves `./x.js` specifiers to the

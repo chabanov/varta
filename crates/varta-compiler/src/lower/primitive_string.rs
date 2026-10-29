@@ -11,7 +11,6 @@ impl Lower<'_> {
                 "Number conversion requires checked-f64-utf16-v20",
             ));
         }
-        let name = if number { "Number" } else { "String" };
         let result_ty = if number { Type::Float64 } else { Type::String };
         if !self.types.profile.primitive_string() {
             return Err(unsupported(
@@ -31,6 +30,19 @@ impl Lower<'_> {
             });
         };
         let value = self.expr(&first.expr)?;
+        self.primitive_convert(value, rest, number, span)
+    }
+    /// Cache an already lowered primitive, evaluate and discard `rest`, then
+    /// convert it with the profile's String or Number conversion.
+    pub(super) fn primitive_convert(
+        &mut self,
+        value: Expr,
+        rest: &[ast::ExprOrSpread],
+        number: bool,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        let name = if number { "Number" } else { "String" };
+        let result_ty = if number { Type::Float64 } else { Type::String };
         if value.ty == Type::BigInt {
             let input = self.hidden(Type::BigInt);
             let mut body = vec![S::Init(input, value)];

@@ -5326,6 +5326,41 @@ V32 reuses the v31 host, value, schema and exception selectors (see the
 features, each gated by its own `LanguageProfile` selector. Until a feature's
 subsection below exists, v32 admits nothing beyond v31.
 
+#### Template literals
+
+Selector `template_literals()`. V32 admits untagged template literal expressions
+`` `head${a}middle${b}tail` ``; v31 and earlier profiles keep rejecting every
+template with `unsupported expression`.
+
+- **Type.** A template literal is a `string` value in every expression context
+  (bindings, arguments, returns, record fields, array elements, comparisons,
+  conditions). An unannotated parameter whose default is a template infers
+  `string`, like a string literal default.
+- **Evaluation.** Substitutions are evaluated exactly once, left to right. Each
+  value is converted with ECMAScript ToString immediately after it is evaluated
+  and before the next substitution runs, so a throwing or exiting substitution
+  aborts before any later substitution. Strings pass through unchanged. Number,
+  Boolean, `null`, `undefined` (including void calls) and closed primitive unions
+  use the [v19 primitive String conversion](#checked-f64-utf16-v19--primitive-string-conversion)
+  through the profile's existing `primitive_to_string_v2` import (canonical v18
+  Number text); BigInt values use the existing decimal BigInt text operation.
+  The parts are then joined with guest string concatenation, which shares the
+  checked heap, exact roots and the 1 MiB per-value limit of `+`; exceeding the
+  limit traps exactly like an oversized concatenation.
+- **Text parts.** Cooked template text is encoded like string literals: escapes
+  (`\u{…}`, `\x…`, `\``, `\${`, line continuations) are exact, a raw CR LF or CR
+  line terminator cooks to LF, and lone surrogates are kept as single UTF-16 code
+  units. Empty parts emit no concatenation.
+- **Rejected with diagnostics.** A substitution whose type has a non-primitive
+  member (records, arrays, functions, Error values, reference unions and, later,
+  class instances) fails with a type error at the substitution: it would need
+  ToPrimitive, which is not admitted. Tagged templates, including `String.raw`,
+  fail with `unsupported tagged template literal (including String.raw)`.
+
+Template literals add no host import, value tag, layout, helper or catalog entry;
+artifacts are indistinguishable from the equivalent `String(…)` and `+` program.
+All budgets are unchanged.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),

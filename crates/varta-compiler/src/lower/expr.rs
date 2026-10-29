@@ -457,6 +457,14 @@ impl Lower<'_> {
             }
             ast::Expr::Call(call) => return self.call(call, None, None),
             ast::Expr::Member(member) => return self.result_field(member),
+            ast::Expr::Tpl(template) if self.types.profile.template_literals() => {
+                return self.template_literal(template);
+            }
+            ast::Expr::TaggedTpl(_) if self.types.profile.template_literals() => {
+                return Err(unsupported(
+                    "tagged template literal (including String.raw)",
+                ));
+            }
             _ => return Err(unsupported("expression")),
         };
         Ok(Expr {
