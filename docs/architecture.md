@@ -152,10 +152,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v29` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v30` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v31` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
+| `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **28**, value ABI **13**, HTTP contract **1** and **34** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **28**, value ABI **13**, HTTP contract **1** and **35** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -5316,6 +5317,14 @@ rejecting named references, type-only imports and `.js` specifiers.
 Named types are compile-time only: they add no host import, value tag, layout,
 helper or catalog entry, and artifacts carry no type names. All budgets are
 unchanged.
+
+### `checked-f64-utf16-v32` — Pilot batch (in development)
+
+V32 reuses the v31 host, value, schema and exception selectors (see the
+[version matrix](#version-matrix)) and inherits every v31 feature. It collects the
+[uarp-sdk pilot](development-plan.md#pilot-acceptance-package-uarp-sdk) M1–M3
+features, each gated by its own `LanguageProfile` selector. Until a feature's
+subsection below exists, v32 admits nothing beyond v31.
 
 ## Local modules
 

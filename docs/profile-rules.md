@@ -1632,3 +1632,11 @@ alias context ends at `;`, an enclosing close or a line break that does not
 continue the union. The former 65,536-token per-file count was removed by
 explicit decision (2026-10-28); byte limits bound total size. Never make a
 separator a reset unless its AST is a flat list in every context.
+
+## Pilot batch profile v32
+
+Inherit v31 under checked-f64-utf16-v32 with shared ABI28/value13/schema13 and
+the v31 exception/JSON selectors. Each pilot work stream has exactly one selector
+(`module_constants`, `literal_types`, `classes`, `module_reexports`,
+`template_literals`); gate every new admission on its own selector, keep v31 and
+earlier profiles frozen, and add rules for the stream under its own heading here.

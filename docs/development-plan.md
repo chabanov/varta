@@ -334,6 +334,22 @@ unsupported constructs keep failing with clear diagnostics. Measurements for the
 research record: share of files and SDK tests passing, artifact size, startup time
 and memory compared with Node, Deno and Bun.
 
+### Pilot batch v32 (in development)
+
+Profile `checked-f64-utf16-v32` collects pilot M1–M3 features developed in
+parallel, one work stream per selector. Each stream lands on its own branch with
+its own tests, contract subsection, profile rules and conformance cases, and is
+merged after review; v32 is not considered released until every stream merges
+and the full gate passes on the merged result.
+
+| Selector | Work stream | Pilot step |
+| --- | --- | --- |
+| `module_constants()` | Top-level `const`/`export const` with checked initializers and `as const` | M1 |
+| `literal_types()` | String/number/boolean literal types and wide literal unions | M1 |
+| `classes()` | Classes, fields, constructors, methods, `extends`, `Error` subclasses | M2 |
+| `module_reexports()` | `export { x } from`, `export * from`, `export type { T } from` | M3, M7 |
+| `template_literals()` | Template literal expressions | M3 |
+
 ### Deferred external validation scenarios
 
 | Profile | Example contract operations | Required behavior |
