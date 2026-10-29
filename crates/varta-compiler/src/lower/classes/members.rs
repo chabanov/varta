@@ -100,6 +100,17 @@ impl Lower<'_> {
             }
             ast::Expr::Call(call) => match &call.callee {
                 ast::Callee::Expr(callee) => match stmt::unparen(callee) {
+                    ast::Expr::Member(member) if self.class_callee(&member.obj).is_some() => {
+                        let class = self.class_callee(&member.obj)?;
+                        let name = self.member_key(&member.prop).ok()?;
+                        self.types
+                            .classes
+                            .get(class)
+                            .statics
+                            .get(&name)?
+                            .signature
+                            .result
+                    }
                     ast::Expr::Member(member) => {
                         let class = self.class_receiver(&member.obj, depth + 1)?;
                         let name = self.member_key(&member.prop).ok()?;
@@ -372,6 +383,48 @@ impl Lower<'_> {
             span: call.span,
             ty: signature.result,
             kind: E::Call(target, args),
+        })
+    }
+    /// `C.m(...)`: a direct call of an own or inherited static method.
+    pub(in crate::lower) fn class_static_call(
+        &mut self,
+        call: &ast::CallExpr,
+        member: &ast::MemberExpr,
+        class: u32,
+    ) -> Result<Expr> {
+        let name = self.member_key(&member.prop)?;
+        let Some(method) = self.types.classes.get(class).statics.get(&name).cloned() else {
+            return Err(self.source.locate(
+                invalid(format!("unknown static class method: {name}")),
+                member.prop.span(),
+            ));
+        };
+        self.check_access(
+            method.owner,
+            method.access,
+            class,
+            &name,
+            member.prop.span(),
+        )?;
+        if call.type_args.is_some() {
+            return Err(unsupported("generic class method call"));
+        }
+        if call.args.iter().any(|arg| arg.spread.is_some()) {
+            return Err(unsupported("spread to a class method"));
+        }
+        let signature = method.signature;
+        if !signature.shape.extended() && call.args.len() != signature.params.len() {
+            return Err(invalid(format!(
+                "class method expects {} arguments",
+                signature.params.len()
+            )));
+        }
+        let values = self.call_arguments(&call.args, &signature.params, &signature.shape)?;
+        let args = self.bind_arguments(values, &signature.params, &signature.shape, call.span)?;
+        Ok(Expr {
+            span: call.span,
+            ty: signature.result,
+            kind: E::Call(signature.index, args),
         })
     }
     fn this_value(&mut self, span: Span) -> Result<Expr> {

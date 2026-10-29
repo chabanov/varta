@@ -99,12 +99,16 @@ fn layout_members(
 ) -> Result<()> {
     check_class_header(class).map_err(|e| source.locate(e, class.span))?;
     let parent = parent_class(class, source, types, next)?;
-    let (mut fields, mut methods) = match parent {
+    let (mut fields, mut methods, mut statics) = match parent {
         Some(parent) => {
             let parent = &types.classes.list[parent as usize];
-            (parent.fields.clone(), parent.methods.clone())
+            (
+                parent.fields.clone(),
+                parent.methods.clone(),
+                parent.statics.clone(),
+            )
         }
-        None => (Vec::new(), BTreeMap::new()),
+        None => (Vec::new(), BTreeMap::new(), BTreeMap::new()),
     };
     let mut initializers = Vec::new();
     let mut constructor = None;
@@ -124,6 +128,14 @@ fn layout_members(
                     initializers.push((field.name.clone(), value));
                 }
                 fields.push(field);
+            }
+            ast::ClassMember::Method(method) if method.is_static => {
+                let (name, mut entry) = static_method(id, method, &statics, source, types)?;
+                entry.signature.index = types
+                    .classes
+                    .allocate(next, id, Member::Static(name.clone()))
+                    .map_err(|e| source.locate(e, method.span))?;
+                statics.insert(name, entry);
             }
             ast::ClassMember::Method(method) => {
                 let (name, entry) = self::method(id, method, &methods, source, types)?;
@@ -196,6 +208,7 @@ fn layout_members(
     entry.shape = shape;
     entry.fields = fields;
     entry.methods = methods;
+    entry.statics = statics;
     entry.init = Some(init);
     entry.initializers = initializers;
     Ok(())
@@ -265,7 +278,6 @@ fn method(
     types: &mut ir::ValueTypes,
 ) -> Result<(String, Method)> {
     let unsupported_kind = match method.kind {
-        _ if method.is_static => Some("static class method"),
         ast::MethodKind::Getter if method.is_abstract => Some("abstract class getter"),
         ast::MethodKind::Getter if !method.function.params.is_empty() => {
             Some("class getter parameters")
@@ -351,6 +363,50 @@ fn method(
             access,
             dispatch: None,
             getter,
+        },
+    ))
+}
+
+/// A static method: a receiver-free function named through its class. A
+/// subclass may redeclare an inherited static; calls resolve statically.
+fn static_method(
+    owner: u32,
+    method: &ast::ClassMethod,
+    inherited: &BTreeMap<String, Method>,
+    source: &Source,
+    types: &mut ir::ValueTypes,
+) -> Result<(String, Method)> {
+    let unsupported_kind = match method.kind {
+        ast::MethodKind::Getter | ast::MethodKind::Setter => Some("static class accessor"),
+        ast::MethodKind::Method if method.is_abstract => Some("abstract class method"),
+        ast::MethodKind::Method if method.is_optional => Some("optional class method"),
+        ast::MethodKind::Method if method.function.this_param.is_some() => {
+            Some("explicit this parameter on a class method")
+        }
+        ast::MethodKind::Method => None,
+    };
+    if let Some(kind) = unsupported_kind {
+        return Err(source.locate(unsupported(kind), method.span));
+    }
+    let name = member_name(&method.key).map_err(|e| source.locate(e, method.key.span()))?;
+    if inherited.get(&name).is_some_and(|m| m.owner == owner) {
+        return Err(source.locate(
+            invalid(format!("duplicate static class member: {name}")),
+            method.span,
+        ));
+    }
+    let declaration = function_declaration(&name, method.key.span(), method.function.clone());
+    let signature = signature::check(&declaration, 0, source, types)
+        .map_err(|e| source.locate(e, method.key.span()))?;
+    Ok((
+        name,
+        Method {
+            owner,
+            root: owner,
+            signature,
+            access: Access::from_ast(method.accessibility),
+            dispatch: None,
+            getter: false,
         },
     ))
 }

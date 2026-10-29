@@ -507,6 +507,11 @@ impl Lower<'_> {
                     return self.super_method_call(call, property);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
+                    && let Some(class) = self.class_callee(&member.obj)
+                {
+                    return self.class_static_call(call, member, class);
+                }
+                if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && self.class_receiver(&member.obj, 0).is_some()
                 {
                     return self.class_method_call(call, member, None);

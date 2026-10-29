@@ -84,7 +84,8 @@ pub(in crate::lower) fn bodies(
                     .ok_or_else(|| CompilerError::Internal("missing class initializer".into()))?;
                 (declaration, signature, Some(index))
             }
-            Member::Method(name) => {
+            Member::Method(name) | Member::Static(name) => {
+                let is_static = matches!(member, Member::Static(_));
                 let info = &types.classes.list[class as usize];
                 let method = info
                     .declaration
@@ -92,7 +93,8 @@ pub(in crate::lower) fn bodies(
                     .iter()
                     .find_map(|member| match member {
                         ast::ClassMember::Method(m)
-                            if member_name(&m.key).is_ok_and(|n| &n == name) =>
+                            if m.is_static == is_static
+                                && member_name(&m.key).is_ok_and(|n| &n == name) =>
                         {
                             Some(m)
                         }
@@ -101,7 +103,17 @@ pub(in crate::lower) fn bodies(
                     .ok_or_else(|| CompilerError::Internal("missing class method".into()))?;
                 let declaration =
                     function_declaration(name, method.key.span(), method.function.clone());
-                (declaration, info.methods[name].signature.clone(), None)
+                let table = if is_static {
+                    &info.statics
+                } else {
+                    &info.methods
+                };
+                let signature = table
+                    .get(name)
+                    .ok_or_else(|| CompilerError::Internal("missing class method".into()))?
+                    .signature
+                    .clone();
+                (declaration, signature, None)
             }
         };
         let source = types.classes.list[class as usize].source.clone();

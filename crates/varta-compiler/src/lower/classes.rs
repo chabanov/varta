@@ -69,6 +69,7 @@ impl Method {
 enum Member {
     Init,
     Method(String),
+    Static(String),
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -87,6 +88,8 @@ pub(super) struct Class {
     pub shape: u32,
     pub fields: Vec<Field>,
     pub methods: BTreeMap<String, Method>,
+    /// Static methods, own and inherited: receiver-free direct calls `C.m()`.
+    pub statics: BTreeMap<String, Method>,
     pub init: Option<Signature>,
     /// Own field initializers in declaration order.
     initializers: Vec<(String, Box<ast::Expr>)>,
@@ -364,6 +367,7 @@ pub(super) fn register(
         shape: 0,
         fields: Vec::new(),
         methods: BTreeMap::new(),
+        statics: BTreeMap::new(),
         init: None,
         initializers: Vec::new(),
         state: State::Pending,

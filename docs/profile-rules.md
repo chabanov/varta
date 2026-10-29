@@ -1670,5 +1670,7 @@ writes are allowed only in the declaring class's initializer through `this`;
 private/protected checks use `classes.context`. Class calls are user code: keep
 `flow::native` false for names declared by any class method and treat class
 `new` as an unknown call in guard effects. Captured class bindings use the
-catalog's `class` leaf. Error subclasses, `#private`, statics and setters need
-their own design; keep them rejected with construct-specific diagnostics.
+catalog's `class` leaf. Static methods are receiver-free direct calls resolved
+against the named class (no dispatch). Error subclasses, `#private`, static
+fields and setters need their own design; keep them rejected with
+construct-specific diagnostics.

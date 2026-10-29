@@ -5342,8 +5342,8 @@ subsection).
   `Object`/`Math`/`Number`/`String`/`Boolean`/`BigInt`, Error families).
 - **Members.** Instance fields with a type annotation or a literal initializer
   (whose literal type is the field type), optionally `readonly` and
-  `public`/`protected`/`private`; methods; `get` accessors; at most one
-  constructor; `extends` of another declared class (in any module of the graph);
+  `public`/`protected`/`private`; methods; `get` accessors; static methods; at
+  most one constructor; `extends` of another declared class (in any module of the graph);
   `super(...)` and `super.m(...)`. Field types follow record field rules (no
   function-valued fields) and may name other classes, including the class itself
   through a union such as `List | null`.
@@ -5406,7 +5406,9 @@ subsection).
   parameter slots. Methods without overrides, `super.m(...)` and `super(...)` are
   direct calls. A getter has no parameters and a non-void result, is invoked by a
   property read and dispatches like a method; it is not an own data property, so
-  JSON omits it.
+  JSON omits it. A static method has no receiver (`this` is rejected inside it)
+  and is called directly as `C.m(...)`; subclasses inherit and may redeclare
+  statics, and the call resolves statically against the named class.
 - **Access.** `private` members are accessible only inside the declaring class
   body (including nested closures), `protected` members inside the declaring class
   and its subclasses through receivers of the enclosing class or its subclasses,
@@ -5429,8 +5431,8 @@ subsection).
   catalog](#typed-private-capture-catalog); its fields are compile-time checked,
   so class field cycles never become catalog cycles.
 - **Rejected with diagnostics.** Generic, abstract, decorated (parser) and
-  `implements` classes; index signatures; `static` fields, methods and blocks;
-  setters; `#private` fields and methods; auto-accessors; constructor parameter
+  `implements` classes; index signatures; `static` fields, blocks and
+  accessors; static method values without a call; setters; `#private` fields and methods; auto-accessors; constructor parameter
   properties; optional, definite (`!`), `declare` and overriding fields;
   function-valued fields; `toJSON` methods; explicit `this` parameters on methods;
   private/protected constructors and overloads; class expressions and class
@@ -5445,7 +5447,7 @@ initializer function and one function per method, plus one dispatcher per
 overridden root method, all within `abi::MAX_USER_FUNCTIONS`. Pending for the
 pilot: `class … extends Error` (Error-channel identity, `message`/`name`/`cause`,
 `unknown` options, `new.target.name`), `#private` fields (excluded from JSON),
-static members and setters.
+static fields (module-level state) and setters.
 
 ## Local modules
 

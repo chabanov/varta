@@ -138,7 +138,10 @@ fn class_unsupported_forms_fail_with_construct_diagnostics() {
         ),
         ("class A{[k:string]:number}", "class index signature"),
         ("class A{static x=1}", "static class field"),
-        ("class A{static f():void{}}", "static class method"),
+        (
+            "class A{static get f():number{return 1;}}",
+            "static class accessor",
+        ),
         ("class A{set x(v:number){}}", "class setter"),
         ("class A{#x=1}", "#private class field"),
         ("class A{#f():void{}}", "#private class method"),
@@ -257,6 +260,44 @@ fn class_dispatch_forwards_extended_parameters_and_implicit_constructors() {
         error.contains("implicit derived constructor of a rest-parameter base"),
         "{error}"
     );
+}
+#[test]
+fn class_static_methods_are_direct_receiver_free_calls() {
+    run(
+        "class Point{x:number;y:number;constructor(x:number,y:number){this.x=x;this.y=y;}\
+         static origin():Point{return new Point(0,0);}private static twice(n:number):number{return n*2;}\
+         static scaled(n:number):Point{return new Point(Point.twice(n),n);}sum():number{return this.x+this.y;}}\
+         class Labeled extends Point{static origin():Point{return new Labeled(7,7);}}\
+         export function main():void{console.log(Point.origin().sum());console.log(Point.scaled(3).sum());\
+         console.log(Labeled.scaled(1).sum());console.log(Labeled.origin().sum());console.log(Labeled.origin() instanceof Labeled);}",
+        &["0", "9", "3", "14", "1"],
+    );
+    for (source, expected) in [
+        (
+            "class A{static f():number{return this.g();}g():number{return 1;}}",
+            "this requires an explicit typed function receiver",
+        ),
+        (
+            "class A{private static f():void{}}function g():void{A.f();}",
+            "class member f is private to A",
+        ),
+        (
+            "class A{static f():void{}}function g():void{A.h();}",
+            "unknown static class method: h",
+        ),
+        (
+            "class A{static f():void{}static f():void{}}",
+            "duplicate static class member: f",
+        ),
+        (
+            "class A{f():void{}}function g():void{A.f();}",
+            "unknown static class method: f",
+        ),
+    ] {
+        let source = format!("{source}export function main():void{{}}");
+        let error = rejected(&source, P::CheckedF64Utf16V32);
+        assert!(error.contains(expected), "{source}\n{error}");
+    }
 }
 #[test]
 fn class_getters_dispatch_and_stay_out_of_json() {
