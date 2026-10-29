@@ -1640,3 +1640,23 @@ the v31 exception/JSON selectors. Each pilot work stream has exactly one selecto
 (`module_constants`, `literal_types`, `classes`, `module_reexports`,
 `template_literals`); gate every new admission on its own selector, keep v31 and
 earlier profiles frozen, and add rules for the stream under its own heading here.
+
+### Template literals (v32)
+
+`template_literals()` gates `ast::Expr::Tpl` and the tagged-template diagnostic in
+`expr_inner`, plus the `string` inference for an unannotated template parameter
+default; without it both keep the exact `unsupported expression` / annotation
+errors. `lower/templates.rs` lowers a template to a left fold of
+`E::Binary(Add)` string concatenations, so it inherits the `+` operand roots,
+source order and 1 MiB value limit; never add a separate join helper without an
+ownership/budget contract. Lower each substitution with `self.expr` and convert it
+before lowering the next one. `string` passes through; every other admitted
+primitive goes through `primitive_convert` (the shared body of `String(x)`, which
+caches the value in a rooted ValueBlock and snapshots the host result), so
+Number text stays the v18 canonical display and BigInt uses `bigint_text`. Check
+members before conversion and reject any non-primitive member at the
+substitution span; adding ToPrimitive (classes, records, arrays, Errors) is a
+separate decision. Cooked parts reuse the string-literal WTF-8 to UTF-16 encoding
+(lone surrogates exact); empty parts emit nothing; a missing cooked value is an
+invalid program. Tagged templates and `String.raw` stay rejected. No host import,
+layout or budget change; `encodeURIComponent` remains a separate builtin.

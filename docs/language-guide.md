@@ -3441,3 +3441,29 @@ source; JavaScript files are never read. Named types are exact closed shapes: a
 value of `{ name; score }` is not assignable where `{ name; score; note? }` is
 expected. Generics, `extends`, recursive types, `Record<K, V>`, re-exports with
 `from` and type declarations inside functions are rejected with a diagnostic.
+
+### `checked-f64-utf16-v32`
+
+#### Template literals (opt-in v32)
+
+Template literals build strings from primitive values. Each substitution runs once,
+left to right, and is converted like `String(value)`:
+
+```ts
+type Options = { userAgent: string };
+
+function activatePath(agentId: number): string {
+  return `/api/v1/agents/${String(agentId)}/activate`;
+}
+
+export function main(): void {
+  const defaults: Options = { userAgent: `varta/${0.5}` };
+  console.log(activatePath(42)); // /api/v1/agents/42/activate
+  console.log(`${defaults.userAgent} ${undefined} ${10n ** 20n}`);
+}
+```
+
+Substitutions may be strings, numbers, booleans, `null`, `undefined`, BigInt
+values or unions of these. Records, arrays, functions and Error values need an
+explicit conversion (for example `JSON.stringify(value)` or `error.message`);
+tagged templates and `String.raw` are rejected with a diagnostic.

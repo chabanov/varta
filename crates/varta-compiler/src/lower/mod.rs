@@ -297,6 +297,7 @@ mod spread;
 mod stmt;
 mod string_enumeration;
 mod strings;
+mod templates;
 mod tools;
 mod undefined;
 mod unions;

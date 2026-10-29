@@ -11110,6 +11110,62 @@ fn number_text_profile_keeps_dependency_type_diagnostics_and_no_failed_outputs()
 }
 
 #[test]
+fn template_literals_v32_run_modules_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {activate,agent} from './api.ts';export function main():void{console.log(activate(42));console.log(agent({userAgent:`varta/${0.5}`},'pilot'));console.log(`${10n**20n}|${null}|${-0}|\\uD800${'x'}`.length);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/api.ts"),
+        "type Options={userAgent:string};export function activate(id:number):string{return `/api/v1/agents/${String(id)}/activate`;}export function agent(defaults:Options,extra:string|undefined):string{return `${defaults.userAgent} ${extra}`;}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v31");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check).contains("unsupported expression"),
+        "{}",
+        combined(&check)
+    );
+    project.language_profile("checked-f64-utf16-v32");
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(info["language"]["profile"], "checked-f64-utf16-v32");
+    let expected =
+        ["/api/v1/agents/42/activate", "varta/0.5 pilot", "31"].map(|s| format!("varta log: {s}"));
+    let mut dev = varta();
+    dev.arg("dev");
+    let mut commands = vec![dev];
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for (index, mut command) in commands.into_iter().enumerate() {
+        if index == 1 {
+            fs::remove_dir_all(project.0.join("src")).unwrap();
+            fs::remove_file(project.0.join("varta.config.json")).unwrap();
+        }
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .filter(|s| s.starts_with("varta log:"))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn primitive_string_runs_across_modules_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {text} from './string.ts';export function main():void{console.log(text(1e21));console.log(text(true));console.log(text(undefined));console.log(String().length);console.log(String('').length);const s=String('A\\uDFFF\\u0000Z');console.log(s.length);console.log(s.charCodeAt(1));console.log(String(Number.MIN_VALUE));console.log(String(-0));}",

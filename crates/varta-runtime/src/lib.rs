@@ -450,6 +450,8 @@ mod recoverable_json_tests;
 mod string_repeat_tests;
 #[cfg(test)]
 mod string_trim_tests;
+#[cfg(test)]
+mod template_literal_tests;
 
 #[cfg(test)]
 mod function_envelope_tests;

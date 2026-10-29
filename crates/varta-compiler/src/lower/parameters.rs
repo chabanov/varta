@@ -35,6 +35,7 @@ fn literal(expr: &ast::Expr, types: &ir::ValueTypes) -> Option<Type> {
         ast::Expr::Paren(p) => literal(&p.expr, types),
         ast::Expr::Lit(ast::Lit::Num(_)) => Some(types.number()),
         ast::Expr::Lit(ast::Lit::Str(_)) => Some(Type::String),
+        ast::Expr::Tpl(_) if types.profile.template_literals() => Some(Type::String),
         ast::Expr::Lit(ast::Lit::Bool(_)) => Some(Type::Boolean),
         ast::Expr::Lit(ast::Lit::Null(_)) => Some(Type::Null),
         ast::Expr::Unary(u)
