@@ -46,6 +46,7 @@ Durable principles:
 | Document | Use it for |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Normative contracts; the generated [version matrix](docs/architecture.md#version-matrix) and limits |
+| [docs/embedding.md](docs/embedding.md) | Normative contract for third-party hosts; generated host-operation, profile, layout and name tables |
 | [docs/profile-rules.md](docs/profile-rules.md) | Implementation rules per profile and feature. **Read the relevant section before changing a feature.** |
 | [docs/language-guide.md](docs/language-guide.md) | User-facing examples by profile |
 | [docs/development-plan.md](docs/development-plan.md) | Status, research thesis, roadmap, pilot ladder, agreed designs |
@@ -73,8 +74,10 @@ crates/
   varta-cli/             # the `varta` binary; thin orchestration, no domain logic
   varta-conformance/     # development tooling: pinned compatibility inventory runner
 conformance/             # inventory manifest (core-v1.json) and checked cases
+examples/                # product examples (e.g. uarp-console); not workspace members, never depended on by crates
 docs/
   architecture.md        # normative contract; generated version matrix and limits
+  embedding.md           # third-party host contract; generated registry tables
   language-guide.md      # user-facing feature guide by profile
   profile-rules.md       # per-profile implementation rules for agents/contributors
   development-plan.md    # status, research thesis, roadmap, pilot, exit criteria
@@ -95,6 +98,7 @@ Placement rules:
   (`VartaConfig`, `CapabilitySpec`) belongs to `varta-project`, not common. CLI
   production code depends on `varta-project`; backend details stay in runtime.
   The boundary regression test and the CI core-only build enforce this direction.
+- `examples/` holds product examples such as `examples/uarp-console/`, kept apart from the engine. It is not a Cargo workspace member, and no crate (engine, distribution, tooling or tests) depends on it. Third-party sources such as uarp-sdk are pinned npm dependencies installed under `node_modules/`, ignored by version control, and are never vendored.
 - New crates go in `crates/<name>/` and are added to workspace `members` and, if user-facing, `default-members`.
 - Domain logic (parsing, emission, capability matching, host I/O, artifact packaging and validation) never lives in `varta-cli`. The CLI calls varta-project and prints results.
 - Shared types and errors belong in `varta-common`. Compiler and runtime must not re-declare them.
@@ -212,7 +216,7 @@ business routes, authentication policy or example payloads belong in runtime.
 ## 9. Documentation
 
 - Changes to the ABI (imports, globals, memory layout, ownership), the capability model, or the config schema require a matching update to `docs/architecture.md` in the same commit.
-- Never restate registry facts (profile counts, host/value ABI versions, launcher maxima, limits, conformance counts) in prose. They live in the generated blocks of `docs/architecture.md` and the profile indexes in `README.md` and this file; `crates/varta-common/tests/documentation.rs` fails when they drift. Paste its expected output when a registry changes.
+- Never restate registry facts (profile counts, host/value ABI versions, launcher maxima, limits, conformance counts) in prose. They live in the generated blocks of `docs/architecture.md` and `docs/embedding.md` and the profile indexes in `README.md` and this file; `crates/varta-common/tests/documentation.rs` and `embedding_documentation.rs` fail when they drift. Paste its expected output when a registry changes.
 - Feature contracts go to `docs/architecture.md` (normative), examples to `docs/language-guide.md`, agent rules to `docs/profile-rules.md`, plans to `docs/development-plan.md`. Completed logs go to `docs/history.md`, not the status summary.
 - New CLI flags update the subcommand doc-comment (visible in `--help`) and the smoke coverage.
 - Commit messages: imperative, one line for the what, optional body for the why.

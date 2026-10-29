@@ -16,6 +16,8 @@ pub mod scheduler;
 pub mod text;
 mod tool;
 pub mod value;
+/// L0 view protocol tables, unstable draft v0 (data only; no host operation).
+pub mod view;
 pub use capability::*;
 pub use diagnostic::*;
 pub use host::{HostOperation, HostScalar};
