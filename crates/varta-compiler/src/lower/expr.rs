@@ -793,6 +793,12 @@ impl Lower<'_> {
             {
                 return Err(unsupported("JSON.stringify value type"));
             }
+            if classes::reaches_instance(value.ty, self.types) {
+                return Err(self.source.locate(
+                    unsupported("JSON.stringify of an Error subclass instance; own-property enumerability is not modelled"),
+                    value.span,
+                ));
+            }
             let ty = if value.ty.is_union()
                 && unions::members(value.ty, self.types).contains(&Type::Undefined)
             {

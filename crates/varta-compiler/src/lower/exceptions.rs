@@ -1,20 +1,32 @@
 use super::*;
+/// The catch-binding union: every value the exception channel can carry. With
+/// v32 Error subclasses it also holds the Error root class, which every
+/// source error class extends.
+pub(super) fn exception_union(types: &mut ir::ValueTypes) -> Result<Type> {
+    let mut members = vec![
+        Type::Float64,
+        Type::Boolean,
+        Type::String,
+        Type::Null,
+        Type::Undefined,
+    ];
+    if types.profile.bigint_values() {
+        members.push(Type::BigInt);
+    }
+    if types.profile.errors() {
+        members.extend(errors::classes(types.profile).map(Type::from_error_class));
+    }
+    if let Some(root) = types
+        .classes
+        .error_root(varta_common::value::ErrorClass::Error)
+    {
+        members.push(Type::Class(root));
+    }
+    unions::intern(members, types)
+}
 impl Lower<'_> {
     pub(super) fn exception_type(&mut self) -> Result<Type> {
-        let mut members = vec![
-            Type::Float64,
-            Type::Boolean,
-            Type::String,
-            Type::Null,
-            Type::Undefined,
-        ];
-        if self.types.profile.bigint_values() {
-            members.push(Type::BigInt);
-        }
-        if self.types.profile.errors() {
-            members.extend(errors::classes(self.types.profile).map(Type::from_error_class));
-        }
-        unions::intern(members, self.types)
+        exception_union(self.types)
     }
     pub(super) fn throw_statement(&mut self, statement: &ast::ThrowStmt) -> Result<S> {
         if !self.types.profile.exceptions() {
@@ -25,6 +37,7 @@ impl Lower<'_> {
             (!unions::primitive(*ty)
                 && !(self.types.profile.bigint_values() && *ty == Type::BigInt))
                 && !(self.types.profile.errors() && ty.is_error())
+                && !matches!(ty, Type::Class(class) if self.types.classes.is_error(*class))
         }) {
             return Err(self.source.locate(
                 unsupported("exception value other than primitives or supported Error"),

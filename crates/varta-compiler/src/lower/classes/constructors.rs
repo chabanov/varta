@@ -17,6 +17,9 @@ struct ThisUse<'a> {
     allow_this: bool,
     /// Inside an arrow body: `this` would be captured; returns are local.
     closure: bool,
+    /// v32 `error_subclasses`: `new.target.name` is admitted in constructor
+    /// parameters and bodies (not in field initializers or closures).
+    new_target: bool,
     violation: Violation,
 }
 impl ThisUse<'_> {
@@ -86,6 +89,12 @@ impl Visit for ThisUse<'_> {
         self.closure = closure;
     }
     fn visit_member_expr(&mut self, node: &ast::MemberExpr) {
+        if self.new_target && error_classes::new_target_name(node) {
+            if self.closure {
+                self.fail("constructor closures cannot capture new.target", node.span);
+            }
+            return;
+        }
         if matches!(&*node.obj, ast::Expr::This(_)) {
             self.this_member(node, false);
             if let ast::MemberProp::Computed(key) = &node.prop {
@@ -161,14 +170,23 @@ struct Discipline<'a> {
     fields: BTreeSet<String>,
     assigned: BTreeSet<String>,
     source: &'a Source,
+    new_target: bool,
 }
 impl Discipline<'_> {
     fn check(&self, node: &dyn Checked, allow_this: bool) -> Result<()> {
+        self.visit(node, allow_this, self.new_target)
+    }
+    /// Field initializers run with an undefined `new.target`.
+    fn check_initializer(&self, node: &dyn Checked) -> Result<()> {
+        self.visit(node, false, false)
+    }
+    fn visit(&self, node: &dyn Checked, allow_this: bool, new_target: bool) -> Result<()> {
         let mut visitor = ThisUse {
             fields: &self.fields,
             assigned: &self.assigned,
             allow_this,
             closure: false,
+            new_target,
             violation: None,
         };
         node.accept(&mut visitor);
@@ -249,6 +267,7 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
         fields,
         assigned: BTreeSet::new(),
         source,
+        new_target: types.profile.error_subclasses(),
     };
     // Field initializers never see `this` or constructor-scoped bindings.
     let mut scoped = BTreeSet::new();
@@ -281,7 +300,7 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
         None => implicit(id, types)?,
     };
     for (_, value) in &class.initializers {
-        discipline.check(&**value, false)?;
+        discipline.check_initializer(&**value)?;
         let mut identifiers = Identifiers::default();
         value.visit_with(&mut identifiers);
         if let Some(name) = identifiers.0.intersection(&scoped).next() {

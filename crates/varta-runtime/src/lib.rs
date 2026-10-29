@@ -531,6 +531,8 @@ mod catch_pattern_tests;
 #[cfg(test)]
 mod class_tests;
 #[cfg(test)]
+mod error_subclass_tests;
+#[cfg(test)]
 mod generic_tests;
 #[cfg(test)]
 mod v32_cross_stream_tests;

@@ -169,3 +169,112 @@ fn default_exported_generic_functions_keep_generic_value_rules() {
         }
     }
 }
+
+const ERRORS: &str = "export default class UarpError extends Error{\
+    constructor(message:string,options?:{cause?:string}){super(message,options);this.name=new.target.name;}}\
+    export class APIError extends UarpError{readonly status:number;\
+    constructor(status:number){super(`HTTP ${status}`);this.status=status;}}\
+    export class NotFoundError extends APIError{}";
+
+#[test]
+fn default_exported_error_subclasses_link_through_star_reexports() {
+    run(
+        "import UarpError, {APIError, NotFoundError, fail} from './index.ts';\
+         import Base from './errors.ts';\
+         export function main():void{\
+         try{fail(404);}catch(e){console.log(e instanceof NotFoundError);\
+         if(e instanceof APIError){console.log(e.toString()+' '+e.status);}\
+         console.log(e instanceof Base);console.log(e instanceof UarpError);}\
+         try{fail(500);}catch(e){if(e instanceof UarpError){console.log(e.name);\
+         console.log(e instanceof NotFoundError);}}\
+         const direct=new UarpError('m',{cause:'c'});console.log(direct.cause==='c');}",
+        &[
+            ("errors.ts", ERRORS),
+            (
+                "index.ts",
+                "export * from './errors.ts';export {default} from './errors.ts';\
+                 export {fail} from './fail.ts';",
+            ),
+            (
+                "fail.ts",
+                "import {APIError,NotFoundError} from './errors.ts';\
+                 export function fail(status:number):void{\
+                 if(status===404){throw new NotFoundError(status);}throw new APIError(status);}",
+            ),
+        ],
+        &[
+            "1",
+            "NotFoundError: HTTP 404 404",
+            "1",
+            "1",
+            "APIError",
+            "0",
+            "1",
+        ],
+    );
+}
+
+#[test]
+fn star_reexports_never_forward_a_default_error_class() {
+    let error = rejected(
+        "import UarpError from './index.ts';export function main():void{}",
+        &[
+            ("errors.ts", ERRORS),
+            ("index.ts", "export * from './errors.ts';"),
+        ],
+        P::CheckedF64Utf16V32,
+    );
+    assert!(error.contains("has no default export"), "{error}");
+}
+
+#[test]
+fn error_subclass_instances_flow_through_generic_functions() {
+    run(
+        &format!(
+            "{}\
+             function identity<T>(x:T):T{{return x;}}\
+             function first<T>(xs:T[],fallback:T):T{{const x=xs[0];return x===undefined?fallback:x;}}\
+             function raise<E extends UarpError>(error:E):void{{throw error;}}\
+             function status<E extends APIError>(error:E):number{{return error.status;}}\
+             export function main():void{{\
+             const e=identity(new NotFoundError(404));console.log(e.toString());console.log(status(e));\
+             const errors:APIError[]=[new APIError(500),e];\
+             const picked=first(errors,new APIError(0));console.log(picked.name+' '+picked.status);\
+             try{{raise(e);}}catch(caught){{if(caught instanceof NotFoundError){{console.log(caught.message);}}}}\
+             try{{raise<UarpError>(new UarpError('plain'));}}catch(caught){{\
+             console.log(caught instanceof APIError);console.log(caught instanceof Error);}}}}",
+            ERRORS.replace("export default class", "export class")
+        ),
+        &[],
+        &[
+            "NotFoundError: HTTP 404",
+            "404",
+            "APIError 500",
+            "HTTP 404",
+            "0",
+            "1",
+        ],
+    );
+}
+
+#[test]
+fn generic_classes_and_generic_error_subclasses_stay_rejected() {
+    for (entry, expected) in [
+        (
+            "class Box<T>{value:T;constructor(value:T){this.value=value;}}",
+            "generic class",
+        ),
+        (
+            "class Failure<T> extends Error{detail:T;constructor(detail:T){super('x');this.detail=detail;}}",
+            "generic class",
+        ),
+        (
+            "class Failure extends Error{}function g(x:Failure<number>):void{}",
+            "generic class type reference",
+        ),
+    ] {
+        let source = format!("{entry}export function main():void{{}}");
+        let error = rejected(&source, &[], P::CheckedF64Utf16V32);
+        assert!(error.contains(expected), "{source}\n{error}");
+    }
+}

@@ -28,6 +28,9 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
         .into_iter()
         .flat_map(|ty| members(ty, types))
         .collect();
+    if types.profile.error_subclasses() {
+        values = classes::join_error_classes(values, types);
+    }
     values.sort();
     values.dedup();
     let values = literals::normalize(values, types)?;
@@ -311,6 +314,9 @@ impl Lower<'_> {
                 || self.types.profile.error_families())
             && let ast::Expr::Ident(id) = &*binary.left
         {
+            if self.types.profile.error_subclasses() {
+                return self.refine_error_family(id.sym.as_ref(), class, yes);
+            }
             return self.refine(id.sym.as_ref(), Guard::Error(class), yes);
         }
         let ast::Expr::Bin(binary) = test else {

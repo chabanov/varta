@@ -1640,7 +1640,8 @@ with backticks are counted as one long code run.
 ## Pilot batch profile v32
 
 Inherit v31 under checked-f64-utf16-v32 with shared ABI28/value13/schema13 and
-the v31 exception/JSON selectors. Each pilot work stream has exactly one selector
+the v31 JSON selectors; `error_subclasses` selects exception channel v5 (see
+[its rules](#error-subclasses-error_subclasses)). Each pilot work stream has exactly one selector
 (`module_constants`, `literal_types`, `classes`, `module_reexports`,
 `template_literals`); gate every new admission on its own selector, keep v31 and
 earlier profiles frozen, and add rules for the stream under its own heading here.
@@ -1743,16 +1744,17 @@ through an ancestor-typed receiver.
 
 Placeholders must stay unobservable: keep the syntactic constructor discipline
 (field-only `this`, top-level definite assignment, single top-level `super`, no
-escape/capture/method calls/returns/`new.target`, `this`-free initializers and
+escape/capture/method calls/returns/`new.target` other than the
+`error_subclasses` `new.target.name`, `this`-free initializers and
 parameter defaults) unless a flow analysis proves the same property. Readonly
 writes are allowed only in the declaring class's initializer through `this`;
 private/protected checks use `classes.context`. Class calls are user code: keep
 `flow::native` false for names declared by any class method and treat class
 `new` as an unknown call in guard effects. Captured class bindings use the
 catalog's `class` leaf. Static methods are receiver-free direct calls resolved
-against the named class (no dispatch). Error subclasses, `#private`, static
-fields and setters need their own design; keep them rejected with
-construct-specific diagnostics.
+against the named class (no dispatch). `#private`, static fields and setters
+need their own design; keep them rejected with construct-specific diagnostics.
+Error subclasses follow [their own rules](#error-subclasses-error_subclasses).
 
 ### Module re-exports (`module_reexports()`)
 
@@ -1886,6 +1888,55 @@ with its reason; `Readonly`/`ReadonlyArray`/`readonly T[]` erase readonly, which
 stays binding-level (`reject_readonly_write` does not see it). Admitting
 `Record<string, V>`, `Promise<T>`, generic classes/methods/arrows or
 inference through context-sensitive arguments needs its own design.
+
+### Error subclasses (`error_subclasses()`)
+
+`lower/classes/error_classes.rs` owns the stream. `layout::parent_class` maps an
+`extends` of a v9 family to `error_classes::root`, which creates the family's
+synthetic root class on first use (the Error root first; other roots extend it).
+Roots have `module = NO_MODULE`, `State::Ready`, no `order` entries and no type
+namespace entry: layout and body lowering must never visit them, and `Error`
+annotations, `new Error` and native `instanceof` must keep resolving to the v9
+natives. The Error root's fields are `message`, `name`, `cause` in that order;
+read slots through `root_slot`, never by literal index. `cause` and the root
+initializer's options record use `exceptions::exception_union`, which adds the
+Error root to the catch union only once a root exists, so programs without Error
+classes keep their exact catch union, exports and code.
+
+Never allocate or call a root initializer: `super_call` delegates to
+`error_super_call`, which evaluates `message` and `options` once into rooted
+hidden locals (non-handle types are not rooted) and then writes the three slots
+through `this`. Keep the message type check (`string`/`undefined`, no coercion)
+and options restricted to `undefined`/one record member; a cause must widen to
+the catch union. `new.target.name` is admitted only by `error_classes::new_target_name`
+in `ThisUse` (`new_target` is false for field initializers; closures fail) and
+lowered by `new_target_member` as a descriptor chain over the descendants of the
+constructor's class; never read a hidden class-name field or add one.
+
+`Classes::is_error` decides Error-ness (descends from the Error root). Hooks
+that must stay consistent: `throw_statement` admission, `instance_of_error`
+(`error_instance_test` when `has_error_instances`), `error_to_string` and
+`class_method_call` (`toString` cannot be declared, so an Error class always gets
+`class_error_text`), `result_field` (`error_union_read` for a mixed native/class
+union), `caught_property` (class branch before the native IsError branch),
+`refine_error_family` for `instanceof Error`/families (keep possible members on
+the positive edge, drop only certain ones on the negative edge) and
+`refine_error_downcast` in `refine_class` (Error classes only; other classes keep
+the classes-stream rule that downcasts do not narrow). `unions::intern` joins
+Error classes to their nearest common ancestor under the selector so every union
+keeps at most one class member; never apply it to non-Error classes without a
+classes-stream decision. `JSON.stringify` rejects values that `reaches_instance`
+because message/cause enumerability is not modelled.
+
+The channel selector lives in `LanguageProfile::exception_channel`
+(`CLASS_ERROR_VERSION = 5`); the runtime's `initial`, `finish` and the JSON
+parse `ready` check must know every selector. `finish` decodes Record cells only
+under v5 through `error_instance`, which reads the already-validated descriptor
+and requires non-optional String `name`/`message` fields. `ThrownValue::ErrorInstance`
+owns both texts; display follows `Error.prototype.toString` with escaped, bounded
+text. Pending: the `unknown` type for `cause`, an `Error` annotation that admits
+Error classes, own-property presence of `message`/`cause` (and with it
+`Object.hasOwn`/JSON), `stack`, and new-profile Tool/HTTP adapters.
 
 ### Cross-stream integration (v32)
 

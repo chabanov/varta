@@ -150,10 +150,6 @@ fn class_unsupported_forms_fail_with_construct_diagnostics() {
             "constructor parameter property",
         ),
         (
-            "class A extends Error{}",
-            "class extends a built-in Error class",
-        ),
-        (
             "class A extends B{}",
             "class extends B, which is not a declared class",
         ),

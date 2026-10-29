@@ -5039,6 +5039,64 @@ fn uncaught_native_error_family_diagnostics_are_owned_escaped_and_preserved_by_f
 }
 
 #[test]
+fn error_subclasses_link_across_modules_and_report_uncaught_instances_in_every_target() {
+    const ERRORS: &str = "export class UarpError extends Error{constructor(message:string){super(message);this.name=new.target.name;}}\
+         export class APITimeoutError extends UarpError{constructor(message='slow\\n😀'){super(message);}}\
+         export class APIError extends UarpError{readonly status:number;constructor(status:number){super(`HTTP ${status}`);this.status=status;}}\
+         export function request(status:number):void{if(status===0){throw new APITimeoutError();}throw new APIError(status);}";
+    let caught = r#"
+import {APIError, APITimeoutError, UarpError, request} from './errors.ts';
+export function main():void {
+ try{request(404);}catch(e){if(e instanceof APIError){console.log(e.toString()+' '+String(e.status));}}
+ try{request(0);}catch(e){if(e instanceof UarpError){console.log(e.name);console.log(e instanceof APITimeoutError);}}
+ try{try{request(0);}finally{console.log("finally");}}catch({message}){console.log(message===undefined);}
+}"#;
+    let uncaught = "import {request} from './errors.ts';\
+                    export function main():void{try{request(0);}finally{console.log('cleanup');}}";
+    for (main, success) in [(caught, true), (uncaught, false)] {
+        let project = RegressionProject::new(main, serde_json::json!({}));
+        fs::write(project.0.join("src/errors.ts"), ERRORS).unwrap();
+        project.language_profile("checked-f64-utf16-v32");
+        let build = project.command(&["build", "--single"]);
+        assert!(build.status.success(), "{}", combined(&build));
+        let mut dev = varta();
+        dev.arg("dev");
+        let mut wasm = varta();
+        wasm.args(["run", "dist/app.wasm"]);
+        let mut runtime = Command::new(runtime_path());
+        runtime.args(["run", "dist/app.wasm"]);
+        for (index, mut command) in [dev, wasm, runtime, Command::new(project.0.join("dist/app"))]
+            .into_iter()
+            .enumerate()
+        {
+            if index == 1 {
+                // Packaged artifacts run without the sources.
+                fs::remove_dir_all(project.0.join("src")).unwrap();
+            }
+            let output = command.current_dir(&project.0).output().unwrap();
+            let text = combined(&output);
+            assert_eq!(output.status.success(), success, "{text}");
+            if success {
+                for line in [
+                    "varta log: APIError: HTTP 404 404",
+                    "varta log: APITimeoutError",
+                    "varta log: 1",
+                    "varta log: finally",
+                    "varta log: 0",
+                ] {
+                    assert!(text.contains(line), "{text}");
+                }
+            } else {
+                assert!(
+                    text.contains("uncaught guest exception: APITimeoutError: \"slow\\n😀\""),
+                    "{text}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn recoverable_json_runs_across_modules_and_source_free_artifacts() {
     let project = RegressionProject::new(
         r#"

@@ -28,8 +28,8 @@ in [conformance/README.md](conformance/README.md).
     constructors with a definite-initialization discipline, methods, getters,
     static methods, `extends` with `super(...)` and `super.m(...)`, nominal
     subtyping, `instanceof` and closed-world override dispatch. Instances are
-    records with per-class descriptors and exact tracing. Error subclasses,
-    `#private`, static fields and setters remain rejected.
+    records with per-class descriptors and exact tracing. `#private`, static
+    fields and setters remain rejected.
   - Module re-exports: `export { x as y } from`, `export type { … } from`,
     `export { type T } from` and `export * from` forward functions, constants,
     named types and classes without local bindings. Functions and constants share
@@ -58,6 +58,16 @@ in [conformance/README.md](conformance/README.md).
     literal-keyed `Record`; one function per distinct instantiation within the
     existing function and body budgets. `Record<string, V>`, `Promise<T>` and
     generic classes, methods and arrows stay rejected with reasons.
+
+- Opt-in v32 Error subclasses: classes may extend `Error`, `TypeError`,
+  `RangeError` and `SyntaxError` with writable `message`/`name`/`cause` fields,
+  `super(message, { cause })`, `new.target.name`, `toString()`, `instanceof` for
+  the native family and every class in the chain (including downcast narrowing of
+  caught values) and catch/finally/rethrow across modules. Instances stay class
+  records with no new tag or layout; v32 selects exception channel v5
+  (`varta.exception.version_v5`) so the runtime reports an uncaught instance as
+  `ThrownValue::ErrorInstance`. `unknown` causes, `stack`, JSON serialization of
+  instances and `Error`-annotated instances remain rejected.
 
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`

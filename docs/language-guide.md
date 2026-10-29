@@ -3557,8 +3557,9 @@ export function main(): void {
 Constructors must assign every field without an initializer through a top-level
 `this.field = …` statement before anything else can see `this`. Instances are not
 structural records: an object literal is not assignable to a class type.
-`extends Error`, `#private` members, static fields, setters, generic and abstract
-classes are rejected with a diagnostic.
+`#private` members, static fields, setters, generic and abstract classes are
+rejected with a diagnostic; `extends Error` is described under
+[Error subclasses](#error-subclasses-opt-in-v32).
 
 #### Module re-exports (opt-in v32)
 
@@ -3709,3 +3710,69 @@ determine a type parameter on its own (an empty array, a literal record whose
 onto closed types; `Record<string, V>`, `Promise<T>`, generic classes, methods
 and arrows, and generic functions used as values are rejected with a diagnostic.
 A generic function that is never called produces no code.
+
+#### Error subclasses (opt-in v32)
+
+A class may extend `Error`, `TypeError`, `RangeError` or `SyntaxError`. Its
+instances are thrown, caught, narrowed with `instanceof` and reported by the
+runtime like native errors, and they keep their own fields and methods:
+
+```ts
+export class UarpError extends Error {
+  constructor(message: string, options?: { cause?: string }) {
+    super(message, options);
+    this.name = new.target.name;
+  }
+}
+
+export class APIConnectionError extends UarpError {
+  constructor(message = 'Connection error', options?: { cause?: string }) {
+    super(message, options);
+  }
+}
+
+export class APIError extends UarpError {
+  readonly status: number;
+  constructor(status: number) {
+    super(`HTTP ${status}`);
+    this.status = status;
+  }
+}
+
+class NotFoundError extends APIError {}
+
+function fetchUser(id: number): string {
+  if (id < 0) throw new APIConnectionError(undefined, { cause: 'socket closed' });
+  throw new NotFoundError(404);
+}
+
+export function main(): void {
+  try {
+    fetchUser(7);
+  } catch (error) {
+    if (error instanceof APIError && error.status === 404) {
+      console.log(error.toString()); // NotFoundError: HTTP 404
+    }
+  }
+  try {
+    fetchUser(-1);
+  } catch (error) {
+    console.log(error instanceof Error); // 1
+    if (error instanceof APIConnectionError) {
+      console.log(error.message); // Connection error
+      console.log(error.cause === 'socket closed'); // 1
+    }
+  }
+}
+```
+
+`message`, `name` and `cause` are writable fields of every Error class. `name`
+defaults to the native family name (`Error` for `class A extends Error {}`), and
+`new.target.name` in a constructor is the name of the class being constructed.
+`super(message, options)` takes `cause` from the options object. `cause` holds
+any value that can be thrown; because `unknown` is not supported, annotate the
+options with a concrete type such as `{ cause?: string }`. A subclass without a
+constructor accepts `new A(message, { cause: caught })` for any caught value. An
+uncaught instance is reported as `NotFoundError: "HTTP 404"`. `JSON.stringify` of
+an instance, `stack` and assigning an instance to an `Error` annotation are
+rejected with a diagnostic.

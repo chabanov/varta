@@ -329,6 +329,9 @@ impl Lower<'_> {
             return Err(unsupported("call"));
         };
         let name = self.member_key(&member.prop)?;
+        if name == error_classes::TO_STRING && self.types.classes.is_error(class) {
+            return self.class_error_to_string(call, value);
+        }
         let Some(method) = self.types.classes.get(class).methods.get(&name).cloned() else {
             return Err(self.source.locate(
                 if self.types.classes.field(class, &name).is_some() {
@@ -429,7 +432,7 @@ impl Lower<'_> {
             kind: E::Call(signature.index, args),
         })
     }
-    fn this_value(&mut self, span: Span) -> Result<Expr> {
+    pub(super) fn this_value(&mut self, span: Span) -> Result<Expr> {
         self.expr(&ast::Expr::This(ast::ThisExpr { span }))
     }
     /// `super(...)` in a derived constructor runs the base initializer.
@@ -443,6 +446,9 @@ impl Lower<'_> {
                 "super(...) outside a derived class constructor",
             ));
         };
+        if self.types.classes.root_family(class).is_some() {
+            return self.error_super_call(call, class);
+        }
         let signature = self
             .types
             .classes
@@ -574,6 +580,9 @@ impl Lower<'_> {
         );
         match member {
             Some(member) => self.refine(name, references::Guard::Exact(member), yes),
+            None if yes && self.types.classes.is_error(class) => {
+                self.refine_error_downcast(name, class)
+            }
             None => Ok(()),
         }
     }
@@ -585,7 +594,15 @@ impl Lower<'_> {
         class: u32,
     ) -> Result<Expr> {
         let value = self.expr(&binary.left)?;
-        let span = binary.span;
+        self.class_test(value, class, binary.span)
+    }
+    /// `value instanceof C` for an already lowered operand.
+    pub(in crate::lower) fn class_test(
+        &mut self,
+        value: Expr,
+        class: u32,
+        span: Span,
+    ) -> Result<Expr> {
         let classes = &self.types.classes;
         let kind = match value.ty {
             Type::Class(actual) if classes.descends(actual, class) => {

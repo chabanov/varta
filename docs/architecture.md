@@ -152,7 +152,7 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v29` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v30` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v31` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
-| `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
+| `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
@@ -5323,15 +5323,16 @@ unchanged.
 
 ### `checked-f64-utf16-v32` — Pilot batch (in development)
 
-V32 reuses the v31 host, value, schema and exception selectors (see the
-[version matrix](#version-matrix)) and inherits every v31 feature. It collects the
+V32 reuses the v31 host, value and schema versions and the v31 JSON selectors
+(see the [version matrix](#version-matrix)); [Error subclasses](#error-subclasses-error_subclasses)
+select exception channel v5. V32 inherits every v31 feature. It collects the
 [uarp-sdk pilot](development-plan.md#pilot-acceptance-package-uarp-sdk) M1–M3
 features, each gated by its own `LanguageProfile` selector: module constants,
 literal types, classes, module re-exports and template literals. The features
 compose: constants and classes link through re-exports, literal types apply to
 class fields, constants and template substitutions, and class bodies read
 module constants. None of them adds a host import, value tag, layout field or
-ABI version, and production budgets are unchanged.
+host/value ABI version, and production budgets are unchanged.
 
 #### Module constants (`module_constants()`)
 
@@ -5485,8 +5486,8 @@ memory-layout change. All budgets are unchanged.
 
 Top-level class declarations with nominal instances, single inheritance and
 closed-world method dispatch. The slice targets the pilot's `APIResource` and
-generated resource classes; Error subclasses remain pending (see the end of this
-subsection).
+generated resource classes; classes extending the native errors follow the
+[Error subclasses](#error-subclasses-error_subclasses) rules.
 
 - **Declarations.** A top-level `class` (exported or not) registers its name in
   the v31 per-module type namespace, so it is usable in annotations and in
@@ -5530,7 +5531,8 @@ subsection).
   or interfaces and no implicit downcast. A class is a record-tagged union member:
   a union holds at most one record or class member. `instanceof C` narrows a union
   binding to its class member when that member is `C` or a subclass; a downcast
-  test does not narrow. Identity comparison of related classes uses their common
+  test does not narrow (except to an Error class, see
+  [Error subclasses](#error-subclasses-error_subclasses)). Identity comparison of related classes uses their common
   ancestor; `typeof` is `"object"` and instances are truthy.
 - **Construction.** `new C(args)` checks the arguments against `C`'s initializer
   signature, allocates the instance with placeholder slots (zero handles, which
@@ -5554,7 +5556,7 @@ subsection).
   one top-level `super(...)` statement. Every own field without an initializer
   must be assigned by a top-level `this.f = …` statement; assignments inside
   branches or loops are writes but do not count. `return` and `new.target` in a
-  constructor are rejected.
+  constructor are rejected, except the `error_subclasses()` form `new.target.name`.
 - **Methods and dispatch.** A method is a function whose receiver is its class
   (the v12 typed-receiver ABI: the first physical parameter); calls evaluate the
   receiver and then the arguments once, in source order. An override keeps the
@@ -5596,18 +5598,18 @@ subsection).
   properties; optional, definite (`!`), `declare` and overriding fields;
   function-valued fields; `toJSON` methods; explicit `this` parameters on methods;
   private/protected constructors and overloads; class expressions and class
-  declarations inside functions; `extends` of non-class expressions, undeclared
-  names or Error families; recursive inheritance; and unions with more than one
-  record or class member.
+  declarations inside functions; `extends` of non-class expressions or undeclared
+  names (Error families only under `error_subclasses()`); recursive inheritance;
+  and unions with more than one record or class member.
 
 Profiles before v32 keep rejecting class declarations (`unsupported top-level
 declaration`), class expressions and nested class statements with their previous
 messages. Production budgets are unchanged: each class uses one record shape, one
 initializer function and one function per method, plus one dispatcher per
 overridden root method, all within `abi::MAX_USER_FUNCTIONS`. Pending for the
-pilot: `class … extends Error` (Error-channel identity, `message`/`name`/`cause`,
-`unknown` options, `new.target.name`), `#private` fields (excluded from JSON),
-static fields (module-level state) and setters.
+pilot: `#private` fields (excluded from JSON), static fields (module-level state)
+and setters; `class … extends Error` is covered by
+[Error subclasses](#error-subclasses-error_subclasses).
 
 #### Module re-exports (`module_reexports()`)
 
@@ -5831,6 +5833,93 @@ generic-function and generic-call diagnostics.
 Generics add no host import, value tag, layout, helper or catalog entry; an
 instantiation is indistinguishable from the hand-written specialized function.
 All budgets are unchanged.
+
+#### Error subclasses (`error_subclasses()`)
+
+Selector `error_subclasses()`. V32 admits [classes](#classes-classes) whose
+`extends` clause names `Error`, `TypeError`, `RangeError` or `SyntaxError`
+(the v9 families), and subclasses of such classes in any module. V31 and earlier
+profiles keep rejecting class declarations; without the selector `extends` of a
+native error keeps `class extends a built-in Error class`.
+
+- **Representation.** An instance is an ordinary class instance record; no value
+  tag, heap flag or layout is added and the 16-byte Error object is unchanged. Each
+  family has one synthetic root class that is never constructed and owns no
+  function: the Error root declares the writable fields `message: string`,
+  `name: string` and `cause` (slots 0–2 of every Error class), and the TypeError,
+  RangeError and SyntaxError roots extend it, mirroring the native prototype
+  chain. Roots are not named in the type namespace, so `Error`, `new Error(…)` and
+  `instanceof Error` on native values keep their v9 meaning. Identity, dispatch,
+  tracing and collection are the class rules: the descriptor of the most-derived
+  class is the identity, and the collector traces `message`, `name`, `cause` and
+  subclass fields through the instance's reference mask.
+- **Construction.** `super(message?, options?)` to a root is lowered inline: both
+  arguments are evaluated once, in order; `message` must be `string`,
+  `undefined` or their union (no coercion) and is stored as given or as the empty
+  string; `name` is set to the family name (the inherited default, so `toString()`
+  of `class A extends Error {}` is `Error: …`); `options` must be `undefined`, an
+  object type or their union, and `cause` is its `cause` property when the object
+  has one and `undefined` otherwise (InstallErrorCause; a missing `cause` field
+  reads `undefined`). An implicit constructor of a direct subclass forwards
+  `(message?, options?)`, where `options` is `{ cause?: <catch union> }`, so
+  `new A('m', { cause: caught })` accepts any caught value. Constructor parameter
+  defaults, readonly fields and the definite-initialization discipline are the
+  class rules.
+- **`new.target.name`.** In a constructor body, its parameter defaults and its
+  `super(...)` arguments, `new.target.name` is the name of the most-derived class
+  being constructed, selected by testing the receiver's descriptor against each
+  descendant of the enclosing class. Bare `new.target`, other properties, field
+  initializers, closures, methods and functions keep rejecting it. The form is
+  admitted in any class constructor under the selector.
+- **Members.** `message`, `name` and `cause` are public writable fields of every
+  Error class; an assignment such as `this.name = new.target.name` is an
+  ordinary field write, and subclasses cannot redeclare them (`duplicate class
+  member`). `toString()` implements `Error.prototype.toString` over the current
+  `name` and `message` (an empty part drops the `: ` separator). `cause` has the
+  catch-union type; it accepts any primitive, BigInt, native error or Error class
+  instance. The `unknown` annotation is not admitted, so an options parameter
+  names a concrete cause type such as `{ cause?: string }`; a non-throwable cause
+  type is rejected (`Error cause must be a primitive, BigInt or Error value`).
+- **`instanceof` and narrowing.** An Error-class instance is `instanceof Error`
+  and `instanceof` its own family (statically, or by descriptor for the root of a
+  union), and of every class in its chain. On a union that may hold an instance,
+  `instanceof Error`/a family combines the v9 host class test with the class test
+  against the family root; positive narrowing keeps the members that may match and
+  negative narrowing removes only certain matches. For Error classes only,
+  `x instanceof C` also narrows a binding whose class member is an ancestor of `C`
+  to `C` (a downcast proven by the descriptor test). On a union of native errors
+  and one Error class (for example after `instanceof Error`), `name`, `message`
+  and `toString()` test the class member first; other properties need a narrower
+  type. Unions join Error classes to their nearest common ancestor, so a union
+  keeps one class member (`cond ? new A() : new B()` has the common base type).
+- **Exceptions.** `throw` accepts Error-class instances. When the program
+  declares an Error class, the catch union additionally holds the Error root, so
+  every caught instance keeps its identity and subclass. Finally, rethrow,
+  cross-module propagation and catch object patterns (`catch ({ name, message })`
+  reads the fields of an instance) work as for native errors.
+- **Channel v5.** V32 selects the immutable i32 export
+  `varta.exception.version_v5 = 5` instead of v4; each profile requires its own
+  selector, so v31 modules (v4) and v32 modules (v5) reject each other's selector
+  and initialization checks the value before guest effects. Channel v5 carries the
+  channel-v4 values plus a Record cell. After `_start` returns with a pending
+  Record, the runtime validates it as a value-13 record and requires its descriptor
+  to declare non-optional String fields `name` and `message`; it copies both into
+  the owned `ThrownValue::ErrorInstance { name, message }`. Display follows
+  `Error.prototype.toString` with bounded escaped text (for example
+  `APITimeoutError: "Request timed out"`). Channel-v4 decoding keeps rejecting
+  Record cells. A forged record with those fields can only change its own
+  diagnostic; validation keeps every access in bounds.
+- **Rejected with diagnostics.** `super(...)` to a root with more than two or
+  spread arguments; non-string messages; non-object options; `JSON.stringify` of
+  any value that may reach an Error-class instance (own-property enumerability of
+  `message`/`cause` is not modelled); `stack`; and the record operations,
+  direct logging and ToPrimitive conversions that classes already reject. A
+  native-error `Error` annotation does not accept an Error-class instance.
+  Logging a caught union prints an instance member as its fields, like other
+  class members of unions, not as a stack trace.
+
+Error subclasses add no host import, value tag, heap layout or budget. The
+version matrix records the channel selector; all other v31 versions are shared.
 
 ## Local modules
 

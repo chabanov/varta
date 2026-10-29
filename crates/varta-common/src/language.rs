@@ -1171,7 +1171,9 @@ impl LanguageProfile {
     #[must_use]
     pub fn exception_channel(self) -> (&'static str, i32) {
         use crate::exceptions as e;
-        if self.bigint_values() {
+        if self.error_subclasses() {
+            (e::CLASS_ERROR_VERSION, e::CLASS_ERROR_CHANNEL_VERSION)
+        } else if self.bigint_values() {
             (e::BIGINT_VERSION, e::BIGINT_CHANNEL_VERSION)
         } else if self.error_families() {
             (e::FAMILY_VERSION, e::FAMILY_CHANNEL_VERSION)
@@ -1433,7 +1435,8 @@ mod tests {
         }
         assert_eq!(new.host_abi(), old.host_abi());
         assert_eq!(new.value_abi(), old.value_abi());
-        assert_eq!(new.exception_channel(), old.exception_channel());
+        // `error_subclasses()` selects its own channel; see the test below.
+        assert_ne!(new.exception_channel(), old.exception_channel());
         assert_eq!(new.json_parse(), old.json_parse());
         assert_eq!(new.json_stringify(), old.json_stringify());
         assert_eq!(
@@ -1441,6 +1444,33 @@ mod tests {
             new
         );
         assert!(serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v33\"").is_err());
+    }
+
+    #[test]
+    fn error_subclasses_select_channel_v5_only_in_v32() {
+        use crate::exceptions as e;
+        for &profile in SUPPORTED_PROFILES {
+            let channel = profile.exception_channel();
+            assert_eq!(
+                channel == (e::CLASS_ERROR_VERSION, e::CLASS_ERROR_CHANNEL_VERSION),
+                profile.error_subclasses(),
+                "{profile:?}"
+            );
+        }
+        assert_eq!(
+            LanguageProfile::CheckedF64Utf16V31.exception_channel(),
+            (e::BIGINT_VERSION, e::BIGINT_CHANNEL_VERSION)
+        );
+        assert!(e::CLASS_ERROR_VERSION.starts_with(e::PREFIX));
+        assert!(
+            [
+                e::ERROR_CHANNEL_VERSION,
+                e::FAMILY_CHANNEL_VERSION,
+                e::BIGINT_CHANNEL_VERSION
+            ]
+            .iter()
+            .all(|old| *old < e::CLASS_ERROR_CHANNEL_VERSION)
+        );
     }
 
     #[test]
