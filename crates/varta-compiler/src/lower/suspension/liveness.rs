@@ -141,6 +141,11 @@ impl Liveness<'_> {
             S::Set(slot, value) => {
                 let mut live = out;
                 self.kill(&mut live, *slot);
+                if self.cells.contains(slot) {
+                    // Assignment writes through the existing closure cell
+                    // (an `Init` allocates a fresh one), so it reads the cell.
+                    live.insert(*slot);
+                }
                 self.uses(value, &mut live)?;
                 live
             }

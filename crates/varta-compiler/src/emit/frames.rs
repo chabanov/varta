@@ -27,7 +27,7 @@ pub(super) struct Layout {
     pub id: u32,
     pub function: usize,
     /// Cell layout: every saved local. Liveness layout (v35): the parameters
-    /// the creator saves for state 0.
+    /// and captured environment cells the creator saves for state 0.
     pub slots: Vec<Slot>,
     /// Liveness layout (v35 `frame_liveness`): the saved slots of state `n` at
     /// index `n - 1`, see `frame_slots`.
@@ -51,11 +51,15 @@ impl Layout {
             shared: ir.cells.contains(&local),
         };
         if let Some(live) = &machine.live {
+            // State 0 holds the parameters and, for an async closure body
+            // (v35 `async_methods`), the captured environment cells, which
+            // the creator stores as shared entries without copying them.
             return Self {
                 id,
                 function,
                 slots: (0..ir.params.len() as u32)
                     .filter(|local| ir.locals[*local as usize].width() > 0)
+                    .chain(ir.captures.iter().copied())
                     .map(slot)
                     .collect(),
                 states: Some(
@@ -758,7 +762,7 @@ impl<'a> Emitter<'a> {
                 .push(I::I64Store(records::field(frame::ENVIRONMENT_FIELD)));
         }
         if layout.states.is_some() {
-            self.create_slots(layout)?;
+            self.create_slots(function, layout)?;
         } else {
             self.create_cells(function, layout, &segments)?;
         }

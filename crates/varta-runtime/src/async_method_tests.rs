@@ -95,11 +95,11 @@ fn async_method_and_closure_job_order_matches_node() {
 /// The checkpoint is driven by hand with a collection forced before every
 /// job: the receiver of a suspended async method, an async closure's captured
 /// cells and both frames' saved values survive while the frames are queued.
-#[test]
-fn receivers_and_captures_survive_a_collection_forced_before_every_job() {
+/// Drive `source` by hand with a full collection forced before every job and
+/// return the job count and the log lines.
+fn run_collecting(source: &str) -> (usize, Vec<String>) {
     use varta_compiler::suspension_test_hook as hook;
-    let bytes =
-        hook::compile_with_profile(include_str!("async_method_cases/lifetime.ts"), V35).unwrap();
+    let bytes = hook::compile_with_profile(source, V35).unwrap();
     let runtime = crate::VartaRuntime::new();
     let module = runtime.prepare_module(&bytes).unwrap();
     let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
@@ -127,10 +127,16 @@ fn receivers_and_captures_survive_a_collection_forced_before_every_job() {
         resume.call(&mut *store, (token, 0, 0)).unwrap();
         jobs += 1;
     }
-    assert!(jobs > 6, "{jobs}");
     assert!(store.data().scheduler.unhandled_rejection().is_none());
+    (jobs, store.data().output.lines.clone())
+}
+
+#[test]
+fn receivers_and_captures_survive_a_collection_forced_before_every_job() {
+    let (jobs, lines) = run_collecting(include_str!("async_method_cases/lifetime.ts"));
+    assert!(jobs > 6, "{jobs}");
     assert_eq!(
-        store.data().output.lines,
+        lines,
         [
             "varta log: L0start,a=2,b=2",
             "varta log: L0start,a=2,b=2",
@@ -141,6 +147,64 @@ fn receivers_and_captures_survive_a_collection_forced_before_every_job() {
     run(
         include_str!("async_method_cases/lifetime.ts"),
         &["L0start,a=2,b=2", "L0start,a=2,b=2", "k:a|a/y k:b|b/y"],
+    );
+}
+
+/// V35 liveness frames (`frame_liveness`) with async closures and methods
+/// (`async_methods`): an async closure body's frame keeps the captured cells
+/// as shared state-0 slots, an assignment after an `await` writes through the
+/// captured cell (it is live although never read), and the enclosing async
+/// method's frame keeps the cells it shares. The module carries liveness
+/// layouts (frame catalog version 3) and passes runtime admission; the same
+/// log holds with a collection forced before every job.
+#[test]
+fn async_closure_captures_stay_shared_cells_in_liveness_frames() {
+    let source = include_str!("async_method_cases/liveness.ts");
+    let expected = [
+        "assigned",
+        "1 2 assigned+b",
+        "assigned+b/2",
+        "c3! seen=3 total=6",
+        "c2! seen=2 total=9",
+        "3 assigned+b+x/3 c1! seen=1 total=10",
+    ];
+    let bytes = compile(source);
+    let catalog = wasmparser::Parser::new(0)
+        .parse_all(&bytes)
+        .find_map(|payload| match payload.unwrap() {
+            wasmparser::Payload::CustomSection(section)
+                if section.name() == varta_common::function::CATALOG_SECTION =>
+            {
+                Some(
+                    varta_common::function::FunctionCatalog::from_liveness_bytes(section.data())
+                        .unwrap(),
+                )
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        catalog.version,
+        varta_common::function::frame::FRAME_LIVENESS_CATALOG_VERSION
+    );
+    // Some async closure body saves captured cells as shared state-0 entries.
+    assert!(
+        catalog
+            .frames
+            .iter()
+            .any(|layout| layout.slots.iter().filter(|slot| slot.shared).count() >= 2),
+        "{:?}",
+        catalog.frames
+    );
+    run(source, &expected);
+    let (jobs, lines) = run_collecting(source);
+    assert!(jobs > 20, "{jobs}");
+    assert_eq!(
+        lines,
+        expected
+            .iter()
+            .map(|line| format!("varta log: {line}"))
+            .collect::<Vec<_>>()
     );
 }
 

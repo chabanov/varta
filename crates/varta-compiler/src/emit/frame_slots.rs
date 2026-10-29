@@ -259,9 +259,10 @@ impl Emitter<'_> {
         Ok(())
     }
     /// Creator of a liveness frame: zeroed liveness segments, the unshared
-    /// parameters stored directly, the state-0 GC map published before any
-    /// further allocation, then the closure cells of shared parameters.
-    pub(super) fn create_slots(&mut self, layout: &Layout) -> Result<()> {
+    /// parameters and captured environment cells stored directly, the state-0
+    /// GC map published before any further allocation, then the closure cells
+    /// of shared parameters.
+    pub(super) fn create_slots(&mut self, function: &ir::Function, layout: &Layout) -> Result<()> {
         let segments = layout.segments();
         for (index, count) in segments.iter().copied().enumerate() {
             let bytes = segment_bytes(count);
@@ -283,8 +284,18 @@ impl Emitter<'_> {
             self.code.push(I::I64Store(records::field(index as u32)));
         }
         let saved = layout.slots.clone();
+        let parameters = function.params.len() as u32;
         for (slot, word, entry) in entries(&saved) {
             if slot.shared {
+                if slot.local >= parameters {
+                    // A captured environment cell (async closure body) is the
+                    // binding itself: store the same cell, never a copy.
+                    self.segment(self.string_temporary, entry);
+                    self.code.extend([
+                        I::LocalGet(self.cell_slots[&slot.local]),
+                        I::I64Store(Self::entry(entry)),
+                    ]);
+                }
                 continue;
             }
             let physical = self.local_slots[slot.local as usize];
@@ -310,7 +321,7 @@ impl Emitter<'_> {
             }
         }
         for (slot, _, entry) in entries(&saved) {
-            if !slot.shared {
+            if !slot.shared || slot.local >= parameters {
                 continue;
             }
             let bytes = binding_bytes(slot.ty);

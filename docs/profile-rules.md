@@ -2408,7 +2408,9 @@ Contract: [frame liveness](architecture.md#frame-liveness-frame_liveness).
 - The analysis may over-approximate, never under-approximate. Kill only on a
   statement-level `Init`/`Set` of an unshared local; count every other mention
   (expression-level writes, hidden statement slots, closure captures) as a
-  use; never kill a closure-shared local. Add the exception continuation
+  use; never kill a closure-shared local, and count a statement-level `Set`
+  of one as a use (it writes through the existing cell; `Init` allocates a
+  fresh one). Add the exception continuation
   before every statement and both completion continuations at every point.
   A new IR statement or expression that names a local must be added to the
   liveness visitors (`node_mentions`, `statement_fields`, `operands`,
@@ -2422,6 +2424,10 @@ Contract: [frame liveness](architecture.md#frame-liveness-frame_liveness).
   masks only after its entries are stored, clear them at resumption after the
   values are restored and rooted, and never allocate in between. The creator
   publishes the state-0 masks before allocating shared parameter cells.
+- State 0 of an async closure body (`async_methods`) saves its captured
+  environment cells after the parameters; the creator stores the loaded cells
+  themselves, never copies (`varta-runtime`
+  `async_method_tests::async_closure_captures_stay_shared_cells_in_liveness_frames`).
 - Restoration validates every touched segment (handle length, flags, kind,
   count, the state's exact mask) and canonical scalar payloads before use;
   keep the default `br_table` target a trap.

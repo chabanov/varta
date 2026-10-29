@@ -6896,14 +6896,17 @@ before this change (pinned by module digests in `varta-runtime`
   the only kill; a write inside an expression is a use; every statement may
   throw; a finalizer may continue to any enclosing target and keeps its
   completion, exception and result locals live; a closure-shared local is
-  never killed and every mention of it is a use, so its closure cell is
-  always the saved binding. A local mentioned only inside one statement
+  never killed and every mention of it is a use (a statement-level `Set`
+  included, because it writes through the existing cell), so its closure cell
+  is always the saved binding. A local mentioned only inside one statement
   operand (call, value-block or helper scratch) is never live across a point,
   because operands are evaluated whole after normalization. The state
   machine adds the hidden locals its resumption path reads itself: the
   selected case of a suspending `switch` and the kept completion of a
   suspending finalizer, for the states they cover. State 0 saves the
-  parameters the creator binds.
+  parameters the creator binds and, for an async closure body
+  ([async methods](#async-methods-and-closures-async_methods)), its captured
+  environment cells as shared entries.
 - **Segments.** A liveness frame keeps the frame envelope and its segment
   table (kind 1) and holds saved values directly in segments of kind
   `FRAME_SLOT_SEGMENT_KIND` (3), at most 32 entries each and
@@ -6912,7 +6915,8 @@ before this change (pinned by module digests in `varta-runtime`
   a two-slot value (its second entry is the `u32` status word). States reuse
   the same entries, so the frame holds the widest state, and no frame cell is
   allocated for an unshared value. Shared parameters still get a closure
-  cell from the creator.
+  cell from the creator; captured environment cells are stored as they are,
+  never copied, so the body and the closure share one binding.
 - **Exact GC maps.** A segment's edge mask is the GC map of the state the
   frame is suspended at: the bits of the entries holding a managed reference
   (a handle or a closure cell). Saving stores the entries, then the masks;
@@ -6935,7 +6939,7 @@ before this change (pinned by module digests in `varta-runtime`
   add `capacity` (entries the segments hold, at most `MAX_FRAME_BINDINGS` and
   at least every state's entries) and, per state, `saved` (the saved slots in
   entry order, each a binding id and whether it is a shared cell); `slots`
-  lists the creator's state-0 parameters. `FunctionCatalog::from_liveness_bytes`
+  lists the creator's state-0 parameters and captured cells. `FunctionCatalog::from_liveness_bytes`
   reads versions 1 and 3 only, `from_frame_bytes` versions 1 and 2 only, and a
   version 2 row with liveness fields is invalid. Runtime preflight and
   artifact validation pick the reader by profile

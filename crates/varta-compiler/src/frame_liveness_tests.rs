@@ -158,6 +158,37 @@ fn handler_and_finalizer_values_stay_live_across_points() {
     }
 }
 
+/// An assignment to a closure-shared local writes through its existing cell,
+/// so the cell is live across a point even when the function never reads the
+/// local again itself.
+#[test]
+fn assignments_through_closure_cells_keep_the_cell_live() {
+    let source = program(
+        "function task(start: number): number {
+           let count = start;
+           const read = (): number => count;
+           const step = __varta_suspend(read());
+           count = step * 2;
+           return read();
+         }",
+    );
+    v35(|| {
+        let mut frames = Frames::new(&source);
+        let token = frames.create(&[Val::F64(4f64.to_bits())]);
+        let (yields, outcome, token) =
+            frames.drive(token, &crate::suspension_tests::numbers(&[0.0, 5.0]));
+        assert_eq!((yields, outcome), (vec![4.0], Outcome::Returned));
+        assert_eq!(frames.number(token), 10.0);
+    });
+    let catalog = catalog_for(&source, V35);
+    let saved = &catalog.frames[0].states[0].saved;
+    assert_eq!(
+        saved.iter().filter(|slot| slot.shared).count(),
+        1,
+        "{saved:?}"
+    );
+}
+
 #[test]
 fn closure_cells_stay_shared_with_liveness_frames() {
     let source = program(
