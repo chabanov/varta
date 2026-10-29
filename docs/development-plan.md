@@ -530,18 +530,18 @@ defaulted function-typed parameter of `streamBackoffDelay`), together with the
 v35 follow-ups that need function-valued fields (abort listeners), async
 generators and timers (`AbortSignal.timeout`, backoff delays), in profile
 `checked-f64-utf16-v36`, developed in four parallel streams. V36 inherits every
-v35 feature with value ABI/layout 16 and declares its own host ABI 32
-(`abi::TIMERS_VERSION`), under which every host import of the batch is added;
+v35 feature and declares its own host ABI 32 (`abi::TIMERS_VERSION`), under
+which every host import of the batch is added, and its own value ABI/layout 17
+(function values as tagged values, introduced by the function-fields stream);
 a v36 module relabelled as v35 fails at its host ABI section, and runtimes that
-do not list v36 reject its declared profile name. The function-fields stream
-owns any value-layout bump (value17)
+do not list v36 reject its declared profile name
 ([contract](architecture.md#checked-f64-utf16-v36--pilot-batch-checked-declared-fields-function-fields-async-generators-and-timers)).
 All selectors are registered and admit nothing yet.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Registered, admits nothing |
-| `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns any value17 bump) | M2, M4 | Registered, admits nothing |
+| `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns the value17 bump) | M2, M4 | Value layout 17 and its readers in place; source admission in progress |
 | `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Registered, admits nothing |
 | `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Registered, admits nothing |
 

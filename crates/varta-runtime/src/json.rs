@@ -111,6 +111,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             varta_common::HostOperation::JsonStringifyV15,
             PROMISE_VALUE_VERSION,
         ),
+        (
+            varta_common::HostOperation::JsonStringifyV16,
+            FUNCTION_FIELD_VALUE_VERSION,
+        ),
     ] {
         linker.func_wrap(
             "varta",
@@ -149,6 +153,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     }
     Ok(())
 }
+
+/// How value17 diagnostics (logged values) show a function value: as Node
+/// shows an anonymous function, since closures carry no source name.
+pub(crate) const FUNCTION_DISPLAY: &str = "[Function (anonymous)]";
 
 pub(super) fn render_reference(
     data: &[u8],
@@ -256,6 +264,10 @@ impl<'a, 'b> Encoder<'a, 'b> {
     fn resolve(&mut self, kind: u32, value: u64) -> Result<(u32, u64), wasmtime::Error> {
         if kind == ValueKind::Function as u32 {
             self.function(value)?;
+            // JSON drops functions like `undefined`; value17 diagnostics show them.
+            if self.version == FUNCTION_FIELD_VALUE_VERSION && self.diagnostic_budget.is_some() {
+                return Ok((kind, value));
+            }
             return Ok((ValueKind::Undefined as u32, 0));
         }
         if kind == ValueKind::ReferenceUnion as u32 {
@@ -270,6 +282,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             ) {
                 return Err(error("incompatible reference union"));
             }
@@ -297,6 +310,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             return Err(error("incompatible primitive union"));
         }
@@ -304,6 +318,13 @@ impl<'a, 'b> Encoder<'a, 'b> {
         Ok((cell.kind as u32, cell.payload))
     }
     fn function(&mut self, handle: u64) -> Result<(), wasmtime::Error> {
+        if self.version == FUNCTION_FIELD_VALUE_VERSION {
+            // Value17 function fields: the closure envelope is checked; the
+            // captured payloads stay opaque and nothing is invoked.
+            varta_common::function::ClosureView::read_envelope(self.data, handle)
+                .map_err(wasmtime::Error::new)?;
+            return Ok(());
+        }
         if self.version != FUNCTION_VALUE_VERSION {
             return Err(error("incompatible function value"));
         }
@@ -441,6 +462,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
+                        | FUNCTION_FIELD_VALUE_VERSION
                 ) {
                     validate_aggregate(self.data, ValueKind::Record, packed, self.version)
                         .map_err(wasmtime::Error::new)?;
@@ -450,6 +472,9 @@ impl<'a, 'b> Encoder<'a, 'b> {
             ValueKind::Array => self.array(packed, depth),
             ValueKind::Dictionary => self.dictionary(packed, depth),
             ValueKind::Promise => self.promise(packed, depth),
+            ValueKind::Function if self.diagnostic_budget.is_some() => {
+                self.write(FUNCTION_DISPLAY.as_bytes())
+            }
             _ => Err(error("noncanonical scalar")),
         }
     }
@@ -478,6 +503,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             HEAP_ERROR_FLAG as u32
         } else {
@@ -494,6 +520,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             ) {
                 HEAP_VECTOR_FLAG as u32
             } else {
@@ -511,6 +538,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             ) {
                 HEAP_UNION_FLAG as u32
             } else {
@@ -540,6 +568,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             return self.vector(packed, depth);
         }
@@ -657,6 +686,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             return self.record_present(packed, depth);
         }

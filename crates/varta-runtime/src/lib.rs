@@ -593,6 +593,8 @@ mod value15_tests;
 #[cfg(test)]
 mod value16_tests;
 #[cfg(test)]
+mod value17_tests;
+#[cfg(test)]
 mod web_headers_tests;
 #[cfg(test)]
 mod wide_record_tests;

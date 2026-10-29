@@ -457,7 +457,7 @@ impl Type {
     /// The value tag of this type in a descriptor of value layout `version`.
     pub(crate) fn layout_kind(self, version: u32) -> Option<varta_common::value::ValueKind> {
         match self {
-            Self::Promise(_) if version == varta_common::value::PROMISE_VALUE_VERSION => {
+            Self::Promise(_) if varta_common::value::promise_layout(version) => {
                 Some(varta_common::value::ValueKind::Promise)
             }
             _ => self.value_kind(),

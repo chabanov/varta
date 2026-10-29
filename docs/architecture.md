@@ -156,11 +156,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
 | `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
-| `checked-f64-utf16-v36` | 32 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
+| `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **32**, value ABI **16**, HTTP contract **1** and **39** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **32**, value ABI **17**, HTTP contract **1** and **39** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -7243,38 +7243,99 @@ dispatch, rooting and diagnostics for each type.
 
 ### `checked-f64-utf16-v36` — Pilot batch: checked declared fields, function fields, async generators and timers
 
-V36 is registered and inherits every v35 feature and selector, including value
-layout 16 (`promise_values()`) with the value16 host readers, exception channel
-v7, JSON schema 16 (`json_stringify_v15`, `json_parse_v17`), the microtask
-scheduler and frame catalog version 3 (`frame_liveness()`). Wherever a v35
-subsection above admits a feature, layout or binding for v35 only, it applies
-to v35 and v36; v34 and earlier profiles stay frozen. V36 declares one version
-identity of its own (see the [version matrix](#version-matrix)):
+V36 is registered and inherits every v35 feature and selector, including the
+promise tag of value layout 16 (`promise_values()`), the microtask scheduler
+and frame catalog version 3 (`frame_liveness()`). Wherever a v35 subsection
+above admits a feature, layout or binding for v35 only, it applies to v35 and
+v36 (with the value17 readers below in place of the value16 ones); v34 and
+earlier profiles stay frozen. V36 declares two version identities of its own
+(see the [version matrix](#version-matrix)):
 
-- **Host ABI** `abi::TIMERS_VERSION` (32), for v36 alone. It adds no host
-  import yet: every v35 operation keeps its signature, binding and minimum ABI,
-  and no registered operation requires host ABI 32. Host imports added in this
-  batch (the timer operations first) use host ABI 32 as their minimum.
-- **Value ABI and layout** `value::PROMISE_VALUE_VERSION` (value16), shared
-  with v35. V36 adds no value tag or layout yet; `LanguageProfile::value_layout`
-  equals `value_abi`, so descriptors, catalogs, frames and exception cells are
-  stamped and read exactly as under v35.
+- **Host ABI** `abi::TIMERS_VERSION` (32), for v36 alone. Every v35 operation
+  other than the value16 readers keeps its signature, binding and minimum ABI.
+  Host imports added in this batch, including the value17 readers, use host
+  ABI 32 as their minimum.
+- **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17), for
+  v36 alone; `LanguageProfile::value_layout` equals `value_abi`, so
+  descriptors, catalogs, frames and exception cells are stamped 17
+  ([value layout 17](#value-layout-17-function_fields)).
 
 An older runtime that does not list v36 rejects the unknown profile name in
 `varta.language` validation, before compilation or any guest effect. A v36
 module relabelled as v35 declares host ABI 32 against v35's 31 and fails at its
 host ABI section before instantiation; as for every profile, a v36 declaration
-with a downgraded or missing host ABI section, a value ABI other than value16
+with a downgraded or missing host ABI section, a value ABI other than value17
 or a missing value section fails validation before any guest effect.
 
-Each ABI is bumped at most once per batch. The host ABI bump is already made at
-registration and every stream adds its imports under it. The function-fields
-stream owns any value-layout bump (value17: a new `value` constant,
-`value_abi`, `value_layout`, value17 variants of every layout-bound reader with
-their minimum host ABI 32, and the launcher maximum); the other streams rebase
-onto it. V35 and earlier profiles keep their host ABI, value ABI and layouts.
+Each ABI is bumped at most once per batch. The host ABI bump was made at
+registration and the value-layout bump by the function-fields stream; every
+stream adds its imports under host ABI 32 and stamps value17. V35 and earlier
+profiles keep their host ABI, value ABI and layouts.
 
-Four selectors gate the batch's work streams, and all admit nothing yet:
+#### Value layout 17 (`function_fields`)
+
+V36 stamps and reads the value17 layouts: record descriptors, record sizes,
+presence trailers, closure and frame catalogs and exception cells carry version
+17, and the runtime checks a v36 capture catalog against it. Value17 keeps every
+value16 layout and tag with exactly its value16 meaning (`value::dynamic_layout`
+and `value::promise_layout` name the families that include it) and admits the
+function tag `ValueKind::Function` = 12 as a reference kind of record and class
+fields, array elements, dictionary values, reference-union and `unknown`
+cells (`value::function_layout` is true for value14 and value17). The payload
+is the packed handle of the existing v12+ closure (heap flag 128, 24 bytes,
+optional environment edge); the guest collector traces it through the same
+exact edge masks as every other reference. Value16 readers stay frozen: they
+reject descriptors, catalogs and cells stamped 17 and the function tag, and the
+value17 readers reject 16.
+
+A value17 reader validates a function cell through its closure envelope
+(`function::ClosureView::read_envelope`: block header, size and flag, the
+signature/reserved words, the environment edge and every binding cell's
+envelope). Captured payloads stay opaque and no reader invokes or decodes a
+function, so unlike value14 (whose transport needs the owner capture catalog)
+no catalog proof is required and no call authority is implied. Observations:
+`typeof` is `"function"`, truthiness is `true`, nullish tests are `false`,
+`Array.isArray` is `false`, strict equality is handle identity,
+`JSON.stringify` treats a function like `undefined` (an omitted field or
+dictionary entry, `null` in an array, an absent top-level result), a callable
+`toJSON` field is a fatal error (the host cannot call guest code), and a logged
+function shows as `[Function (anonymous)]` (Node prints the function's name
+where it has one; closures carry no source name).
+
+V36 binds its own pure, capability-free operations to value17. Each is one more
+row of the runtime's per-layout registration tables, mirroring its value16
+counterpart's signature, result convention, budgets and recoverable errors
+(`HostOperation::value16_counterpart`), and requires host ABI
+`abi::TIMERS_VERSION`:
+
+| Value17 import | Value16 counterpart |
+| --- | --- |
+| `value_log_v11` | `value_log_v10` |
+| `value_typeof_v10`, `value_truthy_v10`, `value_nullish_v10`, `value_strict_equal_v10`, `value_nullish_equal_v10`, `value_is_array_v10` | the `_v9` operations |
+| `value_is_error_class_v6` | `value_is_error_class_v5` |
+| `json_stringify_v16`, `json_parse_v18` | `json_stringify_v15`, `json_parse_v17` |
+| `primitive_to_string_v5`, `primitive_to_number_v5`, `bigint_from_value_v4` | `primitive_to_string_v4`, `primitive_to_number_v4`, `bigint_from_value_v3` |
+
+`LanguageProfile::host_operation` maps every value16 reader (and the value15
+and value13 readers it replaced) to its value17 replacement for v36 only, so
+the runtime rejects a v36 module importing a value16 reader and a v35 module
+importing a value17 reader (whose minimum host ABI also exceeds v35's).
+`json_parse_v18` reads **JSON schema 17** (`json::FUNCTION_FIELD_SCHEMA_VERSION`),
+the schema-15 grammar materializing value17 graphs; JSON never produces a
+function or a promise. Thrown values use **exception channel v8**
+(`varta.exception.version_v8` = 8): the channel-v7 contents read as value17
+cells, records and Error objects; a function is never thrown.
+
+The switch changes no observable behaviour of a v35 program: `varta-runtime`
+`value17_tests` compile the value15, unknown, generator, promise, async-method,
+v35 cross-stream and Web cases under v35 and v36 and require identical output,
+check that v36 imports only value17 readers and exports channel v8, that
+swapped readers and channels are rejected before guest effects, that a
+value16-stamped descriptor fails under v36, and that value16 readers reject a
+function cell that value17 readers accept, while tampered closure envelopes
+fail.
+
+Four selectors gate the batch's work streams:
 
 - records stream: `checked_declared_fields()` (declared fields of mixed
   records that are checkable from `unknown`, for example arrays of optional

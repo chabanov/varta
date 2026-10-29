@@ -11542,7 +11542,7 @@ fn pilot_profile_v35_declares_value16_and_host_abi_31_through_both_binaries() {
 }
 
 #[test]
-fn pilot_profile_v36_declares_host_abi_32_with_value16_through_both_binaries() {
+fn pilot_profile_v36_declares_host_abi_32_with_value17_through_both_binaries() {
     use varta_common::{abi, value};
     const PROFILE: &str = "checked-f64-utf16-v36";
     // An unregistered successor of the same length: every binary sees it as a
@@ -11568,7 +11568,7 @@ fn pilot_profile_v36_declares_host_abi_32_with_value16_through_both_binaries() {
         let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
         assert_eq!(info["language"]["profile"], PROFILE);
         assert_eq!(info["abiVersion"], abi::TIMERS_VERSION);
-        assert_eq!(info["valueAbiVersion"], value::PROMISE_VALUE_VERSION);
+        assert_eq!(info["valueAbiVersion"], value::FUNCTION_FIELD_VALUE_VERSION);
     }
     fs::remove_dir_all(project.0.join("src")).unwrap();
     fs::remove_file(project.0.join("varta.config.json")).unwrap();

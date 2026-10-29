@@ -423,9 +423,10 @@ impl LanguageProfile {
     pub fn checked_declared_fields(self) -> bool {
         self == Self::CheckedF64Utf16V36
     }
-    /// Pilot batch v36, functions stream: function-valued record and class
-    /// fields, and optional or defaulted function-typed parameters. Owns any
-    /// value-layout bump of the batch (value 17). Admits nothing yet.
+    /// Pilot batch v36, functions stream: value layout 17
+    /// ([`crate::value::FUNCTION_FIELD_VALUE_VERSION`]) with function values as
+    /// tagged values in record and class fields, arrays, dictionaries, unions
+    /// and `unknown`, and optional or defaulted function-typed parameters.
     #[must_use]
     pub fn function_fields(self) -> bool {
         self == Self::CheckedF64Utf16V36
@@ -1464,6 +1465,26 @@ impl LanguageProfile {
     #[must_use]
     pub fn host_operation(self, operation: crate::HostOperation) -> crate::HostOperation {
         use crate::HostOperation::*;
+        if self.function_fields() {
+            // Value17 readers replace every value16 reader; nothing else changes.
+            let value16 = LanguageProfile::CheckedF64Utf16V35.host_operation(operation);
+            return match value16 {
+                ValueLogV10 => ValueLogV11,
+                ValueTypeOfV9 => ValueTypeOfV10,
+                ValueTruthyV9 => ValueTruthyV10,
+                ValueNullishV9 => ValueNullishV10,
+                ValueStrictEqualV9 => ValueStrictEqualV10,
+                ValueNullishEqualV9 => ValueNullishEqualV10,
+                ValueIsArrayV9 => ValueIsArrayV10,
+                ValueIsErrorClassV5 => ValueIsErrorClassV6,
+                JsonStringifyV15 => JsonStringifyV16,
+                JsonParseV17 => JsonParseV18,
+                PrimitiveStringV4 => PrimitiveStringV5,
+                PrimitiveNumberV4 => PrimitiveNumberV5,
+                BigIntFromValueV3 => BigIntFromValueV4,
+                other => other,
+            };
+        }
         if self.promise_values() {
             // Value16 readers replace every value15 reader; nothing else changes.
             let value15 = LanguageProfile::CheckedF64Utf16V34.host_operation(operation);
@@ -1637,7 +1658,9 @@ impl LanguageProfile {
     #[must_use]
     pub fn exception_channel(self) -> (&'static str, i32) {
         use crate::exceptions as e;
-        if self.promise_values() {
+        if self.function_fields() {
+            (e::FUNCTION_FIELD_VERSION, e::FUNCTION_FIELD_CHANNEL_VERSION)
+        } else if self.promise_values() {
             (e::PROMISE_VERSION, e::PROMISE_CHANNEL_VERSION)
         } else if self.dynamic_values() {
             (e::DYNAMIC_VERSION, e::DYNAMIC_CHANNEL_VERSION)
@@ -1660,9 +1683,8 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V32
             | Self::CheckedF64Utf16V33 => crate::value::BIGINT_VALUE_VERSION,
             Self::CheckedF64Utf16V34 => crate::value::DYNAMIC_VALUE_VERSION,
-            Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36 => {
-                crate::value::PROMISE_VALUE_VERSION
-            }
+            Self::CheckedF64Utf16V35 => crate::value::PROMISE_VALUE_VERSION,
+            Self::CheckedF64Utf16V36 => crate::value::FUNCTION_FIELD_VALUE_VERSION,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1701,8 +1723,11 @@ impl LanguageProfile {
     /// exception operations read. It equals [`Self::value_abi`] for every
     /// profile: v34 stamps the value15 layouts
     /// ([`crate::value::DYNAMIC_VALUE_VERSION`]) read by its value15 operations,
-    /// and v35 and v36 stamp the value16 layouts
-    /// ([`crate::value::PROMISE_VALUE_VERSION`]) read by the value16 operations.
+    /// v35 stamps the value16 layouts
+    /// ([`crate::value::PROMISE_VALUE_VERSION`]) read by the value16 operations,
+    /// and v36 stamps the value17 layouts
+    /// ([`crate::value::FUNCTION_FIELD_VALUE_VERSION`]) read by the value17
+    /// operations.
     #[must_use]
     pub fn value_layout(self) -> u32 {
         self.value_abi()
@@ -1716,9 +1741,8 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V32
             | Self::CheckedF64Utf16V33 => crate::HostOperation::JsonStringifyV13,
             Self::CheckedF64Utf16V34 => crate::HostOperation::JsonStringifyV14,
-            Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36 => {
-                crate::HostOperation::JsonStringifyV15
-            }
+            Self::CheckedF64Utf16V35 => crate::HostOperation::JsonStringifyV15,
+            Self::CheckedF64Utf16V36 => crate::HostOperation::JsonStringifyV16,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -1763,9 +1787,8 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V32
             | Self::CheckedF64Utf16V33 => crate::HostOperation::JsonParseV15,
             Self::CheckedF64Utf16V34 => crate::HostOperation::JsonParseV16,
-            Self::CheckedF64Utf16V35 | Self::CheckedF64Utf16V36 => {
-                crate::HostOperation::JsonParseV17
-            }
+            Self::CheckedF64Utf16V35 => crate::HostOperation::JsonParseV17,
+            Self::CheckedF64Utf16V36 => crate::HostOperation::JsonParseV18,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -2175,7 +2198,7 @@ mod tests {
         // The promise-values stream owns the v35 ABI bumps: value ABI and
         // layout 16 (promise values), host ABI 31 (the value16 readers),
         // exception channel v7 and JSON schema 16. V34 keeps its own; v36
-        // inherits the value16 layouts under its own host ABI.
+        // extends them to value17 under its own host ABI.
         assert_eq!(new.host_abi(), crate::abi::PROMISE_VALUES_VERSION);
         assert_eq!(old.host_abi(), crate::abi::SCHEDULED_FRAMES_VERSION);
         assert!(crate::abi::supported(new.host_abi()));
@@ -2183,9 +2206,6 @@ mod tests {
         assert_eq!(new.value_layout(), new.value_abi());
         assert_eq!(old.value_abi(), crate::value::DYNAMIC_VALUE_VERSION);
         assert!(crate::value::supported_version(new.value_abi()));
-        assert!(!crate::value::supported_version(
-            crate::value::PROMISE_VALUE_VERSION + 1
-        ));
         assert!(!crate::value::compatible_version(
             old.value_abi(),
             new.value_abi()
@@ -2201,7 +2221,7 @@ mod tests {
             );
             assert_eq!(
                 profile.value_abi() == crate::value::PROMISE_VALUE_VERSION,
-                inherited(profile)
+                profile == new
             );
         }
         assert_eq!(
@@ -2265,13 +2285,13 @@ mod tests {
         let mut launcher = crate::launcher::LauncherInfo::current();
         assert!(launcher.language_profiles.contains(&new));
         assert!(launcher.host_abi > new.host_abi());
-        assert_eq!(launcher.value_abi, new.value_abi());
+        assert!(launcher.value_abi > new.value_abi());
         launcher.language_profiles.retain(|p| *p != new);
         assert!(launcher.validate_current().is_err());
     }
 
     #[test]
-    fn pilot_v36_inherits_v35_with_a_new_host_abi_and_admits_nothing_yet() {
+    fn pilot_v36_inherits_v35_with_host_abi_32_and_value17() {
         use crate::HostOperation as H;
         let new = LanguageProfile::CheckedF64Utf16V36;
         let old = LanguageProfile::CheckedF64Utf16V35;
@@ -2314,9 +2334,9 @@ mod tests {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }
         }
-        // V36 has its own host ABI 32 for the batch's host imports (none yet)
-        // and shares value ABI/layout 16, exception channel v7 and JSON schema
-        // 16 with v35.
+        // V36 has its own host ABI 32 for the batch's host imports and its own
+        // value ABI/layout 17 (function fields), exception channel v8 and JSON
+        // schema 17.
         assert_eq!(new.host_abi(), crate::abi::TIMERS_VERSION);
         assert_eq!(old.host_abi(), crate::abi::PROMISE_VALUES_VERSION);
         assert!(new.host_abi() > old.host_abi());
@@ -2329,35 +2349,60 @@ mod tests {
                 "{profile:?}"
             );
         }
-        assert_eq!(new.value_abi(), crate::value::PROMISE_VALUE_VERSION);
-        assert_eq!(new.value_abi(), old.value_abi());
-        assert_eq!(new.value_layout(), old.value_layout());
+        assert_eq!(new.value_abi(), crate::value::FUNCTION_FIELD_VALUE_VERSION);
+        assert_eq!(old.value_abi(), crate::value::PROMISE_VALUE_VERSION);
+        assert_eq!(new.value_layout(), new.value_abi());
         assert!(!crate::value::supported_version(
-            crate::value::PROMISE_VALUE_VERSION + 1
+            crate::value::FUNCTION_FIELD_VALUE_VERSION + 1
         ));
-        assert_eq!(new.exception_channel(), old.exception_channel());
-        assert_eq!(new.json_parse(), old.json_parse());
-        assert_eq!(new.json_stringify(), old.json_stringify());
+        for &profile in SUPPORTED_PROFILES {
+            assert_eq!(
+                profile.value_abi() == crate::value::FUNCTION_FIELD_VALUE_VERSION,
+                profile == new,
+                "{profile:?}"
+            );
+        }
+        assert_eq!(
+            new.exception_channel(),
+            (
+                crate::exceptions::FUNCTION_FIELD_VERSION,
+                crate::exceptions::FUNCTION_FIELD_CHANNEL_VERSION
+            )
+        );
+        assert_eq!(new.json_parse(), H::JsonParseV18);
+        assert_eq!(new.json_stringify(), H::JsonStringifyV16);
+        // Value17 keeps every value16 tag with its meaning and adds the
+        // function tag; value16 keeps rejecting it.
+        let value17 = crate::value::FUNCTION_FIELD_VALUE_VERSION;
+        for tag in 0..=crate::value::ValueKind::Promise as u32 {
+            let kind = crate::value::ValueKind::from_tag(tag).unwrap();
+            if kind == crate::value::ValueKind::Function {
+                assert!(kind.supported_by(value17));
+                assert!(!kind.supported_by(crate::value::PROMISE_VALUE_VERSION));
+            } else {
+                assert_eq!(
+                    kind.supported_by(value17),
+                    kind.supported_by(crate::value::PROMISE_VALUE_VERSION),
+                    "{kind:?}"
+                );
+            }
+        }
+        assert!(crate::value::dynamic_layout(value17) && crate::value::promise_layout(value17));
+        assert_eq!(
+            crate::value::record_bytes(value17, 40),
+            crate::value::record_bytes(crate::value::PROMISE_VALUE_VERSION, 40)
+        );
+        assert_eq!(
+            crate::value::max_record_fields(value17),
+            crate::value::MAX_WIDE_RECORD_FIELDS
+        );
         assert_eq!(
             crate::function::admission::frame_catalog_version(new),
             crate::function::admission::frame_catalog_version(old)
         );
-        // Every host operation, including the value16 readers, binds exactly
-        // as under v35; no registered operation requires host ABI 32 yet.
-        for operation in [
-            H::LogString,
-            H::LogFloat,
-            H::FsRead,
-            H::PromiseReact,
-            H::UnionLog,
-            H::ValueTypeOf,
-            H::ValueIsError,
-            H::ValueLogV9,
-            H::JsonParseV16,
-            H::JsonStringifyV14,
-            H::PrimitiveStringV3,
-            H::BigIntFromValueV2,
-        ] {
+        // Every host operation other than the value readers binds exactly as
+        // under v35.
+        for operation in [H::LogString, H::LogFloat, H::FsRead, H::PromiseReact] {
             assert_eq!(
                 new.host_operation(operation),
                 old.host_operation(operation),
@@ -2388,6 +2433,67 @@ mod tests {
         assert_eq!(launcher.value_abi, new.value_abi());
         launcher.language_profiles.retain(|p| *p != new);
         assert!(launcher.validate_current().is_err());
+    }
+
+    #[test]
+    fn value17_operations_mirror_value16_and_bind_only_to_v36() {
+        use crate::HostOperation as H;
+        let new = LanguageProfile::CheckedF64Utf16V36;
+        let old = LanguageProfile::CheckedF64Utf16V35;
+        let pairs = [
+            (H::ValueLogV11, H::ValueLogV10),
+            (H::ValueTypeOfV10, H::ValueTypeOfV9),
+            (H::ValueTruthyV10, H::ValueTruthyV9),
+            (H::ValueNullishV10, H::ValueNullishV9),
+            (H::ValueStrictEqualV10, H::ValueStrictEqualV9),
+            (H::ValueNullishEqualV10, H::ValueNullishEqualV9),
+            (H::ValueIsArrayV10, H::ValueIsArrayV9),
+            (H::ValueIsErrorClassV6, H::ValueIsErrorClassV5),
+            (H::JsonParseV18, H::JsonParseV17),
+            (H::JsonStringifyV16, H::JsonStringifyV15),
+            (H::PrimitiveStringV5, H::PrimitiveStringV4),
+            (H::PrimitiveNumberV5, H::PrimitiveNumberV4),
+            (H::BigIntFromValueV4, H::BigIntFromValueV3),
+        ];
+        for (value17, value16) in pairs {
+            assert_eq!(value17.value16_counterpart(), Some(value16));
+            assert_eq!(value16.value16_counterpart(), None);
+            assert_eq!(value17.value15_counterpart(), None);
+            assert_eq!(value17.value13_counterpart(), None);
+            assert_eq!(value17.scalar_signature(), value16.scalar_signature());
+            assert_eq!(value17.returns_string(), value16.returns_string());
+            assert_eq!(
+                value17.needs_result_globals(),
+                value16.needs_result_globals()
+            );
+            assert_eq!(value17.capability(), None);
+            assert_eq!(value17.minimum_abi(), crate::abi::TIMERS_VERSION);
+            assert_eq!(H::from_name(value17.name()), Some(value17));
+            assert_ne!(value17.name(), value16.name());
+            // v36 replaces each value16 reader (and the readers it replaced);
+            // v35 never selects value17 and its host ABI is below the minimum.
+            let value15 = value16.value15_counterpart().unwrap();
+            assert_eq!(new.host_operation(value16), value17);
+            assert_eq!(new.host_operation(value17), value17);
+            assert_eq!(new.host_operation(value15), value17);
+            assert_eq!(
+                new.host_operation(value15.value13_counterpart().unwrap()),
+                value17
+            );
+            assert_eq!(old.host_operation(value16), value16);
+            assert!(value17.minimum_abi() > old.host_abi());
+        }
+        for (generic, value17) in [
+            (H::UnionLog, H::ValueLogV11),
+            (H::ValueTypeOf, H::ValueTypeOfV10),
+            (H::UnionTruthy, H::ValueTruthyV10),
+            (H::ValueIsError, H::ValueIsErrorClassV6),
+            (H::ValueIsArray, H::ValueIsArrayV10),
+        ] {
+            assert_eq!(new.host_operation(generic), value17);
+            assert_ne!(old.host_operation(generic), value17);
+        }
+        assert_eq!(new.host_operation(H::LogString), H::LogString16);
     }
 
     #[test]
@@ -2521,7 +2627,12 @@ mod tests {
             );
             assert_eq!(
                 channel == (e::PROMISE_VERSION, e::PROMISE_CHANNEL_VERSION),
-                profile.promise_values(),
+                profile.promise_values() && !profile.function_fields(),
+                "{profile:?}"
+            );
+            assert_eq!(
+                channel == (e::FUNCTION_FIELD_VERSION, e::FUNCTION_FIELD_CHANNEL_VERSION),
+                profile.function_fields(),
                 "{profile:?}"
             );
         }

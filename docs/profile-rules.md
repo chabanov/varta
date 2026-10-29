@@ -2550,12 +2550,12 @@ Contract: [engine Web types](architecture.md#engine-web-types-web_headers-abort_
 
 ## Profile v36 (in development)
 
-Inherit v35 under checked-f64-utf16-v36 with every v35 selector, value layout
-16 and the value16 host operations, exception channel v7, JSON schema 16, the
+Inherit v35 under checked-f64-utf16-v36 with every v35 selector, the
 scheduler and frame catalog version 3. V36 has its own host ABI
-`abi::TIMERS_VERSION` (32) and shares value ABI/layout 16
-(`value::PROMISE_VALUE_VERSION`) with v35; v35 keeps host ABI 31. Four selectors
-gate the streams and admit nothing yet: records (`checked_declared_fields`),
+`abi::TIMERS_VERSION` (32) and its own value ABI/layout 17
+(`value::FUNCTION_FIELD_VALUE_VERSION`) with the value17 host operations,
+exception channel v8 and JSON schema 17; v35 keeps host ABI 31 and value16.
+Four selectors gate the streams: records (`checked_declared_fields`),
 functions (`function_fields`), async (`async_generators`) and timers
 (`timers`). Gate every admission on its own selector, keep v35 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
@@ -2567,14 +2567,18 @@ profiles frozen, and add each stream's rules under its own heading here.
   ABI in the `HostOperation` registry; do not add another host ABI constant in
   this batch. Add its `.d.ts`, linker, validation and denial tests in the same
   change.
-- The function-fields stream owns the batch's value-layout bump (value17): a
-  new `value` constant, `value_abi`/`value_layout` for v36, value17 variants of
-  every layout-bound reader (minimum ABI 32) and the launcher value maximum.
-  Value16 readers stay frozen for v35. The other streams rebase onto it.
-- Tests that assert v36 equals v35 apart from its host ABI
-  (`pilot_v36_inherits_v35_…` in `varta-common` `language`, the v36 runtime
-  language test and the v36 CLI smoke test) change in the stream that
-  introduces the difference.
+- Value layout 17 (the function-fields stream's bump) is in place: v36
+  stamps value17 everywhere and binds the value17 readers
+  (`HostOperation::value16_counterpart`, minimum ABI 32). A reader that accepts
+  value16 accepts value17 through the same code path (`value::dynamic_layout`,
+  `value::promise_layout`, `json::dynamic_schema`), never by copying it; only
+  the function tag differs, admitted by `value::function_layout`. Value16
+  readers stay frozen for v35. Prove every change here with `value17_tests`:
+  the v35 cases must log identically under v36.
+- Value17 function cells are checked through `function::ClosureView`
+  envelopes only; never decode captured payloads or invoke guest code from a
+  host reader, and never accept the function tag in a value16 or older reader
+  other than the catalog-bound value14 codec.
 - Timers are scheduled by the runtime, never by guest busy-waiting; keep
   production fuel, deadline and scheduler limits unchanged and pin timer
   ordering against Node output.

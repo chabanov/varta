@@ -90,10 +90,7 @@ impl Encoder<'_, '_> {
                 return Err(error("optional field must admit undefined"));
             }
             let [lo, hi] = self.words::<2>(ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES)?;
-            if self.version == FUNCTION_VALUE_VERSION
-                && name == "toJSON"
-                && present & (1u128 << slot) != 0
-            {
+            if function_layout(self.version) && name == "toJSON" && present & (1u128 << slot) != 0 {
                 let payload = ((hi as u64) << i32::BITS) | lo as u64;
                 let callable = if tag == ValueKind::ReferenceUnion {
                     ReferenceBox::read_envelope(self.data, payload, self.version)

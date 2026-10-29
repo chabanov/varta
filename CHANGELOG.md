@@ -20,6 +20,13 @@ in [conformance/README.md](conformance/README.md).
   guest effect. Its `checked_declared_fields`, `function_fields`,
   `async_generators` and `timers` selectors admit nothing yet.
 
+- Value ABI and layout 17 (`FUNCTION_FIELD_VALUE_VERSION`) for v36, owned by
+  the function-fields stream: every value16 tag and layout keeps its meaning
+  and the function tag becomes a reference kind of fields, elements and cells,
+  read through closure envelopes. V36 binds thirteen value17 readers
+  (`value_log_v11` … `bigint_from_value_v4`, host ABI 32), JSON schema 17 and
+  exception channel v8; v35 keeps value16. The launcher advertises value ABI 17.
+
 - Mixed records and JSON to `unknown` under opt-in v35 (selectors
   `mixed_index_records`, `unknown_json`). Object types
   may declare fields next to a string index signature (the pilot's

@@ -59,6 +59,7 @@ impl ReferenceBox {
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             return Err(invalid());
         }
@@ -70,6 +71,7 @@ impl ReferenceBox {
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
@@ -84,6 +86,7 @@ impl ReferenceBox {
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
@@ -97,6 +100,13 @@ impl ReferenceBox {
                 return Err(invalid());
             }
             validate_aggregate(data, ValueKind::Record, cell.payload, version)?;
+        } else if cell.kind == ValueKind::Function && version == FUNCTION_FIELD_VALUE_VERSION {
+            // Value17 function fields: the payload is a v12+ closure whose
+            // envelope (block, signature/reserved words, environment edge and
+            // binding cells) is checked; captured payloads stay opaque, and
+            // no value reader invokes or decodes the function. Value14 cells
+            // still need their owner catalog (`read_with_catalog`).
+            crate::function::ClosureView::read_envelope(data, cell.payload)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
             aggregate(data, cell, version)?;
         } else {
@@ -143,6 +153,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         )
     {
         Vector::read_with_version(data, cell.payload, version)?;
