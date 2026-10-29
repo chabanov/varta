@@ -179,6 +179,25 @@ export function main(): void {
     );
 }
 
+/// Typing caught values as `unknown` keeps the output of the inventory's
+/// existing catch cases identical between v33 and v34.
+#[test]
+fn existing_catch_cases_keep_their_output_under_v34() {
+    for source in [
+        include_str!("../../../conformance/cases/error-subclasses.ts"),
+        include_str!("../../../conformance/cases/generators.ts"),
+    ] {
+        let output = |profile| {
+            let bytes = compile(source, profile).unwrap_or_else(|e| panic!("{e}\n{source}"));
+            VartaRuntime::new()
+                .run_wasm_bytes(&bytes, &[])
+                .unwrap()
+                .lines
+        };
+        assert_eq!(output(P::CheckedF64Utf16V33), output(P::CheckedF64Utf16V34));
+    }
+}
+
 #[test]
 fn checked_assertions_that_hold() {
     run(
