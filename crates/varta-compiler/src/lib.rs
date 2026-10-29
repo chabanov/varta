@@ -16,6 +16,8 @@ mod http_tests;
 mod json_parse_tests;
 mod parse;
 #[cfg(test)]
+mod promise_tests;
+#[cfg(test)]
 mod record_tests;
 #[cfg(test)]
 mod result_tests;

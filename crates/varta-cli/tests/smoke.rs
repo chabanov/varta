@@ -11559,6 +11559,88 @@ fn unknown_and_checked_assertions_run_through_dev_and_source_free_artifacts() {
 }
 
 #[test]
+fn promises_and_async_functions_run_through_dev_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {fetchWithRetry} from './transport.ts';export async function main():Promise<void>{Promise.resolve(1).then((v)=>console.log(`then ${v}`));const text=await fetchWithRetry(3);console.log(text);try{await fetchWithRetry(1);}catch(e){if(e instanceof Error){console.log(`caught ${e.message}`);}}}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/transport.ts"),
+        "async function attempt(n:number):Promise<string>{await null;if(n<3){throw new Error(`attempt ${n}`);}return `ok ${n}`;}export async function fetchWithRetry(limit:number):Promise<string>{let last='none';for(let n=1;n<=limit;n++){try{return await attempt(n);}catch(e){if(e instanceof Error){last=e.message;}}}throw new Error(`gave up after ${last}`);}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v33");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check).contains("unsupported async, generator, generic or decorated function"),
+        "{}",
+        combined(&check)
+    );
+    project.language_profile("checked-f64-utf16-v34");
+    // Node 24 prints the same lines for the same program.
+    let expected =
+        ["then 1", "ok 3", "caught gave up after attempt 1"].map(|s| format!("varta log: {s}"));
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn unhandled_rejections_fail_dev_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "export async function main():Promise<void>{await null;throw new TypeError('lost');}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v34");
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success());
+    assert!(
+        combined(&dev).contains("unhandled promise rejection: TypeError: \"lost\""),
+        "{}",
+        combined(&dev)
+    );
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    for mut command in [varta(), Command::new(runtime_path())] {
+        command.args(["run", "dist/app"]);
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(!output.status.success(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("unhandled promise rejection"),
+            "{}",
+            combined(&output)
+        );
+    }
+}
+
+#[test]
 fn primitive_string_runs_across_modules_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {text} from './string.ts';export function main():void{console.log(text(1e21));console.log(text(true));console.log(text(undefined));console.log(String().length);console.log(String('').length);const s=String('A\\uDFFF\\u0000Z');console.log(s.length);console.log(s.charCodeAt(1));console.log(String(Number.MIN_VALUE));console.log(String(-0));}",

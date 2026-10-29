@@ -2114,10 +2114,10 @@ Inherit v33 under checked-f64-utf16-v34 with every v33 selector, but its own
 value layout (exception channel v6, JSON schema 15), its own host ABI
 (`abi::SCHEDULED_FRAMES_VERSION`, the microtask scheduler that drives
 `varta_resume`) and its own value ABI (`value::DYNAMIC_VALUE_VERSION`); never
-map another profile to either. Seven selectors gate the streams and admit
-nothing yet: records (`index_signatures`, `recursive_types`, `wide_records`),
-unknown (`unknown_type`, `checked_assertions`) and async (`promises`,
-`async_functions`). Gate every admission on its own selector, keep v33 and
+map another profile to either. Seven selectors gate the streams: records
+(`index_signatures`, `recursive_types`, `wide_records`) and unknown
+(`unknown_type`, `checked_assertions`) admit nothing yet; async (`promises`,
+`async_functions`) is specified below. Gate every admission on its own selector, keep v33 and
 earlier profiles frozen, and add each stream's rules under its own heading here.
 
 ### Value layout 15 (`dynamic_values`)
@@ -2249,3 +2249,54 @@ Contract: [architecture.md](architecture.md#checked-assertions-checked_assertion
   its v32 path; `<T>x` stays rejected.
 - Failure messages quote the asserted type's source text; tests pin them,
   because Node erases assertions and never throws there.
+### Promises and async functions (`promises`, `async_functions`)
+
+Contracts: [scheduler](architecture.md#microtask-scheduler-promises),
+[promises](architecture.md#promise-objects-promises) and
+[async functions](architecture.md#async-functions-async_functions).
+
+- Source admission lives in `lower::promises` (types, record operations,
+  synthesized helpers), `lower::promises::methods` (`new Promise`, the statics,
+  `then`/`catch`/`finally`) and `lower::promises::async_functions` (`await`
+  and the async split). Gate `Promise<T>`, `new Promise`, the statics and the
+  promise methods on `promises()`, and `async`/`await` on
+  `async_functions()`; v33 and earlier keep `unsupported async, generator,
+  generic or decorated function` and the existing `Promise<T> type` rejection.
+- Promises have no value tag. Keep `Type::Promise` out of `value_kind()`,
+  arrays, records and unions (`promises::opaque`), JSON, logging, `typeof` and
+  tool/HTTP signatures. Combinators and promises in aggregates need a value tag
+  and therefore the records stream's value15 layouts; until then reject them
+  by name.
+- Every promise job is a scheduled frame of a synthesized function: register
+  it in `Asynchrony::scheduled` so `prepare` marks its machine `scheduled`.
+  Never add a second job mechanism (a guest queue, closures run by the host or
+  a table call): the runtime runs jobs only through `varta_resume` with
+  `Normal` and `undefined`, and every value crosses through guest memory.
+- Synthesize helpers through `Lower::synthesize`, which gives each function
+  its own locals and lifts resolving closures over one captured promise
+  binding; memoize them by kind and types. Build bodies from ordinary IR
+  (record fields through `Reinterpret`, `Zero` for unset slots, `Host`
+  scheduler calls with `Float64` serials and ids). Only the suspension point
+  touches resume tokens; keep the token out of IR.
+- Preserve the job counts that make event logs match Node: a reaction is one
+  job, adoption of a promise is an adoption job plus its reaction, `await` of
+  any value is one job, and `finally` adopts `PromiseResolve(f()).then(...)`.
+  Settle through the `Fulfill`/`Reject` helpers only, so a pending check,
+  `promise_settle` for registered reactions and rejection tracking happen in
+  that order.
+- Scheduled suspension points issue the generation before registering the
+  token, and their dispatcher branches return without issuing another. Keep
+  v33 dispatcher bytes unchanged for modules without scheduled layouts.
+- The async split keeps the declaration's index as the wrapper; the body gets
+  the promise as its last parameter and rewrites `return` into a labelled
+  break, so `finally` blocks run before settlement. Never settle the promise
+  before the body completes.
+- `await` is an unknown reentry for write-aware refinements
+  (`flow_reentry`). `await` inside unreviewed intrinsic value blocks stays
+  rejected by construct name (`unsupported await inside <construct>`).
+- Scheduler failures are fatal `SchedulerError`s and never rejections; the
+  scheduler imports are not charged to the host-call budget but keep their own
+  bounds. Keep production budgets unchanged; fit tests into them.
+- Behavior tests compare against pinned Node output (`varta-runtime`
+  `promise_cases`, `promise_tests`, `async_tests`); regenerate expectations
+  only from Node, never from Varta output.

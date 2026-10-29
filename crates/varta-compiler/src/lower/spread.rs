@@ -201,6 +201,7 @@ impl Lower<'_> {
             cells: Default::default(),
             guarded: Default::default(),
             generator: None,
+            asynchronous: None,
         };
         for value in &operands {
             child.hidden(value.ty);

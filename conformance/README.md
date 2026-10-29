@@ -192,3 +192,17 @@ checked-f64-utf16-v33, which rejects `unknown`, `as` and `!`, so both are known
 gaps of the pinned profile; `varta-runtime` `unknown_tests` runs the same sources
 under v34 with the pinned stdout. Moving the pin to v34 should observe both as
 unexpected support before their review and promotion.
+
+The v34 async increment moves the pinned profile from v33 to v34; every
+earlier case keeps its status. The unchanged `async-function` case was observed
+as unexpected support with its pinned source hash and expected output before
+review and promotion. Three original cases are added: `promise-jobs` (the first
+case of the promise-jobs row: FIFO reactions, interleaved chains and the two
+extra jobs of adopting a returned promise), `promise-resolution` (synchronous
+executor, one-time resolution, executor exceptions, the self-resolution
+`TypeError` and `finally` pass-through and override) and `async-await-errors`
+(`try`/`catch`/`finally` across `await` and rejection propagation). All outputs
+match Node.js v24.20.0 type stripping. `promise-resolve` stays a known gap with
+a new reason: v34 promises have no value tag, so `typeof` rejects them.
+Thenables other than internal promises and the combinators remain outside
+these rows.

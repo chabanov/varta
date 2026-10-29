@@ -4,8 +4,10 @@
 //! environment segments; the frame itself is a separate managed kind retained by
 //! a bounded permanent root table while it is live.
 use super::*;
+use crate::lower::promises::fields as promise_fields;
 use frame::Completion;
 use varta_common::function::{self as layout, frame};
+use varta_common::scheduler::PromiseState;
 
 /// Physical parameters of a resume body: `(frame:i64, completion:i32, value:i64)`.
 const FRAME_PARAM: u32 = 0;
@@ -286,7 +288,9 @@ impl<'a> Emitter<'a> {
     /// Suspension: publish the yielded value, save every binding, record the
     /// state and return to the dispatcher with an empty exception channel.
     pub(super) fn suspend_point(&mut self, value: &Expr, state: u32) -> Result<()> {
-        self.resume()?;
+        if self.resume()?.machine.scheduled {
+            return self.await_point(value, state);
+        }
         self.expr(value)?;
         self.store_completion(value.ty)?;
         self.save_frame()?;
@@ -306,6 +310,166 @@ impl<'a> Emitter<'a> {
         ]);
         self.end_frame();
         self.code.push(I::Return);
+        Ok(())
+    }
+    /// Scheduled suspension (v34 `await`): save every binding, issue the
+    /// frame's next generation, then register its resume token with the
+    /// scheduler. A pending promise records the token as a reaction under
+    /// the promise's serial; a settled promise queues the resumption at once.
+    /// Either way the promise becomes handled, and a rejection reported as
+    /// unhandled is withdrawn. The awaited promise stays in a saved local, so
+    /// the frame roots it until the resumption reads its settled state.
+    fn await_point(&mut self, promise: &Expr, state: u32) -> Result<()> {
+        let Type::Promise(id) = promise.ty else {
+            return Err(CompilerError::Internal("await of a non-promise".into()));
+        };
+        let resources = self
+            .frame_resources
+            .ok_or_else(|| CompilerError::Internal("await without frame resources".into()))?;
+        let shape = self.promises[id as usize].shape;
+        let slot = |name: &str| -> Result<wasm_encoder::MemArg> {
+            self.records[shape as usize]
+                .fields
+                .iter()
+                .position(|field| field.name == name)
+                .map(|slot| records::field(slot as u32))
+                .ok_or_else(|| CompilerError::Internal("missing promise field".into()))
+        };
+        let (state_field, serial, tracked, handled) = (
+            slot(promise_fields::STATE)?,
+            slot(promise_fields::SERIAL)?,
+            slot(promise_fields::TRACKED)?,
+            slot(promise_fields::HANDLED)?,
+        );
+        self.save_frame()?;
+        if let Some(globals) = self.exceptions {
+            self.code.push(I::GlobalGet(globals.pending));
+            self.trap_if();
+        }
+        self.code.extend([
+            I::LocalGet(FRAME_PARAM),
+            I::I32WrapI64,
+            I::I32Const(state as i32),
+            I::I32Store(word(frame::CONTROL_FIELD, true)),
+            I::LocalGet(FRAME_PARAM),
+            I::I32WrapI64,
+            I::I32Const(frame::STATUS_SUSPENDED as i32),
+            I::I32Store(word(frame::STATUS_FIELD, false)),
+            I::LocalGet(FRAME_PARAM),
+            I::I32WrapI64,
+        ]);
+        self.code.extend(next_generation(resources));
+        self.code.extend([
+            I::GlobalSet(resources.generation),
+            I::GlobalGet(resources.generation),
+            I::I32Store(word(frame::STATUS_FIELD, true)),
+        ]);
+        let token = [
+            I::LocalGet(FRAME_PARAM),
+            I::I64Const(i64::from(u32::MAX)),
+            I::I64And,
+            I::GlobalGet(resources.generation),
+            I::I64ExtendI32U,
+            I::I64Const(i64::from(u32::BITS)),
+            I::I64Shl,
+            I::I64Or,
+        ];
+        let host = |operation: Host| -> Result<u32> {
+            self.hosts
+                .get(&operation)
+                .copied()
+                .ok_or_else(|| CompilerError::Internal("missing scheduler host operation".into()))
+        };
+        let (react, enqueue, handled_operation) = (
+            host(Host::PromiseReact)?,
+            host(Host::SchedulerEnqueue)?,
+            host(Host::PromiseHandled)?,
+        );
+        self.expr(promise)?;
+        self.code.extend([
+            I::I32WrapI64,
+            I::LocalTee(self.temporary),
+            I::F64Load(state_field),
+            I::F64Const(f64::from(PromiseState::Pending as i32).into()),
+            I::F64Eq,
+            I::If(BlockType::Empty),
+            I::LocalGet(self.temporary),
+            I::LocalGet(self.temporary),
+            I::F64Load(serial),
+        ]);
+        self.code.extend(token.clone());
+        self.code
+            .extend([I::Call(react), I::F64Store(serial), I::Else]);
+        self.code.extend(token);
+        self.code.extend([
+            I::Call(enqueue),
+            I::LocalGet(self.temporary),
+            I::F64Load(tracked),
+            I::F64Const(0.0.into()),
+            I::F64Ne,
+            I::If(BlockType::Empty),
+            I::LocalGet(self.temporary),
+            I::F64Load(tracked),
+            I::Call(handled_operation),
+            I::LocalGet(self.temporary),
+            I::F64Const(0.0.into()),
+            I::F64Store(tracked),
+            I::End,
+            I::End,
+            I::LocalGet(self.temporary),
+            I::I64Const(1),
+            I::I64Store(handled),
+        ]);
+        self.end_frame();
+        self.code.push(I::Return);
+        Ok(())
+    }
+    /// `Expression::Schedule`: create the frame, then start it through the
+    /// dispatcher (its first run up to a suspension) or queue its start. A
+    /// function without a suspension point has no frame and is called.
+    pub(super) fn schedule(
+        &mut self,
+        function: usize,
+        args: &[Expr],
+        mode: ir::ScheduleMode,
+    ) -> Result<()> {
+        for arg in args {
+            self.expr(arg)?;
+        }
+        let index = self.functions_begin + function as u32;
+        if !self.frame_functions.contains_key(&function) {
+            if mode == ir::ScheduleMode::Enqueue {
+                return Err(CompilerError::Internal(
+                    "queued promise job without a frame".into(),
+                ));
+            }
+            self.code.push(I::Call(index));
+            return self.check_exception();
+        }
+        self.code.push(I::Call(index));
+        match mode {
+            ir::ScheduleMode::Start => {
+                let dispatcher = self.dispatcher.ok_or_else(|| {
+                    CompilerError::Internal("scheduled frame without a dispatcher".into())
+                })?;
+                self.code.extend([
+                    I::I32Const(Completion::Normal as i32),
+                    I::I64Const(0),
+                    I::Call(dispatcher),
+                    I::Drop,
+                ]);
+            }
+            ir::ScheduleMode::Enqueue => {
+                let enqueue = self
+                    .hosts
+                    .get(&Host::SchedulerEnqueue)
+                    .copied()
+                    .ok_or_else(|| {
+                        CompilerError::Internal("missing scheduler host operation".into())
+                    })?;
+                self.code.push(I::Call(enqueue));
+            }
+        }
         Ok(())
     }
     fn save_frame(&mut self) -> Result<()> {
@@ -837,9 +1001,35 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
             I::LocalGet(KIND),
             I::LocalGet(VALUE),
             I::Call(*body),
-            I::Br(1),
-            I::End,
         ]);
+        if machine.scheduled {
+            // A scheduled body (v34) settles its promise on every completion,
+            // so no exception escapes it, and its suspension point already
+            // issued the generation of the token it registered.
+            code.push(I::GlobalGet(globals.pending));
+            trap_if(&mut code);
+            code.extend([
+                I::LocalGet(PTR),
+                I::I32Load(word(frame::STATUS_FIELD, false)),
+                I::I32Const(frame::STATUS_SUSPENDED as i32),
+                I::I32Eq,
+                I::If(BlockType::Empty),
+                I::I32Const(frame::Outcome::Suspended as i32),
+                I::Return,
+                I::End,
+                I::LocalGet(PTR),
+                I::I32Const(frame::STATUS_COMPLETED as i32),
+                I::I32Store(word(frame::STATUS_FIELD, false)),
+                I::LocalGet(CURSOR),
+                I::I64Const(0),
+                I::I64Store(strings::ROOT),
+                I::I32Const(frame::Outcome::Returned as i32),
+                I::Return,
+                I::End,
+            ]);
+            continue;
+        }
+        code.extend([I::Br(1), I::End]);
     }
     code.extend([I::Unreachable, I::End]);
     // Uncaught exceptions leave the channel and become the frame completion.

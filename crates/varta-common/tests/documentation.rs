@@ -1,7 +1,7 @@
 //! Documentation tables that restate registry facts are generated from the
 //! registries and compared here, so a stale count or version fails the gate.
 use std::path::{Path, PathBuf};
-use varta_common::{abi, json, language, launcher::LauncherInfo, value};
+use varta_common::{abi, json, language, launcher::LauncherInfo, scheduler, value};
 
 fn workspace_file(relative: &str) -> (PathBuf, String) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -206,6 +206,26 @@ fn limits() -> String {
             "Language metadata",
             format!("{} bytes", language::MAX_METADATA_BYTES),
             "language::MAX_METADATA_BYTES",
+        ),
+        (
+            "Live continuation frames",
+            varta_common::function::frame::MAX_LIVE_FRAMES.to_string(),
+            "frame::MAX_LIVE_FRAMES",
+        ),
+        (
+            "Pending microtask continuations (v34)",
+            scheduler::MAX_PENDING_CONTINUATIONS.to_string(),
+            "scheduler::MAX_PENDING_CONTINUATIONS",
+        ),
+        (
+            "Microtasks per execution (v34)",
+            scheduler::MAX_EXECUTION_JOBS.to_string(),
+            "scheduler::MAX_EXECUTION_JOBS",
+        ),
+        (
+            "Promise serials / rejection ids per execution (v34)",
+            scheduler::MAX_PROMISE_SERIALS.to_string(),
+            "scheduler::MAX_PROMISE_SERIALS",
         ),
     ];
     let mut lines = vec![

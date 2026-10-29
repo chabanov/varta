@@ -14,6 +14,8 @@ pub(super) struct Normalizer<'a> {
     /// Hidden locals owned by the statement being normalized; their roots are
     /// released when that statement completes.
     pending: Vec<u32>,
+    /// Scheduled frames (v34) name their suspension points `await`.
+    pub awaits: bool,
 }
 
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
@@ -45,6 +47,7 @@ impl<'a> Normalizer<'a> {
             namer,
             source,
             pending: Vec::new(),
+            awaits: false,
         }
     }
     fn fresh(&mut self, ty: Type) -> u32 {
@@ -54,7 +57,12 @@ impl<'a> Normalizer<'a> {
         slot
     }
     fn reject(&self, span: swc_common::Span, construct: &str) -> CompilerError {
-        self.source.locate(rejected(construct), span)
+        let error = if self.awaits {
+            unsupported_suspension_as("await", construct)
+        } else {
+            rejected(construct)
+        };
+        self.source.locate(error, span)
     }
     fn reject_named(&self, span: swc_common::Span) -> CompilerError {
         self.reject(span, &self.namer.describe(span).name)
@@ -390,6 +398,32 @@ impl<'a> Normalizer<'a> {
                 ));
                 return Ok((prefix, local(span, slot, ty)));
             }
+            E::Await {
+                promise,
+                slot,
+                result,
+            } => {
+                // `await p` (v34): the promise moves into its saved hidden
+                // local, the frame suspends on it, and the residual reads
+                // the settled promise after resumption.
+                let promise_ty = promise.ty;
+                let (mut prefix, promise) = self.expr(*promise)?;
+                self.pending.push(slot);
+                prefix.push(S::Init(slot, promise));
+                let input = self.fresh(Type::Undefined);
+                prefix.push(S::Init(
+                    input,
+                    Expr {
+                        span,
+                        ty: Type::Undefined,
+                        kind: E::Suspend {
+                            value: Box::new(local(span, slot, promise_ty)),
+                            state: 0,
+                        },
+                    },
+                ));
+                return Ok((prefix, *result));
+            }
             E::Binary(op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr), a, b) => {
                 if !walk::suspends(&b) {
                     self.unary(*a, |a| E::Binary(op, a, b))?
@@ -577,6 +611,22 @@ impl<'a> Normalizer<'a> {
             E::FunctionCheck { value, slot } => {
                 self.unary(*value, |value| E::FunctionCheck { value, slot })?
             }
+            E::Reinterpret(value) => self.unary(*value, E::Reinterpret)?,
+            E::Schedule {
+                function,
+                args,
+                mode,
+            } => {
+                let (prefix, args) = self.operands(args)?;
+                (
+                    prefix,
+                    E::Schedule {
+                        function,
+                        args,
+                        mode,
+                    },
+                )
+            }
             _ => return Err(self.reject_named(span)),
         };
         Ok((prefix, Expr { span, ty, kind }))
@@ -613,7 +663,7 @@ impl<'a> Normalizer<'a> {
 fn first_suspension(expr: &Expr) -> Option<swc_common::Span> {
     let mut span = None;
     walk::expression(expr, &mut |e| {
-        if span.is_none() && matches!(e.kind, E::Suspend { .. }) {
+        if span.is_none() && walk::point(e) {
             span = Some(e.span);
         }
     });
@@ -625,7 +675,7 @@ fn normalize_span(body: &[S]) -> swc_common::Span {
 pub(super) fn body_span(body: &[S]) -> Option<swc_common::Span> {
     let mut span = None;
     walk::statements(body, &mut |e| {
-        if span.is_none() && matches!(e.kind, E::Suspend { .. }) {
+        if span.is_none() && walk::point(e) {
             span = Some(e.span);
         }
     });

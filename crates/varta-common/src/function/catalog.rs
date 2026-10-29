@@ -100,6 +100,10 @@ pub enum CaptureType {
     /// An `unknown` binding (v34): a reference-union cell whose member may be
     /// any kind the catalog's value version admits in a cell.
     Unknown,
+    /// A promise object (v34): a guest-heap record handle with private fields
+    /// and no value tag; it may be saved in frames and closure cells but never
+    /// crosses a typed value boundary.
+    Promise,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,7 +145,7 @@ impl CaptureType {
             Self::PrimitiveUnion { .. } => ValueKind::PrimitiveUnion,
             Self::ReferenceUnion { .. } | Self::Unknown => ValueKind::ReferenceUnion,
             Self::Function { .. } => ValueKind::Function,
-            Self::Generator => return None,
+            Self::Generator | Self::Promise => return None,
         })
     }
     pub fn reference(&self) -> bool {

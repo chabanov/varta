@@ -30,6 +30,31 @@ in [conformance/README.md](conformance/README.md).
   distinct record or array types, arrays of non-primitive elements, function
   types and `<T>x` are rejected at compile time; `as const` is unchanged.
 
+- Microtask scheduler and `Promise<T>` under opt-in v34 (selector `promises`,
+  K4.4 step 3): one bounded FIFO microtask queue per execution, owned by the
+  runtime and drained after `main`; every job is a scheduled continuation frame
+  resumed only through `varta_resume` with generation-checked tokens, and the
+  runtime keeps reaction serials, never guest references. `new Promise<T>`
+  with a synchronous executor and one-time resolution, `Promise.resolve`,
+  `Promise.reject`, `then`/`catch`/`finally` with handler-result adoption,
+  promise adoption jobs and the self-resolution `TypeError`; job order matches
+  Node event logs. Promises are guest-heap records without a value tag. Five
+  internal scheduler imports join the v34 host ABI without a capability. A
+  rejection still unhandled after the checkpoint terminates the execution
+  with its reason; fuel, deadline and host-call ceilings cover every job and
+  are never renewed, and exhaustion inside a job is fatal, never a rejection.
+  Thenables other than internal promises, the combinators, promises in
+  aggregates and async HTTP/tool handlers are not admitted.
+
+- `async`/`await` under opt-in v34 (selector `async_functions`, K4.4 step 4):
+  annotated top-level and generic `async function` declarations returning
+  `Promise<T>` (including `async function main(): Promise<void>`), `await` of
+  promises and plain values in normalized expression positions, `try`/`catch`/
+  `finally` across `await`, rejection propagation and returned-promise
+  adoption, over the same continuation frames. Async arrows, expressions and
+  methods, `for await`, async generators, top-level `await` and `await` inside
+  intrinsic value blocks fail with construct-specific diagnostics.
+
 - Opt-in v34 (pilot batch: dynamic records, `unknown` and async, in
   development) is registered. It inherits every v33 feature and declares a new
   host ABI, so runtimes without the microtask scheduler reject its modules, and

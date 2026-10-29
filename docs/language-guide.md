@@ -4063,3 +4063,81 @@ shape), classes (with subclasses), `Error` families, arrays of primitives and
 unions of these. Arrays of records or unions, function types and `<T>x` are
 rejected at compile time; `as const` keeps its meaning.
 
+#### Async functions and await (opt-in v34)
+
+A top-level `async function` declares its result as `Promise<T>`. Calling it
+runs the body until its first `await`, then returns the promise; the rest runs
+as microtasks after `main` returns, in the same order as in Node. A rejected
+promise throws at its `await`, so ordinary `try`/`catch`/`finally` works:
+
+```ts
+async function fetchPage(n: number): Promise<string> {
+  await null;                                   // one microtask
+  if (n === 2) {
+    throw new Error(`page ${n} failed`);        // rejects the promise
+  }
+  return `page ${n}`;
+}
+
+async function load(pages: number): Promise<string[]> {
+  const loaded: string[] = [];
+  for (let n = 1; n <= pages; n++) {
+    try {
+      loaded.push(await fetchPage(n));
+    } catch (error) {
+      if (error instanceof Error) {
+        loaded.push(`skipped (${error.message})`);
+      }
+    }
+  }
+  return loaded;
+}
+
+export async function main(): Promise<void> {
+  const pages = await load(3);
+  console.log(String(pages.length));            // 3
+  console.log(pages[1]);                        // skipped (page 2 failed)
+}
+```
+
+Generic async functions instantiate per type argument, and an async function
+can be used as a `(...) => Promise<T>` function value. `await` of a plain
+value still waits one microtask. Store an awaited value in a local before
+using it inside string concatenation, a template literal or a call such as
+`String(...)`: `await` inside those is rejected with a diagnostic.
+
+#### Promises (opt-in v34)
+
+`new Promise<T>(executor)` runs the executor at once; its `resolve` and
+`reject` functions settle the promise only on the first call. `then`, `catch`
+and `finally` handlers run later as microtasks, and a handler that returns a
+promise is adopted:
+
+```ts
+export function main(): void {
+  const ready = new Promise<number>((resolve) => resolve(1));
+  ready
+    .then((n) => n + 1)
+    .then((n) => console.log(`then ${n}`))     // 3rd: then 2
+    .finally(() => console.log("done"));        // 4th: done
+  Promise.reject<number>(new Error("lost")).catch((e) => {
+    if (e instanceof Error) {
+      console.log(`caught ${e.message}`);       // 2nd: caught lost
+    }
+    return 0;
+  });
+  console.log("chain returned");                // 1st
+}
+```
+
+`Promise.resolve(v)` and `Promise.reject(e)` take the promise type from a type
+argument or the context (`Promise.reject<number>(e)`). A rejection that still
+has no handler when the microtasks are done terminates the program with
+`unhandled promise rejection: <reason>`; a handler attached by a later
+microtask is in time.
+
+A promise lives in locals, parameters, results and closures and compares by
+identity; arrays, records, unions, `JSON.stringify`, `console.log` and
+`typeof` reject it, and so do `Promise.all`, `Promise.race`, `allSettled` and
+`any` for now. Async arrows, function expressions and class methods, `for
+await`, async generators and top-level `await` are rejected with a diagnostic.

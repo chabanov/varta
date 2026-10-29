@@ -4089,6 +4089,87 @@ fn public_engine_admits_resumable_frames_only_under_their_profile() {
 }
 
 #[test]
+fn public_engine_runs_async_functions_and_promises_across_modules_in_v34() {
+    // The shape of the pilot's transport: a generic async request with
+    // retries, re-exported through a barrel, and Promise-returning methods.
+    use varta_common::language::LanguageProfile;
+    struct AsyncSources;
+    impl ModuleLoader for AsyncSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./transport.ts" => Ok("transport.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("transport.ts") => "export interface Page<T>{items:T[];next:number}\
+                    async function attempt<T>(value:T,failures:number,round:number):Promise<T>{\
+                    await null;if(round<=failures){throw new Error(`round ${round}`);}return value;}\
+                    export async function request<T>(value:T,failures:number,retries:number):Promise<T>{\
+                    let last='none';for(let round=1;round<=retries+1;round++){\
+                    try{return await attempt(value,failures,round);}catch(error){if(error instanceof Error){last=error.message;}}}\
+                    throw new Error(last);}",
+                Some("index.ts") => "export * from './transport.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import type {Page} from './index.ts';import {request} from './index.ts';\
+                       function list(): Promise<Page<string>> {return request<Page<string>>({items:['a','b'],next:2},1,3);}\
+                       export async function main():Promise<void>{\
+                       const page=await list();console.log(`${page.items[0]},${page.items[1]}`);\
+                       const count=await request(7,0,0).then((n)=>n*2);console.log(count);\
+                       await request('x',5,1).catch((error)=>{if(error instanceof Error){console.log(error.message);}return 'none';});}"
+                    .into(),
+            },
+            &AsyncSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V34).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: a,b", "varta log: 14", "varta log: round 2"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V33)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("async or generator generic function"),
+        "{frozen}"
+    );
+    // An unhandled rejection is a typed public error after the checkpoint.
+    let rejected = varta_compiler::compile_typescript_with_profile(
+        "export function main():void{Promise.reject<number>(new Error('lost'));}",
+        LanguageProfile::CheckedF64Utf16V34,
+    )
+    .unwrap();
+    let error = VartaRuntime::new()
+        .run_wasm_bytes(&rejected, &[])
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            varta_runtime::RuntimeError::Scheduler(
+                varta_common::scheduler::SchedulerError::UnhandledRejection { count: 1, .. }
+            )
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn public_engine_runs_generic_generators_across_modules_in_v33() {
     // A synchronous shape of the pilot's `autoPaginate`: a generic generator
     // re-exported through a barrel and consumed by `for...of` with closing.

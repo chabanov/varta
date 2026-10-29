@@ -229,17 +229,23 @@ impl Eraser {
             | E::Local(_)
             | E::Status
             | E::ModuleConstant(_)
+            | E::Zero
             | E::FunctionRef { .. } => {}
             E::Assignment { value, body, .. } => {
                 self.expression(value);
                 self.statements(body);
             }
+            E::Await {
+                promise, result, ..
+            } => self.boxed(&mut [promise, result]),
+            E::Schedule { args, .. } => args.iter_mut().for_each(|value| self.expression(value)),
             E::ValueBlock { body, .. } => self.statements(body),
             E::GeneratorStep {
                 generator, value, ..
             } => self.boxed(&mut [generator, value]),
             E::FunctionCheck { value, .. }
             | E::GeneratorValue(value)
+            | E::Reinterpret(value)
             | E::Suspend { value, .. }
             | E::StringTrim { value, .. }
             | E::ArrayEnumerate { value, .. }

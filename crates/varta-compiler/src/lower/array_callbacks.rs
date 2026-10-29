@@ -256,6 +256,7 @@ impl Lower<'_> {
             cells: Default::default(),
             guarded: Default::default(),
             generator: None,
+            asynchronous: None,
         };
         let body = child.array_iteration(&iteration, signature.params.len(), signature.result)?;
         let mut operands = vec![base, callback];

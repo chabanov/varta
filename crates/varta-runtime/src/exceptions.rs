@@ -123,32 +123,7 @@ pub(crate) fn finish(
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| invalid("missing exception memory"))?;
-    // Channel v6 (v34) carries the v5 contents in value15 layouts.
-    let dynamic = instance
-        .get_global(&mut *store, abi::DYNAMIC_VERSION)
-        .is_some();
-    let instances = dynamic
-        || instance
-            .get_global(&mut *store, abi::CLASS_ERROR_VERSION)
-            .is_some();
-    let bigints = instances
-        || instance
-            .get_global(&mut *store, abi::BIGINT_VERSION)
-            .is_some();
-    let families = bigints
-        || instance
-            .get_global(&mut *store, abi::FAMILY_VERSION)
-            .is_some();
-    let errors = families || instance.get_global(&mut *store, abi::VERSION).is_some();
-    let version = if dynamic {
-        DYNAMIC_VALUE_VERSION
-    } else if bigints {
-        BIGINT_VALUE_VERSION
-    } else if families {
-        ERROR_FAMILY_VALUE_VERSION
-    } else {
-        ERROR_VALUE_VERSION
-    };
+    let channel = Channel::detect(|name| instance.get_global(&mut *store, name).is_some());
     let data = memory.data(&*store);
     let root = data
         .get(abi::ROOT..abi::ROOT + abi::RESERVED_ROOT_BYTES)
@@ -161,6 +136,62 @@ pub(crate) fn finish(
     if flag != 1 || value != root {
         return Err(invalid("noncanonical exception channel state"));
     }
+    let value = channel.render(data, value)?;
+    Err(varta_common::exceptions::UncaughtException { value }.into())
+}
+
+/// Which exception-channel readers a module's exported version globals select.
+#[derive(Clone, Copy)]
+pub(crate) struct Channel {
+    instances: bool,
+    errors: bool,
+    version: u32,
+}
+impl Channel {
+    pub(crate) fn detect(mut exported: impl FnMut(&str) -> bool) -> Self {
+        // Channel v6 (v34) carries the v5 contents in value15 layouts.
+        let dynamic = exported(abi::DYNAMIC_VERSION);
+        let instances = dynamic || exported(abi::CLASS_ERROR_VERSION);
+        let bigints = instances || exported(abi::BIGINT_VERSION);
+        let families = bigints || exported(abi::FAMILY_VERSION);
+        let errors = families || exported(abi::VERSION);
+        let version = if dynamic {
+            DYNAMIC_VALUE_VERSION
+        } else if bigints {
+            BIGINT_VALUE_VERSION
+        } else if families {
+            ERROR_FAMILY_VALUE_VERSION
+        } else {
+            ERROR_VALUE_VERSION
+        };
+        Self {
+            instances,
+            errors,
+            version,
+        }
+    }
+    /// Copy one boxed exception-channel value out of guest memory, validating
+    /// it exactly like the uncaught-exception path; no guest code runs.
+    pub(crate) fn render(
+        self,
+        data: &[u8],
+        value: u64,
+    ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
+        let Self {
+            instances,
+            errors,
+            version,
+        } = self;
+        thrown(data, value, instances, errors, version)
+    }
+}
+fn thrown(
+    data: &[u8],
+    value: u64,
+    instances: bool,
+    errors: bool,
+    version: u32,
+) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
     let cell = if errors {
         ReferenceBox::read_with_version(data, value, version)?
     } else {
@@ -213,7 +244,7 @@ pub(crate) fn finish(
         ValueKind::Record if instances => error_instance(data, cell.payload)?,
         _ => return Err(invalid("unsupported thrown value kind")),
     };
-    Err(varta_common::exceptions::UncaughtException { value }.into())
+    Ok(value)
 }
 
 /// Field keys a thrown class-instance record must declare as String slots.

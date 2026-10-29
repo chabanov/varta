@@ -293,6 +293,7 @@ fn method(
         ast::MethodKind::Method if method.function.this_param.is_some() => {
             Some("explicit this parameter on a class method")
         }
+        ast::MethodKind::Method if method.function.is_async => Some("async class method"),
         ast::MethodKind::Method => None,
     };
     if let Some(kind) = unsupported_kind {

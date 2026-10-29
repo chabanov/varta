@@ -60,9 +60,13 @@ pub(crate) fn lower(
             let signature = signature::check(declaration, next, &unit.source, &mut types)
                 .map_err(|e| unit.source.locate(e, declaration.ident.span))?;
             if path == &graph.entry && name == "main" {
+                // `async function main(): Promise<void>` (v34) runs its body
+                // through the scheduler; the entry export stays `() -> ()`.
+                let async_main = declaration.function.is_async
+                    && matches!(signature.result, Type::Promise(id) if types.promises[id as usize].value == Type::Void);
                 if signature.receiver.is_some()
                     || !signature.params.is_empty()
-                    || signature.result != Type::Void
+                    || signature.result != Type::Void && !async_main
                 {
                     return Err(unit.source.locate(
                         invalid("main must have signature () -> void"),
@@ -423,9 +427,15 @@ pub(super) fn body(
         Type::Generator(id) if declaration.function.is_generator => Some(id),
         _ => None,
     };
+    // An `async function` body returns its `T`; calls see `Promise<T>` (v34).
+    let asynchronous = match signature.result {
+        Type::Promise(id) if declaration.function.is_async => Some(id),
+        _ => None,
+    };
     let body_result = generator.map_or(signature.result, |id| {
         types.generators[id as usize].returned
     });
+    let body_result = asynchronous.map_or(body_result, |id| types.promises[id as usize].value);
     let mut lower = Lower {
         source,
         types,
@@ -464,6 +474,7 @@ pub(super) fn body(
         cells: Default::default(),
         guarded: Default::default(),
         generator,
+        asynchronous,
     };
     if let Some(ty) = signature.receiver {
         lower.declare("this", Some(ty), true, false)?;
@@ -483,6 +494,8 @@ pub(super) fn body(
         Some(lower.source),
     )?;
     lower.reserve_parameters(&plans)?;
+    // The async body takes its promise right after the parameters.
+    let promise = asynchronous.map(|id| lower.hidden(Type::Promise(id)));
     let mut prologue = lower.module_constants(constants, &declaration.function)?;
     prologue.extend(lower.initialize_parameters(&plans, signature.receiver.is_some())?);
     let body = declaration
@@ -493,6 +506,18 @@ pub(super) fn body(
     prologue.extend(lower.block(&body.stmts, false)?);
     let mut statements = prologue;
     finish_body(&mut lower, &mut statements, declaration.span())?;
+    if let Some(promise) = promise {
+        return lower.split_async(
+            super::promises::AsyncSplit {
+                signature,
+                promise,
+                entry: signature.index == entry,
+                span: declaration.span(),
+                source,
+            },
+            statements,
+        );
+    }
 
     Ok(ir::Function {
         shape: signature.shape.clone(),

@@ -1,3 +1,11 @@
+// checked-f64-utf16-v34 (pilot batch, unreleased) promises and async functions use
+// TypeScript's own `Promise<T>`; no source-level host declaration is added. The
+// compiler emits five internal scheduler imports, never callable from source,
+// host ABI30 minimum, no capability, not charged to the host-call budget:
+// promise_react (f64 serial, i64 token)->f64 serial, promise_settle (f64)->(),
+// scheduler_enqueue (i64 token)->(), promise_unhandled (i64 reason)->f64 id and
+// promise_handled (f64 id)->(). Tokens name live frames resumed only through
+// varta_resume; the runtime keeps serials, never guest references.
 // checked-f64-utf16-v32 (pilot batch, unreleased) inherits v31 and its ABIs with
 // no new host declaration: module constants and `as const`, string/number/boolean
 // literal types, top-level classes, `export ... from`/`export *` re-exports,

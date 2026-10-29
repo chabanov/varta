@@ -41,6 +41,9 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     if values.iter().any(|ty| matches!(ty, Type::Generator(_))) {
         return Err(generators::opaque("a union"));
     }
+    if values.iter().any(|ty| matches!(ty, Type::Promise(_))) {
+        return Err(promises::opaque("a union"));
+    }
     // `unknown` absorbs every other member (v34); `widen` checks admission.
     if values.contains(&Type::Unknown) {
         return Ok(Type::Unknown);

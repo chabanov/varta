@@ -15,6 +15,8 @@ pub(super) struct Machine<'a> {
     /// Generator type id: inputs come only from guest code, so every
     /// one-slot value type is admissible and `throw(e)` delivers `e` itself.
     pub generator: Option<u32>,
+    /// Async bodies and promise jobs (v34): every suspension awaits a promise.
+    pub scheduled: bool,
 }
 
 fn integer(span: swc_common::Span, value: i32) -> Expr {
@@ -172,6 +174,7 @@ impl Machine<'_> {
             exception: self.exception,
             return_input,
             generator: self.generator,
+            scheduled: self.scheduled,
         };
         // A frame that never started completes without entering user code.
         let mut result = vec![S::If(

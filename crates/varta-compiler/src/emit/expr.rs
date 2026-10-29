@@ -47,6 +47,24 @@ impl Emitter<'_> {
                 value,
             } => self.generator_step(generator, *completion, value)?,
             E::GeneratorValue(generator) => self.generator_value(generator, expr.ty)?,
+            E::Schedule {
+                function,
+                args,
+                mode,
+            } => self.schedule(*function, args, *mode)?,
+            E::Reinterpret(value) => self.expr(value)?,
+            E::Zero => self
+                .code
+                .extend(wasm_types(expr.ty).into_iter().map(|ty| match ty {
+                    ValType::I64 => I::I64Const(0),
+                    ValType::F64 => I::F64Const(0.0.into()),
+                    _ => I::I32Const(0),
+                })),
+            E::Await { .. } => {
+                return Err(CompilerError::Internal(
+                    "await reached emission before normalization".into(),
+                ));
+            }
             E::FunctionRef {
                 index,
                 fresh,
@@ -527,6 +545,7 @@ impl Emitter<'_> {
                         | Type::Record(_)
                         | Type::Dictionary(_)
                         | Type::Class(_)
+                        | Type::Promise(_)
                         | Type::Array(_)
                 ) =>
             {

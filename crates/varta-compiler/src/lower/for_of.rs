@@ -26,6 +26,11 @@ impl Lower<'_> {
         if !self.types.profile.closures() {
             return Err(unsupported("for-of requires checked-f64-utf16-v12"));
         }
+        if statement.is_await && self.types.profile.async_functions() {
+            return Err(promises::rejected(
+                "for await...of (async iteration is not implemented yet)",
+            ));
+        }
         if statement.is_await {
             return Err(unsupported("for-await-of"));
         }

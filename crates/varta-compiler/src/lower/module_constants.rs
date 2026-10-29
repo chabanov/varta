@@ -142,6 +142,7 @@ pub(super) fn link_module(
             cells: Default::default(),
             guarded: Default::default(),
             generator: None,
+            asynchronous: None,
         };
         let (body, locals) =
             lower.initializers(chunk, &scope, (&mut linked.stored, &mut linked.declared))?;
@@ -360,6 +361,11 @@ fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
                 }
             }
             return Ok(());
+        }
+        ast::Expr::Await(_) => {
+            return Err(super::promises::rejected(
+                "await outside an async function (top-level await is not supported)",
+            ));
         }
         ast::Expr::TsConstAssertion(_) => "nested as const",
         ast::Expr::Call(_) | ast::Expr::New(_) | ast::Expr::OptChain(_) => "call",

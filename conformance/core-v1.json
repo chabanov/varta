@@ -914,7 +914,26 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Promise objects and resolution are not implemented."
+        "reason": "typeof of a Promise is not admitted: v34 promise objects have no value tag."
+      }
+    },
+    {
+      "id": "promise-resolution",
+      "feature": "promise-construction",
+      "path": "cases/promise-resolution.ts",
+      "sha256": "ba968cd9be1747ab029d27b34c31c003b870e84f3cab93a73af9effa434d00a0",
+      "stdout": [
+        "varta log: executor",
+        "varta log: sync end",
+        "varta log: once first",
+        "varta log: caught executor failed",
+        "varta log: finally",
+        "varta log: TypeError: Chaining cycle detected for promise #<Promise>",
+        "varta log: overridden",
+        "varta log: kept 5"
+      ],
+      "baseline": {
+        "status": "supported"
       }
     },
     {
@@ -926,9 +945,47 @@
         "varta log: 3"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Async execution, await suspension and shutdown are not implemented."
+        "status": "supported"
+      }
+    },
+    {
+      "id": "async-await-errors",
+      "feature": "async-await",
+      "path": "cases/async-await-errors.ts",
+      "sha256": "f3bdc64ce36946d74d8d4df8ca59335be68aaa5befd938a797accfaba0e9df25",
+      "stdout": [
+        "varta log: guarded start",
+        "varta log: main continues",
+        "varta log: caught inner",
+        "varta log: finally after await",
+        "varta log: recovered",
+        "varta log: main caught outer",
+        "varta log: total 5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "promise-jobs",
+      "feature": "promise-jobs",
+      "path": "cases/promise-jobs.ts",
+      "sha256": "1bf848d071401af4566a0d9b0b428806c475821ef8f7cd1f986cff684714da84",
+      "stdout": [
+        "varta log: start",
+        "varta log: end",
+        "varta log: a1 1",
+        "varta log: a-second",
+        "varta log: b1 10",
+        "varta log: tick 1",
+        "varta log: a2 2",
+        "varta log: tick 2",
+        "varta log: tick 3",
+        "varta log: b2 11",
+        "varta log: tick 4"
+      ],
+      "baseline": {
+        "status": "supported"
       }
     },
     {
@@ -1830,7 +1887,7 @@
         "varta log: a-b-c",
         "varta log: 3 ac",
         "varta log: 0.30000000000000004|0|1e+21|null|undefined|true|100000000000000000000",
-        "varta log: crab \ud83e\udd80 `tick` ${literal}",
+        "varta log: crab 🦀 `tick` ${literal}",
         "varta log: [7]",
         "varta log: 2"
       ],

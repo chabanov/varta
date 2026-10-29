@@ -89,6 +89,14 @@ impl Lower<'_> {
             ast::Expr::TsTypeAssertion(_) if self.types.profile.checked_assertions() => Err(
                 unsupported("angle-bracket type assertion; write a checked `x as T` instead"),
             ),
+            ast::Expr::New(new)
+                if self.types.profile.promises() && self.promise_builtin(&new.callee) =>
+            {
+                self.new_promise(new, expected)
+            }
+            ast::Expr::Await(expression) if self.types.profile.async_functions() => {
+                self.await_expression(expression)
+            }
             _ => self.expr_inner(expression),
         };
         self.depth -= 1;
@@ -543,6 +551,7 @@ impl Lower<'_> {
                                 | Type::Record(_)
                                 | Type::Dictionary(_)
                                 | Type::Class(_)
+                                | Type::Promise(_)
                                 | Type::Array(_)
                         ) =>
                     {
@@ -627,6 +636,20 @@ impl Lower<'_> {
         {
             let receiver = self.expr(&member.obj)?;
             return self.generator_method(call, receiver, method.sym.as_ref());
+        }
+        if self.types.profile.promises()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let ast::Expr::Member(member) = stmt::unparen(callee)
+        {
+            if self.promise_builtin(&member.obj) {
+                return self.promise_static(call, member, expected);
+            }
+            if let ast::MemberProp::Ident(method) = &member.prop
+                && matches!(method.sym.as_ref(), "then" | "catch" | "finally")
+            {
+                let receiver = self.expr(&member.obj)?;
+                return self.promise_method(call, receiver, method.sym.as_ref());
+            }
         }
         if let Some(generic) = self.generic_callee(call) {
             return self.generic_call(call, generic, expected);

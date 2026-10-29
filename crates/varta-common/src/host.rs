@@ -17,6 +17,17 @@ pub enum HostOperation {
     PrimitiveNumberV3,
     BigIntFromValueV2,
 
+    /// v34 microtask scheduler (`crate::scheduler`): register a suspended
+    /// frame as a reaction of a pending promise.
+    PromiseReact,
+    /// v34: move a settled promise's reactions into the microtask queue.
+    PromiseSettle,
+    /// v34: queue a frame resumption as a microtask.
+    SchedulerEnqueue,
+    /// v34: report a promise rejected without a handler; returns its tracking id.
+    PromiseUnhandled,
+    /// v34: withdraw a tracked rejection once a handler is added.
+    PromiseHandled,
     PrimitiveCompare,
     PrimitiveEqual,
     BigIntWidthV2,
@@ -301,6 +312,11 @@ impl HostOperation {
             Self::BigIntCompareString => "bigint_compare_string",
             Self::PrimitiveCompare => "primitive_compare",
             Self::PrimitiveEqual => "primitive_equal",
+            Self::PromiseReact => "promise_react",
+            Self::PromiseSettle => "promise_settle",
+            Self::SchedulerEnqueue => "scheduler_enqueue",
+            Self::PromiseUnhandled => "promise_unhandled",
+            Self::PromiseHandled => "promise_handled",
             Self::BigIntWidthV2 => "bigint_width_v2",
             Self::BigIntToStringV2 => "bigint_to_string_v2",
             Self::BigIntWidth => "bigint_width",
@@ -455,13 +471,26 @@ impl HostOperation {
             Self::HttpService => "http_service",
         }
     }
+    /// The v34 microtask scheduler operations. They grant no capability and
+    /// are charged to the scheduler's own limits, not to the host-call budget.
+    #[must_use]
+    pub fn scheduler(self) -> bool {
+        matches!(
+            self,
+            Self::PromiseReact
+                | Self::PromiseSettle
+                | Self::SchedulerEnqueue
+                | Self::PromiseUnhandled
+                | Self::PromiseHandled
+        )
+    }
     pub fn signature(self) -> (usize, usize) {
         let (params, results) = self.scalar_signature();
         (params.len(), results.len())
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
-        if self.value13_counterpart().is_some() {
+        if self.value13_counterpart().is_some() || self.scheduler() {
             return crate::abi::SCHEDULED_FRAMES_VERSION;
         }
         if matches!(
@@ -727,6 +756,11 @@ impl HostOperation {
         use HostScalar::{F64, I32, I64};
         match self {
             Self::PrimitiveCompare => (&[I64, I64], &[F64]),
+            Self::PromiseReact => (&[F64, I64], &[F64]),
+            Self::PromiseSettle => (&[F64], &[]),
+            Self::SchedulerEnqueue => (&[I64], &[]),
+            Self::PromiseUnhandled => (&[I64], &[F64]),
+            Self::PromiseHandled => (&[F64], &[]),
             Self::PrimitiveEqual => (&[I32, I64, I64], &[I32]),
             Self::BigIntWidthV2 => (&[I32, I64, I64], &[I32, I32]),
             Self::BigIntToStringV2 => (&[I64, I64], &[I32, I32]),
@@ -913,6 +947,11 @@ impl HostOperation {
             "primitive_to_number_v3" => Self::PrimitiveNumberV3,
             "bigint_from_value_v2" => Self::BigIntFromValueV2,
             "primitive_compare" => Self::PrimitiveCompare,
+            "promise_react" => Self::PromiseReact,
+            "promise_settle" => Self::PromiseSettle,
+            "scheduler_enqueue" => Self::SchedulerEnqueue,
+            "promise_unhandled" => Self::PromiseUnhandled,
+            "promise_handled" => Self::PromiseHandled,
             "primitive_equal" => Self::PrimitiveEqual,
             "bigint_width_v2" => Self::BigIntWidthV2,
             "bigint_to_string_v2" => Self::BigIntToStringV2,
@@ -1081,6 +1120,11 @@ impl HostOperation {
             | Self::PrimitiveStringV3
             | Self::PrimitiveNumberV3
             | Self::BigIntFromValueV2
+            | Self::PromiseReact
+            | Self::PromiseSettle
+            | Self::SchedulerEnqueue
+            | Self::PromiseUnhandled
+            | Self::PromiseHandled
             | Self::PrimitiveCompare
             | Self::PrimitiveEqual
             | Self::BigIntWidthV2
