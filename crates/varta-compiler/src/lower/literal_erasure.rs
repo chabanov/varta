@@ -226,6 +226,7 @@ impl Eraser {
             }
             E::ValueBlock { body, .. } => self.statements(body),
             E::FunctionCheck { value, .. }
+            | E::Suspend { value, .. }
             | E::StringTrim { value, .. }
             | E::ArrayEnumerate { value, .. }
             | E::ArrayReserve { length: value, .. }

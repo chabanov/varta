@@ -1959,3 +1959,35 @@ Error classes, own-property presence of `message`/`cause` (and with it
   candidate for the subset, like `+`, but need their own decision.
 - Template substitutions treat literal-typed values as their base primitive;
   class instances need ToPrimitive and stay rejected.
+
+## Suspension foundation (K4.4 block 1)
+
+No profile admits suspension. Contract:
+[architecture.md](architecture.md#suspension-foundation-k44-block-1).
+
+- `ir::Expression::Suspend` comes only from the `#[cfg(test)]` hook
+  `lower::suspension::hook` (`__varta_suspend(value[, witness])`). Never
+  produce it from source syntax without a new profile, host ABI and runtime
+  preflight for `varta_resume`, the frame flag and frame catalog version 2.
+- `lower::suspension::prepare` runs on IR after lowering and literal erasure.
+  `walk.rs` is exhaustive on purpose: a new IR form must state its children
+  there. `normalize.rs` must state whether it splits the form, hoists its
+  operands left to right or rejects it with a construct name. Never reorder
+  effects; hoist only operands that are evaluated before the suspending one.
+- Split a lowering value block only when its construct is on the
+  `construct.rs` allowlist (assignments, updates, `&&`/`||`/`??`/`?:`). To add
+  a construct, add an evaluation-order test that resumes in Wasmtime.
+- States are numbered in statement order and guards depend on contiguous
+  ranges. Resumption must re-enter structured code (never jump into it), so
+  `try` handlers, labels and root frames are rebuilt by the normal emitter.
+- `emit::frames` owns frame layout, the creator, resume bodies and the
+  dispatcher. Use `varta_common::function::frame` constants for every offset,
+  flag, kind, status, completion and outcome. Keep the dispatcher closed: direct
+  calls by layout id, no tables. Keep its checks before any effect.
+- Frames use their own budgets (`MAX_FRAME_BINDINGS`, `MAX_SUSPENSION_STATES`,
+  `MAX_LIVE_FRAMES`), never `MAX_CAPTURES`. Captured locals keep their closure
+  cell in the frame. Restoration validates every cell before use.
+- The exception channel is empty at every suspension and dispatcher entry.
+  Uncaught exceptions become the frame completion; traps stay fatal.
+- Modules without suspension points must not change: no frame flag in the
+  collector, catalog version 1, no `varta_resume` export.

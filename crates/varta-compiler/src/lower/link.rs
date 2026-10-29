@@ -192,10 +192,12 @@ pub(crate) fn lower(
         types,
         constants: constants.stored,
         initializers: constants.initializers,
+        suspendable: BTreeMap::new(),
     };
     if profile.literal_types() {
         literal_erasure::erase_program(&mut program);
     }
+    super::suspension::prepare(&mut program, graph)?;
     Ok(program)
 }
 

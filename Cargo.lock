@@ -2046,6 +2046,7 @@ dependencies = [
  "varta-common",
  "wasm-encoder 0.241.2",
  "wasmparser 0.241.2",
+ "wasmtime",
 ]
 
 [[package]]

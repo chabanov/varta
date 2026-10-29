@@ -525,6 +525,10 @@ impl Lower<'_> {
         expected: Option<Type>,
         hints: Option<references::AggregateHints>,
     ) -> Result<Expr> {
+        #[cfg(test)]
+        if let Some(point) = self.suspension_hook(call)? {
+            return Ok(point);
+        }
         if let ast::Callee::Expr(callee) = &call.callee
             && callee_name(callee).as_deref() == Some("varta.json.parse")
         {

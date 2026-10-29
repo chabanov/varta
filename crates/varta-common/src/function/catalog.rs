@@ -18,6 +18,40 @@ pub struct FunctionCatalog {
     pub types: Vec<CaptureType>,
     pub bindings: Vec<CaptureBinding>,
     pub functions: Vec<CaptureFunction>,
+    /// Continuation-frame layouts; present only in [`frame::FRAME_CATALOG_VERSION`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<FrameLayout>,
+}
+/// One suspendable function's frame. Binding ids index `bindings`; layout ids
+/// are the row positions and resume codes are unique user-function indices.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameLayout {
+    pub code: u32,
+    pub slots: Vec<FrameSlot>,
+    /// Suspension points 1..=n in state order; state 0 is the initial state.
+    pub states: Vec<FrameState>,
+    /// Binding id of a returned completion value, absent for void results.
+    pub result: Option<u32>,
+    /// Admissible `Return` completion input, absent when none is admitted.
+    pub return_input: Option<frame::FrameInput>,
+    /// Binding id of an uncaught exception completion.
+    pub exception: u32,
+}
+/// A saved binding: frame-owned cells are allocated with the frame; shared
+/// cells are the closure cells of captured locals and may still be absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameSlot {
+    pub binding: u32,
+    pub shared: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameState {
+    pub input: frame::FrameInput,
+    /// Binding id of the yielded value stored in the completion slot.
+    pub yielded: u32,
 }
 /// `Class` is a nominal class instance (v32): a record carrying its own class
 /// descriptor. Its fields are fixed by the class declaration and may form
@@ -94,11 +128,23 @@ impl CaptureType {
     }
 }
 impl FunctionCatalog {
+    /// Read a version 1 catalog. Frame catalogs (version 2) are rejected here, so
+    /// existing artifacts and runtimes keep exactly their earlier contract.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ValueAbiError> {
+        Self::read(bytes, CATALOG_VERSION)
+    }
+    /// Read a version 1 or frame-bearing version 2 catalog.
+    pub fn from_frame_bytes(bytes: &[u8]) -> Result<Self, ValueAbiError> {
+        Self::read(bytes, frame::FRAME_CATALOG_VERSION)
+    }
+    fn read(bytes: &[u8], newest: u32) -> Result<Self, ValueAbiError> {
         if bytes.len() > abi::MAX_WASM_BYTES {
             return Err(invalid_catalog());
         }
         let value: Self = serde_json::from_slice(bytes).map_err(|_| invalid_catalog())?;
+        if value.version > newest {
+            return Err(invalid_catalog());
+        }
         value.validate()?;
         Ok(value)
     }
@@ -111,7 +157,9 @@ impl FunctionCatalog {
         Ok(bytes)
     }
     pub fn validate(&self) -> Result<(), ValueAbiError> {
-        if self.version != CATALOG_VERSION
+        let frames = self.version == frame::FRAME_CATALOG_VERSION;
+        if !(self.version == CATALOG_VERSION || frames)
+            || frames == self.frames.is_empty()
             || !matches!(
                 self.value_version,
                 value::BIGINT_VALUE_VERSION | value::FUNCTION_VALUE_VERSION
@@ -265,10 +313,38 @@ impl FunctionCatalog {
                 _ => {}
             }
         }
+        self.validate_frames()?;
         let mut state = vec![0u8; self.types.len()];
         let mut heights = vec![0usize; self.types.len()];
         for id in 0..self.types.len() {
             self.acyclic(id, 0, &mut state, &mut heights)?;
+        }
+        Ok(())
+    }
+    fn validate_frames(&self) -> Result<(), ValueAbiError> {
+        let binding = |id: u32| self.bindings.get(id as usize).ok_or_else(invalid_catalog);
+        let mut codes = BTreeSet::new();
+        if self.frames.len() > abi::MAX_USER_FUNCTIONS {
+            return Err(invalid_catalog());
+        }
+        for layout in &self.frames {
+            if layout.code as usize >= abi::MAX_USER_FUNCTIONS
+                || !codes.insert(layout.code)
+                || layout.slots.len() > frame::MAX_FRAME_BINDINGS
+                || layout.states.len() > frame::MAX_SUSPENSION_STATES
+            {
+                return Err(invalid_catalog());
+            }
+            for id in layout
+                .slots
+                .iter()
+                .map(|slot| slot.binding)
+                .chain(layout.states.iter().map(|state| state.yielded))
+                .chain(layout.result)
+                .chain([layout.exception])
+            {
+                binding(id)?;
+            }
         }
         Ok(())
     }

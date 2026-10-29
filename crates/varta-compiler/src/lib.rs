@@ -21,6 +21,8 @@ mod source;
 #[cfg(test)]
 mod string_operation_tests;
 #[cfg(test)]
+mod suspension_tests;
+#[cfg(test)]
 mod tool_tests;
 
 pub use error::CompilerError;

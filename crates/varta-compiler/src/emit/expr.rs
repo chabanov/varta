@@ -40,6 +40,7 @@ impl Emitter<'_> {
                 body,
             } => self.assignment_value(value, *input, *marker, body)?,
             E::FunctionCheck { value, slot } => self.check_function_value(value, *slot)?,
+            E::Suspend { value, state } => self.suspend_point(value, *state)?,
             E::FunctionRef {
                 index,
                 fresh,

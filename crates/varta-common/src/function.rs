@@ -30,8 +30,11 @@ mod catalog;
 mod view_tests;
 pub use catalog::{
     CATALOG_SECTION, CATALOG_VERSION, CaptureBinding, CaptureField, CaptureFunction, CaptureType,
-    FunctionCatalog, MAX_CAPTURE_TYPES,
+    FrameLayout, FrameSlot, FrameState, FunctionCatalog, MAX_CAPTURE_TYPES,
 };
+pub mod frame;
+#[cfg(test)]
+mod frame_tests;
 mod validate;
 pub use validate::{CaptureValidation, VerifiedFunctionCatalog};
 #[cfg(test)]

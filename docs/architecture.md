@@ -6808,6 +6808,117 @@ backend modules for compatibility and inspection. A backend module alone carries
 no capture owner. Missing optional catalogs remain accepted for older v30 code.
 This ownership layer does not admit value14 source operations or grant indirect
 call authority; versioned host handlers and source admission are still pending.
-Planned continuation-frame layouts extend this module-owned metadata; their design
-is in the [development plan](development-plan.md#k44--suspension-scheduling-and-async-planned)
-and is not an implemented contract.
+Continuation-frame layouts extend this module-owned metadata in the frame catalog
+described next; the design is in the
+[development plan](development-plan.md#k44--suspension-scheduling-and-async-planned).
+
+### Suspension foundation (K4.4 block 1)
+
+This is the implemented foundation of the agreed K4.4 design. No profile admits
+suspension syntax: the only producer of a suspension point is a `#[cfg(test)]`
+lowering hook in the compiler. No host import, capability, value tag or runtime
+preflight changes, and modules without suspension points compile exactly as
+before (the passes below find nothing to do).
+
+**IR and normalization.** `Expression::Suspend { value, state }` yields `value`
+and evaluates to the resume input, whose type is the node's type. After lowering
+and literal erasure, `lower::suspension` normalizes every function that contains
+one. Operands evaluated before a suspension point (callees, ignored receivers,
+arguments, binary operands, record/array elements, member bases and indices) move
+into hidden locals in their original order; later operands stay in place. `&&`,
+`||`, `??` and `?:` become explicit branches assigning one result local, so the
+suspending operand runs only on its branch. Loop tests that suspend move to the
+top of the body as `if (!test) break`. Lowering-produced value blocks split into
+ordinary statements only for the constructs whose preparation has been reviewed:
+simple, compound and logical assignments, updates and `&&`/`||`/`??`/`?:`. Then
+the prepared receiver, key and old value are evaluated before the suspension.
+Every other value block and the remaining positions are rejected with
+`unsupported suspension point inside <construct>`. The construct is named from
+the source node at the block's span, for example `call to Math.hypot`,
+`` `repeat` method call ``, `catch clause`, `finally clause`, `switch case`,
+`do-while condition`, `a closure` or `an entry function`. The canonical form is
+`Init(t, Suspend { value })` with a suspension-free `value` and a fresh `t`.
+
+**State machine.** Suspension points are numbered 1..n in statement order, so
+each structured statement covers one contiguous state range. State 0 means
+"created, not started". Every list member is guarded: suspension-free runs execute
+only while running (state 0), and compound statements are entered while running
+or when the target state lies in their range. An `if` records its branch choice in
+a hidden local; a loop re-checks its test only while running. Resumption restores
+all saved locals, then re-enters the structured code, so the emitter rebuilds the
+`try` handler, label and root bookkeeping of the target state itself. The handler
+context is therefore static per state, and the frame's handler field stays zero.
+At the target state the delivery clears the state, raises a `Throw` input as a
+Number exception at that point, performs a `Return` input as `return` (running
+enclosing `finally` blocks) or binds a `Normal` input. Suspension inside a `catch`
+or `finally` body, which would need a deferred completion in the frame, is
+rejected in this block.
+
+**Frames.** A frame is a separate managed kind, heap flag **4096**, with a
+48-byte body: `[layout-id:u32, fields=5:u32, control:i64, status:i64,
+environment:i64, completion:i64, handler:i64]`. Control is `resume-code:u32 |
+state:u32`, status is `status:u32 | generation:u32` (suspended 1, running 2,
+completed 3), and the exact edge mask is **28** (environment, completion and
+handler). The environment is an environment block (flag 256) of kind **1** whose
+entries are segments of kind **2**. Each segment holds at most 32 binding handles
+(the 32-bit edge mask), and a frame holds at most 8 segments. Kinds 1 and 2 are
+rejected by closure validators, which expect kind 0. Saved bindings reuse binding
+cells (flag 512) with their private type ids, widths and reference bits. A
+captured local stores its closure cell, so closures and the continuation share
+one binding; that entry is zero until the cell exists. Every other local owns a
+frame cell that the creator allocates. The state, completion and input locals are
+re-initialized on each entry and are not saved. Budgets: 256 saved bindings per
+frame (independent of the 32-capture closure limit), 256 suspension states per
+function, and 64 live frames. Live frames are permanent root-table slots placed
+after module-constant roots in the reserved root region.
+
+**Creator, resume body and dispatcher.** A suspendable function's own index
+becomes its creator: it allocates and registers the frame (rooted before the next
+allocation), binds the arguments into cells and returns a resume token `frame:u32
+| generation:u32 << 32` without running the body. Generations come from one
+instance-wide counter; exhausting it is fatal. The resume body takes
+`(frame:i64, completion:i32, value:i64)`. The exported dispatcher
+`varta_resume(token:i64, completion:i32, value:i64) -> i32` performs closed direct
+calls by layout id; it uses no table or indirect call. Before any effect it traps
+when:
+
+- the exception channel is not empty;
+- the frame is not live in this instance's root table (ownership);
+- the envelope is not exact (length, flags, mask, field count, zero handler);
+- the frame is running (reentrancy) or completed, or the generation is stale;
+- the completion kind is not Normal 0, Throw 1 or Return 2;
+- the layout, resume code and state do not agree;
+- the input is not admissible.
+
+Admissible inputs are scalars only. Float64 accepts any bits, Boolean only 0 or
+1, and Undefined only 0. A Throw input is a Number, and a Return input must match
+a Float64, Boolean, undefined or void result; other results admit no Return.
+Host-supplied references need a validated transport and are outside this block.
+The dispatcher reports Suspended 0, Returned 1 or Threw 2. It moves an uncaught
+exception from the channel into an exception-union completion cell and clears the
+channel. A completed frame leaves the root table. Its completion stays readable
+until the next guest call that may collect it. The dispatcher has effects and is
+never a pure helper; JSON helper purity validation is unchanged.
+
+**Exception and GC invariants.** The exception channel is empty whenever the
+scheduler holds control. A suspension point asserts this fatally before
+returning, and the dispatcher requires it on entry. Fatal traps and resource
+exhaustion are never converted into completions. In frame-bearing modules the
+collector additionally traces the frame flag through the exact mask; segment and
+cell tracing reuses the environment/binding path. Restoration checks every saved
+cell before use: allocation bounds, flags, reference mask, private type id, width
+and canonical Boolean/null/undefined payloads.
+
+**Metadata and versioning.** Frame-bearing modules emit function catalog version
+**2** with `frames` rows: resume code, saved binding ids and sharing, per-state
+input class and yielded binding, result and Return-input class, and exception
+binding. `FunctionCatalog::from_bytes`, which runtime preflight uses, still
+accepts only version 1 and rejects version 2. `from_frame_bytes` reads both.
+Modules without frames keep emitting version 1 unchanged. Test builds also export
+frame creators (`varta.test.frame.<layout>`) and the collector
+(`varta.test.collect`); release builds export only `varta_resume`.
+
+Runtime admission is the next versioning step. A new profile and host ABI must
+declare the `varta_resume` export, the frame flag and layout, frame catalog
+version 2 validation in preflight and a scheduler-owned root and generation
+policy before any source syntax (`yield`, `await`) may produce suspension points.

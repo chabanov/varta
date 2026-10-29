@@ -1,7 +1,7 @@
 use super::*;
-/// The catch-binding union: every value the exception channel can carry. With
-/// v32 Error subclasses it also holds the Error root class, which every
-/// source error class extends.
+/// The catch-binding union: every value the exception channel can carry, and
+/// the type of a frame's exception completion. With v32 Error subclasses it
+/// also holds the Error root class, which every source error class extends.
 pub(super) fn exception_union(types: &mut ir::ValueTypes) -> Result<Type> {
     let mut members = vec![
         Type::Float64,

@@ -9,7 +9,12 @@ const BLOCK: u32 = 12;
 const FIELD_COUNT: u32 = 13;
 const IS_ARRAY: u32 = 14;
 
-pub(super) fn function(globals: Globals, trace_values: bool, closures: bool) -> Function {
+pub(super) fn function(
+    globals: Globals,
+    trace_values: bool,
+    closures: bool,
+    frames: bool,
+) -> Function {
     const ROOT_CURSOR: u32 = 0;
     const CURRENT: u32 = 1;
     const SIZE: u32 = 2;
@@ -77,7 +82,7 @@ pub(super) fn function(globals: Globals, trace_values: bool, closures: bool) -> 
         ],
     );
     if trace_values {
-        trace(&mut function, globals, closures);
+        trace(&mut function, globals, closures, frames);
     }
     instructions(
         &mut function,
@@ -173,7 +178,7 @@ pub(super) fn function(globals: Globals, trace_values: bool, closures: bool) -> 
 
 // Fixed-point tracing is iterative: no native/Wasm recursion or allocation during
 // collection. Every newly reached block is marked once; scans consume guest fuel.
-fn trace(function: &mut Function, globals: Globals, closures: bool) {
+fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool) {
     use varta_common::value as values;
     const CURRENT: u32 = 1;
     const AGAIN: u32 = 0;
@@ -210,6 +215,13 @@ fn trace(function: &mut Function, globals: Globals, closures: bool) {
                         varta_common::function::HEAP_FLAG
                             | varta_common::function::ENVIRONMENT_FLAG
                             | varta_common::function::BINDING_FLAG
+                    } else {
+                        0
+                    }
+                    // Continuation frames trace their environment, completion
+                    // and handler edges through the same exact edge mask.
+                    | if frames {
+                        varta_common::function::frame::FRAME_FLAG
                     } else {
                         0
                     },

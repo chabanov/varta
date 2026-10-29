@@ -157,6 +157,29 @@ pub(crate) struct Program {
     /// `initializers` (dependency order) before `main` runs.
     pub constants: u32,
     pub initializers: Vec<usize>,
+    /// Functions containing compiler-internal suspension points (K4.4 foundation).
+    pub suspendable: std::collections::BTreeMap<usize, Suspendable>,
+}
+
+/// State-machine metadata produced by `lower::suspension` for one function.
+pub(crate) struct Suspendable {
+    /// Hidden i32 local: target state on entry, zero while running normally.
+    pub state: u32,
+    /// Hidden i32 local: the delivered `frame::Completion` kind.
+    pub completion: u32,
+    /// Hidden locals receiving the scalar resume input, one per admitted type.
+    pub inputs: std::collections::BTreeMap<Type, u32>,
+    /// Suspension points in state order; state `n` is `points[n - 1]`.
+    pub points: Vec<SuspensionPoint>,
+    /// The exception-channel union stored for an uncaught completion.
+    pub exception: Type,
+    /// The admissible `Return` input; `None` rejects `Return` resumption.
+    pub return_input: Option<Type>,
+}
+#[derive(Clone, Copy)]
+pub(crate) struct SuspensionPoint {
+    pub input: Type,
+    pub yielded: Type,
 }
 
 #[derive(Default)]
@@ -478,6 +501,13 @@ pub(crate) enum Expression {
     Length(Box<Expr>),
     /// Read the permanent root slot of stored module constant `n` (v32).
     ModuleConstant(u32),
+    /// Compiler-internal suspension point (K4.4 foundation): yields `value` and
+    /// evaluates to the resume input, whose admissible type is this node's type.
+    /// No source syntax produces it; `state` is assigned by `lower::suspension`.
+    Suspend {
+        value: Box<Expr>,
+        state: u32,
+    },
 }
 
 pub(crate) use varta_common::HostOperation as Host;
