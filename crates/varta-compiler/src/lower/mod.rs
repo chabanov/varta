@@ -133,7 +133,10 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
         ast::TsType::TsUnionOrIntersectionType(ast::TsUnionOrIntersectionType::TsUnionType(
             union,
         )) => {
-            if union.types.len() > 16 {
+            if types.profile.literal_types() {
+                return literals::union(union, types);
+            }
+            if union.types.len() > literals::MAX_UNION_MEMBERS {
                 return Err(invalid("union member count exceeds limit"));
             }
             let members = union
@@ -159,6 +162,9 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
                 .ok_or_else(|| unsupported("Array requires one element type"))?;
             let element = keyword_type(&params.params[0], types)?;
             return arrays::intern(element, types);
+        }
+        ast::TsType::TsLitType(literal) if types.profile.literal_types() => {
+            return literals::annotation(literal, types);
         }
         _ => {}
     }
@@ -265,6 +271,8 @@ mod http;
 mod json;
 mod labels;
 mod link;
+mod literal_erasure;
+pub(crate) mod literals;
 mod logical_assignments;
 mod math;
 mod math_hypot;

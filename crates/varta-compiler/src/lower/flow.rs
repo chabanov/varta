@@ -330,6 +330,9 @@ impl Lower<'_> {
         let Some(&declared) = self.local_types.get(&slot) else {
             return Ok(());
         };
+        if self.types.profile.literal_types() {
+            return self.literal_flow_fact(slot, declared, observed);
+        }
         if !declared.is_union() {
             return Ok(());
         }

@@ -137,7 +137,7 @@ pub(crate) fn lower(
             entry.ast.span(),
         ));
     }
-    Ok(ir::Program {
+    let mut program = ir::Program {
         functions,
         main,
         tools,
@@ -145,7 +145,11 @@ pub(crate) fn lower(
         types,
         constants: constants.stored,
         initializers: constants.initializers,
-    })
+    };
+    if profile.literal_types() {
+        literal_erasure::erase_program(&mut program);
+    }
+    Ok(program)
 }
 
 /// One binding of the value namespace, shared by functions and (v32) module

@@ -38,6 +38,8 @@ pub(super) enum Guard {
     Array,
     Truth(bool),
     Nullish,
+    /// `local === constant` against an interned singleton literal set (v32).
+    Literal(Type),
 }
 impl Guard {
     pub fn matches(self, ty: Type) -> bool {
@@ -47,7 +49,9 @@ impl Guard {
                     && (class == varta_common::value::ErrorClass::Error
                         || ty.error_class() == Some(class))
             }
-            Self::Exact(t) => t == ty,
+            Self::Exact(t) => t == ty.erased(),
+            // Literal guards refine through `literals::refine`, never by member.
+            Self::Literal(_) => false,
             Self::Object => matches!(
                 ty,
                 Type::Error | Type::NativeError(_) | Type::Null | Type::Record(_) | Type::Array(_)
@@ -159,13 +163,19 @@ impl Lower<'_> {
         let Some(ty) = self.refinements.get(&binding.slot).copied().or(binding.ty) else {
             return Ok(());
         };
-        if !ty.is_union() {
+        let remaining: Vec<_> = if let Guard::Literal(single) = matched {
+            match literals::refine(ty, single, positive, self.types) {
+                Some(refined) => vec![refined],
+                None => return Ok(()),
+            }
+        } else if ty.is_union() {
+            unions::members(ty, self.types)
+                .into_iter()
+                .filter(|ty| matched.matches(*ty) == positive)
+                .collect()
+        } else {
             return Ok(());
-        }
-        let remaining: Vec<_> = unions::members(ty, self.types)
-            .into_iter()
-            .filter(|ty| matched.matches(*ty) == positive)
-            .collect();
+        };
         if self.types.profile.truth_guards()
             && (remaining.is_empty() || remaining == unions::members(ty, self.types))
         {

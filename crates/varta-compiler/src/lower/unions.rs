@@ -5,7 +5,12 @@ use references::Guard;
 pub(super) fn primitive(ty: Type) -> bool {
     matches!(
         ty,
-        Type::Float64 | Type::Boolean | Type::String | Type::Null | Type::Undefined
+        Type::Float64
+            | Type::Boolean
+            | Type::String
+            | Type::Null
+            | Type::Undefined
+            | Type::Literal(..)
     )
 }
 pub(super) fn members(ty: Type, types: &ir::ValueTypes) -> Vec<Type> {
@@ -25,6 +30,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
         .collect();
     values.sort();
     values.dedup();
+    let values = literals::normalize(values, types)?;
     if values.is_empty()
         || values.iter().any(|ty| {
             *ty == Type::BigInt && !types.profile.bigint_values()
@@ -75,6 +81,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     }
     let id = types.unions.len() as u32;
     types.unions.push(values);
+    literals::note_union(id, types)?;
     Ok(if references {
         Type::ReferenceUnion(id)
     } else {
@@ -82,11 +89,15 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     })
 }
 pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes) -> Result<Expr> {
+    let value = literals::conform(value, expected, types)?;
     let Some(ty @ (Type::Union(id) | Type::ReferenceUnion(id))) = expected else {
         return Ok(value);
     };
     let target = &types.unions[id as usize];
-    if members(value.ty, types).iter().any(|m| !target.contains(m)) {
+    if members(value.ty, types)
+        .iter()
+        .any(|m| !literals::member_of(*m, target, types))
+    {
         return Err(type_error(format!(
             "value {} is not a member of the expected union",
             value.ty
@@ -246,6 +257,13 @@ impl Lower<'_> {
                 self.guard(&binary.left, yes)?;
                 return self.guard(&binary.right, yes);
             }
+            if self.types.profile.literal_types()
+                && let ast::Expr::Bin(binary) = test
+                && ((binary.op == ast::BinaryOp::LogicalOr && yes)
+                    || (binary.op == ast::BinaryOp::LogicalAnd && !yes))
+            {
+                return self.either_guard(&binary.left, &binary.right, yes);
+            }
         }
         if self.types.profile.reference_unions()
             && let ast::Expr::Unary(unary) = test
@@ -283,6 +301,13 @@ impl Lower<'_> {
             ast::BinaryOp::NotEqEq => !yes,
             _ => return Ok(()),
         };
+        if self.types.profile.literal_types()
+            && let Some((name, single)) =
+                literals::guard_operand(&binary.left, &binary.right, self.types)
+                    .or_else(|| literals::guard_operand(&binary.right, &binary.left, self.types))
+        {
+            return self.refine(&name, Guard::Literal(single), positive);
+        }
         let identify = |a: &ast::Expr, b: &ast::Expr| -> Option<(String, Guard)> {
             if let ast::Expr::Unary(u) = a
                 && u.op == ast::UnaryOp::TypeOf

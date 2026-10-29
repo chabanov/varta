@@ -1729,3 +1729,36 @@ initializer and marks `Binding::readonly`. Every member-write gate must call
 and the `Object.assign` target. A new mutating operation must add the same check.
 Readonly is binding-level intent, not a type: do not intern readonly array or
 record types without a separate profile decision.
+
+### Literal types (`literal_types`)
+
+`Type::Literal(LiteralBase, id)` indexes `ValueTypes::literals`, interned by base
+and value set. Annotation interning fails at `MAX_LITERAL_MEMBERS` and
+`MAX_LITERAL_TABLE_MEMBERS`; guard refinements use the same tables but skip the
+refinement instead of failing. `unions::intern` normalizes literal members
+(`literals::normalize`) and records an erased twin of each literal-bearing union.
+Gate every admission on `literal_types()`; v31 must keep its exact behavior.
+
+Literal types never reach emission. `literal_erasure::erase_program` erases every
+table and IR type and merges function types that coincide after erasure (signature
+dispatch and the capture catalog match signatures structurally). Its IR match is
+exhaustive on purpose: a new `Expression` or `Statement` variant must erase its
+children there. Records, arrays and unions are not merged; duplicates are inert.
+
+Reads erase: `expr_contextual` without an expected type returns the base (or the
+erased union twin). Use `expr_preserving` only where a literal type must survive:
+inferred bindings and assignment right-hand sides before `literals::conform`.
+Assignability goes through `unions::widen` (`literals::conform`), union member
+checks through `literals::member_of` and `arguments::accepts` through
+`literals::assignable`. A new write path must check against the place's declared
+type (field, element, parameter or binding), never against an erased read. Only
+`E::String`, `E::Float64`, `E::Negative(E::Float64)` and Boolean `E::Integer`
+constants count as literal values; anything else needs a literal type.
+
+Literal guards (`literals::guard_operand`, `Guard::Literal`) may refine non-union
+locals. Such a refined read retags the local instead of unboxing it (expression and
+prepared-target reads), and `flow_fact` uses `literal_flow_fact`, which also keeps
+facts for non-union declarations. `either_guard` joins the states of `a || b`; a
+join that cannot intern keeps the unrefined state. `varta.json.parse<T>` rejects
+any target containing a literal set (`literals::contains`); admitting it requires a
+schema version that validates membership before allocation.

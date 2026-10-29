@@ -537,3 +537,52 @@ export function main():void{console.log(SDK_VERSION);console.log(describe());con
     let diagnostic = old.diagnostic();
     assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
 }
+
+#[test]
+fn literal_types_link_across_modules_and_narrow_in_v32() {
+    let main = r#"import type {Auth,AuthType} from "./models.js";
+import {parse,label} from "./lib.js";
+export function main():void{const kind=parse("apiKey");if(kind!==null){const a:Auth={type:kind};console.log(label(a));}
+const fallback:AuthType="none";console.log(label({type:fallback,header:"Authorization"}));console.log(parse("other")===null);}"#;
+    let profile = |version: &str| {
+        format!(
+            r#"{{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-{version}","capabilities":{{}}}}"#
+        )
+    };
+    let models = "export type AuthType='none'|'apiKey';export type AuthHeader='Authorization';\
+                  export interface Auth{type:AuthType;header?:AuthHeader}";
+    let lib = r#"import type {Auth,AuthType} from "./models.js";
+export function parse(s:string):AuthType|null{if(s==="none"||s==="apiKey"){return s;}return null;}
+export function label(a:Auth):string{const h=a.header;return a.type+(h===undefined?"":"/"+h);}"#;
+    let project = Project::new(main);
+    project.write("varta.config.json", &profile("v32"));
+    project.write("src/models.ts", models);
+    project.write("src/lib.ts", lib);
+    let output = success(project.command(&["dev"]));
+    for line in [
+        "varta log: apiKey",
+        "varta log: none/Authorization",
+        "varta log: 1",
+    ] {
+        assert!(output.contains(line), "{output}");
+    }
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains("varta log: apiKey"));
+
+    // A base string is not a member without narrowing, and v31 keeps rejecting
+    // literal type annotations.
+    let unchecked = Project::new(
+        r#"import type {AuthType} from "./models.js";export function main():void{const s:string="none";const k:AuthType=s;}"#,
+    );
+    unchecked.write("varta.config.json", &profile("v32"));
+    unchecked.write("src/models.ts", models);
+    let diagnostic = unchecked.diagnostic();
+    assert_eq!(diagnostic["code"], "type_error", "{diagnostic}");
+    let old = Project::new(main);
+    old.write("varta.config.json", &profile("v31"));
+    old.write("src/models.ts", models);
+    old.write("src/lib.ts", lib);
+    let diagnostic = old.diagnostic();
+    assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
+}

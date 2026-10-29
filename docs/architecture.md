@@ -5470,6 +5470,69 @@ Module constants add no host import, value tag, record or array layout, global,
 helper, export or catalog entry; the reserved permanent root slots are the only
 memory-layout change. All budgets are unchanged.
 
+#### Literal types (`literal_types`)
+
+- **Forms.** String, number (including `-n`) and boolean literal types and unions
+  of them, written inline or through named aliases, interface fields, imports,
+  arrays and function types. Literal members of one primitive kind merge into a
+  single constrained primitive, a value set: `'a' | 'b'` is one string set,
+  `true | false` is `boolean`, and a base primitive absorbs its literals
+  (`'a' | string` is `string`). String members compare as profile-encoded code
+  units; number members compare as binary64 values with `-0` equal to `0`.
+  NaN, bigint and template literal types are rejected.
+- **Bounds.** These compile-time limits are explicit constants in
+  `varta-compiler` (`lower::literals`): one set holds at most
+  `MAX_LITERAL_MEMBERS` (4096) members, sized for generated API code; all sets
+  interned by one compilation, guard refinements included, hold at most
+  `MAX_LITERAL_TABLE_MEMBERS` (65,536) members, and a refinement that would exceed
+  it is skipped rather than rejected. Literal members do not count against the
+  structural union limit `MAX_UNION_MEMBERS` (16), which still bounds the other
+  members, so a union annotation has at most 4096 + 16 syntactic members. A union
+  that mixes a set with other members (`Kind | null`, `'a' | number`) is an
+  ordinary structural union within the existing value-ABI union limits.
+- **Representation.** Literal types are compile-time only. Before emission every
+  set erases to its base primitive (String, Float64 or Boolean slot); union boxes,
+  record layouts, array descriptors, JSON schemas, the capture catalog and function
+  signatures use erased types, and function types that coincide after erasure are
+  merged. No host import, value tag, layout, helper, catalog or ABI version
+  changes, and production budgets are unchanged.
+- **Assignability.** A constant, or a literal-typed value whose set is a subset,
+  is assignable to a literal set; a literal-typed value is assignable to its base
+  primitive and to unions containing the base or a superset. A base-typed value is
+  not assignable to a set without narrowing. The check applies to bindings,
+  assignments (simple, compound, logical and destructuring), arguments, returns,
+  record literal fields and field writes, array literals, element writes,
+  `push`/`fill` and callback results. Without a literal context a literal-typed
+  value reads as its base primitive: comparisons, arithmetic, string methods,
+  concatenation and `JSON.stringify` see the base. An unannotated `let`/`const`
+  keeps the literal type of a literal-typed initializer; a fresh constant
+  (`const s = 'a'`) infers the base type.
+- **Composite types.** Records, arrays, unions and function types that contain
+  literal sets are distinct from their base twins and compared exactly:
+  `{ type: Kind }` and `{ type: string }` are not assignable to each other, nor are
+  `Kind[]` and `string[]`, and an annotated callback parameter must match its
+  context. `Object.assign` and computed record writes select fields by static
+  type: a literal-typed source may store into a base or superset field, while a
+  base-typed source into a literal field throws the existing
+  `TypeError: Invalid computed record field value`.
+- **Narrowing.** `x === c`, `c === x` and `!==` with a string, number (including
+  `-n`) or boolean constant refine a direct local: the positive branch narrows a
+  base, a containing set or a matching union member to the singleton, and the
+  negative branch removes the constant from literal sets. Refinements follow the
+  existing write-aware flow rules (`&&`, `!`, exits and joins); v32 also refines
+  `a || b`, and a failed `a && b`, by joining the two guarded states. `typeof`
+  guards treat literal members as their base. A `switch` discriminant reads as its
+  base, so number and boolean sets switch as before; string `switch` remains
+  unsupported and case bodies are not narrowed.
+- **JSON input.** `varta.json.parse<T>` rejects target types that contain a literal
+  set anywhere (`unsupported JSON parsing target with a literal type`). Schema13
+  cannot express value sets, and accepting them would place unchecked non-members
+  in literal-typed storage. Parse the base type and narrow it; strict membership
+  validation needs a future schema version. JSON output is unchanged.
+- **Earlier profiles.** V31 and earlier keep rejecting literal type annotations with
+  `unsupported type annotation` and keep the 16-member union limit; unused
+  declarations remain ignored.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),

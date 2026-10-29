@@ -117,6 +117,11 @@ impl Lower<'_> {
         } else {
             None
         };
+        if context.is_none() && self.types.profile.literal_types() {
+            // Keep a literal type so a union target can select its literal member.
+            let value = self.expr_preserving(rhs)?;
+            return literals::conform(value, Some(ty), self.types);
+        }
         self.expr_expected(rhs, context)
     }
     pub(in crate::lower) fn prepared_compound_value(
@@ -185,7 +190,11 @@ impl Lower<'_> {
                 if self.types.profile.refinement_writes()
                     && let Some(&ty) = self.refinements.get(&slot)
                 {
-                    if ty.is_union() {
+                    // A literal guard may refine a non-union local in place;
+                    // the read operand is its base primitive.
+                    if self.types.profile.literal_types() && !target.ty.is_union() {
+                        literals::erase(value, self.types)
+                    } else if ty.is_union() {
                         Expr { ty, ..value }
                     } else {
                         Expr {
