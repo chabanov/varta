@@ -61,6 +61,83 @@ pub fn field_mask(count: usize) -> u32 {
 pub fn presence_offset(count: usize) -> usize {
     RECORD_META_BYTES + count * RECORD_SLOT_BYTES
 }
+/// Value15 wide records (v34 `wide_records`): a record may declare up to this
+/// many fields. It is a layout ceiling of value ABI 15, chosen to cover the
+/// pilot's 60-field interfaces with a margin and to fit one `u128` presence
+/// set; value13 and earlier keep [`MAX_RECORD_FIELDS`].
+pub const MAX_WIDE_RECORD_FIELDS: usize = 128;
+pub const PRESENCE_WORD_BITS: usize = u32::BITS as usize;
+/// The largest record field count a value layout admits.
+#[must_use]
+pub fn max_record_fields(version: u32) -> usize {
+    if version == DYNAMIC_VALUE_VERSION {
+        MAX_WIDE_RECORD_FIELDS
+    } else {
+        MAX_RECORD_FIELDS
+    }
+}
+/// Whether a record of this field count uses the value15 wide layout: a
+/// multiword presence bitmap and a slot-indexed reference bitmap trailing its
+/// static descriptor instead of the heap link-word mask (which stays zero).
+#[must_use]
+pub fn is_wide_record(count: usize) -> bool {
+    count > MAX_RECORD_FIELDS
+}
+/// Presence bitmap words of a record trailer: one for at most 32 fields.
+#[must_use]
+pub fn presence_words(count: usize) -> usize {
+    count.div_ceil(PRESENCE_WORD_BITS).max(1)
+}
+/// Byte offset (from the payload) of the presence word holding `slot`, and
+/// the slot's bit within that word.
+#[must_use]
+pub fn presence_bit(count: usize, slot: usize) -> (usize, u32) {
+    (
+        presence_offset(count) + (slot / PRESENCE_WORD_BITS) * size_of::<u32>(),
+        1u32 << (slot % PRESENCE_WORD_BITS),
+    )
+}
+/// Byte offset (from the payload) of the first insertion-order word.
+#[must_use]
+pub fn order_offset(count: usize) -> usize {
+    presence_offset(count) + presence_words(count) * size_of::<u32>()
+}
+/// Every slot bit of a record with `count` fields.
+#[must_use]
+pub fn wide_field_mask(count: usize) -> u128 {
+    if count >= MAX_WIDE_RECORD_FIELDS {
+        u128::MAX
+    } else {
+        (1u128 << count) - 1
+    }
+}
+/// Read `words` consecutive little-endian presence or mask words at `at` as one
+/// slot-indexed set; `None` if the range is outside `data`.
+#[must_use]
+pub fn read_slot_set(data: &[u8], at: usize, words: usize) -> Option<u128> {
+    if words > MAX_WIDE_RECORD_FIELDS / PRESENCE_WORD_BITS {
+        return None;
+    }
+    let mut set = 0u128;
+    for index in 0..words {
+        let start = at.checked_add(index * size_of::<u32>())?;
+        let bytes: [u8; 4] = data.get(start..start.checked_add(4)?)?.try_into().ok()?;
+        set |= u128::from(u32::from_le_bytes(bytes)) << (index * PRESENCE_WORD_BITS);
+    }
+    Some(set)
+}
+/// Bytes of a static record descriptor: header, entries and, for a wide
+/// record, its slot-indexed reference bitmap.
+#[must_use]
+pub fn descriptor_bytes(count: usize) -> usize {
+    RECORD_DESCRIPTOR_HEADER
+        + count * RECORD_DESCRIPTOR_ENTRY
+        + if is_wide_record(count) {
+            presence_words(count) * size_of::<u32>()
+        } else {
+            0
+        }
+}
 #[must_use]
 pub fn record_bytes(version: u32, count: usize) -> usize {
     presence_offset(count)
@@ -76,7 +153,7 @@ pub fn record_bytes(version: u32, count: usize) -> usize {
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
         ) {
-            size_of::<u32>() * (count + 1)
+            size_of::<u32>() * (count + presence_words(count))
         } else {
             0
         }

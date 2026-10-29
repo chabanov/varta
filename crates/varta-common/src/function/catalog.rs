@@ -247,7 +247,7 @@ impl FunctionCatalog {
                     if fields.windows(2).any(|pair| pair[0].name >= pair[1].name) {
                         return Err(invalid_catalog());
                     }
-                    if fields.len() > value::MAX_RECORD_FIELDS {
+                    if fields.len() > value::max_record_fields(self.value_version) {
                         return Err(invalid_catalog());
                     }
                     for field in fields {

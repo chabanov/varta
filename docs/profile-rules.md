@@ -2145,3 +2145,22 @@ Contract: [architecture.md](architecture.md#value-layout-15-dynamic_values).
   and v34 must log identical, Node-pinned output (`varta-runtime`
   `value15_tests`), and the conformance inventory must report identically
   under both profiles.
+
+### Wide records (`wide_records`)
+
+Contract: [architecture.md](architecture.md#wide-records-wide_records).
+
+- Read the field ceiling from `ValueTypes::max_record_fields` (value15:
+  `value::MAX_WIDE_RECORD_FIELDS`); never raise `value::MAX_RECORD_FIELDS`,
+  which stays the frozen value13 ceiling of every older profile.
+- Address presence only through `value::presence_bit`, `value::order_offset`
+  and `Emitter::present_count`; never assume one presence word, a fixed `+ 4`
+  order offset or a `u32` slot mask in compiler or runtime code (`u128` slot
+  sets hold any value15 record).
+- A record wider than 32 fields has a zero link word and a descriptor-trailing
+  edge bitmap (`value::descriptor_bytes`); records with at most 32 fields keep
+  the value13 layout byte for byte. Every value15 reader checks the bitmap
+  against the field kinds, and the collector traces it for record blocks only.
+- Lowerings that emit one leaf per field (lookups, enumeration, rest copies)
+  must stay within the per-function body budget for the widest admitted shape;
+  prefer a direct leaf for static keys.

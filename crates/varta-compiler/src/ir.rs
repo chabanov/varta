@@ -237,6 +237,15 @@ impl ValueTypes {
     pub fn value_version(&self) -> u32 {
         self.profile.value_layout()
     }
+    /// Field ceiling of one record shape: value15 wide records (v34
+    /// `wide_records`) or the frozen value13 limit.
+    pub fn max_record_fields(&self) -> usize {
+        if self.profile.wide_records() {
+            varta_common::value::max_record_fields(self.value_version())
+        } else {
+            varta_common::value::MAX_RECORD_FIELDS
+        }
+    }
     pub fn number(&self) -> Type {
         if self.profile.binary64() {
             Type::Float64
@@ -496,7 +505,8 @@ pub(crate) enum Expression {
     Capture(Box<Expr>),
     ResultField(ResultField, Box<Expr>),
     Record(Vec<(u32, Expr)>),
-    OptionalRecord(Vec<(u32, Expr)>, u32),
+    /// Fields plus the slot-indexed presence set (wide records use > 32 bits).
+    OptionalRecord(Vec<(u32, Expr)>, u128),
     ValueBlock {
         output: u32,
         marker: u32,

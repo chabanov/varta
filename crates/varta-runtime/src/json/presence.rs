@@ -6,14 +6,12 @@ impl Encoder<'_, '_> {
         packed: u64,
         depth: usize,
     ) -> Result<(), wasmtime::Error> {
-        let (ptr, length) = self.managed(
-            packed,
-            HEAP_RECORD_FLAG,
-            record_bytes(self.version, MAX_RECORD_FIELDS),
-        )?;
+        let max = max_record_fields(self.version);
+        let (ptr, length) =
+            self.managed(packed, HEAP_RECORD_FLAG, record_bytes(self.version, max))?;
         let [descriptor, count] = self.words::<2>(ptr)?;
         let count = count as usize;
-        if count > MAX_RECORD_FIELDS || length != record_bytes(self.version, count) {
+        if count > max || length != record_bytes(self.version, count) {
             return Err(error("invalid presence record length"));
         }
         if self.path.contains(&ptr) {
@@ -29,22 +27,27 @@ impl Encoder<'_, '_> {
         if self.words::<2>(descriptor)? != [self.version, count as u32] {
             return Err(error("invalid presence descriptor version or count"));
         }
-        let [present] = self.words::<1>(ptr + presence_offset(count))?;
-        if present & !field_mask(count) != 0 {
+        let present = read_slot_set(
+            self.data,
+            ptr + presence_offset(count),
+            presence_words(count),
+        )
+        .ok_or_else(|| error("presence outside memory"))?;
+        if present & !wide_field_mask(count) != 0 {
             return Err(error("presence outside record shape"));
         }
         let mut order = Vec::new();
-        let mut seen = 0u32;
+        let mut seen = 0u128;
         for index in 0..count {
-            let [slot] = self.words::<1>(ptr + presence_offset(count) + 4 + index * 4)?;
+            let [slot] = self.words::<1>(ptr + order_offset(count) + index * 4)?;
             if index < present.count_ones() as usize {
                 if slot as usize >= count
-                    || seen & (1u32 << slot) != 0
-                    || present & (1u32 << slot) == 0
+                    || seen & (1u128 << slot) != 0
+                    || present & (1u128 << slot) == 0
                 {
                     return Err(error("invalid property insertion order"));
                 }
-                seen |= 1u32 << slot;
+                seen |= 1u128 << slot;
                 order.push(slot as usize);
             } else if slot != 0 {
                 return Err(error("noncanonical unused property order"));
@@ -89,7 +92,7 @@ impl Encoder<'_, '_> {
             let [lo, hi] = self.words::<2>(ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES)?;
             if self.version == FUNCTION_VALUE_VERSION
                 && name == "toJSON"
-                && present & (1u32 << slot) != 0
+                && present & (1u128 << slot) != 0
             {
                 let payload = ((hi as u64) << i32::BITS) | lo as u64;
                 let callable = if tag == ValueKind::ReferenceUnion {
@@ -105,7 +108,7 @@ impl Encoder<'_, '_> {
                 }
             }
             let (kind, value) = self.resolve(kind, ((hi as u64) << i32::BITS) | lo as u64)?;
-            if present & (1u32 << slot) == 0
+            if present & (1u128 << slot) == 0
                 && (!optional || kind != ValueKind::Undefined as u32 || value != 0)
             {
                 return Err(error("invalid absent field payload or required presence"));
@@ -134,7 +137,7 @@ impl Encoder<'_, '_> {
         // Every reserved slot, including absent ones, consumes the traversal budget.
         for (slot, field) in fields.iter().enumerate() {
             let (_, kind, value) = field.ok_or_else(|| error("missing field slot"))?;
-            if present & (1u32 << slot) == 0 || kind == ValueKind::Undefined as u32 {
+            if present & (1u128 << slot) == 0 || kind == ValueKind::Undefined as u32 {
                 self.visit(depth + 1)?;
                 if value != 0 {
                     return Err(error("noncanonical undefined"));

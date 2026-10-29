@@ -6162,6 +6162,25 @@ selectors. It declares two new version identities (see the
   ABI, an unknown value ABI and a missing value section all fail validation
   before instantiation. Earlier profiles keep value ABI 13.
 
+Seven selectors gate the batch's work streams (subsections below specify the
+implemented ones):
+
+- records stream: `index_signatures()` (`{[k: string]: T}` and
+  `Record<string, T>` as a dynamic-key record kind), `recursive_types()`
+  (self-referential aliases such as a JSON value union) and `wide_records()`
+  (records wider than 32 fields);
+- unknown stream: `unknown_type()` (`unknown`, usable after narrowing by
+  `typeof`, `instanceof`, `Array.isArray`, `in` or a type guard) and
+  `checked_assertions()` (`as` as a runtime-checked downcast, never an
+  unchecked reinterpretation);
+- async stream (K4.4 steps 3 and 4): `promises()` (base `Promise<T>`
+  semantics over the microtask scheduler) and `async_functions()`
+  (`async`/`await` on the continuation frames).
+
+Until a stream adds its subsection here, a v34 module compiles and runs exactly
+like a v33 module apart from its declared profile, host ABI, value layout 15
+and the value15 readers, and production budgets of every profile are unchanged.
+
 #### Value layout 15 (`dynamic_values()`)
 
 V34 stamps and reads the value15 layouts: `LanguageProfile::value_layout`
@@ -6206,23 +6225,42 @@ generators, closures) and require identical, Node-pinned output, and the whole
 conformance inventory produces identical reports under both profiles. Older
 profiles keep exactly their layouts, operations and rejections.
 
-Seven selectors gate the batch's work streams, and all admit nothing yet:
+#### Wide records (`wide_records()`)
 
-- records stream: `index_signatures()` (`{[k: string]: T}` and
-  `Record<string, T>` as a dynamic-key record kind), `recursive_types()`
-  (self-referential aliases such as a JSON value union) and `wide_records()`
-  (records wider than 32 fields);
-- unknown stream: `unknown_type()` (`unknown`, usable after narrowing by
-  `typeof`, `instanceof`, `Array.isArray`, `in` or a type guard) and
-  `checked_assertions()` (`as` as a runtime-checked downcast, never an
-  unchecked reinterpretation);
-- async stream (K4.4 steps 3 and 4): `promises()` (base `Promise<T>`
-  semantics over the microtask scheduler) and `async_functions()`
-  (`async`/`await` on the continuation frames).
+V34 admits closed records, interfaces, inline object types, object literals and
+class instances with up to `value::MAX_WIDE_RECORD_FIELDS` fields. The ceiling
+is a layout limit of value ABI 15, chosen to cover the pilot's widest
+interfaces (55 and 60 fields) with a margin and to keep a record's slot set in
+one `u128`; it is not a raised budget of an older value ABI. V33 and earlier
+keep `value::MAX_RECORD_FIELDS` and their `object field count exceeds limit`
+diagnostic, and a v34 shape beyond the new ceiling fails with the same
+diagnostic. All other bounds (key bytes, shapes, body bytes, JSON depth and
+visits, memory, fuel) are unchanged.
 
-Until a stream adds its subsection here, a v34 module compiles and runs exactly
-like a v33 module apart from its declared profile, host ABI, value layout 15
-and the value15 readers, and production budgets are unchanged.
+A record with at most 32 fields keeps exactly the value13 layout. A wider
+record (`value::is_wide_record`) uses the same payload `[descriptor, count]`
+and eight-byte canonical slots, followed by a trailer of
+`value::presence_words(count)` presence words (slot `s` is bit `s % 32` of word
+`s / 32`) and then `count` insertion-order words (`value::order_offset`).
+`value::record_bytes(15, count)` is the payload size. Its block keeps the
+record heap flag, but the link word is zero: the 32-bit link-word edge mask
+cannot describe it. Instead its static descriptor
+(`value::descriptor_bytes`) carries, after the entries, a slot-indexed edge
+bitmap of `presence_words(count)` words with the bit set for every managed
+reference slot. The collector reads that bitmap one word per 32 slots for a
+record block wider than 32 fields; the value15 readers (`ReferenceBox`, the
+JSON encoder, capture/frame validation and the JSON parse writer) require the
+bitmap to equal the descriptor's field kinds, the link word to be zero, the
+presence set to stay inside the shape and the order words to list exactly the
+present slots. Checked JSON schema 15 admits record types up to the same
+ceiling.
+
+Presence, insertion order, `Object.keys`/`values`/`entries`, `Object.hasOwn`,
+optional reads and writes, `delete`, rest destructuring, JSON stringify and
+checked parse behave exactly as for narrow records. A `delete` with a static
+identifier key under v34 lowers to that field's leaf instead of one leaf per
+field, so wide shapes stay within the per-function body budget; computed keys
+keep the full lookup.
 
 ## Local modules
 

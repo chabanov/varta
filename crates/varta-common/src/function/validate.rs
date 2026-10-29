@@ -216,7 +216,12 @@ impl Walker<'_> {
                 if word(self.data, ptr + 4)? as usize != fields.len() {
                     return Err(invalid());
                 }
-                let present = word(self.data, ptr + value::presence_offset(fields.len()))?;
+                let present = value::read_slot_set(
+                    self.data,
+                    ptr + value::presence_offset(fields.len()),
+                    value::presence_words(fields.len()),
+                )
+                .ok_or_else(invalid)?;
                 for at in 0..fields.len() {
                     let entry = descriptor
                         + value::RECORD_DESCRIPTOR_HEADER
@@ -241,7 +246,7 @@ impl Walker<'_> {
                     {
                         return Err(invalid());
                     }
-                    if present & (1 << slot) != 0 {
+                    if present & (1u128 << slot) != 0 {
                         self.value(field.ty, wide(self.data, ptr + 8 + slot * 8)?, depth + 1)?;
                     }
                 }

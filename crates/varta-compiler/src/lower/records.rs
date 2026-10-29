@@ -1,6 +1,6 @@
 use super::*;
 use ir::{RecordField, RecordShape};
-use varta_common::value::{MAX_RECORD_FIELDS, MAX_RECORD_KEY_BYTES, MAX_RECORD_SHAPES};
+use varta_common::value::{MAX_RECORD_KEY_BYTES, MAX_RECORD_SHAPES};
 
 pub(super) fn key(name: String) -> Result<String> {
     if name.len() > MAX_RECORD_KEY_BYTES {
@@ -66,7 +66,7 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     {
         return Err(unsupported("function-valued record fields"));
     }
-    if fields.len() > MAX_RECORD_FIELDS {
+    if fields.len() > types.max_record_fields() {
         return Err(invalid("object field count exceeds limit"));
     }
     fields.sort_by(|a, b| a.name.cmp(&b.name));
@@ -102,7 +102,7 @@ pub(super) fn type_fields(
     members: &[ast::TsTypeElement],
     types: &mut ir::ValueTypes,
 ) -> Result<Vec<RecordField>> {
-    if members.len() > MAX_RECORD_FIELDS {
+    if members.len() > types.max_record_fields() {
         return Err(invalid("object field count exceeds limit"));
     }
     let mut fields = Vec::new();
@@ -139,7 +139,7 @@ impl Lower<'_> {
         object: &ast::ObjectLit,
         expected: Option<Type>,
     ) -> Result<Expr> {
-        if object.props.len() > MAX_RECORD_FIELDS {
+        if object.props.len() > self.types.max_record_fields() {
             return Err(invalid("object field count exceeds limit"));
         }
         let mut values = Vec::new();

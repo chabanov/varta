@@ -46,34 +46,37 @@ impl Emitter<'_> {
             self.local_slots[iteration.0 as usize],
             self.local_slots[iteration.1 as usize],
         );
-        let from = values::presence_offset(self.records[shapes.0 as usize].fields.len());
+        let source_count = self.records[shapes.0 as usize].fields.len();
+        let from = values::order_offset(source_count);
         let count = self.records[shapes.1 as usize].fields.len();
-        let to = values::presence_offset(count);
+        let to = values::order_offset(count);
         self.code.extend([
             I::LocalGet(target),
             I::I32WrapI64,
-            I::I32Const(to as i32),
+            I::I32Const(values::presence_offset(count) as i32),
             I::I32Add,
             I::I32Const(0),
-            I::I32Const(((count + 1) * WORD_BYTES) as i32),
+            I::I32Const(((count + values::presence_words(count)) * WORD_BYTES) as i32),
             I::MemoryFill(strings::MEMORY),
         ]);
         for (old, new) in mapping {
+            let (old_word, old_bit) = values::presence_bit(source_count, *old as usize);
+            let (new_word, new_bit) = values::presence_bit(count, *new as usize);
             self.code.extend([
                 I::LocalGet(source),
                 I::I32WrapI64,
-                I::I32Load(word(from)),
-                I::I32Const((1u32 << old) as i32),
+                I::I32Load(word(old_word)),
+                I::I32Const(old_bit as i32),
                 I::I32And,
                 I::If(BlockType::Empty),
                 I::LocalGet(target),
                 I::I32WrapI64,
                 I::LocalGet(target),
                 I::I32WrapI64,
-                I::I32Load(word(to)),
-                I::I32Const((1u32 << new) as i32),
+                I::I32Load(word(new_word)),
+                I::I32Const(new_bit as i32),
                 I::I32Or,
-                I::I32Store(word(to)),
+                I::I32Store(word(new_word)),
                 I::End,
             ]);
         }
@@ -85,13 +88,9 @@ impl Emitter<'_> {
             I::Block(BlockType::Empty),
             I::Loop(BlockType::Empty),
             I::LocalGet(index),
-            I::LocalGet(source),
-            I::I32WrapI64,
-            I::I32Load(word(from)),
-            I::I32Popcnt,
-            I::I32GeU,
-            I::BrIf(1),
         ]);
+        self.present_count(&[I::LocalGet(source), I::I32WrapI64], source_count);
+        self.code.extend([I::I32GeU, I::BrIf(1)]);
         for (old, new) in mapping {
             self.code.extend([
                 I::LocalGet(source),
@@ -100,7 +99,7 @@ impl Emitter<'_> {
                 I::I32Const(WORD_BYTES as i32),
                 I::I32Mul,
                 I::I32Add,
-                I::I32Load(word(from + WORD_BYTES)),
+                I::I32Load(word(from)),
                 I::I32Const(*old as i32),
                 I::I32Eq,
                 I::If(BlockType::Empty),
@@ -111,7 +110,7 @@ impl Emitter<'_> {
                 I::I32Mul,
                 I::I32Add,
                 I::I32Const(*new as i32),
-                I::I32Store(word(to + WORD_BYTES)),
+                I::I32Store(word(to)),
                 I::LocalGet(cursor),
                 I::I32Const(1),
                 I::I32Add,

@@ -176,7 +176,13 @@ impl Helper {
             Self::Concat => concat::function(helpers[&Self::Allocate]),
             Self::Compare => compare::function(profile.utf16()),
             Self::Allocate => allocate::function(globals, helpers[&Self::Collect]),
-            Self::Collect => collect::function(globals, trace_values, profile.closures(), frames),
+            Self::Collect => collect::function(
+                globals,
+                trace_values,
+                profile.closures(),
+                frames,
+                profile.wide_records(),
+            ),
             Self::RootPush => roots::function(globals.roots),
             Self::ArraySearch => array_search::function(
                 helpers[&Self::Compare],

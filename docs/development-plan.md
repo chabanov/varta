@@ -437,7 +437,7 @@ exception channel v6, and v34 programs behave exactly as under v33.
 | `dynamic_values()` | Records: value layout 15 foundation, value15 readers | M1 | Implemented on `v34-records` |
 | `index_signatures()` | Records: `{[k: string]: T}` and `Record<string, T>` as a dynamic-key record kind | M1 | Registered, admits nothing |
 | `recursive_types()` | Records: recursive aliases such as `JsonValue` | M1 | Registered, admits nothing |
-| `wide_records()` | Records: records wider than 32 fields (presence trailer layout) | M1 | Registered, admits nothing |
+| `wide_records()` | Records: records wider than 32 fields, up to `MAX_WIDE_RECORD_FIELDS` (multiword presence, descriptor edge bitmap) | M1 | Implemented on `v34-records` |
 | `unknown_type()` | Unknown: `unknown` with `typeof`/`instanceof`/`Array.isArray`/`in`/guard narrowing | M1, M2 | Registered, admits nothing |
 | `checked_assertions()` | Unknown: `as` as a runtime-checked downcast | M1, M2 | Registered, admits nothing |
 | `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Registered, admits nothing |

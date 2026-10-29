@@ -28,6 +28,13 @@ in [conformance/README.md](conformance/README.md).
   `primitive_to_number_v3`, `bigint_from_value_v2`) and exception channel v6.
   V34 programs behave exactly as under v33; v33 and earlier keep value13.
 
+- Wide records under opt-in v34 (selector `wide_records`): interfaces, object
+  types, literals and classes with up to `value::MAX_WIDE_RECORD_FIELDS` (128)
+  fields, a value15 layout with multiword presence words and a
+  descriptor-trailing edge bitmap traced by the collector; JSON, presence,
+  deletion, enumeration and rest destructuring behave as for narrow records.
+  Earlier profiles keep the 32-field ceiling.
+
 - Synchronous generators under opt-in v33 (selector `generators`, K4.4 step 2):
   annotated top-level and generic `function*` declarations
   (`Generator<T, TReturn, TNext>`, with `void`/`undefined` defaults instead of

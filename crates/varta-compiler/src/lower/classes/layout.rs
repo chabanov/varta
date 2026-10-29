@@ -183,7 +183,7 @@ fn layout_members(
             }
         }
     }
-    if fields.len() > MAX_RECORD_FIELDS {
+    if fields.len() > types.max_record_fields() {
         return Err(source.locate(invalid("class field count exceeds limit"), class.span));
     }
     let init = initializer(id, constructor, parent, source, types)?;

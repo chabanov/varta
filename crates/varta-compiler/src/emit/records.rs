@@ -71,7 +71,30 @@ pub(super) fn descriptor(
             bytes.extend(value.to_le_bytes());
         }
     }
+    // Value15 wide records: the collector reads this slot-indexed edge bitmap
+    // instead of a 32-bit link-word mask.
+    let count = shape.fields.len();
+    if abi::is_wide_record(count) {
+        let edges = edge_set(shape);
+        for word in 0..abi::presence_words(count) {
+            bytes.extend(((edges >> (word * abi::PRESENCE_WORD_BITS)) as u32).to_le_bytes());
+        }
+    }
     Ok(bytes)
+}
+/// Slots holding managed references, indexed by canonical slot.
+fn edge_set(shape: &ir::RecordShape) -> u128 {
+    shape
+        .fields
+        .iter()
+        .enumerate()
+        .fold(0u128, |mask, (slot, field)| {
+            if field.ty.needs_root() {
+                mask | 1 << slot
+            } else {
+                mask
+            }
+        })
 }
 
 impl Emitter<'_> {
@@ -79,7 +102,7 @@ impl Emitter<'_> {
         &mut self,
         ty: Type,
         fields: &[(u32, Expr)],
-        present: Option<u32>,
+        present: Option<u128>,
     ) -> Result<()> {
         let Type::Record(id) = ty else {
             return Err(CompilerError::Internal("missing object shape".into()));
@@ -91,13 +114,12 @@ impl Emitter<'_> {
         self.code.push(I::I32Const(size as i32));
         self.string_helper(strings::Helper::Allocate)?;
         self.code.push(I::LocalSet(self.temporary));
-        let mask = self.records[id as usize]
-            .fields
-            .iter()
-            .enumerate()
-            .fold(0u32, |mask, (i, field)| {
-                mask | if field.ty.needs_root() { 1 << i } else { 0 }
-            });
+        // A wide record's link word stays zero: its edges trail the descriptor.
+        let mask = if abi::is_wide_record(fields.len()) {
+            0
+        } else {
+            edge_set(&self.records[id as usize]) as u32
+        };
         self.initialize_value(
             strings::ALLOCATED | abi::HEAP_RECORD_FLAG,
             mask as i32,
@@ -114,28 +136,32 @@ impl Emitter<'_> {
             ]);
         }
         if self.profile.missing() {
-            let present = present.unwrap_or_else(|| abi::field_mask(fields.len()));
-            let offset = abi::presence_offset(fields.len());
-            self.code.extend([
-                I::LocalGet(self.temporary),
-                I::I32Const(present as i32),
-                I::I32Store(wasm_encoder::MemArg {
-                    offset: offset as u64,
-                    ..strings::WORD
-                }),
-            ]);
+            let count = fields.len();
+            let present = present.unwrap_or_else(|| abi::wide_field_mask(count));
+            let offset = abi::presence_offset(count);
+            for word in 0..abi::presence_words(count) {
+                self.code.extend([
+                    I::LocalGet(self.temporary),
+                    I::I32Const((present >> (word * abi::PRESENCE_WORD_BITS)) as u32 as i32),
+                    I::I32Store(wasm_encoder::MemArg {
+                        offset: (offset + word * size_of::<u32>()) as u64,
+                        ..strings::WORD
+                    }),
+                ]);
+            }
+            let order_offset = abi::order_offset(count);
             let order = layout_key(id, fields, self.records)
                 .1
                 .into_iter()
-                .filter(|slot| present & (1u32 << slot) != 0)
+                .filter(|slot| present & (1u128 << slot) != 0)
                 .chain(std::iter::repeat(0))
-                .take(fields.len());
+                .take(count);
             for (index, slot) in order.enumerate() {
                 self.code.extend([
                     I::LocalGet(self.temporary),
                     I::I32Const(slot as i32),
                     I::I32Store(wasm_encoder::MemArg {
-                        offset: (offset + 4 + index * 4) as u64,
+                        offset: (order_offset + index * 4) as u64,
                         ..strings::WORD
                     }),
                 ]);
@@ -143,6 +169,24 @@ impl Emitter<'_> {
         }
         self.pack_value(size);
         Ok(())
+    }
+    /// Push the number of present slots of a `count`-field record whose
+    /// payload pointer `load` pushes (one popcount per presence word).
+    pub(super) fn present_count(&mut self, load: &[I<'static>], count: usize) {
+        let base = abi::presence_offset(count);
+        for word in 0..abi::presence_words(count) {
+            self.code.extend(load.iter().cloned());
+            self.code.extend([
+                I::I32Load(wasm_encoder::MemArg {
+                    offset: (base + word * size_of::<u32>()) as u64,
+                    ..strings::WORD
+                }),
+                I::I32Popcnt,
+            ]);
+            if word > 0 {
+                self.code.push(I::I32Add);
+            }
+        }
     }
     pub(super) fn initialize_value(&mut self, flags: i32, link: i32, meta: i32, count: i32) {
         self.code.extend([

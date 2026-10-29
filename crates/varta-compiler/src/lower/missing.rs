@@ -8,7 +8,7 @@ impl Lower<'_> {
         values: Vec<(String, Expr)>,
     ) -> Result<Expr> {
         let shape = self.types.records[id as usize].clone();
-        let mut present = 0u32;
+        let mut present = 0u128;
         let mut fields = Vec::new();
         for (name, value) in values {
             let slot = shape
@@ -16,7 +16,7 @@ impl Lower<'_> {
                 .iter()
                 .position(|f| f.name == name)
                 .ok_or_else(|| invalid(format!("unknown object initializer field: {name}")))?;
-            let bit = 1u32 << slot;
+            let bit = 1u128 << slot;
             if present & bit != 0 {
                 return Err(unsupported("duplicate object key"));
             }
@@ -27,7 +27,7 @@ impl Lower<'_> {
             fields.push((slot as u32, value));
         }
         for (slot, field) in shape.fields.iter().enumerate() {
-            if present & (1u32 << slot) != 0 {
+            if present & (1u128 << slot) != 0 {
                 continue;
             }
             if !field.optional {

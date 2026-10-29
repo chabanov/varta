@@ -22,7 +22,7 @@ impl Emitter<'_> {
         let [index, cursor, selected, backing] = slots.map(|slot| self.local_slots[slot as usize]);
         let fields = self.records[shape as usize].fields.clone();
         let count = fields.len();
-        let presence = values::presence_offset(count);
+        let order = values::order_offset(count);
         self.code.extend([
             I::LocalGet(target),
             I::I32WrapI64,
@@ -48,11 +48,12 @@ impl Emitter<'_> {
         }
         numeric.sort_by_key(|(number, _)| *number);
         for (_, slot) in numeric {
+            let (presence, bit) = values::presence_bit(count, slot);
             self.code.extend([
                 I::LocalGet(source),
                 I::I32WrapI64,
                 I::I32Load(word(presence)),
-                I::I32Const((1u32 << slot) as i32),
+                I::I32Const(bit as i32),
                 I::I32And,
                 I::If(BlockType::Empty),
             ]);
@@ -66,10 +67,9 @@ impl Emitter<'_> {
                 I::Block(BlockType::Empty),
                 I::Loop(BlockType::Empty),
                 I::LocalGet(index),
-                I::LocalGet(source),
-                I::I32WrapI64,
-                I::I32Load(word(presence)),
-                I::I32Popcnt,
+            ]);
+            self.present_count(&[I::LocalGet(source), I::I32WrapI64], count);
+            self.code.extend([
                 I::I32GeU,
                 I::BrIf(1),
                 I::LocalGet(source),
@@ -78,7 +78,7 @@ impl Emitter<'_> {
                 I::I32Const(WORD_BYTES as i32),
                 I::I32Mul,
                 I::I32Add,
-                I::I32Load(word(presence + WORD_BYTES)),
+                I::I32Load(word(order)),
                 I::LocalSet(selected),
             ]);
             for slot in names {

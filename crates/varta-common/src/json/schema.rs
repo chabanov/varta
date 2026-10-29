@@ -152,7 +152,7 @@ impl JsonSchema {
             };
             let depth = match ty {
                 JsonType::Record { fields, .. } => {
-                    if fields.len() > MAX_RECORD_FIELDS
+                    if fields.len() > max_record_fields(self.value_version())
                         || fields.windows(2).any(|pair| pair[0].name >= pair[1].name)
                         || fields
                             .iter()

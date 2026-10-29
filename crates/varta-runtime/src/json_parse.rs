@@ -42,11 +42,27 @@ fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> 
     for ty in &schema.types {
         if let JsonType::Record { descriptor, fields } = ty {
             let descriptor = *descriptor as usize;
-            static_bytes(
-                data,
-                descriptor,
-                RECORD_DESCRIPTOR_HEADER + fields.len() * RECORD_DESCRIPTOR_ENTRY,
-            )?;
+            static_bytes(data, descriptor, descriptor_bytes(fields.len()))?;
+            if is_wide_record(fields.len()) {
+                // The collector traces a wide record through this edge bitmap.
+                let at =
+                    descriptor + RECORD_DESCRIPTOR_HEADER + fields.len() * RECORD_DESCRIPTOR_ENTRY;
+                let edges = read_slot_set(data, at, presence_words(fields.len()))
+                    .ok_or_else(|| error("record edge bitmap"))?;
+                let expected = fields
+                    .iter()
+                    .enumerate()
+                    .fold(0u128, |mask, (slot, field)| {
+                        if schema.types[field.ty as usize].kind().is_reference() {
+                            mask | 1 << slot
+                        } else {
+                            mask
+                        }
+                    });
+                if edges != expected {
+                    return Err(error("record edge bitmap disagrees with schema"));
+                }
+            }
             let [version, count] = words::<2>(data, descriptor)?;
             if !compatible_version(version, schema.value_version())
                 || count as usize != fields.len()

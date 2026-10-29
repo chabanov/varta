@@ -3908,3 +3908,33 @@ records, unions, `JSON.stringify`, `console.log`, `typeof` and equality reject
 it. `yield*`, `async function*`, generator methods and expressions, spread or
 `Array.from` over a generator and `yield` inside calls such as `String(yield x)`
 are rejected with a diagnostic.
+
+### `checked-f64-utf16-v34`
+
+V34 (in development) runs every v33 program unchanged; its values use value
+layout 15, which only changes what the runtime reads, not what programs see.
+
+#### Wide records (opt-in v34)
+
+Interfaces, object types, literals and classes may declare up to 128 fields
+(v33 and earlier: 32), enough for generated API models:
+
+```ts
+interface Agent {
+  id: string;
+  name: string;
+  // ... up to 128 fields in total
+  description?: string;
+}
+
+function rename(agent: Agent, name: string): Agent {
+  agent.name = name;
+  delete agent.description;            // optional fields stay deletable
+  return agent;
+}
+```
+
+Presence, key order, `Object.keys`, `JSON.stringify` and checked
+`varta.json.parse<Agent>` work exactly as for small records. Every function
+body still has the same compiled-size budget, so split very large literals and
+destructurings of wide records across helper functions.

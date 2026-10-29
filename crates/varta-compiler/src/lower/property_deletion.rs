@@ -85,10 +85,21 @@ impl Lower<'_> {
             S::Init(name, key),
             S::Init(output, yes(span)),
         ];
+        // V34 (wide records): a static key needs only its own leaf, so wide
+        // shapes do not pay for one leaf per field; lookup still compares it.
+        let static_key = match &member.prop {
+            ast::MemberProp::Ident(id) if self.types.profile.wide_records() => {
+                Some(id.sym.to_string())
+            }
+            _ => None,
+        };
         if let Type::Record(shape) = ty {
             let fields = self.types.records[shape as usize].fields.clone();
             let mut entries = Vec::new();
             for (slot, field) in fields.into_iter().enumerate() {
+                if static_key.as_ref().is_some_and(|key| *key != field.name) {
+                    continue;
+                }
                 let action = if field.optional {
                     let absent = unions::widen(
                         Expr {

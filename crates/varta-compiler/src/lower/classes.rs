@@ -9,7 +9,7 @@
 use super::*;
 use std::collections::BTreeSet;
 use swc_common::Span;
-use varta_common::value::{MAX_RECORD_FIELDS, MAX_RECORD_SHAPES};
+use varta_common::value::MAX_RECORD_SHAPES;
 
 const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
 /// Synthesized parameter prefix of an implicit derived constructor.

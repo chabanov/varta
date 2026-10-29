@@ -547,6 +547,8 @@ mod v32_cross_stream_tests;
 mod v32_wave2_tests;
 #[cfg(test)]
 mod value15_tests;
+#[cfg(test)]
+mod wide_record_tests;
 
 #[cfg(test)]
 mod string_range_tests;

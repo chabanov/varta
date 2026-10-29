@@ -198,7 +198,7 @@ impl Writer {
                     Vec::with_capacity(RECORD_META_BYTES + values.len() * RECORD_SLOT_BYTES);
                 data.extend(descriptor.to_le_bytes());
                 data.extend((values.len() as u32).to_le_bytes());
-                let mut mask = 0;
+                let mut mask = 0u128;
                 for (index, value) in values.iter().enumerate() {
                     data.extend(self.build(caller, schema, value)?.to_le_bytes());
                     if schema.types[fields[index].ty as usize]
@@ -208,6 +208,12 @@ impl Writer {
                         mask |= 1 << index;
                     }
                 }
+                // Wide records trace through their descriptor's edge bitmap.
+                let link = if is_wide_record(fields.len()) {
+                    0
+                } else {
+                    mask as u32
+                };
                 if matches!(
                     schema.value_version(),
                     MISSING_VALUE_VERSION
@@ -230,18 +236,22 @@ impl Writer {
                                 _ => false,
                             }
                     };
-                    let mut present = field_mask(fields.len());
+                    let mut present = wide_field_mask(fields.len());
                     let mut order: Vec<_> = (0..fields.len())
                         .filter(|slot| {
                             if absent(*slot) {
-                                present &= !(1u32 << slot);
+                                present &= !(1u128 << slot);
                                 false
                             } else {
                                 true
                             }
                         })
                         .collect();
-                    data.extend(present.to_le_bytes());
+                    for word in 0..presence_words(fields.len()) {
+                        data.extend(
+                            ((present >> (word * PRESENCE_WORD_BITS)) as u32).to_le_bytes(),
+                        );
+                    }
                     order.sort_by_key(|slot| {
                         let name = &fields[*slot].name;
                         let integer = name
@@ -255,7 +265,7 @@ impl Writer {
                         data.extend((slot as u32).to_le_bytes());
                     }
                 }
-                self.owned(caller, &data, HEAP_RECORD_FLAG, mask)
+                self.owned(caller, &data, HEAP_RECORD_FLAG, link)
             }
         }
     }
