@@ -81,7 +81,14 @@ impl Lower<'_> {
             };
             let name = binding.id.sym.as_ref();
             let old = self.binding(name)?;
-            let value = if let Some(init) = variable.init.as_deref() {
+            let (init, readonly) = match variable.init.as_deref() {
+                Some(init) => {
+                    let (init, readonly) = self.const_assertion(init);
+                    (Some(init), readonly)
+                }
+                None => (None, false),
+            };
+            let value = if let Some(init) = init {
                 self.expr_expected(init, old.ty)?
             } else if self.types.profile.missing()
                 && declaration.kind == ast::VarDeclKind::Let
@@ -115,6 +122,7 @@ impl Lower<'_> {
                 ));
             }
             self.update(name, value.ty)?;
+            self.mark_const_assertion(name, readonly)?;
             self.flow_known_binding(&old, &value);
             output.push(S::Init(old.slot, value));
         }

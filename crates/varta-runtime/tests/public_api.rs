@@ -3414,3 +3414,96 @@ fn public_engine_links_named_types_across_modules_in_v31() {
         "{frozen}"
     );
 }
+#[test]
+fn public_engine_links_module_constants_across_modules_in_v32() {
+    struct ConstantSources;
+    impl ModuleLoader for ConstantSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./meta.ts" => Ok("meta.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                "./limits.ts" => Ok("limits.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("meta.ts") => "export const SPEC_VERSION='0.4.0';export const SDK_VERSION='0.12.0';export const DEFAULT_BASE_URL='https://api.example';export const SCOPES=['admin','agents:read'] as const;const HIDDEN='hidden';export function count():number{return SCOPES.length;}",
+                Some("limits.ts") => "export const EMPTY_PAGE_LIMIT=3;const RATIO=-0.5;export {RATIO as SCALE};",
+                _ => "import {SDK_VERSION,SCOPES,count} from './meta.ts';import {EMPTY_PAGE_LIMIT} from './limits.ts';export const VERSION=SDK_VERSION;export const PAIR={version:VERSION,scopes:SCOPES,limit:EMPTY_PAGE_LIMIT};export {SCOPES as ALL_SCOPES};export function total():number{return count()+PAIR.limit;}",
+            }
+            .into())
+        }
+    }
+    let source = "import {VERSION,PAIR,ALL_SCOPES,total} from './index.ts';import {SCOPES,DEFAULT_BASE_URL as BASE} from './meta.ts';import {SCALE} from './limits.ts';export function main():void{console.log(VERSION);console.log(BASE);console.log(JSON.stringify(PAIR));console.log(total());console.log(ALL_SCOPES.includes('admin'));console.log(SCALE);console.log(PAIR.scopes.indexOf('agents:read'));console.log(SCOPES.length);}";
+    let profile = varta_common::language::LanguageProfile::CheckedF64Utf16V32;
+    let compile = |text: &str, profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: text.into(),
+            },
+            &ConstantSources,
+            profile,
+        )
+    };
+    let compiled = compile(source, profile).unwrap();
+    assert_eq!(
+        compiled
+            .modules
+            .iter()
+            .map(|module| module.path.display().to_string())
+            .collect::<Vec<_>>(),
+        ["limits.ts", "meta.ts", "index.ts", "entry.ts"]
+    );
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap().lines,
+        [
+            "varta log: 0.12.0",
+            "varta log: https://api.example",
+            "varta log: {\"version\":\"0.12.0\",\"scopes\":[\"admin\",\"agents:read\"],\"limit\":3}",
+            "varta log: 5",
+            "varta log: 1",
+            "varta log: -0.5",
+            "varta log: 1",
+            "varta log: 2",
+        ]
+    );
+    for (text, expected) in [
+        (
+            "import {HIDDEN} from './meta.ts';export function main():void{}",
+            "does not export function or constant HIDDEN",
+        ),
+        (
+            "import {SCOPES} from './meta.ts';export const SCOPES2=SCOPES;const SCOPES=1;export function main():void{}",
+            "duplicate module binding: SCOPES",
+        ),
+        (
+            "import {SCOPES} from './meta.ts';export function SCOPES2():void{}export {SCOPES2 as X,SCOPES as X};export function main():void{}",
+            "duplicate export: X",
+        ),
+        (
+            "import {SCOPES} from './meta.ts';function SCOPES():void{}export function main():void{}",
+            "duplicate or reserved import binding: SCOPES",
+        ),
+        (
+            "import {SCOPES} from './meta.ts';export function main():void{SCOPES.push('x');}",
+            "cannot modify readonly `as const` value SCOPES",
+        ),
+    ] {
+        let error = compile(text, profile).err().unwrap().to_string();
+        assert!(error.contains(expected), "{text}\n{error}");
+    }
+    let frozen = compile(
+        source,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V31,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        frozen.contains("unsupported top-level declaration"),
+        "{frozen}"
+    );
+}

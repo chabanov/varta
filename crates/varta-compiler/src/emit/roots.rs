@@ -19,6 +19,9 @@ pub(super) fn slots(types: &[Type], cells: &BTreeSet<u32>) -> Vec<Option<u32>> {
         .collect()
 }
 impl Emitter<'_> {
+    pub(super) fn constant_root(&self, index: u32) -> i32 {
+        (self.constant_roots + index * abi::STRING_ROOT_SLOT_BYTES as u32) as i32
+    }
     pub(super) fn begin_frame(&mut self, function: &ir::Function) -> Result<()> {
         let Some(memory) = self.memory else {
             return Ok(());

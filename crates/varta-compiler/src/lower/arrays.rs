@@ -144,6 +144,9 @@ impl Lower<'_> {
         ) {
             return self.array_callback(call, member, method, expected, hints);
         }
+        if matches!(method, "push" | "pop" | "reverse" | "fill") {
+            self.reject_readonly_write(&member.obj)?;
+        }
         let base = self.expr(&member.obj)?;
         self.array_plain_method(call, base, method)
     }

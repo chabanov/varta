@@ -67,6 +67,8 @@ mod math_hypot_tests;
 #[cfg(test)]
 mod math_tests;
 #[cfg(test)]
+mod module_constant_tests;
+#[cfg(test)]
 mod mutable_flow_tests;
 #[cfg(test)]
 mod named_type_tests;

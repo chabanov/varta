@@ -41,7 +41,9 @@ pub(crate) fn lower(
             ));
         }
         let mut symbols = BTreeMap::new();
-        for declaration in declarations::collect(&unit.ast, &unit.source)? {
+        for declaration in
+            declarations::collect(&unit.ast, &unit.source, profile.module_constants())?
+        {
             if next >= MAX_FUNCTIONS {
                 return Err(unit.source.locate(
                     invalid("too many functions across modules"),
@@ -82,18 +84,28 @@ pub(crate) fn lower(
             entry.ast.span(),
         )
     })?;
-    let scopes = link_bindings(graph, &definitions, &type_exports, &types)?;
-    let mut functions = Vec::new();
     let mut generated = BTreeMap::new();
     let mut call_effects = BTreeMap::new();
+    let constants = module_constants::link(
+        graph,
+        &definitions,
+        &mut types,
+        main,
+        (&mut generated, &mut next, &mut call_effects),
+    )?;
+    let scopes = link_bindings(graph, &definitions, &type_exports, &constants, &types)?;
+    let mut functions = Vec::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
         named::enter(&mut types, module);
-        for declaration in declarations::collect(&unit.ast, &unit.source)? {
+        let visible = constants.scopes.get(path).cloned().unwrap_or_default();
+        for declaration in
+            declarations::collect(&unit.ast, &unit.source, profile.module_constants())?
+        {
             let signature = &definitions[path][declaration.ident.sym.as_ref()];
             functions.push(body(
                 declaration,
-                signature,
+                (signature, &visible),
                 &scopes[path],
                 &unit.source,
                 main,
@@ -103,8 +115,25 @@ pub(crate) fn lower(
         }
     }
     functions.extend(generated.into_values());
+    // Initialize stored constants in dependency order before the entry body.
+    functions[main].body.splice(
+        0..0,
+        constants.initializers.iter().map(|index| {
+            S::Expr(Expr {
+                span: entry.ast.span(),
+                ty: Type::Void,
+                kind: E::Call(*index, vec![]),
+            })
+        }),
+    );
     let tools = super::tools::collect(graph, &scopes, &functions, main)?;
     let http = http::collect(graph, &scopes, &mut functions, &mut types, main)?;
+    if constants.stored > 0 && (!tools.is_empty() || http.is_some()) {
+        return Err(entry.source.locate(
+            unsupported("module constants with tool/HTTP entry points; only main initializes them"),
+            entry.ast.span(),
+        ));
+    }
     if profile.binary64() && (!tools.is_empty() || http.is_some()) {
         return Err(entry.source.locate(
             unsupported("tool/HTTP contracts in binary64 profile; adapters are not implemented"),
@@ -117,14 +146,18 @@ pub(crate) fn lower(
         tools,
         http,
         types,
+        constants: constants.stored,
+        initializers: constants.initializers,
     })
 }
 
-/// Function bindings only; type bindings were linked by `named::link_module`.
+/// Function bindings only; type bindings were linked by `named::link_module` and
+/// constants by `module_constants::link`.
 fn link_bindings(
     graph: &Graph,
     definitions: &BTreeMap<PathBuf, Symbols>,
     type_exports: &BTreeMap<PathBuf, named::Exports>,
+    constants: &module_constants::Linked,
     types: &ir::ValueTypes,
 ) -> Result<BTreeMap<PathBuf, Symbols>> {
     let mut scopes = BTreeMap::new();
@@ -140,20 +173,33 @@ fn link_bindings(
                 let is_type = type_exports
                     .get(&import.target)
                     .is_some_and(|e| e.contains_key(&binding.imported));
-                if binding.type_only || function.is_none() && is_type {
+                let is_constant = constants
+                    .exports
+                    .get(&import.target)
+                    .is_some_and(|e| e.contains_key(&binding.imported));
+                if binding.type_only || function.is_none() && (is_type || is_constant) {
                     continue;
                 }
                 let signature = function.ok_or_else(|| {
                     unit.source.locate(
                         CompilerError::Module(format!(
-                            "module {} does not export function {}",
+                            "module {} does not export function {}{}",
                             import.target.display(),
+                            if types.profile.module_constants() {
+                                "or constant "
+                            } else {
+                                ""
+                            },
                             binding.imported
                         )),
                         binding.span,
                     )
                 })?;
                 if matches!(binding.local.as_str(), "varta" | "console" | "log" | "JSON")
+                    || constants
+                        .scopes
+                        .get(path)
+                        .is_some_and(|c| c.contains_key(&binding.local))
                     || scope
                         .insert(binding.local.clone(), signature.clone())
                         .is_some()
@@ -170,9 +216,13 @@ fn link_bindings(
         }
         let mut visible = BTreeMap::new();
         for export in &unit.exports {
+            let is_constant = constants
+                .scopes
+                .get(path)
+                .is_some_and(|c| c.contains_key(&export.local));
             if export.type_only
                 || !scope.contains_key(&export.local)
-                    && named::is_type(types, module, &export.local)
+                    && (is_constant || named::is_type(types, module, &export.local))
             {
                 continue;
             }
@@ -188,6 +238,10 @@ fn link_bindings(
             if visible
                 .insert(export.exported.clone(), signature.clone())
                 .is_some()
+                || constants
+                    .exports
+                    .get(path)
+                    .is_some_and(|c| c.contains_key(&export.exported))
             {
                 return Err(unit.source.locate(
                     CompilerError::Module(format!("duplicate export: {}", export.exported)),
@@ -203,7 +257,7 @@ fn link_bindings(
 
 fn body(
     declaration: &ast::FnDecl,
-    signature: &Signature,
+    (signature, constants): (&Signature, &module_constants::Scope),
     functions: &Symbols,
     source: &Source,
     entry: usize,
@@ -271,7 +325,8 @@ fn body(
         Some(lower.source),
     )?;
     lower.reserve_parameters(&plans)?;
-    let mut prologue = lower.initialize_parameters(&plans, signature.receiver.is_some())?;
+    let mut prologue = lower.module_constants(constants, &declaration.function)?;
+    prologue.extend(lower.initialize_parameters(&plans, signature.receiver.is_some())?);
     let body = declaration
         .function
         .body

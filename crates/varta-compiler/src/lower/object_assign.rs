@@ -78,6 +78,9 @@ impl Lower<'_> {
         let mut roots = Vec::new();
         let mut body = Vec::new();
         let mut arguments = Vec::new();
+        if let Some(target) = call.args.first() {
+            self.reject_readonly_write(&target.expr)?;
+        }
         for arg in &call.args {
             if arg.spread.is_some() {
                 return Err(unsupported("Object.assign argument spread"));

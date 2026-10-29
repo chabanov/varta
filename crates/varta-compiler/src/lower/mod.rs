@@ -38,6 +38,8 @@ struct Binding {
     ty: Option<Type>,
     initialized: bool,
     mutable: bool,
+    /// Bound to an `as const` value (v32): writes through it are rejected.
+    readonly: bool,
 }
 struct Lower<'a> {
     source: &'a Source,
@@ -266,6 +268,7 @@ mod logical_assignments;
 mod math;
 mod math_hypot;
 mod missing;
+mod module_constants;
 pub(crate) mod named;
 mod number_format;
 mod number_parse;
@@ -331,6 +334,7 @@ impl Lower<'_> {
                     ty,
                     initialized,
                     mutable,
+                    readonly: false,
                 },
             )
             .is_some()

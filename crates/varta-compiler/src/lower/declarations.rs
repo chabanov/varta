@@ -1,7 +1,9 @@
 use super::*;
+/// With `constants` (v32), top-level `const` declarations are linked separately.
 pub(super) fn collect<'a>(
     module: &'a ast::Module,
     source: &Source,
+    constants: bool,
 ) -> Result<Vec<&'a ast::FnDecl>> {
     let mut declarations = Vec::new();
     for item in &module.body {
@@ -58,6 +60,14 @@ pub(super) fn collect<'a>(
                 ));
             }
             ast::Decl::TsInterface(_) | ast::Decl::TsTypeAlias(_) => {}
+            ast::Decl::Var(var) if constants && !var.declare => {
+                if var.kind != ast::VarDeclKind::Const {
+                    return Err(source.locate(
+                        unsupported("top-level let or var declaration"),
+                        declaration.span(),
+                    ));
+                }
+            }
             ast::Decl::Var(var) if var.declare => {
                 for declaration in &var.decls {
                     let ast::Pat::Ident(binding) = &declaration.name else {

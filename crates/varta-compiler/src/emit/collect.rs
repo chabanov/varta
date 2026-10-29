@@ -411,9 +411,12 @@ impl<'a> Collected<'a> {
                         self.helpers.insert(strings::Helper::ArraySetPresent);
                     }
                 }
-                S::Throw(e) | S::Init(_, e) | S::Set(_, e) | S::Expr(e) | S::Return(Some(e)) => {
-                    self.expression(e, source)
-                }
+                S::Throw(e)
+                | S::Init(_, e)
+                | S::Set(_, e)
+                | S::InitModuleConstant(_, e)
+                | S::Expr(e)
+                | S::Return(Some(e)) => self.expression(e, source),
                 S::ArrayLength {
                     array,
                     length,

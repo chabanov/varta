@@ -118,6 +118,10 @@ pub(crate) struct Program {
     pub tools: Vec<(usize, varta_common::ToolContract)>,
     pub http: Option<(usize, varta_common::http::HttpContract)>,
     pub types: ValueTypes,
+    /// Stored module constants (v32): permanent root slots, initialized by the
+    /// `initializers` (dependency order) before `main` runs.
+    pub constants: u32,
+    pub initializers: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -423,12 +427,16 @@ pub(crate) enum Expression {
     ArraySlice(Box<Expr>, Box<Expr>, Box<Expr>),
     Index(Box<Expr>, Box<Expr>),
     Length(Box<Expr>),
+    /// Read the permanent root slot of stored module constant `n` (v32).
+    ModuleConstant(u32),
 }
 
 pub(crate) use varta_common::HostOperation as Host;
 
 pub(crate) enum Statement {
     Trap,
+    /// Publish stored module constant `n` into its permanent root slot (v32).
+    InitModuleConstant(u32, Expr),
     Throw(Expr),
     TryCatch {
         body: Vec<Statement>,
