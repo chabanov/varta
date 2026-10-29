@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v34",
+  "profile": "checked-f64-utf16-v35",
   "features": [
     {
       "id": "binary64",
@@ -504,6 +504,25 @@
       "id": "wide-records",
       "title": "Closed records wider than 32 fields",
       "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "mixed-index-records",
+      "title": "Mixed index records, for...in and dictionary updates",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "unknown-json",
+      "title": "JSON.parse to unknown and object narrowing",
+      "core": [
+        "CORE-01",
         "CORE-02"
       ],
       "origin": "varta_contract",
@@ -1984,6 +2003,48 @@
       "stdout": [
         "varta log: 41 390",
         "varta log: false 342"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "mixed-index-records",
+      "feature": "mixed-index-records",
+      "path": "cases/mixed-index-records.ts",
+      "sha256": "9ef239a6e6898b0e20674587762b1946a036e72ab229ca621830f1bae8f95a10",
+      "stdout": [
+        "varta log: {\"7\":true,\"status\":404,\"trace\":\"t-1\",\"title\":\"Not Found\",\"extra\":[1]}",
+        "varta log: Not Found 405 true",
+        "varta log: [\"7\",\"title\",\"extra\"] Not Found -"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "dictionary-iteration-updates",
+      "feature": "mixed-index-records",
+      "path": "cases/dictionary-iteration-updates.ts",
+      "sha256": "990b4d874df447bb9031333938df855256734d193040ae5c88d28c543e9aab95",
+      "stdout": [
+        "varta log: 3ba",
+        "varta log: {\"3\":3,\"b\":2,\"a\":12,\"e\":5,\"c\":7} {\"3\":3,\"b\":2,\"a\":0,\"e\":5,\"c\":7,\"f\":6}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "json-parse-unknown",
+      "feature": "unknown-json",
+      "path": "cases/json-parse-unknown.ts",
+      "sha256": "412a11e685346bd40672310c2ca7993bfa0497175227abe88b380e6a08ab2950",
+      "stdout": [
+        "varta log: problem 410",
+        "varta log: object [\"b\",\"a\"]",
+        "varta log: array object number",
+        "varta log: [1,{\"n\":null}] undefined"
       ],
       "baseline": {
         "status": "supported"

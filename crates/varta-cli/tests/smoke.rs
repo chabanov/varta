@@ -11542,6 +11542,54 @@ fn pilot_profile_v35_shares_the_v34_abis_through_both_binaries() {
 }
 
 #[test]
+fn pilot_profile_v35_runs_mixed_records_and_json_to_unknown_in_dev_and_artifacts() {
+    let project = RegressionProject::new(
+        "interface Problem{title?:string;status?:number;[key:string]:unknown}\
+         export function main():void{\
+         const value:unknown=JSON.parse('{\"title\":\"Gone\",\"status\":410,\"trace\":[1]}');\
+         let keys='';\
+         if(typeof value==='object'&&value!==null&&'status' in value){for(const k in value){keys=keys+k+';';}}\
+         const problem=value as Problem;const counts:Record<string,number>={};\
+         for(const k in problem){counts[k]??=0;counts[k]+=k.length;}\
+         const all:Record<string,number>={...counts,extra:1};\
+         console.log(keys+' '+String(problem.title)+' '+JSON.stringify(all));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v35");
+    let expected =
+        [r#"varta log: title;status;trace; Gone {"title":5,"status":6,"trace":5,"extra":1}"#];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for mut command in [varta(), Command::new(runtime_path())] {
+        let output = command
+            .args(["run", "dist/app.wasm"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+    // The same source stays rejected under v34 before any guest effect.
+    project.language_profile("checked-f64-utf16-v34");
+    let old = project.command(&["dev"]);
+    assert!(!old.status.success());
+    let text = combined(&old);
+    // V34 has no global `JSON.parse` (and no mixed object types).
+    assert!(text.contains("unsupported call"), "{text}");
+    assert!(logs(&old).is_empty(), "{text}");
+}
+
+#[test]
 fn generators_run_through_dev_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {pages} from './pages.ts';export function main():void{let total=0;for(const page of pages(3)){if(page===2){break;}total+=page;}const g=pages(1);const first=g.next();const done=g.return();console.log(`total ${total} ${String(first.value)} ${String(done.done)}`);}",

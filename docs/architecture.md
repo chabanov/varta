@@ -6692,7 +6692,8 @@ maximum). Each ABI is bumped at most once per batch: the first stream that needs
 it owns the bump and the others rebase onto it. V34 and earlier profiles keep
 their host ABI, value ABI and layouts.
 
-Seven selectors gate the batch's work streams, and all admit nothing yet:
+Seven selectors gate the batch's work streams (subsections below specify the
+implemented ones):
 
 - Web stream: `web_headers()` (an engine-provided typed `Headers` class,
   implemented in the guest and requiring no capability) and `abort_signals()`
@@ -6714,6 +6715,170 @@ Seven selectors gate the batch's work streams, and all admit nothing yet:
 Until a stream adds its subsection here, a v35 module compiles and runs exactly
 like a v34 module apart from its declared profile, and production budgets of
 every profile are unchanged.
+
+#### Mixed index records (`mixed_index_records()`)
+
+Selector `mixed_index_records()`. V35 admits object types that declare fields
+next to one string index signature, such as the pilot's
+`interface ProblemDocument { type?: string; status?: number; [key: string]: unknown }`:
+type literals, interfaces (including merged declarations and `extends` of a
+record, dictionary or mixed base) and aliases of them. It adds no value tag,
+layout, host import, JSON schema version or budget; v34 and earlier keep
+rejecting the shape (`index signature combined with declared fields (a mixed
+object type)`).
+
+- **Admission.** Declared members are property signatures (required or
+  optional; readonly, computed and method members stay rejected). As in
+  TypeScript (TS2411), every declared type — including the `undefined` of an
+  optional field — must be assignable to the index type `T`. Merged and
+  inherited index signatures must have the same `T` (a narrower one would need
+  another storage). A declared field must be checkable from `T` (the tests of
+  [checked assertions](#checked-assertions-checked_assertions), plus the tag of
+  a member of a closed `T` union); for example `items: Item[]` next to
+  `[key: string]: unknown` is rejected. Number and symbol index signatures and
+  class index signatures stay rejected.
+- **Representation.** A mixed record is a value15 dictionary of `T`
+  (`ValueKind::Dictionary`): exactly the storage record, descriptor and layout
+  of `Record<string, T>`. Declared fields and dynamic keys share one entry list
+  in ECMAScript own-key order, so JSON stringify and checked parse,
+  `Object.keys`/`values`/`entries`, `in`, `Object.hasOwn`, `delete` and
+  collection behave exactly as for dictionaries. The declared fields are a
+  compile-time view (`DictionaryType::declared`), never a layout.
+- **Declared reads.** `p.status` (or `p["status"]`) looks the key up and
+  converts the stored `T` to the declared type: free when `T` already is that
+  type, otherwise the checked test of an assertion. Because a dynamic-key
+  write, an alias typed as the plain dictionary or a `delete` may change the
+  entry, a mismatch throws `TypeError: property <name> does not hold its
+  declared type`, and an absent key reads `undefined` when the declared type
+  admits it and otherwise throws `TypeError: declared property <name> is
+  missing`. This is a deliberate deviation: TypeScript erases the types and
+  JavaScript returns whatever is stored; Varta never reinterprets it. Other
+  keys read `T | undefined` as for dictionaries.
+- **Writes and deletes.** A declared key is written at its declared type and
+  stored as `T`; other keys are written at `T`. `delete` admits optional
+  declared fields and dynamic keys; a required declared field is rejected
+  (TS2790). An object literal with a mixed context must provide every required
+  declared field; values of declared keys are typed by their declarations.
+- **Assignability.** A mixed record is assignable to the plain dictionary of
+  the same `T` (a retag). A plain dictionary or another mixed record of the
+  same `T` is assignable to a mixed record when TypeScript relates them: each
+  required target field is declared required by the source, and each other
+  target field accepts the source's declaration of that key or its index type.
+- **Checked parsing.** `varta.json.parse<M>` and `JSON.parse(text) as M` parse
+  the input as a dictionary of `T` with JSON schema 15 and then validate the
+  root's declared fields: a missing required field or a value of another type
+  throws the checked-schema `TypeError` (`JSON value does not match the checked
+  schema`). Declared fields of a parse target must be parse-stable: primitive,
+  literal or nullish members, members of a closed `T` union, or (under
+  `unknown`) `Record<string, unknown>`. Mixed records nested inside a parse
+  target are rejected.
+
+The selector also completes dictionary operations:
+
+- **`for (const key in value)`** over dictionaries (including mixed records
+  and `object` views) and closed, non-class records: `const`/`let` and
+  identifier assignment heads (no `var` or destructuring). The loop snapshots
+  `Object.keys(value)` first, so keys added by the body are not visited (as in
+  V8), and skips a snapshotted key the body deleted before its visit (as the
+  specification requires). Arrays and class instances are rejected; iterate
+  arrays with `for…of`.
+- **Updates of entries.** Compound (`d[k] += v`, all arithmetic and bitwise
+  operators), logical (`&&=`, `||=`, `??=`) and update (`d[k]++`, `--d[k]`)
+  assignments evaluate the receiver and key once, read the entry before the
+  right-hand side (`undefined` when absent, so `+=` stores `NaN` exactly as
+  JavaScript does; a declared key uses the checked declared read) and store the
+  result like an assignment, typed by the declared field or `T`.
+- **Spread.** An object literal with a dictionary or mixed context accepts
+  `...source` members for dictionaries and closed non-class records. It starts
+  empty and applies its members in source order, as `CopyDataProperties` and
+  `CreateDataProperty` do: a spread copies the source's own keys in its own-key
+  order (a record's present fields in their run-time order), and a later write
+  of an existing key keeps its position. Value types must relate as for
+  assignment. Spreads without a dictionary context and spreads into closed
+  records remain rejected.
+- **Number keys.** A `number` key on a dictionary is converted exactly like
+  `ToPropertyKey` (`String(n)`), so `d[1]` is `d["1"]` and `d[-0]` is
+  `d["0"]`. Numeric index signatures stay rejected.
+- **`Record<string, T>` inference.** A generic parameter typed
+  `Record<string, T>` or `{ [key: string]: T }` infers `T` from a dictionary
+  argument's value type or from the union of an object literal's (widened)
+  field types; the literal is then copied into the instantiated dictionary in
+  its key order.
+- **Shared operations.** V34 inlines every dictionary read, write and delete,
+  and a write is several kilobytes of Wasm. V35 lowers each of these operations
+  once per dictionary value type into a synthesized function with the same body
+  and calls it with the receiver, key and value evaluated in source order, so
+  long runs of dictionary operations stay within the per-function body budget.
+  V34 modules keep their inline bytes.
+- **Class fields.** Optional class fields (`x?: T`) have type `T | undefined`
+  and are defined as `undefined` when not initialized. A subclass may redeclare
+  an inherited field, as the pilot's `readonly cause?: unknown` does: the slot
+  is shared, so the redeclared type must equal the inherited type; a private
+  field cannot be redeclared, accessibility may not become stricter and
+  `readonly` may be added but not dropped. A redeclaration defines the field
+  again after `super(...)` returns (ES2022 `[[Define]]` semantics), so
+  `cause?: unknown` reads `undefined` as in Node, while `declare` makes it
+  type-only. The redeclaring class's constructor may assign a readonly field.
+
+#### JSON to unknown (`unknown_json()`)
+
+Selector `unknown_json()`. V35 parses JSON into `unknown`, checks dictionary
+assertions by their storage descriptor and narrows `unknown` to TypeScript's
+`object`. It adds no value tag, layout, host import, JSON schema version or
+budget; v34 and earlier keep rejecting the global `JSON.parse` (`unsupported
+call`), `varta.json.parse<unknown>` and `in` on `unknown`.
+
+- **`JSON.parse(text)`.** The standard global (one string argument; a reviver
+  is rejected) returns `unknown`. TypeScript declares it `any`, which Varta
+  never admits; `unknown` keeps the program checked, so the result must be
+  narrowed or asserted before use. The returned graph holds `null`, booleans,
+  numbers (binary64), strings, `unknown[]` arrays and `Record<string, unknown>`
+  dictionaries. The compiler describes it to JSON schema 15 as a reference
+  union of `null`, `undefined` (for missing optional positions), boolean,
+  number, string, an array of itself and a dictionary of itself, built from the
+  existing schema nodes; the host decoder is unchanged.
+- **Same grammar as checked parsing.** Malformed input throws `SyntaxError`.
+  Duplicate keys and numbers outside the finite binary64 domain (`1e400`) are
+  outside schema 15 and throw the checked-schema `TypeError`, where Node keeps
+  the last duplicate or returns `Infinity`; inputs beyond the JSON depth,
+  visit, entry or byte limits stay fatal, as for every checked parse. A
+  `__proto__` key is an own key, as with `JSON.parse`.
+- **`varta.json.parse<T>`** admits `unknown` anywhere in `T` (fields, array
+  elements, dictionary values, the root).
+- **`JSON.parse(text) as T`.** When `T` is a checked parse target, the
+  assertion is the checked parse at `T`, which proves the whole graph (a record
+  type, a mixed record, `JsonValue`, …) instead of only the root of an
+  `unknown` graph; a mismatch throws the checked-schema `TypeError`. For any
+  other `T` it is the assertion from `unknown`.
+- **Dictionary assertions.** `x as Record<string, T>`, an index signature or a
+  mixed record is tested by the `Dictionary` tag and the exact descriptor of
+  the dictionary's storage record, for any `T`: storage shapes are interned by
+  their value type, so the descriptor proves `T` exactly and a dictionary of
+  another value type (or a record or instance of the same layout, which
+  carries another tag) fails. This replaces v34's element-kind test, which
+  only covered primitive `T` and could not tell `Record<string, string>` from a
+  dictionary of string literals; v34 keeps its test. In v35 a member of a
+  closed source union that is an array, dictionary, record or class is also
+  tested by its tag alone.
+- **Narrowing to `object`.** `typeof x === "object"` proves `object | null`
+  for an `unknown` binding, and a following `x !== null` or truthiness test
+  proves `object`; `x !== null && typeof x ===
+  "object"` and `x && typeof x === "object"` work in either order.
+  `Array.isArray(x)` and `instanceof` keep the fact. The fact describes the
+  binding's `unknown` cell, which ordinary reads still see as `unknown`. Only
+  the operations TypeScript admits on `object` use it: `key in x`,
+  `Object.keys`/`values`/`entries`/`hasOwn` and `for…in`. Each converts the
+  cell with the checked dictionary test above; every JSON object passes, while
+  an array, record, class instance or Error held by the cell throws
+  `TypeError: object held by unknown is not a Record<string, unknown>
+  dictionary` (a deviation: JavaScript would enumerate it). `Object.values` and
+  `entries` type their values `unknown` (TypeScript: `any`).
+- **`in` guards.** A positive `"key" in x` with a string literal key (not an
+  inherited `Object.prototype` name) refines `x` to an `object` view: a
+  dictionary of `unknown` that declares `key: unknown`, so `x.key` reads
+  `unknown` (`undefined` after a later delete). Further guards add keys; flow
+  joins keep `object`. Undeclared property reads and dynamic keys on `object`
+  stay rejected, because TypeScript rejects them or types them `any`.
 
 ## Local modules
 

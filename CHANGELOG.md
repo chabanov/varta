@@ -11,6 +11,26 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Mixed records and JSON to `unknown` under opt-in v35 (selectors
+  `mixed_index_records`, `unknown_json`, branch `v35-records`). Object types
+  may declare fields next to a string index signature (the pilot's
+  `ProblemDocument`); they are dictionaries of the index type whose declared
+  reads are typed and checked, so a value stored through a dynamic key or a
+  plain alias throws `TypeError` instead of being reinterpreted. Dictionaries
+  gain `for...in`, compound, logical and update assignments, spreads with a
+  dictionary context, number keys (`ToPropertyKey`), `Record<string, T>`
+  inference, and shared per-type read/write/delete functions that keep long
+  runs within the function body budget. Classes may declare optional fields
+  and redeclare an inherited field with the same type (`readonly cause?:
+  unknown`), redefined after `super()` as in ES2022. `JSON.parse(text)` returns
+  `unknown` (a graph of primitives, `unknown[]` and `Record<string, unknown>`),
+  `varta.json.parse<T>` admits `unknown`, `JSON.parse(text) as T` is a checked
+  parse at `T`, dictionary assertions are proven by the storage descriptor for
+  any value type, and `typeof x === "object"` with a null test narrows
+  `unknown` to `object` for `in`, `Object.keys`/`values`/`entries`/`hasOwn`
+  and `for...in`, while `"key" in x` proves `x.key`. No value tag, layout,
+  host import, schema version or budget is added.
+
 - Opt-in v35 (pilot batch: Web types, mixed records, async methods and frame
   liveness, in development) is registered. It inherits every v34 feature and
   shares host ABI 30 and value ABI/layout 15 with v34; runtimes that do not list

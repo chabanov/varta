@@ -2336,3 +2336,63 @@ earlier profiles frozen, and add each stream's rules under its own heading here.
   change the runtime reads is admitted for v35 alone.
 - `web_headers` and `abort_signals` are guest-implemented engine types with no
   capability and no host I/O; `AbortSignal` has no timers until a later batch.
+
+### Mixed index records (`mixed_index_records`)
+
+Contract: [architecture.md](architecture.md#mixed-index-records-mixed_index_records).
+
+- A mixed record is `Type::Dictionary(id)` whose `DictionaryType::declared`
+  indexes `ValueTypes::mixed`; its storage, keys and values are those of the
+  plain dictionary of the same value type. Intern it only through
+  `mixed_records::intern`, which checks TS2411 assignability and checkability
+  of every declared field. Never give declared fields a slot, tag or layout.
+- Declared reads go through `declared_get`: look the key up, convert with
+  `assert_value` (free when the index type is the declared type) and throw for
+  a missing required key. Never trust a stored entry because its key is
+  declared: dynamic writes, plain-dictionary aliases and deletes reach it.
+- Dictionary conversions are retags between types of the same storage
+  (`dictionaries::converts`); keep them in `arguments::accepts`,
+  `unions::widen` and `unknown::upcast` together. `object` views convert only
+  through a checked assertion.
+- Under v35 dictionary get/set/delete call the shared function of their value
+  type (`lower::dictionary_helpers`); build their bodies only from the inline
+  builders (`dictionary_get_inline`, `dictionary_store`,
+  `dictionary_delete_inline`) and keep v34 on the inline path so its bytes do
+  not change.
+- `for…in`, updates and spreads evaluate the receiver and key once and read an
+  entry before evaluating the right-hand side. `for…in` snapshots the keys and
+  re-checks presence before each visit; spreads start from an empty dictionary
+  and apply members in source order.
+- Keys convert only from strings and (v35) numbers through `ToPropertyKey`
+  (`dictionary_key_value`); never coerce other types.
+- Optional class fields are `T | undefined` with an `undefined` initializer.
+  A redeclared inherited field keeps the shared slot and the inherited type
+  exactly; a non-`declare` redeclaration appends an initializer, and
+  `Field::redeclared` lets the redeclaring constructor assign it.
+- Behaviour tests pin Node 24 output of `varta-runtime/src/v35_cases`;
+  regenerate expectations only from Node, never from Varta output. Checked
+  deviations (declared reads after dynamic writes) are pinned separately.
+
+### JSON to unknown (`unknown_json`)
+
+Contract: [architecture.md](architecture.md#json-to-unknown-unknown_json).
+
+- `JSON.parse` and `unknown` parse targets build the JSON value graph from
+  existing schema 15 nodes (`emit::schemas`, `json::unknown_graph`); intern the
+  `unknown[]` and `Record<string, unknown>` types while lowering, because the
+  emitter only reads `ValueTypes`. Never add a host-side `unknown` node or a
+  schema version for it.
+- `JSON.parse(text) as T` becomes the checked parse at `T` only when `T` is a
+  parse target; otherwise it is the ordinary assertion from `unknown`.
+- Dictionary assertion targets are proven by the `Dictionary` tag and the
+  exact storage descriptor (`IsClass` over the storage shape), for any value
+  type; v34 keeps its element-kind test. A closed source union's array,
+  dictionary, record or class member is proven by its tag alone (v35 only).
+- `Type::Object(nullable)` is a refinement fact, never an expression type:
+  identifier reads of an `object` fact return the `unknown` cell, and only
+  `object_value` consumers (`in`, `Object.keys`/`values`/`entries`/`hasOwn`,
+  `for…in`) use it, through the checked dictionary conversion. Unions with an
+  `object` fact join to `object` (with `null` and `object` views) or `unknown`.
+- `in` guards refine to `object` views (`MixedMembers::object`) that declare
+  the proven keys as `unknown`; views reject dynamic and undeclared keys and
+  never convert implicitly to other dictionaries.

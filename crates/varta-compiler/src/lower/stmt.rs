@@ -188,6 +188,9 @@ impl Lower<'_> {
                 S::While(test, body)
             }
             ast::Stmt::ForOf(statement) => self.for_of(statement)?,
+            ast::Stmt::ForIn(statement) if self.types.profile.mixed_index_records() => {
+                self.for_in(statement)?
+            }
             ast::Stmt::For(statement) => {
                 if self.types.profile.refinement_writes() {
                     return self.flow_for(statement);

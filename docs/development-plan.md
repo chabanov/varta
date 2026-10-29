@@ -469,14 +469,25 @@ ABI/layout 15 with v34; the declared profile name alone makes runtimes that do
 not list v35 reject its modules. A stream that adds a host import or a value tag
 bumps the corresponding ABI for v35 itself
 ([contract](architecture.md#checked-f64-utf16-v35--pilot-batch-web-types-mixed-records-async-methods-and-frame-liveness)).
-All selectors are registered and admit nothing yet.
+All selectors are registered. The records stream implements `mixed_index_records()` and
+`unknown_json()` on the `v35-records` branch
+([mixed records](architecture.md#mixed-index-records-mixed_index_records),
+[JSON to unknown](architecture.md#json-to-unknown-unknown_json)) without a new
+value tag, layout, host import or schema version. Pending in that stream:
+spreads without a dictionary context and into closed records, numeric index
+signatures, class index signatures, declared fields that are not checkable from
+the index type (for example `items: Item[]` next to `[key: string]: unknown`),
+mixed records nested inside checked-parse targets, `x.key` on `object` without
+an `in` guard, a null test in an earlier statement than the `typeof` test
+(`if (x === null) return;` keeps `object | null`), and `JSON.stringify` of `unknown`-holding
+values in programs that declare Error classes (the v32 rule).
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `web_headers()` | Web: engine-provided typed `Headers` class, guest-implemented, no capability | M2, M5 | Registered, admits nothing |
 | `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Registered, admits nothing |
-| `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Registered, admits nothing |
-| `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Registered, admits nothing |
+| `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Implemented on `v35-records`: mixed records with checked declared reads, `for…in`, compound/logical/update assignments, spreads, number keys, `Record<string, T>` inference, shared dictionary operations, optional and redeclared class fields |
+| `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Implemented on `v35-records`: `JSON.parse` and `parse<unknown>`, `JSON.parse(text) as T` as checked parse, descriptor-checked dictionary assertions, `object` narrowing and `in` guards |
 | `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Registered, admits nothing |
 | `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Registered, admits nothing |
 | `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Registered, admits nothing |

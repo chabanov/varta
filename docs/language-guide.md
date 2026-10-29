@@ -3969,7 +3969,8 @@ export function main(): void {
 Keys enumerate like JavaScript objects: integer-like keys first in numeric
 order, then the rest in insertion order. `varta.json.parse<Record<string, T>>`
 accepts any keys and rejects duplicates. A type that mixes declared fields
-with an index signature, number keys and `{ ...spread }` are not supported yet.
+with an index signature, number keys and `{ ...spread }` are not supported in
+v34; v35 adds them.
 
 #### Recursive types (opt-in v34)
 
@@ -4146,3 +4147,106 @@ identity; arrays, records, unions, `JSON.stringify`, `console.log` and
 `typeof` reject it, and so do `Promise.all`, `Promise.race`, `allSettled` and
 `any` for now. Async arrows, function expressions and class methods, `for
 await`, async generators and top-level `await` are rejected with a diagnostic.
+
+### `checked-f64-utf16-v35`
+
+Profile v35 (in development) adds the pilot's mixed records and dynamic JSON
+on top of v34.
+
+#### Mixed index records (opt-in v35)
+
+An object type may declare fields next to a string index signature. Declared
+fields keep their types; other keys read `T | undefined`:
+
+```ts
+interface ProblemDocument {
+  type?: string;
+  title?: string;
+  status?: number;
+  [key: string]: unknown;
+}
+
+export function main(): void {
+  const doc: ProblemDocument = { status: 404, traceId: "t-1" };
+  doc.title = "Not Found";
+  const status = doc.status;                      // number | undefined
+  console.log(JSON.stringify(doc));               // {"status":404,"traceId":"t-1","title":"Not Found"}
+  console.log(String(status) + " " + String(doc["traceId"])); // 404 t-1
+  delete doc.status;
+  console.log(JSON.stringify(Object.keys(doc)));  // ["traceId","title"]
+}
+```
+
+Every declared type must fit the index type (`title?: string` needs an index
+type that admits `undefined`). Because any key can also be written through
+`doc[key]` or a `Record<string, unknown>` alias, a declared read checks the
+stored value and throws `TypeError` if it no longer has the declared type.
+
+Dictionaries also support `for...in`, compound and logical assignment,
+`++`/`--`, spreads, number keys and `Record<string, T>` inference:
+
+```ts
+function keysOf<T>(values: Record<string, T>): string[] {
+  return Object.keys(values);
+}
+
+export function main(): void {
+  const counts: Record<string, number> = { b: 1 };
+  for (const word of ["a", "b", "a"]) {
+    if (word !== undefined) {
+      counts[word] ??= 0;
+      counts[word] += 1;
+    }
+  }
+  counts[7] = 0;                                   // the key "7"
+  const all: Record<string, number> = { ...counts, total: 4 };
+  for (const key in all) {
+    console.log(key + "=" + String(all[key]));     // 7=0, b=2, a=2, total=4
+  }
+  console.log(JSON.stringify(keysOf({ y: 1, x: 2 }))); // ["y","x"]
+}
+```
+
+A spread needs a dictionary type from the context (an annotation or a
+parameter); a long run of dictionary writes in one function stays small,
+because v35 shares one function per dictionary type for reads, writes and
+deletes.
+
+A class may declare optional fields and redeclare an inherited field with the
+same type, such as `readonly cause?: unknown` in an `Error` subclass. As in
+JavaScript, such a redeclaration sets the field to `undefined` after
+`super(...)` unless it is written `declare`.
+
+#### `JSON.parse` and `unknown` (opt-in v35)
+
+`JSON.parse(text)` returns `unknown` (never `any`). Narrow it, or assert the
+type you expect; `JSON.parse(text) as T` checks the whole value against `T`:
+
+```ts
+interface Item { id: number; tags: string[] }
+
+function describe(value: unknown): string {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    if ("status" in value) {
+      return "status " + String(value.status);    // value.status: unknown
+    }
+    return "keys " + JSON.stringify(Object.keys(value));
+  }
+  return typeof value;
+}
+
+export function main(): void {
+  console.log(describe(JSON.parse('{"status":410}')));  // status 410
+  console.log(describe(JSON.parse('{"b":1,"a":2}')));   // keys ["b","a"]
+  const item = JSON.parse('{"id":1,"tags":["x"]}') as Item;
+  console.log(String(item.id));                         // 1
+  const bag = JSON.parse('{"k":true}') as Record<string, unknown>;
+  console.log(String(bag["k"]));                        // true
+}
+```
+
+Parsed objects are `Record<string, unknown>` and arrays `unknown[]`. Duplicate
+keys and numbers too large for a double (`1e400`) throw `TypeError` instead of
+being accepted. After `typeof value === "object"` and a null test you can use
+`in`, `Object.keys`, `Object.entries` and `for...in`; these throw `TypeError`
+when the value is an array, class instance or other non-JSON object.

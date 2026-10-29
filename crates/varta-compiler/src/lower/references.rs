@@ -179,7 +179,9 @@ impl Lower<'_> {
     pub(super) fn refine(&mut self, name: &str, matched: Guard, positive: bool) -> Result<()> {
         self.refine_with(name, |ty, types| {
             if ty == Type::Unknown {
-                unknown::refine(matched, positive)
+                unknown::refine(matched, positive, types)
+            } else if let Type::Object(nullable) = ty {
+                unknown::refine_object(matched, positive, nullable)
             } else if let Guard::Literal(single) = matched {
                 literals::refine(ty, single, positive, types).map(|refined| vec![refined])
             } else if ty.is_union() {

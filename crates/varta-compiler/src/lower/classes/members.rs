@@ -295,7 +295,7 @@ impl Lower<'_> {
         if !read && field.readonly {
             let context = self.types.classes.context;
             let constructor = context.is_some_and(|c| {
-                c.class == field.owner
+                (c.class == field.owner || Some(c.class) == field.redeclared)
                     && c.init == Some(self.index)
                     && matches!(stmt::unparen(&member.obj), ast::Expr::This(_))
             });

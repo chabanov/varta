@@ -42,6 +42,12 @@ impl Lower<'_> {
                 .ok_or_else(|| invalid("missing update binding"))?,
             ast::Expr::Member(member) => {
                 let base = self.write_member_base(member)?;
+                if self.types.profile.mixed_index_records()
+                    && matches!(base.ty, Type::Dictionary(_))
+                {
+                    let step = dictionary_updates::Update::Step(update);
+                    return self.dictionary_update(member, base, step, update.span);
+                }
                 if let Type::Record(shape) = base.ty
                     && let ast::MemberProp::Computed(key) = &member.prop
                     && !matches!(

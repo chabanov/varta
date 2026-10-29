@@ -487,6 +487,9 @@ mod recursive {
             return Ok(*ty);
         }
         let kind = match declaration {
+            Some(Declaration::Interface(interface)) if interface.declares_index() => {
+                Kind::Dictionary
+            }
             Some(Declaration::Interface(_)) => Kind::Record,
             Some(Declaration::Local { ty, .. }) => kind(ty).ok_or_else(rejected)?,
             _ => return Err(rejected()),
@@ -512,6 +515,7 @@ mod recursive {
                     keys: Type::Void,
                     values: Type::Void,
                     storage: 0,
+                    declared: None,
                 });
                 Type::Dictionary(types.dictionaries.len() as u32 - 1)
             }

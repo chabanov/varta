@@ -37,7 +37,7 @@ impl Lower<'_> {
             }
             let span = call.span;
             let value = if let Some(first) = call.args.first() {
-                self.expr(&first.expr)?
+                self.object_value(&first.expr)?
             } else {
                 Expr {
                     span,
