@@ -55,6 +55,7 @@ fn catalog() -> FunctionCatalog {
             result: Some(0),
             return_input: Some(frame::FrameInput::Float64),
             exception: 1,
+            generator: false,
         }],
     }
 }
@@ -230,4 +231,31 @@ fn every_layout_agrees_with_its_creator_body_and_bindings() {
         c.frames[0].return_input = Some(frame::FrameInput::Undefined);
     })
     .unwrap();
+}
+
+#[test]
+fn generator_layouts_admit_only_guest_inputs() {
+    // A v33 generator row: every input is delivered by guest code.
+    let generator = |_: &mut FrameSurface, c: &mut FunctionCatalog| {
+        let layout = &mut c.frames[0];
+        layout.generator = true;
+        layout.states[0].input = frame::FrameInput::Guest;
+        layout.return_input = Some(frame::FrameInput::Guest);
+    };
+    check(generator).unwrap();
+    let error = check(|s, c| {
+        generator(s, c);
+        c.frames[0].return_input = Some(frame::FrameInput::Float64);
+    })
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            FrameAdmissionError::Layout {
+                layout: 0,
+                mismatch: LayoutMismatch::ResultBinding
+            }
+        ),
+        "{error}"
+    );
 }

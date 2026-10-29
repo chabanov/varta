@@ -2,6 +2,9 @@ use super::*;
 use varta_common::value::{MAX_ARRAY_ELEMENTS, MAX_ARRAY_TYPES};
 
 pub(super) fn intern(element: Type, types: &mut ir::ValueTypes) -> Result<Type> {
+    if matches!(element, Type::Generator(_)) {
+        return Err(generators::opaque("an array"));
+    }
     if element.value_kind().is_none() || element == Type::BigInt && !types.profile.bigint_values() {
         return Err(unsupported("array element type"));
     }

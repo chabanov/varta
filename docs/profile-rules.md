@@ -1996,13 +1996,14 @@ Error classes, own-property presence of `message`/`cause` (and with it
 
 ## Suspension foundation (K4.4 block 1)
 
-No profile admits suspension. Contract:
+Contract:
 [architecture.md](architecture.md#suspension-foundation-k44-block-1).
 
-- `ir::Expression::Suspend` comes only from the `#[cfg(test)]` hook
+- `ir::Expression::Suspend` comes from v33 `yield` and from the test-only hook
   `lower::suspension::hook` (`__varta_suspend(value[, witness])`). Never
-  produce it from source syntax without a new profile, host ABI and runtime
-  preflight for `varta_resume`, the frame flag and frame catalog version 2.
+  produce it from other source syntax without its own profile selector and
+  the runtime admission rules for `varta_resume`, the frame flag and frame
+  catalog version 2.
 - `lower::suspension::prepare` runs on IR after lowering and literal erasure.
   `walk.rs` is exhaustive on purpose: a new IR form must state its children
   there. `normalize.rs` must state whether it splits the form, hoists its
@@ -2033,10 +2034,11 @@ v5 and the v32 JSON selectors, but its own host ABI
 (`abi::RESUMABLE_FRAMES_VERSION`); never map another profile to that ABI. Two
 selectors gate the K4.4 streams: `resumable_frames` (runtime admission of
 frames, frame catalog v2 in preflight and the `varta_resume` export) and
-`generators` (`function*`, `yield`, `next`/`throw`/`return`). Runtime admission
-is implemented (below); `generators` admits nothing yet. Gate every admission on its own selector, keep v32 and earlier profiles
-frozen (no `varta_resume`, catalog v1 only in preflight), and add each stream's
-rules under its own heading here. A new value tag needs a new value ABI.
+`generators` (`function*`, `yield`, `next`/`throw`/`return`). Both are
+implemented (below). Gate every admission on its own selector, keep v32 and
+earlier profiles frozen (no `varta_resume`, catalog v1 only in preflight, the
+existing `function*` diagnostics), and add each stream's rules under its own
+heading here. A new value tag needs a new value ABI.
 
 ### Runtime admission (`resumable_frames`)
 
@@ -2063,3 +2065,45 @@ Contract: [architecture.md](architecture.md#runtime-admission-resumable_frames).
   `[dev-dependencies]` (runtime, launcher). It is inert unless a test enables
   the hook on its thread, and frame test exports are emitted only then (or in
   compiler unit tests).
+
+### Synchronous generators (`generators`)
+
+Contract: [architecture.md](architecture.md#synchronous-generators-generators).
+
+- Source admission lives in `lower::generators` (annotations, `yield`, protocol
+  methods, `for...of`) and is gated on `profile.generators()` only: the
+  signature check, generic declarations, `Generator`/`IteratorResult`
+  annotations, the `yield` expression arm and the `next`/`return`/`throw`
+  method arm. V32 and earlier keep `unsupported async, generator, generic or
+  decorated function`.
+- `ir::Function::generator` marks a `function*`. Until `lower::suspension`
+  builds its frame, `result` is the generator type that calls see; `prepare`
+  swaps in `TReturn`. A generator is always suspendable, even without a
+  `yield`. Calls to it create the generator object; function references stay
+  rejected (`generator function as a value`).
+- Generators have no value tag. Keep `Type::Generator` out of
+  `value_kind()`, arrays, records and unions (`generators::opaque`), JSON,
+  logging, `typeof`, equality and tool/HTTP signatures. Admitting any of these
+  needs a value tag, a new value ABI, the version matrix and launcher update.
+- Every resumption goes through the step function of the generator type
+  (`emit::frames::step_function`): state checks before any effect, closed
+  direct calls by layout id and resume code. Lowered protocol code decides on
+  the `GeneratorOutcome`; read a completion cell only directly after the step.
+  Never resume a generator frame through `varta_resume`; its creator releases
+  the live-table slot, and its dispatcher branch traps before the body call
+  that admission counts.
+- Generator catalog rows carry `generator: true` and `FrameInput::Guest`
+  inputs; the catalog and `admission.rs` enforce the pairing. Keep inputs of a
+  resume body in their own locals and never root a local whose completion kind
+  was not delivered.
+- `for...of` closing is lowered as try/catch inside try/finally with an
+  `active` flag set only while the body owns a yielded value. Do not close on a
+  generator's own completion or exception, and keep the body's throw ahead of a
+  closing throw. Its `TNext`/`TReturn` must accept `undefined`.
+- Suspension in `catch`, `finally` and `switch` case bodies is shared by every
+  suspension point: the catch-flag rewrite in `normalize.rs`, the saved
+  finalizer completion and the saved case index in `states.rs`. Case tests,
+  `do-while` conditions and unlisted value blocks stay rejected by name.
+- Generator behavior tests compare against pinned Node output
+  (`varta-runtime` `generator_cases`); regenerate expectations only from Node,
+  never from Varta output.

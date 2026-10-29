@@ -141,14 +141,19 @@ impl<'a> Normalizer<'a> {
                 selected,
                 cases,
             } => {
-                if let Some(span) = cases.iter().find_map(|(test, body)| {
-                    test.iter()
-                        .find_map(first_suspension)
-                        .or_else(|| body_span(body))
-                }) {
-                    return Err(self.reject(span, "switch case"));
+                // Case bodies may suspend; the state machine selects the case
+                // once. Case tests run lazily during selection and stay rejected.
+                if let Some(span) = cases
+                    .iter()
+                    .find_map(|(test, _)| test.iter().find_map(first_suspension))
+                {
+                    return Err(self.reject(span, "switch case test"));
                 }
                 let (mut prefix, value) = self.expr(value)?;
+                let cases = cases
+                    .into_iter()
+                    .map(|(test, body)| Ok((test, self.statements(body)?)))
+                    .collect::<Result<_>>()?;
                 prefix.push(S::Switch {
                     value,
                     discriminant,
@@ -163,15 +168,32 @@ impl<'a> Normalizer<'a> {
                 handler,
                 marker,
             } => {
-                if let Some(span) = body_span(&handler) {
-                    return Err(self.reject(span, "catch clause"));
+                let body = self.statements(body)?;
+                if body_span(&handler).is_none() {
+                    return Ok(vec![S::TryCatch {
+                        body,
+                        binding,
+                        handler,
+                        marker,
+                    }]);
                 }
-                vec![S::TryCatch {
-                    body: self.statements(body)?,
-                    binding,
-                    handler,
-                    marker,
-                }]
+                // A suspending handler runs after the protected statement: the
+                // catch only binds the exception and records that it ran. The
+                // handler is never protected by its own catch, so this keeps
+                // its completions, and its state range is entered directly.
+                let span = normalize_span(&handler);
+                let caught = self.fresh(Type::Boolean);
+                let handler = self.statements(handler)?;
+                vec![
+                    S::Init(caught, boolean(span, false)),
+                    S::TryCatch {
+                        body,
+                        binding,
+                        handler: vec![S::Set(caught, boolean(span, true))],
+                        marker,
+                    },
+                    S::If(local(span, caught, Type::Boolean), handler, vec![]),
+                ]
             }
             S::TryFinally {
                 body,
@@ -181,12 +203,9 @@ impl<'a> Normalizer<'a> {
                 exception,
                 result,
             } => {
-                if let Some(span) = body_span(&finalizer) {
-                    return Err(self.reject(span, "finally clause"));
-                }
                 vec![S::TryFinally {
                     body: self.statements(body)?,
-                    finalizer,
+                    finalizer: self.statements(finalizer)?,
                     marker,
                     completion,
                     exception,
@@ -599,6 +618,9 @@ fn first_suspension(expr: &Expr) -> Option<swc_common::Span> {
         }
     });
     span
+}
+fn normalize_span(body: &[S]) -> swc_common::Span {
+    body_span(body).unwrap_or_default()
 }
 pub(super) fn body_span(body: &[S]) -> Option<swc_common::Span> {
     let mut span = None;

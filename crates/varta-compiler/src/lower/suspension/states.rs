@@ -12,6 +12,9 @@ pub(super) struct Machine<'a> {
     pub source: &'a Source,
     pub exception: Type,
     pub result: Type,
+    /// Generator type id: inputs come only from guest code, so every
+    /// one-slot value type is admissible and `throw(e)` delivers `e` itself.
+    pub generator: Option<u32>,
 }
 
 fn integer(span: swc_common::Span, value: i32) -> Expr {
@@ -140,16 +143,22 @@ impl Machine<'_> {
             completion: self.fresh(Type::Number),
         };
         let return_input = match self.result {
-            Type::Float64 | Type::Boolean | Type::Undefined => Some(self.result),
             Type::Void => Some(Type::Undefined),
+            ty if self.generator.is_some() => Some(ty),
+            Type::Float64 | Type::Boolean | Type::Undefined => Some(self.result),
             _ => None,
+        };
+        let throw_input = if self.generator.is_some() {
+            self.exception
+        } else {
+            Type::Float64
         };
         let mut inputs = std::collections::BTreeMap::new();
         for ty in points
             .iter()
             .map(|point: &ir::SuspensionPoint| point.input)
             .chain(return_input)
-            .chain([Type::Float64])
+            .chain([throw_input])
         {
             if let std::collections::btree_map::Entry::Vacant(entry) = inputs.entry(ty) {
                 entry.insert(self.fresh(ty));
@@ -162,6 +171,7 @@ impl Machine<'_> {
             points,
             exception: self.exception,
             return_input,
+            generator: self.generator,
         };
         // A frame that never started completes without entering user code.
         let mut result = vec![S::If(
@@ -199,7 +209,12 @@ impl Machine<'_> {
                     let E::Suspend { value, state } = &mut value.kind else {
                         return Err(CompilerError::Internal("missing suspension point".into()));
                     };
-                    if input_class(input).is_none() || input == Type::Void {
+                    let admitted = if self.generator.is_some() {
+                        input.width() == 1
+                    } else {
+                        input_class(input).is_some()
+                    };
+                    if !admitted || input == Type::Void {
                         return Err(self
                             .source
                             .locate(unsupported_suspension(format!("input type {input}")), span));
@@ -225,19 +240,131 @@ impl Machine<'_> {
                     self.number(body, points)?;
                     self.number(update, points)?;
                 }
+                S::TryFinally {
+                    body, finalizer, ..
+                } => {
+                    self.number(body, points)?;
+                    self.number(finalizer, points)?;
+                }
+                S::Switch { cases, .. } => {
+                    for (_, body) in cases {
+                        self.number(body, points)?;
+                    }
+                }
                 S::While(_, body)
                 | S::DoWhile(_, body)
                 | S::Block(body)
                 | S::Scope(_, body)
                 | S::Label { body, .. }
-                | S::TryCatch { body, .. }
-                | S::TryFinally { body, .. } => self.number(body, points)?,
+                | S::TryCatch { body, .. } => self.number(body, points)?,
                 _ => {}
             }
         }
         Ok(())
     }
+    /// A finalizer that suspends. The emitter resets the pending completion to
+    /// normal on every entry; a resumption skips the protected body, so the
+    /// completion saved in `kept` when the finalizer began is put back first.
+    /// The pending exception and return value are ordinary saved locals.
+    fn resumable_finalizer(
+        &mut self,
+        finalizer: Vec<S>,
+        completion: u32,
+        guards: &Guards,
+        machine: &ir::Suspendable,
+    ) -> Result<Vec<S>> {
+        let span = guards.span;
+        let kept = self.fresh(Type::Number);
+        let mut result = vec![S::If(
+            guards.running(),
+            vec![S::Set(kept, local(span, completion, Type::Number))],
+            vec![S::Set(completion, local(span, kept, Type::Number))],
+        )];
+        result.extend(self.list(finalizer, guards, machine)?);
+        Ok(result)
+    }
+    /// A switch whose case bodies suspend. While running, the discriminant and
+    /// case tests are evaluated once, in order, into the selected case index;
+    /// the emitted switch then matches that saved index against constant tests,
+    /// so a resumption re-enters the selected case without re-evaluating any
+    /// test and falls through to the target state's case.
+    fn resumable_switch(
+        &mut self,
+        value: Expr,
+        discriminant: u32,
+        selected: u32,
+        cases: Vec<(Option<Expr>, Vec<S>)>,
+        guards: &Guards,
+        machine: &ir::Suspendable,
+    ) -> Result<Vec<S>> {
+        const UNSELECTED: i32 = -1;
+        let span = guards.span;
+        let index = self.fresh(Type::Number);
+        let key = self.fresh(Type::Number);
+        let value_ty = value.ty;
+        let mut select = vec![
+            S::Init(discriminant, value),
+            S::Set(index, integer(span, UNSELECTED)),
+        ];
+        let mut default = cases.len() as i32;
+        let mut rewritten = Vec::with_capacity(cases.len());
+        for (position, (test, body)) in cases.into_iter().enumerate() {
+            let position = position as i32;
+            let test = match test {
+                Some(test) => {
+                    select.push(S::If(
+                        boolean(
+                            span,
+                            BinaryOp::EqEqEq,
+                            local(span, index, Type::Number),
+                            integer(span, UNSELECTED),
+                        ),
+                        vec![S::If(
+                            boolean(
+                                span,
+                                BinaryOp::EqEqEq,
+                                local(span, discriminant, value_ty),
+                                test,
+                            ),
+                            vec![S::Set(index, integer(span, position))],
+                            vec![],
+                        )],
+                        vec![],
+                    ));
+                    Some(integer(span, position))
+                }
+                None => {
+                    default = position;
+                    None
+                }
+            };
+            rewritten.push((test, self.list(body, guards, machine)?));
+        }
+        select.push(S::If(
+            boolean(
+                span,
+                BinaryOp::EqEqEq,
+                local(span, index, Type::Number),
+                integer(span, UNSELECTED),
+            ),
+            vec![S::Set(index, integer(span, default))],
+            vec![],
+        ));
+        Ok(vec![
+            S::If(guards.running(), select, vec![]),
+            S::Switch {
+                value: local(span, index, Type::Number),
+                discriminant: key,
+                selected,
+                cases: rewritten,
+            },
+        ])
+    }
     fn throw_delivery(&self, machine: &ir::Suspendable, span: swc_common::Span) -> Result<S> {
+        if machine.generator.is_some() {
+            let exception = machine.exception;
+            return Ok(S::Throw(local(span, machine.inputs[&exception], exception)));
+        }
         let value = local(span, machine.inputs[&Type::Float64], Type::Float64);
         Ok(S::Throw(unions::widen(
             value,
@@ -414,14 +541,34 @@ impl Machine<'_> {
                 completion,
                 exception,
                 result,
-            } => enter(vec![S::TryFinally {
-                body: self.list(body, guards, machine)?,
-                finalizer,
-                marker,
-                completion,
-                exception,
-                result,
-            }]),
+            } => {
+                let finalizer = if range(&finalizer).is_some() {
+                    self.resumable_finalizer(finalizer, completion, guards, machine)?
+                } else {
+                    finalizer
+                };
+                enter(vec![S::TryFinally {
+                    body: self.list(body, guards, machine)?,
+                    finalizer,
+                    marker,
+                    completion,
+                    exception,
+                    result,
+                }])
+            }
+            S::Switch {
+                value,
+                discriminant,
+                selected,
+                cases,
+            } => enter(self.resumable_switch(
+                value,
+                discriminant,
+                selected,
+                cases,
+                guards,
+                machine,
+            )?),
             _ => {
                 return Err(CompilerError::Internal(
                     "suspension point outside a resumable statement".into(),

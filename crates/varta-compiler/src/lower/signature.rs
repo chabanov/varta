@@ -21,8 +21,12 @@ pub(super) fn check(
     } else {
         None
     };
+    let generator = function.is_generator && types.profile.generators();
+    if generator && function.is_async {
+        return Err(unsupported("async generator function"));
+    }
     if function.is_async
-        || function.is_generator
+        || function.is_generator && !generator
         || function.type_params.is_some()
         || !function.decorators.is_empty()
     {
@@ -56,6 +60,14 @@ pub(super) fn check(
         .return_type
         .as_ref()
         .map_or(declaration.ident.span, |a| a.type_ann.span());
+    if generator && function.return_type.is_none() {
+        return Err(source.locate(
+            type_error(
+                "generator function requires a Generator<T, TReturn, TNext> return annotation",
+            ),
+            result_span,
+        ));
+    }
     let result = annotation(function.return_type.as_deref(), types)
         .map_err(|e| source.locate(e, result_span))?
         .unwrap_or_else(|| {
@@ -65,6 +77,17 @@ pub(super) fn check(
                 Type::Void
             }
         });
+    if generator && !matches!(result, Type::Generator(_)) {
+        return Err(source.locate(
+            type_error(format!(
+                "generator function must return Generator<T, TReturn, TNext>, not {result}"
+            )),
+            result_span,
+        ));
+    }
+    if generator && receiver.is_some() {
+        return Err(unsupported("generator function with a this parameter"));
+    }
     Ok(Signature {
         receiver,
         index,

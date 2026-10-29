@@ -78,6 +78,8 @@ struct Lower<'a> {
     captures: BTreeMap<(usize, u32), Binding>,
     cells: std::collections::BTreeSet<u32>,
     guarded: std::collections::BTreeSet<u32>,
+    /// Generator type id while lowering a `function*` body (v33).
+    generator: Option<u32>,
 }
 
 pub(crate) use link::lower;
@@ -133,6 +135,20 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     }
     if let ast::TsType::TsFnOrConstructorType(ast::TsFnOrConstructorType::TsFnType(function)) = ty {
         return functions::type_annotation(function, types);
+    }
+    if types.profile.generators()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && matches!(&reference.type_name, ast::TsEntityName::Ident(id) if id.sym == "Generator")
+        && !named::declared(types, "Generator")
+    {
+        return generators::annotation(reference, types);
+    }
+    if types.profile.generators()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && matches!(&reference.type_name, ast::TsEntityName::Ident(id) if id.sym == "IteratorResult")
+        && !named::declared(types, "IteratorResult")
+    {
+        return generators::iterator_result(reference, types);
     }
     match ty {
         ast::TsType::TsUnionOrIntersectionType(ast::TsUnionOrIntersectionType::TsUnionType(
@@ -280,6 +296,7 @@ mod flow_parameters;
 mod for_of;
 mod function_expressions;
 mod functions;
+mod generators;
 mod generic_calls;
 pub(crate) mod generics;
 mod guest_logical;

@@ -37,6 +37,11 @@ pub struct FrameLayout {
     pub return_input: Option<frame::FrameInput>,
     /// Binding id of an uncaught exception completion.
     pub exception: u32,
+    /// A `function*` frame (v33): owned by its generator object, never in the
+    /// live-frame root table and never resumed by `varta_resume`. Every input
+    /// of a generator row is [`frame::FrameInput::Guest`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub generator: bool,
 }
 /// A saved binding: frame-owned cells are allocated with the frame; shared
 /// cells are the closure cells of captured locals and may still be absent.
@@ -66,13 +71,28 @@ pub enum CaptureType {
     Null,
     Undefined,
     BigInt,
-    Error { class: Option<u32> },
-    Function { signature: u32 },
-    Record { fields: Vec<CaptureField> },
-    Array { element: u32 },
-    PrimitiveUnion { members: Vec<u32> },
-    ReferenceUnion { members: Vec<u32> },
+    Error {
+        class: Option<u32>,
+    },
+    Function {
+        signature: u32,
+    },
+    Record {
+        fields: Vec<CaptureField>,
+    },
+    Array {
+        element: u32,
+    },
+    PrimitiveUnion {
+        members: Vec<u32>,
+    },
+    ReferenceUnion {
+        members: Vec<u32>,
+    },
     Class,
+    /// A generator object (v33): an opaque frame handle with no value tag; it
+    /// may be saved in frames but never crosses a typed value boundary.
+    Generator,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,6 +133,7 @@ impl CaptureType {
             Self::PrimitiveUnion { .. } => ValueKind::PrimitiveUnion,
             Self::ReferenceUnion { .. } => ValueKind::ReferenceUnion,
             Self::Function { .. } => ValueKind::Function,
+            Self::Generator => return None,
         })
     }
     pub fn reference(&self) -> bool {
@@ -332,6 +353,17 @@ impl FunctionCatalog {
                 || !codes.insert(layout.code)
                 || layout.slots.len() > frame::MAX_FRAME_BINDINGS
                 || layout.states.len() > frame::MAX_SUSPENSION_STATES
+            {
+                return Err(invalid_catalog());
+            }
+            let guest = layout
+                .states
+                .iter()
+                .map(|state| state.input)
+                .chain(layout.return_input)
+                .map(|input| input == frame::FrameInput::Guest);
+            if guest.into_iter().any(|guest| guest != layout.generator)
+                || layout.generator && layout.return_input.is_none()
             {
                 return Err(invalid_catalog());
             }

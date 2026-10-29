@@ -370,6 +370,14 @@ impl<'a> Collected<'a> {
                 self.helpers.insert(strings::Helper::Allocate);
                 self.expression(value, source);
             }
+            E::GeneratorStep {
+                generator, value, ..
+            } => {
+                self.helpers.insert(strings::Helper::Allocate);
+                self.expression(generator, source);
+                self.expression(value, source);
+            }
+            E::GeneratorValue(value) => self.expression(value, source),
             _ => {}
         }
     }

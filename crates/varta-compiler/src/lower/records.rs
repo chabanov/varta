@@ -57,6 +57,9 @@ pub(super) fn property_key(name: &ast::PropName) -> Result<String> {
     }
 }
 pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -> Result<Type> {
+    if fields.iter().any(|f| matches!(f.ty, Type::Generator(_))) {
+        return Err(generators::opaque("an object"));
+    }
     if fields
         .iter()
         .any(|field| matches!(field.ty, Type::Function(_)))

@@ -11303,6 +11303,56 @@ fn suspension_profile_v33_declares_its_host_abi_through_both_binaries() {
 }
 
 #[test]
+fn generators_run_through_dev_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {pages} from './pages.ts';export function main():void{let total=0;for(const page of pages(3)){if(page===2){break;}total+=page;}const g=pages(1);const first=g.next();const done=g.return();console.log(`total ${total} ${String(first.value)} ${String(done.done)}`);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/pages.ts"),
+        "export function* pages(n:number):Generator<number>{try{for(let i=0;i<n;i++){yield i;}}finally{console.log(`closed ${n}`);}}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v32");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check).contains("unsupported async, generator, generic or decorated function"),
+        "{}",
+        combined(&check)
+    );
+    project.language_profile("checked-f64-utf16-v33");
+    let expected = ["closed 3", "closed 1", "total 1 0 true"].map(|s| format!("varta log: {s}"));
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
 fn primitive_string_runs_across_modules_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {text} from './string.ts';export function main():void{console.log(text(1e21));console.log(text(true));console.log(text(undefined));console.log(String().length);console.log(String('').length);const s=String('A\\uDFFF\\u0000Z');console.log(s.length);console.log(s.charCodeAt(1));console.log(String(Number.MIN_VALUE));console.log(String(-0));}",

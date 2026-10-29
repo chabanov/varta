@@ -4087,3 +4087,63 @@ fn public_engine_admits_resumable_frames_only_under_their_profile() {
         ));
     }
 }
+
+#[test]
+fn public_engine_runs_generic_generators_across_modules_in_v33() {
+    // A synchronous shape of the pilot's `autoPaginate`: a generic generator
+    // re-exported through a barrel and consumed by `for...of` with closing.
+    use varta_common::language::LanguageProfile;
+    struct GeneratorSources;
+    impl ModuleLoader for GeneratorSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./pagination.ts" => Ok("pagination.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("pagination.ts") => "export interface CursorPage<T>{items:T[];cursor:string|null}\
+                    export function* paginate<T>(pages:CursorPage<T>[],trace:string[]):Generator<T>{\
+                    try{for(const page of pages){if(page===undefined){continue;}for(const item of page.items){if(item!==undefined){yield item;}}\
+                    if(page.cursor===null){return;}}}finally{trace.push('closed');}}",
+                Some("index.ts") => "export * from './pagination.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import type {CursorPage} from './index.ts';import {paginate} from './index.ts';\
+                       export function main():void{const trace:string[]=[];\
+                       const pages:CursorPage<string>[]=[{items:['a','b'],cursor:'n'},{items:['c'],cursor:null},{items:['d'],cursor:null}];\
+                       let seen='';for(const item of paginate(pages,trace)){seen+=item;}console.log(seen);\
+                       for(const n of paginate<number>([{items:[1,2,3],cursor:null}],trace)){if(n===2){break;}console.log(n);}\
+                       console.log(trace.length);}"
+                    .into(),
+            },
+            &GeneratorSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V33).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: abc", "varta log: 1", "varta log: 2"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V32)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("async or generator generic function"),
+        "{frozen}"
+    );
+}

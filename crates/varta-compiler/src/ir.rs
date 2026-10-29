@@ -40,6 +40,9 @@ pub(crate) enum Type {
     /// Nominal class instance (v32): a record block whose static descriptor
     /// identifies the most-derived class; see `lower::classes`.
     Class(u32),
+    /// Synchronous generator object (v33 `generators`): the handle of its
+    /// continuation frame; the id indexes `ValueTypes::generators`.
+    Generator(u32),
 }
 
 /// Base primitive of a literal set; it fixes the erased physical representation.
@@ -76,6 +79,7 @@ impl Type {
             self,
             Self::BigInt
                 | Self::Class(_)
+                | Self::Generator(_)
                 | Self::Function(_)
                 | Self::Error
                 | Self::NativeError(_)
@@ -175,6 +179,9 @@ pub(crate) struct Suspendable {
     pub exception: Type,
     /// The admissible `Return` input; `None` rejects `Return` resumption.
     pub return_input: Option<Type>,
+    /// Generator type id of a `function*` (v33): its frame is owned by the
+    /// generator object and resumed only by guest code, never by `varta_resume`.
+    pub generator: Option<u32>,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct SuspensionPoint {
@@ -193,6 +200,35 @@ pub(crate) struct ValueTypes {
     pub named: crate::lower::named::NamedTypes,
     pub classes: crate::lower::classes::Classes,
     pub generics: crate::lower::generics::Generics,
+    pub generators: Vec<GeneratorType>,
+}
+/// What a generator step function reports to the lowered protocol code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i32)]
+pub(crate) enum GeneratorOutcome {
+    /// Suspended at a `yield`; the completion cell holds `T`.
+    Yielded = 0,
+    /// Completed by `return`; the completion cell holds `TReturn` (none for void).
+    Returned = 1,
+    /// `next` on a completed generator: `{ done: true, value: undefined }`.
+    DoneUndefined = 2,
+    /// `return(v)` on a not-started or completed generator: `{ done: true, value: v }`.
+    DoneInput = 3,
+    /// The generator is executing: the protocol throws a `TypeError`.
+    Running = 4,
+    /// `throw(e)` on a not-started or completed generator: `e` is thrown.
+    ThrowInput = 5,
+}
+/// `Generator<T, TReturn, TNext>` with its `IteratorResult<T, TReturn>` record
+/// `{ done: boolean, value: T | TReturn | undefined }`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GeneratorType {
+    pub yielded: Type,
+    /// `void` when the generator returns no value.
+    pub returned: Type,
+    /// The resume input; never `void` (an omitted `TNext` is `undefined`).
+    pub next: Type,
+    pub result: Type,
 }
 impl ValueTypes {
     pub fn value_version(&self) -> u32 {
@@ -295,6 +331,10 @@ pub(crate) struct Function {
     pub cells: std::collections::BTreeSet<u32>,
     pub captures: Vec<u32>,
     pub environment: bool,
+    /// Generator type id of a `function*` declaration (v33). Until
+    /// `lower::suspension` builds its frame, `result` is the generator type
+    /// that calls observe; afterwards it is the body's `TReturn`.
+    pub generator: Option<u32>,
 }
 
 impl Function {
@@ -508,6 +548,16 @@ pub(crate) enum Expression {
         value: Box<Expr>,
         state: u32,
     },
+    /// Resume a generator (v33) by its frame's closed per-type step function;
+    /// evaluates to a `lower::generators` step outcome code.
+    GeneratorStep {
+        generator: Box<Expr>,
+        completion: varta_common::function::frame::Completion,
+        value: Box<Expr>,
+    },
+    /// The yielded or returned value in a generator frame's completion cell,
+    /// read only directly after the step that produced it.
+    GeneratorValue(Box<Expr>),
 }
 
 pub(crate) use varta_common::HostOperation as Host;
@@ -606,6 +656,7 @@ impl std::fmt::Display for Type {
             Self::Undefined => "undefined",
             Self::Record(_) => "object",
             Self::Class(_) => "class instance",
+            Self::Generator(_) => "generator",
             Self::Array(_) => "array",
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",

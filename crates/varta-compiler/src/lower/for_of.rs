@@ -58,6 +58,9 @@ impl Lower<'_> {
         if self.types.profile.refinement_writes() {
             self.flow_for_of_effects(statement);
         }
+        if matches!(value.ty, Type::Generator(_)) {
+            return self.for_of_generator(statement, pattern, mode, value);
+        }
         let entry = self.flow_snapshot();
         let target = self.flow_iteration();
         let (source, array, mut roots, mut init) = self.for_of_source(value)?;

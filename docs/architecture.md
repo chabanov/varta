@@ -5962,13 +5962,13 @@ Two selectors gate the K4.4 work streams:
   `varta_resume` export (K4.4 step 1), specified
   [below](#runtime-admission-resumable_frames);
 - `generators()`: synchronous `function*`, `yield` and the generator
-  `next`/`throw`/`return` protocol over those frames (K4.4 step 2). It admits
-  nothing yet.
+  `next`/`throw`/`return` protocol over those frames (K4.4 step 2), specified
+  [below](#synchronous-generators-generators).
 
-No source syntax produces a suspension point yet, so a v33 module compiles and
-runs exactly like a v32 module apart from its declared profile and host ABI, and
-production budgets are unchanged. Whether generators need a new value tag, and
-therefore a new value ABI, is decided by the generators stream.
+A v33 module without a generator compiles and runs exactly like a v32 module
+apart from its declared profile and host ABI. Generators add no value tag, so
+the value and schema versions stay those of v32, and production budgets are
+unchanged.
 
 #### Runtime admission (`resumable_frames`)
 
@@ -6009,8 +6009,10 @@ guest effect. The runtime reports a failure as the typed
   returns exactly one `i64` resume token. Yielded and result bindings are
   single-slot cells. The Return input class matches the result: `Float64`,
   `Boolean` or `Undefined` for a result of that type, `Undefined` for a void
-  result and none otherwise. Every layout names the same exception binding, a
-  union cell holding the profile's catch union.
+  result and none otherwise; a generator row (`generator: true`) takes `Guest`
+  instead (see [generators](#synchronous-generators-generators)). Every layout
+  names the same exception binding, a union cell holding the profile's catch
+  union.
 - **Envelope.** The frame constants (five fields, edge mask 28 that excludes the
   control and status words, at most 8 segments of 32 bindings) are checked when
   `varta-common` is compiled. Saved cells and envelopes keep their dynamic checks
@@ -6022,14 +6024,120 @@ guest effect. The runtime reports a failure as the typed
 - **No scheduler yet.** The runtime calls only the entry point and the
   published tool or HTTP exports. It never calls `varta_resume`, and it owns no
   frame roots or generations. The scheduler-owned root and generation policy
-  comes with the first scheduler; until generators (step 2), an admitted
-  module's own code cannot create a frame.
-- **Test producer.** Frame modules come only from the compiler's test-only
-  lowering hook: compiler unit tests, and the `suspension-test-hook` cargo
+  comes with the first scheduler. Generator frames, the only frames source code
+  creates, are resumed by guest code alone and never through `varta_resume`.
+- **Test producer.** Besides generators, frame modules come from the
+  compiler's test-only lowering hook: compiler unit tests, and the
+  `suspension-test-hook` cargo
   feature that only the runtime and launcher dev-dependencies enable. While the
   hook is enabled on a thread, emitted frame modules also export
   `varta.test.frame.<layout>` creators and `varta.test.collect`; admission gives
   these names no meaning.
+
+#### Synchronous generators (`generators`)
+
+V33 admits synchronous generator functions over the frames above. Generators
+need no event loop and no new host import; every resumption is a guest call.
+
+- **Declarations.** Top-level `function*` declarations, exported or not,
+  including generic ones (each instantiation is its own generator function),
+  with a required return annotation `Generator<T>`, `Generator<T, TReturn>` or
+  `Generator<T, TReturn, TNext>`. TypeScript defaults omitted parameters to
+  `any`; Varta reads an omitted `TReturn` as `void` and an omitted `TNext` as
+  `undefined` (a `void` `TNext` is also `undefined`), which can only reject
+  programs that would need `any`. `T` is not `void`, and no type argument is a
+  generator, `any` or `VartaResult`. Parameters are fixed: optional and rest
+  parameters, a `this` parameter, generator methods, generator function
+  expressions, async generators and a generator function used as a value are
+  rejected with construct-specific diagnostics. Calling a generator function
+  binds its arguments into a new frame and returns the generator object without
+  running the body.
+- **`yield`.** `yield e` checks `e` against `T`; bare `yield` yields
+  `undefined`, which `T` must accept. The expression has type `TNext`. `return e`
+  completes with `TReturn`; a `TReturn` other than `void` or `undefined` needs a
+  return on every path. `yield` may appear in every normalized expression
+  position of the [suspension foundation](#suspension-foundation-k44-block-1),
+  inside `try`, `catch` and `finally` bodies, loops, labelled statements and
+  `switch` case bodies. `yield*` fails as `unsupported yield* delegation`;
+  `yield` inside an intrinsic value block (for example a `String(...)` call, a
+  template literal or a generator method call), in a `switch` case test or in a
+  `do-while` condition fails as `unsupported suspension point inside
+  <construct>`.
+- **Representation.** A generator object is the handle of its continuation frame
+  (type `generator`, one `i64` slot, no value tag). It may be held in locals,
+  parameters, results and closure cells and saved in other frames (capture type
+  `generator`). Arrays, records, unions, `JSON.stringify`, `console.log`,
+  `typeof`, equality and tool/HTTP signatures reject it
+  (`unsupported generator inside an array`, `... a union`, `... an object`,
+  `cannot log generator` and the existing boundary diagnostics). The value ABI,
+  schemas and launcher value maximum stay those of v32.
+- **IteratorResult.** `next`, `return` and `throw` produce the closed record
+  `{ done: boolean, value: T | TReturn | undefined }`, also written
+  `IteratorResult<T, TReturn>`. `undefined` is always a member because a
+  completed generator answers `{ done: true, value: undefined }`; a `void`
+  `TReturn` contributes `undefined`. It is an ordinary closed record: narrowing
+  `value` needs an ordinary guard, not the `done` discriminant. A generator whose
+  `T | TReturn | undefined` is not a checked union (for example two record
+  shapes) is rejected.
+- **Protocol.** `g.next(v)` takes `TNext`, `g.return(v)` takes `TReturn`
+  (`undefined` for `void`) and `g.throw(e)` takes any throwable value. Omitting
+  the argument of `next` or `return` requires that type to accept `undefined`.
+  The ECMAScript states hold. On a not-started generator `next` ignores its
+  argument and starts the body, `return(v)` completes it with
+  `{ done: true, value: v }` and `throw(e)` completes it and throws `e`, without
+  running the body. On a suspended generator the argument becomes the `yield`
+  result, a `return` completion (running enclosing `finally` blocks, which may
+  yield again) or an exception thrown at the `yield`. On a completed generator
+  `next` returns `{ done: true, value: undefined }`, `return(v)` returns
+  `{ done: true, value: v }` and `throw(e)` throws `e`. Any call from inside the
+  running generator throws `TypeError("Generator is already running")` in the
+  caller. An uncaught exception completes the generator and propagates from the
+  call.
+- **`for...of`.** A generator source resumes with `undefined` on every step, so
+  `TNext` and `TReturn` must accept `undefined`. `break`, `return`, a labelled
+  `break` or `continue` to an outer statement and a throw from the body close the
+  generator with `return()`, whose `finally` blocks run before the loop exits. A
+  throw from the body keeps precedence over a throw from closing; an exception
+  or completion of the generator itself does not close it. Spread and
+  `Array.from` over generators are not admitted.
+- **Frames.** Generator layouts are frame catalog rows with `generator: true`
+  and the input class `Guest` for every state and for the Return input; the
+  catalog rejects `Guest` on other rows and any other class on a generator row.
+  The creator registers the new frame in the live table only while it allocates
+  the environment and cells, then releases the slot and returns the frame handle
+  (`ptr | 48 << 32`). A generator frame is retained by its generator object like
+  any other managed reference and collected with it; it neither occupies nor is
+  limited by the `MAX_LIVE_FRAMES` table. Because it is never in the table,
+  `varta_resume` fails its ownership check for every completion kind, and the
+  dispatcher's branch for a generator layout traps before any effect (it keeps
+  the direct call so admission pairs bodies and layouts).
+- **Step functions.** Each generator type has one closed step function
+  `(generator:i64, completion:i32, value:i64) -> outcome:i32` with the dispatcher
+  signature; it is not exported. It checks the running and completed status and
+  the not-started state before any effect, marks the frame running and calls the
+  resume body chosen by layout id and resume code among that type's layouts, by
+  direct call, without a table or indirect call. The outcome (yielded, returned,
+  done, done with the input, running, throw the input) drives lowered protocol
+  code that builds the IteratorResult or throws; yielded and returned values are
+  read from the frame's completion cell. The generator handle and the input stay
+  expression-rooted across the step, and the exception channel is empty at every
+  suspension.
+- **Completions in handlers.** A `catch` body that suspends runs after its
+  `try` statement: the catch binds the exception and sets a hidden flag, so the
+  handler keeps its own completions (it was never protected by its own catch)
+  and its states are re-entered directly. A suspending `finally` body saves its
+  pending completion kind in a hidden local when it begins and restores it on
+  resumption; the pending exception and return value are ordinary saved locals.
+  A `switch` whose case bodies suspend evaluates the discriminant and the case
+  tests once, in order, into a saved case index, and the emitted switch matches
+  that index against constant tests, so a resumption re-enters the selected case
+  and falls through to the target case without re-evaluating a test. These rules
+  apply to every suspension point, including the test-only hook's.
+- **Budgets.** The foundation's frame budgets apply per generator function: 256
+  saved bindings and 256 suspension states. At most `MAX_GENERATOR_TYPES` (64)
+  generator types exist per module. Saved bindings are cells, so a program that
+  keeps many generators suspended pays for their cells within the ordinary
+  memory and fuel limits.
 
 ## Local modules
 
@@ -6947,8 +7055,8 @@ the prepared receiver, key and old value are evaluated before the suspension.
 Every other value block and the remaining positions are rejected with
 `unsupported suspension point inside <construct>`. The construct is named from
 the source node at the block's span, for example `call to Math.hypot`,
-`` `repeat` method call ``, `catch clause`, `finally clause`, `switch case`,
-`do-while condition`, `a closure` or `an entry function`. The canonical form is
+`` `repeat` method call ``, `switch case test`, `do-while condition`,
+`a closure` or `an entry function`. The canonical form is
 `Init(t, Suspend { value })` with a suspension-free `value` and a fresh `t`.
 
 **State machine.** Suspension points are numbered 1..n in statement order, so
@@ -6962,9 +7070,10 @@ all saved locals, then re-enters the structured code, so the emitter rebuilds th
 context is therefore static per state, and the frame's handler field stays zero.
 At the target state the delivery clears the state, raises a `Throw` input as a
 Number exception at that point, performs a `Return` input as `return` (running
-enclosing `finally` blocks) or binds a `Normal` input. Suspension inside a `catch`
-or `finally` body, which would need a deferred completion in the frame, is
-rejected in this block.
+enclosing `finally` blocks) or binds a `Normal` input. Suspension inside `catch`
+and `finally` bodies and `switch` case bodies, first rejected in this block, is
+admitted with the v33 rules in
+[completions in handlers](#synchronous-generators-generators).
 
 **Frames.** A frame is a separate managed kind, heap flag **4096**, with a
 48-byte body: `[layout-id:u32, fields=5:u32, control:i64, status:i64,

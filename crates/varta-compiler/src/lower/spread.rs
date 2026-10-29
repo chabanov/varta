@@ -200,6 +200,7 @@ impl Lower<'_> {
             captures: BTreeMap::new(),
             cells: Default::default(),
             guarded: Default::default(),
+            generator: None,
         };
         for value in &operands {
             child.hidden(value.ty);
@@ -220,6 +221,7 @@ impl Lower<'_> {
             cells: Default::default(),
             captures: vec![],
             environment: false,
+            generator: None,
         };
         child.generated.insert(index, function);
         Ok(Expr {

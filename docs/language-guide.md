@@ -3839,3 +3839,72 @@ export function main(): void {
 `export *` forwards `APIError` but never the default export, so the barrel names
 it explicitly. Generic classes, including generic Error subclasses, and merging
 several declarations of a generic interface are rejected with a diagnostic.
+
+### `checked-f64-utf16-v33`
+
+#### Synchronous generators (opt-in v33)
+
+A top-level `function*` declares its type with `Generator<T, TReturn, TNext>`.
+An omitted `TReturn` is `void` and an omitted `TNext` is `undefined`, so
+`Generator<T>` is the common form. Calling the function creates the generator
+without running its body; `next`, `return` and `throw` resume it and return an
+`IteratorResult<T, TReturn>` record `{ done, value }`:
+
+```ts
+function* pages(limit: number): Generator<string, number, number> {
+  let page = 0;
+  try {
+    while (page < limit) {
+      const skip = yield `page ${page}`;    // TNext
+      page += 1 + skip;
+    }
+  } finally {
+    console.log('closed');
+  }
+  return page;                              // TReturn
+}
+
+export function main(): void {
+  const g = pages(5);
+  console.log(String(g.next(0).value));    // page 0 (the first argument is ignored)
+  console.log(String(g.next(1).value));    // page 2
+  const r = g.return(9);                    // closed
+  console.log(`${String(r.done)} ${String(r.value)}`); // true 9
+  console.log(String(g.next(0).done));     // true
+}
+```
+
+`for...of` resumes a generator with `undefined`, so its `TNext` and `TReturn`
+must accept `undefined`. Leaving the loop early with `break`, `return` or a
+throw closes the generator first, which runs its `finally` blocks:
+
+```ts
+function* count(n: number): Generator<number> {
+  try {
+    for (let i = 0; i < n; i++) yield i;
+  } finally {
+    console.log('cleanup');
+  }
+}
+
+export function main(): void {
+  for (const i of count(10)) {
+    if (i === 2) break;                     // cleanup
+    console.log(i);                         // 0, 1
+  }
+}
+```
+
+`yield` works inside `try`, `catch`, `finally`, loops and `switch` case bodies.
+Calling `next` on a generator from inside its own body throws
+`TypeError: Generator is already running`. `value` has the type
+`T | TReturn | undefined` (a finished generator answers
+`{ done: true, value: undefined }`); narrow it with a guard such as
+`typeof value === 'string'`, because the `done` field does not narrow it.
+Generic generators instantiate per type argument.
+
+A generator object lives in locals, parameters, results and closures; arrays,
+records, unions, `JSON.stringify`, `console.log`, `typeof` and equality reject
+it. `yield*`, `async function*`, generator methods and expressions, spread or
+`Array.from` over a generator and `yield` inside calls such as `String(yield x)`
+are rejected with a diagnostic.

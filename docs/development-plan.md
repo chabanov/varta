@@ -24,12 +24,14 @@ Next work, in order:
    ([contract](architecture.md#suspension-foundation-k44-block-1)) and merged
    on the v32 integration branch. Runtime admission under profile v33
    (`resumable_frames`) is implemented; the runtime does not schedule frames
-   yet.
+   yet. Synchronous generators (K4.4 step 2, `generators`) are implemented in
+   v33 on the `v33-generators` branch
+   ([contract](architecture.md#synchronous-generators-generators)).
 2. **Pilot M1–M3**, alongside block 1: review and release the v32 pilot batch
    (both waves are merged on the integration branch), then index signatures and
    wider records, Web types (`Headers`, `AbortSignal`) and the 65-file module
    graph budgets.
-3. Synchronous generators, then Promise jobs, then async/await (K4.4 steps 2–4).
+3. Promise jobs, then async/await (K4.4 steps 3–4).
 
 Completed increment logs, earlier checkpoints and verification records are in
 [history.md](history.md).
@@ -1431,18 +1433,18 @@ its contract is in
 preflight and artifact validation admit its frame surface (frame heap kind,
 frame catalog version 2 and the `varta_resume` export) only under profile v33
 ([runtime admission](architecture.md#runtime-admission-resumable_frames)); no
-host import or value tag changes. These modules are still produced only by the
-compiler's test-only suspension hook, and the runtime does not call the
-dispatcher. Steps 2–6 are not implemented. Each increment still needs its own versioned contract in
+host import or value tag changes. Step 2 (synchronous generators) is the first
+source producer of frames; generator frames are resumed only by guest code, and
+the runtime still does not call the dispatcher. Steps 3–6 are not implemented.
+Each increment still needs its own versioned contract in
 [architecture.md](architecture.md), positive/negative and resource tests and the
 normal gates before source admission.
 
 **Profile v33 (in development).** Runtime admission of block 1 and step 2
 share profile `checked-f64-utf16-v33`, registered with its own host ABI so
-older runtimes reject the `varta_resume` export; the value ABI stays at the v32
-version until the generators stream decides on a value tag. Its selectors
-`resumable_frames()` (step 1 runtime admission, implemented) and `generators()`
-(step 2, admits nothing yet) gate the two streams, which build on them in parallel
+older runtimes reject the `varta_resume` export. Generators add no value tag,
+so the value ABI stays at the v32 version. Its selectors `resumable_frames()`
+(step 1 runtime admission) and `generators()` (step 2) are both implemented
 ([contract](architecture.md#checked-f64-utf16-v33--suspension-and-generators)).
 
 One suspension/resumption mechanism serves generators, async functions and async
@@ -1645,14 +1647,28 @@ artifact execution and a documented contract in [architecture.md](architecture.m
      2026-10-29: admit it in its own profile v33 together with step 2 (the
      first source syntax), rather than adding a runtime surface to the v32
      pilot batch that no source can reach.
-   - suspension inside `catch`/`finally` bodies, `switch` cases, `do-while`
-     conditions and the remaining intrinsic value blocks;
+   - suspension inside `catch`/`finally` bodies and `switch` case bodies:
+     **implemented** with step 2; `switch` case tests, `do-while` conditions
+     and the remaining intrinsic value blocks stay rejected by name;
    - host-supplied reference inputs;
    - liveness-based frame slots;
    - a scheduler-owned retention policy for completed frames.
 2. Synchronous generators: `yield`, resumption and `finally`. Exit: `next`/`throw`/
    `return`, re-entry rejection and `finally` ordering match ECMAScript in
-   differential tests against Node.
+   differential tests against Node. **Implemented** in v33 (selector
+   `generators`, [contract](architecture.md#synchronous-generators-generators)):
+   annotated top-level and generic `function*`, `yield` in normalized
+   positions and in `try`/`catch`/`finally`/`switch` bodies, the full
+   `next`/`return`/`throw` state protocol with the re-entry `TypeError`, and
+   `for...of` with iterator closing. Generators add no value tag (value ABI
+   unchanged); generator frames are owned by their objects, resumed by a closed
+   per-type step function and unreachable through `varta_resume`. Six runtime
+   programs match pinned Node 24 logs (`varta-runtime` `generator_tests`), plus
+   compiler validation/diagnostic tests, a `varta dev` and source-free artifact
+   CLI test and the `generators` conformance case. Open: `yield*`, spread and
+   `Array.from` over generators, generator methods and expressions,
+   `IteratorResult` narrowing by `done`, generators inside aggregates and
+   unions (needs a value tag) and the iterator protocol of other objects.
 3. Microtask queue and base Promise semantics. Exit: `then` chains, thenable
    adoption, self-resolution TypeError and FIFO job order match Node event logs.
 4. async/await over the same frames. Exit: `await` in normalized expression

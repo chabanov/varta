@@ -41,6 +41,12 @@ impl Emitter<'_> {
             } => self.assignment_value(value, *input, *marker, body)?,
             E::FunctionCheck { value, slot } => self.check_function_value(value, *slot)?,
             E::Suspend { value, state } => self.suspend_point(value, *state)?,
+            E::GeneratorStep {
+                generator,
+                completion,
+                value,
+            } => self.generator_step(generator, *completion, value)?,
+            E::GeneratorValue(generator) => self.generator_value(generator, expr.ty)?,
             E::FunctionRef {
                 index,
                 fresh,

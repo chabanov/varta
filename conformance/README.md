@@ -1,6 +1,6 @@
 # Checked core compatibility inventory
 
-This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v32** profile
+This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v33** profile
 and the **checked-ts-main-v1** source model. Its original cases are checked
 TypeScript programs with a Varta `main` entry point and observable runtime output.
 Feature rows identify their CORE work streams and either an ECMAScript section or
@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 49 feature rows and 87 cases:
-76 pass, 11 are known unsupported, and 9 feature rows have no case. These counts
+executable cases. The current inventory has 49 feature rows and 88 cases:
+77 pass, 11 are known unsupported, and 9 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -174,3 +174,13 @@ outputs match Node.js v24.20.0 type stripping with booleans normalized to 0/1.
 The default-export row has no case for the same reason as the re-export row:
 importing a default needs a second module, which this single-file executor does
 not load; compiler, runtime and CLI module tests cover it.
+
+The v33 generators increment moves the pinned profile from v32 to v33; every
+earlier case keeps its status. One original case on the existing generators row
+covers `next(v)` delivery, the `TReturn` completion, a completed generator,
+`for...of` closing through `finally`, `return(v)` at a yield and `throw(e)` on a
+not-started generator; its output matches Node.js v24.20.0 type stripping. The
+unannotated `generator-next` case stays a known gap with a new reviewed
+diagnostic: v33 requires an explicit `Generator<T, TReturn, TNext>` return type
+instead of inferring one. `yield*`, async generators and the iterator protocol
+of other objects remain outside this row.

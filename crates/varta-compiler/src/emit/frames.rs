@@ -4,6 +4,7 @@
 //! environment segments; the frame itself is a separate managed kind retained by
 //! a bounded permanent root table while it is live.
 use super::*;
+use frame::Completion;
 use varta_common::function::{self as layout, frame};
 
 /// Physical parameters of a resume body: `(frame:i64, completion:i32, value:i64)`.
@@ -24,6 +25,8 @@ pub(super) struct Layout {
     pub id: u32,
     pub function: usize,
     pub slots: Vec<Slot>,
+    /// Generator type id of a `function*` frame (v33).
+    pub generator: Option<u32>,
 }
 impl Layout {
     /// Every physical local is saved except the state, completion and input
@@ -53,6 +56,7 @@ impl Layout {
             id,
             function,
             slots,
+            generator: machine.generator,
         }
     }
     fn segments(&self) -> Vec<usize> {
@@ -77,7 +81,9 @@ impl Layout {
         result: Type,
         bindings: &BTreeMap<Type, u32>,
     ) -> layout::FrameLayout {
+        let generator = self.generator.is_some();
         let input = |ty| match ty {
+            _ if generator => frame::FrameInput::Guest,
             Type::Boolean => frame::FrameInput::Boolean,
             Type::Undefined | Type::Void => frame::FrameInput::Undefined,
             _ => frame::FrameInput::Float64,
@@ -103,6 +109,7 @@ impl Layout {
             result: (result != Type::Void).then(|| bindings[&result]),
             return_input: machine.return_input.map(input),
             exception: bindings[&machine.exception],
+            generator,
         }
     }
 }
@@ -152,6 +159,37 @@ fn next_generation(resources: Resources) -> [I<'static>; 9] {
     ]
 }
 use varta_common::{abi, value};
+
+/// Find the live-table slot holding `handle` (always present) and clear it.
+fn release_slot(resources: Resources, cursor: u32, handle: u32) -> Vec<I<'static>> {
+    vec![
+        I::I32Const(resources.table as i32),
+        I::LocalSet(cursor),
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(cursor),
+        I::I32Const(table_end(resources)),
+        I::I32GeU,
+        I::If(BlockType::Empty),
+        I::Unreachable,
+        I::End,
+        I::LocalGet(cursor),
+        I::I64Load(strings::ROOT),
+        I::LocalGet(handle),
+        I::I64Eq,
+        I::BrIf(1),
+        I::LocalGet(cursor),
+        I::I32Const(abi::STRING_ROOT_SLOT_BYTES as i32),
+        I::I32Add,
+        I::LocalSet(cursor),
+        I::Br(0),
+        I::End,
+        I::End,
+        I::LocalGet(cursor),
+        I::I64Const(0),
+        I::I64Store(strings::ROOT),
+    ]
+}
 
 impl<'a> Emitter<'a> {
     fn resume(&self) -> Result<Resume<'a>> {
@@ -550,6 +588,20 @@ impl<'a> Emitter<'a> {
             I::GlobalGet(resources.generation),
             I::I32Store(word(frame::STATUS_FIELD, true)),
         ]);
+        if layout.generator.is_some() {
+            // A generator frame belongs to its generator object: the table
+            // slot rooted it only while the creator allocated its cells. It
+            // leaves the table, so `varta_resume` can never reach it.
+            self.code.extend(release_slot(
+                resources,
+                self.temporary,
+                self.string_temporary,
+            ));
+            self.end_frame();
+            self.code
+                .extend([I::LocalGet(self.string_temporary), I::Return]);
+            return Ok(());
+        }
         self.end_frame();
         self.code.extend([
             I::LocalGet(self.string_temporary),
@@ -700,6 +752,27 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
     ]);
     for (layout, body) in dispatch.layouts.iter().zip(dispatch.bodies) {
         let machine = &dispatch.machines[&layout.function];
+        if layout.generator.is_some() {
+            // Generator frames are resumed only by their typed step
+            // functions and never enter the live table outside their
+            // creator, so ownership already fails. The branch still traps
+            // before any effect; the unreachable call pairs the body with
+            // its layout for admission.
+            code.extend([
+                I::LocalGet(PTR),
+                I::I32Load(strings::WORD),
+                I::I32Const(layout.id as i32),
+                I::I32Eq,
+                I::If(BlockType::Empty),
+                I::Unreachable,
+                I::LocalGet(HANDLE),
+                I::LocalGet(KIND),
+                I::LocalGet(VALUE),
+                I::Call(*body),
+                I::End,
+            ]);
+            continue;
+        }
         code.extend([
             I::LocalGet(PTR),
             I::I32Load(strings::WORD),
@@ -966,5 +1039,183 @@ pub(super) fn test_exports(
     }
     if let Some(collect) = helpers.get(&strings::Helper::Collect) {
         exports.export(TEST_COLLECT, wasm_encoder::ExportKind::Func, *collect);
+    }
+}
+
+/// The closed step function of generator type `generator` (v33):
+/// `(generator:i64, completion:i32, value:i64) -> outcome`. It applies the
+/// ECMAScript generator state rules (executing, completed, not started) before
+/// any effect, then resumes the frame by a direct call chosen by its layout id
+/// among that type's generator layouts. An uncaught exception stays in the
+/// channel for the caller to propagate; the frame is completed either way.
+pub(super) fn step_function(
+    generator: u32,
+    layouts: &[Layout],
+    bodies: &[u32],
+    pending: u32,
+) -> wasm_encoder::Function {
+    use ir::GeneratorOutcome as Out;
+    const HANDLE: u32 = 0;
+    const KIND: u32 = 1;
+    const VALUE: u32 = 2;
+    const PTR: u32 = 3;
+    let status = |code: &mut Vec<I<'static>>, value: u32| {
+        code.extend([
+            I::LocalGet(PTR),
+            I::I32Const(value as i32),
+            I::I32Store(word(frame::STATUS_FIELD, false)),
+        ]);
+    };
+    let done_without_body = |code: &mut Vec<I<'static>>| {
+        code.extend([
+            I::LocalGet(KIND),
+            I::I32Const(Completion::Normal as i32),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+            I::I32Const(Out::DoneUndefined as i32),
+            I::Return,
+            I::End,
+            I::LocalGet(KIND),
+            I::I32Const(Completion::Return as i32),
+            I::I32Eq,
+            I::If(BlockType::Result(ValType::I32)),
+            I::I32Const(Out::DoneInput as i32),
+            I::Else,
+            I::I32Const(Out::ThrowInput as i32),
+            I::End,
+            I::Return,
+        ]);
+    };
+    let mut code: Vec<I<'static>> = vec![
+        I::LocalGet(HANDLE),
+        I::I32WrapI64,
+        I::LocalSet(PTR),
+        // Executing: re-entry is a TypeError in the caller.
+        I::LocalGet(PTR),
+        I::I32Load(word(frame::STATUS_FIELD, false)),
+        I::I32Const(frame::STATUS_RUNNING as i32),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+        I::I32Const(Out::Running as i32),
+        I::Return,
+        I::End,
+        I::LocalGet(PTR),
+        I::I32Load(word(frame::STATUS_FIELD, false)),
+        I::I32Const(frame::STATUS_COMPLETED as i32),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+    ];
+    done_without_body(&mut code);
+    code.extend([
+        I::End,
+        // Not started: `return`/`throw` complete it without entering the body.
+        I::LocalGet(PTR),
+        I::I32Load(word(frame::CONTROL_FIELD, true)),
+        I::I32Const(frame::INITIAL_STATE as i32),
+        I::I32Eq,
+        I::LocalGet(KIND),
+        I::I32Const(Completion::Normal as i32),
+        I::I32Ne,
+        I::I32And,
+        I::If(BlockType::Empty),
+    ]);
+    status(&mut code, frame::STATUS_COMPLETED);
+    done_without_body(&mut code);
+    code.push(I::End);
+    status(&mut code, frame::STATUS_RUNNING);
+    code.extend([
+        I::LocalGet(PTR),
+        I::I64Const(0),
+        I::I64Store(records::field(frame::COMPLETION_FIELD)),
+        I::Block(BlockType::Empty),
+    ]);
+    for (layout, body) in layouts.iter().zip(bodies) {
+        if layout.generator != Some(generator) {
+            continue;
+        }
+        code.extend([
+            I::LocalGet(PTR),
+            I::I32Load(strings::WORD),
+            I::I32Const(layout.id as i32),
+            I::I32Eq,
+            I::LocalGet(PTR),
+            I::I32Load(word(frame::CONTROL_FIELD, false)),
+            I::I32Const(layout.function as i32),
+            I::I32Eq,
+            I::I32And,
+            I::If(BlockType::Empty),
+            I::LocalGet(HANDLE),
+            I::LocalGet(KIND),
+            I::LocalGet(VALUE),
+            I::Call(*body),
+            I::Br(1),
+            I::End,
+        ]);
+    }
+    // A frame of another type or layout never reaches this step function.
+    code.extend([
+        I::Unreachable,
+        I::End,
+        I::GlobalGet(pending),
+        I::If(BlockType::Empty),
+    ]);
+    status(&mut code, frame::STATUS_COMPLETED);
+    code.extend([
+        I::I32Const(Out::Returned as i32),
+        I::Return,
+        I::End,
+        I::LocalGet(PTR),
+        I::I32Load(word(frame::STATUS_FIELD, false)),
+        I::I32Const(frame::STATUS_SUSPENDED as i32),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+        I::I32Const(Out::Yielded as i32),
+        I::Return,
+        I::End,
+    ]);
+    status(&mut code, frame::STATUS_COMPLETED);
+    code.push(I::I32Const(Out::Returned as i32));
+    let mut function = wasm_encoder::Function::new([(1, ValType::I32)]);
+    for instruction in &code {
+        function.instruction(instruction);
+    }
+    function.instruction(&I::End);
+    function
+}
+
+impl Emitter<'_> {
+    /// Push a generator step: the generator handle stays expression-rooted
+    /// while the frame runs; the input travels as one packed slot.
+    pub(super) fn generator_step(
+        &mut self,
+        generator: &Expr,
+        completion: Completion,
+        value: &Expr,
+    ) -> Result<()> {
+        let Type::Generator(id) = generator.ty else {
+            return Err(CompilerError::Internal("step of a non-generator".into()));
+        };
+        let step = *self
+            .generator_steps
+            .get(id as usize)
+            .ok_or_else(|| CompilerError::Internal("missing generator step".into()))?;
+        self.expr(generator)?;
+        self.code.push(I::I32Const(completion as i32));
+        self.expr(value)?;
+        self.pack_slot(value.ty);
+        self.code.push(I::Call(step));
+        self.check_exception()
+    }
+    /// The value in the frame's completion cell after the latest step.
+    pub(super) fn generator_value(&mut self, generator: &Expr, ty: Type) -> Result<()> {
+        self.expr(generator)?;
+        self.code.extend([
+            I::I32WrapI64,
+            I::I64Load(records::field(frame::COMPLETION_FIELD)),
+            I::I32WrapI64,
+            I::I64Load(records::field(0)),
+        ]);
+        self.unpack_slot(ty);
+        Ok(())
     }
 }

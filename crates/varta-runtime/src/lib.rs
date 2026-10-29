@@ -50,6 +50,8 @@ mod exit_flow_tests;
 mod frame_admission_tests;
 mod frames;
 #[cfg(test)]
+mod generator_tests;
+#[cfg(test)]
 mod guest_truth_tests;
 #[cfg(test)]
 mod interface_extends_tests;

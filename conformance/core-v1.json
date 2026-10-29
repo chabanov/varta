@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v32",
+  "profile": "checked-f64-utf16-v33",
   "features": [
     {
       "id": "binary64",
@@ -921,8 +921,32 @@
       ],
       "baseline": {
         "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Generators, iterators and suspended frames are not implemented."
+        "diagnostic": "type_error",
+        "reason": "Generator return types are not inferred: v33 requires an explicit Generator<T, TReturn, TNext> return annotation."
+      }
+    },
+    {
+      "id": "generators",
+      "feature": "generators",
+      "path": "cases/generators.ts",
+      "sha256": "21c172e69b7c0fb88d360d499dab042762c68841476b06d18a1192d81a2f3a32",
+      "stdout": [
+        "varta log: 0",
+        "varta log: 2",
+        "varta log: 5",
+        "varta log: true",
+        "varta log: total 9",
+        "varta log: true",
+        "varta log: ab",
+        "varta log: stopped",
+        "varta log: not started",
+        "varta log: 3",
+        "varta log: finally 9",
+        "varta log: closed",
+        "varta log: finally 0"
+      ],
+      "baseline": {
+        "status": "supported"
       }
     },
     {

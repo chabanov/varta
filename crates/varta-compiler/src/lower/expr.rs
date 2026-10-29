@@ -335,6 +335,9 @@ impl Lower<'_> {
                 }
                 return self.instance_of_error(binary);
             }
+            ast::Expr::Yield(expression) if self.types.profile.generators() => {
+                return self.yield_expression(expression);
+            }
             ast::Expr::Class(_) if self.types.profile.classes() => {
                 return Err(unsupported("class expression"));
             }
@@ -556,6 +559,15 @@ impl Lower<'_> {
                     return self.class_method_call(call, member, None);
                 }
             }
+        }
+        if self.types.profile.generators()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let ast::Expr::Member(member) = stmt::unparen(callee)
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && matches!(method.sym.as_ref(), "next" | "return" | "throw")
+        {
+            let receiver = self.expr(&member.obj)?;
+            return self.generator_method(call, receiver, method.sym.as_ref());
         }
         if let Some(generic) = self.generic_callee(call) {
             return self.generic_call(call, generic, expected);

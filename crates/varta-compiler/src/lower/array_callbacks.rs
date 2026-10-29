@@ -255,6 +255,7 @@ impl Lower<'_> {
             captures: BTreeMap::new(),
             cells: Default::default(),
             guarded: Default::default(),
+            generator: None,
         };
         let body = child.array_iteration(&iteration, signature.params.len(), signature.result)?;
         let mut operands = vec![base, callback];
@@ -275,6 +276,7 @@ impl Lower<'_> {
             cells: Default::default(),
             captures: vec![],
             environment: false,
+            generator: None,
         };
         child.generated.insert(index, function);
         if ignored.is_empty() {

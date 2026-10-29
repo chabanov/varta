@@ -158,6 +158,18 @@ fn layout(code: u32) -> FrameLayout {
         result: Some(0),
         return_input: Some(FrameInput::Float64),
         exception: 0,
+        generator: false,
+    }
+}
+fn generator_layout(code: u32) -> FrameLayout {
+    FrameLayout {
+        states: vec![FrameState {
+            input: FrameInput::Guest,
+            yielded: 0,
+        }],
+        return_input: Some(FrameInput::Guest),
+        generator: true,
+        ..layout(code)
     }
 }
 
@@ -192,6 +204,9 @@ fn frame_catalogs_are_versioned_and_older_catalogs_stay_readable() {
         |l: &mut FrameLayout| l.result = Some(1),
         |l: &mut FrameLayout| l.states = vec![l.states[0].clone(); MAX_SUSPENSION_STATES + 1],
         |l: &mut FrameLayout| l.slots = vec![l.slots[0].clone(); MAX_FRAME_BINDINGS + 1],
+        // Guest inputs exist exactly on generator rows (v33).
+        |l: &mut FrameLayout| l.states[0].input = FrameInput::Guest,
+        |l: &mut FrameLayout| l.generator = true,
     ] {
         let mut row = layout(4);
         change(&mut row);
@@ -199,5 +214,38 @@ fn frame_catalogs_are_versioned_and_older_catalogs_stay_readable() {
     }
     for catalog in invalid {
         assert!(catalog.to_bytes().is_err(), "{catalog:?}");
+    }
+}
+
+#[test]
+fn generator_frame_rows_take_only_guest_inputs() {
+    let row = generator_layout(4);
+    let bytes = catalog(FRAME_CATALOG_VERSION, vec![row.clone()])
+        .to_bytes()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("\"generator\":true"));
+    assert_eq!(
+        FunctionCatalog::from_frame_bytes(&bytes).unwrap().frames,
+        [row]
+    );
+    // Older rows keep their exact serialization.
+    let plain = catalog(FRAME_CATALOG_VERSION, vec![layout(4)])
+        .to_bytes()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&plain).contains("generator"));
+    assert!(!FrameInput::Guest.admits(0));
+    for change in [
+        |l: &mut FrameLayout| l.return_input = None,
+        |l: &mut FrameLayout| l.return_input = Some(FrameInput::Undefined),
+        |l: &mut FrameLayout| l.states[0].input = FrameInput::Float64,
+    ] {
+        let mut row = generator_layout(4);
+        change(&mut row);
+        assert!(
+            catalog(FRAME_CATALOG_VERSION, vec![row])
+                .to_bytes()
+                .is_err(),
+            "invalid generator row"
+        );
     }
 }

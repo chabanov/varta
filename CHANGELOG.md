@@ -11,6 +11,19 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Synchronous generators under opt-in v33 (selector `generators`, K4.4 step 2):
+  annotated top-level and generic `function*` declarations
+  (`Generator<T, TReturn, TNext>`, with `void`/`undefined` defaults instead of
+  `any`), `yield` in normalized expression positions and in `try`, `catch`,
+  `finally` and `switch` case bodies, the `next`/`return`/`throw` protocol with
+  ECMAScript state rules and the re-entry `TypeError`, `IteratorResult<T,
+  TReturn>` records and `for...of` that closes the generator on `break`,
+  `return` or a throw so its `finally` blocks run first. A generator object is
+  its frame handle without a value tag (value ABI unchanged); it is resumed by
+  a closed per-type step function and never through `varta_resume`. Frame
+  catalog rows gain `generator` and the `Guest` input class. `yield*`, async
+  generators, generator methods and generators inside aggregates or unions are
+  rejected with diagnostics. Behavior matches pinned Node 24 logs.
 - Runtime admission of the K4.4 frame surface under opt-in v33 (selector
   `resumable_frames`). Runtime preflight and artifact validation share one rule
   set: function catalog version 2 is read only for v33, `varta_resume` must be a

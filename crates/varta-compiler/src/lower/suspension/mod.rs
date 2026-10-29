@@ -33,7 +33,7 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
         .functions
         .iter()
         .enumerate()
-        .filter(|(_, function)| walk::body_suspends(&function.body))
+        .filter(|(_, function)| function.generator.is_some() || walk::body_suspends(&function.body))
         .map(|(index, _)| index)
         .collect();
     if suspendable.is_empty() {
@@ -52,6 +52,11 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
     } = program;
     for index in suspendable {
         let function = &mut functions[index];
+        let generator = function.generator;
+        if let Some(id) = generator {
+            // Calls created the generator object; the frame returns `TReturn`.
+            function.result = types.generators[id as usize].returned;
+        }
         let namer = construct::Namer::new(graph, &function.source);
         let body = std::mem::take(&mut function.body);
         let body = normalize::Normalizer::new(&mut function.locals, &namer, &function.source)
@@ -62,6 +67,7 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
             source: &function.source,
             exception,
             result: function.result,
+            generator,
         }
         .build(function.span, body)?;
         // State, completion and input locals are re-initialized, never saved.
@@ -83,6 +89,28 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
 fn admissible(program: &ir::Program, index: usize) -> Result<()> {
     let function = &program.functions[index];
     let profile = program.types.profile;
+    if function.generator.is_some() {
+        let reason = if function.environment || function.self_slot.is_some() {
+            Some("generator closure")
+        } else if function.receiver.is_some() {
+            Some("generator method")
+        } else if function.shape.extended() {
+            Some("generator with optional or rest parameters")
+        } else {
+            None
+        };
+        return match reason {
+            Some(reason) => Err(function.source.locate(
+                CompilerError::Unsupported {
+                    kind: reason.into(),
+                    detail: "outside the synchronous generator subset of checked-f64-utf16-v33"
+                        .into(),
+                },
+                function.span,
+            )),
+            None => Ok(()),
+        };
+    }
     let reason = if !(profile.exceptions() && profile.closures() && profile.property_deletion()) {
         Some("a profile without frame metadata (requires checked-f64-utf16-v30)")
     } else if index == program.main
@@ -119,18 +147,28 @@ fn references(program: &ir::Program, suspendable: &[usize]) -> Result<()> {
     for function in &program.functions {
         let mut found = None;
         walk::statements(&function.body, &mut |e| {
+            // Calling a `function*` creates its generator object.
             let target = match &e.kind {
-                E::Call(index, _) | E::FunctionRef { index, .. } => Some(*index),
+                E::Call(index, _) if program.functions[*index].generator.is_none() => Some(*index),
+                E::FunctionRef { index, .. } => Some(*index),
                 _ => None,
             };
-            if found.is_none() && target.is_some_and(|t| suspendable.contains(&t)) {
-                found = Some(e.span);
+            if found.is_none()
+                && let Some(target) = target.filter(|t| suspendable.contains(t))
+            {
+                found = Some((e.span, target));
             }
         });
-        if let Some(span) = found {
+        if let Some((span, target)) = found {
+            let generator = program.functions[target].generator.is_some();
             return Err(function.source.locate(
                 CompilerError::Unsupported {
-                    kind: "reference to a function containing a suspension point".into(),
+                    kind: if generator {
+                        "generator function as a value"
+                    } else {
+                        "reference to a function containing a suspension point"
+                    }
+                    .into(),
                     detail: DETAIL.into(),
                 },
                 span,

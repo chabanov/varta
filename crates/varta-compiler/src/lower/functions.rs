@@ -358,6 +358,7 @@ impl Lower<'_> {
             captures: Default::default(),
             cells: Default::default(),
             guarded: Default::default(),
+            generator: None,
         };
         if let Some(ty) = receiver {
             child.declare("this", Some(ty), true, false)?;
@@ -436,6 +437,7 @@ impl Lower<'_> {
             cells: std::mem::take(&mut child.cells),
             captures: captured.iter().map(|binding| binding.slot).collect(),
             environment: child.types.profile.closures(),
+            generator: None,
             source: child.source.clone(),
             span: arrow.span,
             params: physical_params,

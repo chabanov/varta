@@ -17,7 +17,13 @@ pub(super) fn expression(expr: &Expr, visit: &mut dyn FnMut(&Expr)) {
             statements(body, visit);
         }
         E::ValueBlock { body, .. } => statements(body, visit),
+        E::GeneratorStep {
+            generator, value, ..
+        } => [generator, value]
+            .into_iter()
+            .for_each(|v| expression(v, visit)),
         E::FunctionCheck { value, .. }
+        | E::GeneratorValue(value)
         | E::Suspend { value, .. }
         | E::StringTrim { value, .. }
         | E::ArrayEnumerate { value, .. }

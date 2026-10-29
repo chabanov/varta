@@ -171,14 +171,16 @@ impl LanguageProfile {
     /// K4.4 step 1 runtime admission (v33): continuation frames, function
     /// catalog version 2 in preflight and the exported `varta_resume`
     /// dispatcher, declared by the v33 host ABI and checked by
-    /// [`crate::function::admission`]. No source syntax reaches it before
+    /// [`crate::function::admission`]. Source reaches frames through
     /// [`Self::generators`].
     #[must_use]
     pub fn resumable_frames(self) -> bool {
         self == Self::CheckedF64Utf16V33
     }
-    /// K4.4 step 2 (v33): synchronous `function*`, `yield` and the generator
-    /// `next`/`throw`/`return` protocol over resumable frames. Admits nothing yet.
+    /// K4.4 step 2 (v33): synchronous `function*` declarations with a
+    /// `Generator<T, TReturn, TNext>` annotation, `yield`, the generator
+    /// `next`/`throw`/`return` protocol and `for...of` with iterator closing,
+    /// over guest-resumed frames. Generators add no value tag or value ABI.
     #[must_use]
     pub fn generators(self) -> bool {
         self == Self::CheckedF64Utf16V33

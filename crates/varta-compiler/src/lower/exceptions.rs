@@ -33,6 +33,10 @@ impl Lower<'_> {
             return Err(unsupported("throw requires checked-f64-utf16-v7"));
         }
         let value = self.expr(&statement.arg)?;
+        Ok(S::Throw(self.thrown(value)?))
+    }
+    /// Check a thrown value and widen it to the exception-channel union.
+    pub(super) fn thrown(&mut self, value: Expr) -> Result<Expr> {
         if unions::members(value.ty, self.types).iter().any(|ty| {
             (!unions::primitive(*ty)
                 && !(self.types.profile.bigint_values() && *ty == Type::BigInt))
@@ -45,7 +49,7 @@ impl Lower<'_> {
             ));
         }
         let ty = self.exception_type()?;
-        Ok(S::Throw(unions::widen(value, Some(ty), self.types)?))
+        unions::widen(value, Some(ty), self.types)
     }
     pub(super) fn try_statement(&mut self, statement: &ast::TryStmt) -> Result<S> {
         if !self.types.profile.exceptions() {

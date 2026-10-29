@@ -39,6 +39,9 @@ pub const MAX_FRAME_BINDINGS: usize = SEGMENT_BINDINGS * MAX_FRAME_SEGMENTS;
 pub const MAX_SUSPENSION_STATES: usize = 256;
 /// Permanent root-table slots retaining live (suspended or running) frames.
 pub const MAX_LIVE_FRAMES: usize = 64;
+/// Distinct `Generator<T, TReturn, TNext>` types per module (v33); each one owns
+/// a closed step function over the generator frames of that type.
+pub const MAX_GENERATOR_TYPES: usize = 64;
 /// State zero means "created, body not entered yet".
 pub const INITIAL_STATE: u32 = 0;
 pub const STATUS_SUSPENDED: u32 = 1;
@@ -83,6 +86,9 @@ pub enum FrameInput {
     Boolean,
     /// Canonical 0.
     Undefined,
+    /// Delivered only by guest code through a generator's typed step function
+    /// (v33 `generators`); `varta_resume` admits no host input for it.
+    Guest,
 }
 impl FrameInput {
     pub fn admits(self, value: u64) -> bool {
@@ -90,6 +96,7 @@ impl FrameInput {
             Self::Float64 => true,
             Self::Boolean => value <= 1,
             Self::Undefined => value == 0,
+            Self::Guest => false,
         }
     }
 }

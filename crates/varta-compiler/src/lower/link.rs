@@ -418,6 +418,14 @@ pub(super) fn body(
     ),
 ) -> Result<ir::Function> {
     let (generated, next_function, call_effects) = synthesized;
+    // A `function*` body returns its `TReturn`; calls see the generator type.
+    let generator = match signature.result {
+        Type::Generator(id) if declaration.function.is_generator => Some(id),
+        _ => None,
+    };
+    let body_result = generator.map_or(signature.result, |id| {
+        types.generators[id as usize].returned
+    });
     let mut lower = Lower {
         source,
         types,
@@ -439,7 +447,7 @@ pub(super) fn body(
         control: Default::default(),
         guard_blocked: Default::default(),
         outer_narrows: Default::default(),
-        result: signature.result,
+        result: body_result,
         infer_returns: false,
         entry,
         loops: 0,
@@ -455,6 +463,7 @@ pub(super) fn body(
         captures: Default::default(),
         cells: Default::default(),
         guarded: Default::default(),
+        generator,
     };
     if let Some(ty) = signature.receiver {
         lower.declare("this", Some(ty), true, false)?;
@@ -492,6 +501,7 @@ pub(super) fn body(
         cells: lower.cells,
         captures: vec![],
         environment: false,
+        generator: lower.generator,
         source: source.clone(),
         span: declaration.span(),
         params: signature

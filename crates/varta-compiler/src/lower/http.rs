@@ -233,6 +233,7 @@ pub(super) fn collect(
                     cells: Default::default(),
                     captures: vec![],
                     environment: false,
+                    generator: None,
                     source: unit.source.clone(),
                     span: call.span,
                     params: vec![Type::String],

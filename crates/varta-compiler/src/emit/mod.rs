@@ -92,6 +92,8 @@ struct Emitter<'a> {
     self_functions: &'a BTreeSet<usize>,
     /// Present only while emitting a suspendable function's resume body.
     suspension: Option<frames::Resume<'a>>,
+    /// Step function of each generator type id (v33).
+    generator_steps: &'a [u32],
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
@@ -336,7 +338,8 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             ))
         })
         .collect();
-    let resume_type = (!frame_layouts.is_empty()).then(|| {
+    let generator_types = program.types.generators.len();
+    let resume_type = (!frame_layouts.is_empty() || generator_types > 0).then(|| {
         (
             intern((vec![ValType::I64, ValType::I32, ValType::I64], vec![])),
             intern((
@@ -376,7 +379,13 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         for _ in &frame_layouts {
             functions.function(body);
         }
-        functions.function(dispatcher);
+        if !frame_layouts.is_empty() {
+            functions.function(dispatcher);
+        }
+        // Generator step functions share the dispatcher signature.
+        for _ in 0..generator_types {
+            functions.function(dispatcher);
+        }
     }
     module.section(&functions);
     let mut memory = wasm_encoder::MemorySection::new();
@@ -504,6 +513,10 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         .map(|id| frames_begin + id)
         .collect();
     let dispatcher = frames_begin + frame_layouts.len() as u32;
+    let steps_begin = dispatcher + u32::from(!frame_layouts.is_empty());
+    let generator_steps: Vec<u32> = (0..generator_types as u32)
+        .map(|id| steps_begin + id)
+        .collect();
     let mut exports = wasm_encoder::ExportSection::new();
     if !frame_layouts.is_empty() {
         exports.export(
@@ -682,6 +695,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             environment_functions: &environment_functions,
             self_functions: &self_functions,
             suspension: None,
+            generator_steps: &generator_steps,
         };
         let frame_layout = frame_layouts.iter().find(|layout| layout.function == index);
         if let (Some(layout), Some(resources)) = (frame_layout, frame_resources) {
@@ -754,6 +768,20 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             allocate: helpers[&strings::Helper::Allocate],
             bindings: &binding_types,
         })?);
+    }
+    if let Some(exceptions) = exception_globals {
+        for id in 0..generator_types as u32 {
+            code.function(&frames::step_function(
+                id,
+                &frame_layouts,
+                &resume_bodies,
+                exceptions.pending,
+            ));
+        }
+    } else if generator_types > 0 {
+        return Err(CompilerError::Internal(
+            "generators without an exception channel".into(),
+        ));
     }
     module.section(&code);
     let mut data = wasm_encoder::DataSection::new();
@@ -872,6 +900,7 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
             | Type::String
             | Type::Record(_)
             | Type::Class(_)
+            | Type::Generator(_)
             | Type::Array(_)
             | Type::Union(_)
             | Type::ReferenceUnion(_) => vec![ValType::I64],

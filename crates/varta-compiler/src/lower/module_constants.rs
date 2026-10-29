@@ -141,6 +141,7 @@ pub(super) fn link_module(
             captures: Default::default(),
             cells: Default::default(),
             guarded: Default::default(),
+            generator: None,
         };
         let (body, locals) =
             lower.initializers(chunk, &scope, (&mut linked.stored, &mut linked.declared))?;
@@ -155,6 +156,7 @@ pub(super) fn link_module(
             cells: lower.cells,
             captures: vec![],
             environment: false,
+            generator: None,
             source: source.clone(),
             span,
             params: vec![],

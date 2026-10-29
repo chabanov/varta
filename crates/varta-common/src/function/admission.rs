@@ -283,7 +283,9 @@ fn layout_bindings(
     {
         return Err(LayoutMismatch::YieldedBinding);
     }
+    // A generator frame (v33) takes every input from guest code only.
     let expected = match layout.result {
+        _ if layout.generator => Some(frame::FrameInput::Guest),
         None => Some(frame::FrameInput::Undefined),
         Some(id) if binding(id).result => return Err(LayoutMismatch::ResultBinding),
         Some(id) => match ty(id) {

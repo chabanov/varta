@@ -103,16 +103,8 @@ fn unsupported_positions_fail_with_construct_specific_diagnostics() {
             "call to Math.hypot",
         ),
         (
-            "function t(): number { try { return 1; } catch (e) { return __varta_suspend(1); } }",
-            "catch clause",
-        ),
-        (
-            "function t(): number { try { return 1; } finally { __varta_suspend(1); } }",
-            "finally clause",
-        ),
-        (
-            "function t(x: number): number { switch (x) { case 1: return __varta_suspend(1); } return 0; }",
-            "switch case",
+            "function t(x: number): number { switch (x) { case __varta_suspend(1): return 1; } return 0; }",
+            "switch case test",
         ),
         (
             "function t(): number { let i = 0; do { i = i + 1; } while (__varta_suspend(i) > 0); return i; }",
@@ -144,6 +136,17 @@ fn unsupported_positions_fail_with_construct_specific_diagnostics() {
             message.contains(&format!("unsupported suspension point inside {construct}")),
             "{construct}: {message}"
         );
+    }
+}
+
+#[test]
+fn catch_finally_and_switch_case_bodies_suspend() {
+    for body in [
+        "function t(): number { try { return 1; } catch (e) { return __varta_suspend(1); } }",
+        "function t(): number { try { return 1; } finally { __varta_suspend(1); } }",
+        "function t(x: number): number { switch (x) { case 1: return __varta_suspend(1); default: return 2; } return 0; }",
+    ] {
+        compile(&program(body)).unwrap();
     }
 }
 

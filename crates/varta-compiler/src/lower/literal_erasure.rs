@@ -24,6 +24,16 @@ pub(super) fn erase_program(program: &mut ir::Program) {
     for element in &mut types.arrays {
         *element = eraser.ty(*element);
     }
+    for generator in &mut types.generators {
+        for ty in [
+            &mut generator.yielded,
+            &mut generator.returned,
+            &mut generator.next,
+            &mut generator.result,
+        ] {
+            *ty = eraser.ty(*ty);
+        }
+    }
     for function in &mut program.functions {
         eraser.signature(
             &mut function.receiver,
@@ -225,7 +235,11 @@ impl Eraser {
                 self.statements(body);
             }
             E::ValueBlock { body, .. } => self.statements(body),
+            E::GeneratorStep {
+                generator, value, ..
+            } => self.boxed(&mut [generator, value]),
             E::FunctionCheck { value, .. }
+            | E::GeneratorValue(value)
             | E::Suspend { value, .. }
             | E::StringTrim { value, .. }
             | E::ArrayEnumerate { value, .. }

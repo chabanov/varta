@@ -221,7 +221,8 @@ pub(super) fn declare(
     let function = &declaration.function;
     let span = declaration.ident.span;
     let name = declaration.ident.sym.to_string();
-    let rejected = if function.is_async || function.is_generator {
+    // Synchronous generators instantiate like other functions (v33).
+    let rejected = if function.is_async || function.is_generator && !types.profile.generators() {
         Some("async or generator generic function")
     } else if function.this_param.is_some() {
         Some("generic function with a this parameter")

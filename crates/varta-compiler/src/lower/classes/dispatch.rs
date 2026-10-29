@@ -228,6 +228,7 @@ pub(in crate::lower) fn dispatch_bodies(
             cells: Default::default(),
             captures: Vec::new(),
             environment: false,
+            generator: None,
         });
     }
     Ok(())
