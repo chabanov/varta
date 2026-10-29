@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v31",
+  "profile": "checked-f64-utf16-v32",
   "features": [
     {
       "id": "binary64",
@@ -384,6 +384,43 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md"
+    },
+    {
+      "id": "module-constants",
+      "title": "Module-scope constant declarations",
+      "core": [
+        "CORE-02",
+        "CORE-12"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-let-and-const-declarations"
+    },
+    {
+      "id": "literal-types",
+      "title": "String, number and boolean literal types",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "module-reexports",
+      "title": "Explicit and star re-exports",
+      "core": [
+        "CORE-12"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-resolveexport"
+    },
+    {
+      "id": "template-literals",
+      "title": "Untagged template literals",
+      "core": [
+        "CORE-01"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-template-literals"
     }
   ],
   "cases": [
@@ -720,7 +757,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Class declarations and constructor/instance semantics are not implemented."
+        "reason": "Class declarations inside functions are not admitted; v32 admits top-level classes only."
       }
     },
     {
@@ -1557,6 +1594,92 @@
         "varta log: same:3",
         "varta log: {\"name\":\"json\",\"note\":\"n\",\"score\":2}",
         "varta log: 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "module-constants",
+      "feature": "module-constants",
+      "path": "cases/module-constants.ts",
+      "sha256": "8514efa84bf72e2013946852153e54d9c9a82b48f620bff1720c05ed5d03a102",
+      "stdout": [
+        "varta log: uarp-sdk/0.12.0",
+        "varta log: agents:read none 2",
+        "varta log: 2 2",
+        "varta log: {\"page\":51,\"retries\":2}",
+        "varta log: 0.12.0",
+        "varta log: 18446744073709551617",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "literal-types",
+      "feature": "literal-types",
+      "path": "cases/literal-types.ts",
+      "sha256": "02377d37f3d8bd1da9db518f07804afd6b67fe58d9c9af5d0823c10230241e77",
+      "stdout": [
+        "varta log: GET /agents 200",
+        "varta log: DELETE /agents/1 204",
+        "varta log: POST /runs missing",
+        "varta log: POST has 4 letters",
+        "varta log: 1",
+        "varta log: {\"method\":\"GET\",\"path\":\"/agents\",\"expect\":200,\"cached\":false}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-inheritance",
+      "feature": "classes",
+      "path": "cases/class-inheritance.ts",
+      "sha256": "e48df73863848d0dcbfdbd53b263f2c04b9cf8a1b3c78f89c762f6e1de4cba84",
+      "stdout": [
+        "varta log: dot/0 area 0",
+        "varta log: rect/4 area 6",
+        "varta log: square rect/4 area 1",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: {\"name\":\"rect\",\"sides\":4,\"width\":1,\"height\":2}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-literal-constants",
+      "feature": "classes",
+      "path": "cases/class-literal-constants.ts",
+      "sha256": "ac2438621e4dd4a756370d0bf6c2e9171aaaada8e1d4e5d4594327f228916bec",
+      "stdout": [
+        "varta log: https://api.example/agents?auth=apiKey&retries=2",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: https://api.example/runs?auth=none&retries=0",
+        "varta log: {\"baseUrl\":\"https://api.example\",\"auth\":\"none\",\"retries\":0}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "template-literals",
+      "feature": "template-literals",
+      "path": "cases/template-literals.ts",
+      "sha256": "6c26931f830563b0c427beb612845aaf7edb867b60d50cb49e3e5d714783da81",
+      "stdout": [
+        "varta log: /api/v1/agents/42/activate",
+        "varta log: a-b-c",
+        "varta log: 3 ac",
+        "varta log: 0.30000000000000004|0|1e+21|null|undefined|true|100000000000000000000",
+        "varta log: crab \ud83e\udd80 `tick` ${literal}",
+        "varta log: [7]",
+        "varta log: 2"
       ],
       "baseline": {
         "status": "supported"

@@ -1,6 +1,6 @@
 # Checked core compatibility inventory
 
-This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v31** profile
+This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v32** profile
 and the **checked-ts-main-v1** source model. Its original cases are checked
 TypeScript programs with a Varta `main` entry point and observable runtime output.
 Feature rows identify their CORE work streams and either an ECMAScript section or
@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 41 feature rows and 79 cases:
-68 pass, 11 are known unsupported, and 7 feature rows have no case. These counts
+executable cases. The current inventory has 45 feature rows and 84 cases:
+73 pass, 11 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -152,3 +152,14 @@ ordering/aliases and partial mutation before a standard array-length error.
 All match Node.js v24.20.0. Separate runtime tests exercise checked storage guards
 and declared layout restrictions; these are not promoted to claims of arbitrary
 JavaScript property creation or generic Object.assign support.
+
+The v32 pilot batch moves the pinned profile from v31 to v32; every earlier case
+keeps its status. Four feature rows are added (module constants, literal types,
+module re-exports, template literals) and five original cases: module constants,
+literal types, class inheritance and dispatch on the existing classes row, template
+literals, and one case combining classes, literal-typed fields, module constants
+and template substitutions. All five outputs match Node.js v24.20.0 type stripping
+with booleans normalized to 0/1. The function-local `class-instance` case stays a
+known gap, because v32 admits top-level classes only. The re-export row has no
+case: this executor compiles single-file sources without a module loader, so
+re-exports are covered by compiler, public-API and CLI module tests instead.
