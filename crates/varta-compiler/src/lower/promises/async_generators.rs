@@ -154,12 +154,15 @@ pub(in crate::lower) fn intern(
         optional: false,
     };
     let exception = exceptions::exception_union(types)?;
+    // `return()` from closing a `for await` carries `undefined` whatever the
+    // `TReturn`, so requests and the completion value admit it.
+    let closing = unions::intern(vec![stored(returned), Type::Undefined], types)?;
     let request = records::intern(
         vec![
             field(KIND_FIELD, Type::Float64),
             field(NEXT_FIELD, next),
             field(PROMISE_FIELD, Type::Promise(promise)),
-            field(RETURNED_FIELD, stored(returned)),
+            field(RETURNED_FIELD, closing),
             field(THROWN_FIELD, exception),
         ],
         types,
@@ -194,6 +197,7 @@ pub(in crate::lower) fn intern(
             state,
             request,
             promise,
+            returned: closing,
         }),
         body: false,
     });
@@ -223,8 +227,10 @@ impl Shapes {
     fn frame(&self) -> Type {
         Type::Generator(self.info.body)
     }
+    /// `TReturn | undefined`: the value of a return request and of the
+    /// body's completion.
     fn returned(&self) -> Type {
-        stored(self.generator.returned)
+        self.info.returned
     }
     /// `T | TReturn | undefined`, the `value` of an iterator result.
     fn value(&self, types: &ir::ValueTypes) -> Result<Type> {
@@ -363,84 +369,87 @@ fn discard(value: Expr) -> S {
 /// the body's exit, so enclosing `finally` blocks run first. Afterwards the
 /// only returns inside are the state machine's `Return` deliveries, which
 /// return the state record: every `finally` keeps a pending one in a fresh
-/// local of that type (`slot`).
-fn exits(body: Vec<S>, exit: u32, result: u32, slot: &mut dyn FnMut() -> u32) -> Vec<S> {
-    body.into_iter()
-        .map(|statement| exit_statement(statement, exit, result, slot))
-        .collect()
+/// local of that type.
+struct Exits<'l, 'a> {
+    lower: &'l mut Lower<'a>,
+    exit: u32,
+    result: u32,
+    result_ty: Type,
+    state: Type,
 }
-fn exit_statement(statement: S, exit: u32, result: u32, slot: &mut dyn FnMut() -> u32) -> S {
-    let mut list = |body: Vec<S>| exits(body, exit, result, slot);
-    match statement {
-        S::Return(None) => S::BreakLabel(exit),
-        S::Return(Some(value)) => S::Block(vec![S::Set(result, value), S::BreakLabel(exit)]),
-        S::TryCatch {
-            body,
-            binding,
-            handler,
-            marker,
-        } => S::TryCatch {
-            body: list(body),
-            binding,
-            handler: list(handler),
-            marker,
-        },
-        S::TryFinally {
-            body,
-            finalizer,
-            marker,
-            completion,
-            exception,
-            result: _,
-        } => {
-            let body = list(body);
-            let finalizer = list(finalizer);
+impl Exits<'_, '_> {
+    fn list(&mut self, body: Vec<S>) -> Result<Vec<S>> {
+        body.into_iter().map(|s| self.statement(s)).collect()
+    }
+    fn statement(&mut self, statement: S) -> Result<S> {
+        Ok(match statement {
+            S::Return(None) => S::BreakLabel(self.exit),
+            S::Return(Some(value)) => S::Block(vec![
+                S::Set(
+                    self.result,
+                    unions::widen(value, Some(self.result_ty), self.lower.types)?,
+                ),
+                S::BreakLabel(self.exit),
+            ]),
+            S::TryCatch {
+                body,
+                binding,
+                handler,
+                marker,
+            } => S::TryCatch {
+                body: self.list(body)?,
+                binding,
+                handler: self.list(handler)?,
+                marker,
+            },
             S::TryFinally {
                 body,
                 finalizer,
                 marker,
                 completion,
                 exception,
-                result: Some(slot()),
+                result: _,
+            } => S::TryFinally {
+                body: self.list(body)?,
+                finalizer: self.list(finalizer)?,
+                marker,
+                completion,
+                exception,
+                result: Some(self.lower.hidden(self.state)),
+            },
+            S::Block(body) => S::Block(self.list(body)?),
+            S::Scope(slots, body) => S::Scope(slots, self.list(body)?),
+            S::Label {
+                id,
+                iteration,
+                body,
+            } => S::Label {
+                id,
+                iteration,
+                body: self.list(body)?,
+            },
+            S::If(test, yes, no) => S::If(test, self.list(yes)?, self.list(no)?),
+            S::While(test, body) => S::While(test, self.list(body)?),
+            S::DoWhile(test, body) => S::DoWhile(test, self.list(body)?),
+            S::For(init, test, update, body) => {
+                S::For(self.list(init)?, test, self.list(update)?, self.list(body)?)
             }
-        }
-        S::Block(body) => S::Block(list(body)),
-        S::Scope(slots, body) => S::Scope(slots, list(body)),
-        S::Label {
-            id,
-            iteration,
-            body,
-        } => S::Label {
-            id,
-            iteration,
-            body: list(body),
-        },
-        S::If(test, yes, no) => {
-            let yes = list(yes);
-            S::If(test, yes, list(no))
-        }
-        S::While(test, body) => S::While(test, list(body)),
-        S::DoWhile(test, body) => S::DoWhile(test, list(body)),
-        S::For(init, test, update, body) => {
-            let init = list(init);
-            let update = list(update);
-            S::For(init, test, update, list(body))
-        }
-        S::Switch {
-            value,
-            discriminant,
-            selected,
-            cases,
-        } => S::Switch {
-            value,
-            discriminant,
-            selected,
-            cases: cases
-                .into_iter()
-                .map(|(test, body)| (test, list(body)))
-                .collect(),
-        },
-        other => other,
+            S::Switch {
+                value,
+                discriminant,
+                selected,
+                cases,
+            } => S::Switch {
+                value,
+                discriminant,
+                selected,
+                cases: cases
+                    .into_iter()
+                    .map(|(test, body)| Ok((test, self.list(body)?)))
+                    .collect::<Result<_>>()?,
+            },
+            other => other,
+        })
     }
 }
 
@@ -556,11 +565,7 @@ impl Lower<'_> {
             RETURNED_FIELD,
         )?;
         let returning = self.await_value(span, returning)?;
-        let returning = if self.result == Type::Void {
-            returning
-        } else {
-            unions::widen(returning, Some(self.result), self.types)?
-        };
+        let returning = unions::widen(returning, Some(shapes.returned()), self.types)?;
         let types = &*self.types;
         let block = vec![
             S::Init(yielded, awaited),
@@ -645,6 +650,11 @@ impl Lower<'_> {
             Completion::Throw => Operation::Throw,
         };
         let helper = self.async_helper(span, generator, operation)?;
+        let input = if completion == Completion::Return {
+            unions::widen(input, Some(shapes.returned()), self.types)?
+        } else {
+            input
+        };
         Ok(Expr {
             span,
             ty: Type::Promise(shapes.info.promise),
@@ -702,6 +712,14 @@ impl Lower<'_> {
             ));
         }
         let shapes = self.shapes(span, body.generator)?;
+        let statements = Exits {
+            lower: self,
+            exit: body.exit,
+            result: body.result,
+            result_ty: shapes.returned(),
+            state: shapes.info.state,
+        }
+        .list(statements)?;
         let exception = self.exception_type()?;
         let complete_value = self.async_helper(span, body.generator, Operation::CompleteValue)?;
         let complete_throw = self.async_helper(span, body.generator, Operation::CompleteThrow)?;
@@ -709,11 +727,7 @@ impl Lower<'_> {
         let value_ty = shapes.value(self.types)?;
         let caught = self.hidden(exception);
         let marker = self.hidden(Type::Number);
-        let initial = if generators::accepts_undefined(shapes.generator.returned, self.types) {
-            unions::widen(undefined(span), Some(shapes.returned()), self.types)?
-        } else {
-            zero(span, shapes.returned())
-        };
+        let initial = unions::widen(undefined(span), Some(shapes.returned()), self.types)?;
         let types = &*self.types;
         let finish = |completed: S| -> Result<Vec<S>> {
             Ok(vec![
@@ -758,12 +772,7 @@ impl Lower<'_> {
             body: vec![S::Label {
                 id: body.exit,
                 iteration: false,
-                body: exits(statements, body.exit, body.result, &mut || {
-                    let slot = self.next;
-                    self.next += 1;
-                    self.local_types.insert(slot, shapes.info.state);
-                    slot
-                }),
+                body: statements,
             }],
             binding: Some(caught),
             handler: finish(threw)?,
@@ -1511,12 +1520,12 @@ impl Lower<'_> {
             return Err(CompilerError::Internal("missing async generator".into()));
         };
         let shapes = self.shapes(span, id)?;
-        if !generators::accepts_undefined(shapes.generator.next, self.types)
-            || !generators::accepts_undefined(shapes.generator.returned, self.types)
-        {
+        // Closing sends `return(undefined)`, which every async generator
+        // admits; stepping sends `next(undefined)`.
+        if !generators::accepts_undefined(shapes.generator.next, self.types) {
             return Err(self.source.locate(
                 type_error(
-                    "for await...of over an async generator requires TNext and TReturn to accept undefined",
+                    "for await...of over an async generator requires TNext to accept undefined",
                 ),
                 value.span,
             ));
@@ -1595,9 +1604,8 @@ impl Lower<'_> {
         let failed = self.hidden(Type::Boolean);
         let reason = self.hidden(exception);
         let caught = self.hidden(exception);
-        let awaited = self.await_value(span, value)?;
         let ty = self.local_types[&current];
-        let awaited = unions::widen(awaited, Some(ty), self.types)?;
+        let awaited = self.await_element(span, value, ty)?;
         let mut handler = rejected;
         handler.extend([
             S::Set(failed, boolean(span, true)),
@@ -1621,8 +1629,60 @@ impl Lower<'_> {
             ),
         ])
     }
+    /// The members of a sparse element type `E | undefined` whose `E` holds a
+    /// promise and another member: `E` alone, so the hole is awaited apart.
+    fn holed(&self, ty: Type) -> Option<Vec<Type>> {
+        let members = unions::members(ty, self.types);
+        (members.len() > 2
+            && members.contains(&Type::Undefined)
+            && members.iter().any(|m| matches!(m, Type::Promise(_))))
+        .then(|| {
+            members
+                .into_iter()
+                .filter(|m| *m != Type::Undefined)
+                .collect()
+        })
+    }
+    /// The awaited value of an element or yielded value `value` (a local),
+    /// widened to `target`. A hole of a sparse array is awaited as
+    /// `undefined`, the element otherwise.
+    fn await_element(&mut self, span: swc_common::Span, value: Expr, target: Type) -> Result<Expr> {
+        let Some(members) = self.holed(value.ty) else {
+            let awaited = self.await_value(span, value)?;
+            return unions::widen(awaited, Some(target), self.types);
+        };
+        let E::Local(slot) = value.kind else {
+            return Err(CompilerError::Internal(
+                "holed element is not a local".into(),
+            ));
+        };
+        let ty = value.ty;
+        let element = unions::intern(members, self.types)?;
+        let hole = self.await_value(span, undefined(span))?;
+        let hole = unions::widen(hole, Some(target), self.types)?;
+        let present = self.await_value(span, narrowed(local(span, slot, ty), element))?;
+        let present = unions::widen(present, Some(target), self.types)?;
+        Ok(Expr {
+            span,
+            ty: target,
+            kind: E::Conditional(
+                Box::new(Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsUndefined(Box::new(local(span, slot, ty))),
+                }),
+                Box::new(hole),
+                Box::new(present),
+            ),
+        })
+    }
     /// The awaited type of an element or yielded value of a sync source.
     fn awaited_type(&mut self, ty: Type) -> Result<Type> {
+        if let Some(members) = self.holed(ty) {
+            let element = unions::intern(members, self.types)?;
+            let awaited = self.awaited_type(element)?;
+            return unions::intern(vec![awaited, Type::Undefined], self.types);
+        }
         match ty {
             Type::Promise(id) => Ok(stored(self.types.promises[id as usize].value)),
             ty => match self.promise_member(ty, swc_common::DUMMY_SP)? {
@@ -1832,12 +1892,22 @@ impl Lower<'_> {
                 vec![self.tick(span)?, self.tick(span)?, S::Break],
             ),
         ];
-        let yielded = Expr {
-            span: statement.right.span(),
-            ty: generator.yielded,
-            kind: E::GeneratorValue(Box::new(it())),
-        };
-        step.extend(self.unwrap_value(span, yielded, current, rejected)?);
+        // The yielded value is read directly after the step that produced it.
+        let read = self.hidden(generator.yielded);
+        step.push(S::Init(
+            read,
+            Expr {
+                span: statement.right.span(),
+                ty: generator.yielded,
+                kind: E::GeneratorValue(Box::new(it())),
+            },
+        ));
+        step.extend(self.unwrap_value(
+            span,
+            local(span, read, generator.yielded),
+            current,
+            rejected,
+        )?);
         let mut close = |lower: &mut Self| -> Result<Vec<S>> {
             let (mut body, failed, reason) = sync_return(lower)?;
             body.push(S::If(

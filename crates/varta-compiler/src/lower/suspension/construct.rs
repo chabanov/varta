@@ -14,20 +14,26 @@ pub(super) struct Construct {
 
 pub(super) struct Namer<'a> {
     module: Option<&'a ast::Module>,
+    profile: varta_common::language::LanguageProfile,
 }
 impl<'a> Namer<'a> {
-    pub(super) fn new(graph: &'a crate::modules::Graph, source: &Source) -> Self {
+    pub(super) fn new(
+        graph: &'a crate::modules::Graph,
+        source: &Source,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Self {
         let module = graph
             .units
             .values()
             .find(|unit| std::ptr::eq(&*unit.source.file, &*source.file))
             .map(|unit| &unit.ast);
-        Self { module }
+        Self { module, profile }
     }
     pub(super) fn describe(&self, span: swc_common::Span) -> Construct {
         let mut find = Find {
             target: span,
             found: None,
+            profile: self.profile,
         };
         if let Some(module) = self.module {
             module.visit_with(&mut find);
@@ -42,6 +48,7 @@ impl<'a> Namer<'a> {
 struct Find {
     target: swc_common::Span,
     found: Option<Construct>,
+    profile: varta_common::language::LanguageProfile,
 }
 impl Visit for Find {
     fn visit_expr(&mut self, expr: &ast::Expr) {
@@ -50,13 +57,13 @@ impl Visit for Find {
             return;
         }
         if span == self.target && !matches!(expr, ast::Expr::Paren(_)) {
-            self.found = Some(describe(expr));
+            self.found = Some(describe(expr, self.profile));
         }
         expr.visit_children_with(self);
     }
 }
 
-fn describe(expr: &ast::Expr) -> Construct {
+fn describe(expr: &ast::Expr, profile: varta_common::language::LanguageProfile) -> Construct {
     let (name, splittable) = match expr {
         ast::Expr::Assign(assign) => (
             match assign.op {
@@ -84,6 +91,9 @@ fn describe(expr: &ast::Expr) -> Construct {
         // A v36 async generator `yield` awaits, settles the request and reads
         // the next one; a synchronous `yield` is a bare suspension point.
         ast::Expr::Yield(_) => ("yield expression".to_owned(), true),
+        // A checked `x as T` (v36) evaluates its operand first, then tests
+        // it; earlier profiles keep rejecting it as an intrinsic expression.
+        ast::Expr::TsAs(_) if profile.async_generators() => ("type assertion".to_owned(), true),
         ast::Expr::Call(call) if call.args.iter().any(|arg| arg.spread.is_some()) => {
             ("call with spread arguments".to_owned(), false)
         }

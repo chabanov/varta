@@ -44,28 +44,10 @@ impl Lower<'_> {
             }
             _ => return Err(unsupported("private Math/Number constant")),
         };
-        let value = match (name, property.as_str()) {
-            ("Math", "E") => std::f64::consts::E,
-            ("Math", "LN10") => std::f64::consts::LN_10,
-            ("Math", "LN2") => std::f64::consts::LN_2,
-            ("Math", "LOG10E") => std::f64::consts::LOG10_E,
-            ("Math", "LOG2E") => std::f64::consts::LOG2_E,
-            ("Math", "PI") => std::f64::consts::PI,
-            ("Math", "SQRT1_2") => std::f64::consts::FRAC_1_SQRT_2,
-            ("Math", "SQRT2") => std::f64::consts::SQRT_2,
-            ("Number", "EPSILON") => f64::EPSILON,
-            ("Number", "MAX_SAFE_INTEGER") => 9007199254740991.0,
-            ("Number", "MIN_SAFE_INTEGER") => -9007199254740991.0,
-            ("Number", "MAX_VALUE") => f64::MAX,
-            ("Number", "MIN_VALUE") => f64::from_bits(1),
-            ("Number", "NaN") => f64::NAN,
-            ("Number", "NEGATIVE_INFINITY") => f64::NEG_INFINITY,
-            ("Number", "POSITIVE_INFINITY") => f64::INFINITY,
-            _ => {
-                return Err(unsupported(&format!(
-                    "{name}.{property} constant or method value"
-                )));
-            }
+        let Some(value) = value(name, &property) else {
+            return Err(unsupported(&format!(
+                "{name}.{property} constant or method value"
+            )));
         };
         Ok(Some(Expr {
             span: member.span,
@@ -73,4 +55,41 @@ impl Lower<'_> {
             kind: E::Float64(value),
         }))
     }
+}
+
+/// The exact value of the static `Math`/`Number` constant `name.property`.
+fn value(name: &str, property: &str) -> Option<f64> {
+    Some(match (name, property) {
+        ("Math", "E") => std::f64::consts::E,
+        ("Math", "LN10") => std::f64::consts::LN_10,
+        ("Math", "LN2") => std::f64::consts::LN_2,
+        ("Math", "LOG10E") => std::f64::consts::LOG10_E,
+        ("Math", "LOG2E") => std::f64::consts::LOG2_E,
+        ("Math", "PI") => std::f64::consts::PI,
+        ("Math", "SQRT1_2") => std::f64::consts::FRAC_1_SQRT_2,
+        ("Math", "SQRT2") => std::f64::consts::SQRT_2,
+        ("Number", "EPSILON") => f64::EPSILON,
+        ("Number", "MAX_SAFE_INTEGER") => 9007199254740991.0,
+        ("Number", "MIN_SAFE_INTEGER") => -9007199254740991.0,
+        ("Number", "MAX_VALUE") => f64::MAX,
+        ("Number", "MIN_VALUE") => f64::from_bits(1),
+        ("Number", "NaN") => f64::NAN,
+        ("Number", "NEGATIVE_INFINITY") => f64::NEG_INFINITY,
+        ("Number", "POSITIVE_INFINITY") => f64::INFINITY,
+        _ => return None,
+    })
+}
+
+/// Whether `expr` names a static `Math`/`Number` constant (`Number.MAX_VALUE`).
+/// A shadowing binding is resolved when the expression is lowered.
+pub(super) fn named(expr: &ast::Expr) -> bool {
+    let ast::Expr::Member(member) = unparen(expr) else {
+        return false;
+    };
+    let (ast::Expr::Ident(namespace), ast::MemberProp::Ident(property)) =
+        (unparen(&member.obj), &member.prop)
+    else {
+        return false;
+    };
+    value(namespace.sym.as_ref(), property.sym.as_ref()).is_some()
 }

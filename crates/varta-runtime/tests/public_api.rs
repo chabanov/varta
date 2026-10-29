@@ -4238,6 +4238,75 @@ fn public_engine_runs_async_resource_methods_and_promise_values_across_modules_i
 }
 
 #[test]
+fn public_engine_runs_generic_async_generators_across_modules_in_v36() {
+    // The pilot's `autoPaginate`/`collect` shape: a generic async generator
+    // that awaits a fetcher's `unknown` page through a checked assertion and
+    // yields its items, consumed by a generic `for await` helper over
+    // `AsyncIterable<T>` with a `Number.POSITIVE_INFINITY` default limit,
+    // re-exported through a barrel.
+    use varta_common::language::LanguageProfile;
+    struct PaginationSources;
+    impl ModuleLoader for PaginationSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./pagination.ts" => Ok("pagination.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("pagination.ts") => "export type PageFetcher=(cursor:string|undefined)=>Promise<unknown>;\
+                    export async function* autoPaginate<T>(fetchPage:PageFetcher,itemsProp:string,cursorProp:string):AsyncIterableIterator<T>{\
+                    let cursor:string|undefined;for(;;){const page=(await fetchPage(cursor)) as Record<string,unknown>|undefined;if(!page)return;\
+                    const items=page[itemsProp];if(Array.isArray(items)){for(const item of items as T[])if(item!==undefined)yield item;}\
+                    const next=page[cursorProp];if(typeof next!=='string'||next==='')return;cursor=next;}}\
+                    export async function collect<T>(iterator:AsyncIterable<T>,limit=Number.POSITIVE_INFINITY):Promise<T[]>{\
+                    const out:T[]=[];for await(const item of iterator){out.push(item);if(out.length>=limit)break;}return out;}",
+                Some("index.ts") => "export * from './pagination.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {autoPaginate,collect} from './index.ts';\
+                       export async function main():Promise<void>{let calls=0;\
+                       const fetchPage=async(cursor:string|undefined):Promise<unknown>=>{calls++;\
+                       if(cursor===undefined){const first:Record<string,unknown>={items:['a','b'],cursor:'c1'};return first;}\
+                       if(cursor==='c1'){const second:Record<string,unknown>={items:['c'],cursor:''};return second;}return undefined;};\
+                       const all=await collect(autoPaginate<string>(fetchPage,'items','cursor'));\
+                       const two=await collect(autoPaginate<string>(fetchPage,'items','cursor'),2);\
+                       console.log(`${JSON.stringify(all)} ${JSON.stringify(two)} ${calls}`);}"
+                    .into(),
+            },
+            &PaginationSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V36).unwrap();
+    // Node 24 prints the same line.
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: [\"a\",\"b\",\"c\"] [\"a\",\"b\"] 3"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V35)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("unsupported async generator function"),
+        "{frozen}"
+    );
+}
+
+#[test]
 fn public_engine_runs_generic_generators_across_modules_in_v33() {
     // A synchronous shape of the pilot's `autoPaginate`: a generic generator
     // re-exported through a barrel and consumed by `for...of` with closing.

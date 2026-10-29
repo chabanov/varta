@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 58 feature rows and 104 cases:
-95 pass, 9 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 59 feature rows and 105 cases:
+95 pass, 10 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -234,3 +234,14 @@ The async, Web and `promise-resolve` cases were observed as unexpected support
 with their pinned hashes and expected output under the v35 pin before review
 and promotion. Abort listeners, timers and live header iterators remain outside
 these rows.
+
+The v36 async stream keeps the pin at `checked-f64-utf16-v35`, so every case
+keeps its status. It adds the `async-generators` feature row (CORE-03, CORE-09)
+with one original case, `async-generator-iteration` (requests queued before
+the first settles, `yield await`, a string `TReturn`, and `for await` closing
+through `finally` on `break`), whose output matches Node.js v24.20.0 type
+stripping. Under the v35 pin it is a known gap with the reviewed
+`unsupported_syntax` diagnostic, because async generators are admitted from
+v36; `varta-runtime` `async_generator_tests` runs the same source under v36
+against the same output. It is promoted when the inventory moves its pin to
+v36.

@@ -253,6 +253,41 @@ fn async_generator_methods_generics_and_closures_match_node() {
     );
 }
 
+/// The conformance inventory's case (known unsupported under its v35 pin):
+/// requests queued before the first settles, `yield await`, a `TReturn`
+/// other than `undefined` closed by `for await` through `finally`.
+#[test]
+fn async_generator_conformance_case_matches_node() {
+    run(
+        include_str!("../../../conformance/cases/async-generator-iteration.ts"),
+        &[
+            "countdown closed",
+            r#"[{"value":2,"done":false},{"value":1,"done":false},{"value":"liftoff","done":true}]"#,
+            "countdown closed",
+            "9",
+        ],
+    );
+}
+
+/// The language guide's example.
+#[test]
+fn async_generator_language_guide_example_matches_node() {
+    run(
+        include_str!("async_generator_cases/guide.ts"),
+        &[
+            "1. a",
+            "2. b",
+            "3. c",
+            "numbered 3",
+            r#"{"value":"1. a","done":false}"#,
+            "numbered 1",
+            r#"{"done":true}"#,
+            "1",
+            "2",
+        ],
+    );
+}
+
 /// A request from inside the running body (through a callback) is queued,
 /// and `throw()` reaches a `catch` around the suspended `yield`.
 #[test]

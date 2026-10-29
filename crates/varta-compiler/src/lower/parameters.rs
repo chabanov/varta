@@ -43,6 +43,13 @@ pub(super) fn literal(expr: &ast::Expr, types: &ir::ValueTypes) -> Option<Type> 
         {
             Some(types.number())
         }
+        // `limit = Number.POSITIVE_INFINITY` (v36, the async stream's pilot
+        // pagination helper): a Math/Number constant default is a number.
+        ast::Expr::Member(_)
+            if types.profile.async_generators() && numeric_constants::named(expr) =>
+        {
+            Some(types.number())
+        }
         _ => None,
     }
 }

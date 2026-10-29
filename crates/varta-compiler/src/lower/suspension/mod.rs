@@ -65,7 +65,7 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
             // Calls created the generator object; the frame returns `TReturn`.
             function.result = types.generators[id as usize].returned;
         }
-        let namer = construct::Namer::new(graph, &function.source);
+        let namer = construct::Namer::new(graph, &function.source, types.profile);
         let body = std::mem::take(&mut function.body);
         let mut normalizer =
             normalize::Normalizer::new(&mut function.locals, &namer, &function.source);

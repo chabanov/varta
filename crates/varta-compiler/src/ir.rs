@@ -346,6 +346,9 @@ pub(crate) struct AsyncGeneratorType {
     pub request: Type,
     /// `Promise<IteratorResult<T, TReturn>>`, the result of every request.
     pub promise: u32,
+    /// `TReturn | undefined`: return requests (closing a `for await` sends
+    /// `undefined`) and the body's completion value.
+    pub returned: Type,
 }
 impl ValueTypes {
     /// Layout version stamped into descriptors and catalogs; see
