@@ -3776,3 +3776,66 @@ constructor accepts `new A(message, { cause: caught })` for any caught value. An
 uncaught instance is reported as `NotFoundError: "HTTP 404"`. `JSON.stringify` of
 an instance, `stack` and assigning an instance to an `Error` annotation are
 rejected with a diagnostic.
+
+#### Combining the v32 features
+
+The v32 features compose across modules. A generic interface may extend a
+generic base, an Error class may be the default export of its module, and a
+generic function may take and throw Error-class instances:
+
+```ts
+// page.ts
+export interface Page<T> { items: T[] }
+export interface CursorPage<T> extends Page<T> { cursor: string | null }
+
+// errors.ts
+export default class UarpError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = new.target.name;
+  }
+}
+export class APIError extends UarpError {
+  readonly status: number;
+  constructor(status: number) {
+    super(`HTTP ${status}`);
+    this.status = status;
+  }
+}
+
+// index.ts
+export * from './errors.js';
+export { default as UarpError } from './errors.js';
+export type { CursorPage } from './page.js';
+
+// main.ts
+import { APIError, UarpError, type CursorPage } from './index.js';
+
+function first<T>(page: CursorPage<T>): T {
+  const item = page.items[0];
+  if (item === undefined) throw new APIError(404);
+  return item;
+}
+function rethrow<E extends UarpError>(error: E): void {
+  throw error;
+}
+
+export function main(): void {
+  const page: CursorPage<string> = { items: ['a1', 'a2'], cursor: 'next' };
+  console.log(first(page)); // a1
+  try {
+    first<number>({ items: [], cursor: null });
+  } catch (error) {
+    if (error instanceof APIError) console.log(`${error.name} ${error.status}`); // APIError 404
+  }
+  try {
+    rethrow(new UarpError('closed'));
+  } catch (error) {
+    console.log(error instanceof UarpError); // 1
+  }
+}
+```
+
+`export *` forwards `APIError` but never the default export, so the barrel names
+it explicitly. Generic classes, including generic Error subclasses, and merging
+several declarations of a generic interface are rejected with a diagnostic.

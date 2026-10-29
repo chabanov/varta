@@ -136,7 +136,10 @@ fn generic_functions_and_types_are_default_exportable() {
                 "export interface Box<T>{value:T}\
                  export default function first<T>(xs:T[],fallback:T):T{const x=xs[0];return x===undefined?fallback:x;}",
             ),
-            ("pair.ts", "export default interface Pair<T>{a:T;b:T}"),
+            (
+                "pair.ts",
+                "interface Base<T>{a:T}export default interface Pair<T> extends Base<T>{b:T}",
+            ),
             (
                 "wrap.ts",
                 "import type {Box} from './first.ts';\

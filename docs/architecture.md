@@ -5328,11 +5328,17 @@ V32 reuses the v31 host, value and schema versions and the v31 JSON selectors
 select exception channel v5. V32 inherits every v31 feature. It collects the
 [uarp-sdk pilot](development-plan.md#pilot-acceptance-package-uarp-sdk) M1–M3
 features, each gated by its own `LanguageProfile` selector: module constants,
-literal types, classes, module re-exports and template literals. The features
-compose: constants and classes link through re-exports, literal types apply to
-class fields, constants and template substitutions, and class bodies read
-module constants. None of them adds a host import, value tag, layout field or
-host/value ABI version, and production budgets are unchanged.
+literal types, classes, module re-exports, template literals, default exports,
+interface inheritance, generics and Error subclasses. The features compose:
+constants, classes, generic functions and Error classes link through re-exports
+and default exports; literal types apply to class fields, constants and
+template substitutions; class bodies read module constants; generic interfaces
+extend generic bases (`interface B<T> extends A<T>`); generic functions accept
+and return Error-class instances. Apart from the exception channel selector,
+none of them adds a host import, value tag, layout field or host/value ABI
+version, and production budgets are unchanged. The compiler-internal
+[suspension foundation](#suspension-foundation-k44-block-1) is not admitted by
+v32; its frames carry the v32 catch union, including Error-class instances.
 
 #### Module constants (`module_constants()`)
 
@@ -5702,7 +5708,8 @@ name` for `default` in export lists.
   function, class or interface `f`/`C`/`I` and export it as `default`; the local
   name stays usable in the module. Anonymous `export default function (…) {…}`
   and `export default class {…}` bind ECMAScript's unspellable local name
-  `*default*`.
+  `*default*`. Under [generics](#generics-generics) the declaration may be a
+  generic function or interface; generic classes stay rejected.
 - **Expressions.** `export default x` where `x` is a module binding (function,
   class, module constant, named type or import) exports that binding in every
   namespace in which it exists, like `export { x as default }`; naming a local
@@ -5737,6 +5744,13 @@ Selector `interface_extends()`. V31 and earlier keep `interface extends` and
   The result is an ordinary structural record shape (`interface B extends A {}`
   is the shape of `A`); there is no width subtyping between B and A, no new
   layout and no runtime representation.
+- **Generic interfaces.** Under [generics](#generics-generics) an interface
+  with type parameters may extend bases written with type arguments
+  (`interface CursorPage<T> extends Page<T>`). Each instantiation binds the
+  parameters, then resolves the own members and the base references in that
+  frame, and is memoized like any generic named type. Generic call inference
+  through such an interface reads its own members and each base reference;
+  the inferred arguments are checked against the full instantiated type.
 - **Redeclaration.** An own member may redeclare an inherited field with a type
   assignable to it under the profile's assignability (identical, a literal or
   union member of the base type, a subclass) and may make an optional field
@@ -5748,7 +5762,8 @@ Selector `interface_extends()`. V31 and earlier keep `interface extends` and
   declarations must be exported or all local; one export binding is recorded.
 - **Rejected with diagnostics.** Bases that are classes (nominal instance types:
   `interface A extends class C`), non-record types, qualified or computed bases,
-  generic bases until generic references are admitted, and merging an interface
+  declaration merging of generic interfaces
+  (`declaration merging of generic interface X`), and merging an interface
   with a class (`declaration merging of interface X with class X`): merged
   members would be class fields its constructor never initializes. The pilot's
   `interface UarpClient extends Resources {}` beside `class UarpClient` is
@@ -5804,7 +5819,10 @@ generic-function and generic-call diagnostics.
   body limit; instantiations requested from instance bodies nest at most
   `MAX_INSTANTIATION_DEPTH` (32, `varta-compiler` `lower::generics`) deep, which
   rejects polymorphic recursion. Generic functions link through imports, export
-  lists and re-exports in the value namespace like functions and constants.
+  lists, re-exports and [default exports](#default-exports-default_exports)
+  (`export default function f<T>…`, including the anonymous form) in the value
+  namespace like functions and constants; a default-imported generic function
+  keeps the generic call and `generic function as a value` rules.
 - **Checking.** A generic function body is checked once per instantiation, like
   any function with those concrete types. A generic function that is never
   instantiated is only checked for its declaration form and for explicit `any`;
@@ -5896,7 +5914,10 @@ native error keeps `class extends a built-in Error class`.
   declares an Error class, the catch union additionally holds the Error root, so
   every caught instance keeps its identity and subclass. Finally, rethrow,
   cross-module propagation and catch object patterns (`catch ({ name, message })`
-  reads the fields of an instance) work as for native errors.
+  reads the fields of an instance) work as for native errors. Error classes
+  link through default exports and re-exports like other classes, and generic
+  functions instantiate over them (`function raise<E extends UarpError>(e: E)`);
+  generic Error subclasses are rejected as `generic class`.
 - **Channel v5.** V32 selects the immutable i32 export
   `varta.exception.version_v5 = 5` instead of v4; each profile requires its own
   selector, so v31 modules (v4) and v32 modules (v5) reject each other's selector
@@ -6896,7 +6917,15 @@ a Float64, Boolean, undefined or void result; other results admit no Return.
 Host-supplied references need a validated transport and are outside this block.
 The dispatcher reports Suspended 0, Returned 1 or Threw 2. It moves an uncaught
 exception from the channel into an exception-union completion cell and clears the
-channel. A completed frame leaves the root table. Its completion stays readable
+channel. The completion type is the profile's catch union; in a v32 program
+that declares an Error class it holds the Error root class, so an uncaught
+Error-class instance is a Record member of the completion with its descriptor,
+`message` and `name` intact, and saved class instances are traced through the
+frame like any other reference binding. Suspension points inside methods,
+constructors (including Error-root `super(...)`), `instanceof` tests and the
+other value blocks of the new v32 forms are rejected by construct name, and a
+generic instance can contain one only behind a rejected reference. A completed
+frame leaves the root table. Its completion stays readable
 until the next guest call that may collect it. The dispatcher has effects and is
 never a pure helper; JSON helper purity validation is unchanged.
 

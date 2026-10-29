@@ -421,6 +421,45 @@
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-template-literals"
+    },
+    {
+      "id": "default-exports",
+      "title": "Default exports and default imports",
+      "core": [
+        "CORE-12"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-scripts-and-modules.html#sec-exports"
+    },
+    {
+      "id": "interface-extends",
+      "title": "Interface inheritance and declaration merging",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "generics",
+      "title": "Generic types and functions by monomorphization",
+      "core": [
+        "CORE-01",
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "error-subclasses",
+      "title": "Classes extending the native Error families",
+      "core": [
+        "CORE-02",
+        "CORE-04"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-error-objects"
     }
   ],
   "cases": [
@@ -1680,6 +1719,63 @@
         "varta log: crab \ud83e\udd80 `tick` ${literal}",
         "varta log: [7]",
         "varta log: 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "interface-extends",
+      "feature": "interface-extends",
+      "path": "cases/interface-extends.ts",
+      "sha256": "6e4a84676783c07fab2de71c0c12ee1ac02c4c973d3bea8fc0be7cd19ad95855",
+      "stdout": [
+        "varta log: agent/a1",
+        "varta log: Ada 10 undefined",
+        "varta log: 2",
+        "varta log: {\"id\":\"a1\",\"kind\":\"agent\",\"name\":\"Ada\",\"created\":10,\"tags\":[\"x\",\"y\"]}",
+        "varta log: 2",
+        "varta log: 1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "generics",
+      "feature": "generics",
+      "path": "cases/generics.ts",
+      "sha256": "59a78289a6f3f687bfbfe0dce2182536806ad796162414d3182ff6ae2c217df5",
+      "stdout": [
+        "varta log: 3",
+        "varta log: none",
+        "varta log: 3",
+        "varta log: a2:5",
+        "varta log: score",
+        "varta log: 8",
+        "varta log: 1",
+        "varta log: {\"read\":true,\"write\":false}{\"score\":9}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "error-subclasses",
+      "feature": "error-subclasses",
+      "path": "cases/error-subclasses.ts",
+      "sha256": "f7564d9c5f4160da9017cd87317a0ace48fd71231e47fc6f9f7891e46b05ae16",
+      "stdout": [
+        "varta log: 1",
+        "varta log: 1",
+        "varta log: NotFoundError: HTTP 404",
+        "varta log: UarpError: Connection error",
+        "varta log: 1",
+        "varta log: 0",
+        "varta log: finally",
+        "varta log: APIError 500",
+        "varta log: 1",
+        "varta log: TypeError: bad"
       ],
       "baseline": {
         "status": "supported"

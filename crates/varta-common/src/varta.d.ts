@@ -1,8 +1,12 @@
 // checked-f64-utf16-v32 (pilot batch, unreleased) inherits v31 and its ABIs with
 // no new host declaration: module constants and `as const`, string/number/boolean
-// literal types, top-level classes, `export ... from`/`export *` re-exports and
-// untagged template literals are compile-time language features. Constants and
-// classes re-export through the same tables as functions and types.
+// literal types, top-level classes, `export ... from`/`export *` re-exports,
+// untagged template literals, default exports, interface extends/merging and
+// monomorphized generic interfaces, aliases and top-level functions are
+// compile-time language features. Constants, classes and generic functions
+// re-export through the same tables as functions and types. Classes may extend
+// Error/TypeError/RangeError/SyntaxError; v32 selects exception channel v5 so an
+// uncaught Error-class instance is reported with its name and message.
 // checked-f64-utf16-v27 inherits v26 and infers one admitted element union for
 // uncontextual array literals. Initializers execute once in source order; holes
 // stay absent and do not broaden writable element types. Empty/all-hole nested

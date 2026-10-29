@@ -22,10 +22,12 @@ in [conformance/README.md](conformance/README.md).
   positions fail with construct-specific diagnostics. Only compiler tests reach
   it, through a test-only lowering hook; existing modules and profiles are
   unchanged.
-- Opt-in v32 (pilot batch, in development) adds five composable features for
-  the uarp-sdk pilot. V31 and earlier keep rejecting all of them; host imports,
-  value tags, layouts, ABIs and production budgets are unchanged; the inventory
-  adds one case per feature.
+- Opt-in v32 (pilot batch, in development) adds nine composable features for
+  the uarp-sdk pilot, each behind its own profile selector. V31 and earlier keep
+  rejecting all of them. Host imports, value tags, layouts, host/value ABIs and
+  production budgets are unchanged; the only versioned change is exception
+  channel v5 for Error subclasses. The inventory adds one case per feature that
+  a single-file case can test.
   - Module constants: top-level `const`/`export const` with a pure checked
     initializer subset and `as const` readonly bindings. Scalar constants fold to
     literals; reference values are evaluated once in dependency order before
@@ -46,7 +48,7 @@ in [conformance/README.md](conformance/README.md).
     named types and classes without local bindings. Functions and constants share
     one value namespace; star exports follow ECMAScript rules (no `default`,
     explicit exports win, ambiguous names excluded and rejected only when named)
-    and chain transitively. Namespace and default forms stay rejected.
+    and chain transitively. Namespace forms stay rejected.
   - Template literals: substitutions are evaluated once, left to right, converted
     with primitive ToString (canonical Number text, BigInt decimal text; literal
     types as their base) and joined by guest concatenation with exact UTF-16
@@ -54,31 +56,34 @@ in [conformance/README.md](conformance/README.md).
     templates and `String.raw` fail with diagnostics. The source-complexity
     pre-pass rescans template text after each substitution, so template text and
     later doc comments no longer trip a false complexity error.
-- Opt-in v32 also admits default exports and interface inheritance. `export
-  default` declarations, bindings and constant expressions, `import x from`,
-  `import x, { y } from` and `default` in export and re-export lists link as the
-  ordinary name `default` (never forwarded by `export *`). `interface B extends
-  A, C` builds the combined closed record from local, imported and aliased record
-  bases with checked redeclarations, and repeated interface declarations merge.
-  Class bases, interface/class merging (the pilot `UarpClient` pattern) and
-  namespace imports are rejected with diagnostics; v31 and earlier are unchanged.
-
+  - Default exports: `export default` declarations, bindings and constant
+    expressions, `import x from`, `import x, { y } from` and `default` in export
+    and re-export lists link as the ordinary name `default` (never forwarded by
+    `export *`). Namespace imports are rejected with a diagnostic.
+  - Interface inheritance and merging: `interface B extends A, C` builds the
+    combined closed record from local, imported, aliased and generic record bases
+    (`interface B<T> extends A<T>`) with checked redeclarations, and repeated
+    non-generic interface declarations merge. Class bases, merging generic
+    interfaces and interface/class merging (the pilot `UarpClient` pattern) are
+    rejected with diagnostics.
   - Generics: generic interfaces, aliases and top-level functions by
     monomorphization, with defaults, `extends` constraints, explicit or inferred
     type arguments, `keyof`, `R[K]`, `Readonly`, `ReadonlyArray`, `Partial` and
     literal-keyed `Record`; one function per distinct instantiation within the
-    existing function and body budgets. `Record<string, V>`, `Promise<T>` and
-    generic classes, methods and arrows stay rejected with reasons.
-
-- Opt-in v32 Error subclasses: classes may extend `Error`, `TypeError`,
-  `RangeError` and `SyntaxError` with writable `message`/`name`/`cause` fields,
-  `super(message, { cause })`, `new.target.name`, `toString()`, `instanceof` for
-  the native family and every class in the chain (including downcast narrowing of
-  caught values) and catch/finally/rethrow across modules. Instances stay class
-  records with no new tag or layout; v32 selects exception channel v5
-  (`varta.exception.version_v5`) so the runtime reports an uncaught instance as
-  `ThrownValue::ErrorInstance`. `unknown` causes, `stack`, JSON serialization of
-  instances and `Error`-annotated instances remain rejected.
+    existing function and body budgets. Generic functions and interfaces are
+    default-exportable. `Record<string, V>`, `Promise<T>` and generic classes
+    (including generic Error subclasses), methods and arrows stay rejected with
+    reasons.
+  - Error subclasses: classes may extend `Error`, `TypeError`, `RangeError` and
+    `SyntaxError` with writable `message`/`name`/`cause` fields,
+    `super(message, { cause })`, `new.target.name`, `toString()`, `instanceof`
+    for the native family and every class in the chain (including downcast
+    narrowing of caught values) and catch/finally/rethrow across modules.
+    Instances stay class records with no new tag or layout; v32 selects
+    exception channel v5 (`varta.exception.version_v5`) so the runtime reports
+    an uncaught instance as `ThrownValue::ErrorInstance`. `unknown` causes,
+    `stack`, JSON serialization of instances and `Error`-annotated instances
+    remain rejected.
 
 - Opt-in v31 adds named interface and type alias annotations, resolved per module
   and across imports, with `import type`, `{ type T }`, `export interface/type`

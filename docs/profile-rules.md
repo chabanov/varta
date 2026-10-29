@@ -1643,7 +1643,8 @@ Inherit v31 under checked-f64-utf16-v32 with shared ABI28/value13/schema13 and
 the v31 JSON selectors; `error_subclasses` selects exception channel v5 (see
 [its rules](#error-subclasses-error_subclasses)). Each pilot work stream has exactly one selector
 (`module_constants`, `literal_types`, `classes`, `module_reexports`,
-`template_literals`); gate every new admission on its own selector, keep v31 and
+`template_literals`, `default_exports`, `interface_extends`, `generics`,
+`error_subclasses`); gate every new admission on its own selector, keep v31 and
 earlier profiles frozen, and add rules for the stream under its own heading here.
 The streams compose; the rules for their interactions are in
 [cross-stream integration](#cross-stream-integration-v32).
@@ -1833,16 +1834,25 @@ imports keep a distinct `namespace import` diagnostic under the selector.
 
 ### Interface inheritance and merging (`interface_extends()`)
 
-Under `interface_extends()`, `named::link_module` defers every non-generic
-interface into `interfaces::Merged` (per module, by name) instead of rejecting
+Under `interface_extends()`, `named::link_module` defers every interface
+(after the generic-declaration check) into `interfaces::Merged` (per module, by
+name) instead of rejecting
 `extends`/duplicates, then `declare_interface` registers each name after the
 item loop. A single declaration without `extends` stays `Declaration::Local`
 with its v31 type literal (byte-identical behavior); anything else becomes
 `Declaration::Interface`, resolved lazily by `Interface::resolve` inside
 `named::resolve`, so the resolving stack catches cycles through bases. Bases are
 lowered through `keyword_type` of a synthesized `TsTypeRef` (with the written
-type arguments) in the declaring module: generic bases start working when
-generic references do, without changes here. Only `Type::Record` bases are
+type arguments) in the declaring module. A generic interface keeps its
+`TsTypeParamDecl` in `Interface::params`: `plain()` interfaces become a generic
+`Declaration::Local`, and `named::instantiate` binds the parameters of a
+`Declaration::Interface` with `resolve_parameters` and runs `Interface::resolve`
+inside `generics::with_frame`, so own members and `extends A<T>` see `T`.
+Merging generic interfaces is rejected (`declaration merging of generic
+interface X`) because identical type parameter lists are not compared.
+`named::generic_declaration` returns the own-member literal plus each base
+reference (`Interface::generic_patterns`) as inference patterns; never infer
+from a partially resolved shape. Only `Type::Record` bases are
 admitted; class bases stay rejected because class types are nominal and have
 methods. Own fields come from `records::type_fields` (no interning of partial
 shapes, which would consume `MAX_RECORD_SHAPES`), redeclarations are checked with
@@ -1959,6 +1969,30 @@ Error classes, own-property presence of `message`/`cause` (and with it
   candidate for the subset, like `+`, but need their own decision.
 - Template substitutions treat literal-typed values as their base primitive;
   class instances need ToPrimitive and stay rejected.
+- Default exports rewrite into ordinary declarations before the scan, so a
+  default-exported generic function is registered by `generics::declare` and
+  linked as `link::Value::Generic` under the name `default`. A default absent
+  from both the value and type export tables reports `module m.ts has no
+  default export` in `link::other_namespace`. Never add a default-specific path
+  to generic linking.
+- Generic interfaces with bases resolve through `Declaration::Interface` (see
+  [interface inheritance](#interface-inheritance-and-merging-interface_extends));
+  the generics memo key `(declaration, arguments)` and the `resolving` stack
+  keyed by declaration apply unchanged.
+- Generic functions may be constrained by and instantiated over Error classes;
+  constraints use `arguments::accepts`, so an Error-class argument satisfies an
+  ancestor-class constraint but not the native `Error` annotation. Generic
+  classes, including generic Error subclasses, stay `unsupported generic class`.
+- `exceptions::exception_union` exists once: the catch union, the Error-root
+  member added only once a root exists, and the frame exception completion type
+  read by `lower::suspension::prepare` after all bodies (including generic
+  instances) are lowered. Do not compute it before class layout.
+- No second-wave stream adds an IR variant; `suspension/walk.rs`,
+  `normalize.rs` and literal erasure stay exhaustive over the shared forms. New
+  v32 value blocks (Error `super(...)`, `instanceof` on Error unions, Error
+  `toString`, class `new`) are not on the `construct.rs` allowlist and are
+  rejected by construct name; methods and constructors are rejected as
+  `a method`.
 
 ## Suspension foundation (K4.4 block 1)
 

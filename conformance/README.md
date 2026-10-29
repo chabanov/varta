@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 45 feature rows and 84 cases:
-73 pass, 11 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 49 feature rows and 87 cases:
+76 pass, 11 are known unsupported, and 9 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -163,3 +163,14 @@ with booleans normalized to 0/1. The function-local `class-instance` case stays 
 known gap, because v32 admits top-level classes only. The re-export row has no
 case: this executor compiles single-file sources without a module loader, so
 re-exports are covered by compiler, public-API and CLI module tests instead.
+
+The second v32 wave keeps every earlier case at its status. It adds four feature
+rows (default exports, interface inheritance, generics, Error subclasses) and
+three original cases: interface inheritance with declaration merging and a
+generic base, generic interfaces/aliases/functions with inferred and explicit
+type arguments and the closed-type built-ins, and an Error-class hierarchy with
+`new.target.name`, `cause`, `instanceof`, `toString` and `finally`. All three
+outputs match Node.js v24.20.0 type stripping with booleans normalized to 0/1.
+The default-export row has no case for the same reason as the re-export row:
+importing a default needs a second module, which this single-file executor does
+not load; compiler, runtime and CLI module tests cover it.
