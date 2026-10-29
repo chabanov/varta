@@ -260,8 +260,10 @@ fn liveness_frame_artifacts_run_source_free_only_under_v35() {
     assert!(output.status.success(), "{output:?}");
     assert_eq!(logs(&output), ["varta log: v35 frames"]);
 
-    // V34 shares v35's host and value ABIs, so only the frame catalog
-    // version tells the relabelled module apart.
+    // V35 declares host ABI 31 and value layout 16, so a module relabelled as
+    // v34 fails at its host ABI section before the frame catalog is read
+    // (runtime `frame_admission_tests` rewrites both and pins the catalog
+    // version refusal).
     let (from, to) = (b"checked-f64-utf16-v35", b"checked-f64-utf16-v34");
     let at = wasm
         .windows(from.len())
@@ -287,7 +289,7 @@ fn liveness_frame_artifacts_run_source_free_only_under_v35() {
     assert!(logs(&output).is_empty(), "{output:?}");
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("frame catalog version 2, found version 3"),
+            .contains("declared profile requires its matching host ABI section"),
         "{output:?}"
     );
 }
