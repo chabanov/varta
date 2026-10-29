@@ -9,13 +9,22 @@ impl Lower<'_> {
         expression: &ast::AwaitExpr,
     ) -> Result<Expr> {
         let span = expression.span;
-        if self.asynchronous.is_none() {
+        if self.asynchronous.is_none() && self.async_body().is_none() {
             return Err(self.source.locate(
                 rejected("await outside an async function (top-level await is not supported)"),
                 span,
             ));
         }
-        let mut value = self.expr(&expression.arg)?;
+        let value = self.expr(&expression.arg)?;
+        self.await_value(span, value)
+    }
+    /// `await value` of a lowered operand: a promise is awaited itself, any
+    /// other value through a fulfilled promise (PromiseResolve).
+    pub(in crate::lower) fn await_value(
+        &mut self,
+        span: swc_common::Span,
+        mut value: Expr,
+    ) -> Result<Expr> {
         if value.ty == Type::Void {
             // `await f()` of a void call awaits `undefined` after the call.
             value = Expr {

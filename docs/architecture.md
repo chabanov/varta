@@ -6645,7 +6645,7 @@ primitive.
   adopt. Async arrows, function expressions and methods, a `this` parameter,
   optional and rest parameters, `for await`, async generators and top-level
   `await` fail with construct-specific diagnostics (async iteration is K4.4
-  step 6).
+  step 6, admitted by v36 [async generators](#async-generators-async_generators)).
 - **Split.** The declaration's own function index becomes a wrapper: it
   creates the promise, starts the body frame through the dispatcher (the body
   runs synchronously until its first `await`) and returns the promise, so
@@ -7353,6 +7353,10 @@ function cell that value17 readers accept, while tampered closure envelopes
 fail.
 Four selectors gate the batch's work streams:
 
+Four selectors gate the batch's work streams; `async_generators()` is
+specified [below](#async-generators-async_generators) and the others admit
+nothing yet:
+
 - records stream: `checked_declared_fields()` (declared fields of mixed
   records that are checkable from `unknown`, for example arrays of optional
   records, so checked assertions and JSON narrowing reach them; see
@@ -7360,7 +7364,7 @@ Four selectors gate the batch's work streams:
 - functions stream: `function_fields()` (function-valued record and class
   fields, and optional or defaulted function-typed parameters);
 - async stream: `async_generators()` (`async function*` generators and
-  `for await…of`);
+  `for await…of`), specified [below](#async-generators-async_generators);
 - timers stream: `timers()` (`setTimeout`/`clearTimeout` and timer-driven
   promises), implemented: see [Timers](#timers-timers).
 
@@ -7719,6 +7723,143 @@ diagnostic there.
   and bound tests are fast and cannot flake; production code always waits for
   the wall clock, and one test checks that a production wait lasts at least
   the delay.
+
+Until a stream adds its subsection here, a v36 module compiles and runs exactly
+like a v35 module apart from its declared profile and host ABI, and production
+budgets of every profile are unchanged. A v36 program that uses no construct of
+an implemented selector compiles to the same module as before that selector
+was implemented.
+
+#### Async generators (`async_generators`)
+
+V36 admits async generator functions and `for await…of` (K4.4 step 6) over the
+frames, scheduler and promises of v34/v35. They add no host import, value tag,
+layout, frame catalog version or budget: async generator bodies are generator
+rows of frame catalog version 3 and their awaits are ordinary scheduled frames.
+V35 and earlier profiles keep rejecting `async function*` (`unsupported async
+generator function`), `for await` (`unsupported for await...of (async
+iteration is not implemented yet)`) and the annotations below.
+
+- **Declarations.** Top-level `async function*` declarations, exported or not,
+  generic ones (each instantiation is its own async generator function) and
+  instance and static async generator methods of classes (including overrides),
+  with a required return annotation `AsyncGenerator<T, TReturn, TNext>`.
+  `AsyncIterableIterator`, `AsyncIterable` and `AsyncIterator` with the same
+  parameters denote the same type, because async generator objects are the
+  only async iterables of the subset; generic calls infer `T`, `TReturn` and
+  `TNext` from them. Omitted parameters default as for `Generator` (`TReturn`
+  `void`, `TNext` `undefined`), and no type argument may be or hold a promise
+  (`yield` and `return` await their operands). Optional, default and rest
+  parameters are admitted; parameter defaults run during the call, before the
+  object is returned, so an exception there throws from the call as in
+  ECMAScript. Async generator function expressions and object methods,
+  computed member names such as `[Symbol.asyncIterator]`, a `this` parameter
+  and an async generator entry point are rejected with construct-specific
+  diagnostics.
+- **Representation.** An async generator object is the continuation frame of
+  an internal *body generator*: one `i64` handle of type `generator` (capture
+  type `generator`) without a value tag, so arrays, records, unions, JSON,
+  logging, `typeof` and equality reject it as they reject synchronous
+  generators. From the body's start point on, the frame's completion cell holds
+  the object's private *state record* `{ head, queue, state }`: `state` is
+  `[[AsyncGeneratorState]]` (suspended-start, suspended-yield, executing,
+  draining-queue, completed) and `queue` an array of request records
+  `{ kind, next, promise, returned, thrown }`. The step function of a body type
+  does not clear that cell while the body runs — the only difference from a
+  synchronous step function — so the protocol reads the state record at any
+  time, including for a request made from inside the running body. The state
+  and request records and the result promises are guest-heap records with
+  ordinary value16 descriptors that no reader can reach. Each async generator
+  type takes two of the module's `MAX_GENERATOR_TYPES` generator types (the
+  object type and its body type).
+- **Calls.** The declaration keeps its function index as a wrapper: it creates
+  the state record (suspended-start, empty queue), creates the body frame with
+  the arguments and the state record, steps it once through the parameter
+  prologue to the start point and returns the frame.
+- **Protocol.** `g.next(v)`, `g.return(v)` and `g.throw(e)` follow
+  `AsyncGenerator.prototype.next`, `return` and `throw`: each creates a promise
+  of `IteratorResult<T, TReturn>`, records a request (AsyncGeneratorEnqueue)
+  and returns the promise. A suspended generator is resumed synchronously
+  (AsyncGeneratorResume); requests made while it executes or drains wait in the
+  queue. A completed generator answers `next` with `{ value: undefined, done:
+  true }` and `throw(e)` with a rejection at once; `throw(e)` completes a
+  not-started generator without running it; `return(v)` on a not-started or
+  completed generator awaits `v` in one job (AsyncGeneratorAwaitReturn). Result
+  records are created value first, as CreateIteratorResultObject does, so
+  `JSON.stringify` prints Node's key order. Argument rules are those of
+  synchronous generators: `next()` and `return()` without an argument need
+  `TNext` and `TReturn` to accept `undefined`.
+- **Body.** `await` has the async function semantics (a rejection is thrown at
+  the `await`; `try`/`catch`/`finally` work across it), but the body frame is
+  not a scheduled frame: its suspension point starts a *relay job*, a
+  scheduled frame of a synthesized function per body type and promise type,
+  that awaits the promise and then steps the body, which reads the settled
+  promise from its own saved local. `yield e` awaits `e`, fulfills the front
+  request with `{ value, done: false }` (AsyncGeneratorCompleteStep) and
+  suspends unless another request is queued; the front request then decides
+  the result of the `yield`: its value, a throw at the `yield`, or a `return`
+  that awaits the value and runs enclosing `finally` blocks, which may `await`
+  and `yield` again (AsyncGeneratorUnwrapYieldResumption). `return e` awaits
+  `e`. When the body completes it completes the front request with the return
+  value (or rejects it with an uncaught exception), drains the queue
+  (AsyncGeneratorDrainQueue) and returns the state record, so no exception
+  leaves the body. `yield` is admitted in the positions of synchronous
+  generators, and a checked `x as T` assertion may contain `await` or `yield`
+  in its operand under v36; other intrinsic value blocks keep rejecting
+  suspension points by construct name.
+- **`yield*`.** `yield* inner` delegates to an async generator whose `TNext`
+  equals the delegating generator's and whose values and return values it can
+  yield and return (the async kind of the ECMAScript `yield*` evaluation).
+  Each received request is forwarded as `next(v)`, `throw(e)` or `return(v)`
+  (a return request's value awaited first, as AsyncGeneratorUnwrapYieldResumption
+  does) and the request's promise awaited; a value the delegate yields is
+  passed on without another await (AsyncGeneratorYield); a done result ends
+  the delegation with the delegate's return value as the value of `yield*`, or
+  completes a forwarded `return` with it, running the delegating generator's
+  `finally` blocks. Delegation to arrays, synchronous generators and other
+  values is rejected (`unsupported yield* over a value other than an async
+  generator`).
+- **`for await`.** In async functions and async generator bodies, `for await
+  (x of s)` over an async generator awaits `next()` for every step and, on
+  `break`, `return`, a labelled exit or a throw from the body, closes it by
+  awaiting `return()` (AsyncIteratorClose; a throw from the body keeps
+  precedence and closing errors are then ignored). `TNext` must accept
+  `undefined`; any `TReturn` closes, because return requests and the body's
+  completion carry `TReturn | undefined`. Over a checked array or a
+  synchronous generator it follows CreateAsyncFromSyncIterator: each value and
+  the final done result take two jobs; a rejected value closes a synchronous
+  generator in the first job and throws in the second; a throwing `next()`
+  throws after one job; closing takes one job for an array (no `return`
+  method) and, for a synchronous generator, a synchronous `return()` and two
+  jobs (one when `return()` throws). Holes of sparse arrays are awaited as
+  `undefined`. Other sources are rejected (`for await...of requires an async
+  generator, a generator or a checked array`), and `for…of` over an async
+  generator requires `for await`.
+- **Scheduler, roots and budgets.** A generator suspended at its start point or
+  a `yield` holds no live-frame slot; it is retained by its object and the
+  frames that save it, and collected with them (`varta-runtime`
+  `async_generator_tests` collects 256 abandoned generators with a collection
+  forced before every job). Each pending `await` of a body holds its relay frame
+  in the live-frame table until the promise settles, as an async function's
+  `await` holds its frame, so the `MAX_LIVE_FRAMES` bound applies to pending
+  awaits, not to suspended generators. Relay and return jobs are resumed only
+  by the scheduler through `varta_resume`; the dispatcher branch of a body
+  layout traps, as for synchronous generators. Every job draws on the one
+  execution budget: exhaustion inside a body or a job is fatal and never a
+  rejection, and a request promise rejected without a handler terminates the
+  execution after the checkpoint like any unhandled rejection. Production
+  budgets are unchanged. Measured with them, a `for await` step over an async
+  generator costs about 10.0k fuel (the consumer's `await`, the `yield`'s
+  `await` through a relay and the protocol records), an `await` in a body about
+  3.3k (1.7k in an async function) and a created, started and abandoned
+  generator about 12.7k.
+- **Deviations.** No other object implements the async iteration protocol
+  (there is no `Symbol`); an `AsyncIterable<T>` parameter accepts async
+  generator objects whose `TReturn` and `TNext` match its own; `IteratorResult`
+  values are narrowed by ordinary guards, not by `done`; and requests on a
+  value that is not an async generator are compile-time errors rather than
+  rejected promises. Behaviour tests pin Node 24 logs (`varta-runtime`
+  `async_generator_cases`).
 
 ## Local modules
 

@@ -794,6 +794,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                 &frame_layouts,
                 &resume_bodies,
                 exceptions.pending,
+                program.types.generators[id as usize].body,
             ));
         }
     } else if generator_types > 0 {

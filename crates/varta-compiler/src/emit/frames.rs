@@ -347,11 +347,26 @@ impl<'a> Emitter<'a> {
     /// Suspension: publish the yielded value, save every binding, record the
     /// state and return to the dispatcher with an empty exception channel.
     pub(super) fn suspend_point(&mut self, value: &Expr, state: u32) -> Result<()> {
-        if self.resume()?.machine.scheduled {
+        let machine = self.resume()?.machine;
+        if machine.scheduled {
             return self.await_point(value, state);
         }
-        self.expr(value)?;
-        self.store_completion(value.ty)?;
+        if machine.keeps_completion {
+            // An async generator body (v36) publishes its state record once.
+            self.code.extend([
+                I::LocalGet(FRAME_PARAM),
+                I::I32WrapI64,
+                I::I64Load(records::field(frame::COMPLETION_FIELD)),
+                I::I64Eqz,
+                I::If(BlockType::Empty),
+            ]);
+            self.expr(value)?;
+            self.store_completion(value.ty)?;
+            self.code.push(I::End);
+        } else {
+            self.expr(value)?;
+            self.store_completion(value.ty)?;
+        }
         self.save_frame(state)?;
         if let Some(globals) = self.exceptions {
             self.code.push(I::GlobalGet(globals.pending));
@@ -1337,11 +1352,17 @@ pub(super) fn test_exports(
 /// any effect, then resumes the frame by a direct call chosen by its layout id
 /// among that type's generator layouts. An uncaught exception stays in the
 /// channel for the caller to propagate; the frame is completed either way.
+///
+/// The body type of an async generator (v36, `keep_completion`) keeps the
+/// completion cell, which holds the async generator's state record, while
+/// the body runs: its protocol reads that record on every request,
+/// including requests made from inside the running body.
 pub(super) fn step_function(
     generator: u32,
     layouts: &[Layout],
     bodies: &[u32],
     pending: u32,
+    keep_completion: bool,
 ) -> wasm_encoder::Function {
     use ir::GeneratorOutcome as Out;
     const HANDLE: u32 = 0;
@@ -1412,12 +1433,14 @@ pub(super) fn step_function(
     done_without_body(&mut code);
     code.push(I::End);
     status(&mut code, frame::STATUS_RUNNING);
-    code.extend([
-        I::LocalGet(PTR),
-        I::I64Const(0),
-        I::I64Store(records::field(frame::COMPLETION_FIELD)),
-        I::Block(BlockType::Empty),
-    ]);
+    if !keep_completion {
+        code.extend([
+            I::LocalGet(PTR),
+            I::I64Const(0),
+            I::I64Store(records::field(frame::COMPLETION_FIELD)),
+        ]);
+    }
+    code.push(I::Block(BlockType::Empty));
     for (layout, body) in layouts.iter().zip(bodies) {
         if layout.generator != Some(generator) {
             continue;

@@ -82,6 +82,12 @@ impl Lower<'_> {
                     .as_deref()
                     .map(|expr| self.expr_expected(expr, Some(self.result)))
                     .transpose()?;
+                // `return e` in an async generator awaits `e` (v36).
+                if self.async_body().is_some() {
+                    value = value
+                        .map(|value| self.async_return_value(value))
+                        .transpose()?;
+                }
                 if self.types.profile.has_undefined() {
                     if self.result == Type::Void
                         && value.as_ref().is_some_and(|v| v.ty == Type::Undefined)

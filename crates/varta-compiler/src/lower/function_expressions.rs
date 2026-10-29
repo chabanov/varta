@@ -62,6 +62,11 @@ impl Lower<'_> {
         if function.is_async && !asynchronous && self.types.profile.async_functions() {
             return Err(promises::rejected("async function expression"));
         }
+        if function.is_async && function.is_generator && self.types.profile.async_generators() {
+            return Err(promises::async_generator_rejected(
+                "async generator function expression",
+            ));
+        }
         if function.is_async && !asynchronous
             || function.is_generator
             || function.type_params.is_some()

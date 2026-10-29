@@ -190,6 +190,9 @@ impl Machine<'_> {
             exception: self.exception,
             return_input,
             generator: self.generator,
+            keeps_completion: self
+                .generator
+                .is_some_and(|id| self.types.generators[id as usize].body),
             scheduled: self.scheduled,
             live: None,
         };

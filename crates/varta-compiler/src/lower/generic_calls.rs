@@ -152,6 +152,37 @@ impl Inference {
                     _ => Ok(()),
                 }
             }
+            // `AsyncIterable<T, TReturn, TNext>` and the other async generator
+            // names against an async generator infer from its types (v36).
+            ast::TsType::TsTypeRef(reference)
+                if types.profile.async_generators()
+                    && matches!(&reference.type_name, ast::TsEntityName::Ident(id)
+                    if promises::async_generator_name(id.sym.as_ref())
+                        && !in_definition(self.module, &Frame::new(), types, |t| {
+                            named::declared(t, id.sym.as_ref())
+                        })) =>
+            {
+                let Type::Generator(id) = actual else {
+                    return Ok(());
+                };
+                let generator = types.generators[id as usize];
+                if generator.asynchronous.is_none() {
+                    return Ok(());
+                }
+                let params = reference
+                    .type_params
+                    .as_deref()
+                    .map(|p| &p.params[..])
+                    .unwrap_or_default();
+                for (pattern, ty) in
+                    params
+                        .iter()
+                        .zip([generator.yielded, generator.returned, generator.next])
+                {
+                    self.unify(pattern, ty, types, depth + 1)?;
+                }
+                Ok(())
+            }
             ast::TsType::TsUnionOrIntersectionType(
                 ast::TsUnionOrIntersectionType::TsUnionType(union),
             ) => self.union(union, actual, types, depth),

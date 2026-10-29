@@ -12094,6 +12094,64 @@ fn async_methods_and_promise_values_run_through_dev_and_source_free_artifacts() 
 }
 
 #[test]
+fn async_generators_and_for_await_run_through_dev_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {Feed} from './feed.ts';export async function main():Promise<void>{const feed=new Feed('f');const seen:string[]=[];for await(const e of feed.events(5)){seen.push(e);if(seen.length===2)break;}const it=feed.events(1);const first=await it.next();const last=await it.next();console.log(`${JSON.stringify(seen)} ${JSON.stringify(first)} ${JSON.stringify(last)}`);for await(const n of [Promise.resolve(1),2])console.log(String(n));}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/feed.ts"),
+        "export class Feed{name:string;constructor(name:string){this.name=name;}async *events(count:number):AsyncGenerator<string,number|undefined,undefined>{let sent=0;try{for(let i=0;i<count;i++){await null;sent++;yield `${this.name}:${i}`;}}finally{console.log(`closed ${this.name} after ${sent}`);}return sent;}}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v35");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check).contains("unsupported async generator function"),
+        "{}",
+        combined(&check)
+    );
+    project.language_profile("checked-f64-utf16-v36");
+    // Node 24 prints the same five lines for this program.
+    let expected = [
+        "closed f after 2",
+        "closed f after 1",
+        r#"["f:0","f:1"] {"value":"f:0","done":false} {"value":1,"done":true}"#,
+        "1",
+        "2",
+    ]
+    .map(|s| format!("varta log: {s}"));
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
 fn unknown_and_checked_assertions_run_through_dev_and_source_free_artifacts() {
     let project = RegressionProject::new(
         "import {AppError,read} from './values.ts';export function main():void{try{throw new AppError('m',{cause:{code:3}});}catch(e){if(e instanceof AppError){console.log(`${e.name} ${(e.cause as {code:number}).code}`);}}const values:unknown[]=['a',2];console.log(read(values,0));try{console.log(read(values,1));}catch(e){if(e instanceof TypeError){console.log(e.message);}}}",

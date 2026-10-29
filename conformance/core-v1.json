@@ -282,6 +282,16 @@
       "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-generatorfunction-objects"
     },
     {
+      "id": "async-generators",
+      "title": "Async generators and for await",
+      "core": [
+        "CORE-03",
+        "CORE-09"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-asyncgeneratorfunction-objects"
+    },
+    {
       "id": "unknown-type",
       "title": "The unknown type with guard narrowing and caught values",
       "core": [
@@ -1158,6 +1168,23 @@
       ],
       "baseline": {
         "status": "supported"
+      }
+    },
+    {
+      "id": "async-generator-iteration",
+      "feature": "async-generators",
+      "path": "cases/async-generator-iteration.ts",
+      "sha256": "cfab52e224f6c04179352729296f9669e1a55910d9d1eb1cddab9326c2f42c18",
+      "stdout": [
+        "varta log: countdown closed",
+        "varta log: [{\"value\":2,\"done\":false},{\"value\":1,\"done\":false},{\"value\":\"liftoff\",\"done\":true}]",
+        "varta log: countdown closed",
+        "varta log: 9"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Async generators and for await are admitted from checked-f64-utf16-v36; the inventory pins v35."
       }
     },
     {

@@ -2557,6 +2557,11 @@ scheduler and frame catalog version 3. V36 has its own host ABI
 exception channel v8 and JSON schema 17; v35 keeps host ABI 31 and value16.
 Four selectors gate the streams: records (`checked_declared_fields`),
 functions (`function_fields`), async (`async_generators`) and timers
+
+`abi::TIMERS_VERSION` (32) and shares value ABI/layout 16
+(`value::PROMISE_VALUE_VERSION`) with v35; v35 keeps host ABI 31. Four selectors
+gate the streams: records (`checked_declared_fields`), functions
+(`function_fields`), async (`async_generators`, implemented below) and timers
 (`timers`). Gate every admission on its own selector, keep v35 and earlier
 
 `abi::TIMERS_VERSION` (32) and shares value ABI/layout 16
@@ -2703,3 +2708,63 @@ Contract: [architecture](architecture.md#timers-timers). Lowering lives in
 - Timers belong to `main` executions only; when async HTTP or tools are
   admitted, give each request isolate its own loop and cancel its pending
   timers when the request ends, rather than sharing a queue.
+
+### Async generators (`async_generators`)
+
+Contract: [architecture.md](architecture.md#async-generators-async_generators).
+
+- Source admission lives in `lower::promises::async_generators` (annotations,
+  the split, `yield`/`await`/`return` in bodies, the protocol helpers and every
+  `for await` source) and is gated on `profile.async_generators()` only:
+  `signature::check`, the annotation names in `keyword_type`, generic
+  inference from `AsyncIterable<T>`-like parameters, the `for await` entry in
+  `for_of.rs`, the checked-assertion entry in `suspension::construct` and the
+  `Number`/`Math` constant parameter default in `parameters::literal`. V35 and
+  earlier keep `unsupported async generator function`, the v34 `for await`
+  rejection and `unsupported await inside intrinsic expression`.
+- An async generator type is a `GeneratorType` with `asynchronous` set; its
+  objects are frames of the paired body type (`GeneratorType::body`), reached
+  by `Reinterpret`. Intern both through `async_generators::intern`, which also
+  interns the state and request records and the result promise. Never give an
+  async generator a value tag, a layout or a frame of its own type: no layout
+  may name the object type, and synchronous `for...of`, `yield*` and the
+  synchronous protocol code must reject it.
+- The body's completion cell is the only route from an object to its state
+  record. Publish it at the start point, keep it in the body type's step
+  function (`step_function(.., keep_completion)`) and in every later
+  suspension (`Suspendable::keeps_completion`), and end the body with
+  `return state`. Never read a body's `GeneratorValue` as anything but the
+  state record, and never clear it.
+- Resume a body only through its step function with its own frame handle as
+  the input (the start point's input is that handle, saved for the relays):
+  synchronously from the `Resume` helper, or from a relay job. The body is a
+  generator frame, never a scheduled one: an `await` in it carries
+  `Expression::Await::relay` and the normalizer starts the relay right before
+  the suspension and publishes the state record instead of the promise
+  (`Normalizer::publish`). Keep one relay per pending await; do not add a
+  second job mechanism.
+- Read every resumption value from the front request; do not deliver `Throw`
+  or `Return` completions through the step function (its deliveries only keep
+  the frame layout uniform). The helpers mirror the ECMAScript abstract
+  operations one to one (Enqueue, Resume, CompleteStep, DrainQueue,
+  AwaitReturn, UnwrapYieldResumption); keep their job counts, because the
+  pinned Node logs depend on them. Memoize the helpers per async generator
+  type through `async_helper`, which reserves the index before synthesizing
+  (Drain, AwaitReturn and its job call each other).
+- Body `return`s become a store of `TReturn | undefined` and a break to the
+  body's exit label (`Exits`), so `finally` blocks run first; every rewritten
+  `TryFinally` keeps a pending state-machine `Return` in a fresh local of the
+  state record type. A `yield` is a value block at the `yield` span, which the
+  construct allowlist splits; it may `throw` and break to the exit label.
+- `yield*` (`async_delegate`) forwards requests to an async generator
+  delegate through its protocol helpers and passes yielded values on through
+  the same CompleteStep and suspension as `yield`, without awaiting them; keep
+  its delegate restricted to async generators with the same `TNext` until a
+  source with its own pinned Node log is added.
+- `for await` over synchronous sources must keep the async-from-sync job
+  counts (two per value and per done result, one or two to close, the first-job
+  closing of a rejected value); add a source only with its pinned Node log.
+- Behaviour tests compare against pinned Node 24 output (`varta-runtime`
+  `async_generator_cases`, `async_generator_tests`, which also force a
+  collection before every job and record the fuel figures of the contract);
+  regenerate expectations only from Node, never from Varta output.
