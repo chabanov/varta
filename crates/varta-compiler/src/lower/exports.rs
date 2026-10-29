@@ -10,12 +10,11 @@
 //! without further changes; import resolution must treat
 //! [`Lookup::Ambiguous`] as an error, like [`ambiguous`].
 use super::*;
+/// `export *` never forwards a default export (ECMAScript `GetExportedNames`).
+pub(super) use crate::modules::DEFAULT_EXPORT;
 use crate::modules::{Export, Unit};
 use std::collections::{BTreeSet, btree_map};
 use std::path::{Path, PathBuf};
-
-/// `export *` never forwards a default export (ECMAScript `GetExportedNames`).
-const DEFAULT_EXPORT: &str = "default";
 
 /// The exported names of one module in one binding namespace.
 pub(super) struct Table<V> {

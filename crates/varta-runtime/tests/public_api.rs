@@ -3513,6 +3513,99 @@ fn public_engine_links_reexports_and_star_exports_in_v32() {
 }
 
 #[test]
+fn public_engine_links_default_exports_and_extended_interfaces_in_v32() {
+    // The shape of the pilot's `src/index.ts`: a default-exported client class
+    // forwarded by a barrel, configured through interfaces that extend
+    // interfaces of other modules.
+    struct DefaultSources;
+    impl ModuleLoader for DefaultSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name.strip_prefix("./") {
+                Some(rest) => Ok(rest.into()),
+                None => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("resources.ts") => "export interface Paging{limit:number}export interface Resources{agents:Paging}",
+                Some("client.ts") => "import type {Resources,Paging} from './resources.ts';\
+                    export interface ClientOptions extends Resources{baseURL:string}\
+                    export interface ClientOptions{retries?:number}\
+                    interface AgentPaging extends Paging{limit:20}\
+                    export default class UarpClient{readonly options:ClientOptions;constructor(options:ClientOptions){this.options=options;}\
+                    get baseURL():string{return this.options.baseURL;}}\
+                    export const AGENT_PAGING:AgentPaging={limit:20};",
+                Some("version.ts") => "export default '0.12.0';",
+                Some("index.ts") => "export {default} from './client.ts';export * from './client.ts';\
+                    export {default as VERSION} from './version.ts';export type {Paging} from './resources.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |text: &str, profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: text.into(),
+            },
+            &DefaultSources,
+            profile,
+        )
+    };
+    let profile = varta_common::language::LanguageProfile::CheckedF64Utf16V32;
+    let source = "import UarpClient,{type ClientOptions,type Paging,AGENT_PAGING,VERSION} from './index.ts';\
+        export function main():void{const options:ClientOptions={baseURL:'https://api.test',agents:{limit:5}};\
+        const client=new UarpClient(options);const paging:Paging=client.options.agents;\
+        console.log(client.baseURL+' '+VERSION);console.log(paging.limit+AGENT_PAGING.limit);\
+        console.log(client.options.retries===undefined);}";
+    let compiled = compile(source, profile).unwrap();
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .inspect_module(&compiled.wasm)
+            .unwrap()
+            .language
+            .profile,
+        Some(profile)
+    );
+    assert_eq!(
+        runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap().lines,
+        [
+            "varta log: https://api.test 0.12.0",
+            "varta log: 25",
+            "varta log: 1"
+        ]
+    );
+    for (text, expected) in [
+        (
+            "import Version from './version.ts';import Again from './index.ts';\
+             export function main():void{const c:Version=new Again({baseURL:'',agents:{limit:1}});}",
+            "type reference Version",
+        ),
+        (
+            "import * as index from './index.ts';export function main():void{}",
+            "namespace import (import * as name)",
+        ),
+        (
+            "import Paging from './resources.ts';export function main():void{}",
+            "module resources.ts has no default export",
+        ),
+    ] {
+        let error = compile(text, profile).err().unwrap().to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+    let frozen = compile(
+        source,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V31,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(frozen.contains("default or namespace import"), "{frozen}");
+}
+
+#[test]
 fn public_engine_links_module_constants_across_modules_in_v32() {
     struct ConstantSources;
     impl ModuleLoader for ConstantSources {

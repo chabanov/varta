@@ -3593,6 +3593,46 @@ A name that two `export *` sources provide with different bindings is left out;
 importing it is an error until an explicit `export { name } from` picks one.
 `export * as ns from`, `export {} from` and default exports are rejected.
 
+#### Default exports and interface inheritance (opt-in v32)
+
+A module may have one default export, imported under any local name. Interfaces
+extend other interfaces (also from other modules) and merge repeated
+declarations:
+
+```ts
+// transport.ts
+export interface TransportOptions { baseURL: string }
+
+// client.ts
+import type { TransportOptions } from './transport.js';
+export interface ClientOptions extends TransportOptions { retries: number }
+export interface ClientOptions { userAgent?: string }   // merged
+export default class Client {
+  readonly options: ClientOptions;
+  constructor(options: ClientOptions) { this.options = options; }
+}
+
+// version.ts
+export default '0.12.0';
+
+// main.ts
+import Client, { type ClientOptions } from './client.js';
+import VERSION from './version.js';
+
+export function main(): void {
+  const options: ClientOptions = { baseURL: 'https://api.example', retries: 2 };
+  const client = new Client(options);
+  console.log(`${client.options.baseURL} ${VERSION}`); // https://api.example 0.12.0
+}
+```
+
+`export { x as default }`, `export { default } from` and
+`export { default as x } from` also work; `export *` never forwards a default.
+An own member may narrow an inherited field (for example `kind: 'agent'` over
+`kind: string`) but not change it incompatibly. Extending a class and merging an
+interface into a class (`interface Client extends Resources {}` beside
+`class Client`) are rejected, as are `import * as ns` and `export * as ns`.
+
 #### Template literals (opt-in v32)
 
 Template literals build strings from primitive values. Each substitution runs once,

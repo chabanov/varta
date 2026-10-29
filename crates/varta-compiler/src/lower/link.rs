@@ -296,6 +296,9 @@ fn other_namespace(
     match type_exports.get(target).map(|e| e.lookup(name)) {
         Some(exports::Lookup::Bound(_)) => Ok(()),
         Some(exports::Lookup::Ambiguous) => Err(exports::ambiguous(target, name)),
+        Some(exports::Lookup::Missing) | None if name == exports::DEFAULT_EXPORT => Err(
+            CompilerError::Module(format!("module {} has no default export", target.display())),
+        ),
         Some(exports::Lookup::Missing) | None => Err(CompilerError::Module(format!(
             "module {} does not export function {}{name}",
             target.display(),

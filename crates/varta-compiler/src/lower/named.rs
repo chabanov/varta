@@ -15,6 +15,8 @@ enum Declaration {
     Imported(Key),
     /// A v32 class: its instance type is nominal and needs no lazy resolution.
     Class(u32),
+    /// A v32 interface with `extends` clauses or merged declarations.
+    Interface(Box<interfaces::Interface>),
 }
 type Key = (usize, String);
 
@@ -49,6 +51,7 @@ pub(super) fn link_module(
 ) -> Result<Exports> {
     let unit = &graph.units[path];
     let source = &unit.source;
+    let mut merged = interfaces::Merged::new();
     for item in &unit.ast.body {
         // Exported classes are scanned as module exports and linked below.
         if let Some((name, id)) = classes::register(item, module, source, types)? {
@@ -77,6 +80,11 @@ pub(super) fn link_module(
                     if interface.type_params.is_some() {
                         return Err(source
                             .locate(unsupported("generic type declaration"), interface.id.span));
+                    }
+                    if types.profile.interface_extends() {
+                        let exported = matches!(item, ast::ModuleItem::ModuleDecl(_));
+                        interfaces::collect(&mut merged, interface, exported, source)?;
+                        continue;
                     }
                     if !interface.extends.is_empty() {
                         return Err(source
@@ -115,6 +123,9 @@ pub(super) fn link_module(
             ));
         }
     }
+    for (name, interface) in merged {
+        declare_interface(module, name, interface, types)?;
+    }
     for import in &unit.imports {
         let dependency = &exports[&import.target];
         for binding in &import.bindings {
@@ -149,6 +160,37 @@ pub(super) fn link_module(
         }
     }
     exports::link(unit, &Types { module, types }, exports)
+}
+
+/// Register the merged declarations of one interface name (v32).
+fn declare_interface(
+    module: usize,
+    name: String,
+    interface: interfaces::Interface,
+    types: &mut ir::ValueTypes,
+) -> Result<()> {
+    let source = interface.source().clone();
+    let span = interface.span();
+    let declaration = match interface.plain() {
+        Some(ty) => Declaration::Local {
+            ty: Box::new(ty),
+            source: source.clone(),
+            span,
+        },
+        None => Declaration::Interface(Box::new(interface)),
+    };
+    let message = match types.named.declarations.get(&(module, name.clone())) {
+        None => {
+            types.named.declarations.insert((module, name), declaration);
+            return Ok(());
+        }
+        Some(Declaration::Class(_)) => unsupported(&format!(
+            "declaration merging of interface {name} with class {name} \
+             (merged members would be class fields its constructor never initializes)"
+        )),
+        Some(_) => invalid(format!("duplicate type declaration: {name}")),
+    };
+    Err(source.locate(message, span))
 }
 
 fn missing_type(target: &Path, name: &str) -> CompilerError {
@@ -240,9 +282,11 @@ pub(super) fn resolve(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
     if let Some(Declaration::Class(id)) = types.named.declarations.get(&key) {
         return Ok(Type::Class(*id));
     }
-    let Some(Declaration::Local { ty, source, span }) = types.named.declarations.get(&key).cloned()
-    else {
-        return Err(unsupported(&format!("type reference {name}")));
+    let declaration = types.named.declarations.get(&key).cloned();
+    let (source, span) = match &declaration {
+        Some(Declaration::Local { source, span, .. }) => (source.clone(), *span),
+        Some(Declaration::Interface(interface)) => (interface.source().clone(), interface.span()),
+        _ => return Err(unsupported(&format!("type reference {name}"))),
     };
     if types.named.resolving.contains(&key) {
         return Err(source.locate(unsupported("recursive type declaration"), span));
@@ -250,7 +294,12 @@ pub(super) fn resolve(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
     let caller = types.named.current;
     types.named.resolving.push(key.clone());
     types.named.current = key.0;
-    let result = keyword_type(&ty, types).map_err(|e| source.locate(e, span));
+    let result = match &declaration {
+        Some(Declaration::Interface(interface)) => interface.resolve(types),
+        Some(Declaration::Local { ty, .. }) => keyword_type(ty, types),
+        _ => Err(unsupported(&format!("type reference {name}"))),
+    }
+    .map_err(|e| source.locate(e, span));
     types.named.current = caller;
     types.named.resolving.pop();
     let ty = result?;

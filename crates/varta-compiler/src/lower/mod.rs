@@ -269,6 +269,7 @@ mod function_expressions;
 mod functions;
 mod guest_logical;
 mod http;
+mod interfaces;
 mod json;
 mod labels;
 mod link;

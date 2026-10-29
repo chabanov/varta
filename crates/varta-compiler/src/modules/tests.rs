@@ -329,11 +329,7 @@ fn reexport_forms_outside_the_subset_and_earlier_profiles_are_rejected() {
         ("export * as ns from './a.ts';", "namespace re-export"),
         ("export {} from './a.ts';", "side-effect re-export"),
         (
-            "export {default} from './a.ts';",
-            "string or default export name",
-        ),
-        (
-            "export {f as default} from './a.ts';",
+            "export {f as \"f-1\"} from './a.ts';",
             "string or default export name",
         ),
         (
@@ -364,6 +360,10 @@ fn reexport_forms_outside_the_subset_and_earlier_profiles_are_rejected() {
                 "export * as ns from './a.ts';",
                 "re-export or type-only export",
             ),
+            (
+                "export {default} from './a.ts';",
+                "re-export or type-only export",
+            ),
         ] {
             let error =
                 reexport_error(&format!("{source}export function main():void{{}}"), profile);
@@ -375,4 +375,133 @@ fn reexport_forms_outside_the_subset_and_earlier_profiles_are_rejected() {
         NAMED_TYPES,
     );
     assert!(error.to_string().contains("re-export or type-only export"));
+}
+
+const DEFAULTS: varta_common::language::LanguageProfile =
+    varta_common::language::LanguageProfile::CheckedF64Utf16V32;
+
+#[test]
+fn default_exports_scan_as_bindings_named_default() {
+    let mut loader = MemoryLoader::default();
+    loader.insert(
+        "lib.ts",
+        "export default function make():number{return 1;}export function other():number{return 2;}"
+            .into(),
+    );
+    loader.insert("anon.ts", "export default class{}".into());
+    loader.insert("value.ts", "export default 3;".into());
+    loader.insert(
+        "alias.ts",
+        "function f():void{}export {f as default};".into(),
+    );
+    loader.insert(
+        "forward.ts",
+        "export {default} from './lib.ts';export {default as anon} from './anon.ts';".into(),
+    );
+    let graph = Graph::load_with_profile(
+        entry(
+            "import make,{other} from './lib.ts';import type A from './anon.ts';\
+             import v from './value.ts';import {default as f} from './alias.ts';\
+             import fwd,{anon} from './forward.ts';export function main():void{}"
+                .into(),
+        ),
+        &loader,
+        DEFAULTS,
+    )
+    .unwrap();
+    let unit = |name: &str| &graph.units[Path::new(name)];
+    let exports = |name: &str| -> Vec<(String, String, bool)> {
+        unit(name)
+            .exports
+            .iter()
+            .map(|e| (e.local.clone(), e.exported.clone(), e.from.is_some()))
+            .collect()
+    };
+    let export = |local: &str, exported: &str, from: bool| (local.into(), exported.into(), from);
+    assert_eq!(
+        exports("lib.ts"),
+        [
+            export("make", "default", false),
+            export("other", "other", false)
+        ]
+    );
+    // Anonymous declarations and expressions bind ECMAScript's `*default*`.
+    assert_eq!(exports("anon.ts"), [export("*default*", "default", false)]);
+    assert_eq!(exports("value.ts"), [export("*default*", "default", false)]);
+    assert_eq!(exports("alias.ts"), [export("f", "default", false)]);
+    assert_eq!(
+        exports("forward.ts"),
+        [
+            export("default", "default", true),
+            export("default", "anon", true)
+        ]
+    );
+    // The default declaration is rewritten into an ordinary declaration.
+    assert!(matches!(
+        &unit("anon.ts").ast.body[0],
+        ast::ModuleItem::Stmt(ast::Stmt::Decl(ast::Decl::Class(class))) if class.ident.sym == "*default*"
+    ));
+    let bindings: Vec<_> = unit("main.ts")
+        .imports
+        .iter()
+        .flat_map(|i| &i.bindings)
+        .map(|b| (b.imported.as_str(), b.local.as_str(), b.type_only))
+        .collect();
+    assert_eq!(
+        bindings,
+        // Dependencies are sorted by target path.
+        [
+            ("default", "f", false),
+            ("default", "A", true),
+            ("default", "fwd", false),
+            ("anon", "anon", false),
+            ("default", "make", false),
+            ("other", "other", false),
+            ("default", "v", false),
+        ]
+    );
+}
+
+#[test]
+fn default_exports_keep_namespace_forms_and_earlier_profiles_rejected() {
+    let mut loader = MemoryLoader::default();
+    loader.insert("lib.ts", "export default function f():void{}".into());
+    let error = |source: &str, profile| {
+        Graph::load_with_profile(entry(source.into()), &loader, profile)
+            .err()
+            .unwrap_or_else(|| panic!("accepted under {profile:?}: {source}"))
+            .to_string()
+    };
+    for (source, expected) in [
+        (
+            "import * as lib from './lib.ts';",
+            "namespace import (import * as name)",
+        ),
+        (
+            "import f, * as lib from './lib.ts';",
+            "namespace import (import * as name)",
+        ),
+        ("export * as lib from './lib.ts';", "namespace re-export"),
+        (
+            "export default 1;export default 2;",
+            "duplicate export: default",
+        ),
+        (
+            "export default X;const X=1;",
+            "default export of X precedes its declaration",
+        ),
+    ] {
+        let message = error(source, DEFAULTS);
+        assert!(message.contains(expected), "{source}: {message}");
+    }
+    for profile in [NAMED_TYPES, Default::default()] {
+        for (source, expected) in [
+            ("import f from './lib.ts';", "default or namespace import"),
+            ("export default function f():void{}", "module export form"),
+            ("export default 1;", "module export form"),
+        ] {
+            let message = error(source, profile);
+            assert!(message.contains(expected), "{source}: {message}");
+        }
+    }
 }

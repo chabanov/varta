@@ -1,5 +1,6 @@
 //! A bounded, deterministic graph of explicit source modules. No source text is
 //! concatenated and the compiler never performs ambient filesystem/network I/O.
+mod defaults;
 mod syntax;
 #[cfg(test)]
 mod tests;
@@ -30,6 +31,9 @@ pub struct Compilation {
     pub wasm: Vec<u8>,
     pub modules: Vec<varta_common::ModuleInfo>,
 }
+
+/// The exported name of a default export (v32). `export *` never forwards it.
+pub(crate) const DEFAULT_EXPORT: &str = "default";
 
 pub(crate) struct ImportBinding {
     pub imported: String,
@@ -143,12 +147,12 @@ impl Builder<'_> {
             return Err(module_error("module graph exceeds total source budget"));
         }
         let source = Source::new(&input.path, &input.text);
-        let ast = parse::parse_module(&source)?;
+        let mut ast = parse::parse_module(&source)?;
         let syntax::Scan {
             mut imports,
             exports,
             stars,
-        } = syntax::scan(&ast, &source, &input.path, self.loader, self.profile)?;
+        } = syntax::scan(&mut ast, &source, &input.path, self.loader, self.profile)?;
         self.imports += imports.len();
         if self.imports > MAX_IMPORTS {
             return Err(source.locate(
