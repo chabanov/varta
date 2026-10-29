@@ -901,8 +901,10 @@ web-developer peer.
   and one mono). The browser loads the same fonts through `@font-face` from
   artifact resources, so layout is comparable across renderers.
 - **Events.** click, input, change, submit, keydown, focusin/focusout, scroll
-  (coalesced to at most once per frame), cancel/close. Events bubble to the nearest
-  node with a listener for that kind (delegation); there is no capture phase.
+  (coalesced to at most once per frame), cancel/close. Events bubble from the target
+  to the root; every node on the path with a listener for that kind gets a record,
+  until a `stopPropagation` listener ([draft v0](embedding.md#view-protocol-draft-v0-unstable));
+  there is no capture phase.
   `preventDefault` and `stopPropagation` are listen-time options the host executes
   synchronously; `submit` always prevents default because there is never navigation.
   No pointermove, drag, wheel or touch gestures in v1; the renderer scrolls itself.
@@ -967,8 +969,9 @@ checked by a drift test.
   meta, isComposing, checked), `scroll_top`, `scroll_height`, `client_height`
   (f64, scroll only), then the `key` and `value` strings (empty when absent).
 - **Seq semantics.** The host keeps one edit counter per field and increments it
-  for every local edit, including each IME composition step; every `input`/`change`
-  record carries the new counter. `set_value`/`set_checked` carry the counter the
+  for every local user edit, including each IME composition step; it starts at 0,
+  `input` records carry the new counter, `change` records the current one, and
+  coalescing may leave gaps ([draft v0](embedding.md#view-protocol-draft-v0-unstable)). `set_value`/`set_checked` carry the counter the
   guest last saw for that field. The host applies the patch only when that base
   equals its current counter; otherwise newer local edits exist and the patch is
   dropped as stale. An equal value is a no-op that does not move the caret. During a

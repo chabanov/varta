@@ -4,7 +4,8 @@
 use super::DOCUMENT;
 use crate::support::{assert_block, table};
 use varta_common::view::{
-    self, Attribute, Command, CssProperty, EventFlag, EventKind, ListenOption, Opcode, Tag,
+    self, Attribute, Command, CssProperty, CssValue, EventFlag, EventKind, ListenOption, Opcode,
+    Tag, Tags,
 };
 
 fn codes(rows: impl Iterator<Item = (u32, &'static str)>) -> String {
@@ -131,6 +132,117 @@ fn layout() -> String {
     )
 }
 
+/// Markdown table cells cannot contain a bare `|`.
+fn cell(text: &str) -> String {
+    text.replace('|', "\\|")
+}
+
+fn tags(tags: Tags) -> String {
+    match tags {
+        Tags::All => "all".to_owned(),
+        Tags::Focusable => "focusable elements".to_owned(),
+        Tags::Only(tags) => tags
+            .iter()
+            .map(|tag| format!("`{}`", tag.name()))
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+fn attributes() -> String {
+    table(
+        &["Code", "Attribute", "Elements", "Value"],
+        Attribute::ALL.iter().map(|&attribute| {
+            vec![
+                attribute.code().to_string(),
+                format!("`{}`", attribute.name()),
+                tags(attribute.tags()),
+                cell(&attribute.value().describe()),
+            ]
+        }),
+    )
+}
+
+fn css_properties() -> String {
+    table(
+        &["Code", "Property", "Values"],
+        CssProperty::ALL.iter().map(|&property| {
+            vec![
+                property.code().to_string(),
+                format!("`{}`", property.name()),
+                format!("`{}`", cell(property.grammar())),
+            ]
+        }),
+    )
+}
+
+fn css_values() -> String {
+    table(
+        &["Type", "Definition"],
+        CssValue::ALL
+            .iter()
+            .map(|&value| vec![format!("`{}`", value.name()), cell(value.definition())]),
+    )
+}
+
+fn stylesheet_tokens() -> String {
+    let quoted = |items: &[&str]| {
+        items
+            .iter()
+            .map(|item| format!("`{}`", cell(item)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    table(
+        &["Item", "Values"],
+        [
+            ("Pseudo-classes", quoted(view::PSEUDO_CLASSES)),
+            ("Media features", quoted(view::MEDIA_FEATURES)),
+            ("Forbidden anywhere", quoted(view::FORBIDDEN_CSS)),
+            (
+                "Forbidden in `set_style` values",
+                quoted(view::FORBIDDEN_STYLE_VALUE),
+            ),
+        ]
+        .into_iter()
+        .map(|(item, values)| vec![item.to_owned(), values]),
+    )
+}
+
+fn events() -> String {
+    let flag = |set: bool| if set { "yes" } else { "—" }.to_owned();
+    table(
+        &["Code", "Event", "Coalescible", "Increments seq"],
+        EventKind::ALL.iter().map(|&kind| {
+            vec![
+                kind.code().to_string(),
+                format!("`{}`", kind.name()),
+                flag(kind.coalescible()),
+                flag(kind.edits()),
+            ]
+        }),
+    )
+}
+
+fn commands() -> String {
+    table(
+        &["Code", "Command", "Elements", "Argument"],
+        Command::ALL.iter().map(|&command| {
+            vec![
+                command.code().to_string(),
+                format!("`{}`", command.name()),
+                tags(command.tags()),
+                if command.takes_argument() {
+                    "finite nonnegative top offset (CSS px)"
+                } else {
+                    "must be 0"
+                }
+                .to_owned(),
+            ]
+        }),
+    )
+}
+
 #[test]
 fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-layout", &layout());
@@ -140,36 +252,10 @@ fn view_draft_tables_match_registry() {
         "view-tags",
         &codes(Tag::ALL.iter().map(|v| (u32::from(v.code()), v.name()))),
     );
-    assert_block(
-        DOCUMENT,
-        "view-attributes",
-        &codes(
-            Attribute::ALL
-                .iter()
-                .map(|v| (u32::from(v.code()), v.name())),
-        ),
-    );
-    assert_block(
-        DOCUMENT,
-        "view-css-properties",
-        &codes(
-            CssProperty::ALL
-                .iter()
-                .map(|v| (u32::from(v.code()), v.name())),
-        ),
-    );
-    assert_block(
-        DOCUMENT,
-        "view-events",
-        &codes(
-            EventKind::ALL
-                .iter()
-                .map(|v| (u32::from(v.code()), v.name())),
-        ),
-    );
-    assert_block(
-        DOCUMENT,
-        "view-commands",
-        &codes(Command::ALL.iter().map(|v| (u32::from(v.code()), v.name()))),
-    );
+    assert_block(DOCUMENT, "view-attributes", &attributes());
+    assert_block(DOCUMENT, "view-css-properties", &css_properties());
+    assert_block(DOCUMENT, "view-css-values", &css_values());
+    assert_block(DOCUMENT, "view-stylesheet-tokens", &stylesheet_tokens());
+    assert_block(DOCUMENT, "view-events", &events());
+    assert_block(DOCUMENT, "view-commands", &commands());
 }

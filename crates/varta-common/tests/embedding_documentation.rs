@@ -9,15 +9,15 @@ mod view;
 use std::collections::BTreeSet;
 use support::{assert_block, profile_name, table, workspace_file};
 use varta_common::{
-    HostOperation, HostScalar, TOOL_COPY_STRING, TOOL_EXPORT_PREFIX, TOOL_RETAIN_STRING,
+    GrantKind, HostOperation, HostScalar, TOOL_COPY_STRING, TOOL_EXPORT_PREFIX, TOOL_RETAIN_STRING,
     TOOL_SECTION, ToolCatalog, ToolContract, ToolLimits, ToolParameter, ToolType,
     abi::{self, HostStatus},
-    exceptions, function,
+    capability_kind, exceptions, function,
     function::admission,
     function::frame::{self, Completion, Outcome},
     http,
     language::{self, LanguageProfile},
-    value,
+    scheduler, value,
 };
 
 const DOCUMENT: &str = "docs/embedding.md";
@@ -650,6 +650,34 @@ fn entry_limits() -> String {
             frame::MAX_LIVE_FRAMES.to_string(),
             "`frame::MAX_LIVE_FRAMES`",
         ),
+        (
+            "Catalog types / bindings",
+            format!(
+                "{} / {}",
+                function::MAX_CAPTURE_TYPES,
+                function::MAX_CAPTURE_TYPES
+            ),
+            "`function::MAX_CAPTURE_TYPES`",
+        ),
+        (
+            "Catalog function signature index bound (exclusive)",
+            function::MAX_TYPES.to_string(),
+            "`function::MAX_TYPES`",
+        ),
+        (
+            "Catalog captures per function",
+            function::MAX_CAPTURES.to_string(),
+            "`function::MAX_CAPTURES`",
+        ),
+        (
+            "Frame slots per layout / suspension states per layout",
+            format!(
+                "{} / {}",
+                frame::MAX_FRAME_BINDINGS,
+                frame::MAX_SUSPENSION_STATES
+            ),
+            "`frame::MAX_FRAME_BINDINGS`, `frame::MAX_SUSPENSION_STATES`",
+        ),
     ];
     table(
         &["Contract limit", "Value", "Source constants"],
@@ -680,6 +708,86 @@ fn tool_catalog_example() -> String {
     format!("```json\n{json}\n```")
 }
 
+fn grant_kind(kind: GrantKind) -> (&'static str, &'static str) {
+    // Exhaustive on purpose: a new grant kind fails compilation here.
+    match kind {
+        GrantKind::Boolean => ("Boolean", r#"`"enabled": true \| false`"#),
+        GrantKind::Patterns => ("Name/path patterns", r#"`"patterns": [...]`"#),
+        GrantKind::Urls => ("URL patterns", r#"`"patterns": [...]`"#),
+        GrantKind::Listeners => ("Listen endpoints", r#"`"patterns": ["127.0.0.1:8080"]`"#),
+    }
+}
+
+/// Every capability id a registered operation requires, grouped by grant kind.
+fn grant_kinds() -> String {
+    let ids: BTreeSet<&'static str> = registered_operations()
+        .into_iter()
+        .filter_map(HostOperation::capability)
+        .collect();
+    let kinds = [
+        GrantKind::Boolean,
+        GrantKind::Patterns,
+        GrantKind::Urls,
+        GrantKind::Listeners,
+    ];
+    table(
+        &["Grant kind", "Wire form", "Ids"],
+        kinds.into_iter().map(|kind| {
+            let members: Vec<String> = ids
+                .iter()
+                .filter(|id| capability_kind(id) == Some(kind))
+                .map(|id| format!("`{id}`"))
+                .collect();
+            let (name, wire) = grant_kind(kind);
+            vec![name.to_owned(), wire.to_owned(), members.join(", ")]
+        }),
+    )
+}
+
+fn timers() -> String {
+    table(
+        &["Item", "Value", "Source constant"],
+        [
+            (
+                "Capability",
+                format!("`{}` (boolean)", scheduler::TIMER_CAPABILITY),
+                "`scheduler::TIMER_CAPABILITY`",
+            ),
+            (
+                "`timer_start` flag: interval",
+                scheduler::TIMER_INTERVAL.to_string(),
+                "`scheduler::TIMER_INTERVAL`",
+            ),
+            (
+                "`timer_start` flag: unref",
+                scheduler::TIMER_UNREF.to_string(),
+                "`scheduler::TIMER_UNREF`",
+            ),
+            (
+                "Delay range in ms (others become the minimum)",
+                format!(
+                    "{} to {}",
+                    scheduler::TIMER_MIN_DELAY_MS,
+                    scheduler::TIMER_MAX_DELAY_MS
+                ),
+                "`scheduler::TIMER_MIN_DELAY_MS`, `scheduler::TIMER_MAX_DELAY_MS`",
+            ),
+            (
+                "Timers armed or awaiting their take at once",
+                scheduler::MAX_PENDING_TIMERS.to_string(),
+                "`scheduler::MAX_PENDING_TIMERS`",
+            ),
+            (
+                "Denied `timer_start` (fatal) diagnostic",
+                format!("`{}`", scheduler::SchedulerError::TimerDenied),
+                "`scheduler::SchedulerError::TimerDenied`",
+            ),
+        ]
+        .into_iter()
+        .map(|(item, value, constant)| vec![item.to_owned(), value, constant.to_owned()]),
+    )
+}
+
 #[test]
 fn embedding_host_operations_match_registry() {
     assert_block(DOCUMENT, "embedding-host-operations", &host_operations());
@@ -701,6 +809,8 @@ fn embedding_layout_names_and_codes_match_constants() {
     assert_block(DOCUMENT, "embedding-names", &names());
     assert_block(DOCUMENT, "embedding-codes", &codes());
     assert_block(DOCUMENT, "embedding-entry-limits", &entry_limits());
+    assert_block(DOCUMENT, "embedding-grant-kinds", &grant_kinds());
+    assert_block(DOCUMENT, "embedding-timers", &timers());
     assert_block(
         DOCUMENT,
         "embedding-tool-catalog-example",
