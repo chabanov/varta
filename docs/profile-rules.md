@@ -2523,8 +2523,11 @@ Contract: [engine Web types](architecture.md#engine-web-types-web_headers-abort_
   diagnostics stay on the shared pipeline. A new engine type adds a prelude (or
   an export of one) with its selector, never a host import or capability.
 - A prelude loads only when a module names one of its exports and does not
-  declare or import that name; keep programs that name none byte-identical
-  (`programs_that_do_not_name_web_types_are_unchanged`). Prelude paths stay
+  declare or import that name; keep programs that name none byte-identical to
+  the same profile's output without preludes (compiler
+  `programs_that_do_not_name_web_types_compile_as_without_preludes`, through
+  the test-only `engine::without_preludes`; v35 no longer shares v34's ABIs,
+  so v34 bytes are no reference). Prelude paths stay
   reserved from host loaders and out of module metadata.
 - Write preludes for the production budgets: no per-code-unit `charCodeAt`,
   `%`, union `===`/`!==` against `null`/`undefined` or class identity in loops

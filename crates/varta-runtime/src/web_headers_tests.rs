@@ -232,24 +232,21 @@ fn function_literals_may_omit_trailing_context_parameters_from_v35() {
 
 #[test]
 fn programs_that_do_not_name_web_types_are_unchanged() {
-    // Without a Web type name no prelude is compiled: the module equals the v34
-    // module apart from the declared profile name.
+    // Without a Web type name no prelude is compiled: the module equals the
+    // v35 module compiled without engine preludes (pinned byte for byte by the
+    // compiler's `programs_that_do_not_name_web_types_compile_as_without_preludes`;
+    // v35 no longer shares v34's ABIs, so v34 bytes are no reference). It
+    // carries neither prelude's text and behaves as under v34.
     let source = "class Box{value:string;constructor(value:string){this.value=value;}}\
         export function main():void{const o={Headers:'x'};const b=new Box(o.Headers+'Headers');\
         console.log(b.value);const list=[1,2,3];list.forEach((n)=>console.log(String(n)));}";
     let v35 = module(source);
+    run(source, &["xHeaders", "1", "2", "3"]);
     let v34 = compile(source, P::CheckedF64Utf16V34).unwrap();
-    let rename = |bytes: &[u8]| {
-        let (from, to) = (b"checked-f64-utf16-v35", b"checked-f64-utf16-v34");
-        let at = bytes
-            .windows(from.len())
-            .position(|window| window == from)
-            .unwrap();
-        let mut bytes = bytes.to_vec();
-        bytes[at..at + to.len()].copy_from_slice(to);
-        bytes
-    };
-    assert_eq!(rename(&v35), v34);
+    assert_eq!(
+        VartaRuntime::new().run_wasm_bytes(&v34, &[]).unwrap().lines,
+        ["xHeaders", "1", "2", "3"].map(|line| format!("varta log: {line}"))
+    );
     // Naming AbortSignal compiles the abort prelude only.
     let abort = module(
         "function f(s:AbortSignal):boolean{return s.aborted;} export function main():void{}",

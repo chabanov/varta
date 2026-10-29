@@ -590,3 +590,21 @@ fn engine_prelude_paths_are_reserved_from_host_loaders() {
     .to_string();
     assert!(error.contains("reserved for an engine prelude"), "{error}");
 }
+
+#[test]
+fn programs_that_do_not_name_web_types_compile_as_without_preludes() {
+    // A v35 program that names no Web type compiles to exactly the bytes the
+    // same profile produces when the engine has no preludes at all.
+    let source = "class Box{value:string;constructor(value:string){this.value=value;}}\
+        export function main():void{const o={Headers:'x'};const b=new Box(o.Headers+'Headers');\
+        console.log(b.value);const list=[1,2,3];list.forEach((n)=>console.log(String(n)));}";
+    let compile = |source: &str| crate::compile_typescript_with_profile(source, V35);
+    let with = compile(source).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &with).unwrap();
+    assert_eq!(with, engine::without_preludes(|| compile(source)).unwrap());
+    // The switch removes the preludes: a program naming one then fails.
+    let named =
+        "export function main():void{const h=new Headers();console.log(String(h.has('a')));}";
+    assert!(compile(named).is_ok());
+    assert!(engine::without_preludes(|| compile(named)).is_err());
+}

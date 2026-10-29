@@ -33,7 +33,11 @@ fn custom_section<'a>(bytes: &'a [u8], name: &str) -> Option<&'a [u8]> {
 }
 
 /// Programs of every v35 stream that use layout-bound values.
-const CASES: [&str; 9] = [
+const CASES: [&str; 13] = [
+    include_str!("web_cases/headers_basics.ts"),
+    include_str!("web_cases/headers_values.ts"),
+    include_str!("web_cases/abort_basics.ts"),
+    include_str!("web_cases/abort_flow.ts"),
     include_str!("v35_cases/mixed.ts"),
     include_str!("v35_cases/dictionary_ops.ts"),
     include_str!("v35_cases/spread.ts"),

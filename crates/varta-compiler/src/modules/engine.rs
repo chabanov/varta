@@ -76,6 +76,20 @@ pub(crate) fn is_prelude_source(source: &crate::source::Source) -> bool {
         .any(|prelude| source.is_path(Path::new(prelude.path)))
 }
 
+#[cfg(test)]
+thread_local! {
+    static WITHOUT_PRELUDES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+/// Test-only: run `compile` as if the engine had no preludes, so a program's
+/// bytes can be compared with the same profile's output without the Web types.
+#[cfg(test)]
+pub(crate) fn without_preludes<T>(compile: impl FnOnce() -> T) -> T {
+    WITHOUT_PRELUDES.with(|flag| flag.set(true));
+    let result = compile();
+    WITHOUT_PRELUDES.with(|flag| flag.set(false));
+    result
+}
+
 /// Names bound at the top level of a module: declarations and imports.
 fn top_level(module: &ast::Module, imports: &[Dependency]) -> BTreeSet<String> {
     let mut names: BTreeSet<String> = imports
@@ -138,6 +152,10 @@ pub(super) fn implicit_imports(
     imports: &[Dependency],
     profile: LanguageProfile,
 ) -> Vec<Dependency> {
+    #[cfg(test)]
+    if WITHOUT_PRELUDES.with(std::cell::Cell::get) {
+        return Vec::new();
+    }
     let admitted: Vec<&Prelude> = PRELUDES
         .into_iter()
         .filter(|prelude| (prelude.admitted)(profile))
