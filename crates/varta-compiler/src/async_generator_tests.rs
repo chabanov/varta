@@ -45,10 +45,15 @@ class Feed {
   }
   static async *ticks(n: number = 2): AsyncGenerator<number, void, undefined> { for (let i = 0; i < n; i++) yield i; }
 }
+async function* both(): AsyncGenerator<number, void, undefined> {
+  yield* Feed.ticks(1);
+  yield* pages<number>([[4]]);
+}
 async function use(): Promise<number> {
   let total = 0;
   for await (const n of pages<number>([[1, 2], [3]])) total += n;
   for await (const n of Feed.ticks()) total += n;
+  for await (const n of both()) total += n;
   for await (const n of [Promise.resolve(1), 2]) total += n;
   const it = new Feed('f').events();
   const first = await it.next();
@@ -124,8 +129,12 @@ fn positions_outside_the_async_generator_subset_fail_with_diagnostics() {
     const G: &str = "async function* g(): AsyncGenerator<number, void, undefined> { yield 1; }\n";
     for (body, expected) in [
         (
-            "async function* h(): AsyncGenerator<number> { yield* g(); }",
-            "unsupported yield* delegation in an async generator",
+            "async function* h(): AsyncGenerator<number> { yield* [1, 2]; }",
+            "unsupported yield* over a value other than an async generator",
+        ),
+        (
+            "async function* s(): AsyncGenerator<number, void, string> { const x = yield 1; }\nasync function* h(): AsyncGenerator<number> { yield* s(); }",
+            "yield* delegate receives string, but this generator receives undefined",
         ),
         (
             "function f(): void { const h = async function* (): AsyncGenerator<number> { yield 1; }; }",

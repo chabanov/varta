@@ -189,6 +189,60 @@ const FOR_AWAIT: &[&str] = &[
     "g finally",
     "total 3",
 ];
+const DELEGATION: &[&str] = &[
+    "A tick 1",
+    "B tick 1",
+    "C tick 1",
+    "A tick 2",
+    "B tick 2",
+    "C tick 2",
+    "c inner caught x",
+    "A tick 3",
+    "a 1",
+    "a inner got undefined",
+    "B tick 3",
+    "b1 {\"value\":1,\"done\":false}",
+    "C tick 3",
+    "c1 {\"value\":1,\"done\":false}",
+    "A tick 4",
+    "B tick 4",
+    "b inner finally",
+    "C tick 4",
+    "A tick 5",
+    "B tick 5",
+    "b outer finally",
+    "C tick 5",
+    "c2 {\"value\":9,\"done\":false}",
+    "c inner finally",
+    "A tick 6",
+    "a 2",
+    "B tick 6",
+    "b2 {\"value\":\"stop\",\"done\":true}",
+    "b3 {\"done\":true}",
+    "C tick 6",
+    "c outer got c-caught",
+    "A tick 7",
+    "a inner finally",
+    "B tick 7",
+    "C tick 7",
+    "A tick 8",
+    "a outer got a-r",
+    "B tick 8",
+    "C tick 8",
+    "c3 {\"value\":3,\"done\":false}",
+    "c outer finally",
+    "A tick 9",
+    "C tick 9",
+    "c4 {\"value\":\"done\",\"done\":true}",
+    "A tick 10",
+    "a 3",
+    "C tick 10",
+    "A tick 11",
+    "a outer finally",
+    "A tick 12",
+    "A tick 13",
+    "A tick 14",
+];
 const LIFETIME: &[&str] = &[
     "a a0-2!",
     "b b0-2!",
@@ -269,6 +323,18 @@ fn async_generator_conformance_case_matches_node() {
     );
 }
 
+/// `yield*` over async generators: the delegate's values pass through,
+/// its return value becomes the `yield*` value, and `return()` and `throw()`
+/// reach the delegate (its `finally` and `catch` run first). Interleaved
+/// promise chains pin job order.
+#[test]
+fn async_generator_delegation_matches_node() {
+    run(
+        include_str!("async_generator_cases/delegation.ts"),
+        DELEGATION,
+    );
+}
+
 /// The language guide's example.
 #[test]
 fn async_generator_language_guide_example_matches_node() {
@@ -323,6 +389,10 @@ fn async_generator_values_survive_a_collection_forced_before_every_job() {
             FOR_AWAIT,
         ),
         (include_str!("async_generator_cases/protocol.ts"), PROTOCOL),
+        (
+            include_str!("async_generator_cases/delegation.ts"),
+            DELEGATION,
+        ),
     ] {
         run(source, expected);
         let (jobs, log) = run_collecting(source, abi::FUEL);

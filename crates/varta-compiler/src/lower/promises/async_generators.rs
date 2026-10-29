@@ -529,9 +529,7 @@ impl Lower<'_> {
     ) -> Result<Expr> {
         let span = expression.span;
         if expression.delegate {
-            return Err(self
-                .source
-                .locate(rejected("yield* delegation in an async generator"), span));
+            return self.async_delegate(expression);
         }
         let body = self
             .async_body()
@@ -628,6 +626,239 @@ impl Lower<'_> {
                 output,
                 marker,
                 roots: vec![yielded, request, input, output],
+                body: block,
+            },
+        })
+    }
+    /// `yield* inner` over an async generator (the async kind of the
+    /// ECMAScript `yield*` evaluation): every received request is forwarded
+    /// to `inner` as `next`, `throw` or `return` and its promise awaited; a
+    /// value the delegate yields is passed on (AsyncGeneratorYield, without
+    /// awaiting it again); a done result ends the delegation with the
+    /// delegate's return value, or completes a forwarded `return` with it.
+    fn async_delegate(&mut self, expression: &ast::YieldExpr) -> Result<Expr> {
+        let span = expression.span;
+        let body = self
+            .async_body()
+            .ok_or_else(|| CompilerError::Internal("yield outside an async body".into()))?;
+        let outer = self.shapes(span, body.generator)?;
+        let arg = expression
+            .arg
+            .as_deref()
+            .ok_or_else(|| invalid("yield* requires an operand"))?;
+        let value = self.expr(arg)?;
+        let inner_id = match value.ty {
+            Type::Generator(id) if self.types.generators[id as usize].asynchronous.is_some() => id,
+            _ => {
+                return Err(self.source.locate(
+                    rejected("yield* over a value other than an async generator"),
+                    value.span,
+                ));
+            }
+        };
+        let inner = self.shapes(span, inner_id)?;
+        if inner.generator.next != outer.generator.next {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "yield* delegate receives {}, but this generator receives {}",
+                    inner.generator.next, outer.generator.next
+                )),
+                value.span,
+            ));
+        }
+        let next = self.async_helper(span, inner_id, Operation::Next)?;
+        let throw = self.async_helper(span, inner_id, Operation::Throw)?;
+        let finish = self.async_helper(span, inner_id, Operation::Return)?;
+        let complete = self.async_helper(span, body.generator, Operation::CompleteValue)?;
+        let exception = self.exception_type()?;
+        let outer_value = outer.value(self.types)?;
+        let inner_returned = stored(inner.generator.returned);
+        let iterator = self.hidden(inner.frame());
+        let kind = self.hidden(Type::Float64);
+        let sent = self.hidden(outer.generator.next);
+        let returning = self.hidden(inner.returned());
+        let thrown = self.hidden(exception);
+        let result = self.hidden(inner.generator.result);
+        let request = self.hidden(outer.info.request);
+        let input = self.hidden(outer.frame());
+        let output = self.hidden(inner_returned);
+        let marker = self.hidden(Type::Number);
+        let promise = Type::Promise(inner.info.promise);
+        let call = |helper: usize, argument: Expr| Expr {
+            span,
+            ty: promise,
+            kind: E::Call(helper, vec![local(span, iterator, inner.frame()), argument]),
+        };
+        let resumed = |kind_value: Completion| {
+            compare(
+                span,
+                ast::BinaryOp::EqEqEq,
+                local(span, kind, Type::Float64),
+                float(span, f64::from(kind_value as i32)),
+            )
+        };
+        let sent_next =
+            self.await_promise(span, call(next, local(span, sent, outer.generator.next)))?;
+        let sent_throw = self.await_promise(span, call(throw, local(span, thrown, exception)))?;
+        let sent_return =
+            self.await_promise(span, call(finish, local(span, returning, inner.returned())))?;
+        // AsyncGeneratorUnwrapYieldResumption awaits a return request's value.
+        let types = &*self.types;
+        let requested = local(span, request, outer.info.request);
+        let unwrapped = outer.read(types, requested, RETURNED_FIELD)?;
+        let unwrapped = self.await_value(span, unwrapped)?;
+        let types = &*self.types;
+        let unwrapped = unions::widen(unwrapped, Some(inner.returned()), types).map_err(|_| {
+            self.source.locate(
+                type_error("yield* delegate does not accept this generator's return values"),
+                value.span,
+            )
+        })?;
+        let done_value = |types: &ir::ValueTypes| -> Result<Expr> {
+            Ok(narrowed(
+                inner.read(
+                    types,
+                    local(span, result, inner.generator.result),
+                    VALUE_FIELD,
+                )?,
+                inner_returned,
+            ))
+        };
+        let completed =
+            unions::widen(done_value(types)?, Some(outer.returned()), types).map_err(|_| {
+                self.source.locate(
+                    type_error("yield* delegate returns values this generator cannot return"),
+                    value.span,
+                )
+            })?;
+        let yielded = narrowed(
+            inner.read(
+                types,
+                local(span, result, inner.generator.result),
+                VALUE_FIELD,
+            )?,
+            inner.generator.yielded,
+        );
+        let yielded = unions::widen(yielded, Some(outer_value), types).map_err(|_| {
+            self.source.locate(
+                type_error("yield* delegate yields values this generator cannot yield"),
+                value.span,
+            )
+        })?;
+        let front = outer.front(types, body.state)?;
+        let next_value = outer.read(types, local(span, request, outer.info.request), NEXT_FIELD)?;
+        let thrown_value = outer.read(
+            types,
+            local(span, request, outer.info.request),
+            THROWN_FIELD,
+        )?;
+        let block = vec![
+            S::Init(
+                iterator,
+                Expr {
+                    span: value.span,
+                    ty: inner.frame(),
+                    kind: E::Reinterpret(Box::new(value)),
+                },
+            ),
+            S::Init(kind, float(span, f64::from(Completion::Normal as i32))),
+            S::Init(
+                sent,
+                unions::widen(undefined(span), Some(outer.generator.next), types)
+                    .map_err(|_| invalid("yield* needs a TNext that accepts undefined"))?,
+            ),
+            S::Init(
+                returning,
+                unions::widen(undefined(span), Some(inner.returned()), types)?,
+            ),
+            S::Init(thrown, zero(span, exception)),
+            S::Init(result, zero(span, inner.generator.result)),
+            S::Init(request, zero(span, outer.info.request)),
+            S::Init(output, zero(span, inner_returned)),
+            S::While(
+                boolean(span, true),
+                vec![
+                    S::If(
+                        resumed(Completion::Normal),
+                        vec![S::Set(result, sent_next)],
+                        vec![S::If(
+                            resumed(Completion::Throw),
+                            vec![S::Set(result, sent_throw)],
+                            vec![S::Set(result, sent_return)],
+                        )],
+                    ),
+                    S::If(
+                        inner.read(
+                            types,
+                            local(span, result, inner.generator.result),
+                            DONE_FIELD,
+                        )?,
+                        vec![
+                            S::If(
+                                resumed(Completion::Return),
+                                vec![S::Set(body.result, completed), S::BreakLabel(body.exit)],
+                                vec![],
+                            ),
+                            S::Set(output, done_value(types)?),
+                            S::Break,
+                        ],
+                        vec![],
+                    ),
+                    invoke(
+                        span,
+                        complete,
+                        vec![outer.state(body.state), yielded, boolean(span, false)],
+                    ),
+                    S::If(
+                        outer.empty(types, body.state)?,
+                        vec![
+                            outer.set(types, body.state, State::SuspendedYield)?,
+                            S::Init(
+                                input,
+                                Expr {
+                                    span,
+                                    ty: outer.frame(),
+                                    kind: E::Suspend {
+                                        value: Box::new(outer.state(body.state)),
+                                        state: 0,
+                                    },
+                                },
+                            ),
+                        ],
+                        vec![],
+                    ),
+                    S::Set(request, front),
+                    S::If(
+                        outer.kind_is(types, request, Completion::Throw)?,
+                        vec![
+                            S::Set(kind, float(span, f64::from(Completion::Throw as i32))),
+                            S::Set(thrown, thrown_value),
+                        ],
+                        vec![S::If(
+                            outer.kind_is(types, request, Completion::Return)?,
+                            vec![
+                                S::Set(returning, unwrapped),
+                                S::Set(kind, float(span, f64::from(Completion::Return as i32))),
+                            ],
+                            vec![
+                                S::Set(kind, float(span, f64::from(Completion::Normal as i32))),
+                                S::Set(sent, next_value),
+                            ],
+                        )],
+                    ),
+                ],
+            ),
+        ];
+        self.flow_reentry();
+        Ok(Expr {
+            span,
+            ty: inner_returned,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![
+                    iterator, sent, returning, thrown, result, request, input, output,
+                ],
                 body: block,
             },
         })

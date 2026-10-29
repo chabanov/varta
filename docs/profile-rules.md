@@ -2626,6 +2626,11 @@ Contract: [architecture.md](architecture.md#async-generators-async_generators).
   `TryFinally` keeps a pending state-machine `Return` in a fresh local of the
   state record type. A `yield` is a value block at the `yield` span, which the
   construct allowlist splits; it may `throw` and break to the exit label.
+- `yield*` (`async_delegate`) forwards requests to an async generator
+  delegate through its protocol helpers and passes yielded values on through
+  the same CompleteStep and suspension as `yield`, without awaiting them; keep
+  its delegate restricted to async generators with the same `TNext` until a
+  source with its own pinned Node log is added.
 - `for await` over synchronous sources must keep the async-from-sync job
   counts (two per value and per done result, one or two to close, the first-job
   closing of a rejected value); add a source only with its pinned Node log.

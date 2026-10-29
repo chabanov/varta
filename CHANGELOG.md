@@ -18,16 +18,17 @@ in [conformance/README.md](conformance/README.md).
   `AsyncIterable` or `AsyncIterator`); `next`, `return` and `throw` return
   promises, queue while the body runs and follow the ECMAScript request
   queue; `await`, `yield` and `return` work across `try`/`catch`/`finally`,
-  and `yield` and `return` await their operands. `for await` iterates async
-  generators, arrays and synchronous generators with Node's job counts and
-  closes them on `break`, `return` and throws. An async generator object is
-  the frame of an internal body generator with a guest state record; awaits in
-  bodies run through scheduled relay jobs, so suspended generators hold no
-  live-frame slot and are collected. Under v36 a checked `as` may also contain
-  `await`, and a `Math`/`Number` constant default types a parameter. No host
-  import, value tag, layout or budget is added; `yield*`, async generator
-  expressions and `Symbol.asyncIterator` remain unsupported. Logs match
-  Node 24.
+  and `yield` and `return` await their operands; `yield*` delegates to
+  another async generator, forwarding `return()` and `throw()`. `for await`
+  iterates async generators, arrays and synchronous generators with Node's
+  job counts and closes them on `break`, `return` and throws. An async
+  generator object is the frame of an internal body generator with a guest
+  state record; awaits in bodies run through scheduled relay jobs, so
+  suspended generators hold no live-frame slot and are collected. Under v36 a
+  checked `as` may also contain `await`, and a `Math`/`Number` constant
+  default types a parameter. No host import, value tag, layout or budget is
+  added; `yield*` over other iterables, async generator expressions and
+  `Symbol.asyncIterator` remain unsupported. Logs match Node 24.
 
 - Opt-in v36 (pilot batch: checked declared fields, function fields, async
   generators and timers, in development) is registered. It inherits every v35

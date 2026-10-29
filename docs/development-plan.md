@@ -569,7 +569,7 @@ others admit nothing yet.
 | --- | --- | --- | --- |
 | `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Registered, admits nothing |
 | `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns any value17 bump) | M2, M4 | Registered, admits nothing |
-| `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Implemented on `v36-async-generators` ([contract](architecture.md#async-generators-async_generators)): declarations, generic instantiations and class methods, the queued `next`/`return`/`throw` protocol, `for await` over async generators, arrays and generators; `yield*`, async generator expressions and `Symbol.asyncIterator` open |
+| `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Implemented on `v36-async-generators` ([contract](architecture.md#async-generators-async_generators)): declarations, generic instantiations and class methods, the queued `next`/`return`/`throw` protocol, `yield*` over async generators, `for await` over async generators, arrays and generators; async generator expressions and `Symbol.asyncIterator` open |
 | `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Registered, admits nothing |
 
 ### Deferred external validation scenarios
@@ -1886,12 +1886,13 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    Enqueue/Resume/CompleteStep/DrainQueue/AwaitReturn operations, and each
    `await` in a body is a scheduled relay job that steps the body, so suspended
    generators hold no live-frame slot and are collected. `for await` covers
-   async generators, arrays and synchronous generators with Node's job counts
+   async generators, arrays and synchronous generators, and `yield*` delegates
+   to async generators, with Node's job counts
    (`varta-runtime` `async_generator_tests`, Node 24 logs, a collection forced
    before every job). No host import, value tag or layout is added. Measured
    with production budgets: about 10.5k fuel per `for await` step, 3.6k per
-   `await` in a body (1.7k in an async function). Open: `yield*`, async
-   generator expressions and object methods, `Symbol.asyncIterator` and other
+   `await` in a body (1.7k in an async function). Open: `yield*` over arrays
+   and synchronous generators, async generator expressions and object methods, `Symbol.asyncIterator` and other
    async iterables, top-level `await`, `await` inside intrinsic value blocks
    other than checked assertions, and a cheaper relay (the per-step cost limits
    one execution to about 90 `for await` values).

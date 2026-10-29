@@ -7317,9 +7317,9 @@ iteration is not implemented yet)`) and the annotations below.
   parameters are admitted; parameter defaults run during the call, before the
   object is returned, so an exception there throws from the call as in
   ECMAScript. Async generator function expressions and object methods,
-  `yield*` (`unsupported yield* delegation in an async generator`), computed
-  member names such as `[Symbol.asyncIterator]`, a `this` parameter and an
-  async generator entry point are rejected with construct-specific diagnostics.
+  computed member names such as `[Symbol.asyncIterator]`, a `this` parameter
+  and an async generator entry point are rejected with construct-specific
+  diagnostics.
 - **Representation.** An async generator object is the continuation frame of
   an internal *body generator*: one `i64` handle of type `generator` (capture
   type `generator`) without a value tag, so arrays, records, unions, JSON,
@@ -7371,6 +7371,18 @@ iteration is not implemented yet)`) and the annotations below.
   generators, and a checked `x as T` assertion may contain `await` or `yield`
   in its operand under v36; other intrinsic value blocks keep rejecting
   suspension points by construct name.
+- **`yield*`.** `yield* inner` delegates to an async generator whose `TNext`
+  equals the delegating generator's and whose values and return values it can
+  yield and return (the async kind of the ECMAScript `yield*` evaluation).
+  Each received request is forwarded as `next(v)`, `throw(e)` or `return(v)`
+  (a return request's value awaited first, as AsyncGeneratorUnwrapYieldResumption
+  does) and the request's promise awaited; a value the delegate yields is
+  passed on without another await (AsyncGeneratorYield); a done result ends
+  the delegation with the delegate's return value as the value of `yield*`, or
+  completes a forwarded `return` with it, running the delegating generator's
+  `finally` blocks. Delegation to arrays, synchronous generators and other
+  values is rejected (`unsupported yield* over a value other than an async
+  generator`).
 - **`for await`.** In async functions and async generator bodies, `for await
   (x of s)` over an async generator awaits `next()` for every step and, on
   `break`, `return`, a labelled exit or a throw from the body, closes it by

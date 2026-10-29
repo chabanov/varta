@@ -4508,7 +4508,8 @@ mean the same here. `next()`, `return()` and `throw()` return promises and may
 be called before earlier ones settle; the requests are answered in order.
 `yield` and `return` await their operand, breaking out of a `for await` closes
 the generator after its `finally` blocks, and generic async generators work
-like other generic functions. Not supported yet: `yield*`, async generator
-function expressions, `[Symbol.asyncIterator]` methods and other async
-iterables, and `await` inside an intrinsic call or template (bind it to a
-`const` first). `for await` costs a few microtasks per value, like Node.
+like other generic functions, and `yield* other()` passes on another async
+generator's values (and its `return()` and `throw()`). Not supported yet:
+`yield*` over arrays or synchronous generators, async generator function
+expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
+`await` inside an intrinsic call or template (bind it to a `const` first). `for await` costs a few microtasks per value, like Node.
