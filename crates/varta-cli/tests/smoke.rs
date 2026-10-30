@@ -15382,7 +15382,8 @@ fn pilot_profile_v37_collections_run_everywhere_and_the_clock_needs_time_now() {
 /// V38 structural subtyping through `varta dev`, both artifacts, both
 /// binaries and the packaged executable: a wider interface value, a class
 /// instance and a wider record literal viewed through narrower interfaces in
-/// another module; no capability is granted.
+/// another module, a record spread, the URI prelude and `Array.isArray`
+/// narrowing of `unknown`; no capability is granted.
 #[test]
 fn pilot_profile_v38_views_wider_objects_in_dev_and_artifacts() {
     let project = RegressionProject::new(
@@ -15390,7 +15391,9 @@ fn pilot_profile_v38_views_wider_objects_in_dev_and_artifacts() {
          class Cell{label='cell';#v=1;get value():number{return this.#v;}set(v:number):void{this.#v=v;}}\
          export function main():void{const wide={label:'w',value:2,extra:true};const c=new Cell();\
          const s:Signal<number>=c;bump(s);\
-         console.log(`${show(wide)} ${show(c)} ${JSON.stringify(wide)}`);}",
+         const q={...wide,label:encodeURIComponent('a b')};const u:unknown=JSON.parse('[1,2]');\
+         const n=Array.isArray(u)?u.length:0;\
+         console.log(`${show(wide)} ${show(c)} ${JSON.stringify(wide)} ${q.label} ${n}`);}",
         serde_json::json!({}),
     );
     fs::write(
@@ -15403,7 +15406,7 @@ fn pilot_profile_v38_views_wider_objects_in_dev_and_artifacts() {
     .unwrap();
     project.language_profile("checked-f64-utf16-v38");
     // Node 24 prints the same line.
-    let expected = [r#"varta log: w=2 cell=2 {"label":"w","value":2,"extra":true}"#];
+    let expected = [r#"varta log: w=2 cell=2 {"label":"w","value":2,"extra":true} a%20b 2"#];
     let logs = |output: &std::process::Output| {
         String::from_utf8_lossy(&output.stdout)
             .lines()

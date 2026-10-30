@@ -33,6 +33,9 @@ pub(crate) struct NamedTypes {
     /// Reserved types of declarations that referred to themselves while being
     /// resolved (v34 `recursive_types`), filled when their resolution ends.
     placeholders: BTreeMap<Key, Type>,
+    /// The source of every linked module, by module index (v38 diagnostics
+    /// of generic method signatures instantiated in another module).
+    sources: BTreeMap<usize, Source>,
 }
 
 /// Exported type names of one module, pointing at the exporting module's entry
@@ -44,6 +47,10 @@ pub(super) fn enter(types: &mut ir::ValueTypes, module: usize) {
 }
 pub(super) fn current(types: &ir::ValueTypes) -> usize {
     types.named.current
+}
+/// The source of the module whose annotations are being lowered, once linked.
+pub(super) fn current_source(types: &ir::ValueTypes) -> Option<Source> {
+    types.named.sources.get(&types.named.current).cloned()
 }
 
 /// Record local declarations and type imports of `path`, then return its type
@@ -57,6 +64,7 @@ pub(super) fn link_module(
 ) -> Result<Exports> {
     let unit = &graph.units[path];
     let source = &unit.source;
+    types.named.sources.insert(module, source.clone());
     let mut merged = interfaces::Merged::new();
     for item in &unit.ast.body {
         // Exported classes are scanned as module exports and linked below.

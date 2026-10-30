@@ -33,6 +33,38 @@ pub(crate) struct Views {
     /// reserved function `(value) -> boolean`, by (shape, name). Its body is
     /// `false` unless `resolve` finds sources that declare the name.
     names: BTreeMap<(u32, String), usize>,
+    /// Closed record shapes whose values entered an `unknown` cell, with the
+    /// record shapes they reach (fields, elements, members).
+    boxed: RefCell<BTreeSet<u32>>,
+    /// The reserved `(record) -> Record<string, unknown>` function that
+    /// reads a closed record held by an `unknown` cell as a JSON object, and
+    /// that dictionary type; `resolve` adds one branch per boxed shape.
+    graph: Option<(usize, Type)>,
+}
+impl Views {
+    /// Note the closed record shapes a value of `ty` entering an `unknown`
+    /// cell may hold (v38 JSON-object reads of records).
+    pub(crate) fn note_boxed(&self, ty: Type, types: &ir::ValueTypes) {
+        let mut stack = vec![ty];
+        let mut seen = BTreeSet::new();
+        while let Some(ty) = stack.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
+            match ty {
+                Type::Record(id) if types.records[id as usize].class.is_none() => {
+                    self.boxed.borrow_mut().insert(id);
+                    stack.extend(types.records[id as usize].fields.iter().map(|f| f.ty));
+                }
+                Type::Array(id) => stack.push(types.arrays[id as usize]),
+                Type::Union(id) | Type::ReferenceUnion(id) => {
+                    stack.extend(types.unions[id as usize].iter().copied());
+                }
+                Type::Dictionary(id) => stack.push(types.dictionaries[id as usize].value),
+                _ => {}
+            }
+        }
+    }
 }
 impl Views {
     /// The record shapes whose layouts a value of record `shape` may have:
@@ -498,7 +530,7 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
         return Ok(());
     }
     let edges = program.types.subtyping.edges.borrow().clone();
-    if edges.is_empty() {
+    if edges.is_empty() && program.types.subtyping.graph.is_none() {
         return Ok(());
     }
     let mut sources: BTreeMap<u32, Vec<Type>> = BTreeMap::new();
@@ -552,6 +584,10 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
         if program.types.subtyping.sources.contains_key(&shape) {
             program.functions[index].body = rewriter.has_name(shape, &name);
         }
+    }
+    if let Some((index, graph)) = program.types.subtyping.graph {
+        let dispatch = rewriter.graph_branches(graph)?;
+        program.functions[index].body.splice(0..0, dispatch);
     }
     let created = std::mem::take(&mut rewriter.created);
     if program.types.subtyping.edges.borrow().len() != edges.len() {
@@ -1186,6 +1222,118 @@ impl Rewriter<'_> {
         });
         convert(value, result, types)
     }
+    /// The branches of the reserved record-to-JSON-object function: for each
+    /// boxed closed record shape, a dictionary of its present fields (in
+    /// canonical field order), each value as `unknown`.
+    fn graph_branches(&self, graph: Type) -> Result<Vec<S>> {
+        let types = self.types;
+        let span = swc_common::DUMMY_SP;
+        let Type::Dictionary(id) = graph else {
+            return Err(CompilerError::Internal("record graph type".into()));
+        };
+        let dictionary = types.dictionaries[id as usize];
+        let any = Type::Record(
+            types
+                .records
+                .iter()
+                .position(|r| r.fields.is_empty() && r.class.is_none())
+                .ok_or_else(|| CompilerError::Internal("empty record shape".into()))?
+                as u32,
+        );
+        // Locals: 0 the record, 1 the descriptor, 2 keys, 3 values.
+        let (descriptor, keys, values) = (1, 2, 3);
+        let push = |array: u32, ty: Type, item: Expr| {
+            S::Expr(Expr {
+                span,
+                ty: types.number(),
+                kind: E::ArrayPush(
+                    Box::new(local(span, array, ty)),
+                    Box::new(Expr {
+                        span,
+                        ty,
+                        kind: E::Array(vec![Some(item)]),
+                    }),
+                ),
+            })
+        };
+        let mut body = Vec::new();
+        let boxed: Vec<u32> = types.subtyping.boxed.borrow().iter().copied().collect();
+        for shape in boxed {
+            let record = Type::Record(shape);
+            let mut branch = vec![
+                S::Set(
+                    keys,
+                    Expr {
+                        span,
+                        ty: dictionary.keys,
+                        kind: E::Array(Vec::new()),
+                    },
+                ),
+                S::Set(
+                    values,
+                    Expr {
+                        span,
+                        ty: dictionary.values,
+                        kind: E::Array(Vec::new()),
+                    },
+                ),
+            ];
+            for (slot, field) in types.records[shape as usize].fields.iter().enumerate() {
+                let value = unknown::widen(
+                    Expr {
+                        span,
+                        ty: field.ty,
+                        kind: E::Field(Box::new(local(span, 0, record)), slot as u32),
+                    },
+                    types,
+                )?;
+                let key = Expr {
+                    span,
+                    ty: Type::String,
+                    kind: E::String(types.profile.string_bytes(&field.name)),
+                };
+                let entry = vec![
+                    push(keys, dictionary.keys, key),
+                    push(values, dictionary.values, value),
+                ];
+                if field.optional {
+                    branch.push(S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::HasOwn(Box::new(local(span, 0, record)), Some(slot as u32)),
+                        },
+                        entry,
+                        Vec::new(),
+                    ));
+                } else {
+                    branch.extend(entry);
+                }
+            }
+            branch.push(S::Return(Some(Expr {
+                span,
+                ty: graph,
+                kind: E::Record(vec![
+                    (dictionaries::KEYS, local(span, keys, dictionary.keys)),
+                    (dictionaries::VALUES, local(span, values, dictionary.values)),
+                ]),
+            })));
+            body.push(S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsClass {
+                        value: Box::new(local(span, 0, any)),
+                        shapes: vec![shape],
+                        slot: descriptor,
+                    },
+                },
+                branch,
+                Vec::new(),
+            ));
+        }
+        Ok(body)
+    }
     /// The body of the reserved `"name" in value` function of view `shape`,
     /// which does not declare `name`: true for sources that have it.
     fn has_name(&self, shape: u32, name: &str) -> Vec<S> {
@@ -1329,6 +1477,60 @@ fn convert(value: Expr, target: Type, types: &ir::ValueTypes) -> Result<Expr> {
 }
 
 impl Lower<'_> {
+    /// A closed record held by the `unknown` cell `cell` read as a JSON
+    /// object `Record<string, unknown>` (v38): the reserved function that
+    /// `resolve` completes for every record shape boxed into `unknown`.
+    pub(super) fn record_graph(&mut self, cell: Expr, span: swc_common::Span) -> Result<Expr> {
+        let graph = dictionaries::intern(Type::Unknown, self.types)?;
+        let any = records::intern(Vec::new(), self.types)?;
+        let index = match self.types.subtyping.graph {
+            Some((index, _)) => index,
+            None => {
+                let index = self.reserve_function("too many functions across modules")?;
+                self.types.subtyping.graph = Some((index, graph));
+                let Type::Dictionary(id) = graph else {
+                    return Err(CompilerError::Internal("record graph type".into()));
+                };
+                let dictionary = self.types.dictionaries[id as usize];
+                let error = self.array_error(
+                    varta_common::value::ErrorClass::TypeError,
+                    "a class instance held by unknown cannot be read as a JSON object",
+                    span,
+                )?;
+                self.generated.insert(
+                    index,
+                    ir::Function {
+                        shape: ir::ParameterShape::fixed(1),
+                        self_slot: None,
+                        receiver: None,
+                        source: self.source.clone(),
+                        span,
+                        params: vec![any],
+                        result: graph,
+                        locals: vec![any, Type::Number, dictionary.keys, dictionary.values],
+                        body: vec![S::Throw(error)],
+                        cells: Default::default(),
+                        captures: Vec::new(),
+                        environment: false,
+                        generator: None,
+                    },
+                );
+                index
+            }
+        };
+        Ok(Expr {
+            span,
+            ty: graph,
+            kind: E::Call(
+                index,
+                vec![Expr {
+                    span,
+                    ty: any,
+                    kind: E::UnboxUnion(Box::new(cell)),
+                }],
+            ),
+        })
+    }
     /// `"name" in value` for a record or class instance value (v38): a
     /// record's own (present) field, an inherited `Object.prototype` name or
     /// an instance's field, method or getter. A field the static type does

@@ -305,3 +305,226 @@ fn v37_modules_keep_their_bytes() {
     .collect();
     assert_eq!(digests, FROZEN_V37);
 }
+
+#[test]
+fn generic_method_signatures_erase_to_checked_calls_and_match_node() {
+    run(
+        include_str!("subtyping_cases/generic_methods.ts"),
+        &["r1 3", r#"{"id":"r1","steps":3}"#, "object", "5 s"],
+    );
+}
+
+#[test]
+fn object_annotations_match_node() {
+    run(
+        include_str!("subtyping_cases/object_type.ts"),
+        &["a=1&b=x&c=[1,2]", "none", r#"10 7 object {"z":true}"#],
+    );
+}
+
+#[test]
+fn array_is_array_narrows_unknown_to_unknown_arrays_like_node() {
+    run(
+        include_str!("subtyping_cases/unknown_arrays.ts"),
+        &[
+            "[3] number:1,number:2,number:3,",
+            "[2] string:a,string:b,",
+            "[5] number:1,string:x,boolean:true,object:[object Object],",
+            "[2] boolean:true,boolean:false,",
+            "2",
+            "string",
+            "tag=a&tag=b&n=3&ids=1&ids=2",
+            r#"2 {"id":2}"#,
+        ],
+    );
+}
+
+#[test]
+fn record_spreads_with_optional_sources_match_node() {
+    run(
+        include_str!("subtyping_cases/spreads.ts"),
+        &[
+            r#"{"label":"x","reconnect":false}"#,
+            "3 false y",
+            "undefined e 3 false undefined",
+            "7 f 2 true 5",
+            r#"{"x":1,"y":"three","z":true}"#,
+            r#"{"y":"two","x":1}"#,
+            r#"GET /b {"q":1} true"#,
+            r#"{"a":1,"b":2}"#,
+            r#"{"Accept":"text/event-stream"}"#,
+        ],
+    );
+}
+
+#[test]
+fn property_narrowing_survives_calls_like_typescript_and_is_checked() {
+    run(
+        include_str!("subtyping_cases/property_narrowing.ts"),
+        &[
+            "note connected",
+            "hello 2",
+            "none",
+            "note a",
+            "stop",
+            "no signal",
+            "TypeError",
+        ],
+    );
+}
+
+#[test]
+fn records_read_as_dictionaries_match_node() {
+    run(
+        include_str!("subtyping_cases/record_dictionaries.ts"),
+        &[r#"{"subject_id":"s1","limit":3}"#, "{}"],
+    );
+}
+
+#[test]
+fn literal_fallbacks_keep_literal_types() {
+    run(
+        include_str!("subtyping_cases/literal_fallbacks.ts"),
+        &["decode json", "decode void"],
+    );
+}
+
+#[test]
+fn uri_functions_match_node() {
+    run(
+        include_str!("subtyping_cases/uri.ts"),
+        &[
+            "/api/v1/agents/a%20b%2Fc%3Fd%3D%C3%A9%26%C3%BC%F0%9F%98%80/schedule",
+            "safe-_.!~*'()AZaz09",
+            "https://x.test/a%20b?q=1&r=%C3%A9#frag",
+            "42",
+            "URIError URI malformed",
+        ],
+    );
+}
+
+#[test]
+fn promise_results_widen_to_unknown_and_records_read_as_json_objects() {
+    run(
+        include_str!("subtyping_cases/promise_covariance.ts"),
+        &["a,b,c,"],
+    );
+}
+
+/// Documented deviations from Node, pinned with their Varta results.
+#[test]
+fn checked_deviations_are_pinned() {
+    // A generic method's `unknown` result is checked at the instantiated
+    // type; TypeScript's unchecked `as T` would hand back the string.
+    run(
+        "interface E{data:string;json<T>():T}\
+         interface Run{id:string}\
+         function make(data:string):E{return {data,json<T>():T{return JSON.parse(data) as T;}};}\
+         export function main():void{try{const e=make('\"text\"');const r=e.json<Run>();console.log(r.id);}\
+         catch(e){console.log(e instanceof TypeError?'TypeError':'other');}}",
+        &["TypeError"],
+    );
+    // Spread key order: fields every member provides come first; Node
+    // prints {"retries":3,"reconnect":false,"label":"y"}.
+    run(
+        "interface O{reconnect?:boolean;retries?:number;label?:string}\
+         function f(o:O|undefined,label:string):O{return {...o,label,reconnect:false};}\
+         export function main():void{console.log(JSON.stringify(f({retries:3,reconnect:true},'y')));}",
+        &[r#"{"label":"y","reconnect":false,"retries":3}"#],
+    );
+    // A stale property narrowing throws instead of reading the new value.
+    run(
+        "class B{t='x';}class R{#b:B|null=new B();get body():B|null{return this.#b;}drop():void{this.#b=null;}}\
+         export function main():void{const r=new R();\
+         try{if(r.body){r.drop();console.log(r.body.t);}}\
+         catch(e){console.log(e instanceof TypeError?e.message:'other');}}",
+        &["property body no longer has the type an earlier test proved"],
+    );
+}
+
+#[test]
+fn pilot_item_mismatches_are_diagnosed() {
+    for (source, expected) in [
+        (
+            "interface I{m<T>(x:T[]):T}export function main():void{const i:I={m<T>(x:T[]):T{return x[0]!;}};i.m<number>([1]);}",
+            "type parameter of method m inside a parameter type",
+        ),
+        (
+            "export function main():void{const o={f<T>(x:T):T{return x;}};}",
+            "generic object literal method outside a generic method signature",
+        ),
+        (
+            "class C{a=1;}export function main():void{const c=new C();const o={...c};}",
+            "object spread of a C into a record",
+        ),
+        (
+            "export function main():void{const n=1;const o={...n};}",
+            "object spread of a number into a record",
+        ),
+    ] {
+        let error = rejected(source, V38);
+        assert!(error.contains(expected), "{error}\n{source}");
+    }
+}
+
+/// V37 keeps rejecting the v38 pilot items with its old diagnostics.
+#[test]
+fn v37_keeps_rejecting_pilot_items() {
+    for (source, expected) in [
+        (
+            "function f(o:object):number{return 1;}export function main():void{}",
+            "unsupported type annotation",
+        ),
+        (
+            "interface I{a:number;b?:string}function f(i:I):I{return {...i};}export function main():void{}",
+            "unsupported object spread",
+        ),
+        (
+            "interface E{json<T>():T}function f(e:E):void{}export function main():void{}",
+            "generic method signature in an object type",
+        ),
+        (
+            "export function main():void{console.log(encodeURIComponent('a b'));}",
+            "encodeURIComponent",
+        ),
+    ] {
+        let error = rejected(source, V37);
+        assert!(error.contains(expected), "{error}\n{source}");
+    }
+}
+
+/// `unknown[]` views and record graphs survive forced collections: the
+/// synthesized boxing loop and the record-to-dictionary function allocate
+/// while their sources are rooted.
+#[test]
+fn unknown_array_and_record_graph_views_survive_forced_collections() {
+    use varta_compiler::suspension_test_hook as hook;
+    let source = include_str!("subtyping_cases/promise_covariance.ts");
+    let bytes = hook::compile_with_profile(source, V38).unwrap();
+    let runtime = crate::VartaRuntime::new();
+    let module = runtime.prepare_module(&bytes).unwrap();
+    let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+    let instance = execution.instantiate_prepared(&module).unwrap();
+    let store = &mut execution.store;
+    let start = instance.get_func(&mut *store, "_start").unwrap();
+    start.call(&mut *store, &[], &mut []).unwrap();
+    let collect = instance
+        .get_typed_func::<(), ()>(&mut *store, hook::COLLECT)
+        .unwrap();
+    let resume = instance
+        .get_typed_func::<(i64, i32, i64), i32>(
+            &mut *store,
+            varta_common::function::frame::RESUME_EXPORT,
+        )
+        .unwrap();
+    while let Some(token) = store.data_mut().scheduler.next().unwrap() {
+        // Test-only budget for the forced collections.
+        let remaining = store.get_fuel().unwrap();
+        store.set_fuel(abi::FUEL).unwrap();
+        collect.call(&mut *store, ()).unwrap();
+        store.set_fuel(remaining).unwrap();
+        resume.call(&mut *store, (token, 0, 0)).unwrap();
+    }
+    assert!(store.data().scheduler.unhandled_rejection().is_none());
+    assert_eq!(store.data().output.lines, ["varta log: a,b,c,"]);
+}

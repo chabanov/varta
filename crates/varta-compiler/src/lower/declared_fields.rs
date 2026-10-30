@@ -163,7 +163,12 @@ fn built(ty: Type, types: &ir::ValueTypes) -> bool {
     match ty {
         Type::Record(shape) => types.records[shape as usize].class.is_none(),
         Type::Array(_) => true,
-        Type::Dictionary(id) => types.dictionaries[id as usize].value != Type::Unknown,
+        // V38 also builds `Record<string, unknown>` from a closed record held
+        // by the cell (a JSON-object cell stays exact).
+        Type::Dictionary(id) => {
+            types.dictionaries[id as usize].value != Type::Unknown
+                || types.profile.structural_subtyping() && types.declared(ty).is_none()
+        }
         _ => false,
     }
 }
@@ -842,10 +847,17 @@ impl Lower<'_> {
                 E::IsUnionMember(Box::new(local(span, saved, Type::Unknown)), ty),
             )
         };
+        // V38: a closed record held by the cell also builds an object.
+        let object_tag = if self.types.profile.structural_subtyping() {
+            let any_record = records::intern(Vec::new(), self.types)?;
+            or(span, tag(any_dictionary), tag(any_record))
+        } else {
+            tag(any_dictionary)
+        };
         Ok(vec![S::If(
             tag(any_array),
             arrays,
-            vec![S::If(tag(any_dictionary), objects, otherwise)],
+            vec![S::If(object_tag, objects, otherwise)],
         )])
     }
     /// The JSON-object branch of a union with several record members: each
@@ -1115,9 +1127,29 @@ impl Lower<'_> {
             ty,
             kind: E::Field(Box::new(local(span, source, graph)), slot),
         };
+        // V38: a closed record held by the cell reads as a JSON object.
+        let read = if self.types.profile.structural_subtyping() {
+            let any = records::intern(Vec::new(), self.types)?;
+            let converted = self.record_graph(local(span, saved, Type::Unknown), span)?;
+            S::If(
+                test(
+                    span,
+                    E::IsUnionMember(Box::new(local(span, saved, Type::Unknown)), any),
+                ),
+                vec![S::Init(source, converted)],
+                vec![
+                    S::If(not(span, check), vec![wrong], vec![]),
+                    S::Init(source, view(span, saved, graph)),
+                ],
+            )
+        } else {
+            S::Block(vec![
+                S::If(not(span, check), vec![wrong], vec![]),
+                S::Init(source, view(span, saved, graph)),
+            ])
+        };
         state.body.extend([
-            S::If(not(span, check), vec![wrong], vec![]),
-            S::Init(source, view(span, saved, graph)),
+            read,
             S::Init(keys, field(dictionaries::KEYS, dictionary.keys)),
             S::Init(values, field(dictionaries::VALUES, dictionary.values)),
         ]);

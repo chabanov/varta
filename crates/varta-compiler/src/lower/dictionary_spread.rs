@@ -84,6 +84,44 @@ impl Lower<'_> {
             match property {
                 ast::PropOrSpread::Spread(spread) => {
                     let source = self.expr(&spread.expr)?;
+                    // `...optional` (v38): spreading `undefined` or `null`
+                    // copies nothing, as in JavaScript.
+                    let present: Vec<Type> = unions::members(source.ty, self.types)
+                        .into_iter()
+                        .filter(|member| !matches!(member, Type::Undefined | Type::Null))
+                        .collect();
+                    if self.types.profile.structural_subtyping()
+                        && source.ty.is_union()
+                        && let [member] = present[..]
+                        && matches!(member, Type::Dictionary(_) | Type::Record(_))
+                    {
+                        let cell_ty = source.ty;
+                        let cell = self.hidden(cell_ty);
+                        roots.push(cell);
+                        body.push(S::Init(cell, source));
+                        let unboxed = Expr {
+                            span,
+                            ty: member,
+                            kind: E::UnboxUnion(Box::new(local(span, cell, cell_ty))),
+                        };
+                        let copied =
+                            self.spread_entries(unboxed, local(span, output, ty), &declared)?;
+                        roots.extend(copied.1);
+                        body.push(S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::Not(Box::new(Expr {
+                                    span,
+                                    ty: Type::Boolean,
+                                    kind: E::IsNullish(Box::new(local(span, cell, cell_ty))),
+                                })),
+                            },
+                            copied.2,
+                            Vec::new(),
+                        ));
+                        continue;
+                    }
                     let copied = self.spread_entries(source, local(span, output, ty), &declared)?;
                     provided.extend(copied.0);
                     roots.extend(copied.1);

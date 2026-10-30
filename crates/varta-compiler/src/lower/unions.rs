@@ -254,6 +254,19 @@ pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes)
     if expected == Some(Type::Unknown) {
         return unknown::widen(value, types);
     }
+    // A non-primitive value as TypeScript's `object` (v38): its cell.
+    if expected == Some(Type::Object(false))
+        && types.profile.structural_subtyping()
+        && value.ty != Type::Object(false)
+        && unknown::non_primitive(value.ty, types)
+    {
+        let cell = unknown::widen(value, types)?;
+        return Ok(Expr {
+            span: cell.span,
+            ty: Type::Object(false),
+            kind: E::Reinterpret(Box::new(cell)),
+        });
+    }
     if let Some(ty @ Type::Class(_)) = expected
         && classes::upcast(types, value.ty, ty)
     {

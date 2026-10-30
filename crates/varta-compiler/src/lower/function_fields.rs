@@ -233,6 +233,12 @@ impl Lower<'_> {
             ));
         }
         self.unbound(&value)?;
+        // A generic method signature's erased function (v38).
+        if let Type::Function(id) = value.ty
+            && let Some(generic) = self.types.functions[id as usize].generic
+        {
+            return self.erased_call(call, value, generic);
+        }
         self.function_call_value(call, value)
     }
     fn unbound(&self, value: &Expr) -> Result<()> {

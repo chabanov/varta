@@ -300,6 +300,22 @@ pub(crate) const URL: Prelude = Prelude {
     extended: None,
     loads: &[],
 };
+/// `encodeURIComponent` and `encodeURI` (v38 `structural_subtyping`), in
+/// guest code with no host import, and the `URIError` they throw.
+pub(crate) const URI: Prelude = Prelude {
+    path: "<varta>/builtins/uri.ts",
+    source: include_str!("../prelude/uri.ts"),
+    exports: &[
+        ("encodeURIComponent", Namespace::Value),
+        ("encodeURI", Namespace::Value),
+        ("URIError", Namespace::Class),
+    ],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::structural_subtyping,
+    extended: None,
+    loads: &[],
+};
 /// The recoverable denial of v37 timer starts (`permissionDenied`, a
 /// `NotAllowedError` `DOMException`); it imports the abort prelude.
 pub(crate) const PERMISSION: Prelude = Prelude {
@@ -318,7 +334,7 @@ pub(crate) const PERMISSION: Prelude = Prelude {
 };
 /// The dotted name the timer lowering calls for a denied timer start.
 pub(crate) const PERMISSION_DENIED: &str = "varta.permission.denied";
-pub(crate) const PRELUDES: [&Prelude; 12] = [
+pub(crate) const PRELUDES: [&Prelude; 13] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -331,6 +347,7 @@ pub(crate) const PRELUDES: [&Prelude; 12] = [
     &FETCH,
     &PERMISSION,
     &URL,
+    &URI,
 ];
 /// The `fetch` prelude's stream class and its engine-internal members, which
 /// only engine prelude modules may call.

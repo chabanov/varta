@@ -71,12 +71,38 @@ pub(super) fn admissible(ty: Type) -> bool {
     )
 }
 
+/// Whether every value of `ty` is a non-primitive (TypeScript's `object`,
+/// v38): records, dictionaries, instances, arrays and `object` itself.
+pub(super) fn non_primitive(ty: Type, types: &ir::ValueTypes) -> bool {
+    let members = unions::members(ty, types);
+    !members.is_empty()
+        && members.iter().all(|member| {
+            matches!(
+                member.erased(),
+                Type::Record(_)
+                    | Type::Dictionary(_)
+                    | Type::Class(_)
+                    | Type::Array(_)
+                    | Type::Tuple(_)
+                    | Type::Object(false)
+            )
+        })
+}
+
 /// Widen an admitted value into `unknown`: a closed union keeps its cell, any
 /// other value is boxed into a fresh immutable cell (its identity is unchanged).
 pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     let value = literals::erase(value, types);
     if value.ty == Type::Unknown {
         return Ok(value);
+    }
+    // An `object` value (v38) already is an `unknown` cell.
+    if matches!(value.ty, Type::Object(_)) && types.profile.structural_subtyping() {
+        return Ok(Expr {
+            span: value.span,
+            ty: Type::Unknown,
+            kind: E::Reinterpret(Box::new(value)),
+        });
     }
     if collections::reaches(value.ty, types) {
         return Err(collections::opaque("conversion to unknown"));
@@ -122,6 +148,10 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
              #private fields, which host readers would see as properties",
             value.ty
         )));
+    }
+    // V38 reads closed records held by `unknown` as JSON objects.
+    if types.profile.structural_subtyping() {
+        types.subtyping.note_boxed(value.ty, types);
     }
     if value.ty.is_union() {
         return Ok(Expr {
@@ -356,9 +386,31 @@ impl Lower<'_> {
         message: &str,
         span: Span,
     ) -> Result<Expr> {
+        // An `object` value (v38) is its `unknown` cell.
+        let value = if self.types.profile.structural_subtyping()
+            && matches!(value.ty, Type::Object(_))
+            && !matches!(target, Type::Object(_))
+        {
+            Expr {
+                span: value.span,
+                ty: Type::Unknown,
+                kind: E::Reinterpret(Box::new(value)),
+            }
+        } else {
+            value
+        };
         let source = value.ty;
         if upcast(source, target, self.types) {
             return unions::widen(value, Some(target), self.types);
+        }
+        // `record as Record<string, T>` (v38): a dictionary of the record's
+        // present fields (a snapshot, like `{ ...record }`).
+        if self.types.profile.structural_subtyping()
+            && let (Type::Record(shape), Type::Dictionary(_)) = (source, target)
+            && self.types.records[shape as usize].class.is_none()
+            && self.types.declared(target).is_none()
+        {
+            return self.dictionary_from_record(value, target);
         }
         if !admissible(source) || !admissible(target) {
             return Err(unsupported(&format!("type assertion to {name}")));
@@ -473,6 +525,21 @@ impl Lower<'_> {
         }
         Ok(match target {
             Type::Unknown => boolean(span, true),
+            // TypeScript's `object` (v38): any record, instance, dictionary,
+            // array or Error tag.
+            Type::Object(false) if self.types.profile.structural_subtyping() => {
+                let kinds = [
+                    records::intern(Vec::new(), self.types)?,
+                    dictionaries::intern(Type::Unknown, self.types)?,
+                    arrays::intern(Type::Unknown, self.types)?,
+                    Type::Error,
+                ];
+                let mut check = boolean(span, false);
+                for ty in kinds.into_iter().rev() {
+                    check = or(span, member(ty), check);
+                }
+                check
+            }
             Type::Union(_) | Type::ReferenceUnion(_) => {
                 let mut check = boolean(span, false);
                 for ty in unions::members(target, self.types).into_iter().rev() {

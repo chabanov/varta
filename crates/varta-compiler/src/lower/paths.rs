@@ -30,6 +30,10 @@ pub(super) type Path = (u32, Vec<String>);
 pub(super) struct Fact {
     pub(super) declared: Type,
     pub(super) narrowed: Type,
+    /// V38: the fact survived an effect that may have changed the path, or
+    /// the path reads a getter. TypeScript keeps such narrowings; a read
+    /// checks the value against the narrowed type (`TypeError` otherwise).
+    pub(super) checked: bool,
 }
 
 /// Whether evaluating `expr` may write a property or run user code.
@@ -164,9 +168,18 @@ impl Lower<'_> {
             .or(binding.ty)?;
         Some(((binding.slot, fields), ty))
     }
-    /// The type a data field `name` of `ty` stores.
-    fn data_field(&self, ty: Type, name: &str) -> Option<Type> {
-        match ty {
+    /// The type a data field `name` of `ty` stores; under v38 also the
+    /// result of a class getter (with `true`: each read runs the getter).
+    fn data_field(&self, ty: Type, name: &str) -> Option<(Type, bool)> {
+        if self.types.profile.structural_subtyping()
+            && let Type::Class(id) = ty
+            && self.types.classes.field(id, name).is_none()
+            && let Some(method) = self.types.classes.get(id).methods.get(name)
+            && method.getter
+        {
+            return Some((method.signature.result, true));
+        }
+        let stored = match ty {
             Type::Record(id) => self.types.records[id as usize]
                 .fields
                 .iter()
@@ -179,24 +192,32 @@ impl Lower<'_> {
                 .field(id, name)
                 .map(|(_, field)| field.ty),
             _ => None,
-        }
+        };
+        stored.map(|ty| (ty, false))
     }
     /// The declared and current types of `path`, walking data fields through
     /// the current types (facts) of its prefixes.
     fn path_types(&self, path: &Path, root: Type) -> Option<Fact> {
         let mut current = root;
         let mut declared = root;
+        let mut checked = false;
         for length in 1..=path.1.len() {
-            declared = self.data_field(current, &path.1[length - 1])?;
+            let (stored, getter) = self.data_field(current, &path.1[length - 1])?;
+            declared = stored;
+            checked |= getter;
             let prefix = (path.0, path.1[..length].to_vec());
             current = match self.core.paths.get(&prefix) {
-                Some(fact) if fact.declared == declared => fact.narrowed,
+                Some(fact) if fact.declared == declared => {
+                    checked |= fact.checked;
+                    fact.narrowed
+                }
                 _ => declared,
             };
         }
         Some(Fact {
             declared,
             narrowed: current,
+            checked,
         })
     }
     /// Refine `expr` by `matched` when it is a narrowable path. Returns
@@ -240,6 +261,7 @@ impl Lower<'_> {
                 Fact {
                     declared: fact.declared,
                     narrowed,
+                    checked: fact.checked,
                 },
             );
         }
@@ -277,6 +299,7 @@ impl Lower<'_> {
                 Fact {
                     declared: fact.declared,
                     narrowed,
+                    checked: fact.checked,
                 },
             );
         }
@@ -398,6 +421,19 @@ impl Lower<'_> {
             return Ok(value);
         }
         let narrow = fact.narrowed;
+        // A fact that may be stale (v38) is checked where it unboxes or
+        // retags a cell.
+        if fact.checked && value.ty.is_cell() && narrow != Type::Never {
+            let message = format!(
+                "property {} no longer has the type an earlier test proved",
+                path.1.join(".")
+            );
+            return self.checked_narrow(value, narrow, &message);
+        }
+        // A possibly stale literal narrowing of a primitive is not applied.
+        if fact.checked {
+            return Ok(value);
+        }
         let retag = narrow.is_cell() || self.types.profile.literal_types() && !value.ty.is_cell();
         Ok(if retag {
             Expr {
@@ -412,6 +448,81 @@ impl Lower<'_> {
             }
         })
     }
+    /// `value` (a union cell) as its sub-union or member `narrow`, tested at
+    /// run time: a `TypeError` with `message` when it holds another member.
+    fn checked_narrow(&mut self, value: Expr, narrow: Type, message: &str) -> Result<Expr> {
+        let span = value.span;
+        let union = value.ty;
+        let saved = self.hidden(union);
+        let cell = || Expr {
+            span,
+            ty: union,
+            kind: E::Local(saved),
+        };
+        let mut test: Option<Expr> = None;
+        for member in unions::members(narrow, self.types) {
+            let member_test = Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::IsUnionMember(Box::new(cell()), member),
+            };
+            test = Some(match test {
+                None => member_test,
+                Some(previous) => Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::Conditional(
+                        Box::new(previous),
+                        Box::new(Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::Integer(1),
+                        }),
+                        Box::new(member_test),
+                    ),
+                },
+            });
+        }
+        let test = test.ok_or_else(|| CompilerError::Internal("empty narrowing".into()))?;
+        let error = self.array_error(varta_common::value::ErrorClass::TypeError, message, span)?;
+        let narrowed = if narrow.is_cell() {
+            Expr {
+                span,
+                ty: narrow,
+                kind: E::Local(saved),
+            }
+        } else {
+            Expr {
+                span,
+                ty: narrow,
+                kind: E::UnboxUnion(Box::new(cell())),
+            }
+        };
+        let output = self.hidden(narrow);
+        let marker = self.hidden(Type::Number);
+        Ok(Expr {
+            span,
+            ty: narrow,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![saved],
+                body: vec![
+                    S::Init(saved, value),
+                    S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::Not(Box::new(test)),
+                        },
+                        vec![S::Throw(error)],
+                        Vec::new(),
+                    ),
+                    S::Init(output, narrowed),
+                ],
+            },
+        })
+    }
     /// Join the path facts of the reachable `paths`: a path keeps a fact only
     /// when every one has a fact for it, with the union of their types.
     pub(super) fn flow_join_paths(&mut self, paths: &[&flow::Snapshot]) -> Result<()> {
@@ -422,10 +533,12 @@ impl Lower<'_> {
         let mut joined = BTreeMap::new();
         'facts: for (path, fact) in &first.paths {
             let mut members = unions::members(fact.narrowed, self.types);
+            let mut checked = fact.checked;
             for other in rest {
                 match other.paths.get(path) {
                     Some(next) if next.declared == fact.declared => {
                         members.extend(unions::members(next.narrowed, self.types));
+                        checked |= next.checked;
                     }
                     _ => continue 'facts,
                 }
@@ -439,6 +552,7 @@ impl Lower<'_> {
                     Fact {
                         declared: fact.declared,
                         narrowed,
+                        checked,
                     },
                 );
             }
@@ -446,9 +560,16 @@ impl Lower<'_> {
         self.core.paths = joined;
         Ok(())
     }
-    /// Drop every path fact (an effect that may write a property).
+    /// Drop every path fact (an effect that may write a property). V38 keeps
+    /// them, as TypeScript does, but checks every later read.
     pub(super) fn drop_paths(&mut self) {
-        self.core.paths.clear();
+        if self.types.profile.structural_subtyping() {
+            for fact in self.core.paths.values_mut() {
+                fact.checked = true;
+            }
+        } else {
+            self.core.paths.clear();
+        }
     }
     /// Drop the facts rooted at `slot` (a write to the root binding).
     pub(super) fn drop_root_paths(&mut self, slot: u32) {
