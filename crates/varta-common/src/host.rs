@@ -841,6 +841,11 @@ impl HostOperation {
                 | Self::BigIntCompareNumber
                 | Self::BigIntCompareString
         )
+        // Checked JSON stays a host import: the linked decoder
+        // (`varta_common::json::scan` and `build`, shared with the host
+        // imports) is complete, but its decoding work costs guest fuel the
+        // host import does not, beyond the code generation v2 ceilings
+        // (`docs/development-plan.md`, linked JSON measurement).
     }
     /// The v37 (`collections`) Unicode case conversions.
     #[must_use]

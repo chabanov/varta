@@ -55,6 +55,19 @@ const ESCAPED_SURROGATE_BYTES: usize = 6;
 /// The most UTF-8 bytes one UTF-16 unit of input can become in the reference
 /// transcoding.
 const MAX_TRANSCODED_BYTES: usize = ESCAPED_SURROGATE_BYTES;
+/// Units below 0x100 a string holds as themselves, the fast path of
+/// [`Input::string`]: not `"`, `\\` or a control character.
+const PLAIN: [bool; 256] = {
+    let mut plain = [true; 256];
+    let mut unit = 0;
+    while unit < CONTROL_END as usize {
+        plain[unit] = false;
+        unit += 1;
+    }
+    plain[QUOTE as usize] = false;
+    plain[BACKSLASH as usize] = false;
+    plain
+};
 /// Values visited between two deadline checks.
 const DEADLINE_STRIDE: usize = 1024;
 /// Decimal digits of an integer literal that binary64 holds exactly
@@ -122,17 +135,32 @@ pub enum Node {
     Float64(u64),
     String(Text),
     /// A union value of schema type `ty`: its member's value follows.
-    Union { ty: u32, kind: ValueKind },
+    Union {
+        ty: u32,
+        kind: ValueKind,
+    },
     /// A record of schema type `ty` with `count` present fields, each a
     /// [`Node::Field`] followed by its value. Missing fields are optional.
-    Record { ty: u32, count: u32 },
-    Field { slot: u32 },
+    Record {
+        ty: u32,
+        count: u32,
+    },
+    Field {
+        slot: u32,
+    },
     /// An array of schema type `ty`: `count` element values follow.
-    Array { ty: u32, count: u32 },
+    Array {
+        ty: u32,
+        count: u32,
+    },
     /// A dictionary of schema type `ty`: `count` entries follow in input
     /// order, each a [`Node::Key`] and its value. `indexed` when a key is a
     /// canonical array index, so own-key order differs from input order.
-    Dictionary { ty: u32, count: u32, indexed: bool },
+    Dictionary {
+        ty: u32,
+        count: u32,
+        indexed: bool,
+    },
     Key(Text),
 }
 
@@ -145,11 +173,14 @@ pub struct Tape {
 /// Stops the decoder once the host's deadline passed (checked every
 /// [`DEADLINE_STRIDE`] values); linked code is bounded by fuel instead.
 pub trait Deadline {
+    /// Whether this deadline is ever checked.
+    const TIMED: bool = true;
     fn overdue(&mut self) -> bool;
 }
 /// No deadline.
 pub struct Unbounded;
 impl Deadline for Unbounded {
+    const TIMED: bool = false;
     fn overdue(&mut self) -> bool {
         false
     }
@@ -157,12 +188,12 @@ impl Deadline for Unbounded {
 
 /// Decode UTF-16LE `text` (an even byte count) against `schema` within
 /// `limits` into `tape`. The schema must already be validated.
-pub fn scan(
+pub fn scan<D: Deadline>(
     text: &[u8],
     schema: &JsonSchema,
     limits: JsonLimits,
     tape: &mut Tape,
-    deadline: &mut dyn Deadline,
+    deadline: &mut D,
 ) -> Result<(), JsonDecodeError> {
     let (units, rest) = text.as_chunks::<2>();
     if !rest.is_empty() {
@@ -175,13 +206,14 @@ pub fn scan(
     tape.nodes.clear();
     let stop = match (Decoder {
         input,
-        pos: 0,
         schema,
         limits,
         nodes: 0,
         missing: 0,
         tape,
         frames: Vec::new(),
+        keys: Vec::new(),
+        open_keys: 0,
         deadline,
         digits: Vec::new(),
         decoded: Vec::new(),
@@ -299,10 +331,32 @@ impl Input<'_> {
     /// The string whose opening quote is at `pos`: its text, the position
     /// after the closing quote, and whether it holds a surrogate (raw or
     /// escaped), so that a record key needs a well-formedness check.
+    #[inline]
     fn string(self, pos: usize) -> Result<(Text, usize, bool), usize> {
         let start = pos + 1;
         let mut at = start;
-        let mut units = 0usize;
+        // Plain units first: below 0x100 and neither a quote, a backslash
+        // nor a control character.
+        while let Some(&[low, 0]) = self.units.get(at) {
+            if !PLAIN[usize::from(low)] {
+                break;
+            }
+            at += 1;
+        }
+        if self.units.get(at) == Some(&[b'"', 0]) {
+            let end = at as u32;
+            return Ok((
+                Text {
+                    start: start as u32,
+                    end,
+                    units: end - start as u32,
+                    escaped: false,
+                },
+                at + 1,
+                false,
+            ));
+        }
+        let mut units = at - start;
         let mut escaped = false;
         let mut surrogate = false;
         loop {
@@ -425,27 +479,58 @@ impl Input<'_> {
     }
     /// Append the decoded units of `text` to `out`.
     pub(crate) fn decode(self, text: Text, out: &mut Vec<u16>) {
+        self.pieces(text, |piece| match piece {
+            Piece::Units(start, end) => {
+                out.extend(
+                    self.units[start..end]
+                        .iter()
+                        .map(|unit| u16::from_le_bytes(*unit)),
+                );
+            }
+            Piece::Escape(code) => out.push(code),
+        });
+    }
+    /// The decoded units of `text` as runs of raw units and single escapes.
+    fn pieces(self, text: Text, mut each: impl FnMut(Piece)) {
         let mut at = text.start as usize;
-        let end = text.end as usize;
+        let end = (text.end as usize).min(self.len());
+        let mut run = at;
         while at < end {
-            match self.at(at) {
-                Some(BACKSLASH) => {
-                    if let Ok((code, next)) = self.escape(at + 1) {
-                        out.push(code);
+            if self.at(at) == Some(BACKSLASH) {
+                if run < at {
+                    each(Piece::Units(run, at));
+                }
+                match self.escape(at + 1) {
+                    Ok((code, next)) => {
+                        each(Piece::Escape(code));
                         at = next;
-                    } else {
-                        // Unreachable for a checked text.
-                        at += 1;
                     }
+                    // Unreachable for a checked text.
+                    Err(_) => at += 1,
                 }
-                Some(unit) => {
-                    out.push(unit);
-                    at += 1;
-                }
-                None => break,
+                run = at;
+            } else {
+                at += 1;
             }
         }
+        if run < end {
+            each(Piece::Units(run, end));
+        }
     }
+}
+/// A run of a string's decoded units: raw units `start..end` of the text,
+/// or one escape's unit.
+#[derive(Debug, Clone, Copy)]
+pub enum Piece {
+    Units(usize, usize),
+    Escape(u16),
+}
+/// The decoded units of `text` in UTF-16LE `input`, as [`Piece`]s.
+pub fn pieces(input: &[u8], text: Text, each: impl FnMut(Piece)) {
+    Input {
+        units: input.as_chunks::<2>().0,
+    }
+    .pieces(text, each);
 }
 #[inline]
 fn is_digit(unit: u16) -> bool {
@@ -460,6 +545,37 @@ pub fn decode_text(input: &[u8], text: Text, out: &mut Vec<u16>) {
     .decode(text, out);
 }
 
+/// A set of record slots (at most [`MAX_WIDE_RECORD_FIELDS`]) as two words:
+/// wasm32 has no native 128-bit shifts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Slots([u64; 2]);
+impl Slots {
+    const EMPTY: Self = Self([0; 2]);
+    #[inline]
+    fn contains(self, slot: usize) -> bool {
+        self.0[slot / 64] & 1 << (slot % 64) != 0
+    }
+    #[inline]
+    fn insert(&mut self, slot: usize) {
+        self.0[slot / 64] |= 1 << (slot % 64);
+    }
+    #[inline]
+    fn count(self) -> u32 {
+        self.0[0].count_ones() + self.0[1].count_ones()
+    }
+    /// Every slot of a record with `count` fields.
+    #[inline]
+    fn all(count: usize) -> Self {
+        let word = |bits: usize| match bits {
+            0 => 0,
+            64.. => u64::MAX,
+            bits => (1u64 << bits) - 1,
+        };
+        Self([word(count.min(64)), word(count.saturating_sub(64))])
+    }
+}
+const _: () = assert!(MAX_WIDE_RECORD_FIELDS <= 128);
+
 /// An open container of the first pass.
 enum Frame {
     Array {
@@ -471,28 +587,28 @@ enum Frame {
     Record {
         node: usize,
         ty: u32,
-        present: u128,
+        present: Slots,
         depth: usize,
     },
+    /// A dictionary; its keys are the innermost of `Decoder::keys`.
     Dictionary {
         node: usize,
         value: u32,
         depth: usize,
-        keys: Keys,
     },
 }
 
 /// The distinct keys of one dictionary: hashes and texts, with a hash index
 /// once it outgrows a linear search.
+#[derive(Default)]
 struct Keys {
     entries: Vec<(u32, Text)>,
     index: Vec<u32>,
     indexed: bool,
 }
 
-struct Decoder<'a, 'b> {
+struct Decoder<'a, 'b, D> {
     input: Input<'a>,
-    pos: usize,
     schema: &'a JsonSchema,
     limits: JsonLimits,
     /// Values visited by the whole-input budget.
@@ -501,7 +617,11 @@ struct Decoder<'a, 'b> {
     missing: usize,
     tape: &'b mut Tape,
     frames: Vec<Frame>,
-    deadline: &'b mut dyn Deadline,
+    /// The key sets of the open dictionaries, innermost last; retired sets
+    /// are reused.
+    keys: Vec<Keys>,
+    open_keys: usize,
+    deadline: &'b mut D,
     /// Scratch for number literals and decoded keys.
     digits: Vec<u8>,
     decoded: Vec<u16>,
@@ -515,27 +635,31 @@ enum Next {
     Child(u32, usize),
 }
 
-impl Decoder<'_, '_> {
+impl<D: Deadline> Decoder<'_, '_, D> {
     fn run(&mut self) -> Result<(), Stop> {
+        let input = self.input;
         let mut ty = self.schema.root;
         let mut depth = 0;
+        let mut pos = 0;
         loop {
-            self.pos = self.input.skip(self.pos);
-            if let Next::Child(child, level) = self.value(ty, depth)? {
+            pos = input.skip(pos);
+            let (next, after) = self.value(ty, depth, pos)?;
+            pos = after;
+            if let Next::Child(child, level) = next {
                 (ty, depth) = (child, level);
                 continue;
             }
             // Close containers and find the next value.
             loop {
-                self.pos = self.input.skip(self.pos);
+                pos = input.skip(pos);
                 let Some(frame) = self.frames.last_mut() else {
-                    return if self.pos == self.input.len() {
+                    return if pos == input.len() {
                         Ok(())
                     } else {
-                        Err(Stop::Syntax(self.pos))
+                        Err(Stop::Syntax(pos))
                     };
                 };
-                let unit = self.input.at(self.pos);
+                let unit = input.at(pos);
                 match frame {
                     Frame::Array {
                         node,
@@ -549,34 +673,35 @@ impl Decoder<'_, '_> {
                         }
                         match unit {
                             Some(COMMA) => {
-                                self.pos += 1;
+                                pos += 1;
                                 ty = *element;
                                 depth = *level + 1;
                                 break;
                             }
                             Some(CLOSE_ARRAY) => {
-                                self.pos += 1;
+                                pos += 1;
                                 let (node, count) = (*node, *count as u32);
-                                if let Node::Array { count: slot, .. } = &mut self.tape.nodes[node]
+                                if let Some(Node::Array { count: slot, .. }) =
+                                    self.tape.nodes.get_mut(node)
                                 {
                                     *slot = count;
                                 }
                                 self.frames.pop();
                             }
-                            _ => return Err(Stop::Syntax(self.pos)),
+                            _ => return Err(Stop::Syntax(pos)),
                         }
                     }
                     Frame::Record { .. } | Frame::Dictionary { .. } => match unit {
                         Some(COMMA) => {
-                            self.pos = self.input.skip(self.pos + 1);
-                            (ty, depth) = self.member()?;
+                            let (child, level, after) = self.member(input.skip(pos + 1))?;
+                            (ty, depth, pos) = (child, level, after);
                             break;
                         }
                         Some(CLOSE_OBJECT) => {
-                            self.pos += 1;
-                            self.close()?;
+                            pos += 1;
+                            self.close(pos)?;
                         }
-                        _ => return Err(Stop::Syntax(self.pos)),
+                        _ => return Err(Stop::Syntax(pos)),
                     },
                 }
             }
@@ -590,7 +715,7 @@ impl Decoder<'_, '_> {
             return Err(Stop::Walk(JsonInputLimit::Depth));
         }
         self.nodes += 1;
-        if self.nodes.is_multiple_of(DEADLINE_STRIDE) && self.deadline.overdue() {
+        if D::TIMED && self.nodes.is_multiple_of(DEADLINE_STRIDE) && self.deadline.overdue() {
             return Err(Stop::Walk(JsonInputLimit::Deadline));
         }
         if self.nodes > self.limits.nodes {
@@ -608,11 +733,14 @@ impl Decoder<'_, '_> {
         Ok(())
     }
 
-    /// Check and record the value at `self.pos` of schema type `ty`; a
-    /// container is opened and its first child left to the caller.
-    fn value(&mut self, ty: u32, depth: usize) -> Result<Next, Stop> {
+    /// Check and record the value at `pos` of schema type `ty`: what
+    /// follows and the position after the token; a container is opened and
+    /// its first child left to the caller.
+    #[inline]
+    fn value(&mut self, ty: u32, depth: usize, pos: usize) -> Result<(Next, usize), Stop> {
         self.visit(depth)?;
-        let unit = self.input.at(self.pos).ok_or(Stop::Syntax(self.pos))?;
+        let input = self.input;
+        let unit = input.at(pos).ok_or(Stop::Syntax(pos))?;
         let schema = self.schema;
         let mut ty = ty;
         if let JsonType::PrimitiveUnion { members } | JsonType::ReferenceUnion { members } =
@@ -641,7 +769,7 @@ impl Decoder<'_, '_> {
         }
         self.counted()?;
         let expected = &schema.types[ty as usize];
-        let node = match unit {
+        let (node, after) = match unit {
             OPEN_OBJECT => {
                 let frame = match expected {
                     JsonType::Record { .. } => {
@@ -649,7 +777,7 @@ impl Decoder<'_, '_> {
                         Frame::Record {
                             node: self.tape.nodes.len() - 1,
                             ty,
-                            present: 0,
+                            present: Slots::EMPTY,
                             depth,
                         }
                     }
@@ -659,38 +787,39 @@ impl Decoder<'_, '_> {
                             count: 0,
                             indexed: false,
                         });
+                        if self.open_keys == self.keys.len() {
+                            self.keys.push(Keys::default());
+                        }
+                        let keys = &mut self.keys[self.open_keys];
+                        keys.entries.clear();
+                        keys.index.clear();
+                        keys.indexed = false;
+                        self.open_keys += 1;
                         Frame::Dictionary {
                             node: self.tape.nodes.len() - 1,
                             value: *value,
                             depth,
-                            keys: Keys {
-                                entries: Vec::new(),
-                                index: Vec::new(),
-                                indexed: false,
-                            },
                         }
                     }
                     _ => return mismatch(),
                 };
                 self.frames.push(frame);
-                self.pos = self.input.skip(self.pos + 1);
-                if self.input.at(self.pos) == Some(CLOSE_OBJECT) {
-                    self.pos += 1;
-                    self.close()?;
-                    return Ok(Next::Done);
+                let pos = input.skip(pos + 1);
+                if input.at(pos) == Some(CLOSE_OBJECT) {
+                    self.close(pos + 1)?;
+                    return Ok((Next::Done, pos + 1));
                 }
-                let (child, level) = self.member()?;
-                return Ok(Next::Child(child, level));
+                let (child, level, after) = self.member(pos)?;
+                return Ok((Next::Child(child, level), after));
             }
             OPEN_ARRAY => {
                 let JsonType::Array { element } = expected else {
                     return mismatch();
                 };
                 self.tape.nodes.push(Node::Array { ty, count: 0 });
-                self.pos = self.input.skip(self.pos + 1);
-                if self.input.at(self.pos) == Some(CLOSE_ARRAY) {
-                    self.pos += 1;
-                    return Ok(Next::Done);
+                let pos = input.skip(pos + 1);
+                if input.at(pos) == Some(CLOSE_ARRAY) {
+                    return Ok((Next::Done, pos + 1));
                 }
                 self.frames.push(Frame::Array {
                     node: self.tape.nodes.len() - 1,
@@ -698,18 +827,17 @@ impl Decoder<'_, '_> {
                     count: 0,
                     depth,
                 });
-                return Ok(Next::Child(*element, depth + 1));
+                return Ok((Next::Child(*element, depth + 1), pos));
             }
             QUOTE => {
                 if !matches!(expected, JsonType::String) {
                     return mismatch();
                 }
-                let (text, next, _) = self.input.string(self.pos).map_err(Stop::Syntax)?;
+                let (text, next, _) = input.string(pos).map_err(Stop::Syntax)?;
                 if text.units as usize > self.limits.string_units {
                     return Err(Stop::Walk(JsonInputLimit::StringBytes));
                 }
-                self.pos = next;
-                Node::String(text)
+                (Node::String(text), next)
             }
             0x74 | 0x66 => {
                 if !matches!(expected, JsonType::Boolean) {
@@ -717,53 +845,51 @@ impl Decoder<'_, '_> {
                 }
                 let value = unit == 0x74;
                 let word: &[u8] = if value { b"true" } else { b"false" };
-                self.pos = self.input.literal(self.pos, word).map_err(Stop::Syntax)?;
-                Node::Boolean(value)
+                let next = input.literal(pos, word).map_err(Stop::Syntax)?;
+                (Node::Boolean(value), next)
             }
             0x6e => {
                 if !matches!(expected, JsonType::Null) {
                     return mismatch();
                 }
-                self.pos = self.input.literal(self.pos, b"null").map_err(Stop::Syntax)?;
-                Node::Null
+                let next = input.literal(pos, b"null").map_err(Stop::Syntax)?;
+                (Node::Null, next)
             }
             _ => {
-                let start = self.pos;
-                let (end, integer) = self.input.number(start).map_err(Stop::Syntax)?;
+                let (end, integer) = input.number(pos).map_err(Stop::Syntax)?;
                 let node = match expected {
                     JsonType::I32 if integer => self
-                        .integer(start, end)
+                        .integer(pos, end)
                         .ok_or(Stop::Decode(JsonDecodeError::Type))?,
-                    JsonType::Float64 => Node::Float64(self.float(start, end, integer)?),
+                    JsonType::Float64 => Node::Float64(self.float(pos, end, integer)?),
                     _ => return mismatch(),
                 };
-                self.pos = end;
-                node
+                (node, end)
             }
         };
         self.tape.nodes.push(node);
-        Ok(Next::Done)
+        Ok((Next::Done, after))
     }
-    /// The key of the next member of the innermost object (at `self.pos`)
-    /// and its `:`; returns the type and depth of its value.
-    fn member(&mut self) -> Result<(u32, usize), Stop> {
-        if self.input.at(self.pos) != Some(QUOTE) {
-            return Err(Stop::Syntax(self.pos));
+    /// The key at `pos` of the next member of the innermost object and its
+    /// `:`: the type and depth of its value and the position after the `:`.
+    fn member(&mut self, pos: usize) -> Result<(u32, usize, usize), Stop> {
+        let input = self.input;
+        if input.at(pos) != Some(QUOTE) {
+            return Err(Stop::Syntax(pos));
         }
-        let (text, next, surrogate) = self.input.string(self.pos).map_err(Stop::Syntax)?;
+        let (text, next, surrogate) = input.string(pos).map_err(Stop::Syntax)?;
         if text.units as usize > self.limits.string_units {
             return Err(Stop::Walk(JsonInputLimit::StringBytes));
         }
-        self.pos = next;
         let schema = self.schema;
-        let result = match self.frames.last_mut() {
+        let (ty, depth) = match self.frames.last_mut() {
             Some(Frame::Record {
                 ty, present, depth, ..
             }) => {
                 // A record key is a well-formed string.
                 if surrogate {
                     self.decoded.clear();
-                    self.input.decode(text, &mut self.decoded);
+                    input.decode(text, &mut self.decoded);
                     if char::decode_utf16(self.decoded.iter().copied()).any(|c| c.is_err()) {
                         return mismatch();
                     }
@@ -771,42 +897,47 @@ impl Decoder<'_, '_> {
                 let JsonType::Record { fields, .. } = &schema.types[*ty as usize] else {
                     return mismatch();
                 };
-                let slot = field(self.input, text, fields, &mut self.decoded)
+                let slot = field(input, text, fields, &mut self.decoded)
                     .ok_or(Stop::Decode(JsonDecodeError::Type))?;
-                let bit = 1u128 << slot;
-                if *present & bit != 0 {
+                if present.contains(slot) {
                     return mismatch();
                 }
-                *present |= bit;
+                present.insert(slot);
                 self.tape.nodes.push(Node::Field { slot: slot as u32 });
                 (fields[slot].ty, *depth + 1)
             }
-            Some(Frame::Dictionary {
-                value, depth, keys, ..
-            }) => {
+            Some(Frame::Dictionary { value, depth, .. }) => {
+                let (value, depth) = (*value, *depth + 1);
+                let Some(keys) = self
+                    .open_keys
+                    .checked_sub(1)
+                    .and_then(|open| self.keys.get_mut(open))
+                else {
+                    return Err(Stop::Syntax(pos));
+                };
                 if keys.entries.len() == self.limits.dictionary_entries {
                     return Err(Stop::Decode(JsonDecodeError::Limit(
                         JsonInputLimit::DictionaryEntries,
                     )));
                 }
-                if !keys.insert(self.input, text, &mut self.decoded) {
+                if !keys.insert(input, text, &mut self.decoded) {
                     return mismatch();
                 }
                 self.tape.nodes.push(Node::Key(text));
-                (*value, *depth + 1)
+                (value, depth)
             }
-            _ => return Err(Stop::Syntax(self.pos)),
+            _ => return Err(Stop::Syntax(pos)),
         };
-        self.pos = self.input.skip(self.pos);
-        if self.input.at(self.pos) != Some(COLON) {
-            return Err(Stop::Syntax(self.pos));
+        let pos = input.skip(next);
+        if input.at(pos) != Some(COLON) {
+            return Err(Stop::Syntax(pos));
         }
-        self.pos += 1;
-        Ok(result)
+        Ok((ty, depth, pos + 1))
     }
-    /// Close the innermost object: its missing fields in slot order (an
-    /// optional one counts as a visited value, a required one fails).
-    fn close(&mut self) -> Result<(), Stop> {
+    /// Close the innermost object (`pos` is after its `}`): its missing
+    /// fields in slot order (an optional one counts as a visited value, a
+    /// required one fails).
+    fn close(&mut self, pos: usize) -> Result<(), Stop> {
         match self.frames.pop() {
             Some(Frame::Record {
                 node, ty, present, ..
@@ -814,14 +945,9 @@ impl Decoder<'_, '_> {
                 let JsonType::Record { fields, .. } = &self.schema.types[ty as usize] else {
                     return mismatch();
                 };
-                let all = if fields.len() >= MAX_WIDE_RECORD_FIELDS {
-                    u128::MAX
-                } else {
-                    (1u128 << fields.len()) - 1
-                };
-                if present != all {
+                if present != Slots::all(fields.len()) {
                     for (slot, field) in fields.iter().enumerate() {
-                        if present & 1 << slot != 0 {
+                        if present.contains(slot) {
                             continue;
                         }
                         if !field.optional {
@@ -831,19 +957,22 @@ impl Decoder<'_, '_> {
                         self.counted()?;
                     }
                 }
-                if let Node::Record { count, .. } = &mut self.tape.nodes[node] {
-                    *count = present.count_ones();
+                if let Some(Node::Record { count, .. }) = self.tape.nodes.get_mut(node) {
+                    *count = present.count();
                 }
                 Ok(())
             }
-            Some(Frame::Dictionary { node, keys, .. }) => {
-                if let Node::Dictionary { count, indexed, .. } = &mut self.tape.nodes[node] {
+            Some(Frame::Dictionary { node, .. }) => {
+                self.open_keys = self.open_keys.saturating_sub(1);
+                let keys = &self.keys[self.open_keys];
+                if let Some(Node::Dictionary { count, indexed, .. }) = self.tape.nodes.get_mut(node)
+                {
                     *count = keys.entries.len() as u32;
                     *indexed = keys.indexed;
                 }
                 Ok(())
             }
-            _ => Err(Stop::Syntax(self.pos)),
+            _ => Err(Stop::Syntax(pos)),
         }
     }
     /// An integer literal `start..end` as an i32: `None` outside the range
@@ -867,22 +996,82 @@ impl Decoder<'_, '_> {
         i32::try_from(value).ok().map(Node::I32)
     }
     /// A number literal as correctly rounded binary64 bits; an infinite
-    /// value is a mismatch.
+    /// value is a mismatch. Up to [`EXACT_DIGITS`] significant digits and a
+    /// decimal exponent within [`EXACT_POWERS`] take the exact path (one
+    /// correctly rounded multiplication or division by an exact power of
+    /// ten); every other literal is parsed by `core`.
     fn float(&mut self, start: usize, end: usize, integer: bool) -> Result<u64, Stop> {
-        let negative = self.input.at(start) == Some(MINUS);
-        let digits = start + usize::from(negative);
-        if integer && end - digits <= EXACT_DIGITS {
-            let mut value = 0i64;
-            for at in digits..end {
-                value = value * 10 + i64::from(self.input.at(at).unwrap_or(ZERO) - ZERO);
+        let input = self.input;
+        let negative = input.at(start) == Some(MINUS);
+        let mut at = start + usize::from(negative);
+        let mut mantissa = 0u64;
+        let mut digits = 0usize;
+        let mut scale = 0i64;
+        let mut exact = true;
+        while let Some(unit) = input.at(at).filter(|unit| is_digit(*unit)) {
+            if digits < EXACT_DIGITS {
+                mantissa = mantissa * 10 + u64::from(unit - ZERO);
+                if mantissa != 0 {
+                    digits += 1;
+                }
+            } else {
+                exact = false;
             }
-            let value = value as f64;
-            return Ok(if negative { -value } else { value }.to_bits());
+            at += 1;
+        }
+        if !integer {
+            if input.at(at) == Some(DOT) {
+                at += 1;
+                while let Some(unit) = input.at(at).filter(|unit| is_digit(*unit)) {
+                    if digits < EXACT_DIGITS {
+                        mantissa = mantissa * 10 + u64::from(unit - ZERO);
+                        if mantissa != 0 {
+                            digits += 1;
+                        }
+                        scale -= 1;
+                    } else {
+                        exact = false;
+                    }
+                    at += 1;
+                }
+            }
+            if matches!(input.at(at), Some(0x45 | 0x65)) {
+                at += 1;
+                let sign = match input.at(at) {
+                    Some(MINUS) => {
+                        at += 1;
+                        -1
+                    }
+                    Some(PLUS) => {
+                        at += 1;
+                        1
+                    }
+                    _ => 1,
+                };
+                let mut exponent = 0i64;
+                while let Some(unit) = input.at(at).filter(|unit| is_digit(*unit)) {
+                    exponent = (exponent * 10 + i64::from(unit - ZERO)).min(EXPONENT_CAP);
+                    at += 1;
+                }
+                scale += sign * exponent;
+            }
+        }
+        if exact && (-EXACT_POWERS..=EXACT_POWERS).contains(&scale) {
+            let value = mantissa as f64;
+            let power = POWERS[scale.unsigned_abs() as usize];
+            let value = if scale < 0 {
+                value / power
+            } else {
+                value * power
+            };
+            if value.is_finite() {
+                return Ok(if negative { -value } else { value }.to_bits());
+            }
         }
         self.digits.clear();
         for at in start..end {
             // Number literals are ASCII.
-            self.digits.push(self.input.at(at).unwrap_or(ZERO) as u8);
+            self.digits.push(input.at(at).unwrap_or(ZERO) as u8);
         }
         let value = core::str::from_utf8(&self.digits)
             .ok()
@@ -892,10 +1081,31 @@ impl Decoder<'_, '_> {
         Ok(value.to_bits())
     }
 }
+
+/// Decimal exponents whose power of ten binary64 holds exactly.
+const EXACT_POWERS: i64 = 22;
+/// The exact powers of ten `10^0` to `10^22`.
+const POWERS: [f64; EXACT_POWERS as usize + 1] = {
+    let mut powers = [1.0; EXACT_POWERS as usize + 1];
+    let mut index = 1;
+    while index < powers.len() {
+        powers[index] = powers[index - 1] * 10.0;
+        index += 1;
+    }
+    powers
+};
+/// Exponent digits beyond this cap cannot change an exact-path decision.
+const EXPONENT_CAP: i64 = 1 << 32;
+
 /// The slot of the record field named by the well-formed key `text`, by
 /// binary search over the schema's name-sorted fields (UTF-8 byte order,
 /// which is code point order).
-fn field(input: Input<'_>, text: Text, fields: &[JsonField], scratch: &mut Vec<u16>) -> Option<usize> {
+fn field(
+    input: Input<'_>,
+    text: Text,
+    fields: &[JsonField],
+    scratch: &mut Vec<u16>,
+) -> Option<usize> {
     let units: &[u16] = if text.escaped {
         scratch.clear();
         input.decode(text, scratch);
@@ -913,7 +1123,7 @@ fn field(input: Input<'_>, text: Text, fields: &[JsonField], scratch: &mut Vec<u
     let (mut low, mut high) = (0, fields.len());
     while low < high {
         let middle = (low + high) / 2;
-        match compare(fields[middle].name.as_bytes(), text.units as usize, unit) {
+        match compare(&fields[middle].name, text.units as usize, unit) {
             core::cmp::Ordering::Equal => return Some(middle),
             core::cmp::Ordering::Less => low = middle + 1,
             core::cmp::Ordering::Greater => high = middle,
@@ -921,12 +1131,33 @@ fn field(input: Input<'_>, text: Text, fields: &[JsonField], scratch: &mut Vec<u
     }
     None
 }
-/// Compare a UTF-8 field name with `len` well-formed UTF-16 key units by
-/// code point.
-fn compare(name: &[u8], len: usize, unit: impl Fn(usize) -> u16) -> core::cmp::Ordering {
-    use core::cmp::Ordering;
-    let mut chars = core::str::from_utf8(name).unwrap_or_default().chars();
+/// Compare a field name with `len` well-formed UTF-16 key units by code
+/// point: unit by byte while both are ASCII, by character after that.
+#[inline]
+fn compare(name: &str, len: usize, unit: impl Fn(usize) -> u16) -> core::cmp::Ordering {
+    let bytes = name.as_bytes();
     let mut index = 0;
+    while index < len && index < bytes.len() {
+        let (key, byte) = (unit(index), bytes[index]);
+        if key >= 0x80 || byte >= 0x80 {
+            return compare_chars(&name[index..], index, len, unit);
+        }
+        if key != u16::from(byte) {
+            return u16::from(byte).cmp(&key);
+        }
+        index += 1;
+    }
+    bytes.len().cmp(&len)
+}
+/// [`compare`] from key unit `index` on, where `name` starts.
+fn compare_chars(
+    name: &str,
+    mut index: usize,
+    len: usize,
+    unit: impl Fn(usize) -> u16,
+) -> core::cmp::Ordering {
+    use core::cmp::Ordering;
+    let mut chars = name.chars();
     loop {
         let key = if index < len {
             let high = unit(index);
@@ -1018,21 +1249,16 @@ impl Keys {
 /// The schema-free second pass: the grammar of the whole input and, when
 /// `walk`, its whole-input budgets in document order. The first exceeded
 /// budget is reported only once the grammar of the rest holds.
-struct Checker<'a, 'b> {
+struct Checker<'a, 'b, D> {
     input: Input<'a>,
     limits: JsonLimits,
     walk: bool,
     nodes: usize,
-    deadline: &'b mut dyn Deadline,
+    deadline: &'b mut D,
     exceeded: Option<JsonInputLimit>,
 }
-impl<'a, 'b> Checker<'a, 'b> {
-    fn new(
-        input: Input<'a>,
-        limits: JsonLimits,
-        walk: bool,
-        deadline: &'b mut dyn Deadline,
-    ) -> Self {
+impl<'a, 'b, D: Deadline> Checker<'a, 'b, D> {
+    fn new(input: Input<'a>, limits: JsonLimits, walk: bool, deadline: &'b mut D) -> Self {
         Self {
             input,
             limits,
@@ -1126,7 +1352,7 @@ impl<'a, 'b> Checker<'a, 'b> {
             return self.exceed(JsonInputLimit::Depth);
         }
         self.nodes += 1;
-        if self.nodes.is_multiple_of(DEADLINE_STRIDE) && self.deadline.overdue() {
+        if D::TIMED && self.nodes.is_multiple_of(DEADLINE_STRIDE) && self.deadline.overdue() {
             return self.exceed(JsonInputLimit::Deadline);
         }
         if self.nodes > self.limits.nodes {

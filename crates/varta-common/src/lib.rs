@@ -25,7 +25,7 @@ mod diagnostic;
 /// Host event sources and host tasks (v38 `turn_budgets`).
 #[cfg(feature = "std")]
 pub mod events;
-#[cfg(feature = "std")]
+/// The exception channel's exports and layout; its diagnostics need `std`.
 pub mod exceptions;
 /// Virtual file roots (v38 `file_roots`).
 #[cfg(feature = "std")]

@@ -33,3 +33,35 @@ pub enum JsonDecodeError {
     #[error("checked JSON {0} limit")]
     Limit(JsonInputLimit),
 }
+
+/// V38 linked decoder (`json_parse_v19` as linked code): the code a fatal
+/// input limit stores in the module's `limits::RESOURCE_FAILURE` global
+/// before it traps, above every `limits::Resource` code, so the runtime
+/// reports exactly the host import's [`JsonDecodeError::Limit`].
+pub const LINKED_LIMIT_BASE: i32 = 0x100;
+impl JsonInputLimit {
+    const ALL: [Self; 7] = [
+        Self::Bytes,
+        Self::Depth,
+        Self::Nodes,
+        Self::ArrayElements,
+        Self::StringBytes,
+        Self::DictionaryEntries,
+        Self::Deadline,
+    ];
+    /// This limit's linked failure code.
+    #[must_use]
+    pub fn linked_code(self) -> i32 {
+        let index = Self::ALL
+            .iter()
+            .position(|limit| *limit == self)
+            .unwrap_or_default();
+        LINKED_LIMIT_BASE + index as i32
+    }
+    /// The limit a linked failure code names.
+    #[must_use]
+    pub fn from_linked_code(code: i32) -> Option<Self> {
+        let index = usize::try_from(code.checked_sub(LINKED_LIMIT_BASE)?).ok()?;
+        Self::ALL.get(index).copied()
+    }
+}

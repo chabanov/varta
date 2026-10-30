@@ -906,8 +906,8 @@ before). `typeof Blob` in `binaryContentType` folds to `"function"` and
 | Item | Scope | State |
 | --- | --- | --- |
 | (a) Inline conversions and comparisons | `primitive_to_string_v5`, `primitive_to_number_v5` (under value 18: `primitive_to_string_v6`, `primitive_to_number_v6`), `primitive_compare` and `primitive_equal` get an inline codegen fast path for integers, ASCII strings and same-tag comparisons, with the linked general path (`varta_intrinsics::bigint`, already shared with the host imports) behind it, removing those host imports without a fuel regression. Measured when they were linked without it: the codegen v2 dictionary workload (50 inserts + 50 reads) rose from 456 K to 1.1 M fuel, and the v37 case `generator_cases/lifetime.ts` exhausted the production fuel budget under v38 | Open |
-| (b) Linked JSON | `json_parse_v18` (under value 18: `json_parse_v19`) and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | Open |
-| (c) Owned string results | Results larger than the 1 MiB result buffer (case mapping, `String(x)` of a longer string) are returned as owned guest strings | Open |
+| (b) Linked JSON | `json_parse_v18` (under value 18: `json_parse_v19`) and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | Parse implemented on `v38-p2-json` behind a test switch ([contract](architecture.md#shared-checked-json-decoder-and-linked-json-wave-3)): one `no_std` UTF-16 decoder (`json::scan`) and top-down builder (`json::build`) shared with the host imports of v10–v38, a serde-equivalent `no_std` schema reader, rooted guest scratch blocks, the host's exceptions and typed limits, identical on the case corpus and a differential corpus. **Not linked in production:** linked decoding costs 30 to 5,000 times the host import's fuel ([measurement](#linked-json-measurement-v38)), far beyond the codegen v2 JSON ceiling; owner decision pending. `json_stringify_owned` not linked (same per-byte cost) |
+| (c) Owned string results | Results larger than the 1 MiB result buffer (case mapping, `String(x)` of a longer string) are returned as owned guest strings | Open (the linker's `allocate`/`retain` accessors of (b) are the allocation path; the case-mapping call sites still read the result buffer) |
 | (d) ASCII case mapping inline | An inline ASCII fast path for `toUpperCase`/`toLowerCase` in front of the linked case mapping, which costs about 820 (upper) and 595 (lower) fuel per unit through the core Unicode tables | Open |
 | (e) Coalescing intrinsic arena | A merging (coalescing) arena for linked scratch, so linked BigInt work near a million bits fits the memory budget as the host import does (today its size-class free lists do not coalesce and such operands exhaust the 8 MiB budget) | Open |
 | (f) Collection work per turn | Owner decision: first idle collection between turns with a deterministic per-instance maintenance budget reported by `--budget-report`; then an incremental collector with bounded work per allocation (write barriers on every reference store, exact rooting kept provable). Motivated by a console turn costing about 910k fuel instead of about 430k when a collection fires inside it | Open |
@@ -1178,6 +1178,41 @@ conversions, JSON and owned results):
 3. A coalescing arena (or arena blocks from the guest allocator) so linked
    BigInt work near the bit capacity fits the memory budget as the host
    import does.
+
+#### Linked JSON measurement (v38)
+
+Fuel of one `JSON.parse(text) as T` beyond the same program without the
+parse (`linked_json_fuel_measurement`, `--nocapture`), test-only budgets,
+debug build, `v38-p2-json`:
+
+| Workload | Text units | v37 | v38 host import | v38 linked |
+| --- | ---: | ---: | ---: | ---: |
+| 1 record `{id, name, tags}` | 54 | 737 | 433 | 30,347 |
+| 40 records (the codegen v2 "JSON.parse ~2 KB") | 2,181 | 18,755 | 10,495 | 380,454 |
+| 1,000 numbers `1.5` | 4,001 | 275 | 175 | 936,657 |
+| one RunEventV1-like member, as `unknown` | 76 | 1,995 | 1,192 | 43,353 |
+
+Why: a host import's decoding work is not metered (one host call), while
+linked decoding pays one fuel per Wasm operator. A calibration loop that only
+loads and compares every unit costs 18 fuel per unit at the library's
+`opt-level = "s"` (9 at `opt-level = 3`, which changes the decoder's total by
+less than 10%); the shared decoder spends about 150 fuel per text unit and
+about 600 per value (bounds-checked unit reads, the tape, schema dispatch,
+per-value budgets), the builder about 300 per block beyond the allocator, and
+reading and validating the schema and its descriptors about 3,000 to 10,000
+fuel per call. Optimizations kept (plain-unit string scan, ASCII key compare,
+two-word slot sets, an exact number path, a canonical schema fast path)
+brought the 40-record decode from 417,681 to 380,454. Even a decoder at the
+calibration loop's cost per unit (no per-value work at all) would spend
+about 40,000 fuel on the 40-record text, against the 8,500 the codegen v2
+ceiling (75,000 for the whole workload, at least 4.5 times cheaper than
+v37) leaves. Linked JSON therefore stays behind the test switch; the owner
+decides between keeping the host import (the current state: the host import
+runs the shared `no_std` decoder, so every host implements the same code),
+re-baselining the codegen v2 JSON ceiling and the v37/v38 "never more fuel"
+corpus check for linked JSON, or a schema-specialized decoder emitted by the
+compiler. Memory: the scratch is guest heap (a 100,000-number round trip
+needs about 2 MiB of tape where the host import needs none).
 
 ### Platform targets and application model
 

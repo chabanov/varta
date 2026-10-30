@@ -114,8 +114,8 @@ impl JsonSchema {
         if is_wide_record(fields.len()) {
             // The collector traces a wide record through this edge bitmap.
             let at = RECORD_DESCRIPTOR_HEADER + fields.len() * RECORD_DESCRIPTOR_ENTRY;
-            let edges =
-                read_slot_set(&data, at, presence_words(fields.len())).ok_or("record edge bitmap")?;
+            let edges = read_slot_set(&data, at, presence_words(fields.len()))
+                .ok_or("record edge bitmap")?;
             let expected = fields
                 .iter()
                 .enumerate()

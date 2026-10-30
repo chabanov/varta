@@ -1,6 +1,6 @@
 use super::*;
 use crate::value::*;
-use alloc::{collections::BTreeSet, format};
+use alloc::collections::BTreeSet;
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 
@@ -150,6 +150,32 @@ impl SchemaBounds {
         4 + self.record_shapes + self.array_types + if unions { 1 + self.union_types } else { 0 }
     }
 }
+/// The union member count error, written without `core::fmt` (which the
+/// linked v38 decoder cannot link: it dispatches through function tables).
+fn union_members(count: usize, limit: usize) -> CheckedJsonError {
+    let mut message = String::from("union member count: union has ");
+    decimal(&mut message, count);
+    message.push_str(" members; limit ");
+    decimal(&mut message, limit);
+    CheckedJsonError::Schema(message)
+}
+/// Append `value` in decimal.
+pub(super) fn decimal(out: &mut String, value: usize) {
+    let mut digits = [0u8; 20];
+    let mut at = digits.len();
+    let mut rest = value;
+    loop {
+        at -= 1;
+        digits[at] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    for digit in &digits[at..] {
+        out.push(char::from(*digit));
+    }
+}
 impl JsonSchema {
     pub fn validate_within(
         &self,
@@ -286,11 +312,7 @@ impl JsonSchema {
                 }
                 JsonType::PrimitiveUnion { members } | JsonType::ReferenceUnion { members } => {
                     if members.len() < 2 || members.len() > limits.json_union_members {
-                        return Err(CheckedJsonError::Schema(format!(
-                            "union member count: union has {} members; limit {}",
-                            members.len(),
-                            limits.json_union_members
-                        )));
+                        return Err(union_members(members.len(), limits.json_union_members));
                     }
                     let mut kinds = BTreeSet::new();
                     let mut depth = 0;

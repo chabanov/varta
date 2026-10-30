@@ -7,15 +7,15 @@
 //! profiles (and the reference classifier the shared decoder is tested
 //! against) need `std`.
 use alloc::{boxed::Box, string::String, vec::Vec};
+pub mod build;
 #[cfg(feature = "std")]
 mod classified;
 #[cfg(feature = "std")]
 mod decode;
-pub mod build;
 mod descriptor;
 pub use descriptor::DescriptorError;
 mod error;
-pub use error::{JsonDecodeError, JsonInputLimit};
+pub use error::{JsonDecodeError, JsonInputLimit, LINKED_LIMIT_BASE};
 mod read;
 pub mod scan;
 mod schema;

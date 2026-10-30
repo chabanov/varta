@@ -1,5 +1,8 @@
-//! Grammar and whole-input budgets precede checked schema decoding. Classification
-//! uses typed limit state, never matching or parsing a decoder's error message.
+//! The reference classification of recoverable checked parses over UTF-8:
+//! grammar and whole-input budgets precede checked schema decoding.
+//! Classification uses typed limit state, never matching or parsing a
+//! decoder's error message. The host imports run the shared UTF-16 decoder
+//! ([`super::scan`]), whose differential tests compare it with this one.
 use super::*;
 use crate::limits::DataLimits;
 use serde::{

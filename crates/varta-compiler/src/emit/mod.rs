@@ -131,6 +131,9 @@ pub(crate) struct Emitted {
     /// The allocator's heap-end global, when the module has a managed heap
     /// (v38 linked code starts its per-call arena there).
     pub heap: Option<u32>,
+    /// The allocator, retention helper and root-stack global of a module
+    /// with a managed heap (v38 linked JSON builds guest values with them).
+    pub values: Option<crate::link::GuestValues>,
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Emitted> {
@@ -143,9 +146,16 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Emitted> {
 pub(crate) fn emit_profiled(program: &ir::Program) -> Result<Emitted> {
     let mut names = Vec::new();
     let emitted = emit_named(program, Some(&mut names))?;
+    // The probe imports move every defined function up by their count.
+    let probes = varta_common::profile::Probe::ALL.len() as u32;
     Ok(Emitted {
         bytes: fuel_profile::instrument(&emitted.bytes, &names)?,
         heap: emitted.heap,
+        values: emitted.values.map(|values| crate::link::GuestValues {
+            allocate: values.allocate + probes,
+            retain: values.retain + probes,
+            ..values
+        }),
     })
 }
 
@@ -285,6 +295,12 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     // helpers as the checked parser.
     let has_parser = hosts.contains(&program.types.profile.json_parse())
         || hosts.contains(&Host::JsonStringifyOwned);
+    // V38 (`linked_intrinsics`): linked JSON calls the allocator and the
+    // retention helper inside the module, so the host-facing value ABI
+    // exports exist only while the host itself parses or serializes.
+    let host_values = hosts.iter().any(|host| {
+        matches!(*host, Host::JsonStringifyOwned) || *host == program.types.profile.json_parse()
+    } && !crate::link::links(program.types.profile, *host));
     let trace_values = !layouts.is_empty()
         || collected.arrays
         || collected.unions
@@ -803,7 +819,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             exports.export(name, wasm_encoder::ExportKind::Func, helpers[&helper]);
         }
     }
-    if has_parser {
+    if host_values {
         for (name, helper) in [
             (
                 varta_common::value::VALUE_ALLOCATE,
@@ -1173,6 +1189,11 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     Ok(Emitted {
         bytes,
         heap: needs_arena.then_some(memory_globals.heap),
+        values: needs_arena.then(|| crate::link::GuestValues {
+            allocate: helpers[&strings::Helper::Allocate],
+            retain: helpers[&strings::Helper::RootPush],
+            roots: memory_globals.roots,
+        }),
     })
 }
 

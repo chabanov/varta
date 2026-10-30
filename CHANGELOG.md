@@ -11,6 +11,21 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- One checked JSON decoder for every recoverable parse: the host imports
+  `json_parse_v13` to `json_parse_v19` (profiles v10 to v38) run
+  `varta_common::json::scan`, a `no_std` decoder over the guest's UTF-16
+  text in place (no UTF-8 transcoding, iterative at any depth), with the
+  outcome order of the earlier `serde_json` classification, which the
+  differential tests now compare it against (a hand corpus and 36,000 seeded
+  random inputs and mutations under small limits). V38 builds through the
+  shared top-down builder `varta_common::json::build`; the descriptor check
+  and a serde-equivalent schema reader are shared `no_std` code too.
+  `json_parse_v19` as linked guest code (scratch in rooted guest heap
+  blocks, the host's exceptions and typed limits) is complete and tested
+  behind a compiler test switch, but not linked: it costs 30 to 5,000 times
+  the import's fuel (380,454 against 10,495 fuel for a 2 KB document), far
+  beyond the code generation v2 ceilings. The decision is the owner's.
+
 - V38 `typeof` of engine globals (`web_bytes`): `typeof NAME` of a global
   the engine provides and the program does not shadow is its constant
   JavaScript `typeof` (`"function"` for classes and functions such as

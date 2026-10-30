@@ -13,7 +13,7 @@
 //! reads neither, sees the record before the result is returned.
 use super::{
     JsonSchema, JsonType,
-    scan::{Node, Tape, Text, decode_text},
+    scan::{Node, Piece, Tape, Text, decode_text, pieces},
 };
 use crate::{abi::STRING_HEADER_BYTES, limits::DataLimits, value::*};
 use alloc::vec::Vec;
@@ -89,7 +89,6 @@ pub fn build<H: Heap>(
         version: schema.value_version(),
         frames: Vec::new(),
         orders: Vec::new(),
-        decoded: Vec::new(),
         root: 0,
     };
     builder.run(&tape.nodes)?;
@@ -105,7 +104,6 @@ struct Builder<'a, H> {
     /// Record types' order words when every field is present (integer-named
     /// fields first, ascending, then the others in slot order), by type.
     orders: Vec<(u32, Vec<u32>)>,
-    decoded: Vec<u16>,
     root: u64,
 }
 
@@ -222,7 +220,8 @@ impl<H: Heap> Builder<'_, H> {
                     count == 0
                 }
                 Node::Dictionary { ty, count, indexed } => {
-                    let positions = indexed.then(|| own_key_positions(nodes, index, count, self.text));
+                    let positions =
+                        indexed.then(|| own_key_positions(nodes, index, count, self.text));
                     self.dictionary(ty, count as usize, positions, destination)?;
                     count == 0
                 }
@@ -250,7 +249,9 @@ impl<H: Heap> Builder<'_, H> {
                 index,
                 positions,
                 ..
-            }) => Destination::Slot(*values + position(positions.as_ref(), *index) * ARRAY_SLOT_BYTES),
+            }) => {
+                Destination::Slot(*values + position(positions.as_ref(), *index) * ARRAY_SLOT_BYTES)
+            }
         }
     }
     /// A value of the innermost container is complete: move on, completing
@@ -309,8 +310,10 @@ impl<H: Heap> Builder<'_, H> {
     /// anything else allocates.
     fn block(&mut self, len: usize, flag: i32, link: u32) -> Result<usize, H::Error> {
         let ptr = self.heap.allocate(len)?;
-        self.heap
-            .word(header(ptr, HEAP_FLAGS_OFFSET), HEAP_ALLOCATED_FLAG | flag as u32)?;
+        self.heap.word(
+            header(ptr, HEAP_FLAGS_OFFSET),
+            HEAP_ALLOCATED_FLAG | flag as u32,
+        )?;
         self.heap.word(header(ptr, HEAP_LINK_OFFSET), link)?;
         Ok(ptr)
     }
@@ -322,11 +325,29 @@ impl<H: Heap> Builder<'_, H> {
         let len = text.units as usize * size_of::<u16>();
         let ptr = self.block(len, 0, 0)?;
         if text.escaped {
-            self.decoded.clear();
-            decode_text(self.text, text, &mut self.decoded);
-            for (offset, unit) in self.decoded.iter().enumerate() {
-                self.heap
-                    .write(ptr + offset * size_of::<u16>(), &unit.to_le_bytes())?;
+            // Raw runs are copied, escapes written unit by unit, in place.
+            let (heap, source) = (&mut *self.heap, self.text);
+            let mut at = ptr;
+            let mut failed = None;
+            pieces(source, text, |piece| {
+                let written = match piece {
+                    Piece::Units(start, end) => {
+                        let bytes = &source[start * size_of::<u16>()..end * size_of::<u16>()];
+                        heap.write(at, bytes).map(|()| bytes.len())
+                    }
+                    Piece::Escape(code) => heap
+                        .write(at, &code.to_le_bytes())
+                        .map(|()| size_of::<u16>()),
+                };
+                match written {
+                    Ok(bytes) => at += bytes,
+                    Err(error) => {
+                        failed.get_or_insert(error);
+                    }
+                }
+            });
+            if let Some(error) = failed {
+                return Err(error);
             }
         } else {
             let start = text.start as usize * size_of::<u16>();
@@ -358,7 +379,8 @@ impl<H: Heap> Builder<'_, H> {
         )?;
         self.heap.word(storage, kind as u32)?;
         self.heap.word(storage + size_of::<u32>(), count as u32)?;
-        self.heap.zero(storage + ARRAY_META_BYTES, len - ARRAY_META_BYTES)?;
+        self.heap
+            .zero(storage + ARRAY_META_BYTES, len - ARRAY_META_BYTES)?;
         // Presence bits of slots `0..count`, a byte at a time at the edge.
         let full = count / u8::BITS as usize;
         let at = storage + bitmap;
@@ -396,7 +418,8 @@ impl<H: Heap> Builder<'_, H> {
         let ptr = self.block(len, HEAP_RECORD_FLAG, link)?;
         self.heap.word(ptr, descriptor)?;
         self.heap.word(ptr + size_of::<u32>(), count as u32)?;
-        self.heap.zero(ptr + RECORD_META_BYTES, len - RECORD_META_BYTES)?;
+        self.heap
+            .zero(ptr + RECORD_META_BYTES, len - RECORD_META_BYTES)?;
         self.publish(handle(ptr, len), destination)?;
         Ok(ptr)
     }
@@ -454,10 +477,7 @@ impl<H: Heap> Builder<'_, H> {
         let mut order: Vec<u32> = (0..fields.len() as u32).collect();
         order.sort_by_key(|slot| {
             let name = &fields[*slot as usize].name;
-            let integer = name
-                .parse::<u32>()
-                .ok()
-                .filter(|n| *n < u32::MAX && alloc::format!("{n}") == *name);
+            let integer = canonical_integer(name);
             (integer.is_none(), integer.unwrap_or(*slot))
         });
         self.orders.push((ty, order.clone()));
@@ -489,8 +509,10 @@ impl<H: Heap> Builder<'_, H> {
             .fold(0u32, |edges, (slot, _)| edges | 1 << slot);
         let ptr = self.block(len, HEAP_RECORD_FLAG, edges)?;
         self.heap.word(ptr, descriptor)?;
-        self.heap.word(ptr + size_of::<u32>(), storage.len() as u32)?;
-        self.heap.zero(ptr + RECORD_META_BYTES, len - RECORD_META_BYTES)?;
+        self.heap
+            .word(ptr + size_of::<u32>(), storage.len() as u32)?;
+        self.heap
+            .zero(ptr + RECORD_META_BYTES, len - RECORD_META_BYTES)?;
         let count_slots = storage.len();
         self.heap.word(
             ptr + presence_offset(count_slots),
@@ -507,14 +529,20 @@ impl<H: Heap> Builder<'_, H> {
             storage
                 .iter()
                 .position(|(field, _)| *field == name)
-                .map_or(ptr, |index| ptr + RECORD_META_BYTES + index * RECORD_SLOT_BYTES)
+                .map_or(ptr, |index| {
+                    ptr + RECORD_META_BYTES + index * RECORD_SLOT_BYTES
+                })
         };
         let keys = self.vector(
             ValueKind::String,
             count,
             Destination::Slot(slot(DICTIONARY_KEYS_FIELD)),
         )?;
-        let values = self.vector(kind, count, Destination::Slot(slot(DICTIONARY_VALUES_FIELD)))?;
+        let values = self.vector(
+            kind,
+            count,
+            Destination::Slot(slot(DICTIONARY_VALUES_FIELD)),
+        )?;
         if count > 0 {
             self.frames.push(Frame::Dictionary {
                 keys,
@@ -528,6 +556,18 @@ impl<H: Heap> Builder<'_, H> {
     }
 }
 
+/// The value of a field name that is a canonical integer below `u32::MAX`
+/// (`n.to_string() == name`: digits only, no leading zero).
+fn canonical_integer(name: &str) -> Option<u32> {
+    let bytes = name.as_bytes();
+    if bytes.is_empty()
+        || !bytes.iter().all(u8::is_ascii_digit)
+        || bytes.len() > 1 && bytes[0] == b'0'
+    {
+        return None;
+    }
+    name.parse::<u32>().ok().filter(|n| *n < u32::MAX)
+}
 /// The index after the value starting at `index`.
 fn skip(nodes: &[Node], mut index: usize) -> usize {
     // Values still to pass.

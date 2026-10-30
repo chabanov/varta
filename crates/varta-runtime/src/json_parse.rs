@@ -360,12 +360,9 @@ fn decode(
     };
     let writer = heap::Writer::new(&mut caller, memory)?;
     let value = match parsed {
-        Parsed::Tape(tape, text) => varta_common::json::build::build(
-            &tape,
-            &text,
-            &schema,
-            &mut writer.heap(&mut caller),
-        )?,
+        Parsed::Tape(tape, text) => {
+            varta_common::json::build::build(&tape, &text, &schema, &mut writer.heap(&mut caller))?
+        }
         Parsed::Value(value) => {
             let built = if top_down {
                 tree::build(&writer, &mut caller, &schema, &value, limits)

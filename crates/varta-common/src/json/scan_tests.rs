@@ -6,19 +6,31 @@ use super::*;
 use crate::{limits::DataLimits, value::HASHED_DICTIONARY_VALUE_VERSION};
 
 /// The reference outcome of the host path before the shared decoder.
-fn reference(schema: &JsonSchema, units: &[u16], data: DataLimits) -> Result<JsonValue, JsonDecodeError> {
+fn reference(
+    schema: &JsonSchema,
+    units: &[u16],
+    data: DataLimits,
+) -> Result<JsonValue, JsonDecodeError> {
     let bytes: Vec<u8> = units.iter().flat_map(|unit| unit.to_le_bytes()).collect();
     if bytes.len() > data.json_input_bytes {
         return Err(JsonDecodeError::Limit(JsonInputLimit::Bytes));
     }
     match crate::text::json_input_limited(&bytes, data.json_input_bytes) {
         Ok(encoded) => schema.parse_json_classified_limited(&encoded, data),
-        Err(crate::text::JsonTextError::Syntax) => Err(JsonDecodeError::Syntax { line: 1, column: 1 }),
-        Err(crate::text::JsonTextError::Limit) => Err(JsonDecodeError::Limit(JsonInputLimit::Bytes)),
+        Err(crate::text::JsonTextError::Syntax) => {
+            Err(JsonDecodeError::Syntax { line: 1, column: 1 })
+        }
+        Err(crate::text::JsonTextError::Limit) => {
+            Err(JsonDecodeError::Limit(JsonInputLimit::Bytes))
+        }
         Err(crate::text::JsonTextError::Encoding) => unreachable!("even input"),
     }
 }
-fn shared(schema: &JsonSchema, units: &[u16], data: DataLimits) -> Result<JsonValue, JsonDecodeError> {
+fn shared(
+    schema: &JsonSchema,
+    units: &[u16],
+    data: DataLimits,
+) -> Result<JsonValue, JsonDecodeError> {
     let bytes: Vec<u8> = units.iter().flat_map(|unit| unit.to_le_bytes()).collect();
     if bytes.len() > data.json_input_bytes {
         return Err(JsonDecodeError::Limit(JsonInputLimit::Bytes));
@@ -176,19 +188,87 @@ fn hand_written_corpus_agrees() {
     let wide = DataLimits::V38;
     let small = limits();
     let corpus = [
-        "", " ", "null", " null ", "nul", "nulll", "true", "false", "tru", "1", "-1", "-0", "0",
-        "01", "-01", "1.", "1.5", ".5", "-", "+1", "1e5", "1E+5", "1e-5", "1e", "1e+", "1.5e3",
-        "1e400", "-1e400", "1e-400", "123456789012345678901234567890", "9007199254740993",
-        "0.1", "-0.0", "\"\"", "\"a\"", "\"a", "\"\\u0041\"", "\"\\u00\"", "\"\\x\"",
-        "\"\\ud800\"", "\"\\udc00\\ud800\"", "\"\\ud83d\\ude00\"", "\"\u{1}\"", "\"\t\"",
-        "\"\u{7f}\"", "[]", "[ ]", "[1,]", "[,1]", "[1 2]", "[1,2,3]", "[[[]]]", "[[[[[]]]]]",
-        "[[[[[1]]]]]", "{}", "{ }", "{\"a\":1}", "{\"a\":1,}", "{\"a\" 1}", "{a:1}",
-        "{\"a\":1,\"a\":2}", "{\"1\":1,\"0\":2,\"b\":3,\"a\":4}", "{\"10\":1,\"9\":2,\"01\":3}",
-        "{\"\\ud800\":1}", "[1,2,3,4,5,6,7]", "[1,2,3,4,5,6]", "\"123456789\"", "\"12345678\"",
-        "{\"123456789\":1}", "[true, false, null, \"x\", 1.5, [], {}]", "1 2", "[] []", "{}}",
-        "[\"a\", \"b\"", "{\"a\":{\"b\":{\"c\":{\"d\":{}}}}}", "{\"a\":{\"b\":{\"c\":{\"d\":[]}}}}",
-        "{\"a\":{\"b\":{\"c\":{\"d\":[1]}}}}", "[1,2,3,4,5,6,7,x]", "[1, \"\\q\"]",
-        "{\"a\":1, \"b\":2, \"c\":3}", "{\"a\":[1,2,3,4,5,6,7], \"b\":}",
+        "",
+        " ",
+        "null",
+        " null ",
+        "nul",
+        "nulll",
+        "true",
+        "false",
+        "tru",
+        "1",
+        "-1",
+        "-0",
+        "0",
+        "01",
+        "-01",
+        "1.",
+        "1.5",
+        ".5",
+        "-",
+        "+1",
+        "1e5",
+        "1E+5",
+        "1e-5",
+        "1e",
+        "1e+",
+        "1.5e3",
+        "1e400",
+        "-1e400",
+        "1e-400",
+        "123456789012345678901234567890",
+        "9007199254740993",
+        "0.1",
+        "-0.0",
+        "\"\"",
+        "\"a\"",
+        "\"a",
+        "\"\\u0041\"",
+        "\"\\u00\"",
+        "\"\\x\"",
+        "\"\\ud800\"",
+        "\"\\udc00\\ud800\"",
+        "\"\\ud83d\\ude00\"",
+        "\"\u{1}\"",
+        "\"\t\"",
+        "\"\u{7f}\"",
+        "[]",
+        "[ ]",
+        "[1,]",
+        "[,1]",
+        "[1 2]",
+        "[1,2,3]",
+        "[[[]]]",
+        "[[[[[]]]]]",
+        "[[[[[1]]]]]",
+        "{}",
+        "{ }",
+        "{\"a\":1}",
+        "{\"a\":1,}",
+        "{\"a\" 1}",
+        "{a:1}",
+        "{\"a\":1,\"a\":2}",
+        "{\"1\":1,\"0\":2,\"b\":3,\"a\":4}",
+        "{\"10\":1,\"9\":2,\"01\":3}",
+        "{\"\\ud800\":1}",
+        "[1,2,3,4,5,6,7]",
+        "[1,2,3,4,5,6]",
+        "\"123456789\"",
+        "\"12345678\"",
+        "{\"123456789\":1}",
+        "[true, false, null, \"x\", 1.5, [], {}]",
+        "1 2",
+        "[] []",
+        "{}}",
+        "[\"a\", \"b\"",
+        "{\"a\":{\"b\":{\"c\":{\"d\":{}}}}}",
+        "{\"a\":{\"b\":{\"c\":{\"d\":[]}}}}",
+        "{\"a\":{\"b\":{\"c\":{\"d\":[1]}}}}",
+        "[1,2,3,4,5,6,7,x]",
+        "[1, \"\\q\"]",
+        "{\"a\":1, \"b\":2, \"c\":3}",
+        "{\"a\":[1,2,3,4,5,6,7], \"b\":}",
     ];
     for text in corpus {
         agree_text(&unknown, text, wide);
@@ -255,12 +335,42 @@ fn raw_surrogates_agree() {
         vec![0xd800],
         vec![u16::from(b'['), 0xd800, u16::from(b']')],
         vec![q, u16::from(b'\\'), 0xd800, q],
-        vec![q, 0xd800, u16::from(b'\\'), u16::from(b'u'), u16::from(b'D'), u16::from(b'C'), u16::from(b'0'), u16::from(b'0'), q],
-        "{\"".encode_utf16().chain([0xd83d]).chain("\":1}".encode_utf16()).collect(),
-        "{\"a\":1,\"c\":[],\"".encode_utf16().chain([0xd83d, 0xde00]).chain("\":true}".encode_utf16()).collect(),
-        "{\"a\":1,\"c\":[],\"".encode_utf16().chain([0xd83d]).chain("\\ude00\":true}".encode_utf16()).collect(),
-        "{\"a\":1,\"c\":[],\"\\ud83d".encode_utf16().chain([0xde00]).chain("\":true}".encode_utf16()).collect(),
-        "{\"a\":1,\"c\":[],\"".encode_utf16().chain([0xde00]).chain("\":true}".encode_utf16()).collect(),
+        vec![
+            q,
+            0xd800,
+            u16::from(b'\\'),
+            u16::from(b'u'),
+            u16::from(b'D'),
+            u16::from(b'C'),
+            u16::from(b'0'),
+            u16::from(b'0'),
+            q,
+        ],
+        "{\""
+            .encode_utf16()
+            .chain([0xd83d])
+            .chain("\":1}".encode_utf16())
+            .collect(),
+        "{\"a\":1,\"c\":[],\""
+            .encode_utf16()
+            .chain([0xd83d, 0xde00])
+            .chain("\":true}".encode_utf16())
+            .collect(),
+        "{\"a\":1,\"c\":[],\""
+            .encode_utf16()
+            .chain([0xd83d])
+            .chain("\\ude00\":true}".encode_utf16())
+            .collect(),
+        "{\"a\":1,\"c\":[],\"\\ud83d"
+            .encode_utf16()
+            .chain([0xde00])
+            .chain("\":true}".encode_utf16())
+            .collect(),
+        "{\"a\":1,\"c\":[],\""
+            .encode_utf16()
+            .chain([0xde00])
+            .chain("\":true}".encode_utf16())
+            .collect(),
     ];
     for units in &cases {
         for data in [DataLimits::V38, limits()] {
@@ -287,12 +397,21 @@ fn transcoded_byte_limit_agrees() {
     }
     let q = u16::from(b'"');
     let mut early = vec![0xd800];
-    early.extend("[\"\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\"]".encode_utf16());
+    early.extend(
+        "[\"\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\"]".encode_utf16(),
+    );
     agree(&unknown, &early, data);
-    let mut late: Vec<u16> = "[\"\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\"".encode_utf16().collect();
+    let mut late: Vec<u16> =
+        "[\"\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\""
+            .encode_utf16()
+            .collect();
     late.extend([0xd800, u16::from(b']')]);
     agree(&unknown, &late, data);
-    agree(&unknown, &[q, 0xd800, 0xd800, 0xd800, 0xd800, 0xd800, q], data);
+    agree(
+        &unknown,
+        &[q, 0xd800, 0xd800, 0xd800, 0xd800, 0xd800, q],
+        data,
+    );
 }
 
 /// A small deterministic generator (xorshift64*).
@@ -322,15 +441,37 @@ fn generate(random: &mut Random, depth: usize, out: &mut String) {
     match random.below(if depth > 5 { 6 } else { 9 }) {
         0 => out.push_str(random.pick(&["null", "true", "false"])),
         1 | 2 => out.push_str(random.pick(&[
-            "0", "1", "-1", "-0", "1.5", "2147483647", "2147483648", "-2147483649", "1e3",
-            "1e400", "0.5e-3", "12345678901234567890",
+            "0",
+            "1",
+            "-1",
+            "-0",
+            "1.5",
+            "2147483647",
+            "2147483648",
+            "-2147483649",
+            "1e3",
+            "1e400",
+            "0.5e-3",
+            "12345678901234567890",
         ])),
-        3 | 4 | 5 => {
+        3..=5 => {
             out.push('"');
             for _ in 0..random.below(10) {
                 out.push_str(random.pick(&[
-                    "a", "b", "x", "1", "0", "\\n", "\\u00e9", "\\ud800", "\\udc00", "\u{e9}",
-                    "\u{1f600}", "\\\"", "\\\\", "9",
+                    "a",
+                    "b",
+                    "x",
+                    "1",
+                    "0",
+                    "\\n",
+                    "\\u00e9",
+                    "\\ud800",
+                    "\\udc00",
+                    "\u{e9}",
+                    "\u{1f600}",
+                    "\\\"",
+                    "\\\\",
+                    "9",
                 ]));
             }
             out.push('"');
@@ -355,9 +496,22 @@ fn generate(random: &mut Random, depth: usize, out: &mut String) {
                 }
                 space(random, out);
                 out.push_str(random.pick(&[
-                    "\"a\"", "\"b\"", "\"c\"", "\"d\"", "\"e\u{e9}\"", "\"f\"", "\"x\"", "\"y\"",
-                    "\"z\"", "\"0\"", "\"1\"", "\"10\"", "\"01\"", "\"\\ud83d\\ude00\"",
-                    "\"\\ud800\"", "\"k\"",
+                    "\"a\"",
+                    "\"b\"",
+                    "\"c\"",
+                    "\"d\"",
+                    "\"e\u{e9}\"",
+                    "\"f\"",
+                    "\"x\"",
+                    "\"y\"",
+                    "\"z\"",
+                    "\"0\"",
+                    "\"1\"",
+                    "\"10\"",
+                    "\"01\"",
+                    "\"\\ud83d\\ude00\"",
+                    "\"\\ud800\"",
+                    "\"k\"",
                 ]));
                 space(random, out);
                 out.push(':');
@@ -475,7 +629,6 @@ fn the_no_std_schema_reader_agrees_with_serde() {
         r#"{"version":18,"root":0,"types":[{"kind":"float64"}],"extra":1}"#,
         r#"{"version":18,"version":18,"root":0,"types":[{"kind":"float64"}]}"#,
         r#"{"version":18,"root":0,"types":[{"kind":"float"}]}"#,
-
         r#"{"version":18,"root":0,"types":[{"kind":"array"}]}"#,
         r#"{"version":18,"root":-0,"types":[{"kind":"float64"}]}"#,
         r#"{"version":18,"root":0.0,"types":[{"kind":"float64"}]}"#,
@@ -489,7 +642,10 @@ fn the_no_std_schema_reader_agrees_with_serde() {
             JsonSchema::from_bytes_within(rejected.as_bytes(), &crate::limits::WASM).is_err(),
             "{rejected}"
         );
-        assert!(JsonSchema::read(rejected.as_bytes(), bounds, limit).is_err(), "{rejected}");
+        assert!(
+            JsonSchema::read(rejected.as_bytes(), bounds, limit).is_err(),
+            "{rejected}"
+        );
     }
 }
 

@@ -10159,10 +10159,13 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `primitive_to_number_v6` and the comparisons `primitive_compare`/
   `primitive_equal` (implemented by the same shared code, but on the string
   concatenation and union comparison paths a linked call costs far more fuel
-  than the host call; linking them was measured and reverted), and
-  `json_parse_v19`, `json_stringify_owned` and the value18 readers
-  (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12`), which read
-  layouts the `no_std` core does not hold yet. `bigint_from_value_v5` reads
+  than the host call; linking them was measured and reverted),
+  `json_parse_v19` (its linked implementation exists behind a test switch
+  and costs 30 to 5,000 times the host import's fuel,
+  [shared decoder](#shared-checked-json-decoder-and-linked-json-wave-3)),
+  and `json_stringify_owned` and the value18 readers (`value_*_v11`,
+  `value_is_error_class_v7`, `value_log_v12`), which read layouts the
+  `no_std` core does not hold yet. `bigint_from_value_v5` reads
   only primitive and BigInt cells, whose value18 layout is value17's, so the
   value18 BigInt conversion is linked like the other BigInt operations
   (`bigint_from_value_v4` stays a v36/v37 host import).
@@ -10295,6 +10298,87 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   the 1 MiB result buffer (case mapping or `String(x)` of a longer string)
   traps, as the host's result transfer fails. Delivering such results as
   owned guest strings needs allocating call sites and is open.
+
+#### Shared checked JSON decoder and linked JSON (wave 3)
+
+- **One decoder.** Every recoverable checked parse (`json_parse_v13` to
+  `json_parse_v19`, profiles v10 to v38) runs `varta_common::json::scan`, a `no_std`
+  decoder over the guest's UTF-16LE text read in place (no UTF-8
+  transcoding), iterative at any depth. It produces a tape (every value in
+  document order, completely checked) before any guest allocator call. Its
+  outcome is exactly the earlier host classification over the input's UTF-8
+  transcoding (`text::json_input_limited` followed by
+  `JsonSchema::parse_json_classified`, kept as the reference the
+  differential tests compare against): the transcoding's byte limit and its
+  lone-surrogate syntax errors first (in transcoding order), then
+  `serde_json`'s strict grammar over the whole input, then the whole-input
+  budgets in document order (depth, visited values, array elements, string
+  units), then the schema in document order (a mismatch, or the
+  schema-only budgets: dictionary entries, and the values missing optional
+  fields add). Numbers convert as `serde_json` (`float_roundtrip`)
+  converts them: correctly rounded (an exact path for at most 15 significant
+  digits and decimal exponents within 22, `core` otherwise), an infinite
+  result a mismatch, `-0` a binary64 negative zero; strings keep their exact
+  units, lone surrogates included; record keys must be well-formed UTF-16.
+  Syntax positions are diagnostics only (no guest-visible message changes).
+  The host turns the tape into the existing `JsonValue` tree for the
+  child-first builder of v10 to v37; under v38 (`data_limits`) the tape is
+  built by the shared top-down builder `varta_common::json::build` through a
+  `Heap` (the host's checks the guest allocator's every block as before).
+  The static descriptor check is the shared
+  `JsonSchema::check_descriptors`; the non-recoverable imports of earlier
+  profiles keep their `serde_json` decoder.
+- **Schema reader.** `JsonSchema::read` is a `no_std` reader that accepts
+  and rejects exactly what the strict `serde` reader does (object or
+  sequence forms of structs, unit variants ignoring other members, numbers
+  in range), with a fast path for the compact form `to_bytes` writes;
+  `validate_bounded` validates within `SchemaBounds` (`SchemaBounds::WASM`
+  for v38). Neither formats through `core::fmt` (linked code cannot link the
+  function tables it dispatches through).
+- **Linked JSON (test switch only).** `varta-intrinsics-wasm` exports
+  `json_parse_v19` with the host import's checks and outcomes: the input
+  byte limit, an empty and canonical exception channel (v9), the schema in
+  the static region read and validated within `SchemaBounds::WASM`, schema
+  version 18 and its descriptors, then the shared decoder and builder.
+  `SyntaxError`/`TypeError` are thrown through the exception channel with
+  the host's messages (message string, error object and cell each retained,
+  `env_result_len` zero, the channel root slot, value and pending flag set);
+  an input limit stores `JsonInputLimit::linked_code` (above every
+  `limits::Resource` code) in `resource_failure` and traps, and the runtime
+  reports the host import's `JsonDecodeError::Limit`, word for word; any
+  other failure (a malformed schema, descriptor or channel) is a trap.
+  Production modules do not link it: `HostOperation::linked` excludes it,
+  and only the compiler's test switch (`linked_json_test_hook`) links it,
+  because its decoding work costs guest fuel the host import does not (see
+  the [measurement](development-plan.md#linked-json-measurement-v38)).
+- **Rooted scratch blocks.** Linked JSON's scratch (tape, frames, key sets)
+  is not a reserved gap: the library's allocator, inside a JSON entry
+  (`arena::scratch`), takes ordinary guest heap blocks from the guest
+  allocator (linker accessor `allocate` = the module's `Allocate` helper),
+  stamps each an edge-free block and pushes it on the guest root stack
+  (accessor `retain` = the `RootPush` helper). Blocks up to 64 KiB double
+  from 4 KiB and are shared; a larger request gets a block of its own. A
+  block whose allocations are all freed loses its root (its root-stack slot
+  is zeroed, which the collector skips), so a growing tape holds at most its
+  old and new capacity. The input string's handle is pushed too, so the
+  text the builder copies strings from survives every collection the
+  builder's allocations run. On return the root-stack top (accessors
+  `roots`/`set_roots`) is reset to its entry value and only the result is
+  retained, as the host retains it. The guest's memory budget, collector
+  and resource failures govern the scratch like any other block; linked
+  JSON writes nothing above the heap end. The value accessors trap in a
+  module without a managed heap (only linked JSON reaches them at run
+  time); `exception_version`, `exception_pending`, `exception_value`,
+  `raise` and `static_pages` read and write the exported channel globals and
+  return the static region's pages.
+- **Construction.** The builder publishes every container (zero slots) into
+  its reachable parent slot, or retains it at the root, before allocating
+  its children; a record's presence and order words and the `undefined`
+  cells of missing optional union fields are written when the record is
+  complete; dictionary entries take their own-key positions (array-index
+  keys ascending, then input order); value18 dictionaries are built
+  unindexed (zero holes, zero table). A failed parse throws before the
+  first value allocation, so no partial result exists.
 
 #### Web bytes (`web_bytes`)
 

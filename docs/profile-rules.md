@@ -3663,6 +3663,27 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   `primitive_to_string_v5`, `primitive_to_number_v5`, `primitive_compare`
   and `primitive_equal` stay host imports for this reason until a cheap
   number and string path exists.
+- Checked JSON has one decoder: `varta_common::json::scan` (`no_std`,
+  UTF-16 in place, iterative) for every recoverable parse, and
+  `varta_common::json::build` for every top-down (v38) build, host and
+  linked. Change its outcome order only together with the reference
+  classifier (`JsonSchema::parse_json_classified`), and extend the
+  differential tests (`json::scan` tests: the hand corpus and the seeded
+  random inputs and mutations under small limits) for every grammar or
+  schema rule. Shared JSON code must not format through `core::fmt` or
+  dispatch through trait objects: linked code cannot link function tables.
+- Linked JSON (`json_parse_v19`, compiler test switch
+  `linked_json_test_hook`) takes its scratch only from rooted guest blocks
+  (`arena::scratch`): the guest allocator through the `allocate` accessor,
+  each block rooted with `retain`, unrooted (its root slot zeroed) once its
+  allocations are freed and in any case by resetting `roots` on return,
+  before the result alone is retained. It roots the input string before
+  the builder allocates, publishes every block before the next allocation,
+  throws `SyntaxError`/`TypeError` through the exception channel exactly as
+  the host import and reports input limits as `JsonInputLimit::linked_code`.
+  `linked_json_tests` compares it with the host import on the case corpus,
+  a differential corpus, wide unions, depth and size, the typed limits and
+  collections amid failed parses; keep it passing while JSON is unlinked.
 - Linked code runs in memory 0. The linker places its stack and reached data
   in the module's intrinsic region (`varta.intrinsics`, sized at emission by
   `link::region_pages` before any code that depends on the heap base is

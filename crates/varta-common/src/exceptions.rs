@@ -1,5 +1,7 @@
 //! Primitive guest exceptions. Fatal execution failures use a separate path.
-use crate::{abi, text};
+use crate::abi;
+#[cfg(feature = "std")]
+use crate::text;
 pub const PREFIX: &str = "varta.exception.";
 pub const PENDING: &str = "varta.exception.pending";
 pub const VERSION: &str = "varta.exception.version";
@@ -34,6 +36,7 @@ pub const ROOT: usize = abi::STRING_ROOT_BASE;
 pub const RESERVED_ROOT_BYTES: usize = abi::STRING_ROOT_SLOT_BYTES;
 pub const MAX_DIAGNOSTIC_UNITS: usize = 256;
 
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThrownValue {
     /// Owned canonical binary payload; diagnostics are bounded hexadecimal.
@@ -60,11 +63,13 @@ pub enum ThrownValue {
         message: Vec<u16>,
     },
 }
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("uncaught guest exception: {value}")]
 pub struct UncaughtException {
     pub value: ThrownValue,
 }
+#[cfg(feature = "std")]
 impl std::fmt::Display for ThrownValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -107,6 +112,7 @@ impl std::fmt::Display for ThrownValue {
         }
     }
 }
+#[cfg(feature = "std")]
 fn write_units(f: &mut std::fmt::Formatter<'_>, units: &[u16]) -> std::fmt::Result {
     let mut json = Vec::new();
     text::write_json(&mut json, &units[..units.len().min(MAX_DIAGNOSTIC_UNITS)])
@@ -118,6 +124,7 @@ fn write_units(f: &mut std::fmt::Formatter<'_>, units: &[u16]) -> std::fmt::Resu
     Ok(())
 }
 
+#[cfg(feature = "std")]
 /// Escaped, bounded guest text without the surrounding JSON quotes.
 fn write_bare(f: &mut std::fmt::Formatter<'_>, units: &[u16]) -> std::fmt::Result {
     let mut json = Vec::new();
@@ -132,6 +139,7 @@ fn write_bare(f: &mut std::fmt::Formatter<'_>, units: &[u16]) -> std::fmt::Resul
     Ok(())
 }
 
+#[cfg(feature = "std")]
 fn write_error(f: &mut std::fmt::Formatter<'_>, name: &str, message: &[u16]) -> std::fmt::Result {
     f.write_str(name)?;
     if !message.is_empty() {

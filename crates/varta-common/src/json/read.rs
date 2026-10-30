@@ -143,8 +143,8 @@ impl Reader<'_> {
         if self.peek().is_some_and(|b| b.is_ascii_digit()) {
             return Err(bad("schema syntax"));
         }
-        let text = core::str::from_utf8(&self.bytes[start..self.pos])
-            .map_err(|_| bad("schema syntax"))?;
+        let text =
+            core::str::from_utf8(&self.bytes[start..self.pos]).map_err(|_| bad("schema syntax"))?;
         if plain && !negative {
             let digits = core::str::from_utf8(&self.bytes[digits..integer_end])
                 .map_err(|_| bad("schema syntax"))?;
@@ -365,7 +365,11 @@ fn ty(raw: Raw) -> Result<JsonType, CheckedJsonError> {
         }
         Raw::Array(elements) => {
             let mut elements = elements.into_iter();
-            let kind = string(elements.next().ok_or_else(|| bad("schema sequence length"))?)?;
+            let kind = string(
+                elements
+                    .next()
+                    .ok_or_else(|| bad("schema sequence length"))?,
+            )?;
             let names = variant_fields(&kind).ok_or_else(|| bad("unknown schema kind"))?;
             let values: Vec<Raw> = elements.collect();
             if values.len() != names.len() {
@@ -404,10 +408,9 @@ fn ty(raw: Raw) -> Result<JsonType, CheckedJsonError> {
         "record" => JsonType::Record {
             descriptor: integer(member("descriptor")?)?,
             fields: match member("fields")? {
-                Raw::Array(elements) => elements
-                    .into_iter()
-                    .map(field)
-                    .collect::<Result<_, _>>()?,
+                Raw::Array(elements) => {
+                    elements.into_iter().map(field).collect::<Result<_, _>>()?
+                }
                 _ => return Err(bad("schema sequence")),
             },
         },
@@ -422,6 +425,153 @@ fn ty(raw: Raw) -> Result<JsonType, CheckedJsonError> {
     })
 }
 
+/// The compact form `JsonSchema::to_bytes` writes (members in declaration
+/// order, no whitespace, `optional` only when set, names without escapes),
+/// read without building a value tree. `None` at the first deviation: the
+/// general reader then decides, so this path changes no outcome.
+struct Canonical<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+impl Canonical<'_> {
+    fn eat(&mut self, literal: &[u8]) -> Option<()> {
+        let end = self.pos.checked_add(literal.len())?;
+        (self.bytes.get(self.pos..end)? == literal).then(|| self.pos = end)
+    }
+    fn integer(&mut self) -> Option<u32> {
+        let start = self.pos;
+        let mut value = 0u64;
+        while let Some(digit) = self.bytes.get(self.pos).filter(|b| b.is_ascii_digit()) {
+            value = value * 10 + u64::from(digit - b'0');
+            if value > u64::from(u32::MAX) {
+                return None;
+            }
+            self.pos += 1;
+        }
+        let digits = self.pos - start;
+        (digits == 1 || digits > 1 && self.bytes[start] != b'0').then_some(value as u32)
+    }
+    fn integers(&mut self) -> Option<Vec<u32>> {
+        self.eat(b"[")?;
+        let mut values = Vec::new();
+        if self.eat(b"]").is_some() {
+            return Some(values);
+        }
+        loop {
+            values.push(self.integer()?);
+            if self.eat(b"]").is_some() {
+                return Some(values);
+            }
+            self.eat(b",")?;
+        }
+    }
+    /// A string without escapes or control characters.
+    fn string(&mut self) -> Option<String> {
+        self.eat(b"\"")?;
+        let start = self.pos;
+        while let Some(byte) = self.bytes.get(self.pos) {
+            match byte {
+                b'"' => {
+                    let text = core::str::from_utf8(&self.bytes[start..self.pos]).ok()?;
+                    self.pos += 1;
+                    return Some(String::from(text));
+                }
+                b'\\' | 0..0x20 => return None,
+                _ => self.pos += 1,
+            }
+        }
+        None
+    }
+    fn field(&mut self) -> Option<JsonField> {
+        self.eat(b"{\"name\":")?;
+        let name = self.string()?;
+        self.eat(b",\"ty\":")?;
+        let ty = self.integer()?;
+        let optional = self.eat(b",\"optional\":true").is_some();
+        self.eat(b"}")?;
+        Some(JsonField { name, ty, optional })
+    }
+    fn ty(&mut self) -> Option<JsonType> {
+        self.eat(b"{\"kind\":")?;
+        let kind = self.string()?;
+        let ty = match kind.as_str() {
+            "bigInt" => JsonType::BigInt,
+            "null" => JsonType::Null,
+            "undefined" => JsonType::Undefined,
+            "i32" => JsonType::I32,
+            "float64" => JsonType::Float64,
+            "boolean" => JsonType::Boolean,
+            "string" => JsonType::String,
+            "primitiveUnion" | "referenceUnion" => {
+                self.eat(b",\"members\":")?;
+                let members = self.integers()?;
+                if kind == "primitiveUnion" {
+                    JsonType::PrimitiveUnion { members }
+                } else {
+                    JsonType::ReferenceUnion { members }
+                }
+            }
+            "record" => {
+                self.eat(b",\"descriptor\":")?;
+                let descriptor = self.integer()?;
+                self.eat(b",\"fields\":[")?;
+                let mut fields = Vec::new();
+                if self.eat(b"]").is_none() {
+                    loop {
+                        fields.push(self.field()?);
+                        if self.eat(b"]").is_some() {
+                            break;
+                        }
+                        self.eat(b",")?;
+                    }
+                }
+                JsonType::Record { descriptor, fields }
+            }
+            "array" => {
+                self.eat(b",\"element\":")?;
+                JsonType::Array {
+                    element: self.integer()?,
+                }
+            }
+            "dictionary" => {
+                self.eat(b",\"descriptor\":")?;
+                let descriptor = self.integer()?;
+                self.eat(b",\"value\":")?;
+                JsonType::Dictionary {
+                    descriptor,
+                    value: self.integer()?,
+                }
+            }
+            _ => return None,
+        };
+        self.eat(b"}")?;
+        Some(ty)
+    }
+    fn schema(&mut self) -> Option<JsonSchema> {
+        self.eat(b"{\"version\":")?;
+        let version = self.integer()?;
+        self.eat(b",\"root\":")?;
+        let root = self.integer()?;
+        self.eat(b",\"types\":[")?;
+        let mut types = Vec::new();
+        if self.eat(b"]").is_none() {
+            loop {
+                types.push(self.ty()?);
+                if self.eat(b"]").is_some() {
+                    break;
+                }
+                self.eat(b",")?;
+            }
+        }
+        self.eat(b"}")?;
+        (self.pos == self.bytes.len()).then_some(JsonSchema {
+            version,
+            root,
+            types,
+        })
+    }
+}
+
 impl JsonSchema {
     /// Read and validate schema bytes of at most `schema_bytes` within
     /// `bounds` (`no_std`; the linked v38 decoder's reader).
@@ -432,6 +582,10 @@ impl JsonSchema {
     ) -> Result<Self, CheckedJsonError> {
         if bytes.len() > schema_bytes {
             return Err(bad("byte limit"));
+        }
+        if let Some(schema) = (Canonical { bytes, pos: 0 }).schema() {
+            schema.validate_bounded(bounds)?;
+            return Ok(schema);
         }
         let mut reader = Reader { bytes, pos: 0 };
         let raw = reader.value()?;

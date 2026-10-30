@@ -393,10 +393,16 @@ V38 still imports the value18 primitive conversions
 (`primitive_compare`, `primitive_equal`): the reference host and the linked
 library share their code (`varta_intrinsics::bigint`), but they serve string
 concatenation and union comparisons, where a linked call costs far more fuel
-than the host call. It also imports the pure operations that read value
-layouts beyond primitive and BigInt cells: `json_parse_v19` and `json_stringify_owned`
-(checked JSON over records, arrays, dictionaries and schemas; the parser also
-allocates through the guest's value ABI exports) and the value18 readers
+than the host call. It also imports `json_parse_v19`: a linked implementation
+exists (the shared `no_std` decoder `varta_common::json::scan` and builder
+`varta_common::json::build`, which the reference host's recoverable imports
+run too, so a Rust host can call the same code), but linked decoding costs
+guest fuel the import does not, far beyond the code generation v2 ceilings
+([measurement](development-plan.md#linked-json-measurement-v38)); the import
+allocates through the guest's value ABI exports. It imports the other pure
+operations that read value layouts beyond primitive and BigInt cells:
+`json_stringify_owned` (checked JSON over records, arrays, dictionaries and
+schemas) and the value18 readers
 (`value_*_v11`, `value_is_error_class_v7`; `value_log_v12` renders and then
 logs, and logging stays a host effect). The value18 readers validate every
 dictionary's hash table against its entries

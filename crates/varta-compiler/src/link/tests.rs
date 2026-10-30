@@ -82,6 +82,14 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/abi.rs",
     "crates/varta-common/src/abi/static_region.rs",
     "crates/varta-common/src/bigint.rs",
+    "crates/varta-common/src/exceptions.rs",
+    "crates/varta-common/src/json/mod.rs",
+    "crates/varta-common/src/json/build.rs",
+    "crates/varta-common/src/json/descriptor.rs",
+    "crates/varta-common/src/json/error.rs",
+    "crates/varta-common/src/json/read.rs",
+    "crates/varta-common/src/json/scan.rs",
+    "crates/varta-common/src/json/schema.rs",
     "crates/varta-common/src/limits.rs",
     "crates/varta-common/src/memory.rs",
     "crates/varta-common/src/text.rs",
@@ -93,10 +101,15 @@ const COMMON_CORE: &[&str] = &[
 #[test]
 fn the_fingerprint_covers_every_compiled_common_core_file() {
     // Every common module the core build compiles is fingerprinted: a module
-    // declared without `#[cfg(feature = "std")]` in lib.rs or value.rs must
-    // be listed.
+    // declared without `#[cfg(feature = "std")]` (or `#[cfg(test)]`) in
+    // lib.rs, value.rs or json/mod.rs must be listed, as `name.rs` or
+    // `name/mod.rs`.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../varta-common/src");
-    for (file, prefix) in [("lib.rs", ""), ("value.rs", "value/")] {
+    for (file, prefix) in [
+        ("lib.rs", ""),
+        ("value.rs", "value/"),
+        ("json/mod.rs", "json/"),
+    ] {
         let source = std::fs::read_to_string(root.join(file)).unwrap();
         let mut gated = false;
         for line in source.lines() {
@@ -106,11 +119,16 @@ fn the_fingerprint_covers_every_compiled_common_core_file() {
                 .and_then(|rest| rest.strip_suffix(';'))
                 && !gated
             {
-                let module = format!("crates/varta-common/src/{prefix}{name}.rs");
+                let file = format!("{prefix}{name}.rs");
+                let module = if root.join(&file).exists() {
+                    format!("crates/varta-common/src/{file}")
+                } else {
+                    format!("crates/varta-common/src/{prefix}{name}/mod.rs")
+                };
                 assert!(COMMON_CORE.contains(&module.as_str()), "{module}");
             }
             if !line.starts_with("///") {
-                gated = line == "#[cfg(feature = \"std\")]";
+                gated = line == "#[cfg(feature = \"std\")]" || line == "#[cfg(test)]";
             }
         }
     }
@@ -187,7 +205,11 @@ fn intrinsic_library_exports_every_linked_operation_with_its_signature() {
         let Some(operation) = HostOperation::from_name(name) else {
             continue;
         };
-        assert!(operation.linked(), "{name} is exported but not linked");
+        // Checked JSON is linked only under the test switch (`json_hook`).
+        assert!(
+            operation.linked() || operation == HostOperation::JsonParseV19,
+            "{name} is exported but not linked"
+        );
         let (params, results) = operation.scalar_signature();
         // A pair of i32 results is exported packed into one i64.
         let expected = if results == [HostScalar::I32, HostScalar::I32] {
@@ -205,7 +227,8 @@ fn intrinsic_library_exports_every_linked_operation_with_its_signature() {
         count += 1;
     }
     let linked = every_linked_operation();
-    assert_eq!(count, linked.len());
+    // The linked checked JSON parse is exported too (`json_hook`).
+    assert_eq!(count, linked.len() + 1);
     for operation in linked {
         assert!(V38.links(operation) && !V37.links(operation));
         assert!(
@@ -323,7 +346,7 @@ fn v38_modules_import_no_linked_intrinsic_and_instantiate() {
         "{:?}",
         linked_imports(&v37)
     );
-    assert_eq!(super::link(v37.clone(), V37, None).unwrap(), v37);
+    assert_eq!(super::link(v37.clone(), V37, None, None).unwrap(), v37);
     assert_eq!(super::tests::region(&v37), abi::StaticRegion::SINGLE_PAGE);
 }
 

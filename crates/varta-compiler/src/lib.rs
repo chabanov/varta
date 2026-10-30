@@ -76,6 +76,19 @@ pub mod suspension_test_hook {
     }
 }
 
+/// Test-only: compile v38 programs with checked JSON parsing linked into the
+/// guest (`json_parse_v19` as linked code) instead of imported.
+#[cfg(any(test, feature = "suspension-test-hook"))]
+pub mod linked_json_test_hook {
+    /// Compile one source with linked checked JSON on this thread.
+    pub fn compile_with_profile(
+        source: &str,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Result<Vec<u8>, crate::CompilerError> {
+        crate::link::json_hook::with(|| crate::compile_typescript_with_profile(source, profile))
+    }
+}
+
 /// Parse an in-memory source using the compatibility filename `input.ts`.
 pub fn parse_typescript(source: &str) -> Result<usize, CompilerError> {
     parse_typescript_with_path(source, std::path::Path::new("input.ts"))
@@ -175,7 +188,7 @@ fn compile_graph(
     } else {
         emit::emit(&program)
     }
-    .and_then(|emitted| link::link(emitted.bytes, profile, emitted.heap))
+    .and_then(|emitted| link::link(emitted.bytes, profile, emitted.heap, emitted.values))
     .map_err(|e| root.source.locate(e, root.ast.span()))?;
     wasmparser::Validator::new()
         .validate_all(&bytes)
