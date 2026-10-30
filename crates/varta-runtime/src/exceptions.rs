@@ -128,7 +128,8 @@ pub(crate) fn finish(
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| invalid("missing exception memory"))?;
-    let channel = Channel::detect(|name| instance.get_global(&mut *store, name).is_some());
+    let channel = Channel::detect(|name| instance.get_global(&mut *store, name).is_some())
+        .in_module(store.data().module);
     let data = memory.data(&*store);
     let root = data
         .get(abi::ROOT..abi::ROOT + abi::RESERVED_ROOT_BYTES)
@@ -151,6 +152,7 @@ pub(crate) struct Channel {
     instances: bool,
     errors: bool,
     version: u32,
+    module: ModuleBounds,
 }
 impl Channel {
     pub(crate) fn detect(mut exported: impl FnMut(&str) -> bool) -> Self {
@@ -181,7 +183,12 @@ impl Channel {
             instances,
             errors,
             version,
+            module: ModuleBounds::LEGACY,
         }
+    }
+    /// Read thrown values within the module's bounds.
+    pub(crate) fn in_module(self, module: ModuleBounds) -> Self {
+        Self { module, ..self }
     }
     /// Copy one boxed exception-channel value out of guest memory, validating
     /// it exactly like the uncaught-exception path; no guest code runs.
@@ -218,8 +225,9 @@ impl Channel {
             instances,
             errors,
             version,
+            module,
         } = self;
-        thrown(data, value, instances, errors, version, limit)
+        thrown(data, value, (instances, errors), (version, module), limit)
     }
 }
 /// An optional per-field bound on copied UTF-16 text.
@@ -244,13 +252,12 @@ impl Limit {
 fn thrown(
     data: &[u8],
     value: u64,
-    instances: bool,
-    errors: bool,
-    version: u32,
+    (instances, errors): (bool, bool),
+    (version, module): (u32, ModuleBounds),
     limit: &mut Limit,
 ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
     let cell = if errors {
-        ReferenceBox::read_with_version(data, value, version)?
+        ReferenceBox::read_in(data, value, version, module)?
     } else {
         let primitive = PrimitiveBox::read(data, value)?;
         ReferenceBox {

@@ -193,12 +193,16 @@ pub fn read_catalog(
     bytes: &[u8],
     profile: LanguageProfile,
 ) -> Result<FunctionCatalog, FrameAdmissionError> {
-    let read = match frame_catalog_version(profile) {
-        Some(frame::FRAME_LIVENESS_CATALOG_VERSION) => FunctionCatalog::from_liveness_bytes,
-        Some(_) => FunctionCatalog::from_frame_bytes,
-        None => FunctionCatalog::from_bytes,
+    let accepted: &[u32] = match frame_catalog_version(profile) {
+        Some(frame::FRAME_LIVENESS_CATALOG_VERSION) => &[
+            super::CATALOG_VERSION,
+            frame::FRAME_LIVENESS_CATALOG_VERSION,
+        ],
+        Some(_) => &[super::CATALOG_VERSION, frame::FRAME_CATALOG_VERSION],
+        None => &[super::CATALOG_VERSION],
     };
-    read(bytes).map_err(|error| {
+    // Validated within the profile's structural limits (v38: the Wasm limits).
+    FunctionCatalog::read_within(bytes, accepted, &profile.limits()).map_err(|error| {
         let other = FunctionCatalog::from_frame_bytes(bytes)
             .or_else(|_| FunctionCatalog::from_liveness_bytes(bytes))
             .map(|catalog| catalog.version);

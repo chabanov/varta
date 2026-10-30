@@ -273,12 +273,17 @@ fn profile_acceptance() -> String {
                 }
             };
             let helpers = helper_allowance(profile);
+            let functions = if profile.program_limits() {
+                format!("{} with imports", profile.limits().wasm_functions)
+            } else {
+                (abi::MAX_USER_FUNCTIONS + helpers + abi::MAX_HTTP_HANDLERS).to_string()
+            };
             vec![
                 format!("`{}`", profile_name(profile)),
                 values.join(", "),
                 catalog,
                 helpers.to_string(),
-                (abi::MAX_USER_FUNCTIONS + helpers + abi::MAX_HTTP_HANDLERS).to_string(),
+                functions,
             ]
         }),
     )
@@ -316,6 +321,17 @@ fn layout() -> String {
                 "Managed string/record/array heap",
                 range(abi::OWNED_STRING_BASE, abi::MAX_MEMORY_BYTES),
                 "`abi::OWNED_STRING_BASE`, `abi::MAX_MEMORY_BYTES`",
+            ),
+            (
+                "V38 static extension of `n` pages (`varta.static`), heap after it",
+                format!(
+                    "[{}, {} + n·{}), n ≤ {}",
+                    abi::OWNED_STRING_BASE,
+                    abi::OWNED_STRING_BASE,
+                    abi::WASM_PAGE_BYTES,
+                    abi::MAX_STATIC_EXTENSION_PAGES
+                ),
+                "`abi::StaticRegion`, `abi::MAX_STATIC_EXTENSION_PAGES`",
             ),
             (
                 "Wasm page",

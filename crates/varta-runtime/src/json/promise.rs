@@ -20,8 +20,14 @@ impl Encoder<'_, '_> {
         if !varta_common::value::promise_layout(self.version) {
             return Err(error("incompatible promise value"));
         }
-        validate_aggregate(self.data, ValueKind::Record, packed, self.version)
-            .map_err(wasmtime::Error::new)?;
+        validate_aggregate_in(
+            self.data,
+            ValueKind::Record,
+            packed,
+            self.version,
+            self.module,
+        )
+        .map_err(wasmtime::Error::new)?;
         self.visit(depth + 1)?;
         if self.diagnostic_budget.is_none() {
             return self.write(b"{}");
@@ -73,9 +79,10 @@ impl Encoder<'_, '_> {
         let [descriptor, count] = self.words::<2>(ptr)?;
         let (descriptor, count) = (descriptor as usize, count as usize);
         if count > MAX_RECORD_FIELDS
-            || descriptor
-                .checked_add(descriptor_bytes(count))
-                .is_none_or(|end| end > abi::RESULT_BASE)
+            || !self
+                .module
+                .static_region
+                .contains(descriptor, descriptor_bytes(count))
             || self.words::<2>(descriptor)? != [self.version, count as u32]
         {
             return Err(error("invalid promise descriptor"));

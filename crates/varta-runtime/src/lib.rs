@@ -221,6 +221,10 @@ pub(crate) struct RuntimeContext {
     /// V37 network requests: ids, completions and transfer tasks.
     net: net::Net,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+    /// The instantiated module's bounds (v38 `program_limits`): where its
+    /// record descriptors, keys and JSON schemas may lie, and its profile's
+    /// structural limits.
+    module: varta_common::value::ModuleBounds,
 }
 
 impl RuntimeContext {
@@ -582,13 +586,19 @@ mod dictionary_tests;
 #[cfg(test)]
 mod error_subclass_tests;
 #[cfg(test)]
+mod frozen_profile_tests;
+#[cfg(test)]
 mod generic_tests;
 #[cfg(test)]
 mod language_core_tests;
 #[cfg(test)]
 mod mixed_record_tests;
 #[cfg(test)]
+mod program_limits_tests;
+#[cfg(test)]
 mod regexp_tests;
+#[cfg(test)]
+mod static_region_tests;
 #[cfg(test)]
 mod unknown_json_tests;
 #[cfg(test)]

@@ -17,7 +17,8 @@ fn read(
     value: i64,
     version: u32,
 ) -> Result<ReferenceBox, wasmtime::Error> {
-    ReferenceBox::read_with_version(data(caller)?, value as u64, version)
+    let module = caller.data().module;
+    ReferenceBox::read_in(data(caller)?, value as u64, version, module)
         .map_err(wasmtime::Error::new)
 }
 fn nullish(value: ReferenceBox) -> bool {
@@ -110,22 +111,26 @@ fn register_log(
                                 * 8) as u64,
                             fuel,
                         );
+                        let module = caller.data().module;
                         let result = crate::json::render_diagnostic(
                             data(&mut caller)?,
                             value.kind as u32,
                             value.payload,
                             version,
+                            module,
                             &mut budget,
                         );
                         caller.set_fuel(budget.remaining_work())?;
                         caller.data().check_budget()?;
                         String::from_utf8(result?).map_err(wasmtime::Error::new)?
                     } else {
-                        String::from_utf8(crate::json::render_reference(
+                        let module = caller.data().module;
+                        String::from_utf8(crate::json::render_reference_in(
                             data(&mut caller)?,
                             value.kind as u32,
                             value.payload,
                             version,
+                            module,
                         )?)
                         .map_err(wasmtime::Error::new)?
                     }

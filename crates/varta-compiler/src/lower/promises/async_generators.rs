@@ -19,7 +19,7 @@
 //! every resumption value from the front request of its queue.
 use super::*;
 use ir::{AsyncGeneratorType, GeneratorType};
-use varta_common::function::frame::{Completion, MAX_GENERATOR_TYPES};
+use varta_common::function::frame::Completion;
 use varta_common::value::ErrorClass;
 
 const DETAIL: &str = "outside the async generator subset of checked-f64-utf16-v36";
@@ -141,7 +141,7 @@ pub(in crate::lower) fn intern(
             "promise in an async generator type; yield and return await their operands",
         ));
     }
-    if types.generators.len() + 2 > MAX_GENERATOR_TYPES {
+    if types.generators.len() + 2 > types.profile.limits().generator_types {
         return Err(invalid("generator type count exceeds limit"));
     }
     let result = generators::result_record(yielded, returned, types)?;

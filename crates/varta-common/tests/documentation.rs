@@ -3,7 +3,7 @@
 mod support;
 
 use support::{assert_block, block, profile_name, table, workspace_file};
-use varta_common::{abi, json, language, launcher::LauncherInfo, scheduler, value};
+use varta_common::{abi, json, language, launcher::LauncherInfo, limits, scheduler, value};
 
 fn version_matrix() -> String {
     let mut rows = Vec::new();
@@ -216,6 +216,102 @@ fn limits() -> String {
     )
 }
 
+/// Structural program limits per profile family, from `varta_common::limits`.
+fn program_limits() -> String {
+    fn count(n: usize) -> String {
+        n.to_string()
+    }
+    fn bytes(n: usize) -> String {
+        format!("{n} bytes")
+    }
+    type Row = (
+        &'static str,
+        fn(&limits::ProgramLimits) -> String,
+        &'static str,
+    );
+    let rows: Vec<Row> = vec![
+        (
+            "User functions",
+            |l| count(l.user_functions),
+            "user_functions",
+        ),
+        (
+            "Wasm functions (defined and imported; frozen: defined, maximum helper allowance)",
+            |l| count(l.wasm_functions),
+            "wasm_functions",
+        ),
+        (
+            "Distinct Wasm signatures",
+            |l| count(l.wasm_signatures),
+            "wasm_signatures",
+        ),
+        ("Wasm module", |l| bytes(l.wasm_bytes), "wasm_bytes"),
+        (
+            "Wasm function body",
+            |l| bytes(l.function_body_bytes),
+            "function_body_bytes",
+        ),
+        (
+            "Record shapes / classes",
+            |l| count(l.record_shapes),
+            "record_shapes",
+        ),
+        ("Union types", |l| count(l.union_types), "union_types"),
+        (
+            "Array element types",
+            |l| count(l.array_types),
+            "array_types",
+        ),
+        (
+            "`Promise<T>` types",
+            |l| count(l.promise_types),
+            "promise_types",
+        ),
+        (
+            "Generator types",
+            |l| count(l.generator_types),
+            "generator_types",
+        ),
+        (
+            "Function types",
+            |l| count(l.function_types),
+            "function_types",
+        ),
+        (
+            "JSON schema types (legacy / current schemas)",
+            |l| format!("{} / {}", l.schema_types(false), l.schema_types(true)),
+            "schema_types()",
+        ),
+        ("JSON schema", |l| bytes(l.schema_bytes), "schema_bytes"),
+        (
+            "Function capture types",
+            |l| count(l.capture_types()),
+            "capture_types()",
+        ),
+        (
+            "Static extension pages",
+            |l| count(l.static_extension_pages as usize),
+            "static_extension_pages",
+        ),
+    ];
+    table(
+        &[
+            "Limit",
+            "v1–v37 (`limits::FROZEN`)",
+            "v38 (`limits::WASM`)",
+            "Field",
+        ],
+        rows.into_iter().map(|(name, value, field)| {
+            vec![
+                name.to_owned(),
+                value(&limits::FROZEN),
+                value(&limits::WASM),
+                format!("`{field}`"),
+            ]
+        }),
+    )
+}
+
 /// Profile indexes carry hand-written summaries, but must list exactly the
 /// registered profiles, in registry order.
 fn assert_profile_index(relative: &str) {
@@ -245,6 +341,7 @@ fn architecture_version_matrix_matches_registries() {
 #[test]
 fn architecture_limits_match_constants() {
     assert_block("docs/architecture.md", "limits", &limits());
+    assert_block("docs/architecture.md", "program-limits", &program_limits());
 }
 
 #[test]

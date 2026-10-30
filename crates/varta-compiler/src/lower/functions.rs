@@ -33,7 +33,7 @@ pub(super) fn intern_full(
     if let Some(index) = types.functions.iter().position(|ty| ty == &signature) {
         return Ok(Type::Function(index as u32));
     }
-    if types.functions.len() >= varta_common::function::MAX_TYPES {
+    if types.functions.len() >= types.profile.limits().function_types {
         return Err(invalid("function type count exceeds limit"));
     }
     let index = types.functions.len() as u32;

@@ -440,7 +440,9 @@ impl ValueTypes {
     /// most `abi::MAX_USER_FUNCTIONS` functions. Earlier profiles allocate
     /// against that limit directly and keep their diagnostics.
     pub fn function_limit(&self) -> usize {
-        if self.profile.language_core() {
+        if self.profile.program_limits() {
+            self.profile.limits().user_functions
+        } else if self.profile.language_core() {
             crate::lower::LINKED_FUNCTIONS
         } else {
             varta_common::abi::MAX_USER_FUNCTIONS

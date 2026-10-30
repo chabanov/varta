@@ -923,5 +923,8 @@ fn behaviour_holds_with_liveness_frames() {
     ];
     for test in tests {
         with_profile(LanguageProfile::CheckedF64Utf16V35, test);
+        // V38 (`program_limits`) resumes through the table-driven dispatcher:
+        // the same checks, before any effect, from its static dispatch table.
+        with_profile(LanguageProfile::CheckedF64Utf16V38, test);
     }
 }

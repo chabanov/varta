@@ -72,11 +72,12 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     return Err(error("missing memory"));
                 };
                 let packed = ((hi as u32 as u64) << i32::BITS) | (lo as u32 as u64);
-                let encoder = if version == VALUE_VERSION {
+                let mut encoder = if version == VALUE_VERSION {
                     Encoder::new(memory.data(&caller))
                 } else {
                     Encoder::with_version(memory.data(&caller), version)
                 };
+                encoder.module = caller.data().module;
                 let bytes = if version >= UNDEFINED_VALUE_VERSION {
                     encoder.encode_optional(kind as u32, packed)?
                 } else {
@@ -141,6 +142,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 let packed = ((hi as u32 as u64) << 32) | (lo as u32 as u64);
                 let mut encoder = Encoder::with_version(memory.data(&caller), version);
                 encoder.hide_private = private;
+                encoder.module = caller.data().module;
                 let encoded = encoder.encode_optional(kind as u32, packed);
                 caller.data().check_budget()?;
                 match encoded {
@@ -171,13 +173,26 @@ pub(crate) use varta_common::value::PRIVATE_KEY_PREFIX;
 /// shows an anonymous function, since closures carry no source name.
 pub(crate) const FUNCTION_DISPLAY: &str = "[Function (anonymous)]";
 
+#[cfg(test)]
 pub(super) fn render_reference(
     data: &[u8],
     kind: u32,
     payload: u64,
     version: u32,
 ) -> Result<Vec<u8>, wasmtime::Error> {
-    Encoder::with_version(data, version).encode(kind, payload)
+    render_reference_in(data, kind, payload, version, ModuleBounds::LEGACY)
+}
+
+pub(super) fn render_reference_in(
+    data: &[u8],
+    kind: u32,
+    payload: u64,
+    version: u32,
+    module: ModuleBounds,
+) -> Result<Vec<u8>, wasmtime::Error> {
+    let mut encoder = Encoder::with_version(data, version);
+    encoder.module = module;
+    encoder.encode(kind, payload)
 }
 
 pub(super) fn render_with_functions(
@@ -198,10 +213,12 @@ pub(super) fn render_diagnostic(
     kind: u32,
     payload: u64,
     version: u32,
+    module: ModuleBounds,
     budget: &mut varta_bigint::Budget,
 ) -> Result<Vec<u8>, wasmtime::Error> {
     let mut encoder = Encoder::with_version(data, version);
     encoder.diagnostic_budget = Some(budget);
+    encoder.module = module;
     encoder.encode(kind, payload)
 }
 
@@ -229,6 +246,9 @@ struct Encoder<'a, 'b> {
     /// (v37 `json_stringify_v17`): ES private names and engine prelude state
     /// are not properties.
     hide_private: bool,
+    /// Where record descriptors and keys may lie and the profile's function
+    /// limits (v38 `program_limits`).
+    module: ModuleBounds,
     data: &'a [u8],
     output: Output,
     path: Vec<usize>,
@@ -247,6 +267,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             diagnostic_budget: None,
             version,
             hide_private: false,
+            module: ModuleBounds::LEGACY,
             data,
             output: Output(Vec::new()),
             path: Vec::new(),
@@ -307,7 +328,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             let cell = if self.version == FUNCTION_VALUE_VERSION {
                 ReferenceBox::read_envelope(self.data, value, self.version)
             } else {
-                ReferenceBox::read_with_version(self.data, value, self.version)
+                ReferenceBox::read_in(self.data, value, self.version, self.module)
             }
             .map_err(wasmtime::Error::new)?;
             return self.resolve(cell.kind as u32, cell.payload);
@@ -339,8 +360,12 @@ impl<'a, 'b> Encoder<'a, 'b> {
         if self.version == FUNCTION_FIELD_VALUE_VERSION {
             // Value17 function fields: the closure envelope is checked; the
             // captured payloads stay opaque and nothing is invoked.
-            varta_common::function::ClosureView::read_envelope(self.data, handle)
-                .map_err(wasmtime::Error::new)?;
+            varta_common::function::ClosureView::read_envelope_within(
+                self.data,
+                handle,
+                &self.module.limits,
+            )
+            .map_err(wasmtime::Error::new)?;
             return Ok(());
         }
         if self.version != FUNCTION_VALUE_VERSION {
@@ -482,8 +507,14 @@ impl<'a, 'b> Encoder<'a, 'b> {
                         | PROMISE_VALUE_VERSION
                         | FUNCTION_FIELD_VALUE_VERSION
                 ) {
-                    validate_aggregate(self.data, ValueKind::Record, packed, self.version)
-                        .map_err(wasmtime::Error::new)?;
+                    validate_aggregate_in(
+                        self.data,
+                        ValueKind::Record,
+                        packed,
+                        self.version,
+                        self.module,
+                    )
+                    .map_err(wasmtime::Error::new)?;
                 }
                 self.record(packed, depth)
             }
@@ -622,8 +653,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
     /// A value15 dictionary: an object of its entries in stored own-key order;
     /// entries whose value is `undefined` are omitted, as for record fields.
     fn dictionary(&mut self, packed: u64, depth: usize) -> Result<(), wasmtime::Error> {
-        let dictionary =
-            Dictionary::read(self.data, packed, self.version).map_err(wasmtime::Error::new)?;
+        let dictionary = Dictionary::read_in(self.data, packed, self.version, self.module)
+            .map_err(wasmtime::Error::new)?;
         let ptr = packed as u32 as usize;
         if self.path.contains(&ptr) {
             return Err(error("cyclic object"));
@@ -723,9 +754,10 @@ impl<'a, 'b> Encoder<'a, 'b> {
         }
         let descriptor = descriptor as usize;
         let descriptor_size = RECORD_DESCRIPTOR_HEADER + count * RECORD_DESCRIPTOR_ENTRY;
-        if descriptor
-            .checked_add(descriptor_size)
-            .is_none_or(|end| end > abi::RESULT_BASE)
+        if !self
+            .module
+            .static_region
+            .contains(descriptor, descriptor_size)
         {
             return Err(error("descriptor outside static memory"));
         }
@@ -744,9 +776,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             )?;
             let (key_ptr, key_len, slot) = (key_ptr as usize, key_len as usize, slot as usize);
             if key_len > MAX_RECORD_KEY_BYTES
-                || key_ptr
-                    .checked_add(key_len)
-                    .is_none_or(|end| end > abi::RESULT_BASE)
+                || !self.module.static_region.contains(key_ptr, key_len)
                 || slot >= count
                 || !slots.insert(slot)
             {

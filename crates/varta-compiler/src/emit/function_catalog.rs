@@ -195,6 +195,6 @@ pub(super) fn build(
         functions: functions.into_values().collect(),
         frames,
     }
-    .to_bytes()
+    .to_bytes_within(&program.types.profile.limits())
     .map_err(|e| CompilerError::Invalid(e.to_string()))
 }

@@ -42,10 +42,19 @@ pub fn array_index(units: &[u16]) -> Option<u64> {
 }
 impl Dictionary {
     pub fn read(data: &[u8], handle: u64, version: u32) -> Result<Self, ValueAbiError> {
+        Self::read_in(data, handle, version, ModuleBounds::LEGACY)
+    }
+    /// [`Self::read`] within a module's bounds.
+    pub fn read_in(
+        data: &[u8],
+        handle: u64,
+        version: u32,
+        module: ModuleBounds,
+    ) -> Result<Self, ValueAbiError> {
         if !ValueKind::Dictionary.supported_by(version) {
             return Err(invalid());
         }
-        validate_aggregate(data, ValueKind::Record, handle, version)?;
+        validate_aggregate_in(data, ValueKind::Record, handle, version, module)?;
         let ptr = handle as u32 as usize;
         let descriptor = word(data, ptr)? as usize;
         if word(data, ptr + 4)? as usize != DICTIONARY_FIELDS {

@@ -8950,7 +8950,9 @@ or any change to the static-region ABI lands as an early, separate foundation
 commit, and the other streams rebase onto it. V37 and earlier profiles keep
 their host ABI, value ABI, static region and layouts.
 
-Eight selectors gate the batch's work streams, and all admit nothing yet:
+Eight selectors gate the batch's work streams; `program_limits()` admits the
+[multi-page static region](#multi-page-static-region-program_limits), the
+others admit nothing yet:
 
 - program-limits stream: `program_limits()` (profile-dependent structural
   limits up to the Wasm limits, a shared descriptor-driven checked decoder,
@@ -8976,6 +8978,165 @@ Eight selectors gate the batch's work streams, and all admit nothing yet:
 Until a stream adds its subsection here, a v38 module compiles and runs exactly
 like a v37 module apart from its declared profile and host ABI, and production
 budgets of every profile are unchanged.
+
+#### Program limits (`program_limits`)
+
+V38 removes Varta's own structural program-size ceilings, like a JavaScript
+engine: only the WebAssembly implementation limits remain. Every structural
+limit is read from one registry, `LanguageProfile::limits()`
+(`varta_common::limits`), by the compiler, the runtime's module preflight,
+function-catalog and JSON-schema readers, the value readers' closure checks,
+the artifact and launcher payload readers and the generated tables
+([program limits](#resource-limits),
+[embedding acceptance](embedding.md#profiles)). Every earlier profile reads
+`limits::FROZEN`, the historical constants, so v1–v37 modules, diagnostics and
+artifacts keep their meaning.
+
+The v38 values (`limits::WASM`) and why:
+
+- **Functions** 1,000,000 (defined and imported together) and **types**
+  1,000,000: the WebAssembly JS API limits, which Wasmtime enforces through
+  `wasmparser` (`MAX_WASM_FUNCTIONS`, `MAX_WASM_TYPES`). The compiler checks
+  the function index space after emission; the runtime checks the function
+  section plus imports. Unreachable functions are still removed first.
+- **Function body** 7,654,321 bytes: the JS API and `wasmparser` limit
+  (`MAX_WASM_FUNCTION_SIZE`), for user functions, resume bodies and helpers.
+- **Module** 1 GiB: the JS API module-size limit shared by V8 and
+  SpiderMonkey (`wasmparser` has none). Readers that bound input before its
+  profile is known use `limits::MAXIMUM` and then the declared profile's
+  limit; a `build --single` artifact is in addition bounded by the launcher's
+  `launcher::MAX_LAUNCHER_BYTES`.
+- **Record shapes and classes, unions, array element types, `Promise<T>`
+  types, generator types and function types** 1,000,000 each, and the
+  derived JSON schema and capture type counts: these Varta tables have no Wasm
+  counterpart, so they take the same uniform entity bound as the index spaces
+  they lower to (ids stay `u32`, below the `i32` range of Wasm constants).
+  Module size, static memory and compile time bound them much earlier.
+- **JSON schema bytes**: the memory budget (schemas live in the static
+  region, see below); **static extension**: up to
+  `abi::MAX_STATIC_EXTENSION_PAGES`, the memory32 address space, and in
+  practice the module's memory maximum.
+
+Unchanged for every profile: physical parameters (`abi::MAX_WASM_PARAMETERS`),
+record fields, record key bytes, JSON union members, suspension states per
+function, live frames and the other data limits (owned by the data-limits
+stream), imports, globals and tables, and all production runtime budgets
+(fuel, memory, deadline, host calls, output). A v38 module over a frozen
+limit relabelled as v37 fails at its host ABI section, and with a downgraded
+host ABI at the frozen structural checks, before any guest effect.
+
+#### Unreachable frames and unread module constants (`program_limits`)
+
+V37 removes unreachable functions but keeps every suspendable function as a
+root, so each async function or method of every reached class (the pilot's
+841 resource methods and their `request<T>` instances) keeps its creator,
+resume body, frame layout and dispatch case. V38 roots only generator bodies
+(their step functions dispatch over the generator type's frames); an
+unreachable async function or method is removed with its frame layout,
+catalog row and dispatch entry, and the remaining frames are renumbered.
+
+V37 also keeps every module-constant initializer, so a program pays at startup for every constant of every module
+it reaches (the pilot's 356 enum-value objects in `models.ts` cost about 390 K
+fuel). V38 extends the removal to constants: a constant whose value no
+reachable code reads — directly, through another read constant, through a
+local of the same initializer chunk or through a function-valued constant —
+is not initialized. Initializers are a checked pure subset, so skipping one is
+unobservable. Reads are found to a fixpoint over the reachable functions
+(initializer bodies excluded) and the kept initializer statements; an
+initializer chunk left empty is no longer called and is removed with the
+unreachable functions; an initializer with any statement other than a local
+or constant initialization is kept whole. The constants still read or
+written are renumbered densely, so a dropped constant takes no permanent root
+slot, and its record descriptors and strings are no longer emitted. Startup
+cost then depends only on the read constants and their chunks, not on the
+number of declared ones. Unused record shapes, unions and preludes already
+cost no emitted code or data (descriptors are emitted only for shapes that
+emitted code builds), so their interning stays eager.
+
+#### Table-driven resume dispatch (`program_limits`)
+
+Under v37 and earlier, `varta_resume` checks a frame against each layout in
+turn: a block of about 125 bytes per layout and resume fuel linear in the
+number of layouts. A v38 dispatcher reads the per-layout facts from a static
+dispatch table and selects the layout's body with one `br_table`:
+
+- The table (static data, placed like descriptors) holds one 16-byte entry
+  per layout in layout-id order — the expected control function
+  (`u32::MAX` for generator layouts, which the dispatcher never resumes), the
+  suspension point count, the `Return` rule (forbidden, unchecked or the
+  largest admitted scalar) and the offset of its per-state input limits —
+  followed by those limits (`u32::MAX` when a state's input is not
+  range-checked, 1 for booleans, 0 for `undefined`/`void`).
+- The checks and their order before the first effect are the v37 chain's:
+  empty exception channel, ownership in the live-frame table, envelope,
+  status, generation and completion kind, then layout id in range,
+  layout/control/state agreement and input admissibility, and only then the
+  `RUNNING` status and the cleared completion. Each `br_table` case is the
+  direct call of its resume body followed by a branch to the shared
+  scheduled or synchronous epilogue, so frame admission (direct calls in
+  layout order, no tables or indirect calls) is unchanged.
+- The dispatcher grows by about a dozen bytes per layout and resumes in
+  constant fuel. The table is guest memory like any static data: a guest
+  that overwrites it can only break its own frames; host-side validation of
+  everything the scheduler reads is unchanged.
+
+#### Multi-page static region (`program_limits`)
+
+The batch's memory-layout foundation, under host ABI 34 and value layout 17
+(no value 18: the value17 readers stay, and only where they look for static
+metadata changes). Every earlier profile keeps static data in the single page
+`[0, 65536)`. A v38 module may extend its static region
+(`abi::StaticRegion`):
+
+| Region | Addresses (v38 with `n` extension pages) |
+| --- | --- |
+| Static page | `[0, 65536)` |
+| Host results | `[65536, 1114112)` (unchanged) |
+| Reference roots | `[1114112, 1179648)` (unchanged) |
+| Static extension | `[1179648, 1179648 + n·65536)` |
+| Managed heap | from `heap_base = 1179648 + n·65536` |
+
+- The custom section `varta.static` (`abi::STATIC_SECTION`) declares `n` as
+  one little-endian u32, `1 ≤ n ≤ abi::MAX_STATIC_EXTENSION_PAGES` (the
+  memory32 address space after the fixed regions). A module whose static data
+  fits the first page omits it, and its layout is the legacy one. Only a
+  `program_limits()` profile may declare it, at most once; earlier profiles,
+  duplicates, zero or malformed counts fail validation before compilation.
+- The compiler places static items (string literals, record descriptors,
+  JSON schemas) first-fit: in the first page while they fit, otherwise in the
+  extension. No item straddles the regions. A v38 module stores each region
+  as one active data segment (earlier profiles keep one segment per item), so
+  the Wasm data-segment limit never binds.
+- Under `program_limits()` every data segment is active in memory 0 at a
+  constant offset and lies wholly inside the declared region, and a declared
+  extension lies inside the initial memory: the memory minimum is
+  `heap_base / 65536` pages whenever the module has a managed heap or an
+  extension, within the module's maximum (the 8 MiB memory budget, so the
+  compiler rejects static data beyond it with `static data exceeds the memory
+  budget`). Validation rejects any other segment before compilation.
+- The guest heap starts at `heap_base`: the allocator's initial bump pointer,
+  the collector's sweep and edge tracing and the root push treat a handle
+  below `heap_base` as static and never mark it. Host results, the root stack
+  and the exception root keep their addresses.
+- Runtime readers accept static metadata (record descriptors and their keys,
+  dictionary descriptors, JSON schemas, the descriptors behind checked
+  parsing, logging, exceptions and value conversions) wholly inside the first
+  page or wholly inside the module's own declared extension, never in the
+  result buffer, the root stack or the heap. The region comes from the
+  validated module (`PreparedModule::static_region`) and is bound to the
+  instance and to its verified function catalog; it never comes from guest
+  memory. Managed-handle lower bounds stay `OWNED_STRING_BASE + 16`, followed
+  by the existing header and flag checks.
+- Wasmtime meters instantiation's data-segment copy per byte of the
+  initialized image (rounded to host pages and including the gap before an
+  extension). For a v38 module instantiation receives its own allowance of at
+  most the memory budget, and the guest's fuel budget is restored before any
+  guest code runs, so v38 startup fuel does not depend on static size (the
+  `FUEL` value is unchanged). Earlier profiles keep being charged.
+
+A v38 module relabelled as v37 still fails at its host ABI section; with the
+host ABI downgraded as well, its `varta.static` section or its extension data
+segment fails validation, before any guest effect.
 
 ## Local modules
 
@@ -9532,6 +9693,8 @@ signatures, result globals and advertised ABI versions fail before instantiation
   `[65536, 1114112)`, exact reference roots `[1114112, 1179648)`, then the managed
   string/record/array heap `[1179648, 8388608)`, including block headers. Unreachable blocks are
   reused during execution; the entire instance is released when execution ends.
+  V38 may insert a static extension before the heap; see
+  [multi-page static region](#multi-page-static-region-program_limits).
 - Every privileged system operation first clears result length/status. Failed string calls
   return pointer 0 and length 0. No previous result length can be reused.
 - Logging and pure JSON serialization/parsing preserve the last system status. Serialization
@@ -9656,6 +9819,36 @@ a denied exit returns a failed `VartaResult<void>`.
 | Unhandled-rejection reasons kept / units per field / bytes each | 16 / 256 / 2048 | `scheduler::MAX_*REJECTION_REASON*` |
 | Pending timers (v36) | 32 | `scheduler::MAX_PENDING_TIMERS` |
 <!-- generated:limits:end -->
+
+The structural rows above (Wasm file, function body, signatures, user
+functions, record shapes, array and union types, JSON schema types) are the
+frozen limits of v1–v37. Each profile reads its structural limits from one
+registry, `LanguageProfile::limits` in `varta_common::limits`: the compiler,
+the runtime's module, catalog and schema readers, the value readers'
+function-index bounds and the artifact and launcher payload readers all use
+it. V38 (`program_limits()`) admits the WebAssembly implementation limits
+([program limits](#program-limits-program_limits)); production runtime
+budgets are the same for every profile.
+
+<!-- generated:program-limits:begin (checked by crates/varta-common/tests/documentation.rs) -->
+| Limit | v1–v37 (`limits::FROZEN`) | v38 (`limits::WASM`) | Field |
+| --- | --- | --- | --- |
+| User functions | 256 | 1000000 | `user_functions` |
+| Wasm functions (defined and imported; frozen: defined, maximum helper allowance) | 270 | 1000000 | `wasm_functions` |
+| Distinct Wasm signatures | 256 | 1000000 | `wasm_signatures` |
+| Wasm module | 4194304 bytes | 1073741824 bytes | `wasm_bytes` |
+| Wasm function body | 65536 bytes | 7654321 bytes | `function_body_bytes` |
+| Record shapes / classes | 128 | 1000000 | `record_shapes` |
+| Union types | 128 | 1000000 | `union_types` |
+| Array element types | 128 | 1000000 | `array_types` |
+| `Promise<T>` types | 64 | 1000000 | `promise_types` |
+| Generator types | 64 | 1000000 | `generator_types` |
+| Function types | 128 | 1000000 | `function_types` |
+| JSON schema types (legacy / current schemas) | 260 / 389 | 2000004 / 3000005 | `schema_types()` |
+| JSON schema | 65536 bytes | 8388608 bytes | `schema_bytes` |
+| Function capture types | 672 | 5000032 | `capture_types()` |
+| Static extension pages | 0 | 65518 | `static_extension_pages` |
+<!-- generated:program-limits:end -->
 
 Limits that are derived from several constants or enforced outside `abi`:
 

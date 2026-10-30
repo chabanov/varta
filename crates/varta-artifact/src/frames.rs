@@ -157,6 +157,11 @@ pub(crate) fn validate(wasm: &[u8]) -> Result<()> {
         }
         None => LanguageProfile::default(),
     };
+    // The payload within its declared profile's module-size limit (v38: the
+    // Wasm limit; earlier profiles: the frozen 4 MiB).
+    if wasm.len() > profile.limits().wasm_bytes {
+        return Err(invalid("Wasm exceeds its profile's size limit"));
+    }
     let catalog = found
         .catalog
         .map(|bytes| admission::read_catalog(bytes, profile))

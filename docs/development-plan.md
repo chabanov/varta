@@ -284,6 +284,45 @@ dependencies, and contains no explicit `any`, so it meets the
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
 
+**Program limits under v38 (2026-10-30).** The program-limits stream
+(`program_limits()`) on branch `v38-program-limits`, production budgets
+unchanged, debug `varta` build. *Real pilot:* the per-file probe on the
+scratch copy carrying the v37 walk's stubs (streams, binary bodies, RegExp,
+`globalThis`): under v37 32 of 65 files stop at the record-shape limit (25
+resource modules, `models.ts` and the collections prelude); under v38 no file
+stops at a program-size limit — 6 compile, 49 stop at `core/sse.ts:111` (item
+12 above, property-path facts across a call) and 10 at `Blob`. *Synthetic
+mimic* (the generator of the v36 limits measurement: N models, M resource
+methods each returning `request<Model>()`, a `Client` constructing every
+resource, plus N·356/1900 enum-like constants; "full" makes every method
+reachable through a never-taken branch, "minimal" awaits one call):
+
+| N / M | Shape | v37 production | v38 functions | Wasm | Static | Largest body | Wasmtime compile | Fuel (start + 1 call) | Memory |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 128 / 64 | minimal | union limit | 39 | 34 KB | 2.4 KB | 3.5 KB | 10 ms | 15 K | 1.2 MiB |
+| 128 / 128 | full | union limit | 1314 | 2.8 MB | 136 KB | 66 KB | 1.0 s | 17 K | 1.3 MiB |
+| 1900 / 900 | minimal | union limit | 79 | 76 KB | 4 KB | 12.7 KB | 23 ms | 42 K | 1.2 MiB |
+| 1900 / 900 | full | union limit | 10107 | 30.7 MB | 1.07 MB | 69 KB | 8.2 s | 43 K | 2.2 MiB |
+| 4096 / 2048 | minimal | union limit | 122 | 73 KB | 6 KB | 24 KB | 28 ms | 54 K | 1.2 MiB |
+| 4096 / 2048 | full (awaiting drivers) | union limit | 22903 | 75.7 MB | 2.6 MB | 145 KB | 40 s | 58 K | 3.7 MiB |
+
+Every v38 row compiles and runs under production budgets; `varta run` of the
+1900/900 full graph completes. Against the v36 measurement with a temporarily
+raised build (1900/900: 8165 functions, 9.7 MB, 766 KB static, a 221 KB
+`varta_resume`, ≥816 K fuel and a static-metadata failure at run time),
+startup plus one call drops from ≥816 K to 43 K fuel (no data-segment or
+unread-constant cost, constant-fuel dispatch), the largest body is no longer
+the dispatcher, static data spills into the extension, and a minimal use
+keeps only reachable code (79 functions instead of every resource method).
+Still open: each distinct `request<T>` response type costs about 11 Wasm
+functions (async frame, resume body and per-`Promise<T>` helpers; the
+checked `JSON.parse(text) as T` already decodes through the host's
+schema-driven parser, so its cost per type is a schema in static data) and,
+in the full graph, about 3 KB of code per function, three times the v36
+figure — most of it resume and promise code, for the code-generation stream.
+Wasmtime compile time (8 s for 31 MB) now dominates loading a full graph.
+Scripts and raw results stay outside the repository.
+
 **Verified behavior with v37 (2026-10-29).** The same per-file probe on the
 `v37-merge` branch with all five v37 streams integrated (language core, class
 generics, collections, RegExp, `net.request`) and the integration fixes,
@@ -741,11 +780,13 @@ program-limits stream owns the batch's memory-layout and value-layout
 foundation (any value 18 or static-region ABI change) and lands it as an early
 separate foundation commit
 ([contract](architecture.md#checked-f64-utf16-v38--batch-program-and-data-limits-turn-budgets-linked-intrinsics-view-protocol-and-tsx-structural-subtyping-and-codegen-v2)).
-All selectors are registered and admit nothing yet.
+All selectors are registered. `program_limits()` admits the
+[multi-page static region](architecture.md#multi-page-static-region-program_limits)
+(the batch's layout foundation); the others admit nothing yet.
 
 | Selector | Work stream | State |
 | --- | --- | --- |
-| `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Registered, admits nothing |
+| `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Implemented ([contract](architecture.md#program-limits-program_limits)): multi-page static region (host ABI 34, no value 18; the foundation), profile limits registry with the Wasm limits, table-driven `varta_resume`, unreachable async frames and unread constants removed, startup fuel independent of static size. Pending: per-type `request<T>` code (async frame and promise helpers, about 11 functions per response type) |
 | `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Registered, admits nothing |
 | `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Registered, admits nothing |
 | `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Registered, admits nothing |

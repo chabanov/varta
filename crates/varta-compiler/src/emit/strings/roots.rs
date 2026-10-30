@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn function(roots: u32) -> Function {
+pub(super) fn function(Globals { roots, base, .. }: Globals) -> Function {
     const VALUE: u32 = 0;
     const TOP: u32 = 1;
     let mut function = Function::new([(1, ValType::I32)]);
@@ -9,7 +9,7 @@ pub(super) fn function(roots: u32) -> Function {
         [
             I::LocalGet(VALUE),
             I::I32WrapI64,
-            I::I32Const(abi::OWNED_STRING_BASE as i32),
+            I::I32Const(base as i32),
             I::I32LtU,
             I::If(BlockType::Empty),
             I::LocalGet(VALUE),

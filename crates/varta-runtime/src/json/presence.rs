@@ -18,10 +18,10 @@ impl Encoder<'_, '_> {
             return Err(error("cyclic object"));
         }
         let descriptor = descriptor as usize;
-        if descriptor
-            .checked_add(RECORD_DESCRIPTOR_HEADER + count * RECORD_DESCRIPTOR_ENTRY)
-            .is_none_or(|end| end > abi::RESULT_BASE)
-        {
+        if !self.module.static_region.contains(
+            descriptor,
+            RECORD_DESCRIPTOR_HEADER + count * RECORD_DESCRIPTOR_ENTRY,
+        ) {
             return Err(error("descriptor outside static memory"));
         }
         if self.words::<2>(descriptor)? != [self.version, count as u32] {
@@ -67,9 +67,10 @@ impl Encoder<'_, '_> {
             if slot >= count
                 || fields[slot].is_some()
                 || len as usize > MAX_RECORD_KEY_BYTES
-                || (key as usize)
-                    .checked_add(len as usize)
-                    .is_none_or(|end| end > abi::RESULT_BASE)
+                || !self
+                    .module
+                    .static_region
+                    .contains(key as usize, len as usize)
             {
                 return Err(error("invalid presence field metadata"));
             }

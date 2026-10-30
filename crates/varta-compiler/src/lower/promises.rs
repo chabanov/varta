@@ -42,8 +42,6 @@ pub(crate) mod fields {
 use fields::*;
 /// V8's message for resolving a promise with itself.
 const CYCLE_MESSAGE: &str = "Chaining cycle detected for promise #<Promise>";
-/// Distinct `Promise<T>` types per module; each one owns its helpers and jobs.
-pub(crate) const MAX_PROMISE_TYPES: usize = 64;
 const DETAIL: &str = "outside the promise and async subset of checked-f64-utf16-v34";
 
 /// Synthesized promise functions, memoized by kind and the types they serve.
@@ -147,7 +145,7 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     if let Some(id) = types.promises.iter().position(|p| p.value == value) {
         return Ok(Type::Promise(id as u32));
     }
-    if types.promises.len() >= MAX_PROMISE_TYPES {
+    if types.promises.len() >= types.profile.limits().promise_types {
         return Err(invalid("promise type count exceeds limit"));
     }
     let reason = exceptions::exception_union(types)?;

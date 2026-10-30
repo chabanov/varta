@@ -13,6 +13,7 @@
 //! everything else (dispatch targets, frames, catalogs) from them. Earlier
 //! profiles keep every linked function and their bytes.
 use super::*;
+use std::collections::BTreeSet;
 
 /// Function slots v37 may allocate while linking, before unreachable
 /// functions are removed: four times the emitted limit.
@@ -39,12 +40,31 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     if !program.types.profile.language_core() {
         return Ok(());
     }
+    if program.types.profile.program_limits() {
+        unread_constants(program)?;
+    }
     let count = program.functions.len();
     let mut stack = vec![program.main];
     stack.extend(program.tools.iter().map(|(index, _)| *index));
     stack.extend(program.http.iter().map(|(index, _)| *index));
     stack.extend(program.initializers.iter().copied());
-    stack.extend(program.suspendable.keys().copied());
+    // V37 keeps every suspendable function; v38 (`program_limits`) keeps only
+    // generator bodies unconditionally (their step functions dispatch over
+    // the generator type's frames) and removes unreachable async functions
+    // and methods with their frame layouts.
+    // The test hook exports every frame creator, so it keeps every frame.
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    let hooked = super::suspension::hook::enabled();
+    #[cfg(not(any(test, feature = "suspension-test-hook")))]
+    let hooked = false;
+    let every_frame = !program.types.profile.program_limits() || hooked;
+    stack.extend(
+        program
+            .suspendable
+            .iter()
+            .filter(|(_, machine)| every_frame || machine.generator.is_some())
+            .map(|(index, _)| *index),
+    );
     let mut live = vec![false; count];
     while let Some(index) = stack.pop() {
         let Some(seen) = live.get_mut(index) else {
@@ -69,10 +89,10 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
             kept += 1;
         }
     }
-    if kept > varta_common::abi::MAX_USER_FUNCTIONS {
+    let limit = program.types.profile.limits().user_functions;
+    if kept > limit {
         return Err(invalid(format!(
-            "too many functions across modules: {kept} reachable functions exceed the limit of {}",
-            varta_common::abi::MAX_USER_FUNCTIONS
+            "too many functions across modules: {kept} reachable functions exceed the limit of {limit}"
         )));
     }
     let remap = |index: usize| -> Result<usize> {
@@ -123,9 +143,189 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     }
     program.suspendable = std::mem::take(&mut program.suspendable)
         .into_iter()
+        .filter(|(index, _)| live[*index])
         .map(|(index, machine)| Ok((remap(index)?, machine)))
         .collect::<Result<_>>()?;
     Ok(())
+}
+
+/// V38 (`program_limits`): drop the initialization of every module constant
+/// that no reachable code reads. Initializers are a checked pure subset, so
+/// skipping an unread one is unobservable; this removes the startup cost of
+/// unused constants (the pilot's 356 enum objects) and of the descriptors and
+/// functions only they reference. Reads are found to a fixpoint: reachable
+/// functions (initializer bodies excluded), then the kept initializer
+/// statements, whose values may read earlier constants, through locals of the
+/// same initializer, and function values. An initializer with any statement
+/// other than `Init`/`InitModuleConstant` is kept whole. Constant slots keep
+/// their numbers; a dropped constant's root slot stays empty.
+fn unread_constants(program: &mut ir::Program) -> Result<()> {
+    let count = program.functions.len();
+    let initializer = |function: &ir::Function| {
+        function
+            .body
+            .iter()
+            .all(|statement| matches!(statement, S::Init(..) | S::InitModuleConstant(..)))
+    };
+    let prunable: BTreeSet<usize> = program
+        .initializers
+        .iter()
+        .copied()
+        .filter(|index| program.functions.get(*index).is_some_and(initializer))
+        .collect();
+    let mut live = vec![false; count];
+    let mut read = BTreeSet::new();
+    let mut stack = vec![program.main];
+    stack.extend(program.tools.iter().map(|(index, _)| *index));
+    stack.extend(program.http.iter().map(|(index, _)| *index));
+    stack.extend(program.suspendable.keys().copied());
+    let mut kept: BTreeMap<usize, Vec<bool>> = BTreeMap::new();
+    loop {
+        while let Some(index) = stack.pop() {
+            let Some(seen) = live.get_mut(index) else {
+                return Err(CompilerError::Internal(format!(
+                    "reference to missing function {index}"
+                )));
+            };
+            if std::mem::replace(seen, true) || prunable.contains(&index) {
+                continue;
+            }
+            // The visitor only reads the nodes.
+            statements(&mut program.functions[index].body, &mut |expr| {
+                reads(expr, &mut stack, &mut read)
+            });
+        }
+        // Keep the initializer statements the read constants need, backwards
+        // through each straight-line body.
+        let before = read.len();
+        for &index in &prunable {
+            let body = &mut program.functions[index].body;
+            let mut needed = BTreeSet::new();
+            let mut keep = vec![false; body.len()];
+            for (at, statement) in body.iter_mut().enumerate().rev() {
+                let value = match statement {
+                    S::InitModuleConstant(constant, value) if read.contains(constant) => value,
+                    S::Init(slot, value) if needed.contains(slot) => value,
+                    _ => continue,
+                };
+                keep[at] = true;
+                // The visitor only reads the nodes.
+                expression(value, &mut |expr| {
+                    if let E::Local(slot) = &expr.kind {
+                        needed.insert(*slot);
+                    }
+                    reads(expr, &mut stack, &mut read);
+                });
+            }
+            kept.insert(index, keep);
+        }
+        // Only functions not visited yet are new work.
+        stack.retain(|index| !live.get(*index).copied().unwrap_or(false));
+        if stack.is_empty() && read.len() == before {
+            break;
+        }
+    }
+    for (index, keep) in kept {
+        let body = std::mem::take(&mut program.functions[index].body);
+        program.functions[index].body = body
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(statement, keep)| keep.then_some(statement))
+            .collect();
+    }
+    // An initializer left empty is no longer called (and is then removed as
+    // unreachable).
+    let empty: BTreeSet<usize> = prunable
+        .into_iter()
+        .filter(|index| program.functions[*index].body.is_empty())
+        .collect();
+    program.initializers.retain(|index| !empty.contains(index));
+    program.functions[program.main].body.retain(|statement| {
+        !matches!(statement, S::Expr(Expr { kind: E::Call(index, args), .. })
+            if args.is_empty() && empty.contains(index))
+    });
+    renumber_constants(program);
+    Ok(())
+}
+
+/// Number the constants that remaining code reads or writes densely, so a
+/// dropped constant takes no permanent root slot the collector scans.
+fn renumber_constants(program: &mut ir::Program) {
+    let mut used = BTreeSet::new();
+    for function in &mut program.functions {
+        each_constant(&mut function.body, &mut |index| {
+            used.insert(*index);
+        });
+    }
+    let map: BTreeMap<u32, u32> = used
+        .iter()
+        .enumerate()
+        .map(|(new, old)| (*old, new as u32))
+        .collect();
+    for function in &mut program.functions {
+        // Every index was collected above, so the map holds it.
+        each_constant(&mut function.body, &mut |index| *index = map[index]);
+    }
+    program.constants = map.len() as u32;
+}
+
+/// Visit every module-constant index in `body`: reads (`ModuleConstant`) in
+/// any expression and writes (`InitModuleConstant`) in any statement,
+/// including statement bodies nested in expressions.
+fn each_constant(body: &mut [S], visit: &mut dyn FnMut(&mut u32)) {
+    constant_writes(body, visit);
+    statements(body, &mut |expr| match &mut expr.kind {
+        E::ModuleConstant(index) => visit(index),
+        E::Assignment { body, .. } | E::ValueBlock { body, .. } => constant_writes(body, visit),
+        _ => {}
+    });
+}
+
+/// `InitModuleConstant` indices of `body` and its nested statement bodies;
+/// bodies inside expressions are reached by the expression walk.
+fn constant_writes(body: &mut [S], visit: &mut dyn FnMut(&mut u32)) {
+    for statement in body {
+        match statement {
+            S::InitModuleConstant(index, _) => visit(index),
+            S::TryCatch { body, handler, .. } => {
+                constant_writes(body, visit);
+                constant_writes(handler, visit);
+            }
+            S::TryFinally {
+                body, finalizer, ..
+            } => {
+                constant_writes(body, visit);
+                constant_writes(finalizer, visit);
+            }
+            S::Block(body) | S::Scope(_, body) | S::Label { body, .. } => {
+                constant_writes(body, visit)
+            }
+            S::If(_, yes, no) => {
+                constant_writes(yes, visit);
+                constant_writes(no, visit);
+            }
+            S::While(_, body) | S::DoWhile(_, body) => constant_writes(body, visit),
+            S::For(init, _, update, body) => {
+                constant_writes(init, visit);
+                constant_writes(update, visit);
+                constant_writes(body, visit);
+            }
+            S::Switch { cases, .. } => {
+                for (_, body) in cases {
+                    constant_writes(body, visit);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Function and module-constant references of one expression node.
+fn reads(expr: &Expr, functions: &mut Vec<usize>, constants: &mut BTreeSet<u32>) {
+    if let E::ModuleConstant(index) = &expr.kind {
+        constants.insert(*index);
+    }
+    references(expr, functions);
 }
 
 /// Visit `expr` mutably and every nested expression, including statement

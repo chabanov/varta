@@ -1,5 +1,5 @@
 use super::*;
-use varta_common::value::{MAX_ARRAY_ELEMENTS, MAX_ARRAY_TYPES};
+use varta_common::value::MAX_ARRAY_ELEMENTS;
 
 pub(super) fn intern(element: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     if matches!(element, Type::Generator(_)) {
@@ -16,7 +16,7 @@ pub(super) fn intern(element: Type, types: &mut ir::ValueTypes) -> Result<Type> 
     if let Some(index) = types.arrays.iter().position(|ty| *ty == element) {
         return Ok(Type::Array(index as u32));
     }
-    if types.arrays.len() >= MAX_ARRAY_TYPES {
+    if types.arrays.len() >= types.profile.limits().array_types {
         return Err(invalid("array type count exceeds limit"));
     }
     let index = types.arrays.len() as u32;

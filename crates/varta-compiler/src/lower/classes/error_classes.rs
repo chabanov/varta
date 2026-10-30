@@ -55,7 +55,7 @@ pub(in crate::lower) fn root(
         ErrorClass::Error => None,
         _ => Some(root(ErrorClass::Error, source, span, types)?),
     };
-    if types.classes.list.len() >= MAX_RECORD_SHAPES {
+    if types.classes.list.len() >= types.profile.limits().record_shapes {
         return Err(source.locate(invalid("class count exceeds limit"), span));
     }
     let id = types.classes.list.len() as u32;
@@ -95,7 +95,7 @@ pub(in crate::lower) fn root(
         None => base_members(id, types).map_err(|e| source.locate(e, span))?,
     };
     init.receiver = Some(Type::Class(id));
-    if types.records.len() >= MAX_RECORD_SHAPES {
+    if types.records.len() >= types.profile.limits().record_shapes {
         return Err(source.locate(invalid("object shape count exceeds limit"), span));
     }
     let shape = types.records.len() as u32;

@@ -509,7 +509,7 @@ mod recursive {
         };
         let ty = match kind {
             Kind::Record => {
-                if types.records.len() >= varta_common::value::MAX_RECORD_SHAPES {
+                if types.records.len() >= types.profile.limits().record_shapes {
                     return Err(invalid("object shape count exceeds limit"));
                 }
                 types.records.push(RecordShape {
@@ -533,7 +533,7 @@ mod recursive {
                 Type::Dictionary(types.dictionaries.len() as u32 - 1)
             }
             Kind::Union => {
-                if types.unions.len() >= varta_common::value::MAX_UNION_TYPES {
+                if types.unions.len() >= types.profile.limits().union_types {
                     return Err(invalid("union type count exceeds limit"));
                 }
                 // An empty member list marks the reservation (see unions::intern).

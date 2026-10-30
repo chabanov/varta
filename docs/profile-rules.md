@@ -3097,8 +3097,9 @@ Inherit v37 under checked-f64-utf16-v38 with every v37 selector, value layout
 3, the timer and `net.request` operations and the permission broker's
 recoverable denials. V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION`
 (34) and shares value ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`)
-with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams and
-admit nothing yet: program limits (`program_limits`), data limits
+with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams;
+apart from the program-limits rules below they admit nothing yet: program
+limits (`program_limits`), data limits
 (`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
 (`linked_intrinsics`), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
@@ -3128,3 +3129,58 @@ profiles frozen, and add each stream's rules under its own heading here.
   (`pilot_v38_inherits_v37_…` in `varta-common` `language`, the v38 runtime
   language test and the v38 CLI smoke test) change in the stream that
   introduces the difference.
+
+### Program limits (`program_limits`)
+
+- Read every structural limit through `LanguageProfile::limits()`
+  (`varta_common::limits`): `limits::FROZEN` for v1–v37 (the historical
+  constants), `limits::WASM` for v38 (the Wasm implementation limits). Never
+  compare a v38 count with `abi::MAX_USER_FUNCTIONS`, `value::MAX_RECORD_SHAPES`,
+  `MAX_UNION_TYPES`, `MAX_ARRAY_TYPES`, `function::MAX_TYPES`,
+  `frame::MAX_GENERATOR_TYPES`, `abi::MAX_WASM_SIGNATURES`,
+  `abi::MAX_WASM_BYTES` or `abi::MAX_WASM_FUNCTION_BODY_BYTES` directly; those
+  constants remain only as the frozen values. Readers that bound input before
+  they know its profile use `limits::MAXIMUM`, then the profile's limit.
+- Catalogs and schemas validate within the profile's limits
+  (`FunctionCatalog::read_within`/`validate_within`/`to_bytes_within`,
+  `into_verified_within`, `JsonSchema::from_bytes_within`/`to_bytes_within`,
+  `ClosureView::read_envelope_within`). The plain forms are the frozen ones.
+- Runtime readers take `value::ModuleBounds` (static region and limits) from
+  the validated module, never from guest memory; legacy and test callers use
+  `ModuleBounds::LEGACY`.
+- V38 roots only generator bodies among suspendable functions; unreachable
+  async functions lose their frames. The suspension test hook keeps every
+  frame (it exports the creators).
+- V38 skips unread module constants (`prune::unread_constants`) and renumbers
+  the remaining ones. Any new constant reference in the IR must be visible to
+  `each_constant` and `reads`, and an initializer statement other than
+  `Init`/`InitModuleConstant` keeps its whole chunk; only pure initializers
+  may ever be skipped.
+- The v38 `varta_resume` is table-driven (`frames::dispatch_table`,
+  `table_dispatch`): keep every check before the `RUNNING` store and keep one
+  direct body call per layout in layout order (frame admission depends on
+  it). V37 and earlier keep the per-layout chain byte for byte.
+- A new structural limit in this batch gets a `ProgramLimits` field, a row in
+  the generated program-limits table and a v38 test over the frozen value
+  that also shows the v37 diagnostic.
+- The memory-layout foundation is the multi-page static region
+  (`abi::StaticRegion`, host ABI 34, value layout 17, no value 18). Place
+  static items only through the compiler's `static_data::Placement`
+  (first page first, then the extension, never straddling); never compare a
+  static address with `RESULT_BASE` directly in v38 code.
+- Every guest-side heap classification uses the module's heap base
+  (`strings::Globals::base`, `Emitter::heap_base`), never
+  `abi::OWNED_STRING_BASE`: a handle below the heap base is static and is
+  never marked, traced or pushed as a root. Legacy modules have
+  `base == OWNED_STRING_BASE`, so their bytes do not change.
+- Every runtime reader that checks static metadata takes the module's
+  `StaticRegion` (`ReferenceBox::read_in`, `validate_aggregate_in`,
+  `Dictionary::read_in`, the JSON encoder's `region`, `json_parse` schema and
+  descriptor reads, the exception `Channel::in_region`, the verified function
+  catalog's `with_static_region`). The `*_with_version`/`read` forms are the
+  single-page readers for legacy and test callers; a host function serving a
+  v38 module passes `RuntimeContext::static_region`.
+- Instantiation of a `program_limits()` module gets its own fuel allowance
+  (at most the memory budget) and the guest's budget is restored before any
+  guest code; never charge the data-segment copy to the guest, and never
+  extend this to earlier profiles.

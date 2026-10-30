@@ -10,6 +10,8 @@ mod invocation;
 pub mod json;
 pub mod language;
 pub mod launcher;
+/// Structural program limits by profile (v38 `program_limits`).
+pub mod limits;
 mod manifest;
 mod module;
 /// Asynchronous network requests (v37 `net_request`).

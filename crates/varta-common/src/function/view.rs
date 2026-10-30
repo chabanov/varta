@@ -132,6 +132,14 @@ pub struct ClosureView<'a> {
 impl<'a> ClosureView<'a> {
     /// Read the v12+ physical closure form; legacy v11 cells stay distinct.
     pub fn read_envelope(data: &'a [u8], handle: u64) -> Result<Self, ValueAbiError> {
+        Self::read_envelope_within(data, handle, &crate::limits::FROZEN)
+    }
+    /// [`Self::read_envelope`] with a profile's function and signature limits.
+    pub fn read_envelope_within(
+        data: &'a [u8],
+        handle: u64,
+        limits: &crate::limits::ProgramLimits,
+    ) -> Result<Self, ValueAbiError> {
         let ptr = envelope(data, handle, CLOSURE_BYTES, HEAP_FLAG)?;
         let signature = word(data, ptr)?;
         let code = word(data, ptr + CODE_OFFSET as usize)?;
@@ -140,8 +148,8 @@ impl<'a> ClosureView<'a> {
             data,
             ptr - abi::STRING_HEADER_BYTES + value::HEAP_LINK_OFFSET,
         )?;
-        if signature as usize >= MAX_TYPES
-            || code as usize >= abi::MAX_USER_FUNCTIONS
+        if signature as usize >= limits.function_types
+            || code as usize >= limits.user_functions
             || word(data, ptr + 4)? != FUNCTION_FIELDS as u32
             || word(data, ptr + 12)? != 0
             || mask

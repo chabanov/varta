@@ -235,7 +235,7 @@ impl Emitter<'_> {
             I::LocalGet(physical),
             I::I32WrapI64,
             I::LocalTee(self.temporary),
-            I::I32Const((abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES) as i32),
+            I::I32Const(self.heap_base() as i32 + abi::STRING_HEADER_BYTES as i32),
             I::I32LtU,
             I::I32Or,
             I::LocalGet(self.temporary),

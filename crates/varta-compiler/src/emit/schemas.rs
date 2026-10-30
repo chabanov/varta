@@ -152,6 +152,6 @@ pub(super) fn build(
         root,
         types: builder.nodes,
     }
-    .to_bytes()
+    .to_bytes_within(&types.profile.limits())
     .map_err(|e| CompilerError::Invalid(e.to_string()))
 }

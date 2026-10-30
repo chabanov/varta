@@ -38,7 +38,7 @@ impl ReferenceBox {
             catalog.validate_closure(data, cell.payload, work_budget)?;
             return Ok(cell);
         }
-        Self::read_with_version(data, handle, catalog.value_version)
+        Self::read_in(data, handle, catalog.value_version, ModuleBounds::LEGACY)
     }
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
         Self::read_with_version(data, handle, REFERENCE_VALUE_VERSION)
@@ -47,6 +47,17 @@ impl ReferenceBox {
         data: &[u8],
         handle: u64,
         version: u32,
+    ) -> Result<Self, ValueAbiError> {
+        Self::read_in(data, handle, version, ModuleBounds::LEGACY)
+    }
+    /// [`Self::read_with_version`] for a module whose static metadata lies in
+    /// `module`'s bounds (v38 `program_limits`: record descriptors and keys may
+    /// live in the static extension, closures follow its function limits).
+    pub fn read_in(
+        data: &[u8],
+        handle: u64,
+        version: u32,
+        module: ModuleBounds,
     ) -> Result<Self, ValueAbiError> {
         if !matches!(
             version,
@@ -92,23 +103,23 @@ impl ReferenceBox {
             }
             ErrorObject::read_with_version(data, cell.payload, version)?;
         } else if cell.kind == ValueKind::Dictionary {
-            Dictionary::read(data, cell.payload, version)?;
+            Dictionary::read_in(data, cell.payload, version, module)?;
         } else if cell.kind == ValueKind::Promise {
             // A promise is its private record block; consumers that read its
             // state check the record's descriptor (see `promise_state`).
             if !cell.kind.supported_by(version) {
                 return Err(invalid());
             }
-            validate_aggregate(data, ValueKind::Record, cell.payload, version)?;
+            validate_aggregate_in(data, ValueKind::Record, cell.payload, version, module)?;
         } else if cell.kind == ValueKind::Function && version == FUNCTION_FIELD_VALUE_VERSION {
             // Value17 function fields: the payload is a v12+ closure whose
             // envelope (block, signature/reserved words, environment edge and
             // binding cells) is checked; captured payloads stay opaque, and
             // no value reader invokes or decodes the function. Value14 cells
             // still need their owner catalog (`read_with_catalog`).
-            crate::function::ClosureView::read_envelope(data, cell.payload)?;
+            crate::function::ClosureView::read_envelope_within(data, cell.payload, &module.limits)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
-            aggregate(data, cell, version)?;
+            aggregate(data, cell, version, module)?;
         } else {
             PrimitiveBox::read(data, handle)?;
         }
@@ -136,12 +147,27 @@ pub fn validate_aggregate(
     payload: u64,
     version: u32,
 ) -> Result<(), ValueAbiError> {
+    validate_aggregate_in(data, kind, payload, version, ModuleBounds::LEGACY)
+}
+/// [`validate_aggregate`] within a module's bounds.
+pub fn validate_aggregate_in(
+    data: &[u8],
+    kind: ValueKind,
+    payload: u64,
+    version: u32,
+    module: ModuleBounds,
+) -> Result<(), ValueAbiError> {
     if !matches!(kind, ValueKind::Record | ValueKind::Array) || !kind.supported_by(version) {
         return Err(invalid());
     }
-    aggregate(data, PrimitiveBox { kind, payload }, version)
+    aggregate(data, PrimitiveBox { kind, payload }, version, module)
 }
-fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueAbiError> {
+fn aggregate(
+    data: &[u8],
+    cell: PrimitiveBox,
+    version: u32,
+    module: ModuleBounds,
+) -> Result<(), ValueAbiError> {
     if cell.kind == ValueKind::Array
         && matches!(
             version,
@@ -201,9 +227,9 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
         return Err(invalid());
     }
     let descriptor = meta as usize;
-    if descriptor
-        .checked_add(descriptor_bytes(count))
-        .is_none_or(|end| end > abi::RESULT_BASE)
+    if !module
+        .static_region
+        .contains(descriptor, descriptor_bytes(count))
         || word(data, descriptor)? != version
         || word(data, descriptor + 4)? as usize != count
     {
@@ -228,9 +254,8 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
         if slot >= count
             || slots & (1u128 << slot) != 0
             || len > MAX_RECORD_KEY_BYTES
-            || key
-                .checked_add(len)
-                .is_none_or(|end| end > abi::RESULT_BASE || end > data.len())
+            || !module.static_region.contains(key, len)
+            || key.checked_add(len).is_none_or(|end| end > data.len())
         {
             return Err(invalid());
         }

@@ -6,9 +6,11 @@ pub(crate) fn module(
     engine: &Engine,
     bytes: &[u8],
 ) -> Result<(crate::PreparedModule, Option<varta_common::ToolCatalog>), RuntimeError> {
-    let (language, function_catalog) = preflight(bytes)?;
+    let (language, function_catalog, static_region) = preflight(bytes)?;
     let version = language.profile.map_or(abi::VERSION, |p| p.host_abi());
-    if bytes.len() > abi::MAX_WASM_BYTES || !bytes.starts_with(b"\0asm\x01\0\0\0") {
+    if bytes.len() > language.profile.unwrap_or_default().limits().wasm_bytes
+        || !bytes.starts_with(b"\0asm\x01\0\0\0")
+    {
         return Err(wasmtime::Error::msg("expected a bounded portable Wasm module").into());
     }
     let module = Module::new(engine, bytes)?;
@@ -62,6 +64,8 @@ pub(crate) fn module(
         crate::PreparedModule {
             module,
             function_catalog,
+            static_region,
+            profile: language.profile.unwrap_or_default(),
         },
         tools,
     ))
@@ -93,14 +97,22 @@ fn preflight(
     (
         varta_common::language::LanguageInspection,
         Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+        abi::StaticRegion,
     ),
     RuntimeError,
 > {
     use wasmparser::{Parser, Payload};
-    if bytes.len() > abi::MAX_WASM_BYTES {
+    // Bounded by the largest profile limit before the profile is known, then
+    // by the declared profile's own (v38: the Wasm module-size limit).
+    if bytes.len() > varta_common::limits::MAXIMUM.wasm_bytes {
         return Err(error("Wasm exceeds size limit"));
     }
     let language = crate::language::inspect(bytes)?;
+    let limits = language.profile.unwrap_or_default().limits();
+    if bytes.len() > limits.wasm_bytes {
+        return Err(error("Wasm exceeds size limit"));
+    }
+    let mut imports = 0usize;
     let mut values = 0;
     let mut function_catalog = None;
     let mut union_imports = false;
@@ -108,6 +120,9 @@ fn preflight(
     let mut http = false;
     let mut tools = false;
     let mut value_version = None;
+    let mut static_region = None;
+    let mut memory_initial = None;
+    let mut data_segments = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.map_err(|e| error(&e.to_string()))? {
             Payload::StartSection { .. } if language.profile.is_some_and(|p| p.exceptions()) => {
@@ -116,7 +131,7 @@ fn preflight(
             Payload::TypeSection(reader) => {
                 for (count, ty) in reader.into_iter_err_on_gc_types().enumerate() {
                     let ty = ty.map_err(|e| error(&e.to_string()))?;
-                    if count >= abi::MAX_WASM_SIGNATURES
+                    if count >= limits.wasm_signatures
                         || ty.params().len() > abi::MAX_WASM_PARAMETERS
                         || ty.results().len() > 2
                     {
@@ -128,6 +143,7 @@ fn preflight(
                 return Err(error("too many imports"));
             }
             Payload::ImportSection(reader) => {
+                imports = reader.count() as usize;
                 for import in reader {
                     let import = import.map_err(|e| error(&e.to_string()))?;
                     union_imports |= import.module == "varta"
@@ -186,17 +202,26 @@ fn preflight(
                     }
                 }
             }
+            // V38: the function index space within the Wasm limit.
             Payload::FunctionSection(reader)
-                if reader.count() as usize
-                    > abi::MAX_USER_FUNCTIONS
-                        + if language.profile.is_some_and(|p| p.array_mutations()) {
-                            abi::MAX_INTERNAL_FUNCTIONS
-                        } else if language.profile.is_some_and(|p| p.sparse_arrays()) {
-                            abi::SPARSE_INTERNAL_FUNCTIONS
-                        } else {
-                            abi::LEGACY_INTERNAL_FUNCTIONS
-                        }
-                        + abi::MAX_HTTP_HANDLERS =>
+                if language.profile.is_some_and(|p| p.program_limits())
+                    && (reader.count() as usize).saturating_add(imports)
+                        > limits.wasm_functions =>
+            {
+                return Err(error("too many functions"));
+            }
+            Payload::FunctionSection(reader)
+                if language.profile.is_none_or(|p| !p.program_limits())
+                    && reader.count() as usize
+                        > abi::MAX_USER_FUNCTIONS
+                            + if language.profile.is_some_and(|p| p.array_mutations()) {
+                                abi::MAX_INTERNAL_FUNCTIONS
+                            } else if language.profile.is_some_and(|p| p.sparse_arrays()) {
+                                abi::SPARSE_INTERNAL_FUNCTIONS
+                            } else {
+                                abi::LEGACY_INTERNAL_FUNCTIONS
+                            }
+                            + abi::MAX_HTTP_HANDLERS =>
             {
                 return Err(error("too many functions"));
             }
@@ -212,7 +237,25 @@ fn preflight(
                     {
                         return Err(error("unsupported memory type or initial size"));
                     }
+                    memory_initial = Some(memory.initial);
                 }
+            }
+            Payload::DataSection(reader)
+                if language.profile.is_some_and(|p| p.program_limits()) =>
+            {
+                for segment in reader {
+                    data_segments
+                        .push(active_segment(segment.map_err(|e| error(&e.to_string()))?)?);
+                }
+            }
+            Payload::CustomSection(section) if section.name() == abi::STATIC_SECTION => {
+                if static_region.is_some() || language.profile.is_none_or(|p| !p.program_limits()) {
+                    return Err(error("unsupported or duplicate static region"));
+                }
+                static_region = Some(
+                    abi::StaticRegion::read_section(section.data())
+                        .map_err(|e| error(&e.to_string()))?,
+                );
             }
             Payload::TableSection(reader) => {
                 if reader.count() > 1 {
@@ -229,7 +272,7 @@ fn preflight(
                 return Err(error("too many globals"));
             }
             Payload::CodeSectionEntry(body) => {
-                if body.range().len() > abi::MAX_WASM_FUNCTION_BODY_BYTES {
+                if body.range().len() > limits.function_body_bytes {
                     return Err(error("function body exceeds compilation budget"));
                 }
             }
@@ -248,13 +291,13 @@ fn preflight(
                     section.data(),
                     language.profile.unwrap_or_default(),
                 )?
-                .into_verified()?;
+                .into_verified_within(&limits)?;
                 if Some(catalog.as_catalog().value_version)
                     != language.profile.map(|profile| profile.value_layout())
                 {
                     return Err(error("function capture catalog value version mismatch"));
                 }
-                function_catalog = Some(std::sync::Arc::new(catalog));
+                function_catalog = Some(catalog);
             }
             Payload::CustomSection(section)
                 if section.name() == varta_common::value::VALUE_SECTION =>
@@ -303,12 +346,63 @@ fn preflight(
     if (!json_imports.is_empty() || union_imports || profile.exceptions()) && values != 1 {
         return Err(error("JSON import requires structured value ABI metadata"));
     }
+    let static_region = static_region.unwrap_or(abi::StaticRegion::SINGLE_PAGE);
+    check_static_region(static_region, memory_initial, &data_segments)?;
     crate::frames::admit(
         bytes,
         profile,
-        function_catalog.as_deref().map(|c| c.as_catalog()),
+        function_catalog.as_ref().map(|c| c.as_catalog()),
     )?;
-    Ok((language, function_catalog))
+    let function_catalog = function_catalog.map(|catalog| {
+        std::sync::Arc::new(catalog.with_module(varta_common::value::ModuleBounds::new(
+            profile,
+            static_region,
+        )))
+    });
+    Ok((language, function_catalog, static_region))
+}
+
+/// A `program_limits` (v38) data segment: active, in memory 0, at a constant
+/// i32 offset. Earlier profiles keep their unchecked data sections.
+fn active_segment(segment: wasmparser::Data<'_>) -> Result<(usize, usize), RuntimeError> {
+    let wasmparser::DataKind::Active {
+        memory_index: 0,
+        offset_expr,
+    } = segment.kind
+    else {
+        return Err(error("static data must be active in memory 0"));
+    };
+    let mut operators = offset_expr.get_operators_reader();
+    match (operators.read(), operators.read()) {
+        (Ok(wasmparser::Operator::I32Const { value }), Ok(wasmparser::Operator::End))
+            if operators.eof() =>
+        {
+            Ok((value as u32 as usize, segment.data.len()))
+        }
+        _ => Err(error("static data offset must be an i32 constant")),
+    }
+}
+
+/// The static region covers every data segment of a `program_limits` module
+/// (for earlier profiles the list is empty), and a declared extension lies
+/// within the module's initial memory, so the heap starts after it.
+fn check_static_region(
+    region: abi::StaticRegion,
+    memory_initial: Option<u64>,
+    data_segments: &[(usize, usize)],
+) -> Result<(), RuntimeError> {
+    if data_segments
+        .iter()
+        .any(|(offset, len)| !region.contains(*offset, *len))
+    {
+        return Err(error("data segment outside the static region"));
+    }
+    if region.extension_pages() > 0
+        && memory_initial.is_none_or(|initial| initial < region.minimum_pages())
+    {
+        return Err(error("static region exceeds the initial memory"));
+    }
+    Ok(())
 }
 
 fn check_exports(module: &Module) -> Result<(), RuntimeError> {

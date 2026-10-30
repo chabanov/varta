@@ -11,6 +11,42 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 removes unreachable async functions and methods with their frame
+  layouts (v37 roots every suspendable function); generator bodies stay. A
+  minimal use of the 1900-model pilot mimic keeps 79 functions instead of
+  every resource method. The program-limits measurement is recorded in the
+  development plan.
+
+- V38 skips the initialization of module constants that no reachable code
+  reads and renumbers the rest, so startup fuel, root slots and static data no
+  longer grow with unused constants (100 unread enum objects: 5991 fuel under
+  v38 against 45253 under v37; adding 200 more leaves v38 unchanged).
+
+- V38 `varta_resume` dispatches through a static per-layout table and one
+  `br_table`: about a dozen bytes per frame layout instead of a ~125-byte
+  check block, constant resume fuel, the same checks before any effect and
+  unchanged frame admission. Every pre-v38 runtime case runs identically
+  under v37 and v38.
+
+- V38 `program_limits`: structural limits come from one registry,
+  `LanguageProfile::limits()` (`varta_common::limits`), read by the compiler,
+  runtime preflight, catalog, schema and closure readers, artifact and
+  launcher readers and the generated tables. V38 admits the WebAssembly
+  implementation limits: 1,000,000 functions and types, 7,654,321-byte
+  function bodies, a 1 GiB module, and 1,000,000 record shapes, classes,
+  unions, array, promise, generator and function types. V1–v37 keep their
+  frozen limits, bytes and diagnostics.
+
+- V38 `program_limits` foundation: a multi-page static region under host ABI
+  34 with value layout 17 (no value 18). Static data that no longer fits the
+  first page goes into an extension after the root stack, declared by the
+  `varta.static` section, and the managed heap starts after it; result buffer,
+  root stack and exception root keep their addresses. Runtime readers accept
+  descriptors, keys and schemas in the module's own extension, data segments
+  must lie in the declared region, and v38 instantiation no longer charges
+  Wasmtime's per-byte data-segment copy to the guest's fuel. V37 and earlier
+  keep the single 64 KiB page, their bytes and diagnostics.
+
 - Opt-in v38 (batch: program and data limits, turn budgets, linked
   intrinsics, view protocol and TSX, structural subtyping and code generation
   v2, in development) is registered. It inherits every v37 feature, shares

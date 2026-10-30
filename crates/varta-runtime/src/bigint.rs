@@ -359,11 +359,13 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             move |mut caller: Caller<'_, RuntimeContext>,
                   cell: i64|
                   -> Result<i32, wasmtime::Error> {
+                let module = caller.data().module;
                 let bytes = work(&mut caller, |data, budget| {
-                    let value = varta_common::value::ReferenceBox::read_with_version(
+                    let value = varta_common::value::ReferenceBox::read_in(
                         data,
                         cell as u64,
                         version,
+                        module,
                     )
                     .map_err(|_| Error::InvalidPayload)?;
                     let bytes = if value.kind == varta_common::value::ValueKind::BigInt {
@@ -396,11 +398,13 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             move |mut caller: Caller<'_, RuntimeContext>,
                   cell: i64|
                   -> Result<f64, wasmtime::Error> {
+                let module = caller.data().module;
                 numeric(work(&mut caller, |data, budget| {
-                    let value = varta_common::value::ReferenceBox::read_with_version(
+                    let value = varta_common::value::ReferenceBox::read_in(
                         data,
                         cell as u64,
                         version,
+                        module,
                     )
                     .map_err(|_| Error::InvalidPayload)?;
                     if value.kind == varta_common::value::ValueKind::BigInt {
@@ -419,8 +423,9 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             "varta",
             from_value.name(),
             move |mut caller: Caller<'_, RuntimeContext>, cell: i64| {
+                let module = caller.data().module;
                 let result = work(&mut caller, |data, budget| {
-                    let value = ReferenceBox::read_with_version(data, cell as u64, version)
+                    let value = ReferenceBox::read_in(data, cell as u64, version, module)
                         .map_err(|_| Error::InvalidPayload)?;
                     let value = match value.kind {
                         K::BigInt => integer(data, value.payload as i64, budget)?,

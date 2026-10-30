@@ -366,7 +366,7 @@ fn layout_members(
     let mut init = init;
     init.index =
         allocate(types, next, id, Member::Init).map_err(|e| source.locate(e, class.span))?;
-    if types.records.len() >= MAX_RECORD_SHAPES {
+    if types.records.len() >= types.profile.limits().record_shapes {
         return Err(source.locate(invalid("object shape count exceeds limit"), class.span));
     }
     let shape = types.records.len() as u32;

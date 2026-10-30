@@ -18,11 +18,15 @@ fn bytes(data: &[u8], ptr: usize, len: usize) -> Result<&[u8], wasmtime::Error> 
         .and_then(|end| data.get(ptr..end))
         .ok_or_else(|| error("memory range"))
 }
-fn static_bytes(data: &[u8], ptr: usize, len: usize) -> Result<&[u8], wasmtime::Error> {
-    if ptr
-        .checked_add(len)
-        .is_none_or(|end| end > abi::RESULT_BASE)
-    {
+/// Schema and descriptor bytes in the module's static region (v38: the first
+/// page or the static extension).
+fn static_bytes(
+    data: &[u8],
+    region: abi::StaticRegion,
+    ptr: usize,
+    len: usize,
+) -> Result<&[u8], wasmtime::Error> {
+    if !region.contains(ptr, len) {
         return Err(error("metadata outside static memory"));
     }
     bytes(data, ptr, len)
@@ -42,10 +46,16 @@ fn words<const N: usize>(data: &[u8], ptr: usize) -> Result<[u32; N], wasmtime::
 /// value16), required canonical `keys` and `values` vector slots in that order.
 fn dictionary_descriptor(
     data: &[u8],
+    region: abi::StaticRegion,
     descriptor: usize,
     version: u32,
 ) -> Result<(), wasmtime::Error> {
-    static_bytes(data, descriptor, descriptor_bytes(DICTIONARY_FIELDS))?;
+    static_bytes(
+        data,
+        region,
+        descriptor,
+        descriptor_bytes(DICTIONARY_FIELDS),
+    )?;
     if !dynamic_layout(version)
         || words::<2>(data, descriptor)? != [version, DICTIONARY_FIELDS as u32]
     {
@@ -61,21 +71,25 @@ fn dictionary_descriptor(
         )?;
         if raw as usize != slot
             || kind != ValueKind::Array as u32
-            || static_bytes(data, key as usize, len as usize)? != name.as_bytes()
+            || static_bytes(data, region, key as usize, len as usize)? != name.as_bytes()
         {
             return Err(error("dictionary descriptor disagrees with its layout"));
         }
     }
     Ok(())
 }
-fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> {
+fn descriptors(
+    schema: &JsonSchema,
+    data: &[u8],
+    region: abi::StaticRegion,
+) -> Result<(), wasmtime::Error> {
     for ty in &schema.types {
         if let JsonType::Dictionary { descriptor, .. } = ty {
-            dictionary_descriptor(data, *descriptor as usize, schema.value_version())?;
+            dictionary_descriptor(data, region, *descriptor as usize, schema.value_version())?;
         }
         if let JsonType::Record { descriptor, fields } = ty {
             let descriptor = *descriptor as usize;
-            static_bytes(data, descriptor, descriptor_bytes(fields.len()))?;
+            static_bytes(data, region, descriptor, descriptor_bytes(fields.len()))?;
             if is_wide_record(fields.len()) {
                 // The collector traces a wide record through this edge bitmap.
                 let at =
@@ -144,7 +158,8 @@ fn descriptors(schema: &JsonSchema, data: &[u8]) -> Result<(), wasmtime::Error> 
                 if !slots.insert(slot)
                     || optional != field.optional
                     || kind != schema.types[field.ty as usize].kind() as u32
-                    || static_bytes(data, key as usize, len as usize)? != field.name.as_bytes()
+                    || static_bytes(data, region, key as usize, len as usize)?
+                        != field.name.as_bytes()
                 {
                     return Err(error("record descriptor disagrees with schema"));
                 }
@@ -298,17 +313,18 @@ fn decode(
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(error("missing memory"));
     };
+    let module = caller.data().module;
+    let region = module.static_region;
     let data = memory.data(&caller);
-    let schema = JsonSchema::from_bytes(static_bytes(
-        data,
-        schema_ptr as usize,
-        schema_len as usize,
-    )?)
+    let schema = JsonSchema::from_bytes_within(
+        static_bytes(data, region, schema_ptr as usize, schema_len as usize)?,
+        &module.limits,
+    )
     .map_err(error)?;
     if schema.version != expected_schema {
         return Err(error("schema version does not match JSON import"));
     }
-    descriptors(&schema, data)?;
+    descriptors(&schema, data, region)?;
     let input = bytes(data, ptr as usize, len as usize)?;
     let value = if recoverable {
         use varta_common::{
@@ -352,7 +368,11 @@ fn decode(
         exceptions::ready(&mut caller)?;
         exceptions::deadline(&caller)?;
     }
-    descriptors(&schema, memory.data(&caller))?;
+    descriptors(
+        &schema,
+        memory.data(&caller),
+        caller.data().module.static_region,
+    )?;
     let Some(Extern::Global(length)) = caller.get_export(abi::RESULT_LEN) else {
         return Err(error("missing result length"));
     };
