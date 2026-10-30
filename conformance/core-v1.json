@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v34",
+  "profile": "checked-f64-utf16-v37",
   "features": [
     {
       "id": "binary64",
@@ -282,6 +282,16 @@
       "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-generatorfunction-objects"
     },
     {
+      "id": "async-generators",
+      "title": "Async generators and for await",
+      "core": [
+        "CORE-03",
+        "CORE-09"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-asyncgeneratorfunction-objects"
+    },
+    {
       "id": "unknown-type",
       "title": "The unknown type with guard narrowing and caught values",
       "core": [
@@ -505,6 +515,170 @@
       "title": "Closed records wider than 32 fields",
       "core": [
         "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "mixed-index-records",
+      "title": "Mixed index records, for...in and dictionary updates",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "unknown-json",
+      "title": "JSON.parse to unknown and object narrowing",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "web-headers",
+      "title": "Engine-provided Fetch Headers",
+      "core": [
+        "CORE-10"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "abort-signals",
+      "title": "AbortController and AbortSignal without timers",
+      "core": [
+        "CORE-09"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "function-fields",
+      "title": "Function values in fields, elements, unions and optional parameters",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-function-calls"
+    },
+    {
+      "id": "optional-chains",
+      "title": "Optional chaining of member reads and calls",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-expressions.html#sec-optional-chains"
+    },
+    {
+      "id": "timers",
+      "title": "Event-loop timers (setTimeout, setInterval, timer-driven promises)",
+      "core": [
+        "CORE-09"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "temporal-dead-zone",
+      "title": "Closure captures before initialization (temporal dead zone)",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-let-and-const-declarations"
+    },
+    {
+      "id": "definite-assignment",
+      "title": "Deferred let initialization with definite assignment",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "switch-statement",
+      "title": "switch selection by strict equality over strings and typeof",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-switch-statement"
+    },
+    {
+      "id": "property-narrowing",
+      "title": "Property-path narrowing with write and call invalidation",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "dense-element-types",
+      "title": "Element-typed for...of and indexed reads with checked holes",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "void-function-assignability",
+      "title": "Value-returning functions as void-result function types",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "record-unions",
+      "title": "Unions of record shapes with discriminant narrowing and never",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "module-variables",
+      "title": "Module-level let bindings and function-valued module constants",
+      "core": [
+        "CORE-12"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "tuples",
+      "title": "Tuple types, literals and destructuring",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "string-builtins",
+      "title": "String padding, splitting, case mapping and Array.prototype.join",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.split"
+    },
+    {
+      "id": "url",
+      "title": "WHATWG URL and URLSearchParams subset",
+      "core": [
+        "CORE-11"
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md"
@@ -870,9 +1044,7 @@
         "varta log: 2"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Map allocation, key semantics and tracing are not implemented."
+        "status": "supported"
       }
     },
     {
@@ -884,9 +1056,7 @@
         "varta log: 1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Set allocation, key semantics and tracing are not implemented."
+        "status": "supported"
       }
     },
     {
@@ -898,9 +1068,7 @@
         "varta log: 1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Typed-array storage and conversion semantics are not implemented."
+        "status": "supported"
       }
     },
     {
@@ -912,9 +1080,7 @@
         "varta log: object"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "typeof of a Promise is not admitted: v34 promise objects have no value tag."
+        "status": "supported"
       }
     },
     {
@@ -989,6 +1155,50 @@
       }
     },
     {
+      "id": "async-class-method",
+      "feature": "async-await",
+      "path": "cases/async-class-method.ts",
+      "sha256": "5cf7bf4e0290dd4535997234d23ef7eecc7bda20b744689de72a4726eabb6a6e",
+      "stdout": [
+        "varta log: 2 6 3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "async-closure-captures",
+      "feature": "async-await",
+      "path": "cases/async-closure-captures.ts",
+      "sha256": "bebdddb510bcee8a82a83bcb0cc7d5f26318844c0faeeaa9b826b6e21a8442d4",
+      "stdout": [
+        "varta log: 60 120 6"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "promise-combinators",
+      "feature": "promise-jobs",
+      "path": "cases/promise-combinators.ts",
+      "sha256": "bb5ba2768dab4545820b06ab86370d3be11734fbaf8ab1f9e2a12b5e6b06c6fe",
+      "stdout": [
+        "varta log: settle 2",
+        "varta log: settle 3",
+        "varta log: settle 1",
+        "varta log: all 123",
+        "varta log: settle 5",
+        "varta log: settle 4",
+        "varta log: race 5",
+        "varta log: settle 6",
+        "varta log: [{\"status\":\"fulfilled\",\"value\":6},{\"status\":\"rejected\",\"reason\":{}}]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
       "id": "date-epoch",
       "feature": "date",
       "path": "cases/date-epoch.ts",
@@ -997,9 +1207,7 @@
         "varta log: 1970"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Date construction and time semantics are not implemented."
+        "status": "supported"
       }
     },
     {
@@ -1011,9 +1219,35 @@
         "varta log: 1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "RegExp values and matching are not implemented."
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-exec-groups",
+      "feature": "regexp",
+      "path": "cases/regexp-exec-groups.ts",
+      "sha256": "7fcbf0bd8f70cfbaa741b6ea0f98548c2ce46be81811aedf7113012ce2ff6656",
+      "stdout": [
+        "varta log: 0:a:1@3 4:b:@6 7:c:33@11 0",
+        "varta log: truetrue2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "regexp-string-methods",
+      "feature": "regexp",
+      "path": "cases/regexp-string-methods.ts",
+      "sha256": "78dec3dfb57bcebead84c8380786d505e7830850669f538f2749a043b67bb24c",
+      "stdout": [
+        "varta log: Smith, John a+b+c",
+        "varta log: [\"a\",\"1\",\"b\",\"2\",\"c\"] [\"a\",\"b\"]",
+        "varta log: 1@1;22@3; 4",
+        "varta log: 3 3"
+      ],
+      "baseline": {
+        "status": "supported"
       }
     },
     {
@@ -1049,6 +1283,21 @@
         "varta log: finally 9",
         "varta log: closed",
         "varta log: finally 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "async-generator-iteration",
+      "feature": "async-generators",
+      "path": "cases/async-generator-iteration.ts",
+      "sha256": "cfab52e224f6c04179352729296f9669e1a55910d9d1eb1cddab9326c2f42c18",
+      "stdout": [
+        "varta log: countdown closed",
+        "varta log: [{\"value\":2,\"done\":false},{\"value\":1,\"done\":false},{\"value\":\"liftoff\",\"done\":true}]",
+        "varta log: countdown closed",
+        "varta log: 9"
       ],
       "baseline": {
         "status": "supported"
@@ -1984,6 +2233,337 @@
       "stdout": [
         "varta log: 41 390",
         "varta log: false 342"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "mixed-index-records",
+      "feature": "mixed-index-records",
+      "path": "cases/mixed-index-records.ts",
+      "sha256": "9ef239a6e6898b0e20674587762b1946a036e72ab229ca621830f1bae8f95a10",
+      "stdout": [
+        "varta log: {\"7\":true,\"status\":404,\"trace\":\"t-1\",\"title\":\"Not Found\",\"extra\":[1]}",
+        "varta log: Not Found 405 true",
+        "varta log: [\"7\",\"title\",\"extra\"] Not Found -"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "dictionary-iteration-updates",
+      "feature": "mixed-index-records",
+      "path": "cases/dictionary-iteration-updates.ts",
+      "sha256": "990b4d874df447bb9031333938df855256734d193040ae5c88d28c543e9aab95",
+      "stdout": [
+        "varta log: 3ba",
+        "varta log: {\"3\":3,\"b\":2,\"a\":12,\"e\":5,\"c\":7} {\"3\":3,\"b\":2,\"a\":0,\"e\":5,\"c\":7,\"f\":6}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "checked-declared-fields",
+      "feature": "mixed-index-records",
+      "path": "cases/checked-declared-fields.ts",
+      "sha256": "39a510eae32bada2a3224f4e71e7e5503420529f8c97fdc735b1d3dd94ed22a8",
+      "stdout": [
+        "varta log: built a=undefined undefined=pushed m1 -",
+        "varta log: parsed b=x - v true",
+        "varta log: {\"title\":\"parsed\",\"errors\":[{\"message\":\"x\",\"field\":\"b\"}],\"labels\":{\"k\":\"v\"},\"extra\":1}",
+        "varta log: parsed b=x - v"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "json-parse-unknown",
+      "feature": "unknown-json",
+      "path": "cases/json-parse-unknown.ts",
+      "sha256": "412a11e685346bd40672310c2ca7993bfa0497175227abe88b380e6a08ab2950",
+      "stdout": [
+        "varta log: problem 410",
+        "varta log: object [\"b\",\"a\"]",
+        "varta log: array object number",
+        "varta log: [1,{\"n\":null}] undefined"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "web-headers",
+      "feature": "web-headers",
+      "path": "cases/web-headers.ts",
+      "sha256": "f3660b1cafb8b881998bb8522e981cbc19965324528f692596c7ec0453f86c9c",
+      "stdout": [
+        "varta log: */*, application/json true null",
+        "varta log: [accept=*/*, application/json][set-cookie=a=1][set-cookie=b=2][x-id=7]",
+        "varta log: [\"a=1\",\"b=2\"]",
+        "varta log: Headers.append: \"bad name\" is an invalid header name.",
+        "varta log: 7 8 true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "abort-controller",
+      "feature": "abort-signals",
+      "path": "cases/abort-controller.ts",
+      "sha256": "35dd290fcb4e6d9a72739741ebc926a987b2e14a482551e4dea6faca0833ac33",
+      "stdout": [
+        "varta log: false true",
+        "varta log: true AbortError(20): This operation was aborted",
+        "varta log: thrown true",
+        "varta log: string stop"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "function-fields",
+      "feature": "function-fields",
+      "path": "cases/function-fields.ts",
+      "sha256": "8d72e58b3f5af4508ed3381522c644c4e056dfa4341f0dad2533da878b2233f0",
+      "stdout": [
+        "varta log: 900 123 3",
+        "varta log: 6 3 function {}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "optional-chains",
+      "feature": "optional-chains",
+      "path": "cases/optional-chains.ts",
+      "sha256": "004bcb1a64b81610668ab19775506ef5a1eb4e21fe94a629d86b85719a097ed5",
+      "stdout": [
+        "varta log: tail undefined 1",
+        "varta log: undefined tail@1",
+        "varta log: undefined 3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "abort-listeners",
+      "feature": "abort-signals",
+      "path": "cases/abort-listeners.ts",
+      "sha256": "25f0bb299de0f23de657447c9f059cadace14b5089283c86f63f06d60ead1805",
+      "stdout": [
+        "varta log: [\"first true\",\"once\"]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "timers-event-loop",
+      "feature": "timers",
+      "path": "cases/timers-event-loop.ts",
+      "sha256": "f474a2a164c843a8756df54b54475c973c1c3ac09ba5609350ff24535f513415",
+      "stdout": [
+        "varta log: main end",
+        "varta log: microtask of main",
+        "varta log: timeout 0 first",
+        "varta log: microtask of first",
+        "varta log: timeout 0 second",
+        "varta log: slept 5",
+        "varta log: slept 1"
+      ],
+      "grants": [
+        "time.timer"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "tdz-closure-capture",
+      "feature": "temporal-dead-zone",
+      "path": "cases/tdz-closure-capture.ts",
+      "sha256": "db058dfb3004bbfe95a5219cd78c9613d90e7d1afbfa64f7860285241a5dd63e",
+      "stdout": [
+        "varta log: ReferenceError 7 14"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "deferred-let-assignment",
+      "feature": "definite-assignment",
+      "path": "cases/deferred-let-assignment.ts",
+      "sha256": "7fde307d73a83e0548ff02f5cfc7246ec6281b4d5d7617e3778620909ae949e8",
+      "stdout": [
+        "varta log: big even 4|small odd 3|error"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "string-switch",
+      "feature": "switch-statement",
+      "path": "cases/string-switch.ts",
+      "sha256": "5bea55fb848d29cc362c6c9a954e6fda1f7179283af56655e424640f075b25fd",
+      "stdout": [
+        "varta log: 11 10 3 -1",
+        "varta log: ns"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "property-path-narrowing",
+      "feature": "property-narrowing",
+      "path": "cases/property-path-narrowing.ts",
+      "sha256": "6bb9c18a8ba749cfd474c13f75efbe90394291f07b7066a3028b099fc71fc27f",
+      "stdout": [
+        "varta log: 2abc3|"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "dense-element-reads",
+      "feature": "dense-element-types",
+      "path": "cases/dense-element-reads.ts",
+      "sha256": "f6bd1e8f3578987c1e7d0038a67665eac7496d08c893b060fd1771a0af301393",
+      "stdout": [
+        "varta log: 33 ab1"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "void-function-assignability",
+      "feature": "void-function-assignability",
+      "path": "cases/void-function-assignability.ts",
+      "sha256": "f58129999779f039bb51ef85c1ccebead9ea7799e0dbfad470426c90cdd3eb33",
+      "stdout": [
+        "varta log: 4 10"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "discriminated-unions",
+      "feature": "record-unions",
+      "path": "cases/discriminated-unions.ts",
+      "sha256": "a36fcd9c0914e840fa0ad9ae32a9f042cc6557e1ef2ce1ad5ed3c21143ed13db",
+      "stdout": [
+        "varta log: 3circle! 6rect! 0point "
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "module-variables",
+      "feature": "module-variables",
+      "path": "cases/module-variables.ts",
+      "sha256": "4a73fb0587913e841ebb711a4cc41ee0292cb8621697f7fc08d749f54ea3285a",
+      "stdout": [
+        "varta log: 0 none",
+        "varta log: 2 b"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-generic-method",
+      "feature": "generics",
+      "path": "cases/class-generic-method.ts",
+      "sha256": "8d4e5f54a24a2c907fef742619921ebc9823b1e1a124a9a7ba0a4f094f91a608",
+      "stdout": [
+        "varta log: 7"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-private-names",
+      "feature": "classes",
+      "path": "cases/class-private-names.ts",
+      "sha256": "9cc07dee51fc21e47eab88697565e429f2771026cc44400bf3a16452d5ca8297",
+      "stdout": [
+        "varta log: 12 true false"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "class-generic-class",
+      "feature": "generics",
+      "path": "cases/class-generic-class.ts",
+      "sha256": "b39bbc23d70e8bf3d3ae93f6fedae598f21a4737c278432493ae8e3edcabc075",
+      "stdout": [
+        "varta log: a 3 page"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "tuple-destructuring",
+      "feature": "tuples",
+      "path": "cases/tuple-destructuring.ts",
+      "sha256": "ac2125f7c58c672f90167e3a83a28bfdc37a36efa5085204b10c945dbad34bf0",
+      "stdout": [
+        "varta log: 3 2 n5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "string-split-pad-join",
+      "feature": "string-builtins",
+      "path": "cases/string-split-pad-join.ts",
+      "sha256": "941990c13d88c05849323df4a8d7a1545f7c32ea0979afe92376afe9b11bac65",
+      "stdout": [
+        "varta log: .a|.b|..|.c MIX!"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "text-encoder-roundtrip",
+      "feature": "typed-arrays",
+      "path": "cases/text-encoder-roundtrip.ts",
+      "sha256": "b819d75709cadc93cc96430ea7de456e368fe59ffd77c0c8f19c75c9bbb0835c",
+      "stdout": [
+        "varta log: 3 195 hé"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "url-search-params",
+      "feature": "url",
+      "path": "cases/url-search-params.ts",
+      "sha256": "d480e37dc035913dc97eff585a037630e2309a648532db754e076316357166b1",
+      "stdout": [
+        "varta log: http://example.test/p/x/y?z=1",
+        "varta log: 2 x y a=1&b=x+y&a=2&c=d+e"
       ],
       "baseline": {
         "status": "supported"

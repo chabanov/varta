@@ -59,6 +59,7 @@ pub fn run_suite(
             model::Request {
                 profile: i.profile,
                 source: source.clone(),
+                grants: case.grants.clone(),
             },
             timeout,
         );

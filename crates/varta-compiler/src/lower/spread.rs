@@ -159,7 +159,7 @@ impl Lower<'_> {
             ));
         }
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid("too many functions including spread wrappers"));
         }
         *self.next_function += 1;
@@ -202,6 +202,7 @@ impl Lower<'_> {
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         for value in &operands {
             child.hidden(value.ty);

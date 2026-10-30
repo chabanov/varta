@@ -1,3 +1,13 @@
+// checked-f64-utf16-v37 (pilot batch, unreleased) collections: Map, Set, tuples,
+// Uint8Array, TextEncoder/TextDecoder (UTF-8), btoa/atob, crypto.getRandomValues/
+// randomUUID, a UTC Date subset and the string/array built-ins (padStart, split,
+// toUpperCase, join, String.fromCharCode, ...) use TypeScript's own declarations;
+// no source-level host declaration is added. Engine preludes implement them in
+// guest code. Internal imports, host ABI33 minimum: string_to_upper_case16 and
+// string_to_lower_case16 (i32 ptr, i32 len)->i32 result length [pure, no
+// capability] convert non-ASCII text, and date_now ()->f64 ms [time.now; a denial
+// is recoverable: NaN, and the prelude throws NotAllowedError] backs Date.now()
+// and new Date().
 // checked-f64-utf16-v34 (pilot batch, unreleased) promises and async functions use
 // TypeScript's own `Promise<T>`; no source-level host declaration is added. The
 // compiler emits five internal scheduler imports, never callable from source,
@@ -6,6 +16,134 @@
 // scheduler_enqueue (i64 token)->(), promise_unhandled (i64 reason)->f64 id and
 // promise_handled (f64 id)->(). Tokens name live frames resumed only through
 // varta_resume; the runtime keeps serials, never guest references.
+// checked-f64-utf16-v36 (pilot batch, unreleased) timers: the globals below run
+// their callback in a later event-loop task, ordered by (due time, creation
+// order) on a loop clock that advances only to the due time of the timer that
+// fires. Arming a timer requires the exact `time.timer` grant (denied by
+// default: the execution ends at the call); clearing needs none. Ids are
+// numbers, as in browsers (Node returns Timeout objects). Delays follow Node:
+// a delay outside 1..2^31-1 ms is 1 ms. A timer due at or after the 5 s
+// execution deadline ends the execution with a budget error. Internal imports,
+// host ABI32 minimum: timer_start (f64 serial, f64 delay, i32 flags)->f64 id
+// [time.timer, host-call budget], timer_clear (f64 id)->(), timer_take
+// (f64 serial)->i32 and timer_uncaught (i64 reason)->(). AbortSignal.timeout
+// uses a timer that does not keep the event loop alive.
+declare function setTimeout<A extends unknown[]>(
+  callback: (...args: A) => void,
+  ms?: number,
+  ...args: A
+): number;
+declare function setInterval<A extends unknown[]>(
+  callback: (...args: A) => void,
+  ms?: number,
+  ...args: A
+): number;
+declare function clearTimeout(id?: number | null): void;
+declare function clearInterval(id?: number | null): void;
+// checked-f64-utf16-v37 (pilot batch, unreleased) network requests: `fetch`,
+// `Request`, `Response`, `ReadableStream`, `URL` and `URLSearchParams` are
+// engine preludes (typed guest code) loaded only when a module names them.
+// Every request needs the exact `net.request` grant ("net": {"request":
+// ["https://api.example.com/v1/**"]} or {"urls": [...], "methods": [...]});
+// a denied request rejects with a catchable DOMException `NotAllowedError`
+// before any name resolution or socket, and the denial is logged. A denied
+// v37 timer start throws the same error synchronously (v36 stays fatal).
+// Redirects default to "error" ("follow" re-checks every hop against the
+// grant, "manual" returns the 3xx); there are no cookies or credentials.
+// Bodies are text: response chunks are UTF-8 decoded strings (bytes wait for
+// Uint8Array) and ReadableStream is not generic. Internal imports, host ABI33
+// minimum: net_request_start (i32 ptr, i32 len)->f64 id [net.request,
+// host-call budget], net_request_watch (f64 serial, f64 id)->(),
+// net_request_take (f64 id)->i32 kind, net_request_text (f64 id)->i32 ptr,
+// net_body_read (f64 id)->(), net_request_abort (f64 id)->(), and
+// timer_start_v2 (f64 serial, f64 delay, i32 flags)->f64 id [time.timer].
+// v37 JSON.stringify imports json_stringify_v17 (i32 kind, i32 lo, i32 hi)->
+// (i32 len, i32 error class) [pure, no capability]: like json_stringify_v16,
+// it skips private state (descriptor keys starting with `#`: #private fields,
+// engine prelude state and non-enumerable Error slots), so prelude instances
+// serialize as `{}`. Object keys starting with `#` are rejected in v37; URL and
+// RegExp match arrays stay out of JSON.stringify and unknown. Unreachable
+// functions (unused prelude members included) are removed before the
+// function limit applies.
+type RequestRedirect = 'error' | 'follow' | 'manual';
+type BodyInit = string | URLSearchParams;
+interface RequestInit {
+  method?: string;
+  headers?: HeadersInit;
+  body?: BodyInit | null;
+  signal?: AbortSignal | null;
+  redirect?: RequestRedirect;
+}
+interface ResponseInit {
+  status?: number;
+  statusText?: string;
+  headers?: HeadersInit;
+}
+interface ReadableStreamReadResult {
+  done: boolean;
+  /** The empty string once done (WHATWG: undefined). */
+  value: string;
+}
+declare class ReadableStreamDefaultReader {
+  read(): Promise<ReadableStreamReadResult>;
+  cancel(reason?: unknown): Promise<void>;
+  releaseLock(): void;
+}
+declare class ReadableStream {
+  readonly locked: boolean;
+  getReader(): ReadableStreamDefaultReader;
+  cancel(reason?: unknown): Promise<void>;
+  values(): AsyncGenerator<string, void, undefined>;
+  [Symbol.asyncIterator](): AsyncGenerator<string, void, undefined>;
+}
+declare class Request {
+  constructor(input: string | URL | Request, init?: RequestInit);
+  readonly method: string;
+  readonly url: string;
+  readonly headers: Headers;
+  readonly signal: AbortSignal;
+  readonly redirect: RequestRedirect;
+}
+declare class Response {
+  constructor(body?: string | ReadableStream | null, init?: ResponseInit);
+  readonly status: number;
+  readonly statusText: string;
+  readonly headers: Headers;
+  readonly ok: boolean;
+  readonly url: string;
+  readonly redirected: boolean;
+  readonly body: ReadableStream | null;
+  readonly bodyUsed: boolean;
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+}
+declare function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
+declare class URLSearchParams {
+  constructor(init?: string | Record<string, string> | string[][]);
+  readonly size: number;
+  append(name: string, value: string): void;
+  delete(name: string): void;
+  get(name: string): string | null;
+  getAll(name: string): string[];
+  has(name: string): boolean;
+  set(name: string, value: string): void;
+  toString(): string;
+}
+declare class URL {
+  constructor(url: string, base?: string | URL);
+  static canParse(url: string, base?: string): boolean;
+  readonly href: string;
+  readonly origin: string;
+  readonly protocol: string;
+  readonly host: string;
+  readonly hostname: string;
+  readonly port: string;
+  readonly pathname: string;
+  readonly search: string;
+  readonly hash: string;
+  readonly searchParams: URLSearchParams;
+  toString(): string;
+}
 // checked-f64-utf16-v32 (pilot batch, unreleased) inherits v31 and its ABIs with
 // no new host declaration: module constants and `as const`, string/number/boolean
 // literal types, top-level classes, `export ... from`/`export *` re-exports,

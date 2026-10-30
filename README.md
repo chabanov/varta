@@ -24,6 +24,7 @@ Developed by **Squad AI, Inc.** Architecture and technology by **Pavlo Chabanov*
 | --- | --- |
 | [Language guide](docs/language-guide.md) | Feature tour with examples, by profile |
 | [Architecture contract](docs/architecture.md) | Normative language, ABI, capability and limit contracts; [version matrix](docs/architecture.md#version-matrix) |
+| [Embedding contract](docs/embedding.md) | Normative contract for third-party hosts (JavaScript, other Wasm engines): validation, imports, layout, Tool ABI v1, security obligations |
 | [Development plan](docs/development-plan.md) | Status, research thesis, roadmap and the [uarp-sdk pilot](docs/development-plan.md#pilot-acceptance-package-uarp-sdk) |
 | [Verification](docs/verification.md) | Scoped and full quality gates |
 | [Compatibility inventory](conformance/README.md) | Pinned checked conformance cases |
@@ -135,6 +136,9 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v32` | Pilot batch (integration, unreleased): module constants and `as const`, literal types, classes, re-exports and `export *`, template literals, default exports, interface extends and merging, generics, Error subclasses |
 | `checked-f64-utf16-v33` | Suspension frames and sync generators (in development) |
 | `checked-f64-utf16-v34` | Pilot batch (in development): index signatures, recursive and wide records, `unknown` and checked `as`, Promise and async/await |
+| `checked-f64-utf16-v35` | Pilot batch in development: Web types, mixed records, async methods, frame liveness |
+| `checked-f64-utf16-v36` | Pilot batch in development: checked declared fields, function fields, async generators, timers |
+| `checked-f64-utf16-v37` | Pilot batch in development: language core, class generics, collections and binary text, RegExp, net.request |
 <!-- generated:profile-index:end -->
 
 ## Commands

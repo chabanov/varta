@@ -25,6 +25,11 @@ impl Lower<'_> {
             pattern
         };
         let span = pattern.span();
+        if let ast::Pat::Ident(id) = pattern
+            && let Some(target) = self.early_target(id.id.sym.as_ref(), span)?
+        {
+            return Ok(Some(target));
+        }
         if let ast::Pat::Ident(id) = pattern {
             let binding = self.assignment_binding(id.id.sym.as_ref(), span)?;
             return Ok(Some(Target {
@@ -49,6 +54,40 @@ impl Lower<'_> {
             .place(member)
             .map_err(|e| self.source.locate(e, span))?;
         Ok(Some(self.prepare_member_reference(field, span)?))
+    }
+    /// A prepared reference to a `let` binding that this closure captured
+    /// before its initialization (v37 `tdz`): the flag test runs before the
+    /// reference is read or written.
+    fn early_target(&mut self, name: &str, span: swc_common::Span) -> Result<Option<Target>> {
+        if !self.types.profile.language_core() {
+            return Ok(None);
+        }
+        let Ok(binding) = self.resolve_binding(name) else {
+            return Ok(None);
+        };
+        if !binding.mutable
+            || binding.initialized
+            || binding.tdz.is_none()
+            || binding.identity.0 == self.index
+        {
+            return Ok(None);
+        }
+        let ty = binding
+            .ty
+            .ok_or_else(|| invalid("missing assignment target type"))?;
+        let check = self.tdz_check(
+            name,
+            self.tdz_flag(&binding)
+                .ok_or_else(|| invalid("assignment to constant or uninitialized binding"))?,
+            span,
+        )?;
+        Ok(Some(Target {
+            ty,
+            span,
+            kind: Place::Local(binding.slot),
+            roots: vec![],
+            body: vec![check],
+        }))
     }
     pub(in crate::lower) fn prepare_member_reference(
         &mut self,

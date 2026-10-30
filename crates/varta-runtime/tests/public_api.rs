@@ -4170,6 +4170,143 @@ fn public_engine_runs_async_functions_and_promises_across_modules_in_v34() {
 }
 
 #[test]
+fn public_engine_runs_async_resource_methods_and_promise_values_across_modules_in_v35() {
+    // The pilot's resource shape: an `APIResource` base holding the client,
+    // `XResource extends APIResource` with async methods calling
+    // `this._client.request`, an async retry closure and `Promise.all` over
+    // an array of promises, re-exported through a barrel.
+    use varta_common::language::LanguageProfile;
+    struct ResourceSources;
+    impl ModuleLoader for ResourceSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./resource.ts" => Ok("resource.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("resource.ts") => "export class Client{calls:number;constructor(){this.calls=0;}\
+                    async request(path:string,value:number):Promise<number>{this.calls++;await null;\
+                    if(path==='/flaky'&&this.calls<4){throw new Error(`busy ${this.calls}`);}return value;}}\
+                    export class APIResource{_client:Client;constructor(client:Client){this._client=client;}}\
+                    export class Items extends APIResource{\
+                    async count(base?:number):Promise<number>{return this._client.request('/items',(base??0)+2);}\
+                    async retrieve(id:number):Promise<number>{const client=this._client;const retry=async function again(left:number):Promise<number>{\
+                    try{return await client.request('/flaky',id);}catch(error){if(left===0){throw error;}return again(left-1);}};\
+                    return retry(3);}}",
+                Some("index.ts") => "export * from './resource.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {Client,Items} from './index.ts';\
+                       export async function main():Promise<void>{\
+                       const client=new Client();const items=new Items(client);\
+                       const counts:Promise<number>[]=[items.count(),items.count(10)];\
+                       const both=await Promise.all(counts);console.log(`${both.length} ${both[1]}`);\
+                       const id=await items.retrieve(9);console.log(`${id} after ${client.calls} calls`);}"
+                    .into(),
+            },
+            &ResourceSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V35).unwrap();
+    // Node 24 prints the same two lines.
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: 2 12", "varta log: 9 after 4 calls"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V34)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("unsupported async class method"),
+        "{frozen}"
+    );
+}
+
+#[test]
+fn public_engine_runs_generic_async_generators_across_modules_in_v36() {
+    // The pilot's `autoPaginate`/`collect` shape: a generic async generator
+    // that awaits a fetcher's `unknown` page through a checked assertion and
+    // yields its items, consumed by a generic `for await` helper over
+    // `AsyncIterable<T>` with a `Number.POSITIVE_INFINITY` default limit,
+    // re-exported through a barrel.
+    use varta_common::language::LanguageProfile;
+    struct PaginationSources;
+    impl ModuleLoader for PaginationSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./pagination.ts" => Ok("pagination.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("pagination.ts") => "export type PageFetcher=(cursor:string|undefined)=>Promise<unknown>;\
+                    export async function* autoPaginate<T>(fetchPage:PageFetcher,itemsProp:string,cursorProp:string):AsyncIterableIterator<T>{\
+                    let cursor:string|undefined;for(;;){const page=(await fetchPage(cursor)) as Record<string,unknown>|undefined;if(!page)return;\
+                    const items=page[itemsProp];if(Array.isArray(items)){for(const item of items as T[])if(item!==undefined)yield item;}\
+                    const next=page[cursorProp];if(typeof next!=='string'||next==='')return;cursor=next;}}\
+                    export async function collect<T>(iterator:AsyncIterable<T>,limit=Number.POSITIVE_INFINITY):Promise<T[]>{\
+                    const out:T[]=[];for await(const item of iterator){out.push(item);if(out.length>=limit)break;}return out;}",
+                Some("index.ts") => "export * from './pagination.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {autoPaginate,collect} from './index.ts';\
+                       export async function main():Promise<void>{let calls=0;\
+                       const fetchPage=async(cursor:string|undefined):Promise<unknown>=>{calls++;\
+                       if(cursor===undefined){const first:Record<string,unknown>={items:['a','b'],cursor:'c1'};return first;}\
+                       if(cursor==='c1'){const second:Record<string,unknown>={items:['c'],cursor:''};return second;}return undefined;};\
+                       const all=await collect(autoPaginate<string>(fetchPage,'items','cursor'));\
+                       const two=await collect(autoPaginate<string>(fetchPage,'items','cursor'),2);\
+                       console.log(`${JSON.stringify(all)} ${JSON.stringify(two)} ${calls}`);}"
+                    .into(),
+            },
+            &PaginationSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V36).unwrap();
+    // Node 24 prints the same line.
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: [\"a\",\"b\",\"c\"] [\"a\",\"b\"] 3"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V35)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("unsupported async generator function"),
+        "{frozen}"
+    );
+}
+
+#[test]
 fn public_engine_runs_generic_generators_across_modules_in_v33() {
     // A synchronous shape of the pilot's `autoPaginate`: a generic generator
     // re-exported through a barrel and consumed by `for...of` with closing.
@@ -4351,4 +4488,835 @@ fn public_engine_links_unknown_causes_and_checked_assertions_in_v34() {
         .unwrap()
         .to_string();
     assert!(frozen.contains("unsupported type annotation"), "{frozen}");
+}
+
+#[test]
+fn public_engine_links_mixed_records_and_json_to_unknown_in_v35() {
+    // The pilot's problem documents: a mixed interface exported by an errors
+    // module, read by declared field and by key after `JSON.parse`, with an
+    // Error subclass that redeclares `cause?: unknown`.
+    use varta_common::language::LanguageProfile;
+    struct ProblemSources;
+    impl ModuleLoader for ProblemSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./errors.ts" => Ok("errors.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("errors.ts") => "export interface ProblemDocument{type?:string;title?:string;\
+                    status?:number;detail?:string;instance?:string;[key:string]:unknown}\
+                    export class ApiError extends Error{readonly cause?:unknown;readonly problem:ProblemDocument;\
+                    constructor(message:string,problem:ProblemDocument){super(message);this.problem=problem;}}\
+                    export function parseProblem(text:string):ProblemDocument|undefined{\
+                    const value:unknown=JSON.parse(text);\
+                    if(typeof value==='object'&&value!==null&&!Array.isArray(value)){return value as ProblemDocument;}\
+                    return undefined;}",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {ApiError,parseProblem} from './errors.ts';import type {ProblemDocument} from './errors.ts';\
+                       export function main():void{\
+                       const doc=parseProblem('{\"title\":\"Gone\",\"status\":410,\"traceId\":\"t-1\"}');\
+                       if(doc!==undefined){const error=new ApiError(String(doc.title),doc);\
+                       let extras='';for(const key in error.problem){if(key!=='title'&&key!=='status'){extras=extras+key;}}\
+                       console.log(error.message+' '+String(error.problem.status)+' '+extras+' '+String(error.cause));\
+                       const fallback:ProblemDocument={...doc,status:500};console.log(JSON.stringify(Object.keys(fallback))+' '+String(fallback.status));}\
+                       console.log(String(parseProblem('[1]')===undefined));}"
+                    .into(),
+            },
+            &ProblemSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V35).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: Gone 410 traceId undefined",
+            r#"varta log: ["title","status","traceId"] 500"#,
+            "varta log: true",
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V34)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("mixed object type"), "{frozen}");
+}
+
+#[test]
+fn public_engine_links_checked_declared_fields_across_modules_in_v36() {
+    // The pilot's problem documents (v36): a declared array of optional
+    // records next to `[key: string]: unknown`, converted from JSON on the
+    // first declared read, held by an Error subclass and read by a getter.
+    use varta_common::language::LanguageProfile;
+    struct ProblemSources;
+    impl ModuleLoader for ProblemSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./errors.ts" => Ok("errors.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("errors.ts") => "export interface ProblemDocument{title?:string;status?:number;\
+                    errors?:Array<{field?:string;message?:string}>;[key:string]:unknown}\
+                    export class ApiError extends Error{readonly problem:ProblemDocument;readonly reason?:string;\
+                    constructor(problem:ProblemDocument){super(problem.title??'failed');this.problem=problem;\
+                    this.reason=typeof problem.reason==='string'?problem.reason:undefined;}\
+                    get validationErrors():Array<{field?:string;message?:string}>{return this.problem.errors??[];}}\
+                    export function parseProblem(text:string):ProblemDocument{let parsed:unknown;\
+                    try{parsed=JSON.parse(text);}catch{return {title:text};}\
+                    if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){\
+                    const body=parsed as Record<string,unknown>;return body as ProblemDocument;}\
+                    return {status:0};}",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: r#"import {ApiError,parseProblem} from './errors.ts';
+                       export function main():void{
+                       const error=new ApiError(parseProblem('{"title":"Invalid","reason":"r","errors":[{"field":"a"},{"message":"b"}]}'));
+                       const list=error.validationErrors;let text='';
+                       for(const item of list){if(item!==undefined){text+=String(item.field)+'/'+String(item.message)+';';}}
+                       console.log(error.message+' '+String(error.reason)+' '+text+' '+String(list===error.validationErrors));
+                       console.log(JSON.stringify(Object.keys(error.problem)));}"#
+                    .into(),
+            },
+            &ProblemSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V36).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: Invalid r a/undefined;undefined/b; true",
+            r#"varta log: ["title","reason","errors"]"#,
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V35)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("not checkable from it"), "{frozen}");
+}
+
+#[test]
+fn public_engine_shares_v35_web_types_across_modules_without_listing_preludes() {
+    // The pilot's transport shape: an errors module reads numeric headers and
+    // the entry module owns an AbortController. Both modules name the engine
+    // Web types without importing them, and they share one Headers class.
+    use varta_common::language::LanguageProfile;
+    struct WebSources;
+    impl ModuleLoader for WebSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./errors.ts" => Ok("errors.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("errors.ts") => Ok(
+                    "export function numericHeader(headers:Headers,name:string):number|undefined{\
+                     const value=headers.get(name);if(value===null)return undefined;\
+                     const parsed=Number(value);return Number.isNaN(parsed)?undefined:parsed;}\
+                     export function cancelled(signal:AbortSignal):boolean{return signal.aborted;}"
+                        .into(),
+                ),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {numericHeader,cancelled} from './errors.ts';\
+                       export function main():void{\
+                       const headers=new Headers([['Retry-After','30'],['x-limit','n/a']]);\
+                       const controller=new AbortController();\
+                       console.log(String(numericHeader(headers,'retry-after')));\
+                       console.log(String(numericHeader(headers,'X-Limit')));\
+                       controller.abort();\
+                       const reason=controller.signal.reason;\
+                       console.log(`${cancelled(controller.signal)} ${reason instanceof DOMException}`);}"
+                    .into(),
+            },
+            &WebSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V35).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    // Module metadata lists the program's sources, never the engine preludes.
+    let modules: Vec<_> = compiled
+        .modules
+        .iter()
+        .map(|module| (module.path.clone(), module.imports.clone()))
+        .collect();
+    assert_eq!(
+        modules,
+        [
+            (PathBuf::from("errors.ts"), vec![]),
+            (PathBuf::from("entry.ts"), vec![PathBuf::from("errors.ts")]),
+        ]
+    );
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 30",
+            "varta log: undefined",
+            "varta log: true true"
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V34)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("Headers"), "{frozen}");
+}
+
+#[test]
+fn public_engine_shares_the_v37_regexp_prelude_across_modules() {
+    // A text module returns match arrays and RegExps to the entry module;
+    // neither imports RegExp, both use regex literals, and one RegExp class
+    // serves both. Module metadata never lists the prelude.
+    use varta_common::language::LanguageProfile;
+    struct TextSources;
+    impl ModuleLoader for TextSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./text.ts" => Ok("text.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("text.ts") => Ok(
+                    "export function pair(text:string):RegExpExecArray|null{return /(\\w+)=(\\w+)/.exec(text);}\
+                     export function separator():RegExp{return /\\s*,\\s*/;}"
+                        .into(),
+                ),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {pair,separator} from './text.ts';\
+                       export function main():void{\
+                       const m=pair('a k=v');\
+                       const sep=separator();\
+                       console.log(m===null?'none':`${m.index} ${m[1]??'-'} ${m[2]??'-'}`);\
+                       console.log(JSON.stringify('a , b,c'.split(sep))+' '+String(sep instanceof RegExp));\
+                       console.log('x1y2'.replace(/\\d/g,'#'));}"
+                    .into(),
+            },
+            &TextSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    let modules: Vec<_> = compiled
+        .modules
+        .iter()
+        .map(|module| (module.path.clone(), module.imports.clone()))
+        .collect();
+    assert_eq!(
+        modules,
+        [
+            (PathBuf::from("text.ts"), vec![]),
+            (PathBuf::from("entry.ts"), vec![PathBuf::from("text.ts")]),
+        ]
+    );
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 2 k v",
+            r#"varta log: ["a","b","c"] true"#,
+            "varta log: x#y#",
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(!frozen.contains("v37"), "{frozen}");
+}
+
+#[test]
+fn public_engine_links_function_fields_and_defaulted_callbacks_across_modules_in_v36() {
+    // The pilot's backoff helper (a defaulted `random: () => number =
+    // Math.random` parameter) and a transport hooks interface with optional
+    // function fields, exported by one module and filled by the entry module.
+    use varta_common::language::LanguageProfile;
+    struct HookSources;
+    impl ModuleLoader for HookSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./util.ts" => Ok("util.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("util.ts") => "export interface Hooks{onRetry?:(attempt:number)=>void;delay:(attempt:number)=>number}\
+                    export function streamBackoffDelay(attempt:number,base:number,max:number,random:()=>number=Math.random):number{\
+                    const half=Math.max(Math.min(max,base*2**Math.max(attempt-1,0))/2,1);return Math.round(half+random()*half);}\
+                    export function retry(hooks:Hooks,attempts:number):number{let total=0;\
+                    for(let attempt=1;attempt<=attempts;attempt++){hooks.onRetry?.(attempt);total+=hooks.delay(attempt);}return total;}",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {retry,streamBackoffDelay} from './util.ts';import type {Hooks} from './util.ts';\
+                       export function main():void{let seen='';\
+                       const hooks:Hooks={onRetry:(attempt:number):void=>{seen=seen+String(attempt);},\
+                       delay:(attempt:number):number=>streamBackoffDelay(attempt,100,1000,():number=>0.5)};\
+                       console.log(`${retry(hooks,3)} ${seen}`);\
+                       const plain:Hooks={delay:(attempt:number):number=>attempt};console.log(retry(plain,3));\
+                       const jitter=streamBackoffDelay(2,100,1000);console.log(String(jitter>=100&&jitter<=200));}"
+                    .into(),
+            },
+            &HookSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V36).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: 525 123", "varta log: 6", "varta log: true"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V35)
+        .err()
+        .unwrap()
+        .to_string();
+    // V35 stops at the defaulted function-typed parameter (the pilot's v35 blocker).
+    assert!(frozen.contains("union members other than"), "{frozen}");
+}
+
+#[test]
+fn public_engine_runs_v36_timers_across_modules_with_an_exact_grant() {
+    // The pilot's retry shape: a util module sleeps on a timer between
+    // attempts and the entry module arms a timeout signal; the timer imports
+    // need the exact `time.timer` grant and the module lists no prelude.
+    use varta_common::language::LanguageProfile;
+    use varta_common::scheduler::{SchedulerError, TIMER_CAPABILITY};
+    struct TimerSources;
+    impl ModuleLoader for TimerSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./util.ts" => Ok("util.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("util.ts") => Ok("export function sleep(ms:number):Promise<void>{\
+                     return new Promise<void>((resolve)=>setTimeout(resolve,ms));}\
+                     export function backoffDelay(attempt:number):number{\
+                     return Math.min(40,5*2**attempt);}"
+                    .into()),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {sleep,backoffDelay} from './util.ts';\
+                       export async function main():Promise<void>{\
+                       const signal=AbortSignal.timeout(12);\
+                       for(let attempt=0;attempt<3;attempt++){\
+                       const wait=backoffDelay(attempt);await sleep(wait);\
+                       console.log(`attempt ${attempt} waited ${wait} aborted ${signal.aborted}`);}}"
+                    .into(),
+            },
+            &TimerSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V36).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    let modules: Vec<_> = compiled.modules.iter().map(|m| m.path.clone()).collect();
+    assert_eq!(
+        modules,
+        [PathBuf::from("util.ts"), PathBuf::from("entry.ts")]
+    );
+    let grant = varta_common::CapabilityGrant {
+        id: TIMER_CAPABILITY.into(),
+        value: varta_common::CapabilityValue::Boolean(true),
+    };
+    let runtime = VartaRuntime::new();
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compiled.wasm, std::slice::from_ref(&grant))
+            .unwrap()
+            .lines,
+        [
+            "varta log: attempt 0 waited 5 aborted false",
+            "varta log: attempt 1 waited 10 aborted true",
+            "varta log: attempt 2 waited 20 aborted true",
+        ]
+    );
+    let denied = runtime.run_wasm_bytes(&compiled.wasm, &[]).unwrap_err();
+    assert!(
+        matches!(
+            denied,
+            varta_runtime::RuntimeError::Scheduler(SchedulerError::TimerDenied)
+        ),
+        "{denied:?}"
+    );
+    let ceiling = runtime
+        .run_wasm_bytes_with_policy(&compiled.wasm, std::slice::from_ref(&grant), &[])
+        .unwrap_err();
+    assert!(ceiling.to_string().contains("time.timer"), "{ceiling}");
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V35)
+        .err()
+        .unwrap()
+        .to_string();
+    // V35 keeps rejecting the timer globals as unknown calls.
+    assert!(
+        frozen.contains("unsupported call") && frozen.contains("setTimeout"),
+        "{frozen}"
+    );
+}
+
+#[test]
+fn public_engine_shares_v37_module_variables_and_record_unions_across_modules() {
+    // A store module exports a `let` (a live binding), a function constant
+    // and a discriminated union; the entry module reads the variable after
+    // the store's functions changed it and switches on the union.
+    use varta_common::language::LanguageProfile;
+    struct StoreSources;
+    impl ModuleLoader for StoreSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./store.ts" => Ok("store.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("store.ts") => {
+                    "export type Event={kind:'add';n:number}|{kind:'reset'};\
+                    export let total=0;\
+                    export const apply=(e:Event):void=>{switch(e.kind){case 'add':total+=e.n;break;\
+                    case 'reset':total=0;break;default:{const never:never=e;}}};"
+                }
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {apply,total} from './store.ts';import type {Event} from './store.ts';\
+                       export function main():void{const events:Event[]=[{kind:'add',n:2},{kind:'add',n:5}];\
+                       for(const e of events)apply(e);console.log(String(total));\
+                       apply({kind:'reset'});console.log(String(total));}"
+                    .into(),
+            },
+            &StoreSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: 7", "varta log: 0"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("top-level let or var declaration"),
+        "{frozen}"
+    );
+    // Importers read a module variable but may not assign it.
+    let assigned = varta_compiler::compile_modules_with_profile(
+        ModuleSource {
+            path: "entry.ts".into(),
+            text: "import {total} from './store.ts';export function main():void{total=1;}".into(),
+        },
+        &StoreSources,
+        LanguageProfile::CheckedF64Utf16V37,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(assigned.contains("assignment"), "{assigned}");
+}
+
+#[test]
+fn public_engine_links_the_v37_language_core_across_modules() {
+    // A protocol module with a hoisted helper and a closure created before
+    // the binding it reads, a deferred `let`, a string `switch`, dense reads,
+    // property-path narrowing and a value function passed as a `void`
+    // callback; the entry module drives it.
+    use varta_common::language::LanguageProfile;
+    struct CoreSources;
+    impl ModuleLoader for CoreSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./protocol.ts" => Ok("protocol.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("protocol.ts") => {
+                    "export interface Field{name:string;value?:string}\
+                    export function classify(fields:Field[],each:(n:string)=>void):string{\
+                    const report=():string=>summary+'/'+String(count());\
+                    let total=0;\
+                    for(const field of fields){each(field.name);\
+                    let kind:string;\
+                    switch(field.name){case 'id':case 'key':kind='k';break;default:kind='v';}\
+                    if(field.value!==undefined&&field.value.length>0)total+=field.value.length;\
+                    else total+=kind.length;}\
+                    const summary:string=fields[0].name;\
+                    return report();\
+                    function count():number{return total;}}"
+                }
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {classify} from './protocol.ts';\
+                       export function main():void{const seen:string[]=[];\
+                       const record=(name:string):number=>seen.push(name);\
+                       console.log(classify([{name:'id',value:'abc'},{name:'x'},{name:'key',value:''}],record));\
+                       console.log(String(seen.length)+seen[2]);}"
+                    .into(),
+            },
+            &CoreSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: id/5", "varta log: 3key"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("capture before binding initialization"),
+        "{frozen}"
+    );
+}
+
+#[test]
+fn public_engine_instantiates_generic_classes_and_methods_across_modules_in_v37() {
+    // The pilot's transport shape: a client with a generic async
+    // `request<T>` method and `#private` state, a resource base holding it,
+    // resource methods whose `Promise<R>` results infer `T`, and a generic
+    // page class instantiated in another module, re-exported through a barrel.
+    use varta_common::language::LanguageProfile;
+    struct GenericSources;
+    impl ModuleLoader for GenericSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./client.ts" => Ok("client.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("client.ts") => "export interface Spec{path:string}\
+                    export class Page<T>{items:T[];cursor:string|null;\
+                    constructor(items:T[],cursor:string|null){this.items=items;this.cursor=cursor;}\
+                    map<U>(f:(item:T)=>U):Page<U>{const out:U[]=[];for(let i=0;i<this.items.length;i++){out.push(f(this.items[i]!));}return new Page<U>(out,this.cursor);}}\
+                    export class Client{#calls=0;\
+                    async request<T>(spec:Spec,decode:(path:string)=>T):Promise<T>{this.#calls+=1;await null;return decode(spec.path);}\
+                    get calls():number{return this.#calls;}}\
+                    export class APIResource{protected readonly client:Client;constructor(client:Client){this.client=client;}}",
+                Some("index.ts") => "export * from './client.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {APIResource,Client,Page} from './index.ts';\
+                       class Items extends APIResource{\
+                       list(n:number):Promise<Page<number>>{return this.client.request({path:'/items'},(p:string):Page<number>=>new Page([n,p.length],null));}\
+                       name():Promise<string>{return this.client.request<string>({path:'/name'},(p:string):string=>p);}}\
+                       export async function main():Promise<void>{\
+                       const client=new Client();const items=new Items(client);\
+                       const page=await items.list(3);const labels=page.map((x:number):string=>`#${x}`);\
+                       console.log(`${labels.items[1]} ${await items.name()} ${client.calls}`);}"
+                    .into(),
+            },
+            &GenericSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    // Node 24 prints the same line.
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: #6 /name 2"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("unsupported generic class"), "{frozen}");
+}
+
+#[test]
+fn public_engine_shares_v37_collections_across_modules_without_naming_them() {
+    // The pilot's pagination and SSE shapes: one module owns a typed option
+    // record with a `Set<string>` and a `[string, number]` tuple; the entry
+    // module never names `Set`, `Map` or a tuple type, yet calls the set's
+    // methods, iterates it, destructures the tuple and joins lines. The
+    // engine preludes are not listed as program modules.
+    use varta_common::language::LanguageProfile;
+    struct CollectionSources;
+    impl ModuleLoader for CollectionSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./options.ts" => Ok("options.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("options.ts") => Ok(
+                    "export interface StreamOptions{terminal:Set<string>;retry:[string,number];}\
+                     export function options():StreamOptions{\
+                     return{terminal:new Set(['done','error']),retry:['backoff',250]};}"
+                        .into(),
+                ),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {options} from './options.ts';\
+                       export function main():void{\
+                       const o=options();\
+                       const seen:string[]=[];\
+                       for(const name of o.terminal)seen.push(name.toUpperCase());\
+                       const [label,delay]=o.retry;\
+                       const bytes=new TextEncoder().encode('é');\
+                       console.log(`${o.terminal.has('done')} ${o.terminal.has('x')} ${o.terminal.size}`);\
+                       console.log(`${seen.join('|')} ${label.padEnd(8,'.')}${delay} ${bytes.length}`);}"
+                    .into(),
+            },
+            &CollectionSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    let modules: Vec<_> = compiled
+        .modules
+        .iter()
+        .map(|module| (module.path.clone(), module.imports.clone()))
+        .collect();
+    assert_eq!(
+        modules,
+        [
+            (PathBuf::from("options.ts"), vec![]),
+            (PathBuf::from("entry.ts"), vec![PathBuf::from("options.ts")]),
+        ]
+    );
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: true false 2",
+            "varta log: DONE|ERROR backoff.250 2"
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("Set"), "{frozen}");
+}
+
+#[test]
+fn public_engine_runs_v37_fetch_across_modules_with_an_exact_request_grant() {
+    // The pilot's transport shape: a module issues requests with headers and
+    // a JSON body through `fetch`; the entry module reads the response and a
+    // denied origin. A loopback server answers on 127.0.0.1.
+    use std::io::{BufRead, BufReader, Read, Write};
+    use varta_common::language::LanguageProfile;
+    use varta_common::net::REQUEST_CAPABILITY;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let (mut line, mut length) = (String::new(), 0usize);
+            while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+                line.clear();
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let reply = format!("{{\"echo\":{}}}", String::from_utf8_lossy(&body));
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                )
+                .as_bytes(),
+            );
+        }
+    });
+    struct NetSources(String);
+    impl ModuleLoader for NetSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./transport.ts" => Ok("transport.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("transport.ts") => Ok(format!(
+                    "export async function post(path:string,body:string):Promise<Response>{{\
+                     const headers=new Headers();headers.set('Content-Type','application/json');\
+                     return fetch('{}'+path,{{method:'POST',headers,body}});}}",
+                    self.0
+                )),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {post} from './transport.ts';\
+                       export async function main():Promise<void>{\
+                       const response=await post('/items',JSON.stringify({n:1}));\
+                       const value=(await response.json()) as {echo:{n:number}};\
+                       console.log(`${response.status} ${value.echo.n}`);\
+                       try{await fetch('http://127.0.0.1:9/');}\
+                       catch(error){console.log(error instanceof DOMException?error.name:'other');}}"
+                    .into(),
+            },
+            &NetSources(origin.clone()),
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    let modules: Vec<_> = compiled.modules.iter().map(|m| m.path.clone()).collect();
+    // Engine preludes never appear in the module metadata.
+    assert_eq!(
+        modules,
+        [PathBuf::from("transport.ts"), PathBuf::from("entry.ts")]
+    );
+    let grant = varta_common::CapabilityGrant {
+        id: REQUEST_CAPABILITY.into(),
+        value: varta_common::CapabilityValue::Requests(varta_common::RequestScope {
+            urls: vec![format!("{origin}/items")],
+            methods: Some(vec!["POST".into()]),
+        }),
+    };
+    let runtime = VartaRuntime::new();
+    let denial = "varta log: <capability denied: net.request> (GET http://127.0.0.1:9/)";
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compiled.wasm, std::slice::from_ref(&grant))
+            .unwrap()
+            .lines,
+        ["varta log: 200 1", denial, "varta log: NotAllowedError"]
+    );
+    // A host ceiling without the origin makes the first request a rejection
+    // that escapes main.
+    let ceiling = runtime
+        .run_wasm_bytes_with_policy(&compiled.wasm, std::slice::from_ref(&grant), &[])
+        .unwrap_err();
+    assert!(ceiling.to_string().contains("NotAllowedError"), "{ceiling}");
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    // V36 has no fetch prelude.
+    assert!(frozen.contains("unsupported"), "{frozen}");
 }

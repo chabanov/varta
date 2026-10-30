@@ -12,7 +12,25 @@ pub enum CapabilityValue {
     UrlGlobs(Vec<String>),
     ListenEndpoints(Vec<String>),
     Boolean(bool),
+    /// `net.request` (v37): URL scopes over `http` and `https` with an
+    /// optional method list.
+    Requests(RequestScope),
 }
+
+/// The scope of one `net.request` grant. A request must match one URL pattern
+/// (the network URL rules: exact scheme, host and port, wildcards only after
+/// the authority) and, when `methods` is present, one method exactly. An
+/// empty URL list or an empty method list denies every request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestScope {
+    pub urls: Vec<String>,
+    /// `None` admits every method `fetch` can send.
+    pub methods: Option<Vec<String>>,
+}
+
+/// Methods `fetch` normalizes to uppercase (WHATWG "normalize a method"); a
+/// grant must spell them in uppercase, the only form a request carries.
+pub const NORMALIZED_METHODS: [&str; 6] = ["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"];
 
 use crate::{Result, VartaError};
 
@@ -20,9 +38,10 @@ use crate::{Result, VartaError};
 #[must_use]
 pub fn capability_kind(id: &str) -> Option<GrantKind> {
     match id {
-        "time.now" | "process.exit" => Some(GrantKind::Boolean),
+        "time.now" | "time.timer" | "process.exit" => Some(GrantKind::Boolean),
         "env.has" | "env.print" | "env.get" | "fs.read" | "fs.print" => Some(GrantKind::Patterns),
         "net.fetch" | "net.get" => Some(GrantKind::Urls),
+        crate::net::REQUEST_CAPABILITY => Some(GrantKind::Requests),
         "net.listen" => Some(GrantKind::Listeners),
         _ => None,
     }
@@ -34,6 +53,8 @@ pub enum GrantKind {
     Patterns,
     Urls,
     Listeners,
+    /// URL patterns plus an optional method list (`net.request`).
+    Requests,
 }
 
 impl CapabilityGrant {
@@ -75,11 +96,12 @@ impl CapabilityGrant {
                         }
                     }
                     if kind == GrantKind::Urls {
-                        validate_url_pattern(pattern)?;
+                        validate_url_pattern(pattern, &[HTTP_SCHEME])?;
                     }
                 }
                 Ok(())
             }
+            (GrantKind::Requests, CapabilityValue::Requests(scope)) => scope.validate(&self.id),
             (GrantKind::Listeners, CapabilityValue::ListenEndpoints(endpoints)) => {
                 if endpoints.len() > 64 {
                     return Err(VartaError::InvalidManifest(
@@ -115,7 +137,8 @@ pub fn validate_grants(grants: &[CapabilityGrant]) -> Result<()> {
             CapabilityValue::PathGlobs(patterns)
             | CapabilityValue::UrlGlobs(patterns)
             | CapabilityValue::ListenEndpoints(patterns) => patterns.len(),
-            _ => 0,
+            CapabilityValue::Requests(scope) => scope.urls.len(),
+            CapabilityValue::Boolean(_) => 0,
         })
         .sum();
     if grants.len() > 128 || patterns > 256 {
@@ -135,12 +158,62 @@ pub fn validate_grants(grants: &[CapabilityGrant]) -> Result<()> {
     Ok(())
 }
 
-fn validate_url_pattern(pattern: &str) -> Result<()> {
+/// URL schemes of network grants: `net.fetch`/`net.get` admit plain HTTP only,
+/// `net.request` (v37) admits HTTPS as well.
+const HTTP_SCHEME: &str = "http";
+const HTTPS_SCHEME: &str = "https";
+const SCHEME_SEPARATOR: &str = "://";
+
+impl RequestScope {
+    fn validate(&self, id: &str) -> Result<()> {
+        if self.urls.len() > 64 {
+            return Err(VartaError::InvalidManifest(
+                "too many patterns in one grant".into(),
+            ));
+        }
+        for pattern in &self.urls {
+            if pattern.len() > 512 || pattern.contains('\0') {
+                return Err(VartaError::InvalidManifest(format!(
+                    "unsafe pattern for {id}: {pattern}"
+                )));
+            }
+            validate_url_pattern(pattern, &[HTTP_SCHEME, HTTPS_SCHEME])?;
+        }
+        let Some(methods) = &self.methods else {
+            return Ok(());
+        };
+        if methods.len() > crate::net::MAX_GRANT_METHODS {
+            return Err(VartaError::InvalidManifest(format!(
+                "too many methods in one {id} grant"
+            )));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for method in methods {
+            let unnormalized = NORMALIZED_METHODS
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(method) && known != method);
+            if !crate::net::valid_method(method) || unnormalized || !seen.insert(method) {
+                return Err(VartaError::InvalidManifest(format!(
+                    "invalid method for {id}: {method}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_url_pattern(pattern: &str, schemes: &[&str]) -> Result<()> {
     // Wildcards are allowed only in the path. Authority and scheme are exact.
-    let Some(rest) = pattern.strip_prefix("http://") else {
-        return Err(VartaError::InvalidManifest(
-            "only http:// capabilities are supported".into(),
-        ));
+    let Some(rest) = schemes.iter().find_map(|scheme| {
+        pattern
+            .strip_prefix(scheme)
+            .and_then(|rest| rest.strip_prefix(SCHEME_SEPARATOR))
+    }) else {
+        return Err(VartaError::InvalidManifest(if schemes.len() == 1 {
+            "only http:// capabilities are supported".into()
+        } else {
+            "net.request patterns require http:// or https://".into()
+        }));
     };
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
     if authority.is_empty()

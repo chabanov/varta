@@ -5,6 +5,9 @@ use super::*;
 /// After every module is laid out, give each overridden root method one
 /// dispatcher shared by the root class and all of its descendants.
 pub(in crate::lower) fn dispatchers(types: &mut ir::ValueTypes, next: &mut usize) -> Result<()> {
+    // Generic class instances (v37) created before every declared class was
+    // laid out are laid out now; later ones lay out when they are created.
+    generic_classes::lay_out_deferred(types)?;
     let classes = &types.classes;
     let mut roots = Vec::new();
     for (id, class) in classes.list.iter().enumerate() {
@@ -24,7 +27,7 @@ pub(in crate::lower) fn dispatchers(types: &mut ir::ValueTypes, next: &mut usize
         }
     }
     for (root, name) in roots {
-        if *next >= MAX_FUNCTIONS {
+        if *next >= types.function_limit() {
             let class = &types.classes.list[root as usize];
             return Err(class
                 .source
@@ -46,7 +49,8 @@ pub(in crate::lower) fn dispatchers(types: &mut ir::ValueTypes, next: &mut usize
             .dispatchers
             .push(Dispatcher { root, name, index });
     }
-    Ok(())
+    // Instance member functions take slots after the dispatchers.
+    generic_classes::materialize(types, next)
 }
 
 /// Lower the initializer and method bodies of the classes of `module` in the
@@ -76,7 +80,32 @@ pub(in crate::lower) fn bodies(
         if functions.len() != index {
             return Err(CompilerError::Internal("class function order".into()));
         }
-        let (declaration, signature, init) = match &member {
+        functions.push(member_function(
+            (index, class, &member),
+            (symbols, constants),
+            entry,
+            types,
+            (&mut *generated, &mut *next, &mut *effects),
+        )?);
+    }
+    Ok(())
+}
+
+/// Lower one initializer or method body of `class`; a generic class
+/// instance's body sees its type arguments.
+pub(super) fn member_function(
+    (index, class, member): (usize, u32, &Member),
+    (symbols, constants): (&link::Symbols, &module_constants::Scope),
+    entry: usize,
+    types: &mut ir::ValueTypes,
+    synthesized: (
+        &mut BTreeMap<usize, ir::Function>,
+        &mut usize,
+        &mut BTreeMap<usize, flow_calls::Impact>,
+    ),
+) -> Result<ir::Function> {
+    {
+        let (declaration, signature, init) = match member {
             Member::Init => {
                 let declaration = constructors::declaration(class, types)?;
                 let signature = types.classes.list[class as usize]
@@ -95,7 +124,8 @@ pub(in crate::lower) fn bodies(
                     .find_map(|member| match member {
                         ast::ClassMember::Method(m)
                             if m.is_static == is_static
-                                && member_name(&m.key).is_ok_and(|n| &n == name) =>
+                                && method_name(&m.key, types.profile, true)
+                                    .is_ok_and(|n| &n == name) =>
                         {
                             Some(m)
                         }
@@ -118,20 +148,27 @@ pub(in crate::lower) fn bodies(
             }
         };
         let source = types.classes.list[class as usize].source.clone();
+        let frame = types.classes.list[class as usize].frame.clone();
         types.classes.context = Some(Context { class, init });
-        let function = link::body(
-            &declaration,
-            (&signature, constants),
-            symbols,
-            &source,
-            entry,
-            types,
-            (&mut *generated, &mut *next, &mut *effects),
-        );
+        let lower = |types: &mut ir::ValueTypes| {
+            link::body(
+                &declaration,
+                (&signature, constants),
+                symbols,
+                &source,
+                entry,
+                types,
+                synthesized,
+            )
+        };
+        let function = if frame.is_empty() {
+            lower(types)
+        } else {
+            generics::with_frame(types, frame, lower)
+        };
         types.classes.context = None;
-        functions.push(function?);
+        function
     }
-    Ok(())
 }
 
 /// Synthesize each dispatcher: test the receiver's class descriptor against
@@ -140,46 +177,31 @@ pub(in crate::lower) fn dispatch_bodies(
     types: &ir::ValueTypes,
     functions: &mut Vec<ir::Function>,
 ) -> Result<()> {
-    let classes = &types.classes;
-    for dispatcher in &classes.dispatchers {
-        if functions.len() != dispatcher.index {
+    for (index, function) in dispatcher_functions(types)? {
+        if functions.len() != index {
             return Err(CompilerError::Internal("class dispatcher order".into()));
         }
+        functions.push(function);
+    }
+    Ok(())
+}
+
+/// V37 synthesizes the dispatchers after every body (and so every generic
+/// class instance) exists, into the generated table at their slots.
+pub(in crate::lower) fn late_dispatch_bodies(
+    types: &ir::ValueTypes,
+    generated: &mut BTreeMap<usize, ir::Function>,
+) -> Result<()> {
+    generated.extend(dispatcher_functions(types)?);
+    Ok(())
+}
+
+fn dispatcher_functions(types: &ir::ValueTypes) -> Result<Vec<(usize, ir::Function)>> {
+    let classes = &types.classes;
+    let mut functions = Vec::new();
+    for dispatcher in &classes.dispatchers {
         let root = &classes.list[dispatcher.root as usize];
         let base = &root.methods[&dispatcher.name];
-        let signature = &base.signature;
-        let span = root.span;
-        let params: Vec<Type> = std::iter::once(Type::Class(dispatcher.root))
-            .chain(signature.params.iter().copied())
-            .collect();
-        let slot = params.len() as u32;
-        let mut locals = params.clone();
-        locals.push(Type::Number);
-        let forward = |owner: u32, index: usize| {
-            let args = params
-                .iter()
-                .enumerate()
-                .map(|(position, ty)| Expr {
-                    span,
-                    ty: if position == 0 {
-                        Type::Class(owner)
-                    } else {
-                        *ty
-                    },
-                    kind: E::Local(position as u32),
-                })
-                .collect();
-            let call = Expr {
-                span,
-                ty: signature.result,
-                kind: E::Call(index, args),
-            };
-            if signature.result == Type::Void {
-                vec![S::Expr(call), S::Return(None)]
-            } else {
-                vec![S::Return(Some(call))]
-            }
-        };
         // Group descendants by the implementation they inherit.
         let mut implementations: BTreeMap<(u32, usize), Vec<u32>> = BTreeMap::new();
         for id in 0..classes.list.len() as u32 {
@@ -191,45 +213,102 @@ pub(in crate::lower) fn dispatch_bodies(
                     .push(classes.shape(id));
             }
         }
-        let mut body = Vec::new();
-        for ((owner, index), shapes) in &implementations {
-            if *owner == dispatcher.root {
-                continue;
-            }
-            body.push(S::If(
-                Expr {
-                    span,
-                    ty: Type::Boolean,
-                    kind: E::IsClass {
-                        value: Box::new(Expr {
-                            span,
-                            ty: Type::Class(dispatcher.root),
-                            kind: E::Local(0),
-                        }),
-                        shapes: shapes.clone(),
-                        slot,
-                    },
-                },
-                forward(*owner, *index),
-                Vec::new(),
+        if implementations
+            .keys()
+            .any(|(_, index)| *index == generic_classes::UNALLOCATED)
+        {
+            return Err(CompilerError::Internal(
+                "unallocated dispatch target".into(),
             ));
         }
-        body.extend(forward(dispatcher.root, signature.index));
-        functions.push(ir::Function {
-            shape: signature.shape.clone(),
-            self_slot: None,
-            receiver: Some(Type::Class(dispatcher.root)),
-            source: root.source.clone(),
-            span,
-            params,
-            result: signature.result,
-            locals,
-            body,
-            cells: Default::default(),
-            captures: Vec::new(),
-            environment: false,
-            generator: None,
-        });
+        functions.push((
+            dispatcher.index,
+            dispatcher_function(types, dispatcher.root, &base.signature, &implementations),
+        ));
     }
-    Ok(())
+    Ok(functions)
+}
+
+/// One dispatcher over `root`'s method with `signature`: test the receiver's
+/// class descriptor against the classes sharing each overriding
+/// implementation (grouped by owner and function index), then forward all
+/// physical slots; the root's implementation is the fallback.
+pub(super) fn dispatcher_function(
+    types: &ir::ValueTypes,
+    root: u32,
+    signature: &Signature,
+    implementations: &BTreeMap<(u32, usize), Vec<u32>>,
+) -> ir::Function {
+    let class = &types.classes.list[root as usize];
+    let span = class.span;
+    let params: Vec<Type> = std::iter::once(Type::Class(root))
+        .chain(signature.params.iter().copied())
+        .collect();
+    let slot = params.len() as u32;
+    let mut locals = params.clone();
+    locals.push(Type::Number);
+    let forward = |owner: u32, index: usize| {
+        let args = params
+            .iter()
+            .enumerate()
+            .map(|(position, ty)| Expr {
+                span,
+                ty: if position == 0 {
+                    Type::Class(owner)
+                } else {
+                    *ty
+                },
+                kind: E::Local(position as u32),
+            })
+            .collect();
+        let call = Expr {
+            span,
+            ty: signature.result,
+            kind: E::Call(index, args),
+        };
+        if signature.result == Type::Void {
+            vec![S::Expr(call), S::Return(None)]
+        } else {
+            vec![S::Return(Some(call))]
+        }
+    };
+    let mut body = Vec::new();
+    for ((owner, index), shapes) in implementations {
+        if *owner == root {
+            continue;
+        }
+        body.push(S::If(
+            Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::IsClass {
+                    value: Box::new(Expr {
+                        span,
+                        ty: Type::Class(root),
+                        kind: E::Local(0),
+                    }),
+                    shapes: shapes.clone(),
+                    slot,
+                },
+            },
+            forward(*owner, *index),
+            Vec::new(),
+        ));
+    }
+    body.extend(forward(root, signature.index));
+    ir::Function {
+        shape: signature.shape.clone(),
+        self_slot: None,
+        receiver: Some(Type::Class(root)),
+        source: class.source.clone(),
+        span,
+        params,
+        result: signature.result,
+        locals,
+        body,
+        cells: Default::default(),
+        captures: Vec::new(),
+        environment: false,
+        generator: None,
+    }
 }

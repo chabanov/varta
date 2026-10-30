@@ -25,7 +25,7 @@ impl Lower<'_> {
         }
         let span = call.span;
         let value = if let Some(first) = call.args.first() {
-            self.expr(&first.expr)?
+            self.object_value(&first.expr)?
         } else {
             Expr {
                 span,
@@ -52,7 +52,19 @@ impl Lower<'_> {
         };
         let value_ty = self.types.arrays[values_id as usize];
         let element = unions::intern(vec![Type::String, value_ty], self.types)?;
-        let pair = arrays::intern(element, self.types)?;
+        let physical = arrays::intern(element, self.types)?;
+        // V37 (`collections`) types each entry as the tuple `[string, T]`,
+        // physically the same pair array as before.
+        let pair = if self.types.profile.collections() {
+            tuples::intern(
+                vec![Type::String, value_ty],
+                tuples::PAIR,
+                false,
+                self.types,
+            )?
+        } else {
+            physical
+        };
         let result = arrays::intern(pair, self.types)?;
         let keys_ty = keys.ty;
         let values_ty = values.ty;

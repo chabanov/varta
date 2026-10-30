@@ -13,8 +13,16 @@
 use super::*;
 use functions::{LiftContext, intern_full};
 mod async_functions;
+mod async_generators;
+mod combinators;
 mod methods;
+pub(in crate::lower) mod timers;
+mod values;
 pub(super) use async_functions::AsyncSplit;
+pub(super) use async_generators::{
+    AsyncBody, annotation as async_generator_annotation, named as async_generator_name,
+    rejected as async_generator_rejected,
+};
 use ir::{PromiseType, ScheduleMode};
 use std::collections::BTreeSet;
 use varta_common::scheduler::PromiseState;
@@ -25,11 +33,11 @@ use varta_common::value::ErrorClass;
 pub(crate) mod fields {
     pub(crate) const HANDLED: &str = "handled";
     pub(crate) const LOCKED: &str = "locked";
-    pub(crate) const REASON: &str = "reason";
+    pub(crate) const REASON: &str = varta_common::scheduler::PROMISE_REASON_FIELD;
     pub(crate) const SERIAL: &str = "serial";
-    pub(crate) const STATE: &str = "state";
+    pub(crate) const STATE: &str = varta_common::scheduler::PROMISE_STATE_FIELD;
     pub(crate) const TRACKED: &str = "tracked";
-    pub(crate) const VALUE: &str = "value";
+    pub(crate) const VALUE: &str = varta_common::scheduler::PROMISE_VALUE_FIELD;
 }
 use fields::*;
 /// V8's message for resolving a promise with itself.
@@ -51,6 +59,12 @@ enum Helper {
     Finally,
     TailValue,
     TailThrow,
+    /// The element job of a promise combinator (v35).
+    Combinator(combinators::Combinator),
+    /// The frame of a timeout or interval callback (v36).
+    Timer(timers::TimerKind),
+    /// An async generator protocol helper or job (v36).
+    AsyncGenerator(async_generators::Operation),
 }
 
 /// Promise lowering state shared by every function of one program.
@@ -60,6 +74,13 @@ pub(crate) struct Asynchrony {
     /// bodies and promise jobs.
     pub scheduled: BTreeSet<usize>,
     helpers: BTreeMap<(Helper, Vec<Type>), usize>,
+    /// Async generator bodies being lowered (v36), by the lowering index of
+    /// their declaration.
+    bodies: BTreeMap<usize, AsyncBody>,
+    /// Split async generator bodies (v36), by function index: the state
+    /// record parameter every suspension publishes, its type and the input
+    /// type of every suspension point (the body's own generator type).
+    pub published: BTreeMap<usize, (u32, Type, Type)>,
 }
 
 pub(super) fn rejected(what: &str) -> CompilerError {
@@ -107,6 +128,15 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     }
     if matches!(value, Type::Generator(_)) {
         return Err(generators::opaque("a promise"));
+    }
+    if value.is_union()
+        && unions::members(value, types)
+            .iter()
+            .any(|m| matches!(m, Type::Promise(_)))
+    {
+        return Err(rejected(
+            "Promise<T> whose T may hold a promise; a promise never fulfills with a promise",
+        ));
     }
     if value.width() > 1
         || matches!(value, Type::Function(_))
@@ -234,6 +264,9 @@ struct Synthetic {
     shape: ir::ParameterShape,
     capture: Option<Binding>,
     scheduled: bool,
+    /// The function result: `void` for every promise helper and job; an
+    /// async generator request (v36) returns its promise.
+    result: Type,
 }
 
 /// What a promise handler returns: nothing, a value, or a promise to adopt.
@@ -343,7 +376,7 @@ impl Lower<'_> {
         build: impl FnOnce(&mut Lower<'_>, &[u32], Option<u32>) -> Result<Vec<S>>,
     ) -> Result<usize> {
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid("too many functions including promise jobs"));
         }
         *self.next_function += 1;
@@ -368,7 +401,7 @@ impl Lower<'_> {
             control: Default::default(),
             guard_blocked: Default::default(),
             outer_narrows: Default::default(),
-            result: Type::Void,
+            result: spec.result,
             infer_returns: false,
             entry: self.entry,
             loops: 0,
@@ -386,6 +419,7 @@ impl Lower<'_> {
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         let params: Vec<u32> = spec.params.iter().map(|ty| child.hidden(*ty)).collect();
         let captured = spec
@@ -405,7 +439,7 @@ impl Lower<'_> {
             source: child.source.clone(),
             span: spec.span,
             params: spec.params,
-            result: Type::Void,
+            result: spec.result,
             locals: (0..child.next)
                 .map(|slot| {
                     child
@@ -430,6 +464,7 @@ impl Lower<'_> {
             params,
             capture: None,
             scheduled,
+            result: Type::Void,
         }
     }
     /// `if (p.state === pending) { settle; trigger reactions; track }`.
@@ -501,12 +536,15 @@ impl Lower<'_> {
                 Self::plain(span, vec![ty, value], false),
                 |child, params, _| {
                     let (p, v) = (params[0], params[1]);
-                    child.settle_body(
+                    // An unknown holding a promise is never adopted silently.
+                    let mut body = child.unknown_promise_guard(span, v, value)?;
+                    body.extend(child.settle_body(
                         span,
                         || local(span, p, ty),
                         PromiseState::Fulfilled,
                         local(span, v, value),
-                    )
+                    )?);
+                    Ok(body)
                 },
             )
         })
@@ -604,6 +642,8 @@ impl Lower<'_> {
     fn await_promise(&mut self, span: swc_common::Span, promise: Expr) -> Result<Expr> {
         let ty = promise.ty;
         let (_, info) = self.promise_info(ty)?;
+        // An async generator body (v36) waits through a relay job frame.
+        let relay = self.relay(span, ty)?;
         let value = stored(info.value);
         let slot = self.hidden(ty);
         let output = self.hidden(value);
@@ -638,6 +678,7 @@ impl Lower<'_> {
                 promise: Box::new(promise),
                 slot,
                 result: Box::new(result),
+                relay,
             },
         })
     }
@@ -715,6 +756,7 @@ impl Lower<'_> {
     /// later reads: an `await` or a callback that runs user code acts like an
     /// unknown call for write-aware refinements.
     fn flow_reentry(&mut self) {
+        self.drop_paths();
         if !self.types.profile.refinement_writes() {
             return;
         }
@@ -763,7 +805,7 @@ impl Lower<'_> {
             ast::Expr::Ident(id) if id.sym == "undefined" && self.binding("undefined").is_err() => {
                 return Ok(None);
             }
-            ast::Expr::Arrow(arrow) if arrow.is_async => {
+            ast::Expr::Arrow(arrow) if arrow.is_async && !self.types.profile.async_methods() => {
                 return Err(self
                     .source
                     .locate(rejected("async arrow function"), arrow.span));

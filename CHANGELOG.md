@@ -11,6 +11,300 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- The v37 streams integrated, with their cross-stream rules. Unreachable
+  functions, including unused engine prelude members, are removed before the
+  256-function limit applies (a `fetch` hello world went from 228 linked to
+  154 reachable functions). `JSON.stringify` imports the new
+  `json_stringify_v17` (host ABI 33), which skips private state: `#private`
+  fields, engine prelude internals (`Headers`, `AbortSignal`, `Request`, … as
+  `{}`) and non-enumerable Error slots, so `JSON.stringify` of `unknown` works
+  in programs that load Web types; object keys starting with `#` are reserved,
+  and `URL` and RegExp match arrays stay out of `JSON.stringify` and
+  `unknown`. `Date.now()`/`new Date()` without `time.now` throw a catchable
+  `NotAllowedError` through the permission broker instead of ending the run.
+  Index reads produce `undefined` where code expects it (`T | undefined`
+  contexts, `??`, bindings and loop variables compared with `undefined`,
+  `unknown[]`). String `split` has one dispatch path for string and RegExp
+  separators. `fetch` and `Request` accept `URL` inputs; classes may
+  `implements AsyncIterable<T>`; `instanceof` and `#x in` test every class
+  member of a union; readonly literal fields keep literal types; fields take
+  their type from `new Map<K, V>()`, `new Set<T>()` and `new Uint8Array(n)`;
+  a local named like a prelude value (`fetch`) shadows it. The conformance
+  inventory is pinned to v37. Debug and test builds optimize the Cranelift
+  crates, removing a `build --single` probe timeout under parallel test
+  load. V36 and earlier keep their bytes and diagnostics.
+
+- The language core under opt-in v37 (selector `language_core`). Closures may
+  capture `let`/`const` bindings and hoisted nested function declarations
+  before their initialization, with JavaScript's temporal dead zone: an
+  access through the closure before it throws an Error whose `name` is
+  `ReferenceError`. `let x: T;` is admitted with TypeScript-style definite
+  assignment. `for (const x of xs)`, `xs[i]` and `s[i]` have the element type
+  through a checked read (a hole or a missing index throws `TypeError`, where
+  Node reads `undefined`). Guards on property paths (`a.b !== undefined`,
+  `typeof a.b.c`, truthiness, `a.b?.c`, literal comparisons) narrow later
+  reads until a call or property write may change them. `switch` selects by
+  strict equality over strings, literal unions and `typeof`, with clause
+  narrowing. Value-returning functions convert to `void`-result function
+  types, and function mismatches name both signatures. Endless loops end
+  value-returning functions, uninitialized `T | undefined` class fields start
+  as `undefined`, `new C()` types a field, constructor arrows may use
+  `this.field` and `ReturnType<typeof setTimeout>` is the timer handle type.
+  Unions may hold several record shapes, interfaces and classes and arrays
+  of different element kinds, told apart by layout descriptor and element
+  kind: discriminant, `in`, `instanceof`, `typeof` and `Array.isArray`
+  narrowing, field reads and method calls on the union, `never`
+  exhaustiveness, and checked JSON conversion that selects the member by its
+  literal discriminant. Module-level `let`/`var` hold mutable module state in
+  root slots (exports are live bindings), module constants may hold
+  functions, and `const id = setInterval(() => clearInterval(id), ms)`
+  compiles.
+  No value tag, layout, host import or budget changes; v36 keeps its bytes
+  and diagnostics.
+
+- Class generics under opt-in v37 (selector `class_generics`): generic
+  instance, static and async methods (monomorphized per type-argument list,
+  inferred from arguments and from the contextual result type, so the pilot's
+  `return this._client.request(spec)` instantiates `request<R>` from the
+  method's `Promise<R>`), overrides of generic methods dispatched per
+  instantiation, generic classes (`class Page<T>`, `extends Page<T>`,
+  `class Numbers extends Page<number>`, statics on the template), method
+  signatures in interfaces as function fields with object-literal methods
+  that do not use `this`, checked `implements`, and `#private` fields,
+  methods and getters with `#x in value`. No value tag, layout, host import
+  or budget changes; v36 keeps its diagnostics and bytes.
+
+- Collections and binary text under opt-in v37 (selector `collections`):
+  `Map`/`Set` (insertion order, SameValueZero and identity keys, a hashed
+  index, live iteration, `forEach`, `keys`/`values`/`entries`, spreads and
+  `Array.from`, module-constant sets), tuples (`[A, B]`, `readonly`, trailing
+  optional elements; `Object.entries` returns `[string, T][]`), `padStart`,
+  `padEnd`, `toUpperCase`, `toLowerCase`, `split` with a string separator,
+  `concat`, `codePointAt`, `String.fromCharCode`/`fromCodePoint` and
+  `Array.prototype.join`, `Uint8Array` (ToUint8 writes, `set`/`slice`/`fill`/
+  `indexOf`/`includes`/`join`), UTF-8 `TextEncoder`/`TextDecoder` with
+  `fatal`, `ignoreBOM` and streaming, `btoa`/`atob`,
+  `crypto.getRandomValues`/`randomUUID` (the `Math.random` entropy path) and
+  a UTC `Date` subset (ISO-8601 and IMF-fixdate parsing, `toISOString`,
+  `getUTC*`). They are typed guest code in engine builtin preludes. Three host
+  imports with minimum host ABI 33: `string_to_upper_case16` and
+  `string_to_lower_case16` (pure) and `date_now` (exact `time.now` grant,
+  recoverable `NotAllowedError` denial). No value tag or layout: v37 keeps value layout 17, and
+  logging, `JSON.stringify` and `unknown` reject values holding these
+  objects. V36 keeps its bytes and diagnostics.
+
+- RegExp under opt-in v37 (selector `regexp`). Regular expression literals
+  and `new RegExp` with string literal arguments are compiled ahead of time
+  (ECMAScript 2025 pattern syntax, Annex B without `u`, flags `gimsuy`) into
+  matcher programs that one guest Pike VM runs in time linear in the input,
+  metered as ordinary fuel, so no pattern can backtrack catastrophically. The
+  engine prelude provides `RegExp` (`exec`, `test`, `lastIndex`, `source`,
+  `flags` and the flag getters), `RegExpExecArray` and `RegExpMatchArray`,
+  and the string methods `search`, `match`, `matchAll`, `replace`,
+  `replaceAll` and `split`, with replacement templates, replacer functions
+  and string patterns. Case-insensitive matching is resolved at compile time.
+  Backreferences, lookaround, `\p{…}`, modifiers, run-time patterns and the
+  `d`/`v` flags are rejected by name. No value tag, layout, host import,
+  capability or budget changes; v36 and earlier keep their diagnostics.
+
+- Network requests under opt-in v37 (selector `net_request`). `fetch`,
+  `Request`, `Response`, a `ReadableStream` subset, `URL` and
+  `URLSearchParams` are engine preludes over one new exact capability,
+  `net.request` (URL scopes over `http`/`https` with an optional method list;
+  host ceilings narrow both). Requests run on hyper's HTTP/1.1 client, HTTPS
+  through rustls with the compiled-in Mozilla roots; completions wake a
+  scheduled frame like a timer, so the runtime keeps only ids and serials.
+  Bodies stream as bounded, UTF-8 decoded text chunks (bytes wait for
+  `Uint8Array`); `AbortSignal` and `AbortSignal.timeout` cancel transfers;
+  redirects default to `error`, with `manual` and grant-checked `follow`.
+  Classes may declare `async *[Symbol.asyncIterator]()` for `for await`. Six
+  host ABI 33 imports join the registry (`net_request_start` with
+  `net.request`, and five bookkeeping operations).
+- A permission broker for asynchronous capabilities under v37: a denied
+  `net.request` or `time.timer` is decided before any effect, logged, and
+  delivered as a catchable `NotAllowedError` `DOMException` (`fetch` rejects,
+  `setTimeout` throws through the new `timer_start_v2`); v36 keeps its fatal
+  timer denial. The broker is the documented seam for a later consent prompt.
+- New dependencies, exactly pinned: `rustls` (ring provider), `tokio-rustls`
+  and `webpki-roots` for HTTPS, hyper's `client` feature (adds `want` and
+  `try-lock`), and the test-only `rcgen` for loopback certificates.
+
+- Opt-in v37 (pilot batch: language core, class generics, collections and
+  binary text, RegExp and `net.request`, in development) is registered. It
+  inherits every v36 feature, shares value ABI/layout 17 with v36 and declares
+  its own host ABI 33 (`NET_REQUEST_VERSION`), under which the batch's
+  imports were added later; the launcher advertises host ABI 33. A v37 module relabelled as v36 fails at its
+  host ABI section, and runtimes that do not list v37 reject its declared
+  profile name before any guest effect. Its `language_core`, `class_generics`,
+  `collections`, `regexp` and `net_request` selectors admitted nothing at
+  registration.
+
+- Checked declared fields under opt-in v36 (selector
+  `checked_declared_fields`). A mixed record indexed by `unknown` may declare
+  fields of any type a JSON value can describe, such as the pilot's
+  `errors?: Array<{ field?: string; message?: string }>`, nested records,
+  dictionaries, unions and nested mixed records. A declared read returns the
+  stored value when its static type is proven (descriptors, element kinds, and
+  non-empty exact arrays) and otherwise converts the JSON graph into a fresh
+  value that it stores back; checked parsing and assertions from `unknown`
+  convert the same way, and a plain `Record<string, T>` asserts to a mixed
+  record of the same storage. Structural record assertions accept every key
+  order of a shape. V36 also destructures dictionaries, narrows
+  `typeof a.b === "string" ? a.b : x`, types `a ?? []` by `a`, admits
+  `let x: unknown;` and exhaustive `switch` returns. No value tag, layout,
+  host import or budget changes; v35 keeps its diagnostics.
+
+- Timers under opt-in v36 (selector `timers`, K4.4 step 5): `setTimeout`,
+  `setInterval`, `clearTimeout`, `clearInterval`, the
+  `new Promise<void>((resolve) => setTimeout(resolve, ms))` sleep pattern and
+  `AbortSignal.timeout` run on a runtime event loop after the microtask
+  checkpoint, in Node's order (main and its microtasks, then timers by due
+  time and creation order, each followed by its microtasks). Ids are numbers,
+  as in browsers. Arming a timer requires the new exact boolean grant
+  `time.timer` (`"time": { "timer": true }`), denied by default: without it
+  the execution ends at the call. A timer due at or after the 5-second
+  execution deadline ends the execution with a budget error instead of
+  waiting, at most `MAX_PENDING_TIMERS` timers are pending, an exception from
+  a timer callback ends the execution like one from `main`, and
+  `AbortSignal.timeout` timers do not keep the loop alive. Four internal host
+  imports (`timer_start`, `timer_clear`, `timer_take`, `timer_uncaught`) use
+  host ABI 32; v35 and earlier keep rejecting the timer globals. Under v36 an
+  arrow expression body in a `void` context discards its value, as in
+  TypeScript.
+
+- Async generators and `for await` under opt-in v36 (selector
+  `async_generators`, K4.4 step 6). `async function*` declarations, generic
+  instantiations and instance and static class methods return
+  `AsyncGenerator<T, TReturn, TNext>` (also written `AsyncIterableIterator`,
+  `AsyncIterable` or `AsyncIterator`); `next`, `return` and `throw` return
+  promises, queue while the body runs and follow the ECMAScript request
+  queue; `await`, `yield` and `return` work across `try`/`catch`/`finally`,
+  and `yield` and `return` await their operands; `yield*` delegates to
+  another async generator, forwarding `return()` and `throw()`. `for await`
+  iterates async generators, arrays and synchronous generators with Node's
+  job counts and closes them on `break`, `return` and throws. An async
+  generator object is the frame of an internal body generator with a guest
+  state record; awaits in bodies run through scheduled relay jobs, so
+  suspended generators hold no live-frame slot and are collected. Under v36 a
+  checked `as` may also contain `await`, and a `Math`/`Number` constant
+  default types a parameter. No host import, value tag, layout or budget is
+  added; `yield*` over other iterables, async generator expressions and
+  `Symbol.asyncIterator` remain unsupported. Logs match Node 24.
+
+- Opt-in v36 (pilot batch: checked declared fields, function fields, async
+  generators and timers, in development) integrates its four streams. It
+  inherits every v35 feature and declares its own host ABI 32
+  (`TIMERS_VERSION`: the value17 readers and the timer operations) and value
+  ABI/layout 17; the launcher advertises both. A v36 module relabelled as v35
+  fails validation before any guest effect, and runtimes that do not list v36
+  reject its declared profile name. The streams work together: timer callbacks
+  and abort listeners may be held in function fields (rooted across
+  collections), `for await` consumes async generators that sleep on timers,
+  async generators yield function values, and declared reads of mixed records
+  take optional chains (`varta-runtime` `v36_cross_stream_tests`, Node 24
+  logs). `AbortSignal.any` joins the v36 abort prelude with DOM dependent-signal
+  order, so `AbortSignal.any([signal, AbortSignal.timeout(ms)])` and the pilot's
+  abortable sleep work. The conformance inventory pins v36: six v36 cases pass,
+  the timer case with a reviewed per-case `time.timer` grant (the runner's new
+  `grants` field, which admits no other capability).
+
+- Function fields under opt-in v36 (`function_fields`): function values in
+  record, interface and class fields, arrays, dictionaries, unions (one
+  function type each) and `unknown`; calls through fields without `this`;
+  optional and defaulted function-typed parameters such as
+  `random: () => number = Math.random`; `typeof f === "function"` and
+  truthiness narrowing; optional chains (`x?.p`, `x?.[i]`, `x?.m()`, `f?.()`);
+  `Math.random` as a value with one identity; JSON omission of functions and
+  a compile-time rejection of function-valued `toJSON` fields;
+  `reject(reason)` with an `unknown` reason; `Promise.withResolvers<T>()`; and
+  the v36 abort prelude's `addEventListener`/`removeEventListener`/`onabort`
+  (registration order, `once`, capture identity). V35 programs compile to
+  unchanged bytes (pinned digests); the conformance inventory gains three
+  cases.
+
+- Value ABI and layout 17 (`FUNCTION_FIELD_VALUE_VERSION`) for v36, owned by
+  the function-fields stream: every value16 tag and layout keeps its meaning
+  and the function tag becomes a reference kind of fields, elements and cells,
+  read through closure envelopes. V36 binds thirteen value17 readers
+  (`value_log_v11` … `bigint_from_value_v4`, host ABI 32), JSON schema 17 and
+  exception channel v8; v35 keeps value16. The launcher advertises value ABI 17.
+
+- Mixed records and JSON to `unknown` under opt-in v35 (selectors
+  `mixed_index_records`, `unknown_json`). Object types
+  may declare fields next to a string index signature (the pilot's
+  `ProblemDocument`); they are dictionaries of the index type whose declared
+  reads are typed and checked, so a value stored through a dynamic key or a
+  plain alias throws `TypeError` instead of being reinterpreted. Dictionaries
+  gain `for...in`, compound, logical and update assignments, spreads with a
+  dictionary context, number keys (`ToPropertyKey`), `Record<string, T>`
+  inference, and shared per-type read/write/delete functions that keep long
+  runs within the function body budget. Classes may declare optional fields
+  and redeclare an inherited field with the same type (`readonly cause?:
+  unknown`), redefined after `super()` as in ES2022. `JSON.parse(text)` returns
+  `unknown` (a graph of primitives, `unknown[]` and `Record<string, unknown>`),
+  `varta.json.parse<T>` admits `unknown`, `JSON.parse(text) as T` is a checked
+  parse at `T`, dictionary assertions are proven by the storage descriptor for
+  any value type, and `typeof x === "object"` with a null test narrows
+  `unknown` to `object` for `in`, `Object.keys`/`values`/`entries`/`hasOwn`
+  and `for...in`, while `"key" in x` proves `x.key`. They run on v35's value
+  layout 16 and JSON schema 16 and add no further value tag, layout, host
+  import, schema version or budget.
+
+- Engine Web types under opt-in v35 (selectors `web_headers`,
+  `abort_signals`): `Headers`/`HeadersInit`, `AbortController`, `AbortSignal`
+  and `DOMException` are typed guest preludes compiled with a program only when
+  it names them, with Fetch/DOM validation, ordering and errors pinned to
+  Node 24 and no host import or capability. Header iteration returns array
+  snapshots; abort listeners, `AbortSignal.timeout` and `AbortSignal.any` are
+  rejected with explicit diagnostics. V35 function literals may also omit
+  trailing parameters of their contextual function type.
+
+- Opt-in v35 (pilot batch: Web types, mixed records, async methods and frame
+  liveness, in development) is registered. It inherits every v34 feature;
+  runtimes that do not list v35 reject its declared profile name before any
+  guest effect. Its selectors are `web_headers`, `abort_signals`,
+  `mixed_index_records`, `unknown_json`, `async_methods`, `promise_values` and
+  `frame_liveness`.
+
+- Async class methods, async arrows and async function expressions under
+  opt-in v35 (selector `async_methods`): instance methods with overrides and
+  awaited `super.m()` calls, async closures that share their captured bindings
+  across `await`, contextual or inferred `Promise<T>` results, optional,
+  default and rest parameters in every async function, and `Promise<T>`
+  inference in generic calls. Receivers and captured cells are exact frame
+  roots; job order matches Node.
+
+- Promise values under opt-in v35 (selector `promise_values`): promises in
+  arrays, records, class fields, dictionaries, unions and `unknown`, compared
+  by identity, `typeof` `"object"`, logged as `Promise { … }` and stringified
+  as `{}`; `await` and `Promise.resolve` of `T | Promise<T>`; and
+  `Promise.all`, `allSettled`, `race` and `any` over arrays of promises with
+  Node's job order. `Promise.any` rejects with an `Error` (no
+  `AggregateError`); a promise held by `unknown` is never adopted silently.
+
+- Value layout 16 for v35 (`promise_values` foundation): value ABI 16 adds the
+  promise value tag to every value15 layout, read by thirteen value16 host
+  operations that mirror their value15 counterparts (host ABI 31), exception
+  channel v7 and JSON schema 16. V35 programs behave exactly as under v34; v34
+  modules keep host ABI 30, value15 and their imports, and swapped readers,
+  channels or descriptor stamps are rejected before guest effects.
+
+- Liveness-based continuation frames under opt-in v35 (selector
+  `frame_liveness`): each `await`, `yield` and test-hook suspension point saves
+  only the locals live across it (through the normal, throw and return
+  continuations, closure-shared cells, handlers and finalizers), directly in
+  frame segments of kind 3 without per-value frame cells; states reuse the same
+  entries, and each segment's edge mask is the exact GC map of the state the
+  frame is suspended at (zero while running and after completion). Frame
+  catalog version 3 describes the per-state saved slots and the entry
+  capacity; only v35 reads it, v33/v34 keep version 2 and their modules stay
+  byte-identical, and a module relabelled across the two layouts fails
+  admission. No host or value ABI changes. An async closure body's frame
+  keeps its captured cells as shared state-0 slots, and an assignment to a
+  closure-shared local keeps its cell live across a point. Measured with production budgets,
+  an `await` costs about 1.6k fuel instead of 3.0k, a `yield` 1.1k instead of
+  1.8k, and 141 instead of 57 suspended generators fit in one execution.
+
 - `unknown` under opt-in v34 (selector `unknown_type`): a reference-union cell
   that holds any primitive, BigInt, record, array, native error or class
   instance (function values are rejected). Unnarrowed values admit only
@@ -513,6 +807,16 @@ in [conformance/README.md](conformance/README.md).
 - Contributor and security policies, an MIT license, and GitHub issue/PR templates.
 
 ### Changed
+
+- Unhandled-rejection reports (v34 and v35 scheduler) hold bounded host
+  memory: each reason is copied out of guest memory only up to 256 UTF-16 code
+  units per string field and rendered to at most 2048 bytes, at most 16
+  outstanding reports keep a rendered reason and every other report keeps one
+  tracking bit. The termination diagnostic marks a cut reason with
+  `[reason truncated]` and names an earliest remaining report whose reason was
+  not kept as `<reason not retained>`; `SchedulerError::UnhandledRejection`
+  carries a `RejectionReason`. Guest-observable behaviour and the termination
+  itself are unchanged.
 
 - The module graph admits 256 unique modules (was 64) and 2048 import and
   re-export declarations (was 256) in every profile. The active-path depth, the

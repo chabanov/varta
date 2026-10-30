@@ -52,7 +52,14 @@ fn register_log(
                 Kind::Boolean => value.payload.to_string(),
                 Kind::Float64 => {
                     let value = f64::from_bits(value.payload);
-                    if matches!(log, Host::ValueLogV7 | Host::ValueLogV8 | Host::ValueLogV9) {
+                    if matches!(
+                        log,
+                        Host::ValueLogV7
+                            | Host::ValueLogV8
+                            | Host::ValueLogV9
+                            | Host::ValueLogV10
+                            | Host::ValueLogV11
+                    ) {
                         number::canonical_display(value)
                     } else {
                         number::display(value)
@@ -85,11 +92,15 @@ fn register_log(
                         format!("{}: {message}", object.class.name())
                     }
                 }
-                Kind::Record | Kind::Array | Kind::Dictionary => {
+                // Value17: a function shows as Node shows an anonymous one.
+                Kind::Function => crate::json::FUNCTION_DISPLAY.into(),
+                Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise => {
                     if matches!(
                         version,
                         varta_common::value::BIGINT_VALUE_VERSION
                             | varta_common::value::DYNAMIC_VALUE_VERSION
+                            | varta_common::value::PROMISE_VALUE_VERSION
+                            | varta_common::value::FUNCTION_FIELD_VALUE_VERSION
                     ) {
                         caller.data().check_budget()?;
                         let fuel = caller.get_fuel()?;
@@ -198,6 +209,26 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             Host::ValueStrictEqualV8,
             Host::ValueNullishEqualV8,
         ),
+        (
+            varta_common::value::PROMISE_VALUE_VERSION,
+            Host::ValueLogV10,
+            Host::ValueTypeOfV9,
+            Host::ValueTruthyV9,
+            Host::ValueNullishV9,
+            Host::ValueIsArrayV9,
+            Host::ValueStrictEqualV9,
+            Host::ValueNullishEqualV9,
+        ),
+        (
+            varta_common::value::FUNCTION_FIELD_VALUE_VERSION,
+            Host::ValueLogV11,
+            Host::ValueTypeOfV10,
+            Host::ValueTruthyV10,
+            Host::ValueNullishV10,
+            Host::ValueIsArrayV10,
+            Host::ValueStrictEqualV10,
+            Host::ValueNullishEqualV10,
+        ),
     ] {
         register_log(linker, version, log)?;
         linker.func_wrap(
@@ -207,14 +238,19 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 caller.data_mut().tick()?;
                 let value = read(&mut caller, value, version)?;
                 let name = match value.kind {
-                    Kind::Error | Kind::Null | Kind::Record | Kind::Array | Kind::Dictionary => {
-                        "object"
-                    }
+                    Kind::Error
+                    | Kind::Null
+                    | Kind::Record
+                    | Kind::Array
+                    | Kind::Dictionary
+                    | Kind::Promise => "object",
                     Kind::Undefined => "undefined",
                     Kind::String => "string",
                     Kind::Float64 => "number",
                     Kind::Boolean => "boolean",
                     Kind::BigInt => "bigint",
+                    // Only value17 readers accept function cells.
+                    Kind::Function => "function",
                     _ => return Err(wasmtime::Error::msg("invalid value kind")),
                 };
                 host::result16(&mut caller, name.as_bytes())
@@ -235,7 +271,12 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     } else {
                         match value.kind {
                             Kind::Null | Kind::Undefined => false,
-                            Kind::Error | Kind::Record | Kind::Array | Kind::Dictionary => true,
+                            Kind::Error
+                            | Kind::Record
+                            | Kind::Array
+                            | Kind::Dictionary
+                            | Kind::Function
+                            | Kind::Promise => true,
                             Kind::BigInt => !varta_common::bigint::BigIntView::read(
                                 data(&mut caller)?,
                                 value.payload,
@@ -317,6 +358,14 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (
             Host::ValueIsErrorClassV4,
             varta_common::value::DYNAMIC_VALUE_VERSION,
+        ),
+        (
+            Host::ValueIsErrorClassV5,
+            varta_common::value::PROMISE_VALUE_VERSION,
+        ),
+        (
+            Host::ValueIsErrorClassV6,
+            varta_common::value::FUNCTION_FIELD_VALUE_VERSION,
         ),
     ] {
         linker.func_wrap(

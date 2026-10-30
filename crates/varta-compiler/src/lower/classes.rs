@@ -7,11 +7,11 @@
 //! subclass is known before bodies are lowered, so overridden methods dispatch
 //! through one synthesized function per overridden root method.
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
+use std::rc::Rc;
 use swc_common::Span;
 use varta_common::value::MAX_RECORD_SHAPES;
 
-const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
 /// Synthesized parameter prefix of an implicit derived constructor.
 const IMPLICIT_PARAMETER: &str = "$super";
 fn implicit_parameter(index: usize) -> String {
@@ -42,6 +42,9 @@ pub(super) struct Field {
     pub owner: u32,
     pub access: Access,
     pub readonly: bool,
+    /// The most-derived class that redeclared this inherited field (v35); its
+    /// constructor may assign the field like the declaring class's.
+    pub redeclared: Option<u32>,
 }
 #[derive(Clone)]
 pub(super) struct Method {
@@ -65,6 +68,18 @@ impl Method {
         }
     }
 }
+/// A generic method (v37 `class_generics`): it gets no function slot; each
+/// distinct type-argument list is one method function of its owner.
+pub(super) struct GenericMethod {
+    pub owner: u32,
+    /// The ancestor that first declared this method name.
+    pub root: u32,
+    pub access: Access,
+    pub is_static: bool,
+    /// The declaration without its type parameters, lowered per instance.
+    pub function: Rc<generics::Function>,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 enum Member {
     Init,
@@ -90,10 +105,34 @@ pub(super) struct Class {
     pub methods: BTreeMap<String, Method>,
     /// Static methods, own and inherited: receiver-free direct calls `C.m()`.
     pub statics: BTreeMap<String, Method>,
+    /// Generic instance and static methods, own and inherited (v37).
+    pub generic_methods: BTreeMap<String, Rc<GenericMethod>>,
+    pub generic_statics: BTreeMap<String, Rc<GenericMethod>>,
     pub init: Option<Signature>,
     /// Own field initializers in declaration order.
     initializers: Vec<(String, Box<ast::Expr>)>,
     state: State,
+    /// Declared by an engine prelude module (v35 Web types).
+    pub prelude: bool,
+    /// Declared by a v37 builtin prelude (`collections`): its instances never
+    /// enter `unknown`, so they never reach a host value reader through it.
+    pub opaque: bool,
+    /// Type parameters of a generic class template (v37 `class_generics`).
+    /// A template has only static members; each instantiation is a class of
+    /// its own with `template` set.
+    params: Option<Rc<ast::TsTypeParamDecl>>,
+    /// The template of a generic class instance.
+    pub template: Option<u32>,
+    /// The type arguments of a generic class instance, by parameter name.
+    pub frame: generics::Frame,
+    /// Own members of an instance whose function slots are not allocated yet.
+    unallocated: Vec<Member>,
+}
+impl Class {
+    /// A generic class declaration (not one of its instances).
+    pub(super) fn is_template(&self) -> bool {
+        self.params.is_some()
+    }
 }
 
 /// The class whose member bodies are being lowered; `init` is the function
@@ -120,6 +159,20 @@ pub(crate) struct Classes {
     method_names: BTreeSet<String>,
     /// Synthetic native-error root classes (v32 `error_subclasses`).
     error_roots: BTreeMap<varta_common::value::ErrorClass, u32>,
+    /// Generic method instances by (owner, name, static, type arguments).
+    method_instances: BTreeMap<generic_methods::InstanceKey, Signature>,
+    /// Dispatchers of overridden generic methods by (root, name, arguments).
+    generic_dispatchers: BTreeMap<(u32, String, Vec<Type>), usize>,
+    /// Generic method instances whose bodies are not lowered yet.
+    pending_methods: VecDeque<generic_methods::Pending>,
+    /// Generic class instances by (template, type arguments).
+    instances: BTreeMap<(u32, Vec<Type>), u32>,
+    /// Instances created before every declared class was laid out.
+    deferred: Vec<u32>,
+    /// Every declared class is laid out: instances lay out when created.
+    ready: bool,
+    /// Instance member bodies to lower: (function index, class, member).
+    pending_members: VecDeque<generic_classes::PendingMember>,
 }
 impl Classes {
     pub(crate) fn shape(&self, id: u32) -> u32 {
@@ -136,6 +189,36 @@ impl Classes {
     pub(super) fn has_method(&self, name: &str) -> bool {
         self.method_names.contains(name)
     }
+    /// The engine prelude class `name` (v35 Web types), when the program loaded it.
+    pub(super) fn prelude_class(&self, name: &str) -> Option<u32> {
+        self.list
+            .iter()
+            .position(|class| class.prelude && class.name == name)
+            .map(|id| id as u32)
+    }
+    /// Whether the program loaded any engine prelude class that may enter
+    /// `unknown` (v37 builtin classes never do).
+    pub(super) fn has_prelude(&self) -> bool {
+        self.list.iter().any(|class| class.prelude && !class.opaque)
+    }
+    /// The explanation for a member of an engine prelude class (or of a
+    /// subclass) that the profile names but does not implement.
+    pub(super) fn pending_member(
+        &self,
+        mut class: u32,
+        name: &str,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Option<(&'static str, &'static str)> {
+        loop {
+            let info = &self.list[class as usize];
+            if info.prelude
+                && let Some(reason) = crate::modules::engine::pending(&info.name, name, profile)
+            {
+                return Some((reason, crate::modules::engine::pending_detail(&info.name)));
+            }
+            class = info.parent?;
+        }
+    }
     /// `descendant` equals `ancestor` or inherits from it.
     pub(super) fn descends(&self, mut descendant: u32, ancestor: u32) -> bool {
         loop {
@@ -149,7 +232,7 @@ impl Classes {
         }
     }
     /// Record shapes of `ancestor` and all of its descendants.
-    pub(super) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
+    pub(crate) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
         (0..self.list.len() as u32)
             .filter(|id| self.descends(*id, ancestor))
             .map(|id| self.shape(id))
@@ -163,8 +246,13 @@ impl Classes {
             .find(|(_, field)| field.name == name)
             .map(|(slot, field)| (slot as u32, field))
     }
-    fn allocate(&mut self, next: &mut usize, class: u32, member: Member) -> Result<usize> {
-        if *next >= MAX_FUNCTIONS {
+    fn allocate(
+        &mut self,
+        (next, limit): (&mut usize, usize),
+        class: u32,
+        member: Member,
+    ) -> Result<usize> {
+        if *next >= limit {
             return Err(invalid("too many functions across modules"));
         }
         let index = *next;
@@ -271,7 +359,48 @@ fn member_name(key: &ast::PropName) -> Result<String> {
             "class member named like the inherited {name}"
         )));
     }
+    if name == ASYNC_ITERATOR_METHOD {
+        return Err(unsupported(&format!("class member named {name}")));
+    }
     Ok(name)
+}
+
+/// The name a `[Symbol.asyncIterator]()` method is registered under (v37
+/// `net_request`). A string key cannot register it (`member_name` rejects
+/// the spelling), so only the well-known symbol reaches it.
+pub(super) const ASYNC_ITERATOR_METHOD: &str = "[Symbol.asyncIterator]";
+
+/// Whether `key` is the computed key `[Symbol.asyncIterator]`.
+fn async_iterator_key(key: &ast::PropName) -> bool {
+    let ast::PropName::Computed(computed) = key else {
+        return false;
+    };
+    matches!(
+        &*computed.expr,
+        ast::Expr::Member(ast::MemberExpr { obj, prop: ast::MemberProp::Ident(property), .. })
+            if matches!(&**obj, ast::Expr::Ident(object) if object.sym == "Symbol")
+                && property.sym == "asyncIterator"
+    )
+}
+
+/// An instance method's registered name: `member_name`, or the async
+/// iterator method under `net_request` profiles. Engine preludes of those
+/// profiles may also declare `toString` (`URL`, `URLSearchParams`).
+fn method_name(
+    key: &ast::PropName,
+    profile: varta_common::language::LanguageProfile,
+    prelude: bool,
+) -> Result<String> {
+    if profile.net_request() && async_iterator_key(key) {
+        return Ok(ASYNC_ITERATOR_METHOD.to_owned());
+    }
+    if profile.net_request()
+        && prelude
+        && matches!(key, ast::PropName::Ident(id) if id.sym == error_classes::TO_STRING)
+    {
+        return Ok(error_classes::TO_STRING.to_owned());
+    }
+    member_name(key)
 }
 
 fn receiver_width(signature: &Signature) -> Result<()> {
@@ -359,21 +488,49 @@ pub(super) fn register(
     if types.classes.list.len() >= MAX_RECORD_SHAPES {
         return Err(source.locate(invalid("class count exceeds limit"), declaration.ident.span));
     }
+    let params = match &declaration.class.type_params {
+        Some(params) if types.profile.class_generics() => {
+            if matches!(&declaration.class.super_class, Some(parent)
+                if matches!(&**parent, ast::Expr::Ident(id)
+                    if varta_common::value::ErrorClass::from_name(id.sym.as_ref()).is_some()))
+            {
+                return Err(source.locate(
+                    unsupported("generic Error subclass"),
+                    declaration.ident.span,
+                ));
+            }
+            Some(Rc::new((**params).clone()))
+        }
+        _ => None,
+    };
     let id = types.classes.list.len() as u32;
     types.classes.list.push(Class {
         name: name.clone(),
         module,
         source: source.clone(),
         span: declaration.ident.span,
-        declaration: declaration.class.clone(),
+        // `#x` members and references become `private` members named `#x` (v37).
+        declaration: if types.profile.class_generics() {
+            private_names::rewrite(&declaration.class, source)?
+        } else {
+            declaration.class.clone()
+        },
         parent: None,
         shape: 0,
         fields: Vec::new(),
         methods: BTreeMap::new(),
         statics: BTreeMap::new(),
+        generic_methods: BTreeMap::new(),
+        generic_statics: BTreeMap::new(),
         init: None,
         initializers: Vec::new(),
         state: State::Pending,
+        prelude: crate::modules::engine::is_prelude_source(source),
+        params,
+        template: None,
+        frame: generics::Frame::new(),
+        unallocated: Vec::new(),
+        opaque: crate::modules::engine::is_builtin_source(source),
     });
     Ok(Some((name, id)))
 }
@@ -398,10 +555,22 @@ impl Lower<'_> {
 mod constructors;
 mod dispatch;
 mod error_classes;
+mod generic_classes;
+mod generic_methods;
+mod implements;
 mod layout;
 mod members;
-pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers};
+mod private_names;
+pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers, late_dispatch_bodies};
 pub(super) use error_classes::{
-    MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance,
+    MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_json_form,
+    reaches_prelude, root as error_family_root,
+};
+pub(super) use generic_classes::{instantiate_class, member_body, next_member};
+pub(super) use generic_methods::{
+    generic_dispatch_bodies, generic_method_body, next_generic_method,
 };
 pub(super) use layout::layout_module;
+pub(super) use private_names::{
+    PREFIX as PRIVATE_PREFIX, hide_prelude_state, is_private_name, reaches_private,
+};

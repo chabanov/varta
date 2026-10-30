@@ -74,6 +74,28 @@ pub(super) fn build(
                 Type::Array(id) => JsonType::Array {
                     element: self.node(self.types.arrays[id as usize])?,
                 },
+                // The JSON value graph of `unknown` (v35 `unknown_json`):
+                // primitives, `unknown[]` and `Record<string, unknown>`, plus
+                // `undefined` for missing optional positions.
+                Type::Unknown => {
+                    let (array, dictionary) = crate::lower::json::unknown_graph_types(self.types)
+                        .ok_or_else(|| {
+                        CompilerError::Internal("missing unknown JSON graph types".into())
+                    })?;
+                    let members = [
+                        Type::Null,
+                        Type::Undefined,
+                        Type::Boolean,
+                        Type::Float64,
+                        Type::String,
+                        Type::Array(array),
+                        Type::Dictionary(dictionary),
+                    ]
+                    .into_iter()
+                    .map(|ty| self.node(ty))
+                    .collect::<Result<Vec<_>>>()?;
+                    JsonType::ReferenceUnion { members }
+                }
                 Type::Dictionary(id) => {
                     let dictionary = self.types.dictionaries[id as usize];
                     JsonType::Dictionary {
@@ -94,7 +116,11 @@ pub(super) fn build(
     };
     let root = builder.node(root)?;
     JsonSchema {
-        version: if types.profile.dynamic_values() {
+        version: if types.profile.function_fields() {
+            varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION
+        } else if types.profile.promise_values() {
+            varta_common::json::PROMISE_SCHEMA_VERSION
+        } else if types.profile.dynamic_values() {
             varta_common::json::DYNAMIC_SCHEMA_VERSION
         } else if types.profile.bigint_values() {
             varta_common::json::BIGINT_SCHEMA_VERSION

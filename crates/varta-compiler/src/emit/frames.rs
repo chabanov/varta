@@ -10,7 +10,7 @@ use varta_common::function::{self as layout, frame};
 use varta_common::scheduler::PromiseState;
 
 /// Physical parameters of a resume body: `(frame:i64, completion:i32, value:i64)`.
-const FRAME_PARAM: u32 = 0;
+pub(super) const FRAME_PARAM: u32 = 0;
 const COMPLETION_PARAM: u32 = 1;
 const VALUE_PARAM: u32 = 2;
 pub(super) const RESUME_PARAMS: u32 = 3;
@@ -26,19 +26,50 @@ pub(super) struct Slot {
 pub(super) struct Layout {
     pub id: u32,
     pub function: usize,
+    /// Cell layout: every saved local. Liveness layout (v35): the parameters
+    /// and captured environment cells the creator saves for state 0.
     pub slots: Vec<Slot>,
+    /// Liveness layout (v35 `frame_liveness`): the saved slots of state `n` at
+    /// index `n - 1`, see `frame_slots`.
+    pub states: Option<Vec<Vec<Slot>>>,
     /// Generator type id of a `function*` frame (v33).
     pub generator: Option<u32>,
 }
 impl Layout {
     /// Every physical local is saved except the state, completion and input
-    /// locals, which each resumption re-initializes from the dispatcher.
+    /// locals, which each resumption re-initializes from the dispatcher. A
+    /// liveness layout saves only the locals live across each point.
     pub(super) fn new(
         id: u32,
         function: usize,
         ir: &ir::Function,
         machine: &ir::Suspendable,
     ) -> Self {
+        let slot = |local: u32| Slot {
+            local,
+            ty: ir.locals[local as usize],
+            shared: ir.cells.contains(&local),
+        };
+        if let Some(live) = &machine.live {
+            // State 0 holds the parameters and, for an async closure body
+            // (v35 `async_methods`), the captured environment cells, which
+            // the creator stores as shared entries without copying them.
+            return Self {
+                id,
+                function,
+                slots: (0..ir.params.len() as u32)
+                    .filter(|local| ir.locals[*local as usize].width() > 0)
+                    .chain(ir.captures.iter().copied())
+                    .map(slot)
+                    .collect(),
+                states: Some(
+                    live.iter()
+                        .map(|saved| saved.iter().copied().map(slot).collect())
+                        .collect(),
+                ),
+                generator: machine.generator,
+            };
+        }
         let entry: BTreeSet<u32> = [machine.state, machine.completion]
             .into_iter()
             .chain(machine.inputs.values().copied())
@@ -58,19 +89,30 @@ impl Layout {
             id,
             function,
             slots,
+            states: None,
             generator: machine.generator,
         }
     }
-    fn segments(&self) -> Vec<usize> {
+    /// Entries per segment: one per saved binding of a cell layout, the
+    /// capacity of a liveness layout.
+    pub(super) fn segments(&self) -> Vec<usize> {
+        if self.states.is_some() {
+            let capacity = self.capacity();
+            return (0..capacity)
+                .step_by(frame::SEGMENT_BINDINGS)
+                .map(|start| (capacity - start).min(frame::SEGMENT_BINDINGS))
+                .collect();
+        }
         self.slots
             .chunks(frame::SEGMENT_BINDINGS)
             .map(<[Slot]>::len)
             .collect()
     }
-    /// Every type a frame cell of this layout may hold.
+    /// Every type a frame cell or catalog slot of this layout may hold.
     pub(super) fn binding_types(&self, machine: &ir::Suspendable, result: Type) -> Vec<Type> {
         self.slots
             .iter()
+            .chain(self.states.iter().flatten().flatten())
             .map(|slot| slot.ty)
             .chain(machine.points.iter().map(|point| point.yielded))
             .chain((result != Type::Void).then_some(result))
@@ -90,22 +132,31 @@ impl Layout {
             Type::Undefined | Type::Void => frame::FrameInput::Undefined,
             _ => frame::FrameInput::Float64,
         };
-        layout::FrameLayout {
-            code: self.function as u32,
-            slots: self
-                .slots
+        let rows = |slots: &[Slot]| -> Vec<layout::FrameSlot> {
+            slots
                 .iter()
                 .map(|slot| layout::FrameSlot {
                     binding: bindings[&slot.ty],
                     shared: slot.shared,
                 })
-                .collect(),
+                .collect()
+        };
+        layout::FrameLayout {
+            code: self.function as u32,
+            slots: rows(&self.slots),
+            capacity: self.states.as_ref().map(|_| self.capacity() as u32),
             states: machine
                 .points
                 .iter()
-                .map(|point| layout::FrameState {
+                .enumerate()
+                .map(|(index, point)| layout::FrameState {
                     input: input(point.input),
                     yielded: bindings[&point.yielded],
+                    saved: self
+                        .states
+                        .as_ref()
+                        .and_then(|states| states.get(index))
+                        .map_or_else(Vec::new, |saved| rows(saved)),
                 })
                 .collect(),
             result: (result != Type::Void).then(|| bindings[&result]),
@@ -129,7 +180,7 @@ pub(super) struct Resume<'a> {
     pub machine: &'a ir::Suspendable,
 }
 
-fn word(field: u32, high: bool) -> wasm_encoder::MemArg {
+pub(super) fn word(field: u32, high: bool) -> wasm_encoder::MemArg {
     wasm_encoder::MemArg {
         offset: records::field(field).offset + if high { HIGH_WORD } else { 0 },
         ..strings::WORD
@@ -138,11 +189,19 @@ fn word(field: u32, high: bool) -> wasm_encoder::MemArg {
 fn table_end(resources: Resources) -> i32 {
     (resources.table as usize + frame::MAX_LIVE_FRAMES * abi::STRING_ROOT_SLOT_BYTES) as i32
 }
-fn binding_bytes(ty: Type) -> usize {
+pub(super) fn binding_bytes(ty: Type) -> usize {
     value::RECORD_META_BYTES + ty.width() as usize * abi::STRING_ROOT_SLOT_BYTES
 }
-fn segment_bytes(count: usize) -> usize {
+pub(super) fn segment_bytes(count: usize) -> usize {
     value::RECORD_META_BYTES + count * abi::STRING_ROOT_SLOT_BYTES
+}
+/// Canonical payload ceiling of a saved scalar's first word, if it has one.
+pub(super) fn ceiling(ty: Type) -> Option<i64> {
+    match ty.result_value().unwrap_or(ty) {
+        Type::Boolean => Some(1),
+        Type::Null | Type::Undefined | Type::Void => Some(0),
+        _ => None,
+    }
 }
 /// Generations start above zero, so zeroed memory never names a live frame.
 const GENERATION_STEP: i32 = 1;
@@ -199,7 +258,7 @@ impl<'a> Emitter<'a> {
             .ok_or_else(|| CompilerError::Internal("suspension outside a resume body".into()))
     }
     /// Push the segment pointer holding saved slot `index` of the frame in `frame`.
-    fn segment(&mut self, frame: u32, index: usize) {
+    pub(super) fn segment(&mut self, frame: u32, index: usize) {
         self.code.extend([
             I::LocalGet(frame),
             I::I32WrapI64,
@@ -209,11 +268,11 @@ impl<'a> Emitter<'a> {
             I::I32WrapI64,
         ]);
     }
-    fn entry(index: usize) -> wasm_encoder::MemArg {
+    pub(super) fn entry(index: usize) -> wasm_encoder::MemArg {
         records::field((index % frame::SEGMENT_BINDINGS) as u32)
     }
     /// Allocate a block and write its managed header; `self.temporary` holds it.
-    fn frame_block(
+    pub(super) fn frame_block(
         &mut self,
         bytes: usize,
         flags: i32,
@@ -227,7 +286,7 @@ impl<'a> Emitter<'a> {
         self.initialize_value(strings::ALLOCATED | flags, link, meta, count);
         Ok(())
     }
-    fn zero_fields(&mut self, count: usize) {
+    pub(super) fn zero_fields(&mut self, count: usize) {
         self.code.extend([
             I::LocalGet(self.temporary),
             I::I32Const(value::RECORD_META_BYTES as i32),
@@ -288,12 +347,27 @@ impl<'a> Emitter<'a> {
     /// Suspension: publish the yielded value, save every binding, record the
     /// state and return to the dispatcher with an empty exception channel.
     pub(super) fn suspend_point(&mut self, value: &Expr, state: u32) -> Result<()> {
-        if self.resume()?.machine.scheduled {
+        let machine = self.resume()?.machine;
+        if machine.scheduled {
             return self.await_point(value, state);
         }
-        self.expr(value)?;
-        self.store_completion(value.ty)?;
-        self.save_frame()?;
+        if machine.keeps_completion {
+            // An async generator body (v36) publishes its state record once.
+            self.code.extend([
+                I::LocalGet(FRAME_PARAM),
+                I::I32WrapI64,
+                I::I64Load(records::field(frame::COMPLETION_FIELD)),
+                I::I64Eqz,
+                I::If(BlockType::Empty),
+            ]);
+            self.expr(value)?;
+            self.store_completion(value.ty)?;
+            self.code.push(I::End);
+        } else {
+            self.expr(value)?;
+            self.store_completion(value.ty)?;
+        }
+        self.save_frame(state)?;
         if let Some(globals) = self.exceptions {
             self.code.push(I::GlobalGet(globals.pending));
             self.trap_if();
@@ -341,7 +415,7 @@ impl<'a> Emitter<'a> {
             slot(promise_fields::TRACKED)?,
             slot(promise_fields::HANDLED)?,
         );
-        self.save_frame()?;
+        self.save_frame(state)?;
         if let Some(globals) = self.exceptions {
             self.code.push(I::GlobalGet(globals.pending));
             self.trap_if();
@@ -436,6 +510,13 @@ impl<'a> Emitter<'a> {
         for arg in args {
             self.expr(arg)?;
         }
+        if self.environment_functions.contains(&function) {
+            // An async closure starts its body with its own environment.
+            let environment = self.environment_param.ok_or_else(|| {
+                CompilerError::Internal("scheduled closure body without an environment".into())
+            })?;
+            self.code.push(I::LocalGet(environment));
+        }
         let index = self.functions_begin + function as u32;
         if !self.frame_functions.contains_key(&function) {
             if mode == ir::ScheduleMode::Enqueue {
@@ -472,8 +553,11 @@ impl<'a> Emitter<'a> {
         }
         Ok(())
     }
-    fn save_frame(&mut self) -> Result<()> {
+    fn save_frame(&mut self, state: u32) -> Result<()> {
         let resume = self.resume()?;
+        if resume.layout.states.is_some() {
+            return self.save_slots(resume.layout, state);
+        }
         for (index, slot) in resume.layout.slots.iter().enumerate() {
             if slot.shared {
                 self.segment(FRAME_PARAM, index);
@@ -507,7 +591,7 @@ impl<'a> Emitter<'a> {
     }
     /// Exact binding checks before any restored value is used: allocation,
     /// flags, reference mask, private type id, width and canonical payload.
-    fn checked_cell(&mut self, physical: u32, ty: Type) {
+    pub(super) fn checked_cell(&mut self, physical: u32, ty: Type) {
         self.managed_guard(
             physical,
             binding_bytes(ty),
@@ -516,12 +600,7 @@ impl<'a> Emitter<'a> {
         );
         self.assert_word(layout::SIGNATURE_OFFSET, self.binding_types[&ty] as i32);
         self.assert_word(layout::RESERVED_OFFSETS[0], ty.width() as i32);
-        let limit = match ty.result_value().unwrap_or(ty) {
-            Type::Boolean => Some(1),
-            Type::Null | Type::Undefined | Type::Void => Some(0),
-            _ => None,
-        };
-        if let Some(limit) = limit {
+        if let Some(limit) = ceiling(ty) {
             self.code.extend([
                 I::LocalGet(self.temporary),
                 I::I64Load(records::field(0)),
@@ -587,13 +666,20 @@ impl<'a> Emitter<'a> {
     pub(super) fn begin_resume(&mut self, function: &ir::Function) -> Result<()> {
         let resume = self.resume()?;
         self.begin_frame(function)?;
-        self.restore_frame()?;
         let machine = resume.machine;
+        if resume.layout.states.is_some() {
+            // A liveness frame restores the saved set of its target state.
+            self.restore_states(resume.layout, machine)?;
+        } else {
+            self.restore_frame()?;
+            self.code.extend([
+                I::LocalGet(FRAME_PARAM),
+                I::I32WrapI64,
+                I::I32Load(word(frame::CONTROL_FIELD, true)),
+                I::LocalSet(self.local_slots[machine.state as usize]),
+            ]);
+        }
         self.code.extend([
-            I::LocalGet(FRAME_PARAM),
-            I::I32WrapI64,
-            I::I32Load(word(frame::CONTROL_FIELD, true)),
-            I::LocalSet(self.local_slots[machine.state as usize]),
             I::LocalGet(COMPLETION_PARAM),
             I::LocalSet(self.local_slots[machine.completion as usize]),
         ]);
@@ -618,8 +704,12 @@ impl<'a> Emitter<'a> {
         function: &ir::Function,
         layout: &Layout,
         resources: Resources,
+        (environment, index): (Option<u32>, usize),
     ) -> Result<()> {
         self.begin_frame(function)?;
+        // An async closure body (v35) validates its environment like any
+        // closure; its captured cells then become shared frame slots.
+        self.load_environment(function, environment, index)?;
         self.frame_block(
             frame::FRAME_BYTES,
             frame::FRAME_FLAG,
@@ -686,63 +776,10 @@ impl<'a> Emitter<'a> {
             self.code
                 .push(I::I64Store(records::field(frame::ENVIRONMENT_FIELD)));
         }
-        for (index, count) in segments.iter().copied().enumerate() {
-            let bytes = segment_bytes(count);
-            self.frame_block(
-                bytes,
-                layout::ENVIRONMENT_FLAG,
-                value::field_mask(count) as i32,
-                frame::FRAME_SEGMENT_KIND,
-                count as i32,
-            )?;
-            self.zero_fields(count);
-            self.code.extend([
-                I::LocalGet(self.string_temporary),
-                I::I32WrapI64,
-                I::I64Load(records::field(frame::ENVIRONMENT_FIELD)),
-                I::I32WrapI64,
-            ]);
-            self.pack_value(bytes);
-            self.code.push(I::I64Store(records::field(index as u32)));
-        }
-        let parameters = function.params.len() as u32;
-        for (index, slot) in layout.slots.iter().enumerate() {
-            let parameter = slot.local < parameters;
-            if slot.shared && !parameter {
-                continue;
-            }
-            let bytes = binding_bytes(slot.ty);
-            self.frame_block(
-                bytes,
-                layout::BINDING_FLAG,
-                i32::from(slot.ty.needs_root()),
-                self.binding_types[&slot.ty] as i32,
-                slot.ty.width() as i32,
-            )?;
-            self.code.push(I::LocalGet(self.temporary));
-            if parameter {
-                self.code
-                    .push(I::LocalGet(self.local_slots[slot.local as usize]));
-                self.pack_slot(slot.ty.result_value().unwrap_or(slot.ty));
-            } else {
-                self.code.push(I::I64Const(0));
-            }
-            self.code.push(I::I64Store(records::field(0)));
-            if slot.ty.width() == 2 {
-                self.code.push(I::LocalGet(self.temporary));
-                if parameter {
-                    self.code.extend([
-                        I::LocalGet(self.local_slots[slot.local as usize] + 1),
-                        I::I64ExtendI32U,
-                    ]);
-                } else {
-                    self.code.push(I::I64Const(0));
-                }
-                self.code.push(I::I64Store(records::field(1)));
-            }
-            self.segment(self.string_temporary, index);
-            self.pack_value(bytes);
-            self.code.push(I::I64Store(Self::entry(index)));
+        if layout.states.is_some() {
+            self.create_slots(function, layout)?;
+        } else {
+            self.create_cells(function, layout, &segments)?;
         }
         self.code
             .extend([I::LocalGet(self.string_temporary), I::I32WrapI64]);
@@ -778,6 +815,81 @@ impl<'a> Emitter<'a> {
             I::I64Or,
             I::Return,
         ]);
+        Ok(())
+    }
+    /// Cell layout (v33 and v34): full-mask segments of binding cells, one
+    /// frame-owned cell per unshared local and per shared parameter.
+    fn create_cells(
+        &mut self,
+        function: &ir::Function,
+        layout: &Layout,
+        segments: &[usize],
+    ) -> Result<()> {
+        for (index, count) in segments.iter().copied().enumerate() {
+            let bytes = segment_bytes(count);
+            self.frame_block(
+                bytes,
+                layout::ENVIRONMENT_FLAG,
+                value::field_mask(count) as i32,
+                frame::FRAME_SEGMENT_KIND,
+                count as i32,
+            )?;
+            self.zero_fields(count);
+            self.code.extend([
+                I::LocalGet(self.string_temporary),
+                I::I32WrapI64,
+                I::I64Load(records::field(frame::ENVIRONMENT_FIELD)),
+                I::I32WrapI64,
+            ]);
+            self.pack_value(bytes);
+            self.code.push(I::I64Store(records::field(index as u32)));
+        }
+        let parameters = function.params.len() as u32;
+        for (index, slot) in layout.slots.iter().enumerate() {
+            let parameter = slot.local < parameters;
+            if slot.shared && !parameter {
+                if function.captures.contains(&slot.local) {
+                    self.segment(self.string_temporary, index);
+                    self.code.extend([
+                        I::LocalGet(self.cell_slots[&slot.local]),
+                        I::I64Store(Self::entry(index)),
+                    ]);
+                }
+                continue;
+            }
+            let bytes = binding_bytes(slot.ty);
+            self.frame_block(
+                bytes,
+                layout::BINDING_FLAG,
+                i32::from(slot.ty.needs_root()),
+                self.binding_types[&slot.ty] as i32,
+                slot.ty.width() as i32,
+            )?;
+            self.code.push(I::LocalGet(self.temporary));
+            if parameter {
+                self.code
+                    .push(I::LocalGet(self.local_slots[slot.local as usize]));
+                self.pack_slot(slot.ty.result_value().unwrap_or(slot.ty));
+            } else {
+                self.code.push(I::I64Const(0));
+            }
+            self.code.push(I::I64Store(records::field(0)));
+            if slot.ty.width() == 2 {
+                self.code.push(I::LocalGet(self.temporary));
+                if parameter {
+                    self.code.extend([
+                        I::LocalGet(self.local_slots[slot.local as usize] + 1),
+                        I::I64ExtendI32U,
+                    ]);
+                } else {
+                    self.code.push(I::I64Const(0));
+                }
+                self.code.push(I::I64Store(records::field(1)));
+            }
+            self.segment(self.string_temporary, index);
+            self.pack_value(bytes);
+            self.code.push(I::I64Store(Self::entry(index)));
+        }
         Ok(())
     }
 }
@@ -1180,6 +1292,8 @@ pub(super) fn resume_body<'a>(
         exception_jumps: BTreeMap::new(),
         cell_slots,
         suspension: Some(resume),
+        // A resume body reaches its captured cells through the frame.
+        environment_param: None,
         ..creator
     };
     emitter.begin_resume(function)?;
@@ -1238,11 +1352,17 @@ pub(super) fn test_exports(
 /// any effect, then resumes the frame by a direct call chosen by its layout id
 /// among that type's generator layouts. An uncaught exception stays in the
 /// channel for the caller to propagate; the frame is completed either way.
+///
+/// The body type of an async generator (v36, `keep_completion`) keeps the
+/// completion cell, which holds the async generator's state record, while
+/// the body runs: its protocol reads that record on every request,
+/// including requests made from inside the running body.
 pub(super) fn step_function(
     generator: u32,
     layouts: &[Layout],
     bodies: &[u32],
     pending: u32,
+    keep_completion: bool,
 ) -> wasm_encoder::Function {
     use ir::GeneratorOutcome as Out;
     const HANDLE: u32 = 0;
@@ -1313,12 +1433,14 @@ pub(super) fn step_function(
     done_without_body(&mut code);
     code.push(I::End);
     status(&mut code, frame::STATUS_RUNNING);
-    code.extend([
-        I::LocalGet(PTR),
-        I::I64Const(0),
-        I::I64Store(records::field(frame::COMPLETION_FIELD)),
-        I::Block(BlockType::Empty),
-    ]);
+    if !keep_completion {
+        code.extend([
+            I::LocalGet(PTR),
+            I::I64Const(0),
+            I::I64Store(records::field(frame::COMPLETION_FIELD)),
+        ]);
+    }
+    code.push(I::Block(BlockType::Empty));
     for (layout, body) in layouts.iter().zip(bodies) {
         if layout.generator != Some(generator) {
             continue;

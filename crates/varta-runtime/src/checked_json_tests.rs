@@ -157,6 +157,9 @@ fn checked_json_rejects_wrong_members_duplicate_unknown_missing_fields_and_inval
         );
     }
 }
+/// Wall-clock allowance of the 300x-fuel collection run (test-only).
+const TEST_WALL_CLOCK: std::time::Duration = std::time::Duration::from_secs(120);
+
 #[test]
 fn checked_json_is_pure_and_retains_union_children_through_collection() {
     let source = r#"
@@ -173,7 +176,10 @@ export function main():void{
     let runtime = VartaRuntime::new();
     let module = runtime.validate_module(&compile(source)).unwrap();
     let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+    // Test-only fuel and wall-clock allowance for the collection churn; the
+    // production deadline flaked this run under parallel test load.
     execution.store.set_fuel(300 * abi::FUEL).unwrap();
+    execution.allow_test_wall_clock(TEST_WALL_CLOCK);
     let instance = execution.instantiate(&module).unwrap();
     instance
         .get_typed_func::<(), ()>(&mut execution.store, "_start")

@@ -1,6 +1,7 @@
 //! Pure bounded serialization of the versioned guest value ABI. No OS access,
 //! native pointers, eval, arbitrary object hooks or host authority are involved.
 mod presence;
+mod promise;
 use crate::{RuntimeContext, host};
 use std::{collections::BTreeSet, io::Write};
 use varta_common::{abi, value::*};
@@ -97,14 +98,32 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
-    for (operation, version) in [
+    // The bool hides private state (v37 `json_stringify_v17`).
+    for (operation, version, private) in [
         (
             varta_common::HostOperation::JsonStringifyV13,
             BIGINT_VALUE_VERSION,
+            false,
         ),
         (
             varta_common::HostOperation::JsonStringifyV14,
             DYNAMIC_VALUE_VERSION,
+            false,
+        ),
+        (
+            varta_common::HostOperation::JsonStringifyV15,
+            PROMISE_VALUE_VERSION,
+            false,
+        ),
+        (
+            varta_common::HostOperation::JsonStringifyV16,
+            FUNCTION_FIELD_VALUE_VERSION,
+            false,
+        ),
+        (
+            varta_common::HostOperation::JsonStringifyV17,
+            FUNCTION_FIELD_VALUE_VERSION,
+            true,
         ),
     ] {
         linker.func_wrap(
@@ -120,8 +139,9 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     return Err(error("missing memory"));
                 };
                 let packed = ((hi as u32 as u64) << 32) | (lo as u32 as u64);
-                let encoded = Encoder::with_version(memory.data(&caller), version)
-                    .encode_optional(kind as u32, packed);
+                let mut encoder = Encoder::with_version(memory.data(&caller), version);
+                encoder.hide_private = private;
+                let encoded = encoder.encode_optional(kind as u32, packed);
                 caller.data().check_budget()?;
                 match encoded {
                     Ok(Some(bytes)) => Ok((
@@ -144,6 +164,12 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     }
     Ok(())
 }
+
+pub(crate) use varta_common::value::PRIVATE_KEY_PREFIX;
+
+/// How value17 diagnostics (logged values) show a function value: as Node
+/// shows an anonymous function, since closures carry no source name.
+pub(crate) const FUNCTION_DISPLAY: &str = "[Function (anonymous)]";
 
 pub(super) fn render_reference(
     data: &[u8],
@@ -199,6 +225,10 @@ struct Encoder<'a, 'b> {
     functions: BTreeSet<u64>,
     diagnostic_budget: Option<&'b mut varta_bigint::Budget>,
     version: u32,
+    /// Skip record fields whose key starts with [`PRIVATE_KEY_PREFIX`]
+    /// (v37 `json_stringify_v17`): ES private names and engine prelude state
+    /// are not properties.
+    hide_private: bool,
     data: &'a [u8],
     output: Output,
     path: Vec<usize>,
@@ -216,6 +246,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             functions: BTreeSet::new(),
             diagnostic_budget: None,
             version,
+            hide_private: false,
             data,
             output: Output(Vec::new()),
             path: Vec::new(),
@@ -251,6 +282,10 @@ impl<'a, 'b> Encoder<'a, 'b> {
     fn resolve(&mut self, kind: u32, value: u64) -> Result<(u32, u64), wasmtime::Error> {
         if kind == ValueKind::Function as u32 {
             self.function(value)?;
+            // JSON drops functions like `undefined`; value17 diagnostics show them.
+            if self.version == FUNCTION_FIELD_VALUE_VERSION && self.diagnostic_budget.is_some() {
+                return Ok((kind, value));
+            }
             return Ok((ValueKind::Undefined as u32, 0));
         }
         if kind == ValueKind::ReferenceUnion as u32 {
@@ -264,6 +299,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             ) {
                 return Err(error("incompatible reference union"));
             }
@@ -290,6 +327,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             return Err(error("incompatible primitive union"));
         }
@@ -297,6 +336,13 @@ impl<'a, 'b> Encoder<'a, 'b> {
         Ok((cell.kind as u32, cell.payload))
     }
     fn function(&mut self, handle: u64) -> Result<(), wasmtime::Error> {
+        if self.version == FUNCTION_FIELD_VALUE_VERSION {
+            // Value17 function fields: the closure envelope is checked; the
+            // captured payloads stay opaque and nothing is invoked.
+            varta_common::function::ClosureView::read_envelope(self.data, handle)
+                .map_err(wasmtime::Error::new)?;
+            return Ok(());
+        }
         if self.version != FUNCTION_VALUE_VERSION {
             return Err(error("incompatible function value"));
         }
@@ -430,7 +476,11 @@ impl<'a, 'b> Encoder<'a, 'b> {
             ValueKind::Record => {
                 if matches!(
                     self.version,
-                    BIGINT_VALUE_VERSION | FUNCTION_VALUE_VERSION | DYNAMIC_VALUE_VERSION
+                    BIGINT_VALUE_VERSION
+                        | FUNCTION_VALUE_VERSION
+                        | DYNAMIC_VALUE_VERSION
+                        | PROMISE_VALUE_VERSION
+                        | FUNCTION_FIELD_VALUE_VERSION
                 ) {
                     validate_aggregate(self.data, ValueKind::Record, packed, self.version)
                         .map_err(wasmtime::Error::new)?;
@@ -439,6 +489,10 @@ impl<'a, 'b> Encoder<'a, 'b> {
             }
             ValueKind::Array => self.array(packed, depth),
             ValueKind::Dictionary => self.dictionary(packed, depth),
+            ValueKind::Promise => self.promise(packed, depth),
+            ValueKind::Function if self.diagnostic_budget.is_some() => {
+                self.write(FUNCTION_DISPLAY.as_bytes())
+            }
             _ => Err(error("noncanonical scalar")),
         }
     }
@@ -466,6 +520,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             HEAP_ERROR_FLAG as u32
         } else {
@@ -481,6 +537,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             ) {
                 HEAP_VECTOR_FLAG as u32
             } else {
@@ -497,6 +555,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             ) {
                 HEAP_UNION_FLAG as u32
             } else {
@@ -525,6 +585,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             return self.vector(packed, depth);
         }
@@ -641,6 +703,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             return self.record_present(packed, depth);
         }
@@ -693,6 +757,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             if !names.insert(key) {
                 return Err(error("duplicate object field"));
             }
+
             let [lo, hi] = self.words::<2>(ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES)?;
             let packed = ((hi as u64) << i32::BITS) | lo as u64;
             let (kind, packed) = self.resolve(kind, packed)?;

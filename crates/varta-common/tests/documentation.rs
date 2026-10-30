@@ -1,57 +1,12 @@
 //! Documentation tables that restate registry facts are generated from the
 //! registries and compared here, so a stale count or version fails the gate.
-use std::path::{Path, PathBuf};
+mod support;
+
+use support::{assert_block, block, profile_name, table, workspace_file};
 use varta_common::{abi, json, language, launcher::LauncherInfo, scheduler, value};
 
-fn workspace_file(relative: &str) -> (PathBuf, String) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(relative);
-    // Test-only read of a checked-in document; a missing file is a test failure.
-    let text = std::fs::read_to_string(&path).unwrap();
-    (path, text)
-}
-
-/// Returns the text between `<!-- generated:NAME:begin ... -->` and its end marker.
-fn block<'a>(text: &'a str, name: &str) -> &'a str {
-    let begin = format!("<!-- generated:{name}:begin");
-    let end = format!("<!-- generated:{name}:end -->");
-    let start = text
-        .find(&begin)
-        .unwrap_or_else(|| panic!("missing {begin}"));
-    let body = start + text[start..].find("-->").unwrap() + "-->".len();
-    let stop = text[body..]
-        .find(&end)
-        .unwrap_or_else(|| panic!("missing {end}"));
-    text[body..body + stop].trim()
-}
-
-fn assert_block(relative: &str, name: &str, expected: &str) {
-    let (path, text) = workspace_file(relative);
-    let actual = block(&text, name);
-    assert!(
-        actual == expected.trim(),
-        "{} block `{name}` is stale; replace it with:\n\n{}\n",
-        path.display(),
-        expected.trim()
-    );
-}
-
-fn profile_name(profile: language::LanguageProfile) -> String {
-    // Infallible: the profile enum serializes to its registered string name.
-    serde_json::to_value(profile)
-        .unwrap()
-        .as_str()
-        .unwrap()
-        .to_owned()
-}
-
 fn version_matrix() -> String {
-    let mut rows = vec![
-        "| Profile | Host ABI | Value ABI | Exception export | JSON stringify | JSON parse |"
-            .to_owned(),
-        "| --- | --- | --- | --- | --- | --- |".to_owned(),
-    ];
+    let mut rows = Vec::new();
     for &profile in language::SUPPORTED_PROFILES {
         let exception = if profile.exceptions() {
             let (export, channel) = profile.exception_channel();
@@ -59,16 +14,26 @@ fn version_matrix() -> String {
         } else {
             "—".to_owned()
         };
-        rows.push(format!(
-            "| `{}` | {} | {} | {exception} | `{}` | `{}` |",
-            profile_name(profile),
-            profile.host_abi(),
-            profile.value_abi(),
-            profile.json_stringify().name(),
-            profile.json_parse().name(),
-        ));
+        rows.push(vec![
+            format!("`{}`", profile_name(profile)),
+            profile.host_abi().to_string(),
+            profile.value_abi().to_string(),
+            exception,
+            format!("`{}`", profile.json_stringify().name()),
+            format!("`{}`", profile.json_parse().name()),
+        ]);
     }
-    rows.join("\n")
+    table(
+        &[
+            "Profile",
+            "Host ABI",
+            "Value ABI",
+            "Exception export",
+            "JSON stringify",
+            "JSON parse",
+        ],
+        rows,
+    )
 }
 
 fn launcher_summary() -> String {
@@ -227,16 +192,28 @@ fn limits() -> String {
             scheduler::MAX_PROMISE_SERIALS.to_string(),
             "scheduler::MAX_PROMISE_SERIALS",
         ),
+        (
+            "Unhandled-rejection reasons kept / units per field / bytes each",
+            format!(
+                "{} / {} / {}",
+                scheduler::MAX_RETAINED_REJECTION_REASONS,
+                scheduler::MAX_REJECTION_REASON_UNITS,
+                scheduler::MAX_REJECTION_REASON_BYTES
+            ),
+            "scheduler::MAX_*REJECTION_REASON*",
+        ),
+        (
+            "Pending timers (v36)",
+            scheduler::MAX_PENDING_TIMERS.to_string(),
+            "scheduler::MAX_PENDING_TIMERS",
+        ),
     ];
-    let mut lines = vec![
-        "| Resource | Limit | Source constant |".to_owned(),
-        "| --- | --- | --- |".to_owned(),
-    ];
-    lines.extend(
-        rows.into_iter()
-            .map(|(resource, limit, constant)| format!("| {resource} | {limit} | `{constant}` |")),
-    );
-    lines.join("\n")
+    table(
+        &["Resource", "Limit", "Source constant"],
+        rows.into_iter().map(|(resource, limit, constant)| {
+            vec![resource.to_owned(), limit, format!("`{constant}`")]
+        }),
+    )
 }
 
 /// Profile indexes carry hand-written summaries, but must list exactly the

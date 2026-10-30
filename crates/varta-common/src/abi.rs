@@ -34,6 +34,20 @@ pub const RESUMABLE_FRAMES_VERSION: u32 = 29;
 /// Pilot batch v34: the runtime microtask scheduler drives `varta_resume` for
 /// promise jobs and `await`, so runtimes without the scheduler reject the module.
 pub const SCHEDULED_FRAMES_VERSION: u32 = 30;
+/// Pilot batch v35: the value16 readers (`HostOperation::value15_counterpart`)
+/// bound to value layout 16, which adds promise values.
+pub const PROMISE_VALUES_VERSION: u32 = 31;
+/// Pilot batch v36 (timers and function-valued fields): the minimum host ABI
+/// of every import the batch adds, such as the timer operations behind
+/// `setTimeout`/`clearTimeout`. No import requires it yet; it binds v36 alone,
+/// so a v36 module relabelled as v35 fails at its host ABI section.
+pub const TIMERS_VERSION: u32 = 32;
+/// Pilot batch v37 (language core, class generics, collections, RegExp and
+/// the async network request capability): the minimum host ABI of every
+/// import the batch adds, such as the `net.request` operations behind
+/// `fetch`. No import requires it yet; it binds v37 alone, so a v37 module
+/// relabelled as v36 fails at its host ABI section.
+pub const NET_REQUEST_VERSION: u32 = 33;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -68,6 +82,9 @@ pub fn supported(version: u32) -> bool {
             | BIGINT_VALUES_VERSION
             | RESUMABLE_FRAMES_VERSION
             | SCHEDULED_FRAMES_VERSION
+            | PROMISE_VALUES_VERSION
+            | TIMERS_VERSION
+            | NET_REQUEST_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";

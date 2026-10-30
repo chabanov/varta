@@ -17,6 +17,9 @@ pub(super) struct Constant {
     ty: Type,
     value: Value,
     readonly: bool,
+    /// A module `let` (v37 `language_core`): its storage type, and whether
+    /// this module may assign it (the declaring module; imports read only).
+    variable: Option<(Type, bool)>,
     /// Graph-unique declaration identity: two star re-export sources that
     /// forward the same declaration are not ambiguous.
     id: usize,
@@ -51,8 +54,12 @@ type Synthesized<'a> = (
     &'a mut BTreeMap<usize, flow_calls::Impact>,
 );
 
-/// Top-level non-ambient `const` declarations, exported or not.
-fn declarations(module: &ast::Module) -> Vec<&ast::VarDecl> {
+/// Top-level non-ambient `const` declarations, exported or not, and under v37
+/// (`language_core`) `let` and `var` declarations (module variables).
+fn declarations(
+    module: &ast::Module,
+    profile: varta_common::language::LanguageProfile,
+) -> Vec<&ast::VarDecl> {
     module
         .body
         .iter()
@@ -66,7 +73,9 @@ fn declarations(module: &ast::Module) -> Vec<&ast::VarDecl> {
             }
             _ => None,
         })
-        .filter(|var| !var.declare && var.kind == ast::VarDeclKind::Const)
+        .filter(|var| {
+            !var.declare && (var.kind == ast::VarDeclKind::Const || profile.language_core())
+        })
         .collect()
 }
 
@@ -100,10 +109,31 @@ pub(super) fn link_module(
     }
     let (generated, next, call_effects) = synthesized;
     let source = &unit.source;
-    let declared = declarations(&unit.ast);
-    check(source, functions, &scope, &declared)?;
+    let declared = declarations(&unit.ast, types.profile);
+    // Imported module variables are read-only bindings here.
+    for constant in scope.values_mut() {
+        if let Some((_, assignable)) = &mut constant.variable {
+            *assignable = false;
+        }
+    }
+    check(source, functions, &scope, &declared, types.profile)?;
     for chunk in chunks(&declared) {
         let index = *next;
+        // Function initializers (v37) lift their bodies, and collection
+        // constructors (v37) instantiate prelude functions, while the chunk
+        // is lowered: reserve the initializer's index first so they do not
+        // take it.
+        let reserved = types.profile.language_core() && lifts(chunk)
+            || types.profile.collections() && constructs_collection(chunk);
+        if reserved {
+            if index >= types.function_limit() {
+                return Err(source.locate(
+                    invalid("too many functions including module initializers"),
+                    chunk[0].span,
+                ));
+            }
+            *next += 1;
+        }
         let mut lower = Lower {
             source,
             types,
@@ -143,6 +173,7 @@ pub(super) fn link_module(
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         let (body, locals) =
             lower.initializers(chunk, &scope, (&mut linked.stored, &mut linked.declared))?;
@@ -173,14 +204,16 @@ pub(super) fn link_module(
                 .collect(),
             body,
         };
-        if stored {
-            if index >= varta_common::abi::MAX_USER_FUNCTIONS {
-                return Err(source.locate(
-                    invalid("too many functions including module initializers"),
-                    span,
-                ));
+        if stored || reserved {
+            if !reserved {
+                if index >= types.function_limit() {
+                    return Err(source.locate(
+                        invalid("too many functions including module initializers"),
+                        span,
+                    ));
+                }
+                *next += 1;
             }
-            *next += 1;
             generated.insert(index, function);
             linked.initializers.push(index);
         }
@@ -188,6 +221,42 @@ pub(super) fn link_module(
     }
     linked.scopes.insert(path.clone(), scope);
     Ok(())
+}
+
+/// Whether lowering `chunk` lifts function bodies (arrows or function
+/// expressions in its initializers).
+fn lifts(chunk: &[Declared<'_>]) -> bool {
+    struct Functions(bool);
+    impl Visit for Functions {
+        fn visit_arrow_expr(&mut self, _: &ast::ArrowExpr) {
+            self.0 = true;
+        }
+        fn visit_function(&mut self, _: &ast::Function) {
+            self.0 = true;
+        }
+    }
+    let mut found = Functions(false);
+    for var in chunk {
+        var.visit_with(&mut found);
+    }
+    found.0
+}
+
+/// Whether a chunk's initializers construct a `Map` or `Set` (v37).
+fn constructs_collection(chunk: &[Declared<'_>]) -> bool {
+    #[derive(Default)]
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_new_expr(&mut self, new: &ast::NewExpr) {
+            self.0 |= matches!(stmt::unparen(&new.callee), ast::Expr::Ident(id) if matches!(id.sym.as_ref(), "Set" | "Map"));
+            new.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder::default();
+    for var in chunk {
+        var.visit_with(&mut finder);
+    }
+    finder.0
 }
 
 /// Conservative upper estimate of emitted code per initializer weight unit
@@ -235,6 +304,7 @@ fn check(
     functions: &BTreeMap<String, Signature>,
     imported: &Scope,
     declared: &[Declared<'_>],
+    profile: varta_common::language::LanguageProfile,
 ) -> Result<()> {
     let mut names: BTreeSet<String> = imported.keys().cloned().collect();
     for var in declared {
@@ -252,7 +322,7 @@ fn check(
                     binding.id.span,
                 ));
             }
-            if declarator.init.is_none() {
+            if declarator.init.is_none() && var.kind == ast::VarDeclKind::Const {
                 return Err(source.locate(
                     invalid("module constant requires an initializer"),
                     declarator.span,
@@ -267,13 +337,17 @@ fn check(
             let (Some(init), ast::Pat::Ident(binding)) =
                 (declarator.init.as_deref(), &declarator.name)
             else {
+                // A module `let x: T | undefined;` (v37) starts as `undefined`.
+                if let ast::Pat::Ident(binding) = &declarator.name {
+                    ready.insert(binding.id.sym.to_string());
+                }
                 continue;
             };
             let value = match stmt::unparen(init) {
                 ast::Expr::TsConstAssertion(assertion) => &assertion.expr,
                 _ => init,
             };
-            initializer_form(value, &names).map_err(|e| source.locate(e, value.span()))?;
+            initializer_form(value, &names, profile).map_err(|e| source.locate(e, value.span()))?;
             if let Some(early) = referenced(value)
                 .into_iter()
                 .find(|name| names.contains(name) && !ready.contains(name))
@@ -290,8 +364,30 @@ fn check(
 }
 
 /// Why an initializer leaves the admitted pure subset, naming the construct.
-fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
+fn initializer_form(
+    expr: &ast::Expr,
+    names: &BTreeSet<String>,
+    profile: varta_common::language::LanguageProfile,
+) -> Result<()> {
     let form = match expr {
+        // V37 (`language_core`): function values; their bodies run later and
+        // may reference anything an ordinary function may.
+        ast::Expr::Arrow(_) | ast::Expr::Fn(_) if profile.language_core() => return Ok(()),
+        // `new Set([...])`/`new Map([...])` of admitted values (v37): the
+        // constructor only builds the new collection.
+        ast::Expr::New(new)
+            if profile.collections()
+                && matches!(stmt::unparen(&new.callee), ast::Expr::Ident(id)
+                    if matches!(id.sym.as_ref(), "Set" | "Map") && !names.contains(id.sym.as_ref())) =>
+        {
+            for argument in new.args.iter().flatten() {
+                if argument.spread.is_some() {
+                    return Err(unsupported("spread in a module constant initializer"));
+                }
+                initializer_form(&argument.expr, names, profile)?;
+            }
+            return Ok(());
+        }
         ast::Expr::Lit(
             ast::Lit::Str(_)
             | ast::Lit::Num(_)
@@ -308,7 +404,7 @@ fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
                 "reference to {name} in a module constant initializer; only module constants are admitted"
             )));
         }
-        ast::Expr::Paren(paren) => return initializer_form(&paren.expr, names),
+        ast::Expr::Paren(paren) => return initializer_form(&paren.expr, names, profile),
         ast::Expr::Unary(unary)
             if matches!(unary.op, ast::UnaryOp::Minus | ast::UnaryOp::Plus)
                 && matches!(
@@ -319,14 +415,14 @@ fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
             return Ok(());
         }
         ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::Add => {
-            initializer_form(&binary.left, names)?;
-            return initializer_form(&binary.right, names);
+            initializer_form(&binary.left, names, profile)?;
+            return initializer_form(&binary.right, names, profile);
         }
         ast::Expr::Array(array) => {
             for element in &array.elems {
                 match element {
                     Some(ast::ExprOrSpread { spread: None, expr }) => {
-                        initializer_form(expr, names)?
+                        initializer_form(expr, names, profile)?
                     }
                     Some(_) => return Err(unsupported("spread in a module constant initializer")),
                     None => return Err(unsupported("array hole in a module constant initializer")),
@@ -344,10 +440,10 @@ fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
                                 ast::PropName::Ident(_) | ast::PropName::Str(_)
                             ) =>
                         {
-                            initializer_form(&pair.value, names)?
+                            initializer_form(&pair.value, names, profile)?
                         }
                         ast::Prop::Shorthand(id) => {
-                            initializer_form(&ast::Expr::Ident(id.clone()), names)?
+                            initializer_form(&ast::Expr::Ident(id.clone()), names, profile)?
                         }
                         _ => {
                             return Err(unsupported(
@@ -424,12 +520,24 @@ impl Lower<'_> {
                 folded.insert(*slot, literal);
             }
         }
-        for var in declared {
+        // A module `var` (v37) is a module variable like `let`: initializers
+        // run before any other code, so its hoisting is not observable.
+        let declared: Vec<ast::VarDecl> = declared
+            .iter()
+            .map(|var| {
+                let mut var = (*var).clone();
+                if var.kind == ast::VarDeclKind::Var {
+                    var.kind = ast::VarDeclKind::Let;
+                }
+                var
+            })
+            .collect();
+        for var in &declared {
             self.predeclare(var)
                 .map_err(|e| self.source.locate(e, var.span()))?;
         }
         let mut locals = Scope::new();
-        for var in declared {
+        for var in &declared {
             for (declarator, statement) in var.decls.iter().zip(self.variables(var)?) {
                 let ast::Pat::Ident(name) = &declarator.name else {
                     return Err(invalid("missing module constant binding"));
@@ -440,6 +548,60 @@ impl Lower<'_> {
                 let binding = self.binding(name.id.sym.as_ref())?;
                 let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
                 let span = value.span;
+                if var.kind != ast::VarDeclKind::Const {
+                    // A module variable (v37) always lives in its root slot;
+                    // a primitive is boxed so the slot holds a handle.
+                    if matches!(value.kind, E::Zero) {
+                        return Err(self.source.locate(
+                            unsupported(
+                                "module let without an initializer whose type does not admit \
+                                 undefined (definite assignment is not tracked across functions)",
+                            ),
+                            declarator.span,
+                        ));
+                    }
+                    let storage = if ty.needs_root() {
+                        ty
+                    } else {
+                        unions::intern(vec![ty, Type::Undefined], self.types)?
+                    };
+                    let index = *stored;
+                    *stored += 1;
+                    body.push(S::Init(slot, value));
+                    body.push(S::InitModuleConstant(
+                        index,
+                        unions::widen(
+                            Expr {
+                                span,
+                                ty,
+                                kind: E::Local(slot),
+                            },
+                            Some(storage),
+                            self.types,
+                        )?,
+                    ));
+                    // Later initializers (closures) reach the stored variable.
+                    if let Some(binding) = self
+                        .scopes
+                        .iter_mut()
+                        .rev()
+                        .find_map(|scope| scope.get_mut(name.id.sym.as_ref()))
+                    {
+                        binding.global = Some((index, storage));
+                    }
+                    locals.insert(
+                        name.id.sym.to_string(),
+                        Constant {
+                            ty,
+                            value: Value::Stored(index),
+                            readonly: false,
+                            variable: Some((storage, true)),
+                            id: *ids,
+                        },
+                    );
+                    *ids += 1;
+                    continue;
+                }
                 let constant = if ty.needs_root() {
                     let index = *stored;
                     *stored += 1;
@@ -471,6 +633,7 @@ impl Lower<'_> {
                         ty,
                         value: constant,
                         readonly: binding.readonly,
+                        variable: None,
                         id: *ids,
                     },
                 );
@@ -492,6 +655,25 @@ impl Lower<'_> {
         let mut bindings = BTreeMap::new();
         for (name, constant) in scope.iter().filter(|(name, _)| names.contains(*name)) {
             let slot = self.hidden(constant.ty);
+            // A module variable is read and written in its root slot.
+            if let (Some((storage, assignable)), Value::Stored(index)) =
+                (constant.variable, constant.value)
+            {
+                bindings.insert(
+                    name.clone(),
+                    Binding {
+                        identity: (self.index, slot),
+                        slot,
+                        ty: Some(constant.ty),
+                        initialized: true,
+                        mutable: assignable,
+                        readonly: false,
+                        tdz: None,
+                        global: Some((index, storage)),
+                    },
+                );
+                continue;
+            }
             bindings.insert(
                 name.clone(),
                 Binding {
@@ -501,6 +683,8 @@ impl Lower<'_> {
                     initialized: true,
                     mutable: false,
                     readonly: constant.readonly,
+                    tdz: None,
+                    global: None,
                 },
             );
             let kind = match constant.value {

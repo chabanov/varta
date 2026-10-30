@@ -113,9 +113,14 @@ impl Lower<'_> {
             .collect();
         let ty = match present.as_slice() {
             [ty] if if array {
-                matches!(ty, Type::Array(_))
+                matches!(ty, Type::Array(_) | Type::Tuple(_))
             } else {
                 matches!(ty, Type::Record(_))
+                    // V36: dictionaries and mixed records (not `object` views,
+                    // whose undeclared keys would read `any`).
+                    || matches!(ty, Type::Dictionary(_))
+                        && self.types.profile.checked_declared_fields()
+                        && !self.types.declared(*ty).is_some_and(|members| members.object)
             } =>
             {
                 *ty

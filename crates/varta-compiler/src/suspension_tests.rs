@@ -8,32 +8,46 @@ use varta_common::value::ValueKind;
 use wasmtime::{Caller, Engine, Instance, Linker, Memory, Module, Store, Val};
 
 const PROFILE: LanguageProfile = LanguageProfile::CheckedF64Utf16V31;
-const CREATE: &str = "varta.test.frame.0";
+pub(crate) const CREATE: &str = "varta.test.frame.0";
+thread_local! {
+    /// Profile override: the liveness tests rerun these behaviour tests with
+    /// v35 frames (`frame_liveness`) on their own test thread.
+    static OVERRIDE: std::cell::Cell<Option<LanguageProfile>> = const { std::cell::Cell::new(None) };
+}
+fn profile() -> LanguageProfile {
+    OVERRIDE.with(std::cell::Cell::get).unwrap_or(PROFILE)
+}
+/// Run `test` with every harness compilation under `profile`.
+pub(crate) fn with_profile(profile: LanguageProfile, test: impl FnOnce()) {
+    OVERRIDE.with(|cell| cell.set(Some(profile)));
+    test();
+    OVERRIDE.with(|cell| cell.set(None));
+}
 
 pub(crate) fn compile(source: &str) -> Result<Vec<u8>, crate::CompilerError> {
-    compile_with(source, PROFILE)
+    compile_with(source, profile())
 }
 fn compile_with(source: &str, profile: LanguageProfile) -> Result<Vec<u8>, crate::CompilerError> {
     hook::with(|| crate::compile_typescript_with_profile(source, profile))
 }
 
 #[derive(Default)]
-struct Host {
+pub(crate) struct Host {
     /// Token re-entered from the guest's `console.log(number)` callback.
     reenter: Option<i64>,
     /// Frame status observed inside that callback, and whether re-entry trapped.
     observed: Option<(u32, bool)>,
 }
-struct Frames {
-    store: Store<Host>,
-    instance: Instance,
-    memory: Memory,
+pub(crate) struct Frames {
+    pub(crate) store: Store<Host>,
+    pub(crate) instance: Instance,
+    pub(crate) memory: Memory,
 }
 impl Frames {
-    fn new(source: &str) -> Self {
-        Self::with_profile(source, PROFILE)
+    pub(crate) fn new(source: &str) -> Self {
+        Self::with_profile(source, profile())
     }
-    fn with_profile(source: &str, profile: LanguageProfile) -> Self {
+    pub(crate) fn with_profile(source: &str, profile: LanguageProfile) -> Self {
         let bytes = compile_with(source, profile).unwrap();
         let engine = Engine::default();
         let module = Module::new(&engine, &bytes).unwrap();
@@ -77,30 +91,40 @@ impl Frames {
             memory,
         }
     }
-    fn create(&mut self, args: &[Val]) -> i64 {
+    pub(crate) fn create(&mut self, args: &[Val]) -> i64 {
         self.create_layout(CREATE, args)
     }
-    fn create_layout(&mut self, name: &str, args: &[Val]) -> i64 {
+    pub(crate) fn create_layout(&mut self, name: &str, args: &[Val]) -> i64 {
         let func = self.instance.get_func(&mut self.store, name).unwrap();
         let mut result = [Val::I64(0)];
         func.call(&mut self.store, args, &mut result).unwrap();
         result[0].unwrap_i64()
     }
-    fn resume(&mut self, token: i64, kind: Completion, value: u64) -> wasmtime::Result<Outcome> {
+    pub(crate) fn resume(
+        &mut self,
+        token: i64,
+        kind: Completion,
+        value: u64,
+    ) -> wasmtime::Result<Outcome> {
         self.resume_raw(token, kind as i32, value)
     }
-    fn resume_raw(&mut self, token: i64, kind: i32, value: u64) -> wasmtime::Result<Outcome> {
+    pub(crate) fn resume_raw(
+        &mut self,
+        token: i64,
+        kind: i32,
+        value: u64,
+    ) -> wasmtime::Result<Outcome> {
         let resume = self
             .instance
             .get_typed_func::<(i64, i32, i64), i32>(&mut self.store, frame::RESUME_EXPORT)?;
         let code = resume.call(&mut self.store, (token, kind, value as i64))?;
         Ok(Outcome::from_code(code).unwrap())
     }
-    fn next(&mut self, token: i64, value: f64) -> Outcome {
+    pub(crate) fn next(&mut self, token: i64, value: f64) -> Outcome {
         self.resume(token, Completion::Normal, value.to_bits())
             .unwrap()
     }
-    fn view(&self, token: i64) -> FrameView {
+    pub(crate) fn view(&self, token: i64) -> FrameView {
         FrameView::read_envelope(
             self.memory.data(&self.store),
             ResumeToken::from_bits(token).frame,
@@ -108,38 +132,38 @@ impl Frames {
         .unwrap()
     }
     /// The token for the frame's current suspension generation.
-    fn token(&self, token: i64) -> i64 {
+    pub(crate) fn token(&self, token: i64) -> i64 {
         let frame = ResumeToken::from_bits(token).frame;
         self.view(token).token(frame).to_bits()
     }
-    fn collect(&mut self) {
+    pub(crate) fn collect(&mut self) {
         self.instance
             .get_typed_func::<(), ()>(&mut self.store, crate::emit::TEST_COLLECT)
             .unwrap()
             .call(&mut self.store, ())
             .unwrap();
     }
-    fn completion(&self, token: i64) -> u64 {
+    pub(crate) fn completion(&self, token: i64) -> u64 {
         self.view(token).completion.unwrap().value
     }
-    fn number(&self, token: i64) -> f64 {
+    pub(crate) fn number(&self, token: i64) -> f64 {
         f64::from_bits(self.completion(token))
     }
-    fn word(&self, at: usize) -> u32 {
+    pub(crate) fn word(&self, at: usize) -> u32 {
         u32::from_le_bytes(
             self.memory.data(&self.store)[at..at + 4]
                 .try_into()
                 .unwrap(),
         )
     }
-    fn wide(&self, at: usize) -> u64 {
+    pub(crate) fn wide(&self, at: usize) -> u64 {
         u64::from_le_bytes(
             self.memory.data(&self.store)[at..at + 8]
                 .try_into()
                 .unwrap(),
         )
     }
-    fn string(&self, handle: u64) -> String {
+    pub(crate) fn string(&self, handle: u64) -> String {
         let (ptr, len) = (handle as u32 as usize, (handle >> 32) as usize);
         let units: Vec<u16> = self.memory.data(&self.store)[ptr..ptr + len]
             .chunks(2)
@@ -148,11 +172,11 @@ impl Frames {
         String::from_utf16(&units).unwrap()
     }
     /// Kind and payload of a boxed exception-union completion.
-    fn thrown(&self, token: i64) -> (u32, u64) {
+    pub(crate) fn thrown(&self, token: i64) -> (u32, u64) {
         let union = self.completion(token) as u32 as usize;
         (self.word(union), self.wide(union + 8))
     }
-    fn pending(&mut self) -> i32 {
+    pub(crate) fn pending(&mut self) -> i32 {
         self.instance
             .get_global(&mut self.store, varta_common::exceptions::PENDING)
             .unwrap()
@@ -166,14 +190,17 @@ pub(crate) fn catalog(bytes: &[u8]) -> varta_common::function::FunctionCatalog {
         if let wasmparser::Payload::CustomSection(section) = payload.unwrap()
             && section.name() == varta_common::function::CATALOG_SECTION
         {
-            return varta_common::function::FunctionCatalog::from_frame_bytes(section.data())
+            // Cell layouts (version 2) or v35 liveness layouts (version 3).
+            let data = section.data();
+            return varta_common::function::FunctionCatalog::from_frame_bytes(data)
+                .or_else(|_| varta_common::function::FunctionCatalog::from_liveness_bytes(data))
                 .unwrap();
         }
     }
     panic!("missing function catalog");
 }
 
-fn program(body: &str) -> String {
+pub(crate) fn program(body: &str) -> String {
     format!("{body}\nexport function main(): void {{}}")
 }
 
@@ -208,7 +235,7 @@ fn suspension_round_trips_values_and_completes() {
 impl Frames {
     /// Resume with each input in turn; returns yields (as f64), the final
     /// outcome and the token whose frame holds the final completion.
-    fn drive(&mut self, mut token: i64, inputs: &[u64]) -> (Vec<f64>, Outcome, i64) {
+    pub(crate) fn drive(&mut self, mut token: i64, inputs: &[u64]) -> (Vec<f64>, Outcome, i64) {
         let mut yields = Vec::new();
         for input in inputs {
             let outcome = self.resume(token, Completion::Normal, *input).unwrap();
@@ -222,7 +249,7 @@ impl Frames {
         (yields, Outcome::Suspended, token)
     }
 }
-fn numbers(values: &[f64]) -> Vec<u64> {
+pub(crate) fn numbers(values: &[f64]) -> Vec<u64> {
     values.iter().map(|value| value.to_bits()).collect()
 }
 
@@ -547,7 +574,7 @@ const TWO_STEPS: &str = "function task(flag: boolean): string {
    return first && flag ? \"both\" : \"one\";
  }";
 
-fn trapped(result: wasmtime::Result<Outcome>) -> bool {
+pub(crate) fn trapped(result: wasmtime::Result<Outcome>) -> bool {
     result
         .unwrap_err()
         .downcast_ref::<wasmtime::Trap>()
@@ -864,5 +891,37 @@ fn v32_suspension_points_in_new_forms_are_rejected_by_construct() {
             .unwrap()
             .to_string();
         assert!(error.contains(expected), "{source}\n{error}");
+    }
+}
+
+/// The behaviour tests above, rerun with v35 liveness frames
+/// (`frame_liveness`): only the locals live across each point are saved,
+/// directly in liveness segments whose edge masks are the GC map of the
+/// point. Tests that inspect cell layouts have liveness counterparts in
+/// `frame_liveness_tests`.
+#[test]
+fn behaviour_holds_with_liveness_frames() {
+    let tests: [fn(); 18] = [
+        suspension_round_trips_values_and_completes,
+        normalization_preserves_operand_order_and_already_evaluated_values,
+        normalization_preserves_an_already_evaluated_callee,
+        short_circuit_and_conditional_operands_suspend_only_on_their_branch,
+        nullish_operand_suspends_only_for_nullish_left_values,
+        compound_assignments_prepare_receiver_and_old_value_before_suspension,
+        loops_resume_inside_their_bodies_and_keep_per_iteration_cells,
+        thrown_resumption_reaches_the_handler_active_at_the_suspension_point,
+        uncaught_exceptions_move_into_the_frame_and_leave_the_channel_empty,
+        return_resumption_runs_enclosing_finally_blocks,
+        frames_keep_exact_roots_across_forced_collections,
+        pending_exception_completion_survives_collection_until_read,
+        dispatcher_rejects_stale_completed_and_foreign_tokens,
+        dispatcher_rejects_inadmissible_completions_and_inputs_before_effects,
+        dispatcher_requires_an_empty_exception_channel,
+        running_frames_reject_reentrant_resumption,
+        live_frames_have_their_own_budget,
+        completed_frames_release_their_root_table_slot,
+    ];
+    for test in tests {
+        with_profile(LanguageProfile::CheckedF64Utf16V35, test);
     }
 }

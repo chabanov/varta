@@ -9,6 +9,7 @@ use varta_common::function::frame;
 mod construct;
 #[cfg(any(test, feature = "suspension-test-hook"))]
 pub(crate) mod hook;
+mod liveness;
 mod normalize;
 mod states;
 #[cfg(test)]
@@ -64,12 +65,14 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
             // Calls created the generator object; the frame returns `TReturn`.
             function.result = types.generators[id as usize].returned;
         }
-        let namer = construct::Namer::new(graph, &function.source);
+        let namer = construct::Namer::new(graph, &function.source, types.profile);
         let body = std::mem::take(&mut function.body);
         let mut normalizer =
             normalize::Normalizer::new(&mut function.locals, &namer, &function.source);
         normalizer.awaits = types.asynchrony.scheduled.contains(&index);
+        normalizer.publish = types.asynchrony.published.get(&index).copied();
         let body = normalizer.statements(body)?;
+        let liveness = types.profile.frame_liveness();
         let (body, machine) = states::Machine {
             locals: &mut function.locals,
             types: &*types,
@@ -78,11 +81,37 @@ pub(crate) fn prepare(program: &mut ir::Program, graph: &crate::modules::Graph) 
             result: function.result,
             generator,
             scheduled: types.asynchrony.scheduled.contains(&index),
+            liveness: liveness.then_some((&function.cells, function.params.len())),
+            resumed: Vec::new(),
         }
         .build(function.span, body)?;
-        // State, completion and input locals are re-initialized, never saved.
-        let entry = 2 + machine.inputs.len();
-        let saved = function.locals.iter().filter(|ty| ty.width() > 0).count() - entry;
+        let saved = match &machine.live {
+            // A liveness frame holds the largest saved set of any state,
+            // the creator's parameters included.
+            Some(live) => {
+                let entries = |slots: &mut dyn Iterator<Item = u32>| -> usize {
+                    slots
+                        .map(|slot| {
+                            if function.cells.contains(&slot) {
+                                1
+                            } else {
+                                function.locals[slot as usize].width() as usize
+                            }
+                        })
+                        .sum()
+                };
+                live.iter()
+                    .map(|saved| entries(&mut saved.iter().copied()))
+                    .chain([entries(&mut (0..function.params.len() as u32))])
+                    .max()
+                    .unwrap_or(0)
+            }
+            // State, completion and input locals are re-initialized, never saved.
+            None => {
+                let entry = 2 + machine.inputs.len();
+                function.locals.iter().filter(|ty| ty.width() > 0).count() - entry
+            }
+        };
         if saved > frame::MAX_FRAME_BINDINGS {
             return Err(function.source.locate(
                 invalid("suspendable function exceeds the continuation frame budget"),
@@ -132,7 +161,9 @@ fn admissible(program: &ir::Program, index: usize) -> Result<()> {
             .is_some_and(|(http, _)| *http == index)
     {
         Some("an entry function")
-    } else if function.environment || function.self_slot.is_some() {
+    } else if function.self_slot.is_some()
+        || function.environment && !async_closure_body(program, index)
+    {
         Some("a closure")
     } else if function.receiver.is_some() {
         Some("a method")
@@ -149,6 +180,12 @@ fn admissible(program: &ir::Program, index: usize) -> Result<()> {
             .locate(rejected(reason), suspension_span(&function.body))),
         None => Ok(()),
     }
+}
+
+/// The scheduled body of an async closure (v35 `async_methods`): an
+/// environment function whose captured cells its frame keeps as shared slots.
+fn async_closure_body(program: &ir::Program, index: usize) -> bool {
+    program.types.profile.async_methods() && program.types.asynchrony.scheduled.contains(&index)
 }
 
 /// Suspendable functions are not ordinary callables until generator/async

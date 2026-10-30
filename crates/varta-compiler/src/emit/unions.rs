@@ -8,7 +8,7 @@ impl Emitter<'_> {
             ));
         }
         let tag = member
-            .value_kind()
+            .profile_kind(self.profile)
             .ok_or_else(|| CompilerError::Internal("member check requires a value type".into()))?;
         self.expr(value)?;
         self.code.extend([
@@ -18,6 +18,7 @@ impl Emitter<'_> {
             I::I32Const(tag as i32),
             I::I32Eq,
         ]);
+        self.shared_member(value.ty, member)?;
         if let Some(class) = member.error_class() {
             // All Error families share a union tag. Only after that tag matches
             // may we dereference the Error payload and test its exact class.
@@ -51,7 +52,7 @@ impl Emitter<'_> {
         self.string_helper(strings::Helper::Allocate)?;
         self.code.push(I::LocalSet(self.temporary));
         let tag = ty
-            .value_kind()
+            .profile_kind(self.profile)
             .ok_or_else(|| CompilerError::Internal("missing union member tag".into()))?;
         self.initialize_value(
             strings::ALLOCATED | values::HEAP_UNION_FLAG,
@@ -74,7 +75,7 @@ impl Emitter<'_> {
             I::LocalTee(self.temporary),
             I::I32Load(strings::WORD),
             I::I32Const(
-                ty.value_kind()
+                ty.profile_kind(self.profile)
                     .ok_or_else(|| CompilerError::Internal("missing narrowed tag".into()))?
                     as i32,
             ),

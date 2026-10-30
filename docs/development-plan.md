@@ -10,10 +10,11 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Item | Current state |
 | --- | --- |
 | Profiles | Default `checked-i32-utf8-v1`; latest released opt-in `checked-f64-utf16-v31`; `checked-f64-utf16-v32` is the [pilot batch](#pilot-batch-v32-in-development), merged on the `v32-integration` branch and not released. Versions of every profile: [version matrix](architecture.md#version-matrix) |
-| Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
+| Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. `v36-merge` with the declared-fields, function-fields, timers and async-generator streams: commit `765743e` (2026-10-29), 2196 tests, 0 failures, conformance 101 passed and 9 known gaps. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v34-integration-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts` and `core/pagination.ts` compile and validate; the other files stop at `Headers` or `AbortSignal` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Platform targets | Third-party embedding contract published in [embedding.md](embedding.md); browser, desktop and Raspberry Pi 5 targets, application lifecycle and view layer follow the [accepted design](#platform-targets-and-application-model) (2026-10-29), not implemented yet |
 
 Next work, in order:
 
@@ -35,7 +36,11 @@ Next work, in order:
    and merged with the records and unknown streams on `v34-integration-merge`
    ([scheduler](architecture.md#microtask-scheduler-promises),
    [async functions](architecture.md#async-functions-async_functions));
-   timers, I/O and async HTTP (step 5) are next.
+   step 5's timers and step 6's async generators and `for await` are
+   implemented under v36 and integrated on `v36-merge`
+   ([timers](architecture.md#timers-timers),
+   [async generators](architecture.md#async-generators-async_generators));
+   I/O and async HTTP are next.
 
 Completed increment logs, earlier checkpoints and verification records are in
 [history.md](history.md).
@@ -152,6 +157,8 @@ inferred from the current regression suite.
 | CORE-14 | Distribution | Partial | Supported target matrix, Windows/cross-target validation, release delivery and package authenticity |
 | CORE-15 | Conformance | Partial | Pinned checked-case inventory and isolated runner are implemented; expand edition-wide cases, script/module/harness execution for upstream Test262, historical profiles and independent compatibility verification |
 | CORE-16 | Performance and production readiness | Partial | Reproducible startup/memory/throughput/leak measurements, sustained workloads, fuzzing and independent security review |
+| CORE-17 | Application lifecycle | Planned ([accepted design](#application-lifecycle-and-event-turns)) | Long-lived instances, event turns with per-turn budgets, host→guest task delivery, timers and I/O completions, no automatic restart after a trap |
+| CORE-18 | View output | Planned ([accepted design](#view-layer-l0l3)) | L0 protocol over the specified HTML/CSS subset, headless, browser and native renderers, cross-renderer layout and accessibility conformance |
 
 The immediate implementation order remains CORE-01/02/03/06 foundation work,
 followed by CORE-07/08/09 scheduling and lifetime integration and CORE-10/11/12 API
@@ -228,7 +235,10 @@ Core development comes first. The engine consists of `varta-common`,
 packaging and CLI presentation are supporting development tools. They consume
 engine APIs and must not become engine dependencies.
 
-No separate application project is being built in this repository. The scenarios
+Apart from the product example `examples/uarp-console/` (the
+[cross-target acceptance application](#uarp-console-cross-target-acceptance-application),
+decided on 2026-10-29), no separate application project is built in this
+repository; the example is not a workspace member and no crate depends on it. The scenarios
 below are deferred consumers of the core, not work items for built-in domain
 models. First design and verify the generic mechanisms; only then build a separate
 TS/JS project using those real APIs. Test source fixtures remain necessary for
@@ -273,6 +283,164 @@ dependencies, and contains no explicit `any`, so it meets the
 [typed-only rule](#research-thesis). Its only library-level `any` entry point is
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
+
+**Verified behavior with v37 (2026-10-29).** The same per-file probe on the
+`v37-merge` branch with all five v37 streams integrated (language core, class
+generics, collections, RegExp, `net.request`) and the integration fixes,
+under `checked-f64-utf16-v37` with production budgets unchanged; the v36
+column comes from the same binary:
+
+| First diagnostic under v37 | Files | Under v36 |
+| --- | --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts`, `core/errors.ts` | 5 | the same 5 |
+| `core/sse.ts:227` `unsupported generic class type reference` (`ReadableStream<Uint8Array>`, the byte body of `parseEventStream`; reached by `core/sse.ts`, `core/transport.ts`, `core/resource.ts`, `index.ts` and the 55 resource modules) | 59 | `core/sse.ts:227` `unsupported type reference ReadableStream` |
+| `core/util.ts:41` `unknown identifier: globalThis` (`randomId`'s `globalThis.crypto` feature test) | 1 | `core/util.ts:28` capture before binding initialization |
+
+Both v36 blockers are gone: `ReadableStream` exists (text chunks) and the
+`sleep` timer callback captures `onAbort` before its declaration. A
+whole-program walk on a scratch copy (the pilot sources are never edited),
+stubbing each blocker to reach the next, finds in order:
+
+1. `ReadableStream<Uint8Array>` and `ReadableStreamReadResult<Uint8Array>`
+   (`core/sse.ts:227`, `core/transport.ts:300`): byte bodies; v37 streams are
+   text. Deferred to v38.
+2. `core/sse.ts:6` the generic method signature `json<T = JsonValue>(): T`
+   in `UarpEvent`.
+3. `core/sse.ts:80` `implements AsyncIterable<UarpEvent>`: fixed in the
+   integration.
+4. `core/transport.ts:60` the `object` type annotation (`form?: object`).
+5. `core/json.ts:10` `Blob`, `ArrayBuffer`, `ArrayBufferView` in
+   `BinaryInput`; then `core/transport.ts:358` `FormData` and
+   `response.blob()` (multipart and binary bodies).
+6. `generated/models.ts:16453` `object shape count exceeds limit`: the whole
+   program needs more than 128 record shapes (the 1203rd interface).
+7. With a core-only entry (`new Transport(...).request<Item>(...)`):
+   `core/util.ts:41` `globalThis.crypto`, `core/transport.ts:115`
+   `globalThis.fetch as FetchLike | undefined` and `:425`
+   `(globalThis as {...}).process?.env`. Deferred to v38.
+8. `core/util.ts:79` `for (const item of value)` after `Array.isArray(value)`
+   on `unknown` (no array narrowing of `unknown`). `JSON.stringify(value)` of
+   `unknown` on line 85 now compiles.
+9. `core/sse.ts:276` `Promise.race([reader.read(), timeout])`: two promise
+   types in one union.
+10. `core/sse.ts:353` `reader.releaseLock?.()`: an optional call of a class
+    method value.
+11. `core/sse.ts:367` object spread of a parameter with optional fields.
+12. `core/sse.ts:177` and `:111` property-path facts dropped by an
+    intervening call (`if (!response.body) throw …; this.#onState?.(…);
+    parseEventStream(response.body, …)`), where TypeScript keeps the
+    narrowing: the receiver is a union again.
+13. `core/transport.ts:332` `JSON.stringify(value)` typed `string |
+    undefined` where TypeScript declares `string`.
+
+With the stream and binary stubs applied, the per-file probe checks 6 of 65
+files (`core/util.ts` joins); 27 stop at the call of item 12, 25 at the
+record-shape limit and 7 at `Blob` in their resource modules.
+
+*Limits.* Unreachable functions no longer take slots under v37 (only
+functions reachable from the entry points count against 256): a fetch hello
+world went from 228 linked to 154 reachable functions (156 with `URL`
+inputs). Each distinct `request<T>` response type costs 10 functions, so 24
+distinct response types fit one program
+(`class_generic_tests::pilot_request_pattern_function_counts`); the whole SDK
+declares 670. The 128 record-shape limit is now the first program-wide limit:
+interfaces used by a single resource module already exceed it in 25 files.
+
+**Verified behavior with v36 (2026-10-29).** The same probe on the
+`v36-merge` branch with all four v36 streams integrated (checked declared
+fields, function fields with value layout 17, timers and async generators,
+host ABI 32), under `checked-f64-utf16-v36` with production budgets unchanged.
+The first diagnostic per file, with the v35 result from the same binary:
+
+| First diagnostic under v36 | Files | Under v35 |
+| --- | --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts`, `core/errors.ts` | 5 | 4 (all but `core/errors.ts`) |
+| `core/sse.ts:227` `unsupported type reference ReadableStream` (the parameter type of `parseEventStream`; reached by `core/sse.ts`, `core/transport.ts`, `core/resource.ts`, `index.ts` and the 55 resource modules) | 59 | `core/errors.ts:4` declared property `errors` not checkable from `unknown` |
+| `core/util.ts:28` `unsupported capture before binding initialization` (`sleep`'s timer callback names `onAbort`, a `const` declared after it) | 1 | `core/util.ts:125` defaulted function-typed parameter |
+
+Both v35 blockers are gone: `ProblemDocument.errors` is a checked declared
+field and `streamBackoffDelay`'s `random: () => number = Math.random`
+compiles. In a scratch copy (sources outside this repository, each step
+patched minimally, then the module checked again), the next blockers in order
+are:
+
+1. `core/util.ts`: the TDZ capture above (with `onAbort` first and
+   `let timer = 0`, the pilot's abortable `sleep` with `setTimeout`, abort
+   listeners and optional chains compiles); `globalThis.crypto` and
+   `Uint8Array` (`randomId`); `TextEncoder`, then `String.fromCharCode` and
+   regular expressions (`encodeQueryComponent`); `for…of` over an
+   `Array.isArray`-narrowed `unknown` (an `unknown[]` view); `Object.entries`
+   pairs typing `[key, value]`'s `key` as `unknown` (no tuple types);
+   `JSON.stringify` of `unknown` in a program that loads a Web prelude;
+   `Array.prototype.join`; `RegExp` and `String.replace` (`joinUrl`);
+   `Date.now()`/`Date.parse` (`parseRetryAfter`). With these stubbed,
+   `core/util.ts` compiles.
+2. `core/sse.ts`: Web streams (`ReadableStream`, `getReader`,
+   `ReadableStreamReadResult`, `TextDecoder`) and `Response`; method
+   signatures in interfaces (the generic `json<T>()` of `UarpEvent`);
+   `implements AsyncIterable`; `#private` fields; a class field typed by its
+   `new` initializer; `Set<string>`; a union of several record shapes
+   (`StreamState`); `[Symbol.asyncIterator]`; `Array.prototype.join`; a
+   `() => void reader.cancel()` arrow (result `undefined`) where a
+   `() => void` listener is expected (reported as `expected function, found
+   function`); `let x: T;` assigned later; `ReturnType<typeof setTimeout>`;
+   `Promise.race` over differently typed promises; regular expressions; a
+   `switch` on strings; an object spread with an extra method; property-path
+   narrowing (`response.body`, `event.retry`); a constructor closure capturing
+   `this`; an uninitialized `string | undefined` class field; `Date.now` as a
+   function value; and finally `parseEventStream`'s body exceeds the resume
+   compilation budget (production budgets unchanged). With these patched and
+   that body stubbed, `core/sse.ts` compiles: the `EventStream` class with its
+   reconnecting async generator method, abortable backoff sleeps and abort
+   listeners.
+3. `core/transport.ts:300`: the Fetch surface (`ReadableStream`, `Response`,
+   `Request`, `URL`, `URLSearchParams`, `Blob`, `FormData`) and `#private`
+   fields.
+
+**Verified behavior with v36, async stream (2026-10-29).** The same probe on
+the `v36-async-generators` branch (selector `async_generators` only) under
+`checked-f64-utf16-v36` gives the v35 table unchanged: the records and
+functions streams own its two diagnostics. In a scratch copy with both patched
+as above (`errors?: unknown`, no default for `random`), 59 files stop at
+`core/sse.ts:227` `unsupported type reference ReadableStream` — the parameter
+type of `parseEventStream`, whose `async function*` declaration is now
+admitted — and two files stop outside the async area (`core/errors.ts:136`, a
+`switch` returning on every path that the return check does not accept, and
+`core/util.ts:23`, `sleep`'s `new Promise` without a type argument around
+`setTimeout`). `parseEventStream` itself also needs Web streams
+(`ReadableStream`, `getReader`), `TextDecoder` and `Uint8Array`, `RegExp`
+literals, `Set<string>`, a `switch` on strings, timers (`setTimeout`,
+`ReturnType<typeof setTimeout>`), `Promise.race` over differently typed
+promises and object methods in `makeEvent`; `EventStream` needs
+`[Symbol.asyncIterator]` and `implements AsyncIterable`. `core/pagination.ts`
+compiles with `autoPaginate<T>` instantiated: `collect`'s
+`limit = Number.POSITIVE_INFINITY` default, `(await fetchPage(cursor)) as …`
+and `AsyncIterable<T>` inference were fixed in this stream, and the remaining
+blockers are `new Set<string>()` and `for (const item of items)` over an
+`Array.isArray`-narrowed `unknown` (an `unknown[]` view, records stream); with
+both rewritten in a scratch copy it runs and pages through typed pages as
+Node does.
+
+**Verified behavior with v35 (2026-10-29).** The same probe on the
+`v35-merge` branch with all seven v35 selectors integrated (Web types, mixed
+index records, JSON to `unknown`, async methods, promise values and liveness
+frames on value layout 16), under `checked-f64-utf16-v35` with production
+budgets unchanged. The first diagnostic per file:
+
+| First diagnostic | Files |
+| --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` | 4 |
+| `core/errors.ts:4` `unsupported declared property errors of a mixed object type` (`ProblemDocument.errors?: Array<{ field?: string; message?: string }>` next to `[key: string]: unknown`: the declared array type is not checkable from the index type; reached through the same 60 files as `Headers` before) | 60 |
+| `core/util.ts:125` `unsupported union members other than number, boolean, string, null or undefined` (the defaulted function-typed parameter `random: () => number = Math.random` of `streamBackoffDelay`) | 1 |
+
+The file count is unchanged, but both v34 blockers are gone: `Headers` and
+`AbortSignal` resolve to the engine preludes and the probe now stops later in
+the same two files. In a scratch copy with `errors?: unknown`, the `index.ts`
+probe reaches `core/util.ts:125` too; with that parameter's default removed as
+well, its next diagnostic is `core/sse.ts:226` `unsupported async generator
+function` (`parseEventStream`, K4.4 step 6). So the next pilot batch needs
+declared fields checkable from `unknown` (arrays of mixed/optional records),
+optional function-typed parameters and async generators.
 
 **Verified behavior with v34 (2026-10-29).** The same probe on the
 `v34-integration-merge` branch with all eight v34 selectors (value layout 15,
@@ -362,8 +530,8 @@ data limit before M3.
 - *Exact capabilities.* The SDK needs network access to one base URL and reads of
   `UARP_API_KEY`, `UARP_BASE_URL` and `SNAGA_API_KEY`; its manifest should contain
   exactly these grants. `Math.random` needs no grant today. `crypto.randomUUID`/
-  `getRandomValues` have no host operation yet; whether entropy stays ungated or
-  gets an explicit capability is an open decision.
+  `getRandomValues` have no host operation yet; decided on 2026-10-29: entropy
+  stays ungated, like `Math.random`.
 - *Checked assertions over JSON (proposal).* `decodeBody` returns
   `JSON.parse(text) as T`, an unchecked assertion in Node. Varta owns its lib
   declarations: `JSON.parse` could return `unknown`, removing the library-level
@@ -442,9 +610,11 @@ under value15 descriptors and recursive values may be held in frames
 (`varta-runtime` `v34_cross_stream_tests`). Pending: `JSON.parse` and
 `varta.json.parse<unknown>` producing `unknown` (they need an internal
 recursive JSON value type), narrowing `unknown` to dictionaries by
-`typeof`/`in`, `await` inside dictionary reads and writes (an intrinsic value
-block), and a decision on bounding the host memory retained by unhandled
-rejection reports.
+`typeof`/`in` and `await` inside dictionary reads and writes (an intrinsic value
+block). The host memory retained by unhandled rejection reports is now bounded
+by named constants for every scheduler profile (decided on the `v35-frames`
+branch: it changes only the diagnostic text, see
+[bounded reports](architecture.md#microtask-scheduler-promises)).
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
@@ -456,6 +626,1063 @@ rejection reports.
 | `checked_assertions()` | Unknown: `x as T` and `x!` as runtime-checked conversions | M1, M2 | Merged on `v34-integration-merge`; arrays of non-primitive elements are not checkable assertion targets |
 | `promises()` | Async (K4.4 step 3): microtask queue and scheduler, base `Promise<T>` semantics | M5 | Merged on `v34-integration-merge` |
 | `async_functions()` | Async (K4.4 step 4): `async`/`await` on continuation frames | M5 | Merged on `v34-integration-merge` |
+
+### Pilot batch v35 (in development)
+
+Decided with the project author on 2026-10-29: the next pilot batch targets the
+first diagnostics of the [v34 measurement](#pilot-acceptance-package-uarp-sdk)
+(`Headers` in 60 files, `AbortSignal` in `core/util.ts`, then the mixed
+`ProblemDocument` object type) together with the async and frame follow-ups, in
+profile `checked-f64-utf16-v35`, developed in four parallel streams. V35
+inherits every v34 feature and, at registration, shares host ABI 30 and value
+ABI/layout 15 with v34; the declared profile name alone makes runtimes that do
+not list v35 reject its modules. A stream that adds a host import or a value tag
+bumps the corresponding ABI for v35 itself
+([contract](architecture.md#checked-f64-utf16-v35--pilot-batch-web-types-mixed-records-async-methods-and-frame-liveness)).
+The async stream switched v35 to value layout 16 (value15 plus the promise
+tag) with host ABI 31 for its value16 readers
+([contract](architecture.md#value-layout-16-promise_values)); the records and
+Web streams run on that layout and JSON schema 16 without a further tag,
+layout, host import or schema version, and every v35 frame uses the frames
+stream's liveness layout, including async closure bodies, whose captured cells
+are shared state-0 slots. The four streams are integrated on `v35-merge`.
+
+Pending in the records stream: spreads without a dictionary context and into
+closed records, numeric index signatures, class index signatures, declared
+fields that are not checkable from the index type (for example `items: Item[]`
+next to `[key: string]: unknown`), mixed records nested inside checked-parse
+targets, `x.key` on `object` without an `in` guard, a null test in an earlier
+statement than the `typeof` test (`if (x === null) return;` keeps
+`object | null`), and `JSON.stringify` of `unknown`-holding values in programs
+that declare Error classes (the v32 rule). Pending in the Web stream: abort
+event listeners, because a signal would hold listener functions, which needs a
+function-valued object field in the value layout.
+
+| Selector | Work stream | Pilot step | State |
+| --- | --- | --- | --- |
+| `web_headers()` | Web: engine-provided typed `Headers` class, guest-implemented, no capability | M2, M5 | Implemented (prelude; snapshot iteration, no tuple types) |
+| `abort_signals()` | Web: `AbortController`/`AbortSignal` data model, no timers | M4, M5 | Implemented without listeners (pending a value-layout change), `timeout` or `any` |
+| `mixed_index_records()` | Records: declared fields combined with a string index signature; `for…in`, compound assignment and spread on dictionaries | M1, M2 | Implemented: mixed records with checked declared reads, `for…in`, compound/logical/update assignments, spreads, number keys, `Record<string, T>` inference, shared dictionary operations, optional and redeclared class fields |
+| `unknown_json()` | Records: `JSON.parse`/checked parse producing `unknown`; narrowing `unknown` to dictionaries | M1, M2 | Implemented: `JSON.parse` and `parse<unknown>`, `JSON.parse(text) as T` as checked parse, descriptor-checked dictionary assertions, `object` narrowing and `in` guards |
+| `async_methods()` | Async: async class methods, async arrow functions and async function expressions | M5 | Implemented; generic methods stay rejected with all generic methods |
+| `promise_values()` | Async: promises as tagged values (arrays, unions, `unknown`) and `Promise.all/allSettled/race/any` | M5 | Implemented (value ABI 16, host ABI 31); no `AggregateError` class, `Promise.withResolvers` and executor `resolve(promise)` not admitted |
+| `frame_liveness()` | Frames: liveness-based continuation frame slots (v35 frame layout only) | M5 | Implemented ([contract](architecture.md#frame-liveness-frame_liveness)): per-state saved sets, direct liveness segments with exact per-state GC maps, frame catalog version 3; about half the fuel per `await`/`yield` of v34 |
+
+### Pilot batch v36 (in development)
+
+The next pilot batch targets the remaining diagnostics of the
+[v35 measurement](#pilot-acceptance-package-uarp-sdk) (declared fields of the
+mixed `ProblemDocument` that are not checkable from its index type, and the
+defaulted function-typed parameter of `streamBackoffDelay`), together with the
+v35 follow-ups that need function-valued fields (abort listeners), async
+generators and timers (`AbortSignal.timeout`, backoff delays), in profile
+`checked-f64-utf16-v36`, developed in four parallel streams. V36 inherits every
+v35 feature and declares its own host ABI 32 (`abi::TIMERS_VERSION`), under
+which every host import of the batch is added, and its own value ABI/layout 17
+(function values as tagged values, introduced by the function-fields stream);
+a v36 module relabelled as v35 fails validation before any guest effect, and
+runtimes that do not list v36 reject its declared profile name
+([contract](architecture.md#checked-f64-utf16-v36--pilot-batch-checked-declared-fields-function-fields-async-generators-and-timers)).
+All four streams are implemented and integrated on `v36-merge`, with
+cross-stream tests (`varta-runtime` `v36_cross_stream_tests`), `AbortSignal.any`
+in the v36 abort prelude and the conformance pin at v36 (the timer case runs
+with a reviewed per-case `time.timer` grant). Both v35 pilot blockers are gone;
+the [v36 measurement](#pilot-acceptance-package-uarp-sdk) lists the next ones.
+
+| Selector | Work stream | Pilot step | State |
+| --- | --- | --- | --- |
+| `checked_declared_fields()` | Records: mixed-record declared fields checkable from `unknown`, such as arrays of optional records | M1, M2 | Implemented ([contract](architecture.md#checked-declared-fields-checked_declared_fields)): convertible declared fields with exact-or-built reads and write-back, checked parsing and assertions converting JSON graphs, any-layout record descriptors, dictionary destructuring, `typeof` property-path conditionals, `??`/`\|\|` literal fallbacks, `let x: unknown;`, exhaustive `switch` returns |
+| `function_fields()` | Functions: function-valued record and class fields; optional and defaulted function-typed parameters (owns the value17 bump) | M2, M4 | Implemented ([contract](architecture.md#function-fields-function_fields)): value layout 17, function fields/elements/unions/`unknown`, optional and defaulted function parameters, optional chains, `Math.random` as a value, abort listeners, `Promise.withResolvers`; `resolve(promise)` and checked `as` to function types pending |
+| `async_generators()` | Async: `async function*` generators and `for await…of` | M5 | Implemented ([contract](architecture.md#async-generators-async_generators)): declarations, generic instantiations and class methods, the queued `next`/`return`/`throw` protocol, `yield*` over async generators, `for await` over async generators, arrays and generators; async generator expressions and `Symbol.asyncIterator` open |
+| `timers()` | Timers: `setTimeout`/`clearTimeout` and timer-driven promises (host ABI 32 imports) | M4, M5 | Implemented ([contract](architecture.md#timers-timers)): `setTimeout`/`setInterval`/clears, sleep pattern, `AbortSignal.timeout` (with v36 abort listeners), exact `time.timer` grant |
+
+### Pilot batch v37 (in development)
+
+The next pilot batch targets the blockers of the
+[v36 measurement](#pilot-acceptance-package-uarp-sdk) in profile
+`checked-f64-utf16-v37`, developed in five parallel streams: language-core
+gaps, class generics, collections and binary text, RegExp and the asynchronous
+network request capability. V37 inherits every v36 feature with value
+ABI/layout 17 and declares its own host ABI 33 (`abi::NET_REQUEST_VERSION`),
+under which every host import of the batch is added; a v37 module relabelled
+as v36 fails at its host ABI section, and runtimes that do not list v37 reject
+its declared profile name. The collections stream owned any value-layout bump
+and needed none, so v37 keeps value layout 17
+([contract](architecture.md#checked-f64-utf16-v37--pilot-batch-language-core-class-generics-collections-and-binary-text-regexp-and-netrequest)).
+All five streams are implemented and integrated on `v37-merge`; the
+[batch integration](architecture.md#batch-integration-v37) contract covers
+how they combine (unreachable-function removal, private state in JSON,
+`undefined`-aware index reads, recoverable clock denials, one `split` path,
+`URL` fetch inputs). Pending for v38: byte bodies
+(`ReadableStream<Uint8Array>`, `Blob`, `FormData`, `ArrayBuffer`),
+`globalThis` member access, generic method signatures in interfaces,
+`Array.isArray` narrowing of `unknown`, unions of collections with other
+objects and `instanceof Map`/`Set`, and the record-shape limit
+(see the [v37 measurement](#pilot-acceptance-package-uarp-sdk)).
+
+| Selector | Work stream | Pilot step | State |
+| --- | --- | --- | --- |
+| `language_core()` | Language core: TDZ-safe closure capture before declaration, deferred `let x: T;` initialization, dense `for…of` typing, property-path narrowing, `switch` on strings, function assignability fixes | M3, M4 | Implemented ([contract](architecture.md#language-core-language_core)): captures before initialization with run-time TDZ (`ReferenceError`-named Error instances), hoisted nested function declarations, definite assignment of `let x: T;`, element-typed `for…of`/`xs[i]`/`s[i]` with checked holes (TypeError deviation), property-path narrowing with call/write invalidation, `switch` by strict equality with clause narrowing, value functions as `void` callbacks with signature diagnostics, endless-loop return analysis, undefined-capable and `new C()` class fields, constructor closures over `this.field`, unions of several record shapes, classes and arrays (descriptor and element-kind member tests, discriminant/`in` narrowing, field reads and method calls on the union, discriminated JSON conversion), `never` exhaustiveness, module `let`/`var` variables with live exports, function-valued module constants, self-referencing timer handles. Open: `instanceof ReferenceError`, captures of destructured or loop-head bindings before initialization, `Array.isArray` narrowing of `unknown` to an array, `A[] \| B[]` of record element types, class expressions in module initializers |
+| `class_generics()` | Classes: generic methods and classes, interface method signatures, `implements`, `#private` | M4, M5 | Implemented ([contract](architecture.md#class-generics-class_generics)): monomorphized generic instance/static/async methods with inference from arguments and the contextual result, per-instantiation override dispatch, generic classes with generic bases and declared subclasses of instances, method signatures as function fields and object-literal methods without `this`, checked `implements`, `#private` fields/methods/getters and `#x in v`. Pending: generic method signatures (`json<T>(): T`), overrides inside generic classes, `instanceof` of a generic class on `unknown`, abstract classes. Measured: about 10 Wasm functions per distinct `request<T>` response type, 24 distinct types per program against the pilot's 670. Pilot probe (unmodified pilot): first blocker unchanged (`ReadableStream`, net-request stream); with the transport/SSE modules stubbed in a scratch copy 29 of 65 files check (5 before), the rest blocked by other streams (object spread of optional parameters, `Blob`, unions, the shape limit, `encodeURIComponent`) and by checked `as` to `void`/`JsonValue` in `request<T>` instances |
+| `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owned the value-layout bump; needed none) | M4, M6 | Implemented ([contract](architecture.md#collections-and-binary-text-collections)): `Map`/`Set` with hashed lookup and live iteration, tuples (and `Object.entries` pairs), `padStart`/`padEnd`/`split`/case mapping/`join`/`fromCharCode`/`fromCodePoint`, `Uint8Array`, UTF-8 `TextEncoder`/`TextDecoder` with streaming, `btoa`/`atob`, `crypto.getRandomValues`/`randomUUID`, UTC `Date` with ISO/IMF parsing and the `time.now`-gated clock (host ABI 33 imports `string_to_upper_case16`, `string_to_lower_case16`, `date_now`). Private storage (no value tag): logging, JSON and `unknown` reject these values; `subarray`, `ArrayBuffer`, union keys and `globalThis.crypto` open |
+| `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Implemented ([contract](architecture.md#regexp-regexp)): literals and constant `new RegExp` compiled ahead of time to a linear-time guest Pike VM (no host import), `exec`/`test`/`lastIndex`, match arrays, `search`/`match`/`matchAll`/`replace`/`replaceAll`/`split` with templates, replacer functions and string patterns; backreferences, lookaround, `\p{…}`, run-time patterns and the `d`/`v` flags open |
+| `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Implemented ([contract](architecture.md#network-requests-net_request)): `net.request` with URL scopes and methods, hyper + rustls transport, streamed text bodies, abort and timeouts, redirects `error`/`manual`/`follow`, `URL`/`URLSearchParams` subset, `[Symbol.asyncIterator]` async generator methods, a recoverable denial through the [permission broker](architecture.md#permission-broker-v37) for requests and v37 timers; bytes bodies wait for `Uint8Array`, generic `ReadableStream<T>` for class generics |
+
+### Platform targets and application model
+
+**Status: design accepted by the owner on 2026-10-29
+([accepted decisions](#accepted-decisions-2026-10-29)). Nothing in this section is
+implemented yet.** The contract that exists today for third-party hosts is
+[embedding.md](embedding.md). This section is the agreed design for the owner's
+stated goal:
+
+> A developer writes an application that uses uarp-sdk (HTTP through `fetch` with
+> headers and body, `AbortSignal`, timers and backoff, SSE async generators,
+> pagination) and builds the **same** application for desktop, for the browser and
+> for Raspberry Pi 5, with full security and everything in Wasm.
+
+A web-developer peer wrote a ~25-line JavaScript host for Tool invocation ABI v1
+that matched native `varta invoke` in Node and a real browser, but had to read Rust
+code to do it. Their requests, by priority:
+
+| Priority | Request | Where this section answers it |
+| --- | --- | --- |
+| P0 | Published embedding contract | [embedding.md](embedding.md) (published with this design, documentation only) |
+| P0 | Official browser target: same imports, manifest and deny-by-default, generated from `HostOperation`, same conformance, honest budgets | [Targets](#targets-and-artifacts), [browser security](#browser-security-model-and-honest-guarantees), [generated hosts](#generated-hosts-and-cross-host-conformance) |
+| P0 | Lifecycle for interactive applications and host→guest events | [Lifecycle](#application-lifecycle-and-event-turns) |
+| P0 | UI output, preferably a declarative view tree | [View layer](#view-layer-l0l3) |
+| P0 | Modern profiles on every entry point with structured values | [Structured entry points](#structured-entry-points) |
+| P1 | One async `fetch` capability (native and `window.fetch`), KV storage, binary/encoding/crypto | [Async fetch](#async-host-io-fetch-first), [later increments](#storage-binary-data-and-crypto) |
+| P2 | Source-mapped diagnostics, `varta dev --target browser`, size/startup budgets | [Increments](#increments-and-acceptance) |
+
+"No JS engine on the device" is met completely on desktop and Raspberry Pi 5 by
+the [native renderer](#native-renderer-for-desktop-and-raspberry-pi-5):
+application logic, UI framework and rendering are compiled Wasm plus memory-safe
+Rust, with no JavaScript engine anywhere in the process. In the browser the
+engine is the platform itself; there, the generated applier is the only script
+besides the guest, and it never runs application code.
+
+#### Feasibility probes (2026-10-29)
+
+All probes ran on the author's macOS arm64 host at commit `8ccdb12`, with
+production budgets, in a scratch directory outside the repository. No toolchain or
+image was installed or downloaded, and no build-system change was committed.
+
+| Probe | Method | Result |
+| --- | --- | --- |
+| Raspberry Pi 5 launcher | Installed Rust targets: `aarch64-apple-darwin`, `aarch64-unknown-linux-musl`, `wasm32-wasip2`, `x86_64-unknown-linux-musl`; `cargo-zigbuild` and `zig` present; no `aarch64-unknown-linux-gnu` target and no GNU cross linker. `cargo zigbuild --offline --locked -p varta-launcher --release --target aarch64-unknown-linux-musl` | **Builds** in 1 min 28 s: a statically linked, stripped aarch64 ELF of 11.0 MB. Run in an already present arm64 `debian:12-slim` container (the Raspberry Pi OS Bookworm base) with no network: `--runtime-info` reports `linux`/`aarch64` and the full profile list; a v36 async program and three tool invocations print exactly the macOS output; one run takes 18 ms wall time |
+| Cross-target packaging | `varta build --single --launcher <aarch64 runtime>` on macOS | **Fails by design**: packaging executes the companion's `--runtime-info`/`--validate` probes, which cannot run a Linux binary on macOS ("cannot execute binary file") |
+| Third-party tool host | A Node host (`varta-tool-host.mjs`, ~500 lines with full validation) written **only** from [embedding.md](embedding.md): manifest/ceiling parsing, pattern matching, module validation, catalog validation, argument parsing, string transfer, budgets | **21 of 21** invocations identical to native `varta invoke --json` (UTF-8/Cyrillic/emoji strings, i32 wrap-around, booleans, void with logs, `env.get` granted and denied by a deny-all host ceiling, eight malformed-argument cases, unknown tool). Writing it exposed one contract gap, fixed in the document: the JS API reports no import function types, so a JS host must parse the type/import sections |
+| Modern profiles in a JS host | A 92-line Node probe that implements only the operations the contract specifies (logging, `string_char_code_at16`, the five scheduler imports, the exception channel and the microtask checkpoint) | A v36 module with a class, `async`/`await`, `for…of`, `try`/`catch` and binary64 logging (20 KB, 8 imports) **instantiates and runs to completion with output identical to the native runtime**. A v36 module using `JSON.stringify`, checked JSON parsing and `Headers` (60 KB, 12 imports) instantiates but stops at its first `json_stringify_v15` call: the layout-bound intrinsics are unspecified |
+
+What a browser host needs beyond the probe, for the v35/v36 surface:
+
+- **Already specifiable:** logging, UTF-16 character access, clock, environment as an
+  embedder-supplied map, the scheduler and checkpoint, the exception channel, and
+  Tool ABI v1. `log_f64_v2` is exactly JavaScript's `String(number)`.
+- **Layout-bound pure intrinsics** (`json_*`, `value_*`, `union_*`,
+  `primitive_*`, `bigint_*`, `number_to_*`, `number_parse_*` and the exception
+  renderers): about 12k lines of runtime code plus `varta-common` readers, bound
+  to value layouts that change per profile. Reimplementing them in JavaScript would
+  create a second, drifting implementation. The accepted
+  [thin host](#thin-host-guest-intrinsics) moves them into the guest instead.
+- **Budgets:** memory is enforceable through the module's declared maximum; fuel
+  only through the accepted metering transform; the deadline only through a Worker (see
+  [browser security](#browser-security-model-and-honest-guarantees)).
+- **Not available:** `fs.*` (no file system), `net.listen`, `process.exit` beyond
+  ending the execution, and HTTPS `fetch` (the native runtime is HTTP-only today).
+
+#### Targets and artifacts
+
+| Target | Host | Artifact from `varta build` | State today |
+| --- | --- | --- | --- |
+| macOS arm64/x86-64, Linux x86-64 | Wasmtime launcher | `--single`: native launcher + portable Wasm + manifest (VARTA3) | Implemented for the build host's own OS/CPU |
+| Windows x86-64/arm64 | Wasmtime launcher | Same container | Unverified |
+| Linux aarch64 (Raspberry Pi 5) | Static musl Wasmtime launcher | Same container with a prebuilt aarch64 launcher | Launcher cross-builds and runs (probe); packaging needs offline launcher metadata |
+| Browser, Worker (recommended) | Generated JS host in a dedicated Worker; generated applier on the main thread | `dist/web/`: `app.wasm`, `app.manifest.json`, `varta-host.js`, `varta-applier.js`, `index.html` loader with CSP and SRI | Not implemented; T1/R2 subsets proven by probes |
+| Browser, main thread | Generated JS host | Same bundle with `mode: "main"` | Development only: no deadline enforcement |
+| Desktop/Pi5 with UI | `varta-desktop` shell: Wasmtime + [native renderer](#native-renderer-for-desktop-and-raspberry-pi-5) in one process (no webview) | Prebuilt shell + payload in an OS bundle ([desktop packaging](#desktop-packaging)) | Not implemented |
+
+- **Native cross-targets.** `varta build --target server-<os>-<arch>` (headless) or
+  `desktop-<os>-<arch>` ([desktop packaging](#desktop-packaging)) selects a
+  prebuilt companion or shell for that target. Because a foreign binary cannot be executed,
+  each companion ships a `runtime-info.json` produced when it was built, and the
+  builder validates the payload with its own runtime of the same package version.
+  This is a *declared* compatibility claim, not a probe, and is labelled
+  unverified in build output until package authenticity (C3) can sign companions
+  (accepted). musl static builds are used for Linux (no glibc version coupling on Raspberry Pi OS); a GNU
+  build needs `aarch64-unknown-linux-gnu` and a cross linker, neither of which is
+  installed. Real Pi 5 hardware is unverified: its default kernel uses 16 KiB pages
+  (the container used 4 KiB), so a device run is the first acceptance check.
+- **Browser.** One artifact, not a separate compilation: the browser bundle reuses
+  the same validated portable Wasm and manifest. The generated host and applier are
+  versioned with the host ABI and value ABI; a mismatch fails at load.
+
+#### Application lifecycle and event turns
+
+Today every entry point is one bounded execution: `main` with its microtask
+checkpoint, one tool call, or one HTTP request, each in a fresh store. Interactive
+applications need state that survives between events. Design:
+
+- **Application mode.** An entry module declares `varta.app({ ... })` (compile-time
+  form like `varta.tool`) with an `init` function and typed event handlers. The host
+  keeps **one long-lived instance** for the application's lifetime. It is the
+  long-lived isolate already anticipated by
+  [K4.4](#k44--suspension-scheduling-and-async-planned); the one-instantiation rule
+  is unchanged.
+- **Event turn.** One turn = deliver one host task (UI event, timer, I/O
+  completion), run the microtask checkpoint, then flush the view patch buffer once.
+  Turns never interleave; a checkpoint is never interrupted for fairness.
+- **Budgets.** Per-turn fuel and per-turn deadline (renewed for each turn, never by
+  `await`), per-instance memory and live-frame/scheduler bounds (not renewed), and
+  lifetime limits on total turns or wall time when the embedder sets them. New
+  named constants whose values are set after measurement (accepted); existing
+  production budgets of existing entry points stay unchanged.
+- **Failure.** A trap or exhausted budget terminates the whole instance (no
+  reuse after a trap); the host shows a fatal state and **does not restart the
+  instance automatically** (accepted); only an explicit user or embedder action
+  starts a new instance from `init`.
+  Ordinary `throw` and rejections remain language completions; an unhandled
+  rejection after a turn follows the existing policy but ends only that instance.
+- **Coexistence.** Tool and HTTP entry points stay stateless, fresh-store
+  invocations. An application may also publish tools; they run in their own fresh
+  instances and do not see application state (shared state remains C2 work).
+
+#### Host→guest event delivery
+
+Events reuse the scheduler: the host owns a bounded task queue next to the
+microtask queue. A task is either a resume token (timer or I/O completion of a
+suspended frame) or a UI event record. Ordering policy (to fix before
+implementation, as K4.4 requires): FIFO across sources, timers ordered by due time
+and then registration, I/O completions in completion order, at most one task per
+turn. High-frequency sources (`input`, `scroll`, `pointermove`, `resize`) are
+coalesced in the host: the queue keeps only the newest pending record per
+listener and kind, so one burst costs one turn. The queue is bounded; overflow
+drops coalescible records and fails the instance for others. Every completion
+carries the operation id and generation, so a late completion of a cancelled
+operation is discarded before it reaches the guest.
+
+#### Async host I/O, `fetch` first
+
+uarp-sdk needs `fetch(url, { method, headers, body, signal })`, `Response.status`,
+`headers`, `text()`/`json()` and a streamed body for SSE. Accepted: **one
+capability**, `net.request`, which replaces `net.get`/`net.fetch` in new profiles
+(earlier profiles keep them), with URL patterns (the existing URL matching rules)
+and optional method lists, mapped natively and to `window.fetch`:
+
+| Aspect | Native (Wasmtime) | Browser |
+| --- | --- | --- |
+| Authorization | Exact `net.request` + URL (+ method) against package and host ceiling, before connecting | Same check in the generated host, before calling `fetch`; CORS can only narrow further |
+| Transport | Async HTTP client on the existing Tokio runtime; HTTPS through `rustls`, justified and pinned exactly at adoption | `window.fetch` with `credentials: "omit"`, `redirect: "error"`, `referrerPolicy: "no-referrer"`, `cache: "no-store"`: no ambient cookies or redirects |
+| Request | Method, header list, UTF-8 or byte body, all bounded | Same |
+| Response | Status, header list, body as a stream of bounded chunks | `Response.body` reader, same chunk bounds |
+| Cancellation | `AbortSignal` from the prelude; abort drops the transfer and resolves the pending operation with an `AbortError` rejection | `AbortController` passed to `fetch` |
+
+ABI shape: `net_request_start(request_record) -> op id`, `net_body_read(op id) -> op
+id` and `net_abort(op id)`, each completing later as a scheduler task that resumes
+the awaiting frame with a result record. Guest-side `fetch`, `Response`, `Headers`
+and a `ReadableStream` subset for SSE are engine preludes (like `Headers` today),
+so the SDK's own code is unchanged. Bounds: request and response header counts and
+bytes, chunk size, total body bytes, concurrent operations per instance and an
+end-to-end deadline per operation, all named constants.
+
+#### Thin host: guest intrinsics
+
+The owner's goal ("everything in Wasm") and cross-host conformance both favour a
+host that contains only **effects**: capability-checked I/O, the scheduler, view
+output and the clock. Today about half of the import surface is pure computation
+bound to value layouts. Options:
+
+| Option | Semantics across hosts | Cost | Assessment |
+| --- | --- | --- | --- |
+| Reimplement every pure intrinsic in each host (JS, later others) | Two implementations of JSON, Number formatting/parsing and BigInt drift; JavaScript's own `JSON.parse` differs from checked parsing | Every host ×12k lines | Rejected |
+| Compile the existing Rust intrinsics to `wasm32` and **link them into the guest module** at build time | Identical everywhere; fuel-metered as guest code; no host change | A linking step in the compiler, fuel and size increase (to measure) | **Accepted**, as a new profile with a new host ABI that drops those imports; never reimplemented per host |
+| Rewrite intrinsics as TS preludes | Identical; typed | Very large; slower than Rust-compiled code | Later, case by case |
+
+Earlier profiles keep their imports and meaning; only a new profile moves
+intrinsics into the guest. Requirements: link only the intrinsics the application
+actually uses, and measure the growth of `app.wasm` together with cold start in the
+browser and on the Pi 5.
+
+#### View layer (L0–L3)
+
+Goals from the owner: a consistent model, convenient application building with
+typed npm packages, the browser touched **exclusively** through Wasm (application
+logic and the UI framework run in the guest; the host is a thin, generated,
+capability-checked renderer that applies patches and delivers events by handler
+id), and the same application on every target.
+
+**Accepted baseline:** four layers. Only L0 and L2 are engine work; L1
+and L3 are typed TS packages compiled into the application, so the engine stays
+application- and framework-agnostic.
+
+| Layer | Owner | Content |
+| --- | --- | --- |
+| **L0 — view protocol** | Engine (`HostOperation` registry, generated appliers) | One batched patch stream per turn and one typed event stream back |
+| **L1 — reactive core** | Typed TS package (not engine code) | Signals, computed values, effects, batching, ownership/cleanup, keyed list reconciliation, context; fine-grained, no virtual DOM |
+| **L2 — compiler support** | Engine | `tsx` parsing; AOT compilation of JSX into static templates with dynamic holes bound to L1, emitting L0 patches |
+| **L3 — authoring APIs** | Packages over L1 | Native signals + TSX first; a specified hooks subset later; Svelte syntax last or never |
+
+**L0 — a DOM-like protocol over a specified HTML/CSS subset.** L0 names elements,
+attributes and CSS properties from a **specified, versioned subset** ("view subset
+v1"), not all of HTML and CSS. The browser maps the subset one to one onto the real
+DOM; the native renderer implements exactly the same subset; the headless renderer
+serializes it. This keeps the web developer's mental model and avoids a lossy
+abstract widget tree. Cross-renderer conformance compares layout rectangles within
+stated tolerances, not pixels.
+
+The v1 subset draft and a protocol draft that a browser applier can be written
+against follow. Beyond v1: SVG and MathML namespaces, portals into other roots,
+declarative animations (`@keyframes`, WAAPI keyframe records) with
+`transitionend`/`animationend`, measurement queries (`measure`,
+`observe_resize`, `observe_intersection`, answered one turn later so
+`@floating-ui/core`-style positioning works deterministically), History API
+routing (`nav.push`/`nav.replace`, `popstate`), file input through a user-gesture
+`ui.pick_file` capability, clipboard capabilities, drag and drop, and server-side
+rendering with hydration.
+
+##### L0 v1 subset (draft)
+
+Criterion: the native renderer implements as little as possible while the first
+uarp-sdk application still has enough. **First application, confirmed by the
+owner on 2026-10-29:** the [UARP console](#uarp-console-cross-target-acceptance-application)
+with a settings screen (base URL, API key), side
+navigation between resources, paginated lists with "load more", a detail card,
+create/edit forms (enums as `select`), streamed SSE text, loading and error
+states, a confirm dialog and toasts. The subset below was proposed by the
+web-developer peer.
+
+| Area | In v1 | Not in v1 |
+| --- | --- | --- |
+| Structure | `div`, `span`, `p`, `h1`–`h3`, `ul`/`ol`/`li`, `header`/`nav`/`main`/`section`/`aside`/`footer` (landmarks for AccessKit; `aside` added in [round 4](embedding.md#view-draft-v0-round-4-subset-fixes)) | Table elements (Taffy has no table layout: use grid with `role=table/row/cell/columnheader`) |
+| Text | `strong`, `em`, `code`, `pre`, `br` | Raw HTML, `contenteditable` |
+| Controls | `button`; `a` for internal routing, and external links opened by the renderer under the accepted `ui.open_url` capability; `form` only as a submit boundary (no `action`/`method`); `label` (`for` focuses the field); `input` types text, password, number, search, checkbox, radio; `textarea`; `select`/`option` with a native popup; `progress` | `input` types date, color, range, file; `details`/`summary` |
+| Overlays | `dialog` with the `showModal` command, top layer, focus trap, Esc = cancel | — |
+| Media | `img` from artifact resources only (PNG; SVG through resvg) | Remote images (v1.1, need the network capability: exfiltration channel); `iframe`, `video`/`audio`, `canvas`, `script`/`style` elements |
+| Selectors, cascade | `.a`, `.a.b`, `:hover`, `:active`, `:focus-visible`, `:disabled`, `:checked`, inline style; specificity by class count, then source order; stylesheets sent through the protocol; custom properties and `var()`; `@media` with `prefers-color-scheme` and `min-width`/`max-width` | Combinators, `::before`/`::after`, `:nth-child` |
+| Layout | `display` block, flex, grid, none, inline (text level); `box-sizing` always border-box; width/height/min-*/max-*, margin, padding, gap; flex direction, wrap, `justify-content`, `align-items`, `align-self`, grow/shrink/basis; grid templates in px, %, fr, auto, `minmax()`, `repeat()`, `grid-column`/`grid-row` with `span` | Named grid areas, `position: sticky` (v1.1), `calc()` (v1.1) |
+| Positioning, scrolling | `position` static, relative, absolute, fixed; top/right/bottom/left; `z-index`; `overflow` visible, hidden, auto | — |
+| Units | px, %, rem, fr | em, vh/vw, `calc()` |
+| Paint | border (width, solid, colour), `border-radius`, `background-color`, `color`, `opacity`, `outline` (width, solid, colour, offset) | Background images and gradients; `box-shadow` (v1.1) |
+| Text styling | Generic families plus artifact fonts; `font-size`; `font-weight` 400/500/600/700; italic; `line-height`; `text-align` left/center/right; underline; `white-space` normal/nowrap/pre-wrap; one-line `text-overflow: ellipsis`; `overflow-wrap: anywhere` | — |
+| Cursor | default, pointer, text, not-allowed | — |
+| Motion | Transitions on opacity, color, background-color and transform (translate/scale only) | `@keyframes`, rotate (v1.1) |
+
+- **Authoring guidance.** Grid and flex containers holding form fields use
+  shrinkable tracks (`grid-template-columns: minmax(0, 1fr)`, `min-width: 0` on
+  flex items); otherwise a `textarea`'s intrinsic width overflows narrow
+  viewports such as 375 px ([round 4](embedding.md#view-draft-v0-round-4-subset-fixes)).
+- **Fonts.** The application ships its fonts in the artifact (by default one sans
+  and one mono). The browser loads the same fonts through `@font-face` from
+  artifact resources, so layout is comparable across renderers.
+- **Events.** click, input, change, submit, keydown, focusin/focusout, scroll
+  (coalesced to at most once per frame), cancel/close. Events bubble from the target
+  to the root; every node on the path with a listener for that kind gets a record,
+  until a `stopPropagation` listener ([draft v0](embedding.md#view-protocol-draft-v0-unstable));
+  there is no capture phase.
+  `preventDefault` and `stopPropagation` are listen-time options the host executes
+  synchronously; `submit` always prevents default because there is never navigation.
+  No pointermove, drag, wheel or touch gestures in v1; the renderer scrolls itself.
+- **Input fields (most important).** The **host owns editing**: buffer, caret,
+  selection, IME composition, undo/redo, in-field copy/paste, key navigation and
+  password masking. Attributes: `value`, `placeholder`, `disabled`, `readonly`,
+  `maxlength`, `autofocus`, `name`, `checked`, `selected`; `type=number` returns a
+  string; no built-in validation (validation lives in the application, for example
+  with valibot). Enter in a form submits, Esc in a dialog cancels, Tab follows
+  document order, `tabindex` is 0 or -1 only. Guest commands: focus, blur, select,
+  scrollIntoView, scrollTo(id, top), showModal, close. In v1 (accepted in round 3):
+  `clipboard.write` as a user-gesture capability with `copy_text`, key filters on
+  `keydown` listeners and auto-growing textareas
+  ([draft v0](embedding.md#view-draft-v0-round-3-chat-requirements)). v1.1:
+  selecting arbitrary text outside fields.
+- **Accessibility (AccessKit).** Roles table, row, cell, columnheader, dialog,
+  alert, status, navigation, list, listitem, tab, tablist, tabpanel; attributes
+  `aria-label`, `aria-labelledby`, `aria-describedby`, `aria-live`,
+  `aria-expanded`, `aria-selected`, `aria-current`, `aria-busy`, `aria-invalid`,
+  `aria-hidden`. A visible focus outline is mandatory. The headless renderer outputs
+  the accessibility tree.
+- **Window (native targets).** Title, initial and minimum size, DPI handled by the
+  renderer, the OS colour scheme, system copy/paste shortcuts.
+- **Freeze criterion for L0 v1.** A set of conformance pages where the same patch
+  stream with the same fonts produces headless (Taffy + Parley) layout rectangles
+  matching the browser's `getBoundingClientRect` within ±1 px; an accessibility
+  tree matching AccessKit's; and input tests for IME, fast typing under delivery
+  latency (Worker messages, the native thread hop) and
+  stale-patch rejection.
+
+##### L0 protocol draft v0
+
+A draft for the peer's browser applier and headless renderer; every budget is a
+placeholder to be replaced by measured named limits.
+
+- **Transport.** Patches: the guest encodes one **batch** in its own memory and
+  calls `view_commit(ptr: i32, len: i32) → (i32)` once per turn, a new
+  capability-free `HostOperation` with its own minimum host ABI. The host validates
+  the **whole batch** before applying any operation (atomic): an invalid batch is a
+  fatal error of the instance, never a partial render or a recoverable status.
+  Events: the host writes one event record at `abi::RESULT_BASE` and calls the guest
+  export `varta.view_abi.event(len: i32) → ()`, which copies it before any other
+  host operation; that call is the task of one turn.
+- **Encoding.** Little-endian. A batch starts with `version: u16`, `flags: u16`,
+  `op_count: u32`. Each operation is `opcode: u8`, three reserved zero bytes, then
+  its operands. Ids are `u32`; strings are `len: u32` (bytes) followed by UTF-16LE
+  code units, padded to 4 bytes; tag, attribute, CSS property, event and command
+  names are `u16` codes from a generated subset table, so anything outside the subset
+  cannot even be encoded.
+- **Ids.** Node ids are guest-chosen nonzero `u32`; id 1 is the root container, which
+  the host creates. An id is live from its `create_*` until the `remove` of it or an
+  ancestor; reusing it requires that `remove` earlier in the same or a previous batch.
+  Handler ids are nonzero `u32` chosen by the guest. Any unknown, dead or duplicate id
+  invalidates the batch. Removing a node releases its subtree and listeners.
+
+The opcodes, operand wire order, element/attribute/CSS/event/command codes, bit
+sets, event record offsets and placeholder budgets are data-only registry tables in
+`varta_common::view` (unstable draft v0, no host operation registered), generated
+into the [embedding contract](embedding.md#view-protocol-draft-v0-unstable) and
+checked by a drift test.
+
+- **Event record.** `version: u16`, `kind: u16` (click, input, change, submit,
+  keydown, focusin, focusout, scroll, cancel, close), `handler: u32`, `target: u32`
+  (the node the event originated on), `seq: u32`, `flags: u32` (shift, ctrl, alt,
+  meta, isComposing, checked), `scroll_top`, `scroll_height`, `client_height`
+  (f64, scroll only), then the `key` and `value` strings (empty when absent).
+- **Seq semantics.** The host keeps one edit counter per field and increments it
+  for every local user edit, including each IME composition step; it starts at 0,
+  `input` records carry the new counter, `change` records the current one, and
+  coalescing may leave gaps ([draft v0](embedding.md#view-protocol-draft-v0-unstable)). `set_value`/`set_checked` carry the counter the
+  guest last saw for that field. The host applies the patch only when that base
+  equals its current counter; otherwise newer local edits exist and the patch is
+  dropped as stale. An equal value is a no-op that does not move the caret. During a
+  composition, input records carry `isComposing`; the final value follows
+  composition end.
+- **Turns and frames.** One task (event, timer, I/O completion) is one turn: the
+  guest handles it, runs the microtask checkpoint and commits at most one batch. The
+  renderer applies batches in order and may coalesce several turns into one frame;
+  scroll records are coalesced to one per frame and keep only the latest position.
+- **Budgets (placeholders).** Batch bytes and operations, live nodes and listeners,
+  one text or attribute value, total stylesheet text and pending event records, as
+  the `view::DRAFT_*` constants; coalescible records are replaced, others are fatal
+  on overflow.
+- **Headless output.** The headless renderer returns the node tree (tags,
+  attributes, text), the layout rectangle of every element and the accessibility
+  tree as deterministic JSON, the basis of the freeze criterion and of conformance
+  snapshots.
+
+**The applier is the trust boundary.** It is generated (or, natively, it is the
+renderer's patch decoder), contains no application logic and enforces:
+
+- text nodes and attributes only, never raw HTML (`innerHTML`,
+  `insertAdjacentHTML`, `outerHTML`, `srcdoc` are not reachable);
+- a tag allowlist without `script`, `iframe`, `object`, `embed`, `base`, `meta`,
+  `link`, `form action` targets outside the origin, and no `on*` attributes;
+- URL-valued attributes (`href`, `src`, `srcset`, `poster`, `action`, `xlink:href`,
+  CSS `url()`) restricted to bundled assets and to origins the manifest grants:
+  **an image or media URL to a foreign host is a network effect and an
+  exfiltration channel**, so it requires the same `net.request` grant as `fetch`,
+  whose URL patterns act as the origin allowlist; there is no separate `ui.load`
+  capability (accepted); `javascript:`, `data:` (except bundled images) and `blob:`
+  from outside the applier are rejected.
+
+The native renderer has no script engine and no URL loader of its own: every image
+or font load goes through the capability-checked host, so the same URL rule holds.
+
+**Renderers for the same protocol.**
+
+| Renderer | Where the guest runs | Guarantees |
+| --- | --- | --- |
+| Browser DOM applier | Dedicated Worker (recommended) | See [browser security](#browser-security-model-and-honest-guarantees): fuel through the metering transform, deadline via `Worker.terminate` |
+| **Native renderer** (desktop, Pi 5; primary) | Native Wasmtime in the same process | Full fuel, deadline, memory and capability enforcement; no JavaScript engine on the device; the strongest target |
+| Headless renderer | Native or Node | Serialized tree, layout boxes and accessibility tree; used for conformance, snapshots and server-side rendering |
+| System webview applier | — | Not built (accepted): it would bring a JavaScript engine back onto the device |
+
+**Server-side rendering and hydration.** The headless renderer emits HTML with
+stable node ids (`data-v` attributes) derived from the template structure; the
+browser applier adopts existing nodes by id instead of creating them, and the guest
+replays `init` to rebuild its handler table. Hydration mismatch fails closed to a
+full client render.
+
+**Performance and patch volume (estimates, to measure).**
+
+| Scenario | Patches | Crossings | Guest work |
+| --- | --- | --- | --- |
+| Initial render of 50 resource rows (row, 4 cells, 4 texts, 2 attributes, 1 listener) | ~600 operations, ~7 KB at ~12 bytes each | 1 `view_commit` | Proportional to the tree once |
+| Update of one field (fine-grained L1) | 1 `set_text` | 1 | Proportional to dependents of one signal |
+| Same update through a virtual-DOM diff | 1 | 1 | Proportional to the component subtree (~500 vnodes compared); at the current measured cost of compiled code (for example, the `Headers` workload uses a fifth of the per-execution fuel), a whole-list diff per keystroke is a material share of a per-turn budget |
+| Keystroke in a search box | 1 event → 1 turn | 2 (event in, commit out) | Debounced fetch through timers |
+
+Startup: the probes' modules are 4–60 KB; a reactive core and template runtime
+are estimated at a few tens of KB of Wasm; V8 compiles such modules lazily in well
+under a millisecond. Measured artifact size and startup become CORE-16 rows.
+
+**Typed npm reach — what "using npm UI libraries" can honestly mean.** Under the
+[research thesis](#research-thesis) only packages that ship TS/TSX sources (and
+compile within the admitted subset) can be used; packages that ship compiled JS
+with `.d.ts` are rejected. Most npm UI component libraries (React, Preact, MUI,
+Radix, shadcn) are compiled JS plus declarations, or need React DOM, so they are
+out of reach except by porting through the hooks subset later. Preact and Svelte
+are themselves JavaScript with JSDoc types; Solid's reactive core is TypeScript
+(its JSX compiler is a Babel plugin in JavaScript). Realistic first targets are
+**framework-agnostic, DOM-free typed cores**:
+
+| Package | Why | Needs |
+| --- | --- | --- |
+| `clsx` | Trivial first test | — |
+| `valibot` | Validation; simpler than `zod` | Generics, unions |
+| `@tanstack/table-core`, `virtual-core`, `query-core` | Ideal tests of L1 adapters | Classes, generics, closures; `query-core` needs timers and promises |
+| `@floating-ui/core` | Exercises the asynchronous measurement queries | `measure` queries |
+| `nanoid` | Small | Crypto random |
+| `@zag-js/*` | Accessible state machines | Check its DOM queries first |
+
+Caution: `date-fns` and all date/number/plural formatting need `Date` and `Intl`
+(a large gap, possibly a capability-free host provider); `immer`, MobX and Vue
+reactivity rely on `Proxy` and are out of scope; CSS-only design systems (plain
+CSS, Tailwind output) are usable because CSS is data shipped as a stylesheet asset.
+
+**Front-end options compared.** Facts: SWC is configured with
+`Syntax::Typescript(Default::default())` in `crates/varta-compiler/src/parse.rs`, so
+`tsx` is off today; JSX typing in TypeScript uses `JSX.IntrinsicElements` and
+`jsxImportSource`, which the existing checker can consume once `tsx` is enabled.
+
+| Option | Thesis fit | Engine work | Runtime cost | Library reach | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| **(A)** TSX + Preact-compatible API (function components, hooks, `h`/`jsx-runtime`), virtual-DOM diff in the guest | Typed TSX; framework is a TS package; but Preact itself is JS + JSDoc, so a typed port is needed | `tsx` parsing and JSX lowering to calls | Whole-subtree rerender and diff per state change; fuel-heavy per turn | Familiar API; React libraries still compiled JS | Alternative; later as a **specified hooks subset over L1**, never claimed "React compatible" (rerender, dependency arrays and stale closures do not match fine-grained signals) |
+| **(B)** Solid-style fine-grained signals, TSX compiled to templates + reactive holes | Typed TSX; L1 is a TS package (Solid's core is TS but would need tightening to the typed subset) | `tsx` parsing, template compilation in the compiler (estimate 3–6k lines) | Work proportional to what changed; minimal patches | Same typed-source limit; ports of typed DOM-free cores | **Accepted primary path** |
+| **(C)** Full Svelte component compiler/file format, Svelte ecosystem compatibility | Svelte compiler and output are JS; libraries often untyped | Reimplement Svelte | — | Svelte JS libraries | Rejected |
+| **(D)** `.svelte` front-end restricted to `<script lang="ts">` with typed templates, compiled to the same IR and L1 | Good: AOT, typed script | High (see below) | Like B | `.svelte` libraries that are fully typed | Last (accepted); only after B is stable |
+
+*Steel-manning Svelte (D).* Svelte's compile-time model (components compiled to
+imperative updates, no virtual DOM, a tiny runtime) is philosophically the closest
+to Varta's AOT thesis, and Svelte libraries usually ship `.svelte` **source** that
+the consumer compiles, which suits "typed source only" better than React's compiled
+packages. The obstacles, with estimates:
+
+- a second front-end for the SFC format (template, `<script>`, `<style>`):
+  4–8k lines of Rust;
+- our own template type checking at `svelte-check` level, because `svelte-check`
+  and `svelte2tsx` are JavaScript tools; without it untyped expressions enter
+  templates: 3–5k lines, generating typed IR from templates so the existing checker
+  runs;
+- the Svelte compiler is JavaScript and emits JavaScript that drives the DOM
+  directly, so it would be reimplemented in Rust, emitting Varta IR plus L0
+  patches: 5–10k lines;
+- Svelte 5 runes: deep `$state` relies on `Proxy`; mapping `$state`/`$derived`/
+  `$effect` to L1 at compile time works for closed typed records and arrays by
+  instrumenting field writes, not for dictionaries or `unknown`;
+- many published components use untyped or JSDoc-typed `<script>` blocks, which
+  remain rejected.
+
+B can be read as Svelte's compile-time reactivity in TSX syntax: it reuses SWC's
+`tsx` parser and the existing type checker. Because L2 lowers templates to one IR
+("static template + holes bound to L1"), D can later be added as another front-end
+over the same L1 runtime and L0 protocol. Mixing components across front-ends is
+deferred: three front-ends × three renderers would multiply the conformance surface.
+
+**Trying to break the baseline against the criteria.**
+
+| Criterion | Holds? | Weak point and mitigation |
+| --- | --- | --- |
+| 1. Typed only | Yes | L1/L3 are typed TS packages; JSX typing through `JSX.IntrinsicElements`; no `.d.ts`-only dependency |
+| 2. All app/UI logic in Wasm | Yes | The applier is generated, logic-free and capability-checked; `preventDefault` etc. are declarative options, not callbacks |
+| 3. Security parity | Partly | Native targets are stronger than the browser (logic in Wasmtime, no JS engine); the browser lacks fuel and fine-grained deadlines; URL-loading attributes are network effects and need grants |
+| 4. Same app everywhere | Yes, within the L0 subset | The native renderer implements the same subset the browser maps to the DOM; fidelity is proven by the freeze criterion, and anything outside the subset is rejected |
+| 5. Familiarity | Medium | TSX and signals (Solid) are familiar; hooks subset later; Svelte syntax not soon |
+| 6. npm reach | Narrow, honestly | Typed DOM-free cores first; component libraries need ports |
+| 7. Performance | Good | One crossing per turn; fine-grained patches; VDOM option costs more fuel |
+| 8. Cost and order | Moderate | L0, headless renderer and L1 are small; template compilation is the main compiler work |
+| 9. Conformance | Yes | The headless renderer gives deterministic tree and accessibility snapshots on every host |
+| 10. Budgets and event loop | Yes, with coalescing | Per-turn budgets; coalesced high-frequency events; queries answer in later turns |
+
+Breaking points found: synchronous DOM reads (layout, selection) are impossible
+by design and libraries that require them need the asynchronous queries;
+controlled-input races need the seq rule above; hooks over signals need a
+per-component rerender adapter, so the subset must be specified rather than implied.
+
+**Decision (accepted 2026-10-29).** L0 is a DOM-like protocol over a specified,
+versioned HTML/CSS subset with the headless renderer; L1 is a typed package
+maintained outside the engine crates; B (TSX + compiled signals) is the first and
+only path for now; then the browser applier and the native desktop/Pi 5 renderer.
+A hooks subset comes later, only as a specified subset and never called "React
+compatible"; `.svelte` comes last. No webview is built now.
+
+#### Native renderer for desktop and Raspberry Pi 5
+
+**Primary desktop and Pi 5 design, accepted 2026-10-29.** A system
+webview brings a JavaScript engine back onto the device, even if only as a display.
+A native renderer keeps the whole device free of a JavaScript engine, which fully
+matches the [research thesis](#research-thesis). The renderer is memory-safe Rust
+in our crates (no `unsafe`); its dependencies may contain `unsafe`, each with a
+justification and an exact `=` pin. It implements exactly the
+[L0 v1 subset](#l0-v1-subset-draft),
+the same subset the browser maps one to one onto the DOM.
+
+| Concern | Candidate | License as published (verify at adoption) | Notes |
+| --- | --- | --- | --- |
+| Windowing, input, IME events | `winit` | Apache-2.0 | IME preedit/commit on macOS, Windows, X11 and Wayland (`text-input-v3`; support in the Pi OS compositor is unverified) |
+| Layout | `taffy` | MIT | Block, flexbox and grid; no table layout (hence grid + roles in v1) |
+| Text shaping, bidi, line breaking, editing | `parley` (with `fontique` for font enumeration and fallback) | Apache-2.0 OR MIT | Includes a plain-text editor model with IME preedit; `cosmic-text` (MIT OR Apache-2.0) is the alternative |
+| GPU rendering | `vello` on `wgpu` | Apache-2.0 OR MIT; `wgpu` MIT OR Apache-2.0 | Compute-shader 2D renderer; Pi 5 VideoCore VII exposes Vulkan 1.2 through Mesa `v3dv` (performance unverified) |
+| CPU fallback | `vello_cpu`, or `tiny-skia` with `softbuffer` | Apache-2.0 OR MIT; `tiny-skia` BSD-3-Clause; `softbuffer` MIT OR Apache-2.0 | For weak or missing GPUs |
+| Accessibility | `accesskit` (with its `winit` adapter) | MIT OR Apache-2.0 | Maps to the native accessibility APIs on all three desktop OSes |
+| SVG images | `resvg` | Apache-2.0 OR MIT | Artifact SVG only |
+| Clipboard | `arboard` | MIT OR Apache-2.0 | v1: in-field copy/paste only |
+| Prior art | Dioxus Blitz (HTML/CSS renderer on Stylo, Taffy, Parley, Vello) | MIT OR Apache-2.0; Stylo is MPL-2.0 | A reference and possible source of parts; Stylo implements far more CSS than the subset needs, and the subset's selector language is small enough for our own cascade |
+
+Accepted stack: winit, taffy, parley/fontique, vello with a CPU fallback,
+AccessKit and resvg; each dependency is justified and pinned exactly (`=`) when it
+is adopted. Feasibility note: none of these crates is in `Cargo.lock` or in the
+local Cargo registry cache today, and none has been added; licenses above are as
+published by the projects and must be re-checked for the pinned versions.
+
+Process model: one native process. The renderer owns the main thread (required by
+`winit` on macOS) and the window; Wasmtime runs the guest on a worker thread with
+full fuel, deadline, memory and capability enforcement; batches and event records
+cross a bounded in-process channel, so there is no IPC serialization beyond the
+batch bytes themselves. Every effect (fetch, storage, timers, files, clipboard)
+goes through the same capability-checked host as headless execution.
+
+**Alternatives.**
+
+| Option | For | Against | Verdict |
+| --- | --- | --- | --- |
+| **(a) Own subset renderer** (winit + taffy + parley + vello/CPU + AccessKit) | No JS engine; one implementation for every desktop OS and Pi 5; exactly the browser's subset; headless renderer shares layout code | We own text input, scrolling, accessibility mapping and CSS fidelity | **Accepted** |
+| (b) Abstract widget tree mapped to native OS widgets (AppKit, Win32, GTK) | Native look and native text input | Three backends; lossy mapping from the browser model; no shared layout with the headless renderer | Rejected for v1 |
+| (c) Existing toolkit behind the protocol: Iced (MIT), Slint (GPLv3, royalty-free or commercial licences: **licence risk**), Xilem/Masonry (Apache-2.0, experimental) | Mature widgets and text input (Iced, Slint) | Their layout and styling models are not the HTML/CSS subset, so the browser mapping becomes lossy again; licence constraints for Slint | Alternative; Masonry worth re-evaluating as it matures |
+| (d) System webview (WKWebView, WebView2, WebKitGTK) with the generated applier | Full CSS fidelity, mature text input and accessibility | A JavaScript engine on the device; WebKitGTK on Pi 5 is heavy (typically 100 MB or more, slow start, GPU issues); large platform dependency graph (`wry`/`tao`) | Not built now (accepted) |
+
+**Costs and risks.** Text input and IME (Cyrillic, CJK) across winit backends,
+including Wayland on Pi OS; accessibility completeness through AccessKit; smooth
+scrolling with nested overflow; fonts and i18n (fallback, bidi); CSS fidelity
+against the browser within the freeze tolerance; binary size (estimated +10–20 MB
+for the renderer stack, to measure); GPU availability and driver quality (vello's
+compute path on `v3dv`); startup and memory on Pi 5 (target well below the 100 MB
+or more of WebKitGTK, to measure); the effort of owning a renderer at all, which is
+contained only by keeping the subset small.
+
+**First renderer increment.** Box, text, flex, button, text input with IME and
+overflow scrolling, measured on macOS and on a Pi 5: startup time, resident
+memory, frame time for the 50-row list and keystroke-to-frame latency.
+
+#### Desktop packaging
+
+**Shell crate.** A new distribution-layer crate, `varta-desktop` (binary
+`varta-shell`), next to the headless `varta-launcher`, under the same boundary
+rules: production dependencies are common, artifact and runtime plus the renderer
+stack, never compiler, SWC, project, CLI or clap. The headless launcher stays the
+companion for CLI and server applications. The shell runs `app.wasm` in Wasmtime
+and the [native renderer](#native-renderer-for-desktop-and-raspberry-pi-5) in one
+native process, with the same capability-checked host for every effect.
+
+**No webview fallback for now (accepted).** The shell has no system webview
+path; a later reconsideration would need its own decision, dependency review and
+CSP/IPC contract. A system browser on `localhost` is rejected: it is not an
+application window and shares the browser's realm.
+
+**Build model: compile once, choose a shell per target.** The portable Wasm and
+manifest are compiled once and attached to a **prebuilt shell** for each target
+with the existing VARTA3 layout (native prefix | Wasm | manifest | fixed versioned
+EOF footer), so the developer needs no cross toolchain. CLI:
+
+```sh
+varta build --target desktop-macos-arm64     # also desktop-macos-x64
+varta build --target desktop-windows-x64     # also desktop-windows-arm64
+varta build --target desktop-linux-x64       # also desktop-linux-aarch64 (Pi 5)
+varta build --target browser                 # dist/web bundle
+varta build --target server-linux-aarch64    # headless launcher, like --single today
+```
+
+Prebuilt shells are versioned with the package version, host ABI, value ABI and
+profile list; each ships the `runtime-info.json` it was built with, because a
+foreign-OS shell cannot be executed for today's `--runtime-info` probe. Shells are
+published with each Varta release (fetching them is a tooling step outside the
+engine; accepted: distributed through releases, signing later). Until C3
+provenance exists, this is a declared compatibility claim plus a checksum the
+developer pins, labelled unverified in build output and documentation.
+
+**OS bundles.**
+
+| OS | Bundle | Varta can automate | Needs the developer's own identity |
+| --- | --- | --- | --- |
+| macOS | `.app` (Info.plist, icon, the shell with its attached payload), optional `.dmg` | Bundle layout, Info.plist from manifest metadata, ad-hoc signing for local runs | Developer ID signing and notarization (Apple account). The payload is inside the signed executable, so it is attached before signing |
+| Windows | `.exe`, optionally MSIX | Executable, icon, MSIX manifest | Authenticode or MSIX signing certificate. No WebView2 dependency |
+| Linux, Pi 5 | `.deb` or AppImage | `.deb` depending on the Vulkan/Mesa and Wayland/X11 client libraries; no WebKitGTK | Repository or AppImage signing keys, if wanted |
+
+**Startup.** Native launchers compile the embedded portable Wasm at every start.
+The 20 KB probe module runs end to end in 18 ms on aarch64, but a pilot-sized
+module is expected to take much longer (to measure; the file limit is
+`abi::MAX_WASM_BYTES`). Options:
+
+| Option | Security argument | Assessment |
+| --- | --- | --- |
+| Compile at every start (today) | No native code is ever read from disk | Until the cache lands; the shell shows its window and a splash while compiling |
+| Shell-generated local code cache, keyed by SHA-256 of the Wasm plus the Wasmtime version, engine configuration and host target, written only by the shell from validated portable Wasm into a user-private directory | A cache entry is native code. Whoever can write it runs code with the user's authority, which that user can already do by replacing the shell; it never comes from package input. A per-install MAC key (OS keychain) rejects swapped or stale entries | **Accepted** through Wasmtime's own cache feature (deserializing compiled modules is `unsafe` in Wasmtime's API and our workspace forbids `unsafe`, so never through our own code). The ban on native payloads in package input stays |
+| Winch baseline compiler or the Pulley interpreter | No cached native code | **Accepted: Winch for fast development starts**; Pulley (no JIT, relevant to kernels without JIT in the research thesis) remains research; to measure |
+
+**Window, metadata and permissions.** Application metadata joins the manifest as
+a strictly validated optional `app` object: title, initial and minimum size, icon
+asset, single-instance flag; menus and tray later. Capability grants: the package
+manifest is the request; the shell shows it at first run (or the installer at
+install time) as a plain-language list ("connect to https://api.example.com",
+"store data on this computer", "read the clipboard") and stores the user's decision
+as the host ceiling in the user's configuration directory. Denied requests stay
+denied at runtime with the usual status. Changing grants is an explicit settings
+action, never a prompt triggered by guest code.
+
+**Updates.** Later, and only with C3 provenance: a signed update manifest names the
+new payload hash and shell version; the shell verifies the signature and runs the
+normal artifact validation before replacing itself.
+
+#### Browser security model and honest guarantees
+
+| Guarantee | Browser (guest in a Worker) | Notes |
+| --- | --- | --- |
+| Memory isolation | **Strong** | Wasm linear memory; module-declared maximum checked before instantiation |
+| Capabilities and host calls | **Strong only while the generated host is intact** | Any other script in the page's realm (XSS, extensions, third-party scripts) shares trust and could call imports or read guest memory. Mitigate: the guest runs in a dedicated Worker created from the bundle, a strict CSP, Subresource Integrity on the loader, Trusted Types, no other scripts. The origin's own permissions are an outer ceiling the host cannot widen |
+| Deadline | **Coarse** | `Worker.terminate()` kills the whole instance; no per-turn graceful interruption. On the main thread there is none (development only) |
+| Fuel | **Through a deterministic metering transform** (accepted) | The browser packaging step applies a deterministic metering transform to the same validated Wasm: a fuel counter decremented at function entries and loop headers, trapping at zero. Native builds keep Wasmtime fuel, so browser fuel units are defined by the transform, not equal to Wasmtime's. Published gas-metering instrumentations report overheads on the order of 5–15 % time and a few percent size; to measure for Varta |
+| Host calls, output, patch budgets | Strong | Counted by the host |
+| Stack | Engine-defined | Recursion depth differs from Wasmtime; conformance must not depend on exact overflow depth |
+
+Capability mapping in the browser: `net.request`/`net.fetch`/`net.get` →
+`window.fetch` after the URL check (credentials omitted, redirects errors);
+`time.now` → `Date.now`; random → `crypto.getRandomValues`; `env.*` → an
+embedder-supplied configuration map, never page state; `fs.*` → denied (a separate
+origin-private storage capability could map to OPFS); `net.listen` → denied;
+`process.exit` → ends the instance.
+
+#### Generated hosts and cross-host conformance
+
+- **Generator.** A tool in `varta-common`'s registry ecosystem emits, from
+  `HostOperation`, `LanguageProfile` and the layout constants: the import table
+  (names, exact signatures, minimum ABI, capability ids), validation tables and the
+  binary patch/event encodings, as a small JS module. Hand-written JS supplies only
+  the effects (DOM application, `fetch`, timers). A drift test compares the
+  checked-in generated JS with the registry, like the documentation blocks.
+- **Conformance under Node and browsers.** `varta-conformance` gains a host
+  selector: compile with the Rust compiler as today, then execute each case either
+  in the native worker or in a Node worker running the generated host, and compare
+  observations. A browser run uses the same protocol in a headless browser in CI.
+  Cases whose imports are not supported by a host are reported as host gaps, never
+  as passes.
+- **Embedding conformance.** The tool/run/scheduler cases of the probes become
+  checked fixtures: positive, denied and malformed cases with expected envelopes.
+
+#### Structured entry points
+
+Tool and HTTP contracts are rejected in every binary64 profile today. Design: a
+**v2 adapter ABI** shared by tools, HTTP, application events and view events: the
+host passes one bounded JSON (or binary record) argument and receives one result,
+through a compiler-generated guest adapter that runs the profile's own checked JSON
+parsing, calls the typed handler and serializes the result, exactly as the HTTP
+adapter does in the i32 profile. Schemas come from the checked TS types (records,
+optional fields, unions, arrays, binary64, UTF-16 strings). Async handlers return a
+promise; the adapter's execution runs the request-scoped checkpoint. Tool ABI v1 and
+HTTP v1 keep their meaning; v2 is a new contract version under a new profile.
+
+#### Storage, binary data and crypto
+
+Later increments, each its own capability or capability-free contract:
+
+- `kv.get`/`kv.set`/`kv.delete`/`kv.list` with namespace patterns; native backend a
+  file under a pinned root, browser backend IndexedDB; bounded keys, values and
+  total bytes.
+- `Uint8Array`/`ArrayBuffer`/`DataView` (CORE-05), `TextEncoder`/`TextDecoder`,
+  base64: guest code, no host imports.
+- Crypto random: `crypto.getRandomValues`/`randomUUID` as an ungated,
+  capability-free entropy source like `Math.random` (accepted);
+  `crypto.subtle.digest` as guest code or a capability-free host provider.
+- `Date` and `Intl`: a capability-free host provider with explicitly versioned data,
+  or a guest library; a large gap for formatting libraries. **Concrete consumer:**
+  the UARP console's Single Chat feed needs relative times ("2 minutes ago") and
+  date separators. Required subsets: `Intl.RelativeTimeFormat` (`format` for the
+  units second to year, `numeric` `always`/`auto`, `style` `long`/`short`) and
+  `Intl.DateTimeFormat` (`dateStyle`/`timeStyle` and the `weekday`, `day`,
+  `month`, `year`, `hour`, `minute` components, plus `formatToParts` for
+  separators), `Date` construction from epoch milliseconds and its UTC/local
+  getters. Proposed delivery, capability-free: CLDR data for exactly the locales a
+  manifest lists (for example `"locales": ["en", "uk"]`) compiled into the
+  artifact's static data, so formatting is guest code and identical on every host;
+  the current locale and time-zone offset are read-only embedder configuration
+  (not a capability, no page or environment access); reading the clock stays
+  behind `time.now`. Time-zone rules beyond one current offset (historic or
+  future transitions) would need a versioned tz data subset and are out of the
+  first increment.
+
+#### Permission model
+
+**Status: accepted direction 2026-10-29; details pending.** Normative once each
+part lands in its profile and in [architecture.md](architecture.md#capabilities-and-trust);
+until then this is the agreed target. Requirement from the owner: permissions are
+handled professionally. A denial is never a fatal error, because a user will
+later be able to confirm a permission at the moment it is needed (a consent
+prompt). The security invariants of the capability model do not change; the model
+adds a decision step and a user as a bounded grant source.
+
+**1. Recoverable denials (new profiles, from v37).**
+
+- Every capability-checked operation fails **recoverably** when it is denied or the
+  platform refuses it. Asynchronous APIs (`fetch`/`net.request`, timers,
+  `clipboard.write`, `ui.open_url`, future storage) **reject** their promise with a
+  `DOMException` named `NotAllowedError`; synchronous APIs **throw** that
+  `DOMException`, or keep returning a failed `VartaResult` with status 1 where the
+  `VartaResult` ABI applies. A denial **never traps** and never ends the execution;
+  only budgets, traps of guest code and authorized exits stay fatal.
+- **Revision of round 3.** `copy_text` and the `ui.open_url` activation report
+  every outcome to the guest: `copy_text` carries a request id and each request,
+  and each external-link activation, gets one `command_result` record with the
+  status `ok`, `not_allowed`, `refused_by_platform` or `invalid_context`, which the
+  guest API maps to `NotAllowedError` (decided 2026-10-29,
+  [round 5](embedding.md#view-draft-v0-round-5-command-results)).
+- **Profiles.** The v37 net-request stream is implementing recoverable
+  `net.request` denials and recoverable v37 timer denials now. **v36 is frozen**: a
+  denied `timer_start` stays fatal there, exactly as its contract states. Earlier
+  synchronous operations keep their recoverable `VartaResult` statuses, which
+  already never trap.
+
+**2. Permission states.** Each capability (with its concrete resource where the
+grant has patterns) is in one of three states, following the
+[Permissions API](https://www.w3.org/TR/permissions/):
+
+| State | Meaning |
+| --- | --- |
+| `granted` | Package request ∩ host ceiling allow it, and the user has allowed it or it needs no consent |
+| `denied` | Outside the request or the ceiling, or the user refused it; operations fail recoverably at once |
+| `prompt` | Requested and within the ceiling, but no decision yet; the next use (or `request()`) asks the user |
+
+- **Query (accepted 2026-10-29).** A guest API
+  `varta.permissions.query({ name, resource? })` resolves to `{ state }` and never
+  prompts; it **distinguishes `denied` from `prompt`**. Fingerprinting
+  consideration: the answer reveals only this application's own state (the
+  package request, the ceiling and decisions stored for this application
+  identity), never another application's, and the broker answers within the
+  current user's profile only. In the browser the host combines the broker's
+  state with `navigator.permissions.query` where the browser exposes that
+  permission: the stricter wins (`denied` over `prompt` over `granted`), and where
+  the browser does not expose it the broker's own state is the answer.
+- **Request (accepted 2026-10-29).** `varta.permissions.request({ name, resource? })`
+  exists and asks explicitly, but it is valid only during a user-gesture turn: there
+  it prompts if the state is `prompt` and resolves to the new state; in every other
+  turn it does not prompt and resolves to the current state. Outside `request()`, a
+  permission in `prompt` state is asked at its first use (subject to the
+  user-gesture rule for UI-sensitive permissions).
+
+**3. Manifest.** A requested grant gains, besides its exact resource patterns:
+
+- `"required": true | false`. Required permissions are decided at install or first
+  run (prompted once, or granted by policy); if the user refuses one, the shell
+  says that the application cannot run instead of starting it half-authorized.
+  Optional permissions start in `prompt` and are requested at the point of use.
+- `"purpose"`: a short human-readable text shown in every prompt, for example
+  "Connect to your UARP workspace". It is untrusted package text: the prompt shows
+  it as a quote next to the broker's own description of the operation and the
+  exact resource, never instead of them.
+- The patterns stay exact and are the only resources a prompt can grant: a user can
+  allow `https://api.uarp.example/v1/**` because the package asked for it, never a
+  broader one.
+
+**4. Permission broker (host).** One host component decides every concrete
+operation, asynchronously:
+
+1. Package request ∩ host ceiling, exactly as today (deny by default, exact
+   operation and resource matching). Outside it: `denied`, no prompt.
+2. Stored user decisions for this application identity: allow, deny, or allow for
+   this session.
+3. Otherwise the prompt UI of the target, or `denied` where no prompt exists.
+
+- **Ceiling.** A user decision can only narrow or confirm within the ceiling; it can
+  never exceed it. The ceiling stays embedder-owned and is never written by a
+  prompt.
+- **Identity and persistence.** Decisions persist per application identity: the
+  artifact hash until C3 provenance exists, then the signer and application id (so
+  an update by the same signer keeps decisions, unless its requests grew). Users
+  can revoke decisions at runtime; revocation affects **new** operations, never one
+  already authorized and running.
+- **Audit log.** Every decision (source, operation, resource, outcome, time) is
+  appended to a bounded host audit log the user and embedder can read; the guest
+  cannot read or write it.
+- **Prompt UI per target.**
+  - Browser: the host page's own dialog outside the guest's view (the guest renders
+    only inside its closed shadow root), or the browser's own permission prompt where
+    the browser has one for that permission.
+  - Native shell: a dialog drawn by the renderer **outside the guest's control**
+    (its own window layer, not an L0 node), so a guest cannot spoof or overlay it.
+  - Headless and server: a policy file only, never a prompt; anything unresolved is
+    `denied`.
+- **Anti-abuse.** No prompt from a background turn (a timer, I/O completion or
+  any turn that is not a user-gesture turn); UI-sensitive permissions prompt only on
+  a user gesture; prompts are rate-limited per application (for example at most one
+  open prompt and a cool-down after repeated refusals), and repeated refusals
+  become a stored `denied`.
+
+**5. Budgets while waiting.** A decision that needs the user suspends the operation
+through the scheduler: the guest's promise stays pending and **no fuel** is used
+while waiting. The prompt does not count against a turn's deadline, because the
+turn ends when the guest returns to the scheduler; the decision arrives later as an
+ordinary task (a completion record) in a new turn. Synchronous APIs cannot wait: a
+synchronous operation in `prompt` state fails at once with `NotAllowedError` (or
+status 1), and the application asks through `request()` first. Within one
+execution (the current model) the wait still counts against the execution
+deadline; long-lived application instances bound only their turns.
+
+**6. Invariants unchanged.** Deny by default; check before effect; exact
+operation matching; grants are the only authority. A user decision is one more
+**grant source**, bounded by the package request and the host ceiling, and its
+result is a concrete grant for that application identity. No guest value, prompt
+text or purpose string is ever authority.
+
+**7. Increment placement.** Recoverable denials: v37 now (net-request stream).
+Broker, permission states and `query`: with the application lifecycle increment
+(P5), since they need tasks across turns. Prompt UI: with the browser bundle (P9)
+and the OS bundles and first-run approval of the shells (P10b). The headless
+policy-file path needs no new UI.
+
+**Decided on 2026-10-29.** `request()` exists, user-gesture only; `query`
+distinguishes `denied` from `prompt`; the result records of `copy_text` and
+`ui.open_url` are the engine's choice and are specified in
+[round 5](embedding.md#view-draft-v0-round-5-command-results).
+
+Also accepted on 2026-10-29: `ui.open_url` admits the grant form `https://*`
+for arbitrary external links (never for other capabilities); every such activation
+prompts with the full URL and no decision is stored
+([details](embedding.md#view-draft-v0-round-6-gestures-and-platform-refusals)).
+
+**Open questions.** Whether "allow for this session" is offered; the exact identity
+key before C3; how a required permission refused at first run is presented on each
+target; the rate-limit values.
+
+#### Evolving JSON: unknown fields and variants (strict only)
+
+**Status: accepted 2026-10-29 (owner's final decision: strict only).** Checked JSON
+stays strict in every profile, including future ones:
+
+- **Unknown fields are rejected.** Parsing into a closed record
+  (`varta.json.parse<T>`, `JSON.parse(text) as T`, `unknown as T`) fails when the
+  input has a field the type does not declare.
+- **Extra fields only by declaration.** A type that must accept additions says so
+  explicitly with an index signature, `[key: string]: unknown`; such types keep
+  preserving the unknown fields as today.
+- **Unmatched discriminants raise an error.** A discriminant value that matches no
+  literal member of a discriminated union is rejected with a catchable error in
+  every profile with recoverable checked JSON or checked assertions (earlier
+  profiles keep their existing checked-JSON failure). Applications that need an
+  open set parse the discriminant as `string` and narrow by hand.
+- **No tolerant mode and no fallback branch.** There is no option to ignore unknown
+  fields and no implicit fallback member for unknown variants.
+
+Considered and rejected: a tolerant mode that ignored unknown fields with a bounded
+diagnostic and routed unmatched discriminants to a fallback member.
+
+Context: the UARP API evolves additively and uarp-sdk keeps unknown fields in its own
+types; applications on Varta model that with explicit index signatures and `string`
+discriminants. The existing strict contract in [architecture.md](architecture.md)
+already describes this behaviour; no new profile is needed for it.
+
+#### Increments and acceptance
+
+Each increment is a separate versioned contract with positive, negative and
+resource tests, Wasmtime validation and, where a JS host exists, the same cases
+under Node. Order (P1–P12):
+
+| # | Increment | Acceptance | CORE | Pilot |
+| --- | --- | --- | --- | --- |
+| P0 | Embedding contract ([embedding.md](embedding.md)) with drift tests | Doc-only Node T1 host matches native (done in the probe) | 13, 14 | — |
+| P1 | Generated JS host (T1, R1, R2 subsets) + conformance host selector for Node | Every conformance case whose imports the host supports matches native; probes become fixtures | 13, 15 | — |
+| P2 | Thin host: Rust intrinsics linked into the guest under a new profile | Only the intrinsics an application uses are linked; JSON/Headers/value programs run identically in Node and Wasmtime; `app.wasm` growth, fuel deltas and cold start in the browser and on the Pi 5 recorded | 01, 10, 13, 16 | M1–M4 programs |
+| P3 | Cross-target native packaging (`--target`, offline launcher metadata, musl aarch64) | Same artifact runs on a real Pi 5 (16 KiB pages) and on macOS/Linux; Windows CI | 14 | — |
+| P4 | Structured entry points v2 (binary64/UTF-16 tools and HTTP) | A uarp-sdk-shaped typed tool with records/unions runs in native and Node hosts | 10, 13 | M2–M3 |
+| P5 | Application lifecycle: long-lived instance, event turns, per-turn budgets, timers delivered as tasks; [permission broker](#permission-model), states and `query` | Timer and event ordering tests against Node logs; trap kills the instance without automatic restart; per-turn budget values set from measurements | 07, 08, 09, 17 | M4–M5 (timers, backoff) |
+| P6 | Async `fetch` (`net.request`, replacing `net.get`/`net.fetch` in the new profile), streaming bodies, `AbortSignal`, HTTPS through `rustls` | uarp-sdk `transport.ts`/`sse.ts` paths against a local test server, native and browser | 09, 10, 11 | M5–M6 |
+| P7 | L0 view protocol + headless renderer (tree + accessibility snapshot) | Patch/event conformance cases; malformed patches fail closed | 10, 15, 18 | — |
+| P8 | L1 reactive core package + `tsx` + template compilation (B) | TSX counter/list/form examples produce identical headless snapshots on every host | 02, 03, 18 | — |
+| P9 | Browser bundle (Worker host + applier, CSP/SRI loader, deterministic metering transform), `varta dev --target browser` | The UARP console's `app.wasm` runs in Chromium, Firefox and WebKit with the headless snapshots; metering overhead measured; permission prompts in the host page or the browser's own prompts | 14, 16, 18 | M7 |
+| P10 | Native renderer, first increment: box, text, flex, button, text input with IME, scrolling; `varta-desktop` shell (each dependency justified and pinned at adoption) | The UARP console's settings and list screens render on macOS and a Pi 5 with layout matching the headless renderer; startup, memory, frame time and keystroke latency measured | 14, 16, 18 | M7 |
+| P10a | Prebuilt shells per target distributed through releases, `varta build --target desktop-…`, offline `runtime-info.json` labelled unverified | A macOS host builds Windows and Pi 5 bundles without a cross toolchain; the payload is validated by the builder's runtime | 14 | — |
+| P10b | OS bundles (`.app`, `.exe`/MSIX, `.deb`/AppImage), manifest `app` metadata, first-run capability approval | Bundles install and run; denied grants stay denied; required permissions decided at first run and optional ones prompted at use in a dialog outside the guest's control | 14 | — |
+| P10c | Startup: measure a pilot-sized compile; shell-generated cache through Wasmtime's cache feature; Winch for development starts | Startup budget met; tampered cache entries rejected | 14, 16 | — |
+| P10d | Rest of the L0 v1 subset natively | Freeze criterion passes on native, headless and browser renderers; the **same UARP console `app.wasm`** passes the scripted acceptance session in the browser, the macOS native renderer, the Pi 5 (`desktop-linux-aarch64`) native renderer and the headless conformance run | 14, 15, 18 | M7 |
+| P11 | Hooks subset over L1 (specified; never called "React compatible") | Subset spec plus differential cases | 03, 18 | — |
+| P12 | KV storage, binary/encoding, crypto, Date/Intl provider (KV before P10d: the console keeps its API key there) | Per-capability denial and budget tests | 05, 06, 10, 11 | M4 |
+| — | `.svelte` front-end (D) | Last; only after P8 is stable | 18 | — |
+
+Interleaving with the pilot ladder: M1–M4 language work (the v36 streams) proceeds
+unchanged, P0–P4 have no language dependency and can run in parallel; P5–P6 are
+the runtime half of K4.4 step 5 and close M5–M6 together with async generators;
+P7–P10d turn the pilot into the cross-target acceptance scenario at M7: the UARP
+console below.
+
+##### UARP console (cross-target acceptance application)
+
+Confirmed by the owner on 2026-10-29 as the first application. It lives in this
+repository at `examples/uarp-console/`, a product example kept apart from the
+engine: a TS/TSX project that is not a Cargo workspace member, that no crate
+depends on, and that takes the pinned uarp-sdk as an npm dependency installed under
+`node_modules/`, ignored by version control and never vendored. It is built once into one
+`app.wasm` with one manifest:
+
+- **Screens:** settings (base URL, API key); side navigation between resources;
+  paginated lists with "load more" (cursor pagination through `CursorPage<T>`); a
+  detail card; create/edit forms with enums as `select`; streamed SSE text
+  (`parseEventStream`, async generator); loading and error states (including
+  `ProblemDocument` errors); a confirm dialog; toasts.
+- **Behaviour:** search or filter input debounced by `setTimeout`; a new request
+  aborts the in-flight one through `AbortController`; retry with backoff on
+  transient errors.
+- **Manifest:** `net.request` for the configured API base URL only; the API key is
+  entered on the settings screen and kept in KV storage, never in page state or in
+  the artifact.
+- **Acceptance:** a scripted session against a local mock server (record/replay of
+  fetch completions) yields identical headless snapshots (tree, layout rectangles
+  within the freeze tolerance, accessibility tree) and event logs for the **same
+  `app.wasm`** in four places: the browser (Worker host + applier), the macOS
+  desktop native renderer, the Raspberry Pi 5 native renderer
+  (`desktop-linux-aarch64`) and the headless conformance run. The console then runs
+  visibly on all three display targets.
+
+**Risks.** The layout-bound intrinsics (P2) are the largest hidden dependency of
+every non-Wasmtime host; HTTPS adds a TLS dependency (`rustls`); owning a native
+renderer (text input,
+IME, accessibility, scrolling, CSS fidelity) is the largest new engineering risk;
+browser fuel needs instrumentation with unmeasured overhead; the typed npm UI
+ecosystem is small, so most value comes from DOM-free cores and our own L1;
+controlled inputs and IME need careful applier work; a second front-end (D) would
+double template typing work.
+
+##### Accepted decisions (2026-10-29)
+
+The owner accepted all thirteen recommendations of this design:
+
+1. **UI order.** TSX with compiled signals first; a hooks subset later, never
+   called "React compatible"; `.svelte` last.
+2. **Renderer.** L0 is a DOM-like, specified, versioned HTML/CSS subset, rendered
+   natively on desktop and Raspberry Pi 5; no webview is built now (decision 13).
+3. **Resource-loading URLs** need the same `net.request` grant, whose URL patterns
+   are the origin allowlist; there is no separate `ui.load` capability.
+4. **Thin host.** The existing Rust pure intrinsics are linked into the guest Wasm
+   under a new profile and never reimplemented per host. Only the intrinsics an
+   application uses are linked, and the growth of `app.wasm` and cold start in the
+   browser and on the Pi 5 are measured.
+5. **Browser fuel.** The browser packaging step applies a deterministic metering
+   transform to the same validated Wasm; native builds keep Wasmtime fuel.
+6. **Network.** `net.request` replaces `net.get`/`net.fetch` in new profiles; HTTPS
+   uses `rustls`.
+7. **Foreign-target shells.** A declared `runtime-info.json` is acceptable,
+   explicitly labelled unverified, until C3 signing exists.
+8. **Per-turn budgets.** Values are set after measurement; a trapped instance is not
+   restarted automatically.
+9. **Entropy** is ungated, like `Math.random`.
+10. **CORE ledger.** Rows CORE-17 (application lifecycle) and CORE-18 (view output)
+    are added.
+11. **Renderer stack.** winit, taffy, parley/fontique, vello with a CPU fallback,
+    AccessKit and resvg; each dependency is justified and pinned exactly at
+    adoption. Prebuilt shells are distributed through releases, with signing later.
+12. **Startup.** A shell-generated cache through Wasmtime's own cache feature;
+    Winch for fast development starts.
+13. **No webview fallback** for now.
+
+Later the same day the owner chose the console's **Single Chat** UX and accepted
+two L0 v1 capabilities, user-gesture only with exact grants: `ui.open_url`
+(external links opened by the renderer) and `clipboard.write` (`copy_text`). Their
+contract is the [round 3 draft](embedding.md#view-draft-v0-round-3-chat-requirements);
+the runtime implements neither yet.
 
 ### Deferred external validation scenarios
 
@@ -1476,7 +2703,8 @@ host import or value tag changes. Step 2 (synchronous generators) is the first
 source producer of frames; generator frames are resumed only by guest code, and
 the v33 runtime still does not call the dispatcher. Steps 3–4 (promises and
 async functions) are implemented under v34, where the runtime scheduler is the
-dispatcher's first caller; steps 5–6 are not implemented.
+dispatcher's first caller. Step 5's timers are implemented under v36
+(`timers`); its asynchronous I/O and step 6 are not implemented.
 Each increment still needs its own versioned contract in
 [architecture.md](architecture.md), positive/negative and resource tests and the
 normal gates before source admission.
@@ -1703,8 +2931,21 @@ artifact execution and a documented contract in [architecture.md](architecture.m
      **implemented** with step 2; `switch` case tests, `do-while` conditions
      and the remaining intrinsic value blocks stay rejected by name;
    - host-supplied reference inputs;
-   - liveness-based frame slots;
-   - a scheduler-owned retention policy for completed frames.
+   - liveness-based frame slots: **implemented** under v35 (selector
+     `frame_liveness`,
+     [contract](architecture.md#frame-liveness-frame_liveness)): each point
+     saves only the locals live across it, directly in liveness segments
+     whose edge masks are the exact GC map of the suspended state, described
+     by frame catalog version 3 and admitted for v35 only; v33/v34 keep their
+     byte-identical cell layout. Measured with production budgets: about 1.6k
+     instead of 3.0k fuel per `await`, 1.1k instead of 1.8k per `yield`, and
+     141 instead of 57 suspended generators per execution (`varta-runtime`
+     `frame_liveness_tests`);
+   - a scheduler-owned retention policy for completed frames: partly
+     addressed by liveness frames, which clear their GC maps on resumption so
+     a completed frame retains only its completion cell; an explicit policy
+     (for example releasing that cell once the scheduler consumed it) is
+     still open.
 2. Synchronous generators: `yield`, resumption and `finally`. Exit: `next`/`throw`/
    `return`, re-entry rejection and `finally` ordering match ECMAScript in
    differential tests against Node. **Implemented** in v33 (selector
@@ -1747,8 +2988,44 @@ artifact execution and a documented contract in [architecture.md](architecture.m
    planned fix) and request-scoped isolates for async HTTP (step 5).
 5. Timers, asynchronous I/O, cancellation and shutdown. Exit: separate budgets,
    generation-checked late completions and request-scoped cleanup.
+   **Timers implemented** in v36 (selector `timers`,
+   [contract](architecture.md#timers-timers)): `setTimeout`, `setInterval`,
+   their clears, the sleep pattern and `AbortSignal.timeout` on a runtime
+   event loop after the microtask checkpoint. A timer is a scheduled job
+   frame awaiting an engine-internal promise, so the existing frames root its
+   callback and arguments and the runtime keeps only serials and ids; the
+   queue is ordered by (due time, sequence) on a virtual loop clock that the
+   runtime advances to each due time while it waits for the wall clock.
+   Decided in this increment: timer ids are numbers (browser model, not
+   Node's `Timeout`); arming a timer requires the exact `time.timer` grant
+   (deny by default, fatal at the call); a timer due at or after the
+   execution deadline ends the execution with a budget error instead of
+   waiting; at most `MAX_PENDING_TIMERS` are pending; the single execution
+   deadline still covers the whole loop (no separate wait budget yet). Open:
+   asynchronous I/O, cancellation of host operations through `AbortSignal`,
+   abort listeners (function fields), request-scoped loops for async HTTP and
+   a per-case grant in the conformance runner.
 6. Async generators, `for await`, top-level await and compatibility expansion.
    Exit: the uarp-sdk pilot steps M5–M6 compile and pass their tests.
+   **Async generators and `for await` implemented** in v36 (selector
+   `async_generators`, branch `v36-async-generators`,
+   [contract](architecture.md#async-generators-async_generators)): an async
+   generator object is the frame of an internal body generator whose
+   completion cell holds a guest state record (request queue and
+   `[[AsyncGeneratorState]]`); guest helpers implement the ECMAScript
+   Enqueue/Resume/CompleteStep/DrainQueue/AwaitReturn operations, and each
+   `await` in a body is a scheduled relay job that steps the body, so suspended
+   generators hold no live-frame slot and are collected. `for await` covers
+   async generators, arrays and synchronous generators, and `yield*` delegates
+   to async generators, with Node's job counts
+   (`varta-runtime` `async_generator_tests`, Node 24 logs, a collection forced
+   before every job). No host import, value tag or layout is added. Measured
+   with production budgets: about 10.0k fuel per `for await` step, 3.3k per
+   `await` in a body (1.7k in an async function). Open: `yield*` over arrays
+   and synchronous generators, async generator expressions and object methods, `Symbol.asyncIterator` and other
+   async iterables, top-level `await`, `await` inside intrinsic value blocks
+   other than checked assertions, and a cheaper relay (the per-step cost limits
+   one execution to about 100 `for await` values).
 
 The prepared function-catalog ownership increment, which owns the immutable
 metadata that frame layouts extend, is committed (`bf8c6c2`).

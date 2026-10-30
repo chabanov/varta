@@ -44,7 +44,7 @@ pub(super) fn descriptor(
         let field = &shape.fields[*index as usize];
         let kind = field
             .ty
-            .value_kind()
+            .layout_kind(version)
             .ok_or_else(|| CompilerError::Internal("missing object field kind".into()))?;
         for value in [
             strings[field.name.as_bytes()],
@@ -60,6 +60,8 @@ pub(super) fn descriptor(
                         | abi::SPARSE_VALUE_VERSION
                         | abi::BIGINT_VALUE_VERSION
                         | abi::DYNAMIC_VALUE_VERSION
+                        | abi::PROMISE_VALUE_VERSION
+                        | abi::FUNCTION_FIELD_VALUE_VERSION
                 ) && field.optional
                 {
                     abi::OPTIONAL_FIELD_FLAG
@@ -224,7 +226,7 @@ impl Emitter<'_> {
     pub(super) fn json(&mut self, value: &Expr, result: Type, status: Option<u32>) -> Result<()> {
         let kind = value
             .ty
-            .value_kind()
+            .profile_kind(self.profile)
             .ok_or_else(|| CompilerError::Internal("missing JSON value kind".into()))?;
         self.code.push(I::I32Const(kind as i32));
         self.expr(value)?;

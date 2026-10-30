@@ -8,6 +8,7 @@ mod errors;
 mod exceptions;
 mod expr;
 mod finally;
+mod frame_slots;
 mod frames;
 mod function_catalog;
 mod functions;
@@ -24,12 +25,14 @@ mod records;
 mod repeat;
 mod roots;
 mod schemas;
+mod shared_members;
 mod strings;
 mod unions;
 use crate::{
     CompilerError,
     ir::{self, Expr, Expression as E, Host, Statement as S, Type},
 };
+use shared_members::{SharedMembers, shared_members};
 use std::collections::{BTreeMap, BTreeSet};
 use swc_ecma_ast::BinaryOp;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
@@ -91,6 +94,9 @@ struct Emitter<'a> {
     binding_types: &'a BTreeMap<Type, u32>,
     environment_functions: &'a BTreeSet<usize>,
     self_functions: &'a BTreeSet<usize>,
+    /// The Wasm local holding this function's own closure environment, which
+    /// an async closure forwards to its scheduled body (v35).
+    environment_param: Option<u32>,
     /// Present only while emitting a suspendable function's resume body.
     suspension: Option<frames::Resume<'a>>,
     /// Step function of each generator type id (v33).
@@ -102,6 +108,10 @@ struct Emitter<'a> {
     frame_resources: Option<frames::Resources>,
     /// `Promise<T>` types (v34) by id: value type and private record shape.
     promises: &'a [ir::PromiseType],
+    /// V37 (`language_core`): unions with several record-tag or array
+    /// members, and the descriptor shapes that identify each record or class
+    /// member (`shared_members`).
+    shared: &'a SharedMembers,
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
@@ -131,6 +141,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             "module constants exceed root stack capacity".into(),
         ));
     }
+    let shared = shared_members(&program.types);
     let canonical_functions: BTreeMap<_, _> = collected
         .canonical_functions
         .iter()
@@ -703,16 +714,18 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             binding_types: &binding_types,
             environment_functions: &environment_functions,
             self_functions: &self_functions,
+            environment_param: environment_slot,
             suspension: None,
             generator_steps: &generator_steps,
             dispatcher: (!frame_layouts.is_empty()).then_some(dispatcher),
             frame_functions: &program.suspendable,
             frame_resources,
             promises: &program.types.promises,
+            shared: &shared,
         };
         let frame_layout = frame_layouts.iter().find(|layout| layout.function == index);
         if let (Some(layout), Some(resources)) = (frame_layout, frame_resources) {
-            emitter.frame_creator(function, layout, resources)?;
+            emitter.frame_creator(function, layout, resources, (environment_slot, index))?;
         } else {
             emitter.begin_frame(function)?;
             emitter.begin_closure(function, environment_slot, index)?;
@@ -789,6 +802,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                 &frame_layouts,
                 &resume_bodies,
                 exceptions.pending,
+                program.types.generators[id as usize].body,
             ));
         }
     } else if generator_types > 0 {
@@ -926,7 +940,7 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
             | Type::Union(_)
             | Type::ReferenceUnion(_)
             | Type::Unknown => vec![ValType::I64],
-            Type::Void => vec![],
+            Type::Void | Type::Never => vec![],
             _ => vec![ValType::I32],
         }
     }

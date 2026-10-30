@@ -4,13 +4,13 @@
 //! those vectors inside a rooted value block, keeping keys distinct and in
 //! ECMAScript own-key order (canonical array indices ascending, then insertion).
 use super::*;
-use ir::{DictionaryType, RecordField};
+use ir::{DictionaryHelper, DictionaryType, RecordField};
 use varta_common::value::{
     DICTIONARY_KEYS_FIELD, DICTIONARY_VALUES_FIELD, ErrorClass, MAX_DICTIONARY_ENTRIES,
 };
 
 /// Canonical storage slots (fields sorted by name: `keys` < `values`).
-const KEYS: u32 = 0;
+pub(super) const KEYS: u32 = 0;
 pub(super) const VALUES: u32 = 1;
 const PROTO: &str = "__proto__";
 
@@ -21,13 +21,17 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     if matches!(value, Type::Generator(_)) {
         return Err(generators::opaque("a dictionary"));
     }
-    if matches!(value, Type::Function(_)) {
+    if matches!(value, Type::Function(_)) && !types.profile.function_fields() {
         return Err(unsupported("function-valued index signature"));
     }
-    if value.value_kind().is_none() {
+    if value.profile_kind(types.profile).is_none() {
         return Err(unsupported("index signature value type"));
     }
-    if let Some(id) = types.dictionaries.iter().position(|d| d.value == value) {
+    if let Some(id) = types
+        .dictionaries
+        .iter()
+        .position(|d| d.value == value && d.declared.is_none())
+    {
         return Ok(Type::Dictionary(id as u32));
     }
     let keys = arrays::intern(Type::String, types)?;
@@ -56,28 +60,54 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
         keys,
         values,
         storage,
+        declared: None,
     });
     Ok(Type::Dictionary(id))
 }
 
 /// `{ [key: string]: T }`: a type literal whose only member is one string
-/// index signature. `None` when the literal has no index signature.
+/// index signature, or (v35 `mixed_index_records`) a mixed object type that
+/// also declares fields. `None` when the literal has no index signature.
 pub(super) fn signature(
     literal: &ast::TsTypeLit,
     types: &mut ir::ValueTypes,
 ) -> Result<Option<Type>> {
-    let index = literal.members.iter().find_map(|member| match member {
+    let mut indices = literal.members.iter().filter_map(|member| match member {
         ast::TsTypeElement::TsIndexSignature(index) => Some(index),
         _ => None,
     });
-    let Some(index) = index else {
+    let Some(index) = indices.next() else {
         return Ok(None);
     };
-    if literal.members.len() != 1 {
+    if literal.members.len() == 1 {
+        return intern(index_value(index, types)?, types).map(Some);
+    }
+    if !types.profile.mixed_index_records() {
         return Err(unsupported(
             "index signature combined with declared fields (a mixed object type)",
         ));
     }
+    if indices.next().is_some() {
+        return Err(unsupported(
+            "more than one index signature in an object type",
+        ));
+    }
+    let value = index_value(index, types)?;
+    let members: Vec<_> = literal
+        .members
+        .iter()
+        .filter(|member| !matches!(member, ast::TsTypeElement::TsIndexSignature(_)))
+        .cloned()
+        .collect();
+    let fields = records::type_fields(&members, types)?;
+    mixed_records::intern(value, fields, false, types).map(Some)
+}
+
+/// The value type `T` of one `[key: string]: T` signature.
+pub(super) fn index_value(
+    index: &ast::TsIndexSignature,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
     if index.readonly || index.is_static {
         return Err(unsupported("readonly or static index signature"));
     }
@@ -95,9 +125,45 @@ pub(super) fn signature(
             "index signature key other than string (number and symbol keys)",
         ));
     }
-    let value = annotation(index.type_ann.as_deref(), types)?
-        .ok_or_else(|| invalid("index signatures require a value annotation"))?;
-    intern(value, types).map(Some)
+    annotation(index.type_ann.as_deref(), types)?
+        .ok_or_else(|| invalid("index signatures require a value annotation"))
+}
+
+/// Whether a dictionary of type `source` may be used as `target` without a
+/// test (v35): both share one storage layout (the same value type), and
+/// TypeScript relates them. Declared members are a static view whose reads
+/// are checked, so retagging never trusts a value's declared fields.
+pub(super) fn converts(target: Type, source: Type, types: &ir::ValueTypes) -> bool {
+    let (Type::Dictionary(to), Type::Dictionary(from)) = (target, source) else {
+        return false;
+    };
+    let (to, from) = (
+        types.dictionaries[to as usize],
+        types.dictionaries[from as usize],
+    );
+    if to == from || to.storage != from.storage || to.value != from.value {
+        return to == from;
+    }
+    let source = types.declared(source);
+    let Some(target) = types.declared(target) else {
+        // Every mixed record is a dictionary of its index type; an `object`
+        // view becomes one only through a checked assertion.
+        return !source.is_some_and(|members| members.object);
+    };
+    if target.object || source.is_some_and(|members| members.object) {
+        return false;
+    }
+    target.fields.iter().all(|field| {
+        match source.and_then(|members| members.fields.iter().find(|f| f.name == field.name)) {
+            Some(own) => {
+                (field.optional || !own.optional)
+                    && mixed_records::assignable(field.ty, own.ty, types)
+            }
+            // TypeScript relates the source index signature to an optional
+            // target property; a required one must be declared.
+            None => field.optional && mixed_records::assignable(field.ty, to.value, types),
+        }
+    })
 }
 
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
@@ -156,16 +222,28 @@ fn index_key(key: Expr) -> Expr {
 }
 
 /// Hidden locals of one dictionary operation and its rooted value block.
-struct Block {
+pub(super) struct Block {
     span: swc_common::Span,
     dictionary: DictionaryType,
     ty: Type,
     source: u32,
     key: u32,
     roots: Vec<u32>,
-    body: Vec<S>,
+    pub(super) body: Vec<S>,
 }
 impl Block {
+    /// The evaluated receiver, held in a rooted local of the block.
+    pub(super) fn receiver(&self) -> Expr {
+        self.source()
+    }
+    /// The evaluated key, held in a rooted local of the block.
+    pub(super) fn key_value(&self) -> Expr {
+        self.key()
+    }
+    /// Keep `slot` rooted for the rest of the block.
+    pub(super) fn root(&mut self, slot: u32) {
+        self.roots.push(slot);
+    }
     fn source(&self) -> Expr {
         local(self.span, self.source, self.ty)
     }
@@ -217,20 +295,11 @@ impl Block {
 }
 
 impl Lower<'_> {
-    fn dictionary_block(&mut self, value: Expr, key: Expr) -> Result<Block> {
+    pub(super) fn dictionary_block(&mut self, value: Expr, key: Expr) -> Result<Block> {
         let Type::Dictionary(id) = value.ty else {
             return Err(invalid("missing dictionary type"));
         };
-        let key = literals::erase(key, self.types);
-        if key.ty != Type::String {
-            return Err(self.source.locate(
-                type_error(format!(
-                    "dictionary key must be a narrowed string, found {}; coercion is unsupported",
-                    key.ty
-                )),
-                key.span,
-            ));
-        }
+        let key = self.dictionary_key_value(key)?;
         let span = value.span;
         let ty = value.ty;
         let source = self.hidden(ty);
@@ -245,7 +314,27 @@ impl Lower<'_> {
             body: vec![S::Init(source, value), S::Init(name, key)],
         })
     }
-    fn finish(&mut self, block: Block, output: u32, ty: Type) -> Expr {
+    /// A key as a property name: a narrowed string or (v35) a number,
+    /// converted exactly like `ToPropertyKey` (`String(n)`, so `d[1]` is
+    /// `d["1"]` and `d[-0]` is `d["0"]`). Other types are rejected.
+    pub(super) fn dictionary_key_value(&mut self, key: Expr) -> Result<Expr> {
+        let key = literals::erase(key, self.types);
+        if key.ty == Type::Float64 && self.types.profile.mixed_index_records() {
+            let span = key.span;
+            return self.primitive_convert(key, &[], false, span);
+        }
+        if key.ty != Type::String {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "dictionary key must be a narrowed string, found {}; coercion is unsupported",
+                    key.ty
+                )),
+                key.span,
+            ));
+        }
+        Ok(key)
+    }
+    pub(super) fn finish_dictionary(&mut self, block: Block, output: u32, ty: Type) -> Expr {
         let marker = self.hidden(Type::Number);
         let mut roots = block.roots;
         roots.push(output);
@@ -259,6 +348,29 @@ impl Lower<'_> {
                 body: block.body,
             },
         }
+    }
+    /// Look `key` up in `value`: the found entry (valid when the test holds),
+    /// the found test and the open block, receiver and key evaluated once.
+    pub(super) fn dictionary_lookup(
+        &mut self,
+        value: Expr,
+        key: Expr,
+    ) -> Result<(Expr, Expr, Block)> {
+        let mut block = self.dictionary_block(value, key)?;
+        let span = block.span;
+        let index = self.hidden(Type::Float64);
+        block.body.push(S::Init(index, block.search()));
+        let found = block.element(
+            block.values(),
+            block.dictionary.value,
+            local(span, index, Type::Float64),
+        );
+        let test = binary(
+            ast::BinaryOp::GtEq,
+            local(span, index, Type::Float64),
+            number(span, 0.0),
+        );
+        Ok((found, test, block))
     }
     /// Throws for an absent key naming an inherited `Object.prototype` member,
     /// the checked boundary shared with closed computed record reads.
@@ -278,7 +390,7 @@ impl Lower<'_> {
     }
     /// The key of `d.name`, `d["name"]` or `d[expression]`, evaluated after the
     /// receiver.
-    fn dictionary_key(&mut self, member: &ast::MemberExpr) -> Result<Expr> {
+    pub(super) fn dictionary_key(&mut self, member: &ast::MemberExpr) -> Result<Expr> {
         let span = member.prop.span();
         match &member.prop {
             ast::MemberProp::Ident(id) => Ok(Expr {
@@ -296,7 +408,24 @@ impl Lower<'_> {
         member: &ast::MemberExpr,
         value: Expr,
     ) -> Result<Expr> {
+        if let Some(field) = mixed_records::declared_field(value.ty, member, self.types) {
+            return self.declared_read(member, value, &field);
+        }
+        mixed_records::object_key(value.ty, member, self.types)
+            .map_err(|e| self.source.locate(e, member.prop.span()))?;
         let key = self.dictionary_key(member)?;
+        self.dictionary_get(value, key)
+    }
+    /// The stored `T` under `key`, or `undefined` for an absent own key.
+    pub(super) fn dictionary_get(&mut self, value: Expr, key: Expr) -> Result<Expr> {
+        if self.types.profile.mixed_index_records() {
+            let key = self.dictionary_key_value(key)?;
+            return self.dictionary_helper_call(DictionaryHelper::Get, vec![value, key]);
+        }
+        self.dictionary_get_inline(value, key)
+    }
+    /// The inline body of [`Self::dictionary_get`].
+    pub(super) fn dictionary_get_inline(&mut self, value: Expr, key: Expr) -> Result<Expr> {
         let mut block = self.dictionary_block(value, key)?;
         let element = block.dictionary.value;
         let result = unions::intern(vec![element, Type::Undefined], self.types)?;
@@ -331,7 +460,7 @@ impl Lower<'_> {
                 miss,
             ),
         ]);
-        Ok(self.finish(block, output, result))
+        Ok(self.finish_dictionary(block, output, result))
     }
     /// `d[key] = value` (statement or expression): replaces an existing
     /// entry in place or inserts a new one at its own-key position.
@@ -341,21 +470,82 @@ impl Lower<'_> {
         base: Expr,
         rhs: &ast::Expr,
     ) -> Result<Expr> {
+        // A declared key is written at its declared type (v35), then stored
+        // as the index type it is assignable to.
+        let declared = mixed_records::declared_field(base.ty, member, self.types);
+        if declared.is_none() {
+            mixed_records::object_key(base.ty, member, self.types)
+                .map_err(|e| self.source.locate(e, member.prop.span()))?;
+        }
         let key = self.dictionary_key(member)?;
-        let mut block = self.dictionary_block(base, key)?;
-        let span = block.span;
+        if self.types.profile.mixed_index_records() {
+            let Type::Dictionary(id) = base.ty else {
+                return Err(invalid("missing dictionary type"));
+            };
+            let element = self.types.dictionaries[id as usize].value;
+            let expected = declared.as_ref().map_or(element, |field| field.ty);
+            let key = self.dictionary_key_value(key)?;
+            let value = self.expr_expected(rhs, Some(expected))?;
+            return self.dictionary_set(base, key, value, expected);
+        }
+        let block = self.dictionary_block(base, key)?;
         let element = block.dictionary.value;
-        let value = self.expr_expected(rhs, Some(element))?;
-        if !arguments::accepts(element, value.ty, self.types) {
+        let expected = declared.as_ref().map_or(element, |field| field.ty);
+        let value = self.expr_expected(rhs, Some(expected))?;
+        self.dictionary_store(block, value, expected)
+    }
+    /// Store the evaluated `value` (of the key's `expected` type) under `key`.
+    pub(super) fn dictionary_set(
+        &mut self,
+        base: Expr,
+        key: Expr,
+        value: Expr,
+        expected: Type,
+    ) -> Result<Expr> {
+        if self.types.profile.mixed_index_records() {
+            let Type::Dictionary(id) = base.ty else {
+                return Err(invalid("missing dictionary type"));
+            };
+            let element = self.types.dictionaries[id as usize].value;
+            let value = self.dictionary_value(value, expected, element)?;
+            let key = self.dictionary_key_value(key)?;
+            return self.dictionary_helper_call(DictionaryHelper::Set, vec![base, key, value]);
+        }
+        let block = self.dictionary_block(base, key)?;
+        self.dictionary_store(block, value, expected)
+    }
+    /// Check `value` against the key's `expected` type and widen it to the
+    /// index type `element` it is stored as.
+    pub(super) fn dictionary_value(
+        &mut self,
+        value: Expr,
+        expected: Type,
+        element: Type,
+    ) -> Result<Expr> {
+        if !mixed_records::assignable(expected, value.ty, self.types) {
             return Err(self.source.locate(
                 type_error(format!(
-                    "dictionary value type mismatch: expected {element}, found {}",
+                    "dictionary value type mismatch: expected {expected}, found {}",
                     value.ty
                 )),
                 value.span,
             ));
         }
-        let value = unions::widen(value, Some(element), self.types)?;
+        let value = unions::widen(value, Some(expected), self.types)?;
+        unions::widen(value, Some(element), self.types)
+    }
+    /// Store an evaluated `value` of the `expected` key type under the
+    /// block's key: replace the entry in place or insert it at its own-key
+    /// position. The expression's value is the stored `T`.
+    pub(super) fn dictionary_store(
+        &mut self,
+        mut block: Block,
+        value: Expr,
+        expected: Type,
+    ) -> Result<Expr> {
+        let span = block.span;
+        let element = block.dictionary.value;
+        let value = self.dictionary_value(value, expected, element)?;
         let output = self.hidden(element);
         let index = self.hidden(Type::Float64);
         let rank = self.hidden(Type::Float64);
@@ -472,7 +662,7 @@ impl Lower<'_> {
                 absent,
             ),
         ]);
-        Ok(self.finish(block, output, element))
+        Ok(self.finish_dictionary(block, output, element))
     }
     fn set_index(&mut self, array: Expr, index: Expr, value: Expr) -> S {
         let slots = self
@@ -493,7 +683,30 @@ impl Lower<'_> {
         member: &ast::MemberExpr,
         base: Expr,
     ) -> Result<Expr> {
+        match mixed_records::declared_field(base.ty, member, self.types) {
+            // TypeScript (TS2790): only optional properties may be deleted.
+            Some(field) if !field.optional => {
+                return Err(self.source.locate(
+                    type_error(format!(
+                        "the operand of delete must be optional; {} is a required declared property",
+                        field.name
+                    )),
+                    member.span,
+                ));
+            }
+            Some(_) => {}
+            None => mixed_records::object_key(base.ty, member, self.types)
+                .map_err(|e| self.source.locate(e, member.prop.span()))?,
+        }
         let key = self.dictionary_key(member)?;
+        if self.types.profile.mixed_index_records() {
+            let key = self.dictionary_key_value(key)?;
+            return self.dictionary_helper_call(DictionaryHelper::Delete, vec![base, key]);
+        }
+        self.dictionary_delete_inline(base, key)
+    }
+    /// The inline body of `delete d[key]`.
+    pub(super) fn dictionary_delete_inline(&mut self, base: Expr, key: Expr) -> Result<Expr> {
         let mut block = self.dictionary_block(base, key)?;
         let span = block.span;
         let output = self.hidden(Type::Boolean);
@@ -533,7 +746,7 @@ impl Lower<'_> {
                 vec![],
             ),
         ]);
-        Ok(self.finish(block, output, Type::Boolean))
+        Ok(self.finish_dictionary(block, output, Type::Boolean))
     }
     /// `Object.hasOwn(d, key)` (own) or `key in d` (own or an inherited
     /// `Object.prototype` member name).
@@ -568,7 +781,7 @@ impl Lower<'_> {
             ),
             S::If(local(span, output, Type::Boolean), vec![], miss),
         ]);
-        Ok(self.finish(block, output, Type::Boolean))
+        Ok(self.finish_dictionary(block, output, Type::Boolean))
     }
     /// `Object.keys(d)` / `Object.values(d)`: a fresh array in own-key order.
     pub(super) fn dictionary_enumeration(&mut self, value: Expr, keys: bool) -> Result<Expr> {
@@ -619,11 +832,24 @@ impl Lower<'_> {
     /// An object literal with a dictionary context: static keys only. Values
     /// run in source order; entries are stored in own-key order.
     pub(super) fn dictionary_literal(&mut self, object: &ast::ObjectLit, id: u32) -> Result<Expr> {
+        if self.types.profile.mixed_index_records()
+            && object
+                .props
+                .iter()
+                .any(|property| matches!(property, ast::PropOrSpread::Spread(_)))
+        {
+            return self.dictionary_spread_literal(object, id);
+        }
         let dictionary = self.types.dictionaries[id as usize];
         let span = object.span;
         if object.props.len() > MAX_DICTIONARY_ENTRIES {
             return Err(invalid("dictionary literal entry count exceeds limit"));
         }
+        let declared = self
+            .types
+            .declared(Type::Dictionary(id))
+            .map(|members| members.fields.clone())
+            .unwrap_or_default();
         let mut entries: Vec<(String, u32)> = Vec::new();
         let mut body = Vec::new();
         let mut roots = Vec::new();
@@ -631,22 +857,33 @@ impl Lower<'_> {
             let ast::PropOrSpread::Prop(property) = property else {
                 return Err(unsupported("object spread"));
             };
+            // A declared key (v35) is typed by its declared field.
+            let expected = |name: &str| {
+                declared
+                    .iter()
+                    .find(|field| field.name == name)
+                    .map_or(dictionary.value, |field| field.ty)
+            };
             let (name, value) = match &**property {
-                ast::Prop::KeyValue(field) => (
-                    records::property_key(&field.key)?,
-                    self.expr_expected(&field.value, Some(dictionary.value))?,
-                ),
-                ast::Prop::Shorthand(id) => (
-                    records::key(id.sym.to_string())?,
-                    self.expr_expected(&ast::Expr::Ident(id.clone()), Some(dictionary.value))?,
-                ),
+                ast::Prop::KeyValue(field) => {
+                    let name = records::property_key(&field.key)?;
+                    let value = self.expr_expected(&field.value, Some(expected(&name)))?;
+                    (name, value)
+                }
+                ast::Prop::Shorthand(id) => {
+                    let name = records::key(id.sym.to_string())?;
+                    let value =
+                        self.expr_expected(&ast::Expr::Ident(id.clone()), Some(expected(&name)))?;
+                    (name, value)
+                }
                 _ => return Err(unsupported("object method, getter or setter")),
             };
-            if !arguments::accepts(dictionary.value, value.ty, self.types) {
+            let field = expected(&name);
+            if !mixed_records::assignable(field, value.ty, self.types) {
                 return Err(self.source.locate(
                     type_error(format!(
-                        "dictionary value type mismatch: expected {}, found {}",
-                        dictionary.value, value.ty
+                        "dictionary value type mismatch: expected {field}, found {}",
+                        value.ty
                     )),
                     value.span,
                 ));
@@ -655,12 +892,25 @@ impl Lower<'_> {
                 return Err(unsupported("duplicate object key"));
             }
             let slot = self.hidden(dictionary.value);
+            let value = unions::widen(value, Some(field), self.types)?;
             body.push(S::Init(
                 slot,
                 unions::widen(value, Some(dictionary.value), self.types)?,
             ));
             roots.push(slot);
             entries.push((name, slot));
+        }
+        if let Some(missing) = declared
+            .iter()
+            .find(|field| !field.optional && !entries.iter().any(|(name, _)| *name == field.name))
+        {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "object literal is missing the required declared property {}",
+                    missing.name
+                )),
+                span,
+            ));
         }
         entries.sort_by_key(|(name, _)| {
             let units: Vec<u16> = name.encode_utf16().collect();

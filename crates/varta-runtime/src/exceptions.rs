@@ -73,6 +73,11 @@ pub(crate) fn initial(
         (abi::BIGINT_VERSION, abi::BIGINT_CHANNEL_VERSION),
         (abi::CLASS_ERROR_VERSION, abi::CLASS_ERROR_CHANNEL_VERSION),
         (abi::DYNAMIC_VERSION, abi::DYNAMIC_CHANNEL_VERSION),
+        (abi::PROMISE_VERSION, abi::PROMISE_CHANNEL_VERSION),
+        (
+            abi::FUNCTION_FIELD_VERSION,
+            abi::FUNCTION_FIELD_CHANNEL_VERSION,
+        ),
     ] {
         if let Some(version) = instance.get_global(&mut *store, name)
             && version.get(&mut *store).i32() != Some(expected)
@@ -149,13 +154,21 @@ pub(crate) struct Channel {
 }
 impl Channel {
     pub(crate) fn detect(mut exported: impl FnMut(&str) -> bool) -> Self {
-        // Channel v6 (v34) carries the v5 contents in value15 layouts.
-        let dynamic = exported(abi::DYNAMIC_VERSION);
+        // Channel v6 (v34) carries the v5 contents in value15 layouts and
+        // channel v7 (v35) the same contents in value16 layouts, channel v8
+        // (v36) in value17 layouts.
+        let functions = exported(abi::FUNCTION_FIELD_VERSION);
+        let promises = functions || exported(abi::PROMISE_VERSION);
+        let dynamic = promises || exported(abi::DYNAMIC_VERSION);
         let instances = dynamic || exported(abi::CLASS_ERROR_VERSION);
         let bigints = instances || exported(abi::BIGINT_VERSION);
         let families = bigints || exported(abi::FAMILY_VERSION);
         let errors = families || exported(abi::VERSION);
-        let version = if dynamic {
+        let version = if functions {
+            FUNCTION_FIELD_VALUE_VERSION
+        } else if promises {
+            PROMISE_VALUE_VERSION
+        } else if dynamic {
             DYNAMIC_VALUE_VERSION
         } else if bigints {
             BIGINT_VALUE_VERSION
@@ -177,12 +190,55 @@ impl Channel {
         data: &[u8],
         value: u64,
     ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
+        self.read(data, value, &mut Limit::default())
+    }
+    /// Like [`Self::render`], but copy at most `units` UTF-16 code units of
+    /// each string field; reports whether any field was cut. The whole value
+    /// is still validated, and no host copy grows with longer guest text.
+    pub(crate) fn render_bounded(
+        self,
+        data: &[u8],
+        value: u64,
+        units: usize,
+    ) -> Result<(varta_common::exceptions::ThrownValue, bool), RuntimeError> {
+        let mut limit = Limit {
+            units: Some(units),
+            truncated: false,
+        };
+        let value = self.read(data, value, &mut limit)?;
+        Ok((value, limit.truncated))
+    }
+    fn read(
+        self,
+        data: &[u8],
+        value: u64,
+        limit: &mut Limit,
+    ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
         let Self {
             instances,
             errors,
             version,
         } = self;
-        thrown(data, value, instances, errors, version)
+        thrown(data, value, instances, errors, version, limit)
+    }
+}
+/// An optional per-field bound on copied UTF-16 text.
+#[derive(Default)]
+struct Limit {
+    units: Option<usize>,
+    truncated: bool,
+}
+impl Limit {
+    /// The prefix of validated, even-length UTF-16 bytes within the bound.
+    fn units(&mut self, bytes: &[u8]) -> Result<Vec<u16>, ()> {
+        let bytes = match self.units {
+            Some(units) if bytes.len() > units * size_of::<u16>() => {
+                self.truncated = true;
+                &bytes[..units * size_of::<u16>()]
+            }
+            _ => bytes,
+        };
+        varta_common::text::units(bytes).map_err(|_| ())
     }
 }
 fn thrown(
@@ -191,6 +247,7 @@ fn thrown(
     instances: bool,
     errors: bool,
     version: u32,
+    limit: &mut Limit,
 ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
     let cell = if errors {
         ReferenceBox::read_with_version(data, value, version)?
@@ -218,7 +275,8 @@ fn thrown(
             let len = (cell.payload >> i32::BITS) as usize;
             // PrimitiveBox checked the complete even byte range and size bound.
             V::String(
-                varta_common::text::units(&data[start..start + len])
+                limit
+                    .units(&data[start..start + len])
                     .map_err(|_| invalid("invalid thrown UTF-16 value"))?,
             )
         }
@@ -226,7 +284,8 @@ fn thrown(
             let object = ErrorObject::read_with_version(data, cell.payload, version)?;
             let start = object.message as u32 as usize;
             let len = (object.message >> i32::BITS) as usize;
-            let message = varta_common::text::units(&data[start..start + len])
+            let message = limit
+                .units(&data[start..start + len])
                 .map_err(|_| invalid("invalid Error message"))?;
             if object.class == ErrorClass::Error {
                 V::Error {
@@ -241,7 +300,7 @@ fn thrown(
                 }
             }
         }
-        ValueKind::Record if instances => error_instance(data, cell.payload)?,
+        ValueKind::Record if instances => error_instance(data, cell.payload, limit)?,
         _ => return Err(invalid("unsupported thrown value kind")),
     };
     Ok(value)
@@ -249,6 +308,7 @@ fn thrown(
 
 /// Field keys a thrown class-instance record must declare as String slots.
 const INSTANCE_NAME: &str = "name";
+use varta_common::value::PRIVATE_KEY_PREFIX;
 const INSTANCE_MESSAGE: &str = "message";
 
 /// Copy the `name`/`message` String fields of a thrown class instance (channel
@@ -257,6 +317,7 @@ const INSTANCE_MESSAGE: &str = "message";
 fn error_instance(
     data: &[u8],
     record: u64,
+    limit: &mut Limit,
 ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
     let word = |at: usize| {
         at.checked_add(size_of::<u32>())
@@ -268,16 +329,25 @@ fn error_instance(
     let ptr = record as u32 as usize;
     let descriptor = word(ptr)? as usize;
     let count = word(ptr + size_of::<u32>())? as usize;
+    // `[name, message]` under their own keys, then under the v37 private-state
+    // keys (`#name`, `#message`: Error slots that are not own enumerable
+    // properties). An own key wins, so earlier profiles, whose Error slots
+    // always carry the own keys, read exactly the fields they read before.
     let mut fields = [None, None];
+    let mut private = [None, None];
     for index in 0..count {
         let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
         let key = word(entry)? as usize;
         let len = word(entry + 4)? as usize;
         let raw = word(entry + 8)?;
         let kind = word(entry + 12)?;
-        let position = match key.checked_add(len).and_then(|end| data.get(key..end)) {
-            Some(bytes) if bytes == INSTANCE_NAME.as_bytes() => 0,
-            Some(bytes) if bytes == INSTANCE_MESSAGE.as_bytes() => 1,
+        let bytes = key.checked_add(len).and_then(|end| data.get(key..end));
+        let hidden = bytes.and_then(|bytes| bytes.strip_prefix(&[PRIVATE_KEY_PREFIX as u8][..]));
+        let (target, position) = match (bytes, hidden) {
+            (Some(bytes), _) if bytes == INSTANCE_NAME.as_bytes() => (&mut fields, 0),
+            (Some(bytes), _) if bytes == INSTANCE_MESSAGE.as_bytes() => (&mut fields, 1),
+            (_, Some(bytes)) if bytes == INSTANCE_NAME.as_bytes() => (&mut private, 0),
+            (_, Some(bytes)) if bytes == INSTANCE_MESSAGE.as_bytes() => (&mut private, 1),
             _ => continue,
         };
         if raw & OPTIONAL_FIELD_FLAG != 0 || kind != ValueKind::String as u32 {
@@ -294,12 +364,15 @@ fn error_instance(
             .checked_add(len)
             .and_then(|end| data.get(start..end))
             .ok_or_else(|| invalid("invalid thrown Error instance field"))?;
-        fields[position] = Some(
-            varta_common::text::units(bytes)
+        target[position] = Some(
+            limit
+                .units(bytes)
                 .map_err(|_| invalid("invalid thrown Error instance field"))?,
         );
     }
-    let [Some(name), Some(message)] = fields else {
+    let [name, message] = fields;
+    let [private_name, private_message] = private;
+    let (Some(name), Some(message)) = (name.or(private_name), message.or(private_message)) else {
         return Err(invalid("thrown record is not an Error instance"));
     };
     Ok(varta_common::exceptions::ThrownValue::ErrorInstance { name, message })
@@ -357,12 +430,31 @@ mod tests {
     #[test]
     fn thrown_instances_copy_name_and_message_fields() {
         assert_eq!(
-            error_instance(&instance(), handle()).unwrap(),
+            error_instance(&instance(), handle(), &mut Limit::default()).unwrap(),
             ThrownValue::ErrorInstance {
                 name: "Ab".encode_utf16().collect(),
                 message: Vec::new(),
             }
         );
+        // A bounded copy keeps a prefix of each field and reports the cut.
+        let mut limit = Limit {
+            units: Some(1),
+            truncated: false,
+        };
+        assert_eq!(
+            error_instance(&instance(), handle(), &mut limit).unwrap(),
+            ThrownValue::ErrorInstance {
+                name: "A".encode_utf16().collect(),
+                message: Vec::new(),
+            }
+        );
+        assert!(limit.truncated);
+        let mut exact = Limit {
+            units: Some(2),
+            truncated: false,
+        };
+        error_instance(&instance(), handle(), &mut exact).unwrap();
+        assert!(!exact.truncated);
     }
 
     #[test]
@@ -382,11 +474,14 @@ mod tests {
         for (at, word) in corruptions {
             let mut data = instance();
             put(&mut data, at, word);
-            assert!(error_instance(&data, handle()).is_err(), "{at}");
+            assert!(
+                error_instance(&data, handle(), &mut Limit::default()).is_err(),
+                "{at}"
+            );
         }
         // Descriptor entries past the end of memory fail instead of panicking.
         let mut data = instance();
         put(&mut data, RECORD, u32::MAX - 8);
-        assert!(error_instance(&data, handle()).is_err());
+        assert!(error_instance(&data, handle(), &mut Limit::default()).is_err());
     }
 }

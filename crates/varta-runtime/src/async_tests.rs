@@ -118,39 +118,40 @@ export async function main(): Promise<void> {
   console.log(second);
 }
 "##;
-    let bytes = hook::compile_with_profile(
-        source,
-        varta_common::language::LanguageProfile::CheckedF64Utf16V34,
-    )
-    .unwrap();
-    let runtime = crate::VartaRuntime::new();
-    let module = runtime.prepare_module(&bytes).unwrap();
-    let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
-    let instance = execution.instantiate_prepared(&module).unwrap();
-    let store = &mut execution.store;
-    let start = instance.get_func(&mut *store, "_start").unwrap();
-    start.call(&mut *store, &[], &mut []).unwrap();
-    let collect = instance
-        .get_typed_func::<(), ()>(&mut *store, hook::COLLECT)
-        .unwrap();
-    let resume = instance
-        .get_typed_func::<(i64, i32, i64), i32>(
-            &mut *store,
-            varta_common::function::frame::RESUME_EXPORT,
-        )
-        .unwrap();
-    let mut jobs = 0;
-    while let Some(token) = store.data_mut().scheduler.next().unwrap() {
-        collect.call(&mut *store, ()).unwrap();
-        resume.call(&mut *store, (token, 0, 0)).unwrap();
-        jobs += 1;
+    // v34 cell frames and v35 liveness frames, whose segments carry only the
+    // GC map of the point each frame is suspended at.
+    for profile in crate::promise_tests::FRAME_PROFILES {
+        let bytes = hook::compile_with_profile(source, profile).unwrap();
+        let runtime = crate::VartaRuntime::new();
+        let module = runtime.prepare_module(&bytes).unwrap();
+        let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+        let instance = execution.instantiate_prepared(&module).unwrap();
+        let store = &mut execution.store;
+        let start = instance.get_func(&mut *store, "_start").unwrap();
+        start.call(&mut *store, &[], &mut []).unwrap();
+        let collect = instance
+            .get_typed_func::<(), ()>(&mut *store, hook::COLLECT)
+            .unwrap();
+        let resume = instance
+            .get_typed_func::<(i64, i32, i64), i32>(
+                &mut *store,
+                varta_common::function::frame::RESUME_EXPORT,
+            )
+            .unwrap();
+        let mut jobs = 0;
+        while let Some(token) = store.data_mut().scheduler.next().unwrap() {
+            collect.call(&mut *store, ()).unwrap();
+            resume.call(&mut *store, (token, 0, 0)).unwrap();
+            jobs += 1;
+        }
+        assert!(jobs > 4, "{jobs}");
+        assert!(store.data().scheduler.unhandled_rejection().is_none());
+        assert_eq!(
+            store.data().output.lines,
+            ["varta log: a!a/ba?64", "varta log: b!b/bb?64#"],
+            "{profile:?}"
+        );
     }
-    assert!(jobs > 4, "{jobs}");
-    assert!(store.data().scheduler.unhandled_rejection().is_none());
-    assert_eq!(
-        store.data().output.lines,
-        ["varta log: a!a/ba?64", "varta log: b!b/bb?64#"]
-    );
 }
 #[test]
 fn suspended_frames_keep_their_values_across_forced_collections() {

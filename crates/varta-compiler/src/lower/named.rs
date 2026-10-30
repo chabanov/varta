@@ -330,10 +330,23 @@ pub(super) fn instantiate(
         key = target.clone();
     }
     if let Some(Declaration::Class(id)) = types.named.declarations.get(&key) {
+        let id = *id;
+        // A generic class (v37) is instantiated per argument list.
+        if types.classes.get(id).is_template() {
+            let lowered = match args {
+                Some(args) => generics::arguments(args, types)?
+                    .into_iter()
+                    .map(Some)
+                    .collect(),
+                None => Vec::new(),
+            };
+            return classes::instantiate_class(id, &lowered, generics::Missing::Reference, types)
+                .map(Type::Class);
+        }
         if args.is_some() {
             return Err(unsupported("generic class type reference"));
         }
-        return Ok(Type::Class(*id));
+        return Ok(Type::Class(id));
     }
     let declaration = types.named.declarations.get(&key).cloned();
     let (source, span, params) = match &declaration {
@@ -487,6 +500,9 @@ mod recursive {
             return Ok(*ty);
         }
         let kind = match declaration {
+            Some(Declaration::Interface(interface)) if interface.declares_index() => {
+                Kind::Dictionary
+            }
             Some(Declaration::Interface(_)) => Kind::Record,
             Some(Declaration::Local { ty, .. }) => kind(ty).ok_or_else(rejected)?,
             _ => return Err(rejected()),
@@ -512,6 +528,7 @@ mod recursive {
                     keys: Type::Void,
                     values: Type::Void,
                     storage: 0,
+                    declared: None,
                 });
                 Type::Dictionary(types.dictionaries.len() as u32 - 1)
             }

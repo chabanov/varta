@@ -1,12 +1,31 @@
 use super::*;
 impl Lower<'_> {
     fn pattern_field(
-        &self,
+        &mut self,
         span: swc_common::Span,
         source: u32,
         ty: Type,
         name: &str,
     ) -> Result<Expr> {
+        if let Type::Dictionary(_) = ty {
+            // V36: a dictionary or mixed record property reads as `d[name]`
+            // does, declared fields through their checked read.
+            let key = Expr {
+                span,
+                ty: Type::String,
+                kind: E::String(self.types.profile.string_bytes(name)),
+            };
+            let receiver = local(span, source, ty);
+            let declared = self
+                .types
+                .declared(ty)
+                .and_then(|members| members.fields.iter().find(|field| field.name == name))
+                .cloned();
+            return match declared {
+                Some(field) => self.declared_get(span, receiver, key, &field),
+                None => self.dictionary_get(receiver, key),
+            };
+        }
         let Type::Record(id) = ty else {
             return Err(invalid("missing pattern record"));
         };
@@ -65,7 +84,7 @@ impl Lower<'_> {
                     };
                     let mut rest_body = Vec::new();
                     let Type::Record(from) = ty else {
-                        return Err(invalid("missing source record"));
+                        return Err(unsupported("rest element of a dictionary binding pattern"));
                     };
                     let fields: Vec<_> = self.types.records[from as usize]
                         .fields

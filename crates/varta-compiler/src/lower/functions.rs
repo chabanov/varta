@@ -217,14 +217,17 @@ impl Lower<'_> {
     }
     pub(super) fn arrow(&mut self, arrow: &ast::ArrowExpr, expected: Option<Type>) -> Result<Expr> {
         required(self.types)?;
-        if arrow.is_async && self.types.profile.async_functions() {
+        let asynchronous = arrow.is_async && self.types.profile.async_methods();
+        if arrow.is_async && !asynchronous && self.types.profile.async_functions() {
             return Err(promises::rejected("async arrow function"));
         }
-        if arrow.is_async || arrow.is_generator || arrow.type_params.is_some() {
+        if arrow.is_async && !asynchronous || arrow.is_generator || arrow.type_params.is_some() {
             return Err(unsupported("async/generic/generator arrow"));
         }
-        let expected = match expected {
+        let expected = match self.function_context(expected).or(expected) {
             Some(Type::Function(id)) => Some(self.types.functions[id as usize].clone()),
+            // An annotated literal stored in `unknown` (v36) has no context.
+            Some(Type::Unknown) if self.types.profile.function_fields() => None,
             Some(_) => return Err(type_error("arrow requires a function context")),
             None => None,
         };
@@ -261,11 +264,20 @@ impl Lower<'_> {
             self_name,
         } = context;
         required(self.types)?;
-        if arrow.is_async || arrow.is_generator || arrow.type_params.is_some() {
+        // Async arrows and function expressions are split into a wrapper and
+        // a scheduled body over the closure's own captures (v35).
+        let asynchronous = arrow.is_async && self.types.profile.async_methods();
+        if arrow.is_async && !asynchronous || arrow.is_generator || arrow.type_params.is_some() {
             return Err(unsupported("async/generic/generator arrow"));
         }
+        let padded = ignored_parameters(
+            arrow,
+            expected.as_deref(),
+            expected_shape.as_ref(),
+            self.types,
+        );
         let plans = parameters::analyze(
-            &arrow.params,
+            padded.as_deref().unwrap_or(&arrow.params),
             expected.as_deref(),
             expected_shape.as_ref(),
             self.types,
@@ -274,6 +286,16 @@ impl Lower<'_> {
         let params: Vec<_> = plans.iter().map(|p| p.incoming).collect();
         let shape = parameters::shape(&plans);
         let annotated = annotation(arrow.return_type.as_deref(), self.types)?;
+        // V37 (`void_functions`): an annotated result in a `void` context
+        // keeps its own type; the value is converted to the context after.
+        let expected_result = if self.types.profile.language_core()
+            && expected_result == Some(Type::Void)
+            && annotated.is_some_and(|result| result != Type::Void)
+        {
+            None
+        } else {
+            expected_result
+        };
         let result = annotated.or(expected_result);
         if annotated
             .is_some_and(|result| expected_result.is_some_and(|expected| expected != result))
@@ -298,11 +320,25 @@ impl Lower<'_> {
         } else {
             None
         };
-        let infer_returns = infer_block
-            && result.is_none()
-            && matches!(&*arrow.body, ast::ArrowFunctionBody::FunctionBody(_));
+        // An async closure's body returns the promise's `T`; without an
+        // annotation or context a block body infers it from its returns.
+        let promise = match result {
+            Some(Type::Promise(id)) if asynchronous => Some(id),
+            Some(other) if asynchronous => {
+                return Err(type_error(format!(
+                    "async function must return Promise<T>, not {other}"
+                )));
+            }
+            _ => None,
+        };
+        let result = match promise {
+            Some(id) => Some(self.types.promises[id as usize].value),
+            None => result,
+        };
+        let block = matches!(&*arrow.body, ast::ArrowFunctionBody::FunctionBody(_));
+        let infer_returns = (infer_block || asynchronous) && result.is_none() && block;
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid("too many functions including arrows"));
         }
         *self.next_function += 1;
@@ -310,6 +346,7 @@ impl Lower<'_> {
         for scope in &self.scopes {
             outer.extend(scope.clone());
         }
+        self.unassigned_outer(&mut outer);
         if !lexical {
             outer.remove("this");
         }
@@ -362,7 +399,9 @@ impl Lower<'_> {
             cells: Default::default(),
             guarded: Default::default(),
             generator: None,
-            asynchronous: None,
+            // An unknown promise type until inference fixes it.
+            asynchronous: asynchronous.then_some(promise.unwrap_or(u32::MAX)),
+            core: Default::default(),
         };
         if let Some(ty) = receiver {
             child.declare("this", Some(ty), true, false)?;
@@ -378,6 +417,8 @@ impl Lower<'_> {
                 ty: Some(ty),
                 initialized: true,
                 mutable: false,
+                tdz: None,
+                global: None,
                 readonly: false,
             };
             child
@@ -387,12 +428,21 @@ impl Lower<'_> {
         } else {
             None
         };
+        // The async body takes its promise right after the parameters.
+        let promise_slot = asynchronous.then(|| child.hidden(Type::Void));
         let mut prologue = child.initialize_parameters(&plans, receiver.is_some())?;
         let body = match &*arrow.body {
             ast::ArrowFunctionBody::FunctionBody(block) => child.block(&block.stmts, false)?,
+            ast::ArrowFunctionBody::Expr(expr) if asynchronous => {
+                child.async_expression_body(expr, result)?
+            }
             ast::ArrowFunctionBody::Expr(expr) => {
                 let value = child.expr_expected(expr, result)?;
-                if result == Some(Type::Void) && value.ty == Type::Undefined {
+                // V36 (`timers`): as in TypeScript, a void context discards
+                // the value of an expression body, so `(resolve) =>
+                // setTimeout(resolve, ms)` is a void executor.
+                let discarded = child.types.profile.timers() && value.ty != Type::Void;
+                if result == Some(Type::Void) && (value.ty == Type::Undefined || discarded) {
                     vec![S::Expr(value), S::Return(None)]
                 } else {
                     if result.is_some_and(|ty| ty != value.ty) {
@@ -406,14 +456,29 @@ impl Lower<'_> {
         prologue.extend(body);
         let mut body = prologue;
         if infer_returns {
-            child.infer_callback_returns(&mut body, arrow.span)?;
+            child.infer_callback_returns(&mut body, arrow.span, asynchronous)?;
+            if let Some(Type::Promise(id)) = asynchronous
+                .then(|| promises::intern(child.result, child.types))
+                .transpose()?
+            {
+                child.asynchronous = Some(id);
+            }
         }
         super::link::finish_body(&mut child, &mut body, arrow.span)?;
+        let callable_result = match promise_slot {
+            Some(slot) => {
+                let ty = promises::intern(child.result, child.types)
+                    .map_err(|error| child.source.locate(error, arrow.span))?;
+                child.local_types.insert(slot, ty);
+                ty
+            }
+            None => child.result,
+        };
         let ty = intern_full(
             receiver,
             params.clone(),
             shape.clone(),
-            child.result,
+            callable_result,
             child.types,
         )?;
         let mut physical_params: Vec<_> =
@@ -434,28 +499,47 @@ impl Lower<'_> {
         let captured: Vec<_> = child.captures.values().cloned().collect();
         let effects = child.flow_summary();
         child.call_effects.insert(index, effects);
-        let function = ir::Function {
-            shape,
-            self_slot,
-            receiver,
-            cells: std::mem::take(&mut child.cells),
-            captures: captured.iter().map(|binding| binding.slot).collect(),
-            environment: child.types.profile.closures(),
-            generator: None,
-            source: child.source.clone(),
-            span: arrow.span,
-            params: physical_params,
-            result: child.result,
-            locals: (0..child.next)
-                .map(|slot| {
-                    child
-                        .local_types
-                        .get(&slot)
-                        .copied()
-                        .unwrap_or(Type::Number)
-                })
-                .collect(),
-            body: std::mem::take(&mut body),
+        let function = if let Some(promise) = promise_slot {
+            let source = child.source;
+            child.split_async(
+                promises::AsyncSplit {
+                    incoming: physical_params,
+                    shape,
+                    receiver,
+                    self_slot,
+                    captures: captured.iter().map(|binding| binding.slot).collect(),
+                    environment: child.types.profile.closures(),
+                    promise,
+                    entry: false,
+                    span: arrow.span,
+                    source,
+                },
+                std::mem::take(&mut body),
+            )?
+        } else {
+            ir::Function {
+                shape,
+                self_slot,
+                receiver,
+                cells: std::mem::take(&mut child.cells),
+                captures: captured.iter().map(|binding| binding.slot).collect(),
+                environment: child.types.profile.closures(),
+                generator: None,
+                source: child.source.clone(),
+                span: arrow.span,
+                params: physical_params,
+                result: child.result,
+                locals: (0..child.next)
+                    .map(|slot| {
+                        child
+                            .local_types
+                            .get(&slot)
+                            .copied()
+                            .unwrap_or(Type::Number)
+                    })
+                    .collect(),
+                body: std::mem::take(&mut body),
+            }
         };
         child.generated.insert(index, function);
         let captures = captured
@@ -474,6 +558,45 @@ impl Lower<'_> {
     }
 }
 
+/// Name prefix of a synthesized ignored parameter; `#` cannot start a source
+/// binding, so the name never shadows or captures user code.
+const IGNORED_PARAMETER: &str = "#ignored";
+
+/// V35 (`web_headers`): a function literal whose context is an exact function
+/// type may declare fewer parameters than that type, as in TypeScript, like
+/// `headers.forEach((value, name) => …)` for a three-parameter callback. The
+/// missing trailing parameters are synthesized as ignored bindings, so the
+/// literal has the context's exact function type. Earlier profiles keep the
+/// exact parameter count.
+fn ignored_parameters(
+    arrow: &ast::ArrowExpr,
+    expected: Option<&[Type]>,
+    shape: Option<&ir::ParameterShape>,
+    types: &ir::ValueTypes,
+) -> Option<Vec<ast::Pat>> {
+    let expected = expected?;
+    // A rest parameter of the context keeps its exact shape.
+    if !types.profile.web_headers()
+        || shape.is_none_or(|shape| shape.rest)
+        || arrow.params.len() >= expected.len()
+        || arrow
+            .params
+            .last()
+            .is_some_and(|param| matches!(param, ast::Pat::Rest(_)))
+    {
+        return None;
+    }
+    let mut params = arrow.params.clone();
+    for index in arrow.params.len()..expected.len() {
+        let name = format!("{IGNORED_PARAMETER}{index}");
+        params.push(ast::Pat::Ident(ast::BindingIdent {
+            id: ast::Ident::new(name.into(), arrow.span, Default::default()),
+            type_ann: None,
+        }));
+    }
+    Some(params)
+}
+
 impl Lower<'_> {
     /// Materialize a transitive capture once per activation; stable identities
     /// distinguish shadowed bindings even when their source names coincide.
@@ -483,7 +606,13 @@ impl Lower<'_> {
                 "arrow capture of an outer binding requires checked-f64-utf16-v12",
             ));
         }
-        if !binding.initialized || binding.ty.is_none() {
+        // V37 (`language_core`): a binding the TDZ scan reserved a flag for may
+        // be captured before its initialization, together with that flag.
+        let early =
+            !binding.initialized && binding.tdz.is_some() && self.types.profile.language_core();
+        if early {
+            self.capture_early(binding)?;
+        } else if !binding.initialized || binding.ty.is_none() {
             return Err(unsupported("capture before binding initialization"));
         }
         let slot = if binding.identity.0 == self.index {
@@ -536,6 +665,20 @@ impl Lower<'_> {
             return Ok(binding);
         }
         if let Some(binding) = self.outer.get(name).cloned() {
+            // A module variable is reached through its root slot, never
+            // captured; this function keeps its own slot for guard facts.
+            if binding.global.is_some() {
+                let slot = self.hidden(binding.ty.ok_or_else(|| invalid("missing type"))?);
+                let local = Binding {
+                    identity: (self.index, slot),
+                    slot,
+                    ..binding
+                };
+                if let Some(scope) = self.scopes.first_mut() {
+                    scope.insert(name.to_owned(), local.clone());
+                }
+                return Ok(local);
+            }
             let slot = self.capture_binding(&binding)?;
             return Ok(Binding { slot, ..binding });
         }

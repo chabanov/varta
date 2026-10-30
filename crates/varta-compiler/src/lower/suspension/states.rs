@@ -17,6 +17,12 @@ pub(super) struct Machine<'a> {
     pub generator: Option<u32>,
     /// Async bodies and promise jobs (v34): every suspension awaits a promise.
     pub scheduled: bool,
+    /// Liveness layout (v35 `frame_liveness`) over these closure-shared locals
+    /// and leading parameters; `None` keeps the cell layout.
+    pub liveness: Option<(&'a std::collections::BTreeSet<u32>, usize)>,
+    /// Hidden locals the resumption path itself reads, with the state range
+    /// they must be saved for.
+    pub resumed: Vec<(u32, (u32, u32))>,
 }
 
 fn integer(span: swc_common::Span, value: i32) -> Expr {
@@ -139,6 +145,16 @@ impl Machine<'_> {
                 span,
             ));
         }
+        let live = match self.liveness {
+            Some((cells, params)) => Some(liveness::analyze(
+                &body,
+                points.len(),
+                self.locals.len(),
+                params,
+                cells,
+            )?),
+            None => None,
+        };
         let guards = Guards {
             span,
             state: self.fresh(Type::Number),
@@ -174,7 +190,11 @@ impl Machine<'_> {
             exception: self.exception,
             return_input,
             generator: self.generator,
+            keeps_completion: self
+                .generator
+                .is_some_and(|id| self.types.generators[id as usize].body),
             scheduled: self.scheduled,
+            live: None,
         };
         // A frame that never started completes without entering user code.
         let mut result = vec![S::If(
@@ -200,6 +220,25 @@ impl Machine<'_> {
             ));
         }
         result.extend(self.list(body, &guards, &machine)?);
+        let mut machine = machine;
+        machine.live = live.map(|mut live| {
+            for &(slot, (low, high)) in &self.resumed {
+                for state in low..=high {
+                    if let Some(saved) = live.get_mut(state as usize - 1) {
+                        saved.insert(slot);
+                    }
+                }
+            }
+            // Only physical locals are saved; void bindings occupy no slot.
+            live.into_iter()
+                .map(|saved| {
+                    saved
+                        .into_iter()
+                        .filter(|slot| self.locals[*slot as usize].width() > 0)
+                        .collect()
+                })
+                .collect()
+        });
         Ok((result, machine))
     }
     /// Assign states in statement order and check the canonical normalized form.
@@ -278,6 +317,9 @@ impl Machine<'_> {
     ) -> Result<Vec<S>> {
         let span = guards.span;
         let kept = self.fresh(Type::Number);
+        if let Some(states) = range(&finalizer) {
+            self.resumed.push((kept, states));
+        }
         let mut result = vec![S::If(
             guards.running(),
             vec![S::Set(kept, local(span, completion, Type::Number))],
@@ -304,6 +346,13 @@ impl Machine<'_> {
         let span = guards.span;
         let index = self.fresh(Type::Number);
         let key = self.fresh(Type::Number);
+        let covered = cases
+            .iter()
+            .filter_map(|(_, body)| range(body))
+            .reduce(|(low, high), (l, h)| (low.min(l), high.max(h)));
+        if let Some(states) = covered {
+            self.resumed.push((index, states));
+        }
         let value_ty = value.ty;
         let mut select = vec![
             S::Init(discriminant, value),

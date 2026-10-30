@@ -22,11 +22,14 @@ pub(super) fn accepts(expected: Type, actual: Type, types: &ir::ValueTypes) -> b
     expected == actual
         || literals::assignable(expected, actual, types)
         || classes::upcast(types, actual, expected)
+        || dictionaries::converts(expected, actual, types)
         || expected.is_union() && {
             let target = unions::members(expected, types);
             unions::members(actual, types).iter().all(|t| {
                 literals::member_of(*t, &target, types)
-                    || target.iter().any(|e| classes::upcast(types, *t, *e))
+                    || target.iter().any(|e| {
+                        classes::upcast(types, *t, *e) || dictionaries::converts(*e, *t, types)
+                    })
             })
         }
 }
@@ -48,9 +51,24 @@ impl Lower<'_> {
         args.iter()
             .enumerate()
             .map(|(index, arg)| {
-                self.expr_expected(&arg.expr, context(index, params, shape, self.types))
+                let expected = context(index, params, shape, self.types);
+                if self.unknown_reason(&arg.expr, expected)? {
+                    // `reject(reason)` with an `unknown` reason (v36): checked
+                    // like a thrown `unknown` value.
+                    let value = self.expr(&arg.expr)?;
+                    return self.thrown_unknown(value);
+                }
+                self.expr_expected(&arg.expr, expected)
             })
             .collect()
+    }
+    /// Whether `argument` is an `unknown` path passed where the exception
+    /// union (a promise rejection reason) is expected (v36 `function_fields`).
+    fn unknown_reason(&mut self, argument: &ast::Expr, expected: Option<Type>) -> Result<bool> {
+        Ok(self.types.profile.function_fields()
+            && expected.is_some_and(Type::is_union)
+            && self.peek_type(argument, 0) == Some(Type::Unknown)
+            && expected == Some(self.exception_type()?))
     }
     pub(super) fn bind_arguments(
         &mut self,
@@ -70,10 +88,10 @@ impl Lower<'_> {
             });
             let value = unions::widen(value, Some(*ty), self.types)?;
             if value.ty != *ty {
+                let (expected, found) = self.mismatch(*ty, value.ty);
                 return Err(self.source.locate(
                     type_error(format!(
-                        "argument type mismatch: expected {ty}, found {}",
-                        value.ty
+                        "argument type mismatch: expected {expected}, found {found}"
                     )),
                     value.span,
                 ));

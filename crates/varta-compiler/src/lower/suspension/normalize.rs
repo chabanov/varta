@@ -16,6 +16,9 @@ pub(super) struct Normalizer<'a> {
     pending: Vec<u32>,
     /// Scheduled frames (v34) name their suspension points `await`.
     pub awaits: bool,
+    /// Async generator bodies (v36): the state record local an `await`
+    /// publishes, its type, and the input type of the suspension.
+    pub publish: Option<(u32, Type, Type)>,
 }
 
 fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
@@ -48,6 +51,7 @@ impl<'a> Normalizer<'a> {
             source,
             pending: Vec::new(),
             awaits: false,
+            publish: None,
         }
     }
     fn fresh(&mut self, ty: Type) -> u32 {
@@ -402,6 +406,7 @@ impl<'a> Normalizer<'a> {
                 promise,
                 slot,
                 result,
+                relay,
             } => {
                 // `await p` (v34): the promise moves into its saved hidden
                 // local, the frame suspends on it, and the residual reads
@@ -410,14 +415,33 @@ impl<'a> Normalizer<'a> {
                 let (mut prefix, promise) = self.expr(*promise)?;
                 self.pending.push(slot);
                 prefix.push(S::Init(slot, promise));
-                let input = self.fresh(Type::Undefined);
+                if let Some((function, frame)) = relay {
+                    let frame_ty = self.locals[frame as usize];
+                    prefix.push(S::Expr(Expr {
+                        span,
+                        ty: Type::Void,
+                        kind: E::Schedule {
+                            function,
+                            args: vec![local(span, frame, frame_ty), local(span, slot, promise_ty)],
+                            mode: ir::ScheduleMode::Start,
+                        },
+                    }));
+                }
+                // An async generator body (v36) is a generator frame whose
+                // relay job resumes it: every suspension publishes the state
+                // record instead of the promise.
+                let (published, input_ty) = match self.publish {
+                    Some((state, state_ty, input_ty)) => (local(span, state, state_ty), input_ty),
+                    None => (local(span, slot, promise_ty), Type::Undefined),
+                };
+                let input = self.fresh(input_ty);
                 prefix.push(S::Init(
                     input,
                     Expr {
                         span,
-                        ty: Type::Undefined,
+                        ty: input_ty,
                         kind: E::Suspend {
-                            value: Box::new(local(span, slot, promise_ty)),
+                            value: Box::new(published),
                             state: 0,
                         },
                     },
@@ -537,6 +561,14 @@ impl<'a> Normalizer<'a> {
                 let (prefix, args) = self.operands(args)?;
                 (prefix, E::Math(mode, args))
             }
+            E::Intrinsic(op, args) => {
+                let (prefix, args) = self.operands(args)?;
+                (prefix, E::Intrinsic(op, args))
+            }
+            E::RegExp(op, args) => {
+                let (prefix, args) = self.operands(args)?;
+                (prefix, E::RegExp(op, args))
+            }
             E::NumberPredicate(mode, args) => {
                 let (prefix, args) = self.operands(args)?;
                 (prefix, E::NumberPredicate(mode, args))
@@ -608,6 +640,7 @@ impl<'a> Normalizer<'a> {
             E::StringTrim { value, mode } => {
                 self.unary(*value, |value| E::StringTrim { value, mode })?
             }
+            E::TextUnits { value, op } => self.unary(*value, |value| E::TextUnits { value, op })?,
             E::FunctionCheck { value, slot } => {
                 self.unary(*value, |value| E::FunctionCheck { value, slot })?
             }

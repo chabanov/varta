@@ -99,6 +99,10 @@ impl<'a> Collected<'a> {
                 self.helpers.insert(strings::Helper::string_trim(*mode));
                 self.expression(value, source);
             }
+            E::TextUnits { value, op } => {
+                self.helpers.insert(strings::Helper::text_units(*op));
+                self.expression(value, source);
+            }
             E::StringRepeat {
                 value,
                 count,
@@ -324,6 +328,12 @@ impl<'a> Collected<'a> {
                     self.expression(arg, source);
                 }
             }
+            E::RegExp(op, args) => {
+                self.helpers.insert(strings::Helper::regexp(*op));
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
             E::Math(mode, args) => {
                 if *mode == ir::MathIntrinsic::Random {
                     self.hosts.insert(Host::MathRandom);
@@ -333,6 +343,20 @@ impl<'a> Collected<'a> {
                 }
                 if let ir::MathIntrinsic::Native(operation) = mode {
                     self.hosts.insert(operation.host());
+                }
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
+            E::Intrinsic(op, args) => {
+                match op {
+                    ir::Intrinsic::CodeUnit => {
+                        self.helpers.insert(strings::Helper::CodeUnit);
+                    }
+                    ir::Intrinsic::FromUnits => {
+                        self.helpers.insert(strings::Helper::FromUnits);
+                    }
+                    ir::Intrinsic::Identity => {}
                 }
                 for arg in args {
                     self.expression(arg, source);
@@ -411,7 +435,15 @@ impl<'a> Collected<'a> {
             return;
         }
         match ty {
-            Type::Unknown => self.unions = true,
+            Type::Unknown => {
+                self.unions = true;
+                if let Some((array, dictionary)) =
+                    crate::lower::json::unknown_graph_types(self.types)
+                {
+                    self.schema_type(Type::Array(array), location);
+                    self.schema_type(Type::Dictionary(dictionary), location);
+                }
+            }
             Type::Union(id) | Type::ReferenceUnion(id) => {
                 self.unions = true;
                 let members = self.types.unions[id as usize].clone();

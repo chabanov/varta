@@ -90,10 +90,7 @@ impl Encoder<'_, '_> {
                 return Err(error("optional field must admit undefined"));
             }
             let [lo, hi] = self.words::<2>(ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES)?;
-            if self.version == FUNCTION_VALUE_VERSION
-                && name == "toJSON"
-                && present & (1u128 << slot) != 0
-            {
+            if function_layout(self.version) && name == "toJSON" && present & (1u128 << slot) != 0 {
                 let payload = ((hi as u64) << i32::BITS) | lo as u64;
                 let callable = if tag == ValueKind::ReferenceUnion {
                     ReferenceBox::read_envelope(self.data, payload, self.version)
@@ -147,6 +144,11 @@ impl Encoder<'_, '_> {
         for (_, _, slot) in rank {
             let (name, kind, value) = fields[slot].ok_or_else(|| error("missing field slot"))?;
             if kind == ValueKind::Undefined as u32 {
+                continue;
+            }
+            // V37 private state is not a property (`json_stringify_v17`).
+            if self.hide_private && name.starts_with(PRIVATE_KEY_PREFIX) {
+                self.visit(depth + 1)?;
                 continue;
             }
             if written {

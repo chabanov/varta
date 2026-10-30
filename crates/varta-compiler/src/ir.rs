@@ -49,9 +49,68 @@ pub(crate) enum Type {
     /// `unknown` (v34 `unknown_type`): a reference-union cell whose member may
     /// be any admitted value kind; only checked guards and assertions extract it.
     Unknown,
+    /// TypeScript's `object` (v35 `unknown_json`): an `unknown` cell that a
+    /// `typeof x === "object"` guard proved to hold a non-primitive value, or
+    /// (`true`) that value or `null`. Physically the same cell as `unknown`;
+    /// dictionary operations on it test the cell first.
+    Object(bool),
     /// Promise object (v34 `promises`): a guest-heap record with private
     /// fields and no value tag; the id indexes `ValueTypes::promises`.
     Promise(u32),
+    /// TypeScript's `never` (v37 `language_core`): the type of a binding whose
+    /// narrowing excluded every member, or of a `never` annotation. No value
+    /// has it; code that would observe one is unreachable and traps.
+    Never,
+    /// Engine collection object (v37 `collections`): `Map`, `Set` or
+    /// `Uint8Array`, physically its private storage
+    /// (`ValueTypes::collections[id].storage`), with no value tag of its own.
+    /// Erased to the storage before emission; see `lower::collections`.
+    Collection(CollectionKind, u32),
+    /// Tuple type (v37 `collections`): physically the dense array
+    /// `ValueTypes::tuples[id].array` of the union of its element types.
+    /// Erased to that array before emission; see `lower::tuples`.
+    Tuple(u32),
+}
+
+/// The engine collection families of v37 (`Type::Collection`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum CollectionKind {
+    Map,
+    Set,
+    Uint8Array,
+}
+impl CollectionKind {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Map => "Map",
+            Self::Set => "Set",
+            Self::Uint8Array => "Uint8Array",
+        }
+    }
+}
+/// One instantiated engine collection type (v37 `collections`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CollectionType {
+    pub kind: CollectionKind,
+    /// The key type (`Set` elements; `number` for `Uint8Array`).
+    pub key: Type,
+    /// The value type (`Set`: its element type; `number` for `Uint8Array`).
+    pub value: Type,
+    /// The physical storage: the prelude record (`MapStore`/`SetStore`) or,
+    /// for `Uint8Array`, a dense `number[]` of byte values.
+    pub storage: Type,
+}
+/// One tuple type (v37 `collections`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TupleType {
+    /// Element types in position order.
+    pub elements: Vec<Type>,
+    /// Trailing optional elements start at this position.
+    pub required: usize,
+    /// `readonly [..]`: writes through the tuple are rejected.
+    pub readonly: bool,
+    /// The physical dense array type.
+    pub array: Type,
 }
 
 /// Base primitive of a literal set; it fixes the erased physical representation.
@@ -87,6 +146,8 @@ impl Type {
         matches!(
             self,
             Self::BigInt
+                | Self::Collection(..)
+                | Self::Tuple(_)
                 | Self::Dictionary(_)
                 | Self::Class(_)
                 | Self::Generator(_)
@@ -100,11 +161,12 @@ impl Type {
                 | Self::Union(_)
                 | Self::ReferenceUnion(_)
                 | Self::Unknown
+                | Self::Object(_)
         )
     }
-    /// A managed union cell: a closed union or `unknown` (v34).
+    /// A managed union cell: a closed union, `unknown` (v34) or `object` (v35).
     pub(crate) fn is_cell(self) -> bool {
-        self.is_union() || self == Self::Unknown
+        self.is_union() || matches!(self, Self::Unknown | Self::Object(_))
     }
     pub(crate) fn from_error_class(class: varta_common::value::ErrorClass) -> Self {
         if class == varta_common::value::ErrorClass::Error {
@@ -150,7 +212,7 @@ impl Type {
         })
     }
     pub(crate) fn width(self) -> u32 {
-        if self == Self::Void {
+        if matches!(self, Self::Void | Self::Never) {
             0
         } else if self.result_value().is_some() {
             2
@@ -198,10 +260,18 @@ pub(crate) struct Suspendable {
     /// Generator type id of a `function*` (v33): its frame is owned by the
     /// generator object and resumed only by guest code, never by `varta_resume`.
     pub generator: Option<u32>,
+    /// The body of an async generator (v36): the frame's completion cell
+    /// holds the state record from the first suspension on and is never
+    /// cleared, so later suspensions do not publish it again.
+    pub keeps_completion: bool,
     /// A scheduled frame (v34 `promises`/`async_functions`): every suspension
     /// awaits a promise and the runtime scheduler resumes it through
     /// `varta_resume`; the suspension point issues the frame's generation.
     pub scheduled: bool,
+    /// Liveness layout (v35 `frame_liveness`): the locals saved at state `n`
+    /// are `live[n - 1]`, sorted. `None` keeps the cell layout that saves
+    /// every local at every point (v33 and v34, and the test hook before v35).
+    pub live: Option<Vec<Vec<u32>>>,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct SuspensionPoint {
@@ -222,9 +292,27 @@ pub(crate) struct ValueTypes {
     pub generics: crate::lower::generics::Generics,
     pub generators: Vec<GeneratorType>,
     pub dictionaries: Vec<DictionaryType>,
+    /// Declared members of mixed index records (v35 `mixed_index_records`),
+    /// indexed by `DictionaryType::declared`.
+    pub mixed: Vec<MixedMembers>,
+    /// Shared dictionary operation functions (v35), by operation and plain
+    /// dictionary type id; see `lower::dictionary_helpers`.
+    pub dictionary_helpers: std::collections::BTreeMap<(DictionaryHelper, u32), usize>,
+    /// Checked declared-field conversion functions (v36), by kind and target
+    /// type; see `lower::declared_fields`.
+    pub converters: std::collections::BTreeMap<(Converter, Type), usize>,
     pub promises: Vec<PromiseType>,
+    /// Built-in functions referenced as values (v36 `function_fields`): the
+    /// synthesized wrapper of each, by name; see `lower::function_fields`.
+    pub builtin_functions: std::collections::BTreeMap<&'static str, usize>,
     /// Promise lowering state (v34): synthesized helpers and scheduled frames.
     pub asynchrony: crate::lower::promises::Asynchrony,
+    /// Engine collection types (v37), interned by kind and type arguments.
+    pub collections: Vec<CollectionType>,
+    /// Tuple types (v37), interned.
+    pub tuples: Vec<TupleType>,
+    /// Loaded engine prelude modules and their functions (v37).
+    pub engine: crate::lower::engine::EngineModules,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1).
@@ -234,6 +322,47 @@ pub(crate) struct DictionaryType {
     pub keys: Type,
     pub values: Type,
     pub storage: u32,
+    /// Declared members of a mixed index record or an `object` view (v35),
+    /// an index into `ValueTypes::mixed`; `None` for a plain dictionary. The
+    /// storage is always the plain dictionary's: declared members are a
+    /// static view whose reads are checked, never a layout.
+    pub declared: Option<u32>,
+}
+/// A dictionary operation lowered once per dictionary type into a shared
+/// function (v35) instead of inline at every use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DictionaryHelper {
+    /// `(d, key) -> T | undefined`.
+    Get,
+    /// `(d, key, value) -> T`: replace in place or insert at the own-key position.
+    Set,
+    /// `(d, key) -> boolean`.
+    Delete,
+}
+/// A conversion of an `unknown` cell to a declared type lowered once per
+/// target type into a shared function (v36 `checked_declared_fields`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Converter {
+    /// `(array: T[]) -> boolean`: whether the array's static type provably
+    /// is `T[]`, so the stored array itself may be returned.
+    Exact,
+    /// `(cell: unknown, message: string) -> T`: a fresh `T` built from the
+    /// JSON-graph form of the cell, or a `TypeError(message)`.
+    Build,
+    /// `(d: Record<string, unknown>, key, wrong, missing) -> T`: the declared
+    /// read of a mixed record's field of type `T`, which stores a built value
+    /// back under the key.
+    Read,
+}
+/// The declared fields of a mixed index record (v35 `mixed_index_records`),
+/// sorted by name, or the keys an `in` guard proved on an `object` (v35
+/// `unknown_json`). Field types include `undefined` for optional fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MixedMembers {
+    pub fields: Vec<RecordField>,
+    /// TypeScript's `object` narrowed by `in` guards: only the proven keys may
+    /// be read by name, and dynamic keys are rejected (they would be `any`).
+    pub object: bool,
 }
 /// `Promise<T>` (v34): the value type and the private record shape of its
 /// objects; see `lower::promises`.
@@ -278,8 +407,45 @@ pub(crate) struct GeneratorType {
     /// The resume input; never `void` (an omitted `TNext` is `undefined`).
     pub next: Type,
     pub result: Type,
+    /// `AsyncGenerator<T, TReturn, TNext>` (v36 `async_generators`): objects
+    /// of this type are the frames of the internal body generator type
+    /// `AsyncGeneratorType::body`; no frame has this type itself.
+    pub asynchronous: Option<AsyncGeneratorType>,
+    /// The internal body type of an async generator (v36): every suspension
+    /// publishes the async generator's state record as the frame completion,
+    /// and its step function keeps that cell while the body runs, so the
+    /// protocol finds the state record at any time.
+    pub body: bool,
+}
+/// The private parts of an async generator type (v36 `async_generators`); see
+/// `lower::promises::async_generators`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AsyncGeneratorType {
+    /// The internal body generator type whose frames are the objects.
+    pub body: u32,
+    /// The state record `{ head, queue, state }`.
+    pub state: Type,
+    /// The request record `{ kind, next, promise, returned, thrown }`.
+    pub request: Type,
+    /// `Promise<IteratorResult<T, TReturn>>`, the result of every request.
+    pub promise: u32,
+    /// `TReturn | undefined`: return requests (closing a `for await` sends
+    /// `undefined`) and the body's completion value.
+    pub returned: Type,
 }
 impl ValueTypes {
+    /// Function slots lowering may allocate. V37 (`language_core`) removes
+    /// unreachable functions after lowering (`lower::prune`), so it links
+    /// against a wider compile-time cap; the emitted module still holds at
+    /// most `abi::MAX_USER_FUNCTIONS` functions. Earlier profiles allocate
+    /// against that limit directly and keep their diagnostics.
+    pub fn function_limit(&self) -> usize {
+        if self.profile.language_core() {
+            crate::lower::LINKED_FUNCTIONS
+        } else {
+            varta_common::abi::MAX_USER_FUNCTIONS
+        }
+    }
     /// Layout version stamped into descriptors and catalogs; see
     /// `LanguageProfile::value_layout`. The module's value section declares
     /// `LanguageProfile::value_abi` instead.
@@ -293,6 +459,15 @@ impl ValueTypes {
             varta_common::value::max_record_fields(self.value_version())
         } else {
             varta_common::value::MAX_RECORD_FIELDS
+        }
+    }
+    /// The declared members of a mixed index record or `object` view (v35).
+    pub fn declared(&self, ty: Type) -> Option<&MixedMembers> {
+        match ty {
+            Type::Dictionary(id) => self.dictionaries[id as usize]
+                .declared
+                .map(|members| &self.mixed[members as usize]),
+            _ => None,
         }
     }
     /// The record shape that physically lays out a record or dictionary value.
@@ -382,10 +557,45 @@ impl Type {
             Self::Dictionary(_) => V::Dictionary,
             Self::Array(_) => V::Array,
             Self::Union(_) => V::PrimitiveUnion,
-            Self::ReferenceUnion(_) | Self::Unknown => V::ReferenceUnion,
+            Self::ReferenceUnion(_) | Self::Unknown | Self::Object(_) => V::ReferenceUnion,
             Self::Literal(base, _) => return base.erased().value_kind(),
+            // Physical kinds of the v37 erased types (their storage).
+            Self::Collection(CollectionKind::Uint8Array, _) | Self::Tuple(_) => V::Array,
+            Self::Collection(..) => V::Record,
             _ => return None,
         })
+    }
+}
+impl Type {
+    /// The value tag of this type under `profile`: value16 (v35
+    /// `promise_values`) also tags promises, which earlier layouts leave
+    /// untagged and keep out of every aggregate.
+    pub(crate) fn profile_kind(
+        self,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Option<varta_common::value::ValueKind> {
+        match self {
+            Self::Promise(_) if profile.promise_values() => {
+                Some(varta_common::value::ValueKind::Promise)
+            }
+            // Value17 (v36 `function_fields`) tags function values.
+            Self::Function(_) if profile.function_fields() => {
+                Some(varta_common::value::ValueKind::Function)
+            }
+            _ => self.value_kind(),
+        }
+    }
+    /// The value tag of this type in a descriptor of value layout `version`.
+    pub(crate) fn layout_kind(self, version: u32) -> Option<varta_common::value::ValueKind> {
+        match self {
+            Self::Promise(_) if varta_common::value::promise_layout(version) => {
+                Some(varta_common::value::ValueKind::Promise)
+            }
+            Self::Function(_) if version == varta_common::value::FUNCTION_FIELD_VALUE_VERSION => {
+                Some(varta_common::value::ValueKind::Function)
+            }
+            _ => self.value_kind(),
+        }
     }
 }
 pub(crate) struct Function {
@@ -442,6 +652,61 @@ pub(crate) enum StringTrimMode {
     Trim,
     TrimStart,
     TrimEnd,
+}
+
+/// Engine-internal UTF-16 code-unit operations of the v35 Web type preludes
+/// (`lower::web_text`); they make no host call and read no capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum TextUnits {
+    /// Index of the first code unit in the class as a Number, or -1.
+    Index(UnitClass),
+    /// A copy with ASCII `A`-`Z` lowercased.
+    AsciiLowercase,
+    /// A copy with ASCII `a`-`z` uppercased (v37 `collections` text prelude).
+    AsciiUppercase,
+    /// A copy without leading and trailing HTTP whitespace (TAB, LF, CR, SP).
+    TrimHttpWhitespace,
+}
+
+/// A class of UTF-16 code units matched by [`TextUnits::Index`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum UnitClass {
+    /// Above U+00FF: not a WebIDL ByteString unit.
+    AboveByte,
+    /// Not an HTTP token character (RFC 9110 `tchar`).
+    NonToken,
+    /// NUL, LF or CR: not allowed in a header value.
+    ForbiddenValue,
+    /// Above U+007F (v37 text prelude: the ASCII case-mapping fast path).
+    NonAscii,
+}
+
+/// Engine-internal guest operations of the v37 preludes (`lower::engine`
+/// intrinsics); they make no host call and read no capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Intrinsic {
+    /// `(string, index) -> number`: the UTF-16 code unit at a non-negative
+    /// integral index, or NaN outside the string.
+    CodeUnit,
+    /// `(units: number[]) -> string`: a fresh string of the array's code
+    /// units, each an integer in 0..=0xFFFF.
+    FromUnits,
+    /// `(reference) -> number`: the stable address of a managed reference
+    /// (the nonmoving heap never relocates it), a collection key hash.
+    Identity,
+}
+
+/// Engine-internal guest operations of the v37 RegExp prelude
+/// (`lower::regexp`); they make no host call and read no capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RegExpIntrinsic {
+    /// `(program, input, start, sticky)`: one matcher run; the capture slots
+    /// as a string, or the empty string without a match.
+    Exec,
+    /// `(captures, slot)`: one capture slot as a Number, -1 when unset.
+    Slot,
+    /// `(text, index)`: the code unit at `index` as a Number, -1 outside.
+    Unit,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -509,6 +774,13 @@ pub(crate) enum Expression {
         value: Box<Expr>,
         mode: StringTrimMode,
     },
+    /// A v35 Web prelude code-unit operation on a string value.
+    TextUnits {
+        value: Box<Expr>,
+        op: TextUnits,
+    },
+    /// A v37 engine prelude intrinsic; operands are evaluated in order.
+    Intrinsic(Intrinsic, Vec<Expr>),
     StringRepeat {
         value: Box<Expr>,
         count: Box<Expr>,
@@ -552,6 +824,8 @@ pub(crate) enum Expression {
     NumberSameValue(Box<Expr>, Box<Expr>),
     Negative(Box<Expr>),
     Math(MathIntrinsic, Vec<Expr>),
+    /// A v37 RegExp prelude guest operation.
+    RegExp(RegExpIntrinsic, Vec<Expr>),
     NumberPredicate(NumberPredicate, Vec<Expr>),
     ToBoolean(Box<Expr>),
     Not(Box<Expr>),
@@ -643,6 +917,10 @@ pub(crate) enum Expression {
         promise: Box<Expr>,
         slot: u32,
         result: Box<Expr>,
+        /// In an async generator body (v36): the relay job function started
+        /// with the body's own frame (in this local) and the promise right
+        /// before the suspension; it resumes the body once the promise settled.
+        relay: Option<(usize, u32)>,
     },
     /// Create the frame of scheduled function `function` with `args` and start
     /// or enqueue it (v34). A function without a suspension point is called.
@@ -759,10 +1037,15 @@ impl std::fmt::Display for Type {
             Self::Class(_) => "class instance",
             Self::Generator(_) => "generator",
             Self::Promise(_) => "promise",
+            Self::Collection(kind, _) => kind.name(),
+            Self::Tuple(_) => "tuple",
             Self::Array(_) => "array",
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",
             Self::Unknown => "unknown",
+            Self::Never => "never",
+            Self::Object(false) => "object",
+            Self::Object(true) => "object | null",
             Self::Literal(LiteralBase::String, _) => "string literal type",
             Self::Literal(LiteralBase::Number, _) => "number literal type",
             Self::Literal(LiteralBase::Boolean, _) => "boolean literal type",

@@ -223,3 +223,73 @@ fn resumable_frame_artifacts_run_source_free_only_under_their_profile() {
         "{output:?}"
     );
 }
+
+/// V35 liveness frames (catalog version 3) are valid portable artifacts that
+/// run source-free; the same bytes relabelled as v34 are refused by artifact
+/// validation and by the runtime before any guest output.
+#[test]
+fn liveness_frame_artifacts_run_source_free_only_under_v35() {
+    use varta_common::language::LanguageProfile;
+    use varta_compiler::suspension_test_hook as hook;
+    const SOURCE: &str = "function task(n: number): number {
+       const kept = \"ab\".repeat(2);
+       const got = __varta_suspend(n);
+       return got + kept.length;
+     }
+     export function main(): void { console.log(\"v35 frames\"); }";
+    let temp = Temp::new();
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let profile = LanguageProfile::CheckedF64Utf16V35;
+    let wasm = hook::compile_with_profile(SOURCE, profile).unwrap();
+    let mut manifest = Manifest::new(&[]);
+    manifest.abi_version = profile.host_abi();
+    let artifact = Artifact {
+        wasm: wasm.clone(),
+        manifest: manifest.clone(),
+    };
+    let path = temp.0.join("liveness.wasm");
+    artifact.write_wasm(&path).unwrap();
+    assert_eq!(Artifact::read(&path).unwrap().wasm, artifact.wasm);
+    let output = runtime().arg("run").arg(&path).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(logs(&output), ["varta log: v35 frames"]);
+
+    // V35 declares host ABI 31 and value layout 16, so a module relabelled as
+    // v34 fails at its host ABI section before the frame catalog is read
+    // (runtime `frame_admission_tests` rewrites both and pins the catalog
+    // version refusal).
+    let (from, to) = (b"checked-f64-utf16-v35", b"checked-f64-utf16-v34");
+    let at = wasm
+        .windows(from.len())
+        .position(|window| window == from)
+        .unwrap();
+    let mut relabelled = wasm;
+    relabelled[at..at + to.len()].copy_from_slice(to);
+    let rejected = Artifact {
+        wasm: relabelled,
+        manifest,
+    };
+    let refused = temp.0.join("relabelled.wasm");
+    assert!(rejected.write_wasm(&refused).is_err());
+    fs::write(&refused, &rejected.wasm).unwrap();
+    fs::write(
+        refused.with_extension("manifest.json"),
+        rejected.manifest.to_bytes().unwrap(),
+    )
+    .unwrap();
+    assert!(Artifact::read(&refused).is_err());
+    let output = runtime().arg("run").arg(&refused).output().unwrap();
+    assert!(!output.status.success());
+    assert!(logs(&output).is_empty(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("declared profile requires its matching host ABI section"),
+        "{output:?}"
+    );
+}

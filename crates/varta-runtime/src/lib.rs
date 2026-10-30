@@ -37,6 +37,10 @@ pub use server::{HttpShutdown, RuntimeEvent, RuntimeObserver};
 #[cfg(test)]
 mod array_inference_tests;
 #[cfg(test)]
+mod async_generator_tests;
+#[cfg(test)]
+mod async_method_tests;
+#[cfg(test)]
 mod async_tests;
 #[cfg(test)]
 mod bitwise_compound_tests;
@@ -50,6 +54,8 @@ mod default_export_tests;
 mod exit_flow_tests;
 #[cfg(test)]
 mod frame_admission_tests;
+#[cfg(test)]
+mod frame_liveness_tests;
 mod frames;
 #[cfg(test)]
 mod generator_tests;
@@ -88,6 +94,11 @@ mod named_type_tests;
 mod native_math;
 #[cfg(test)]
 mod native_math_tests;
+mod net;
+#[cfg(test)]
+mod net_loopback;
+#[cfg(test)]
+mod net_tests;
 mod number;
 mod number_format;
 #[cfg(test)]
@@ -110,6 +121,7 @@ mod number_value_tests;
 mod numeric_constant_tests;
 #[cfg(test)]
 mod parameter_flow_tests;
+mod permission;
 mod policy;
 #[cfg(test)]
 mod post_write_tests;
@@ -134,6 +146,8 @@ mod primitive_string_tests;
 #[cfg(test)]
 mod promise_tests;
 #[cfg(test)]
+mod promise_value_tests;
+#[cfg(test)]
 mod property_deletion_tests;
 mod random;
 #[cfg(test)]
@@ -145,6 +159,8 @@ mod record_tests;
 #[cfg(test)]
 mod reduce_right_tests;
 mod scheduler;
+#[cfg(test)]
+mod timer_tests;
 #[cfg(test)]
 mod truth_guard_tests;
 #[cfg(test)]
@@ -180,6 +196,8 @@ pub enum RuntimeError {
     Policy(#[from] varta_common::VartaError),
     #[error(transparent)]
     Scheduler(#[from] varta_common::scheduler::SchedulerError),
+    #[error(transparent)]
+    Net(#[from] varta_common::net::NetError),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
 }
@@ -200,6 +218,8 @@ pub(crate) struct RuntimeContext {
     http_control: Option<(String, HttpShutdown)>,
     random: random::RandomSource,
     scheduler: scheduler::Scheduler,
+    /// V37 network requests: ids, completions and transfer tasks.
+    net: net::Net,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
 }
 
@@ -395,20 +415,7 @@ impl VartaRuntime {
             scheduler::checkpoint(&instance, store)?;
             Ok::<(), RuntimeError>(())
         })();
-        // Scheduler failures inside guest calls keep their typed error.
-        let result = result.map_err(|error| match error {
-            RuntimeError::Execution(source)
-                if source
-                    .downcast_ref::<varta_common::scheduler::SchedulerError>()
-                    .is_some() =>
-            {
-                match source.downcast::<varta_common::scheduler::SchedulerError>() {
-                    Ok(error) => RuntimeError::Scheduler(error),
-                    Err(source) => RuntimeError::Execution(source),
-                }
-            }
-            other => other,
-        });
+        let result = result.map_err(scheduler::typed);
         let store = &mut execution.store;
         let exited = result.is_err();
         if let Err(error) = result {
@@ -494,6 +501,8 @@ mod template_literal_tests;
 #[cfg(test)]
 mod function_envelope_tests;
 #[cfg(test)]
+mod function_field_tests;
+#[cfg(test)]
 mod function_value14_tests;
 #[cfg(test)]
 mod function_value_tests;
@@ -557,15 +566,31 @@ mod object_values_tests;
 mod array_enumeration_tests;
 
 #[cfg(test)]
+mod abort_signal_tests;
+#[cfg(test)]
 mod catch_pattern_tests;
 #[cfg(test)]
+mod class_generic_tests;
+#[cfg(test)]
 mod class_tests;
+#[cfg(test)]
+mod collection_tests;
+#[cfg(test)]
+mod declared_field_tests;
 #[cfg(test)]
 mod dictionary_tests;
 #[cfg(test)]
 mod error_subclass_tests;
 #[cfg(test)]
 mod generic_tests;
+#[cfg(test)]
+mod language_core_tests;
+#[cfg(test)]
+mod mixed_record_tests;
+#[cfg(test)]
+mod regexp_tests;
+#[cfg(test)]
+mod unknown_json_tests;
 #[cfg(test)]
 mod unknown_tests;
 #[cfg(test)]
@@ -575,7 +600,19 @@ mod v32_wave2_tests;
 #[cfg(test)]
 mod v34_cross_stream_tests;
 #[cfg(test)]
+mod v35_cross_stream_tests;
+#[cfg(test)]
+mod v36_cross_stream_tests;
+#[cfg(test)]
+mod v37_integration_tests;
+#[cfg(test)]
 mod value15_tests;
+#[cfg(test)]
+mod value16_tests;
+#[cfg(test)]
+mod value17_tests;
+#[cfg(test)]
+mod web_headers_tests;
 #[cfg(test)]
 mod wide_record_tests;
 

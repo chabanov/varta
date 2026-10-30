@@ -89,6 +89,11 @@ impl Lower<'_> {
                 None => (None, false),
             };
             let value = if let Some(init) = init {
+                // V37: `const x = xs[i]` later compared with `undefined` reads
+                // `T | undefined`, as JavaScript does (`dense`).
+                if old.ty.is_none() && self.core.undefined_checked.contains(name) {
+                    self.optional_index(init);
+                }
                 if old.ty.is_none() && self.types.profile.literal_types() {
                     // An inferred binding keeps a literal-typed initializer's type.
                     self.expr_preserving(init)?
@@ -97,9 +102,11 @@ impl Lower<'_> {
                 }
             } else if self.types.profile.missing()
                 && declaration.kind == ast::VarDeclKind::Let
-                && old
-                    .ty
-                    .is_some_and(|ty| unions::members(ty, self.types).contains(&Type::Undefined))
+                && old.ty.is_some_and(|ty| {
+                    unions::members(ty, self.types).contains(&Type::Undefined)
+                        // `let x: unknown;` (v36) starts as `undefined`, as in TypeScript.
+                        || ty == Type::Unknown && self.types.profile.checked_declared_fields()
+                })
             {
                 unions::widen(
                     Expr {
@@ -110,6 +117,12 @@ impl Lower<'_> {
                     old.ty,
                     self.types,
                 )?
+            } else if self.types.profile.language_core()
+                && declaration.kind == ast::VarDeclKind::Let
+                && let Some(ty) = old.ty
+            {
+                output.push(self.deferred(name, &old, ty, variable.span)?);
+                continue;
             } else {
                 return Err(unsupported(
                     "uninitialized variable without an undefined-capable let annotation",
@@ -117,11 +130,10 @@ impl Lower<'_> {
             };
             value_type(value.ty).map_err(|e| self.source.locate(e, value.span))?;
             if old.ty.is_some_and(|ty| ty != value.ty) {
+                let (expected, found) = self.mismatch(old.ty.unwrap_or(Type::Void), value.ty);
                 return Err(self.source.locate(
                     type_error(format!(
-                        "type mismatch for {name}: expected {}, found {}",
-                        old.ty.unwrap_or(Type::Void),
-                        value.ty
+                        "type mismatch for {name}: expected {expected}, found {found}"
                     )),
                     value.span,
                 ));
@@ -129,7 +141,12 @@ impl Lower<'_> {
             self.update(name, value.ty)?;
             self.mark_const_assertion(name, readonly)?;
             self.flow_known_binding(&old, &value);
-            output.push(S::Init(old.slot, value));
+            let never = value.ty == Type::Never;
+            output.extend(self.initialize(&old, value));
+            // A `never` binding (v37) is unreachable: fail safe if reached.
+            if never {
+                output.push(S::Trap);
+            }
         }
         Ok(output)
     }

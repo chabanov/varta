@@ -26,8 +26,9 @@ impl Lower<'_> {
         expression: &ast::FnExpr,
         expected: Option<Type>,
     ) -> Result<Expr> {
-        let context = match expected {
+        let context = match self.function_context(expected).or(expected) {
             Some(Type::Function(id)) => Some(self.types.functions[id as usize].clone()),
+            Some(Type::Unknown) if self.types.profile.function_fields() => None,
             Some(_) => {
                 return Err(type_error(
                     "function expression requires a function context",
@@ -57,10 +58,16 @@ impl Lower<'_> {
             ));
         }
         let function = &expression.function;
-        if function.is_async && self.types.profile.async_functions() {
+        let asynchronous = function.is_async && self.types.profile.async_methods();
+        if function.is_async && !asynchronous && self.types.profile.async_functions() {
             return Err(promises::rejected("async function expression"));
         }
-        if function.is_async
+        if function.is_async && function.is_generator && self.types.profile.async_generators() {
+            return Err(promises::async_generator_rejected(
+                "async generator function expression",
+            ));
+        }
+        if function.is_async && !asynchronous
             || function.is_generator
             || function.type_params.is_some()
             || !function.decorators.is_empty()
@@ -100,6 +107,7 @@ impl Lower<'_> {
             params: positional,
             body: Box::new(ast::ArrowFunctionBody::FunctionBody(body.clone())),
             return_type: function.return_type.clone(),
+            is_async: asynchronous,
             ..Default::default()
         };
         self.arrow_context(

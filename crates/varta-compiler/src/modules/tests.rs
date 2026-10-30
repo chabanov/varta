@@ -505,3 +505,138 @@ fn default_exports_keep_namespace_forms_and_earlier_profiles_rejected() {
         }
     }
 }
+
+const V34: varta_common::language::LanguageProfile =
+    varta_common::language::LanguageProfile::CheckedF64Utf16V34;
+const V35: varta_common::language::LanguageProfile =
+    varta_common::language::LanguageProfile::CheckedF64Utf16V35;
+
+#[test]
+fn engine_preludes_load_only_for_named_web_types_and_stay_out_of_metadata() {
+    let loader = MemoryLoader::default();
+    let preludes = |source: &str, profile| {
+        let graph = Graph::load_with_profile(entry(source.into()), &loader, profile).unwrap();
+        // Preludes are compiler-owned: module metadata lists program sources only.
+        let metadata = graph.metadata();
+        assert_eq!(metadata.len(), 1, "{source}");
+        assert!(metadata[0].imports.is_empty(), "{source}");
+        let mut loaded: Vec<String> = graph
+            .order
+            .iter()
+            .filter(|path| engine::is_prelude(path))
+            .map(|path| path.display().to_string())
+            .collect();
+        loaded.sort();
+        loaded
+    };
+    let headers = engine::HEADERS.path.to_owned();
+    let abort = engine::ABORT.path.to_owned();
+    for (source, mut expected) in [
+        ("export function main():void{}", vec![]),
+        // Property names, object keys and strings are not references.
+        (
+            "export function main():void{const o={Headers:1};console.log(o.Headers+'AbortSignal');}",
+            vec![],
+        ),
+        (
+            "export function main():void{const h=new Headers();}",
+            vec![headers.clone()],
+        ),
+        (
+            "function f(init:HeadersInit):void{} export function main():void{}",
+            vec![headers.clone()],
+        ),
+        (
+            "function f(s:AbortSignal):void{} export function main():void{}",
+            vec![abort.clone()],
+        ),
+        (
+            "export function main():void{const e=new DOMException('m');const h=new Headers();}",
+            vec![abort.clone(), headers.clone()],
+        ),
+        // A module's own declaration of the name takes precedence.
+        (
+            "class Headers{} export function main():void{const h=new Headers();}",
+            vec![],
+        ),
+    ] {
+        expected.sort();
+        assert_eq!(preludes(source, V35), expected, "{source}");
+        // Earlier profiles never load a prelude and keep their diagnostics.
+        if let Ok(graph) = Graph::load_with_profile(entry(source.into()), &loader, V34) {
+            assert!(!graph.order.iter().any(|path| engine::is_prelude(path)));
+        }
+    }
+}
+
+#[test]
+fn v36_selects_the_abort_listener_prelude_and_earlier_profiles_keep_theirs() {
+    use varta_common::language::{LanguageProfile as P, SUPPORTED_PROFILES};
+    let listeners = engine::ABORT.text(P::CheckedF64Utf16V36);
+    assert_ne!(listeners, engine::ABORT.source);
+    assert!(listeners.contains("addEventListener"));
+    assert!(!engine::ABORT.source.contains("addEventListener"));
+    for &profile in SUPPORTED_PROFILES {
+        // Only `function_fields` profiles compile the extended source, under
+        // the same reserved path; Headers has a single source.
+        assert_eq!(
+            engine::ABORT.text(profile) == listeners,
+            profile.function_fields(),
+            "{profile:?}"
+        );
+        assert_eq!(engine::HEADERS.text(profile), engine::HEADERS.source);
+    }
+    let loader = MemoryLoader::default();
+    let graph = Graph::load_with_profile(
+        entry("export function main():void{const c=new AbortController();}".into()),
+        &loader,
+        P::CheckedF64Utf16V36,
+    )
+    .unwrap();
+    assert!(
+        graph
+            .order
+            .iter()
+            .any(|path| path == Path::new(engine::ABORT.path))
+    );
+}
+
+#[test]
+fn engine_prelude_paths_are_reserved_from_host_loaders() {
+    struct Reserved;
+    impl ModuleLoader for Reserved {
+        fn resolve(&self, _: &Path, _: &str) -> Result<PathBuf, CompilerError> {
+            Ok(PathBuf::from(engine::HEADERS.path))
+        }
+        fn load(&self, _: &Path) -> Result<String, CompilerError> {
+            Err(module_error("must not load a reserved path"))
+        }
+    }
+    let error = Graph::load_with_profile(
+        entry("import {Headers} from './web.ts';export function main():void{}".into()),
+        &Reserved,
+        V35,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("reserved for an engine prelude"), "{error}");
+}
+
+#[test]
+fn programs_that_do_not_name_web_types_compile_as_without_preludes() {
+    // A v35 program that names no Web type compiles to exactly the bytes the
+    // same profile produces when the engine has no preludes at all.
+    let source = "class Box{value:string;constructor(value:string){this.value=value;}}\
+        export function main():void{const o={Headers:'x'};const b=new Box(o.Headers+'Headers');\
+        console.log(b.value);const list=[1,2,3];list.forEach((n)=>console.log(String(n)));}";
+    let compile = |source: &str| crate::compile_typescript_with_profile(source, V35);
+    let with = compile(source).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &with).unwrap();
+    assert_eq!(with, engine::without_preludes(|| compile(source)).unwrap());
+    // The switch removes the preludes: a program naming one then fails.
+    let named =
+        "export function main():void{const h=new Headers();console.log(String(h.has('a')));}";
+    assert!(compile(named).is_ok());
+    assert!(engine::without_preludes(|| compile(named)).is_err());
+}

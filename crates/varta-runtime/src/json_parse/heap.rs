@@ -91,6 +91,8 @@ impl Writer {
                 | BIGINT_VALUE_VERSION
                 | FUNCTION_VALUE_VERSION
                 | DYNAMIC_VALUE_VERSION
+                | PROMISE_VALUE_VERSION
+                | FUNCTION_FIELD_VALUE_VERSION
         ) {
             let bitmap = ARRAY_META_BYTES + array_capacity(payloads.len()) * ARRAY_SLOT_BYTES;
             let sparse = matches!(
@@ -99,6 +101,8 @@ impl Writer {
                     | BIGINT_VALUE_VERSION
                     | FUNCTION_VALUE_VERSION
                     | DYNAMIC_VALUE_VERSION
+                    | PROMISE_VALUE_VERSION
+                    | FUNCTION_FIELD_VALUE_VERSION
             );
             data.resize(bitmap + if sparse { SPARSE_BITMAP_BYTES } else { 0 }, 0);
             if sparse {
@@ -116,6 +120,8 @@ impl Writer {
                             | BIGINT_VALUE_VERSION
                             | FUNCTION_VALUE_VERSION
                             | DYNAMIC_VALUE_VERSION
+                            | PROMISE_VALUE_VERSION
+                            | FUNCTION_FIELD_VALUE_VERSION
                     ) {
                         HEAP_SPARSE_FLAG
                     } else {
@@ -139,6 +145,8 @@ impl Writer {
                             | BIGINT_VALUE_VERSION
                             | FUNCTION_VALUE_VERSION
                             | DYNAMIC_VALUE_VERSION
+                            | PROMISE_VALUE_VERSION
+                            | FUNCTION_FIELD_VALUE_VERSION
                     ) {
                         HEAP_SPARSE_FLAG
                     } else {
@@ -220,7 +228,7 @@ impl Writer {
                 let values = self.vector(caller, schema, kind, &values)?;
                 // The storage record: canonical `keys`/`values` slots, both present.
                 let mut data =
-                    Vec::with_capacity(record_bytes(DYNAMIC_VALUE_VERSION, DICTIONARY_FIELDS));
+                    Vec::with_capacity(record_bytes(schema.value_version(), DICTIONARY_FIELDS));
                 data.extend(descriptor.to_le_bytes());
                 data.extend((DICTIONARY_FIELDS as u32).to_le_bytes());
                 data.extend(keys.to_le_bytes());
@@ -267,6 +275,8 @@ impl Writer {
                         | BIGINT_VALUE_VERSION
                         | FUNCTION_VALUE_VERSION
                         | DYNAMIC_VALUE_VERSION
+                        | PROMISE_VALUE_VERSION
+                        | FUNCTION_FIELD_VALUE_VERSION
                 ) {
                     let absent = |slot: usize| {
                         fields[slot].optional

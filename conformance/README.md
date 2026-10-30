@@ -1,6 +1,6 @@
 # Checked core compatibility inventory
 
-This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v34** profile
+This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v36** profile
 and the **checked-ts-main-v1** source model. Its original cases are checked
 TypeScript programs with a Varta `main` entry point and observable runtime output.
 Feature rows identify their CORE work streams and either an ECMAScript section or
@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 54 feature rows and 96 cases:
-86 pass, 10 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 73 feature rows and 127 cases:
+123 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -31,7 +31,11 @@ package version, dependency-lock digest, worker timeout, runtime budgets, OS and
 results remain separate from the overall baseline check.
 
 Every case runs in a fresh process with a cleared environment, a fresh runtime and
-empty requested/ceiling grants. Compilation, validation and execution have a
+empty requested/ceiling grants, unless its manifest row lists reviewed `grants`:
+those are then both the requested grants and the host ceiling. Only `time.timer`
+(v36 timers, which wait on the runtime event loop within the execution deadline
+and have no other effect) is admitted; any other, duplicate or unsorted grant
+fails inventory loading. Compilation, validation and execution have a
 15-second wall limit (configurable to 1–60000 milliseconds with `--timeout-ms`).
 The guest retains ordinary production fuel, deadline, memory and host-call limits.
 Workers accept source snapshots over bounded stdin; concurrent pipe drains keep a
@@ -129,6 +133,12 @@ The v30 deletion increment adds three cases with reviewed Node.js output. Requir
 closed fields, descriptors, object/Symbol keys and arbitrary dynamic properties
 remain outside this checked increment; the CORE ledger stays Partial.
 
+The v37 RegExp stream adds two RegExp cases next to the original `regexp-test`
+gap: grouped global `exec` with `lastIndex` and Unicode/case flags, and the
+regex string methods with templates, captures in `split` and a replacer. All
+three remain known gaps while the inventory pins v36; under v37 they produce
+exactly their manifest output, which matches Node.js v24.20.0.
+
 The v30 object-operation increment adds optional-record deletion, primitive delete
 keys and Object.entries snapshots for closed records and typed arrays. Five new
 pinned cases cover key order, side effects, sparse presence and shared child
@@ -208,3 +218,102 @@ match Node.js v24.20.0 type stripping. `promise-resolve` stays a known gap with
 a new reason: v34 promises have no value tag, so `typeof` rejects them.
 Thenables other than internal promises and the combinators remain outside
 these rows.
+
+The v35 batch moves the pin to `checked-f64-utf16-v35`. Under it every v34
+case keeps its status except `promise-resolve`, which was observed as unexpected
+support with its pinned source hash and expected output (v35 promises carry a
+value tag, so `typeof` reports `"object"`) and is promoted. The batch adds
+eight original cases, all supported under the v35 pin and matching Node.js
+v24.20.0 type stripping:
+
+- the records stream's `mixed-index-records` row with `mixed-index-records`
+  and `dictionary-iteration-updates` (declared fields next to a string index
+  signature, `for...in`, compound updates and spreads), and its `unknown-json`
+  row with `json-parse-unknown` (`JSON.parse` to `unknown` and `object`
+  narrowing);
+- the async stream's `async-class-method` (an overridden async method
+  awaiting `super.step`), `async-closure-captures` (an async arrow sharing a
+  captured `let` across `await`, and an async function expression) and
+  `promise-combinators` (`Promise.all`, `race` and `allSettled` job order and
+  results);
+- the Web stream's `web-headers` (CORE-10) and `abort-signals` (CORE-09) rows,
+  both Varta contracts for the engine-provided Web types, with `web-headers`
+  and `abort-controller`.
+
+The async, Web and `promise-resolve` cases were observed as unexpected support
+with their pinned hashes and expected output under the v35 pin before review
+and promotion. Abort listeners, timers and live header iterators remain outside
+these rows.
+
+The v36 batch moves the pin to `checked-f64-utf16-v36`. Its streams add:
+
+- the functions stream's `function-fields` and `optional-chains` rows (CORE-03)
+  with one case each, and an `abort-listeners` case under the existing
+  `abort-signals` row;
+- the records stream's `checked-declared-fields` case on the
+  `mixed-index-records` row (declared arrays, records and dictionaries next to
+  `[key: string]: unknown`, built by literals and converted from JSON);
+- the timers stream's `timers` row (CORE-09, a Varta contract) with
+  `timers-event-loop` (main and its microtasks before any timer, equal delays in
+  creation order, each timer's microtasks before the next, a cleared timer and
+  the sleep pattern), the first case with a reviewed `time.timer` grant;
+- the async stream's `async-generators` row (CORE-03, CORE-09) with
+  `async-generator-iteration` (requests queued before the first settles,
+  `yield await`, a string `TReturn`, and `for await` closing through `finally`
+  on `break`).
+
+Each case was a reviewed `unsupported_syntax` gap under the v35 pin; under the
+v36 pin the five compile-time gaps were observed as unexpected support with
+their pinned hashes and expected output, which matches Node.js v24.20.0 type
+stripping, and were promoted. The timer case was observed as a denied runtime
+failure without a grant, and passes with its reviewed grant. Earlier-profile
+rejections stay covered by the compiler/runtime/CLI regression tests.
+
+The v37 language-core stream adds eight original cases while the pin stays at
+v36, each a reviewed known gap with the exact v36 diagnostic code and an
+output that matches Node.js v24.20.0 type stripping and the v37 compiler:
+`tdz-closure-capture` (`temporal-dead-zone`, CORE-03: a closure reading a
+`const` before its initialization throws `ReferenceError`, and a nested
+function declaration is hoisted), `deferred-let-assignment`
+(`definite-assignment`), `string-switch` (`switch-statement`, strict-equality
+selection with fallthrough and a leading `default`), `property-path-narrowing`
+(`property-narrowing`), `dense-element-reads` (`dense-element-types`, CORE-02)
+and `void-function-assignability`, plus `discriminated-unions`
+(`record-unions`, CORE-02: a union of three record shapes switched on its
+literal `kind`, with `never` in `default`) and `module-variables`
+(`module-variables`, CORE-12: module `let` state shared with a
+function-valued module constant). The Varta-contract rows reference the
+architecture contract. When the pin moves to v37 each is expected to be
+observed as unexpected support and reviewed for promotion; the TypeError
+deviations of dense reads of holes and missing indices stay pinned in the
+runtime tests, not here.
+The v37 collections review added tuple, string built-in and UTF-8 text gap cases
+(`tuple-destructuring.ts`, `string-split-pad-join.ts`, `text-encoder-roundtrip.ts`)
+with the `tuples` and `string-builtins` feature rows. They and the earlier Map, Set,
+Uint8Array and Date gap cases run with exactly their pinned output under
+checked-f64-utf16-v37 (checked against local Node.js v24.20.0), but stay known
+gaps while the inventory is pinned to checked-f64-utf16-v36; moving the pin
+promotes them after the usual unexpected-support review.
+
+The v37 net-request stream adds the `url` row (CORE-11, a Varta contract) with
+`url-search-params` (relative resolution with scheme/host lowercasing and the
+default port dropped, and an `application/x-www-form-urlencoded` list), a
+reviewed `unsupported_syntax` gap under the v36 pin (`URL` is a v37 prelude).
+`fetch` has no inventory case: it needs a `net.request` grant and a loopback
+server, and the reviewed per-case `grants` field admits only `time.timer`.
+That stays a recorded gap; the runtime tests compare `fetch` with Node.js
+v24.20.0 against a loopback server instead.
+
+The v37 integration moves the pin to `checked-f64-utf16-v37`. Under it the 22
+v37 cases kept as known gaps under the v36 pin (the eight language-core cases,
+the three class-generics cases, the Map, Set, Uint8Array, Date, tuple, string
+built-in and UTF-8 text cases of the collections stream, the three RegExp
+cases and `url-search-params`) were observed as unexpected support with
+exactly their pinned hashes and expected output, which matches Node.js
+v24.20.0 type stripping, and were promoted. The move first exposed three
+regressions of supported cases (`unknown-narrowing`, `module-constants`,
+`generics`): dense index reads threw on `undefined` checks that the cases
+rely on, which the integration fixed in the compiler rather than in the
+cases. The four remaining known gaps (`symbol-type`, `class-instance`,
+`define-data-property`, `generator-next`) are unchanged, and `fetch` remains
+the recorded gap above.

@@ -4,7 +4,6 @@ use super::*;
 use crate::modules::{Export, Graph};
 use std::path::{Path, PathBuf};
 
-const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
 pub(super) type Symbols = BTreeMap<String, Signature>;
 /// Names that no module binding or import may take.
 const RESERVED_BINDINGS: [&str; 4] = ["varta", "console", "log", "JSON"];
@@ -20,9 +19,30 @@ pub(crate) fn lower(
     };
     let mut next = 0;
     let mut main = None;
+    // A program whose closures may capture a binding before its
+    // initialization throws `ReferenceError` instances of the Error root
+    // (v37 `language_core`), so the root exists before any catch union.
+    if profile.language_core()
+        && let Some(unit) = graph
+            .order
+            .iter()
+            .map(|path| &graph.units[path])
+            .find(|unit| tdz::module_has_early_captures(&unit.ast))
+    {
+        classes::error_family_root(
+            varta_common::value::ErrorClass::Error,
+            &unit.source,
+            unit.ast.span(),
+            &mut types,
+        )?;
+    }
     let mut type_exports: BTreeMap<PathBuf, named::Exports> = BTreeMap::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
+        let prelude = crate::modules::engine::prelude(path);
+        if let Some(prelude) = prelude {
+            engine::register(prelude, module, &mut types);
+        }
         if profile.named_types() {
             named::enter(&mut types, module);
             let exports = named::link_module(graph, path, module, &type_exports, &mut types)?;
@@ -50,7 +70,7 @@ pub(crate) fn lower(
                 generics::declare(declaration, module, entry, &unit.source, &mut types)?;
                 continue;
             }
-            if next >= MAX_FUNCTIONS {
+            if next >= types.function_limit() {
                 return Err(unit.source.locate(
                     invalid("too many functions across modules"),
                     declaration.ident.span,
@@ -96,6 +116,9 @@ pub(crate) fn lower(
         }
         if profile.classes() {
             classes::layout_module(module, &symbols, &mut types, &mut next)?;
+        }
+        if let Some(prelude) = prelude {
+            engine::register_functions(prelude, &symbols, &mut types);
         }
         definitions.insert(path.clone(), symbols);
     }
@@ -149,7 +172,8 @@ pub(crate) fn lower(
             )?;
         }
     }
-    if profile.classes() {
+    // V37 synthesizes dispatchers after every generic class instance exists.
+    if profile.classes() && !profile.class_generics() {
         classes::dispatch_bodies(&types, &mut functions)?;
     }
     if profile.generics() {
@@ -200,8 +224,11 @@ pub(crate) fn lower(
     };
     if profile.literal_types() {
         literal_erasure::erase_program(&mut program);
+        classes::hide_prelude_state(&mut program.types);
     }
     super::suspension::prepare(&mut program, graph)?;
+    let entry = &graph.units[&graph.entry];
+    prune::prune(&mut program).map_err(|e| entry.source.locate(e, entry.ast.span()))?;
     Ok(program)
 }
 
@@ -475,6 +502,7 @@ pub(super) fn body(
         guarded: Default::default(),
         generator,
         asynchronous,
+        core: Default::default(),
     };
     if let Some(ty) = signature.receiver {
         lower.declare("this", Some(ty), true, false)?;
@@ -496,8 +524,16 @@ pub(super) fn body(
     lower.reserve_parameters(&plans)?;
     // The async body takes its promise right after the parameters.
     let promise = asynchronous.map(|id| lower.hidden(Type::Promise(id)));
+    // An async generator body takes its state record there (v36).
+    let async_generator = match generator {
+        Some(id) if lower.types.generators[id as usize].asynchronous.is_some() => {
+            Some(lower.begin_async_generator(id)?)
+        }
+        _ => None,
+    };
     let mut prologue = lower.module_constants(constants, &declaration.function)?;
     prologue.extend(lower.initialize_parameters(&plans, signature.receiver.is_some())?);
+    let start = prologue.len();
     let body = declaration
         .function
         .body
@@ -506,15 +542,30 @@ pub(super) fn body(
     prologue.extend(lower.block(&body.stmts, false)?);
     let mut statements = prologue;
     finish_body(&mut lower, &mut statements, declaration.span())?;
+    if let Some(body) = async_generator {
+        let tail = statements.split_off(start);
+        return lower.split_async_generator(
+            super::promises::AsyncSplit::declaration(
+                signature,
+                body.state,
+                signature.index == entry,
+                declaration.span(),
+                source,
+            ),
+            body,
+            statements,
+            tail,
+        );
+    }
     if let Some(promise) = promise {
         return lower.split_async(
-            super::promises::AsyncSplit {
+            super::promises::AsyncSplit::declaration(
                 signature,
                 promise,
-                entry: signature.index == entry,
-                span: declaration.span(),
+                signature.index == entry,
+                declaration.span(),
                 source,
-            },
+            ),
             statements,
         );
     }
@@ -569,7 +620,13 @@ pub(super) fn finish_body(
         )?;
         statements.push(S::Return(Some(value)));
     }
-    if lower.result != Type::Void && !returns(statements) {
+    if lower.result != Type::Void
+        && !returns(statements)
+        && !(lower.types.profile.checked_declared_fields()
+            && completion::exits_function_through_switches(statements))
+        && !(lower.types.profile.language_core()
+            && completion::exits_function_through_loops(statements))
+    {
         return Err(lower.source.locate(
             invalid("value-returning function must return on every path"),
             span,

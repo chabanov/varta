@@ -2114,7 +2114,7 @@ Inherit v33 under checked-f64-utf16-v34 with every v33 selector, but its own
 value layout (exception channel v6, JSON schema 15), its own host ABI
 (`abi::SCHEDULED_FRAMES_VERSION`, the microtask scheduler that drives
 `varta_resume`) and its own value ABI (`value::DYNAMIC_VALUE_VERSION`); never
-map another profile to either. Eight selectors gate the streams, all
+map another profile to either except v35, which inherits them. Eight selectors gate the streams, all
 specified below: the value layout (`dynamic_values`), records
 (`index_signatures`, `recursive_types`, `wide_records`), unknown
 (`unknown_type`, `checked_assertions`) and async (`promises`,
@@ -2306,3 +2306,785 @@ Contracts: [scheduler](architecture.md#microtask-scheduler-promises),
 - Behavior tests compare against pinned Node output (`varta-runtime`
   `promise_cases`, `promise_tests`, `async_tests`); regenerate expectations
   only from Node, never from Varta output.
+
+## Profile v35 (in development)
+
+Inherit v34 under checked-f64-utf16-v35 with every v34 selector and the
+scheduler. The async stream owns the batch's ABI bumps: v35 declares host ABI
+`abi::PROMISE_VALUES_VERSION` and value ABI/layout `value::PROMISE_VALUE_VERSION`
+(value16), read by the value16 host operations, exception channel v7 and JSON
+schema 16; v34 keeps host ABI 30 and value15. Seven selectors gate the streams:
+Web (`web_headers`, `abort_signals`), records (`mixed_index_records`,
+`unknown_json`), async (`async_methods`, `promise_values`) and frames
+(`frame_liveness`), each specified below. Gate every admission on its own selector, keep v34 and
+earlier profiles frozen, and add each stream's rules under its own heading here.
+
+- A stream that adds a host import adds a new `abi` constant and maps only v35
+  to it in `LanguageProfile::host_abi` in the same change, with the import's
+  minimum ABI, the launcher maximum, the version matrix and the v35 ABI tests.
+  A stream that adds a value tag or layout does the same for `value_abi` and
+  `value_layout` and binds new readers to the new version; v34 readers stay
+  frozen. Bump each ABI once per batch: the first stream owns the bump and the
+  others rebase onto it.
+- Tests that assert v35 equals v34 (`pilot_v35_inherits_v34_…` in
+  `varta-common` `language`, the v35 runtime language test and the v35 CLI
+  smoke test) change in the stream that introduces the difference.
+- `frame_liveness` changes the frame layout of v35 modules only. V34 and
+  earlier modules keep their frame slots and dispatcher bytes; any catalog
+  change the runtime reads is admitted for v35 alone.
+- `web_headers` and `abort_signals` are guest-implemented engine types with no
+  capability and no host I/O; `AbortSignal` has no timers until a later batch.
+
+### Value layout 16 (`promise_values`)
+
+- Value16 is value15 plus the promise tag (`ValueKind::Promise`). Every reader
+  that accepts value15 accepts value16 through the same code path: extend a
+  version pattern with `PROMISE_VALUE_VERSION` (or use `value::dynamic_layout`,
+  `json::dynamic_schema`), never copy a reader. Value15 readers keep rejecting
+  value16 stamps and the promise tag, and value16 readers reject value15.
+- Each value16 host operation mirrors its value15 counterpart
+  (`HostOperation::value15_counterpart`): same signature, result convention,
+  capability (none) and budgets, minimum host ABI `PROMISE_VALUES_VERSION`.
+  Register it as one more row of the existing per-layout tables; select it only
+  through `LanguageProfile::host_operation`, which maps every value15 reader to
+  value16 for v35 alone.
+- A stream that needs another layout-bound operation or tag under v35 rebases
+  onto this layout and adds the value16 variant only; it does not bump the
+  value or host ABI again in this batch.
+
+### Async methods and closures (`async_methods`)
+
+- Split every async method, arrow and function expression through
+  `AsyncSplit` (`lower::promises::async_functions`): the wrapper keeps the
+  source function's index, receiver, self slot, captures and shape; the body
+  takes the wrapper's physical parameters plus the promise, which must be the
+  slot right after them. Never give the body a receiver or a self slot.
+- An async closure's body is an environment function with the closure's
+  captures; `Schedule` forwards the wrapper's environment
+  (`Emitter::environment_param`) and the frame creator stores captured cells as
+  shared slots. Do not copy captured values into the body: mutable captures
+  must stay one cell. `suspension::admissible` admits environment functions only
+  for v35 scheduled bodies; generator closures and self slots stay rejected.
+- Keep v34 frozen: async instance methods, async arrows and function
+  expressions, async optional/rest parameters and `Promise<T>` inference in
+  generic calls are gated on `async_methods()`; v34 keeps its diagnostics.
+- Tests compare against pinned Node logs (`varta-runtime`
+  `async_method_tests`, `async_method_cases`); GC tests force a collection
+  before every job with the test hook, paying collections from a test-only
+  fuel refill, never by raising a production budget.
+
+### Promise values (`promise_values`)
+
+- Promise tags exist only in value16: lowering admits a promise in an
+  aggregate through `Type::profile_kind` and emission writes its tag through
+  `profile_kind`/`layout_kind`; `Type::value_kind` stays untagged so v34 and
+  earlier keep every rejection (arrays, records, unions, dictionaries,
+  `unknown`, `typeof`, logging, `JSON.stringify`, the combinators by name).
+- At most one promise type per union; `Promise<T>` never admits a `T` that may
+  hold a promise. Await and resolve a cell by its tag (`promises::values`), so
+  a promise member keeps the one-job PromiseResolve path; never box or copy a
+  promise into a new promise.
+- A promise inside `unknown` is never adopted silently: every path that would
+  adopt one without a static `T` throws the documented `TypeError`.
+- Combinators are guest code: one memoized job frame per combinator and
+  element type, a private state record and ordinary helpers. Add no host
+  import and no scheduler bound; keep the element snapshot and index-order
+  starts so job order matches Node.
+- The runtime reads a promise only through the value16 readers: its record
+  block is validated like a record, and logging locates `state`, `value` and
+  `reason` by the shared `scheduler::PROMISE_*_FIELD` names.
+
+### Frame liveness (`frame_liveness`)
+
+Contract: [frame liveness](architecture.md#frame-liveness-frame_liveness).
+
+- `lower::suspension::liveness` computes the saved set of every state on the
+  normalized body after `Machine::number` and before the state machine is
+  built; `emit::frame_slots` emits liveness segments, per-state saves, the
+  `br_table` restoration and the creator. `Suspendable::live` is `Some` only
+  under `frame_liveness()`; every other profile takes the unchanged cell path,
+  and `frame_liveness_tests` pins their module digests. Never touch the cell
+  path's instruction sequence for a liveness need.
+- The analysis may over-approximate, never under-approximate. Kill only on a
+  statement-level `Init`/`Set` of an unshared local; count every other mention
+  (expression-level writes, hidden statement slots, closure captures) as a
+  use; never kill a closure-shared local, and count a statement-level `Set`
+  of one as a use (it writes through the existing cell; `Init` allocates a
+  fresh one). Add the exception continuation
+  before every statement and both completion continuations at every point.
+  A new IR statement or expression that names a local must be added to the
+  liveness visitors (`node_mentions`, `statement_fields`, `operands`,
+  `substatements`) and to `Liveness::statement`; an unknown branch target
+  falls back to every local.
+- A hidden local the state machine reads on the resumption path (today the
+  `switch` case index and the finalizer's kept completion) is recorded in
+  `Machine::resumed` with the states it covers.
+- Saved entries are packed from zero per state; two-slot values take two
+  entries and shared locals one (their closure cell). Publish a state's edge
+  masks only after its entries are stored, clear them at resumption after the
+  values are restored and rooted, and never allocate in between. The creator
+  publishes the state-0 masks before allocating shared parameter cells.
+- State 0 of an async closure body (`async_methods`) saves its captured
+  environment cells after the parameters; the creator stores the loaded cells
+  themselves, never copies (`varta-runtime`
+  `async_method_tests::async_closure_captures_stay_shared_cells_in_liveness_frames`).
+- Restoration validates every touched segment (handle length, flags, kind,
+  count, the state's exact mask) and canonical scalar payloads before use;
+  keep the default `br_table` target a trap.
+- Liveness rows exist only in catalog version 3 and are admitted only for
+  v35 (`admission::frame_catalog_version`); test relabelled modules in both
+  directions and tampered rows (`admission_tests`, runtime
+  `frame_admission_tests`). Existing suspension suites run under v35 too
+  (`promise_tests::FRAME_PROFILES`, `generator_tests::run`,
+  `suspension_tests::behaviour_holds_with_liveness_frames`).
+- Record fuel figures only from `frame_liveness_tests` (deterministic fuel
+  under production budgets) and update the table in the contract when the
+  frame or scheduler path changes.
+
+### Unhandled-rejection reports (all scheduler profiles)
+
+- Copy reasons only through `Channel::render_bounded` with
+  `MAX_REJECTION_REASON_UNITS`, keep at most
+  `MAX_RETAINED_REJECTION_REASONS` rendered reasons and one tracking bit per id
+  otherwise. Never store a host value whose size follows guest input; never
+  change which reports are made or withdrawn, because the bound applies to v34
+  as well.
+
+### Mixed index records (`mixed_index_records`)
+
+Contract: [architecture.md](architecture.md#mixed-index-records-mixed_index_records).
+
+- A mixed record is `Type::Dictionary(id)` whose `DictionaryType::declared`
+  indexes `ValueTypes::mixed`; its storage, keys and values are those of the
+  plain dictionary of the same value type. Intern it only through
+  `mixed_records::intern`, which checks TS2411 assignability and checkability
+  of every declared field. Never give declared fields a slot, tag or layout.
+- Declared reads go through `declared_get`: look the key up, convert with
+  `assert_value` (free when the index type is the declared type) and throw for
+  a missing required key. Never trust a stored entry because its key is
+  declared: dynamic writes, plain-dictionary aliases and deletes reach it.
+- Dictionary conversions are retags between types of the same storage
+  (`dictionaries::converts`); keep them in `arguments::accepts`,
+  `unions::widen` and `unknown::upcast` together. `object` views convert only
+  through a checked assertion.
+- Under v35 dictionary get/set/delete call the shared function of their value
+  type (`lower::dictionary_helpers`); build their bodies only from the inline
+  builders (`dictionary_get_inline`, `dictionary_store`,
+  `dictionary_delete_inline`) and keep v34 on the inline path so its bytes do
+  not change.
+- `for…in`, updates and spreads evaluate the receiver and key once and read an
+  entry before evaluating the right-hand side. `for…in` snapshots the keys and
+  re-checks presence before each visit; spreads start from an empty dictionary
+  and apply members in source order.
+- Keys convert only from strings and (v35) numbers through `ToPropertyKey`
+  (`dictionary_key_value`); never coerce other types.
+- Optional class fields are `T | undefined` with an `undefined` initializer.
+  A redeclared inherited field keeps the shared slot and the inherited type
+  exactly; a non-`declare` redeclaration appends an initializer, and
+  `Field::redeclared` lets the redeclaring constructor assign it.
+- Behaviour tests pin Node 24 output of `varta-runtime/src/v35_cases`;
+  regenerate expectations only from Node, never from Varta output. Checked
+  deviations (declared reads after dynamic writes) are pinned separately.
+
+### JSON to unknown (`unknown_json`)
+
+Contract: [architecture.md](architecture.md#json-to-unknown-unknown_json).
+
+- `JSON.parse` and `unknown` parse targets build the JSON value graph from
+  existing schema nodes, stamped schema 16 under v35 (`emit::schemas`,
+  `json::unknown_graph`), and read them only through the value16 readers
+  (`v35_cross_stream_tests`); intern the
+  `unknown[]` and `Record<string, unknown>` types while lowering, because the
+  emitter only reads `ValueTypes`. Never add a host-side `unknown` node or a
+  schema version for it.
+- `JSON.parse(text) as T` becomes the checked parse at `T` only when `T` is a
+  parse target; otherwise it is the ordinary assertion from `unknown`.
+- Dictionary assertion targets are proven by the `Dictionary` tag and the
+  exact storage descriptor (`IsClass` over the storage shape), for any value
+  type; v34 keeps its element-kind test. A closed source union's array,
+  dictionary, record or class member is proven by its tag alone (v35 only).
+- `Type::Object(nullable)` is a refinement fact, never an expression type:
+  identifier reads of an `object` fact return the `unknown` cell, and only
+  `object_value` consumers (`in`, `Object.keys`/`values`/`entries`/`hasOwn`,
+  `for…in`) use it, through the checked dictionary conversion. Unions with an
+  `object` fact join to `object` (with `null` and `object` views) or `unknown`.
+- `in` guards refine to `object` views (`MixedMembers::object`) that declare
+  the proven keys as `unknown`; views reject dynamic and undeclared keys and
+  never convert implicitly to other dictionaries.
+
+### Web stream (`web_headers`, `abort_signals`)
+
+Contract: [engine Web types](architecture.md#engine-web-types-web_headers-abort_signals).
+
+- Engine Web types are typed TypeScript preludes in
+  `crates/varta-compiler/src/prelude/`, registered in `modules::engine`
+  (`PRELUDES`, gated by their selector). Implement behavior in the prelude
+  source, not as compiler intrinsics, so classes, dispatch, rooting, frames and
+  diagnostics stay on the shared pipeline. A new engine type adds a prelude (or
+  an export of one) with its selector, never a host import or capability.
+- A prelude loads only when a module names one of its exports and does not
+  declare or import that name; keep programs that name none byte-identical to
+  the same profile's output without preludes (compiler
+  `programs_that_do_not_name_web_types_compile_as_without_preludes`, through
+  the test-only `engine::without_preludes`; v35 no longer shares v34's ABIs,
+  so v34 bytes are no reference). Prelude paths stay
+  reserved from host loaders and out of module metadata.
+- Write preludes for the production budgets: no per-code-unit `charCodeAt`,
+  `%`, union `===`/`!==` against `null`/`undefined` or class identity in loops
+  (each is a host call); narrow chains with `instanceof`. Code-unit work uses
+  the `varta.web.*` intrinsics (`lower::web_text`, `ir::TextUnits`), which
+  exist only in prelude modules. Keep
+  `headers_typical_workload_stays_within_production_budgets` passing rather
+  than raising a budget.
+- Pin every behavior test to Node 24 output (`web_cases`, `web_headers_tests`,
+  `abort_signal_tests`); mark Varta-specific results. Validation messages
+  match Node's text.
+- Members a prelude names but cannot implement are listed in
+  `engine::PENDING` with their reason, so programs get an `unsupported`
+  diagnostic instead of an unknown-member error. Abort listeners need
+  function-valued object fields, a value-layout change: keep them pending
+  until a stream owns that layout bump. `AbortSignal.timeout`/`any` stay
+  pending in v35; v36 implements `timeout` (see Timers below).
+- The fewer-parameter rule for function literals is gated by `web_headers()`;
+  earlier profiles keep the exact-count rule.
+
+## Profile v36 (in development)
+
+Inherit v35 under checked-f64-utf16-v36 with every v35 selector, the
+scheduler and frame catalog version 3. V36 has its own host ABI
+`abi::TIMERS_VERSION` (32) and its own value ABI/layout 17
+(`value::FUNCTION_FIELD_VALUE_VERSION`) with the value17 host operations,
+exception channel v8 and JSON schema 17; v35 keeps host ABI 31 and value16.
+Four selectors gate the streams, all implemented: records
+(`checked_declared_fields`), functions (`function_fields`), async
+(`async_generators`) and timers (`timers`). Gate every admission on its own
+selector, keep v35 and earlier profiles frozen, and add each stream's rules
+under its own heading here.
+
+- A v35 rule or binding stated "for v35 only" (value16 readers, liveness
+  frames, preludes, mixed records) extends to v36 through the inherited
+  selectors; never widen it to v34 or earlier.
+- Every host import the batch adds takes `abi::TIMERS_VERSION` as its minimum
+  ABI in the `HostOperation` registry; do not add another host ABI constant in
+  this batch. Add its `.d.ts`, linker, validation and denial tests in the same
+  change.
+- Value layout 17 (the function-fields stream's bump) is in place: v36
+  stamps value17 everywhere and binds the value17 readers
+  (`HostOperation::value16_counterpart`, minimum ABI 32). A reader that accepts
+  value16 accepts value17 through the same code path (`value::dynamic_layout`,
+  `value::promise_layout`, `json::dynamic_schema`), never by copying it; only
+  the function tag differs, admitted by `value::function_layout`. Value16
+  readers stay frozen for v35. Prove every change here with `value17_tests`:
+  the v35 cases must log identically under v36.
+- Value17 function cells are checked through `function::ClosureView`
+  envelopes only; never decode captured payloads or invoke guest code from a
+  host reader, and never accept the function tag in a value16 or older reader
+  other than the catalog-bound value14 codec.
+- Timers are scheduled by the runtime, never by guest busy-waiting; keep
+  production fuel, deadline and scheduler limits unchanged and pin timer
+  ordering against Node output.
+- Cross-stream behavior is pinned in `varta-runtime` `v36_cross_stream_tests`
+  (Node 24 logs, virtual clock, a collection forced before every job): every
+  stream's programs validate under value17 and import only value17 readers;
+  timer callbacks and abort listeners held in function fields stay rooted;
+  `for await` over generators that sleep on timers; declared reads under
+  optional chains. Add a case there when a change spans two streams.
+- `AbortSignal.any` lives in the v36 abort prelude
+  (`prelude/abort_listeners.ts`) with the listeners; `AbortSignal.timeout` stays
+  in its own prelude (`prelude/abort_timeout.ts`), loaded only where called, so
+  no other program imports a timer operation or needs `time.timer`. Keep
+  `prelude/abort.ts` (v35) byte-identical.
+- The conformance inventory pins v36. A case that needs a capability lists it
+  in its reviewed `grants` (only `time.timer` is admitted); never grant a
+  capability to turn a denial into a pass.
+
+### Function fields (`function_fields`)
+
+Contract: [architecture.md](architecture.md#function-fields-function_fields).
+
+- A function type is a value type only through `Type::profile_kind` /
+  `layout_kind` (value17 tags it `ValueKind::Function`); `value_kind` stays
+  `None` for functions so every pre-v36 admission check keeps rejecting them.
+  Gate each lifted rejection (record, class, dictionary, union, element,
+  `unknown`, logging) on `function_fields()` and keep the earlier diagnostic
+  text byte for byte for older profiles.
+- A union holds at most one function type: guards, `?.()` and contextual
+  typing select "the" function member. Never add signature tests to cells;
+  the call's checked closed dispatch (signature word, target code, environment)
+  is the only proof a function value has its static type.
+- Calls through a field go through `function_field_callee` (a side-effect-free
+  static peek) before builtin method names; the field is read once and called
+  without a receiver. Reject a receiver-typed function at such a call instead
+  of passing `undefined` or the object as `this`.
+- Optional chains lower the first optional link's object once into a hidden
+  `#chain` binding narrowed by a refinement; everything after it is the
+  ordinary AST lowered again on that binding. Keep the rewrite AST-only (no
+  second lowering of the object) and parentheses as chain boundaries.
+- Built-in function values are synthesized once per program
+  (`ValueTypes::builtin_functions`) and referenced canonically; add a name to
+  `function_fields::BUILTIN_VALUES` only with its own body and Node-pinned
+  identity test.
+- The v36 abort prelude is a separate source (`prelude/abort_listeners.ts`)
+  selected by `Prelude::text`; never edit `prelude/abort.ts` for a v36
+  feature. `v35_modules_keep_their_bytes` freezes v35 output (including the v35
+  prelude) by digest; a change there is a v35 regression, not a new baseline.
+- JSON: a function serializes like `undefined`; reject a reachable
+  function-valued `toJSON` field at compile time. Checked parsing never builds
+  functions.
+- Tests: Node-pinned `function_field_cases` logs, the forced-collection
+  driver for closures reached only through containers, descriptor-tag
+  tampering, v35 rejection and frozen-digest tests, the public API and CLI
+  smoke tests and the v35-pinned conformance gaps.
+
+### Checked declared fields (`checked_declared_fields`)
+
+Contract: [architecture.md](architecture.md#checked-declared-fields-checked_declared_fields).
+
+- All conversions live in `lower::declared_fields`. `convertible` admits a
+  declared type of a mixed record indexed by `unknown`; `applies` selects the
+  conversion (source `unknown`, a record, array or dictionary member) for
+  declared reads, checked parsing (`json::validate_declared`) and assertions
+  (`unknown::assert_value`). Other sources and targets keep the v35 tests.
+- Return a stored value only when `exact_test` proves its static type. Never
+  treat an empty array, an array with holes or an array of union cells as
+  exact, and never prove an array of class instances by its elements: another
+  alias may hold the same array at another element type. Structural records
+  are proven by any layout descriptor of their shape (`IsClass` in v36);
+  classes by their family.
+- Builds start from the JSON-graph forms only (`Record<string, unknown>`
+  storage, arrays of cells or of the target's element kinds). Records accept
+  exactly their declared keys, in the dictionary's order, through `SetField`
+  so presence and order trailers stay exact. Root every handle local of a
+  synthesized function in its value block; built values are published only
+  after every child converted.
+- Synthesized functions (`Converter::{Exact, Build, Read}`) are keyed by the
+  target type in `ValueTypes::converters` and registered before their body is
+  lowered, so recursive types recurse. Use `reserve_function` and
+  `define_function`; do not inline conversions at each read (the per-function
+  body budget).
+- Declared reads write a built value back through the shared dictionary `Set`
+  helper under the found key; parse validation calls the same read. Do not
+  write back from assertions.
+- The completions (dictionary binding patterns, `typeof` property-path
+  conditionals, `??`/`||` literal fallbacks, `let x: unknown;`, exhaustive
+  `switch` returns through `completion::exits_function_through_switches`) are
+  gated on this selector; keep their v35 diagnostics.
+- Pin behavior to Node 24 output of `varta-runtime/src/v36_cases`; pin the
+  checked deviations (`checked_conversions_deviate_from_node`) separately.
+
+### Timers (`timers`)
+
+Contract: [architecture](architecture.md#timers-timers). Lowering lives in
+`lower/promises/timers.rs`; the event loop in `varta-runtime` `scheduler.rs`.
+
+- A timer is a scheduled frame of a synthesized function (memoized per
+  `Helper::Timer(kind)` and callback/argument types) that awaits an
+  engine-internal pending `Promise<void>`. Keep it that way: the frame is what
+  roots the callback, captures and arguments, and the runtime must never hold a
+  guest reference or call a function value directly. The runtime resumes timer
+  frames only through `varta_resume`, like every job.
+- Never settle the timer promise record; the runtime only queues its one
+  reaction. Fired and cleared timers are told apart by `timer_take`; an
+  interval frame loops on `timer_take` and awaits the same promise again, and
+  `Scheduler::react` releases a cleared interval's frame at once.
+- `timer_start` is the only timer import with a capability (`time.timer`,
+  exact boolean grant) and the only one charged to the host-call budget; check
+  the grant before the timer exists and keep denial fatal
+  (`SchedulerError::TimerDenied`). Clear/take/uncaught stay bookkeeping.
+- Loop time is virtual: it starts at 0 and moves only to the due time of the
+  timer that fires. Never derive a due time from the wall clock; the runtime
+  only waits for the wall clock to catch up. Order is (due bits, sequence).
+- A timer due at or after `abi::DEADLINE_SECONDS` must end the execution with
+  `SchedulerError::TimerDeadline` without waiting. Unreferenced timers
+  (`TIMER_UNREF`, only `AbortSignal.timeout`) never keep the loop alive.
+- Check unhandled rejections after every microtask checkpoint, before the
+  next timer.
+- Runtime tests run on `scheduler::with_virtual_clock` (test-only, never in a
+  production build); keep at most a lower-bound assertion on real waits so no
+  test depends on timing.
+- `AbortSignal.timeout` is the `ABORT_TIMEOUT` prelude, loaded by the member
+  trigger `AbortSignal.timeout` and bound under that dotted name, which source
+  cannot declare; `varta.web.unrefTimeout` is a prelude-only intrinsic. Programs
+  that never name it must not import a timer operation.
+- Under `timers()` an arrow expression body in a `void` context discards its
+  value (TypeScript's void compatibility); earlier profiles keep "arrow
+  expression result mismatch".
+- Timers belong to `main` executions only; when async HTTP or tools are
+  admitted, give each request isolate its own loop and cancel its pending
+  timers when the request ends, rather than sharing a queue.
+
+### Async generators (`async_generators`)
+
+Contract: [architecture.md](architecture.md#async-generators-async_generators).
+
+- Source admission lives in `lower::promises::async_generators` (annotations,
+  the split, `yield`/`await`/`return` in bodies, the protocol helpers and every
+  `for await` source) and is gated on `profile.async_generators()` only:
+  `signature::check`, the annotation names in `keyword_type`, generic
+  inference from `AsyncIterable<T>`-like parameters, the `for await` entry in
+  `for_of.rs`, the checked-assertion entry in `suspension::construct` and the
+  `Number`/`Math` constant parameter default in `parameters::literal`. V35 and
+  earlier keep `unsupported async generator function`, the v34 `for await`
+  rejection and `unsupported await inside intrinsic expression`.
+- An async generator type is a `GeneratorType` with `asynchronous` set; its
+  objects are frames of the paired body type (`GeneratorType::body`), reached
+  by `Reinterpret`. Intern both through `async_generators::intern`, which also
+  interns the state and request records and the result promise. Never give an
+  async generator a value tag, a layout or a frame of its own type: no layout
+  may name the object type, and synchronous `for...of`, `yield*` and the
+  synchronous protocol code must reject it.
+- The body's completion cell is the only route from an object to its state
+  record. Publish it at the start point, keep it in the body type's step
+  function (`step_function(.., keep_completion)`) and in every later
+  suspension (`Suspendable::keeps_completion`), and end the body with
+  `return state`. Never read a body's `GeneratorValue` as anything but the
+  state record, and never clear it.
+- Resume a body only through its step function with its own frame handle as
+  the input (the start point's input is that handle, saved for the relays):
+  synchronously from the `Resume` helper, or from a relay job. The body is a
+  generator frame, never a scheduled one: an `await` in it carries
+  `Expression::Await::relay` and the normalizer starts the relay right before
+  the suspension and publishes the state record instead of the promise
+  (`Normalizer::publish`). Keep one relay per pending await; do not add a
+  second job mechanism.
+- Read every resumption value from the front request; do not deliver `Throw`
+  or `Return` completions through the step function (its deliveries only keep
+  the frame layout uniform). The helpers mirror the ECMAScript abstract
+  operations one to one (Enqueue, Resume, CompleteStep, DrainQueue,
+  AwaitReturn, UnwrapYieldResumption); keep their job counts, because the
+  pinned Node logs depend on them. Memoize the helpers per async generator
+  type through `async_helper`, which reserves the index before synthesizing
+  (Drain, AwaitReturn and its job call each other).
+- Body `return`s become a store of `TReturn | undefined` and a break to the
+  body's exit label (`Exits`), so `finally` blocks run first; every rewritten
+  `TryFinally` keeps a pending state-machine `Return` in a fresh local of the
+  state record type. A `yield` is a value block at the `yield` span, which the
+  construct allowlist splits; it may `throw` and break to the exit label.
+- `yield*` (`async_delegate`) forwards requests to an async generator
+  delegate through its protocol helpers and passes yielded values on through
+  the same CompleteStep and suspension as `yield`, without awaiting them; keep
+  its delegate restricted to async generators with the same `TNext` until a
+  source with its own pinned Node log is added.
+- `for await` over synchronous sources must keep the async-from-sync job
+  counts (two per value and per done result, one or two to close, the first-job
+  closing of a rejected value); add a source only with its pinned Node log.
+- Behaviour tests compare against pinned Node 24 output (`varta-runtime`
+  `async_generator_cases`, `async_generator_tests`, which also force a
+  collection before every job and record the fuel figures of the contract);
+  regenerate expectations only from Node, never from Varta output.
+
+## Profile v37 (in development)
+
+Inherit v36 under checked-f64-utf16-v37 with every v36 selector, value layout
+17 and the value17 host operations, exception channel v8, JSON schema 17, the
+scheduler, frame catalog version 3, async generators and the timer operations.
+V37 has its own host ABI `abi::NET_REQUEST_VERSION` (33) and shares value
+ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`) with v36; v36 keeps host
+ABI 32. Five selectors gate the streams, all implemented below: language
+core (`language_core`), class generics (`class_generics`), collections and
+binary text (`collections`), RegExp (`regexp`) and network requests
+(`net_request`); [batch integration](#batch-integration-v37) holds the rules
+for their combination. Gate every admission on its own selector, keep v36 and
+earlier profiles frozen, and add each stream's rules under its own heading
+here.
+
+- A v36 rule or binding stated "for v36 only" (value17 readers, timer
+  operations, preludes, async generators) extends to v37 through the inherited
+  selectors; never widen it to v35 or earlier.
+- Every host import the batch adds takes `abi::NET_REQUEST_VERSION` as its
+  minimum ABI in the `HostOperation` registry; do not add another host ABI
+  constant in this batch. Add its `.d.ts`, linker, validation and denial tests
+  in the same change.
+- The collections stream owned the batch's value-layout bump and needed none
+  (its storage is private and tuples are arrays), so value 18 does not exist.
+  A later stream that needs a value tag lands it first as its own foundation
+  commit: a new `value` constant, `value_abi`/`value_layout` for v37, value18
+  variants of every layout-bound reader (minimum ABI 33) and the launcher
+  value maximum. Value17 readers stay frozen for v36.
+- `net.request` is a new exact capability operation, denied by default and
+  checked before any socket is opened; never let `net.fetch`, `net.get` or
+  `net.listen` grants authorize it.
+- Tests that assert v37 equals v36 apart from its host ABI
+  (`pilot_v37_inherits_v36_…` in `varta-common` `language`, the v37 runtime
+  language test and the v37 CLI smoke test) change in the stream that
+  introduces the difference.
+
+### Batch integration (v37)
+
+Contract: [architecture.md](architecture.md#batch-integration-v37).
+
+- Function slots: lowering allocates against `ValueTypes::function_limit()`
+  (never `abi::MAX_USER_FUNCTIONS` directly); `lower::prune` removes
+  unreachable functions and is the only v37 place that enforces the emitted
+  limit. A new IR form that names a function index must be added to
+  `prune::references` and the renumbering in the same change, and the
+  emitter must derive every other function table from `Program`.
+- Private state: descriptor keys with `value::PRIVATE_KEY_PREFIX` are private
+  (`classes::hide_prelude_state` renames prelude and Error slots after
+  lowering; guest code reads by slot). Never add a v37 source path that
+  creates a structural record key with the prefix, and keep URL and RegExp
+  match arrays out of `JSON.stringify` and `unknown`
+  (`engine::JSON_FORM_CLASSES`). Shared host readers keyed by field name must
+  prefer the own key and fall back to the prefixed one, as the exception
+  channel does.
+- Dense reads: undefined contexts go through `dense::optional_index` /
+  `undefined_comparisons`; keep `unknown` elements unchecked.
+- Unions: collections and tuples stay single members of their tag;
+  `instanceof` and `#x in` over class unions must consider every class
+  member, never the first one only.
+- `split` dispatch lives in `builtin_methods::string_split`; RegExp splits go
+  through `regexp_split`.
+- Tests: `varta-runtime` `v37_integration_tests` (Node-pinned cases in
+  `v37_integration_cases`, a loopback SSE loop, forced collections, the
+  relabelled every-stream module and the pruning limits).
+
+### Language core (`language_core`)
+
+Contract: [architecture.md](architecture.md#language-core-language_core).
+
+- Per-function state lives in `lower::core::State` (`early`, `unassigned`,
+  `paths`, `impure_guard`); `unassigned` and `paths` are also fields of the
+  flow `Snapshot`, so every join, alternate, restore and finalizer transform
+  must carry them: unions for `unassigned`, keyed intersections with unions
+  of types for `paths`, and `restore` may never resurrect a fact. Gate every
+  admission on `language_core()`; an empty state must leave earlier profiles
+  byte-identical (`v36_modules_keep_their_bytes`).
+- Temporal dead zones (`lower::tdz`): reserve flags only through
+  `early_names` (simple declarators and nested function declarations),
+  identify the flag by the declaring function's slot (`Binding::tdz`) and
+  resolve its local slot through `tdz_flag`; the owner learns an early
+  capture when it re-captures a closure's captures (`capture_early`, by
+  `identity.1`, never the closure's slot). An early binding's
+  initialization must be `Set` plus the flag, never `Init` (which would
+  allocate a fresh cell the closure does not hold). Any new write path through
+  a closure must go through `prepare_pattern_target`/`early_target` or test the
+  flag itself. The Error root for `ReferenceError` is created in `link::lower`
+  before the first module when `module_has_early_captures`; never create it
+  lazily during body lowering.
+- Deferred bindings (`lower::deferred`): `flow_assigned` is the only place
+  that clears `unassigned`; conservative invalidation (`flow_write` from loop
+  or call effects) must not count as an assignment. Read-modify-write targets
+  call `require_assigned_target` before `prepare_pattern_target`.
+  `unassigned_outer` hides unassigned bindings from closure snapshots.
+- Dense reads (`lower::dense`): every element-typed read of a possibly
+  missing element goes through `dense_read`; element types that admit
+  `undefined` must stay unchecked.
+- Path facts (`lower::paths`): only data fields are path components; a new
+  construct that can run user code or write a property must drop facts
+  (`path_effects`, `drop_paths`) and be listed in `paths::Scan`. Facts are
+  keyed by the root's local slot, so they never leave the function that
+  created them.
+- `switch` by equality (`lower::switches`) reuses the `Switch` statement over
+  the Boolean `true`; its tests are ordinary `===` lowering of the hidden
+  discriminant binding, lowered before any clause body. Keep scalar switches
+  on the original path (`switch_statement`).
+- `void` conversion (`lower::void_functions`) synthesizes an AST arrow over a
+  hidden binding; keep it to receiverless fixed-arity shapes, and keep
+  diagnostics of earlier profiles on `Type`'s `Display` (`mismatch` renders
+  signatures for v37 only).
+- Record unions (`lower::shared_unions`, `emit::shared_members`): a union
+  with several record-tag or array members must be told apart only by the
+  emitted payload test in `is_union_member` (descriptor offsets of every
+  layout of the member shape or class family, or the array element kind);
+  never read a field of such a union except through `dispatch`, and never
+  add a value tag for it. `unions::intern` must keep rejecting array members
+  with equal element kinds. Catalogs describe such unions as `Unknown`
+  (`function_catalog`); do not relax `varta-common` catalog validation.
+  Converting JSON graphs to them goes through `discriminated_build`, which
+  needs a literal discriminant per member.
+- `Type::Never` has width 0 and no value; it comes only from guards that
+  exclude every member and from `never` annotations. Keep `unions::members`
+  empty for it, `widen` converting it to any target, and the trap after a
+  `never` binding.
+- Module variables (`lower::globals`, `module_constants`): a `let`/`var` is
+  `Binding::global` (root slot index and storage type); reads and writes go
+  through `global_read`/`global_store` only, closures re-bind it with their
+  own slot for facts and never capture it, and every new write form must
+  route there or be rejected (`assignment_binding` rejects pattern targets).
+  A chunk whose initializers lift functions reserves its initializer index
+  first (`lifts`), or the lifted function would take it.
+- Return analysis for endless loops is the `loops` completion mode
+  (`exits_function_through_loops`), used only by v37 `finish_body`; never fold
+  it into `normal`, which flow reachability of every profile uses.
+- Stack depth: lowering recursion runs on 2 MiB test threads; keep new
+  per-arm locals out of `statement_inner` and `expr_inner` (call a helper).
+- Tests: Node-pinned `language_core_cases` logs, a forced collection before
+  every job for the async cases and a stress-fuel run for synchronous
+  closures, deviation and diagnostic tables, v36 rejections and frozen v36
+  digests, the public API and CLI smoke tests, and the v36-pinned conformance
+  gaps.
+
+### Class generics (`class_generics`)
+
+Contract: [architecture.md](architecture.md#class-generics-class_generics).
+
+- Monomorphization only, as for [generics](#generics-generics): never emit a
+  generic body. Generic methods live in `Class::generic_methods` /
+  `generic_statics` (`lower/classes/generic_methods.rs`), get no slot at
+  layout and are instantiated per (owner, name, static, arguments) in
+  `Classes::method_instances`; their bodies queue in `pending_methods` and are
+  lowered by the `generics::bodies` fixpoint with the class context and the
+  merged class + method frame. Reuse `Lower::infer`, `instance_arguments` and
+  `bind_instance_arguments`; never re-lower an argument for inference, and
+  lower the receiver first.
+- An overridden generic method dispatches through `generic_dispatchers`
+  (root, name, arguments), instantiating every implementation with the same
+  arguments when the dispatcher is created and synthesizing its body in
+  `generic_dispatch_bodies` after the last body. `super.m<T>()` and statics
+  are direct calls.
+- Generic class templates (`Class::is_template`) own statics only; instances
+  (`Class::template`, `frame`) are created by `instantiate_class` (memoized in
+  `Classes::instances` before layout so self-references resolve), laid out at
+  once when `Classes::ready` and otherwise at `lay_out_deferred` (start of
+  `dispatchers`). Instance members are allocated `UNALLOCATED` and get their
+  slots in `materialize` (end of `dispatchers`, and `Lower::class_functions`
+  before any member call, `new`, getter or `super` use), which also rewrites
+  the inherited entries of descendants; their bodies queue in
+  `pending_members`. Never let an instance member index reach emission
+  unallocated, and never put instance members in `Classes::order`.
+- V37 synthesizes the declared dispatchers late (`late_dispatch_bodies`) so
+  instance shapes created by later bodies join the descriptor tests. Keep
+  `dispatch_bodies` at its v36 position for every earlier profile
+  (`v36_modules_keep_their_bytes`). Instances may not override inherited
+  methods (`override_rejected`): a dispatcher decided before the instance
+  existed would miss the override.
+- Method signatures are function fields (`records::method_signature`); object
+  literal methods are function expressions that may not use `this`/`super`
+  (`uses_receiver`). Never bind a receiver for a function field call.
+- `implements` is a check only (`classes/implements.rs`) after the class (or
+  instance) is laid out; never widen a class instance to a record.
+- Private names are a pre-layout AST rewrite (`classes/private_names.rs`):
+  `#x` becomes a `private` member named `#x`. Keep quoted `'#x'` members and
+  computed `obj['#x']` member accesses rejected under the selector, keep
+  `reaches_private` gating `JSON.stringify` and `unknown::widen`, and keep a
+  subclass from redeclaring an inherited private name. `#x in v` is
+  `class_test` of the declaring class.
+- Tests: `varta-runtime` `class_generic_tests` with Node 24 logs of
+  `class_generic_cases`, the forced-collection driver, v37 diagnostics, v36
+  rejections and `v36_modules_keep_their_bytes`, and the pilot function-count
+  measurement; the public API cross-module test and the CLI smoke test.
+
+### Collections (`collections()`)
+
+Contract: [collections and binary text](architecture.md#collections-and-binary-text-collections).
+
+- Implement built-ins as typed guest code in the reserved `<varta>/builtins/*`
+  preludes (`modules::engine::BUILTINS`), gated by `collections()`. A prelude
+  loads through an export, a static member (`Member`) or a load trigger
+  (`Prelude::loads`: an identifier, or `.property` for a member name); never
+  load one for v36 or earlier, so their bytes stay frozen
+  (`v36_modules_keep_their_bytes`). Call prelude functions only through
+  `lower::engine` (`engine_call`, `engine_apply`, `engine_signature`): it
+  resolves the function in the prelude module itself, instantiating generic
+  ones with explicit type arguments, so callers never depend on per-module
+  import bindings.
+- Prelude-only intrinsics (`varta.text.*`, `varta.array.get`,
+  `varta.collections.*`, `varta.bytes.*`, `varta.date.now`) are checked in
+  `lower::web_text` with `is_prelude_source`; in program modules they stay
+  unknown calls. `varta.array.get` is for densely filled prelude vectors read
+  below their length only. Prefer index appends (`a[a.length] = v`) and
+  `varta.array.get` over `push` and `a[i]!` in prelude hot paths: `push`
+  allocates its argument array and `!` reads through the hole-aware path.
+- `Type::Collection` and `Type::Tuple` are erased to their storage in
+  `literal_erasure` (with dictionaries, promises and merged function types);
+  emission never sees them. Map/Set storage is the prelude's generic
+  `MapStore`/`SetStore` instantiated in the prelude module
+  (`collections::store`); keep the prelude the single layout definition. In
+  unions a map or set counts as a record shape and a tuple or byte array as an
+  array type.
+- Never let collection storage or an `opaque` (v37 builtin) class instance
+  reach a host value reader: check `collections::reaches` before logging,
+  `JSON.stringify` and every widening to `unknown`. Keep `has_prelude`
+  excluding opaque classes.
+- A receiver whose static type is a collection is found without lowering
+  (`collection_receiver`: bindings, fields, `new`, chained `add`/`set`,
+  declared function and class-method results); string/array built-ins lower
+  the receiver once and keep class dispatch for class instances. Built-in
+  method names never shadow a user class method.
+- Module-constant chunks that construct a `Set`/`Map` reserve their
+  initializer slot before lowering (`constructs_collection`), because the
+  constructor instantiates prelude functions.
+- Host imports: `string_to_upper_case16`/`string_to_lower_case16` (pure,
+  capability-free) and `date_now` (exact `time.now`, recoverable denial
+  through the permission broker: NaN, then the prelude's `NotAllowedError`) take host
+  ABI 33. Keep the ASCII fast path in guest code.
+- Tests: Node-pinned runtime cases (`collection_tests`), forced collection
+  with test-only fuel, production-budget workloads, privacy and unsupported
+  diagnostics, the v36 frozen digests, the host-ABI-33 import test
+  (`collection_host_imports_require_host_abi_33`), the public API
+  cross-module test and the CLI smoke test through both binaries.
+
+### RegExp (`regexp`)
+
+- Gate every admission on `LanguageProfile::regexp()`; v36 and earlier must
+  keep rejecting regex literals, `new RegExp` and the regex string methods
+  with their old diagnostics and bytes (`regexp_stays_rejected_before_v37`,
+  `regexp_stays_rejected_by_v36_projects_and_names_v37_limits`).
+- Patterns compile only at compile time (`varta-compiler` `regexp`): literals
+  and `new RegExp` whose arguments are string literals or substitution-free
+  templates. Never add a host regex import or a run-time pattern compiler
+  without a new contract: the linear-time and scratch bounds are proven by
+  the compiler.
+- Keep the matcher backtracking-free: no construct may make a thread's future
+  depend on more than its instruction, its position and which enclosing
+  empty-check registers hold that position; the visited set is keyed by
+  exactly that state (`program::NESTING`, at most `MAX_NESTING` levels).
+  Every optional iteration of a nullable body with captures needs its
+  `CHECK`; differential fuzzing against Node found the cases where keying by
+  the instruction alone is wrong. Backreferences, lookaround, `\p{…}`, modifiers,
+  duplicate group names and the `d`/`v` flags stay rejected by name
+  (`RegExpError::Unsupported`); syntax errors keep V8's text.
+- Program format changes (`regexp::program`) bump `FORMAT_VERSION` and change
+  the compiler and the guest matcher together; programs are data, so their
+  limits (`MAX_PROGRAM_UNITS`, `MAX_SCRATCH_BYTES`) are compile-time errors,
+  never traps.
+- The lean program must give exactly the full program's slots 0 and 1; use it
+  only where no capture is observable.
+- Case-insensitive matching widens characters and classes at compile time
+  (`regexp::case`); the guest matcher never folds case.
+- The prelude (`prelude/regexp.ts`) may call `varta.regexp.*`; it must not
+  make host calls on any path a program reaches (`charCodeAt`, `typeof` and
+  equality on unions, Number formatting and template numbers are host
+  operations), which `regexps_need_no_capability_and_add_no_host_import`
+  checks.
+- Compiler hooks reach prelude members only by name (`RegExp` private statics,
+  match-array fields `first`/`values`); renaming a prelude member changes
+  `lower::regexp` in the same change.
+- Behaviour tests compare against pinned Node 24 output (`regexp_cases`);
+  regenerate expectations only from Node. Adversarial inputs stay small enough
+  for Node to answer, since Node backtracks exponentially on them.
+
+### Network requests (`net_request`)
+
+See the [contract](architecture.md#network-requests-net_request).
+
+- `fetch`, `Request`, `Response`, `ReadableStream`, `URL` and
+  `URLSearchParams` are engine preludes (`prelude/fetch.ts`, `url.ts`,
+  `permission.ts`). Keep them loaded only when named, so programs that do not
+  name them keep their bytes. Their `varta.net.*` and `varta.web.unitAt`
+  intrinsics work only inside prelude modules; engine-internal members
+  (`engine::INTERNAL_MEMBERS`) are unknown members to program modules. Mirror
+  every shared constant of `varta_common::net` in `fetch.ts` by name; the
+  `lower::net` test keeps them in step.
+- The runtime keeps request ids, completions and serials only. A completion
+  wakes the one reaction of the waiting frame (`varta.net.watch`, the timer
+  frame shape); never resolve a guest promise from the host and never retain
+  a guest reference.
+- Every capability decision of an asynchronous operation goes through
+  `runtime::permission` before any effect, and a v37 denial is recoverable
+  (`NotAllowedError`) and logged. Keep v36's fatal timer denial unchanged;
+  v37 binds `timer_start_v2`. A future "pending" broker answer must keep the
+  operation without effect until decided, and a user grant must still satisfy
+  the host ceiling.
+- `net.request` matches the full operation id, URL scopes and exact methods of
+  both the package and the host ceiling; never let `net.fetch`, `net.get` or
+  `net.listen` grant it, never resolve names or connect before the decision,
+  and keep redirects manual in the transport (the prelude re-checks each
+  followed hop).
+- Transfers run only inside the event loop's wait on the execution's
+  current-thread Tokio runtime; bound every phase by the remaining deadline and
+  the `net` limits. Body text is decoded per chunk with a UTF-8 carry; bytes
+  wait for `Uint8Array` (the body element type is the seam).
+- Tests use only 127.0.0.1 with ephemeral ports (`net_loopback.rs`, a
+  test-only HTTPS trust anchor) and pin Node 24 output from
+  `net_cases/server.mjs`; never contact another host.

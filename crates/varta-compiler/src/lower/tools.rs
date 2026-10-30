@@ -265,7 +265,7 @@ fn expression(
             expression(start, functions, visited, effects);
             expression(end, functions, visited, effects);
         }
-        E::StringTrim { value, .. } => {
+        E::StringTrim { value, .. } | E::TextUnits { value, .. } => {
             expression(value, functions, visited, effects);
         }
         E::StringRepeat {
@@ -312,7 +312,10 @@ fn expression(
                 expression(value, functions, visited, effects);
             }
         }
-        E::Math(_, args) | E::NumberPredicate(_, args) => {
+        E::Math(_, args)
+        | E::NumberPredicate(_, args)
+        | E::Intrinsic(_, args)
+        | E::RegExp(_, args) => {
             for arg in args {
                 expression(arg, functions, visited, effects);
             }

@@ -2,6 +2,11 @@
 //! and `finally` reactions, each a job frame of a synthesized function.
 use super::*;
 
+/// Field names of the `Promise.withResolvers` record (v36).
+const WITH_RESOLVERS_PROMISE: &str = "promise";
+const WITH_RESOLVERS_RESOLVE: &str = "resolve";
+const WITH_RESOLVERS_REJECT: &str = "reject";
+
 impl Lower<'_> {
     /// `new Promise<T>((resolve, reject) => ...)`: the executor runs now with
     /// two resolving closures sharing the promise's one-time resolution flag;
@@ -76,6 +81,8 @@ impl Lower<'_> {
             initialized: true,
             mutable: false,
             readonly: false,
+            tdz: None,
+            global: None,
         };
         let mut body = vec![
             S::Init(exec, executor),
@@ -135,6 +142,137 @@ impl Lower<'_> {
             },
         })
     }
+    /// `Promise.withResolvers<T>()` (v36 `function_fields`): a pending promise
+    /// and the `resolve`/`reject` closures of `new Promise`, as the record
+    /// `{ promise, resolve, reject }` (in that own-key order) whose function
+    /// fields are value17 function values.
+    fn promise_with_resolvers(&mut self, call: &ast::CallExpr) -> Result<Expr> {
+        let span = call.span;
+        if !call.args.is_empty() {
+            return Err(self
+                .source
+                .locate(rejected("Promise.withResolvers arguments"), span));
+        }
+        let value = self
+            .explicit_value(call.type_args.as_deref(), "Promise.withResolvers")?
+            .ok_or_else(|| {
+                self.source.locate(
+                    type_error("Promise.withResolvers requires a type argument"),
+                    span,
+                )
+            })?;
+        let ty = intern(value, self.types).map_err(|e| self.source.locate(e, span))?;
+        let Type::Promise(id) = ty else {
+            return Err(CompilerError::Internal("missing promise".into()));
+        };
+        let reason = self.exception_type()?;
+        let resolve_ty = intern_full(
+            None,
+            vec![stored(value)],
+            ir::ParameterShape {
+                optional: vec![value == Type::Void],
+                rest: false,
+            },
+            Type::Void,
+            self.types,
+        )?;
+        let reject_ty = intern_full(
+            None,
+            vec![reason],
+            ir::ParameterShape {
+                optional: vec![true],
+                rest: false,
+            },
+            Type::Void,
+            self.types,
+        )?;
+        let promise = self.hidden(ty);
+        let binding = Binding {
+            identity: (self.index, promise),
+            slot: promise,
+            ty: Some(ty),
+            initialized: true,
+            mutable: false,
+            readonly: false,
+            tdz: None,
+            global: None,
+        };
+        let mut body = vec![S::Init(promise, self.promise_object(span, id, None)?)];
+        let mut functions = Vec::new();
+        for (helper, function_ty) in [
+            (Helper::ResolveFunction, resolve_ty),
+            (Helper::RejectFunction, reject_ty),
+        ] {
+            let index = self.resolving_function(span, id, helper, &binding)?;
+            let slot = self.capture_binding(&binding)?;
+            functions.push(Expr {
+                span,
+                ty: function_ty,
+                kind: E::FunctionRef {
+                    index,
+                    fresh: true,
+                    captures: vec![slot],
+                },
+            });
+        }
+        let field = |name: &str, ty| ir::RecordField {
+            name: name.into(),
+            ty,
+            optional: false,
+        };
+        let record = records::intern(
+            vec![
+                field(WITH_RESOLVERS_PROMISE, ty),
+                field(WITH_RESOLVERS_REJECT, reject_ty),
+                field(WITH_RESOLVERS_RESOLVE, resolve_ty),
+            ],
+            self.types,
+        )?;
+        let Type::Record(shape) = record else {
+            return Err(CompilerError::Internal("missing resolvers record".into()));
+        };
+        let slot = |name: &str, types: &ir::ValueTypes| {
+            types.records[shape as usize]
+                .fields
+                .iter()
+                .position(|field| field.name == name)
+                .map(|slot| slot as u32)
+                .ok_or_else(|| CompilerError::Internal("missing resolvers field".into()))
+        };
+        let mut functions = functions.into_iter();
+        let (Some(resolve), Some(reject)) = (functions.next(), functions.next()) else {
+            return Err(CompilerError::Internal(
+                "missing resolving functions".into(),
+            ));
+        };
+        let fields = vec![
+            (
+                slot(WITH_RESOLVERS_PROMISE, self.types)?,
+                local(span, promise, ty),
+            ),
+            (slot(WITH_RESOLVERS_RESOLVE, self.types)?, resolve),
+            (slot(WITH_RESOLVERS_REJECT, self.types)?, reject),
+        ];
+        let output = self.hidden(record);
+        body.push(S::Init(
+            output,
+            Expr {
+                span,
+                ty: record,
+                kind: E::Record(fields),
+            },
+        ));
+        Ok(Expr {
+            span,
+            ty: record,
+            kind: E::ValueBlock {
+                output,
+                marker: self.hidden(Type::Number),
+                roots: vec![output],
+                body,
+            },
+        })
+    }
     /// The resolve or reject closure of `new Promise`: it captures the promise
     /// and settles it only on its first call through either closure.
     fn resolving_function(
@@ -164,6 +302,7 @@ impl Lower<'_> {
                     },
                     capture: Some(binding),
                     scheduled: false,
+                    result: Type::Void,
                 },
                 |child, params, captured| {
                     let p = captured
@@ -189,8 +328,8 @@ impl Lower<'_> {
             )
         })
     }
-    /// `Promise.resolve(v)` and `Promise.reject(e)`; the combinators are
-    /// rejected by name.
+    /// `Promise.resolve(v)` and `Promise.reject(e)`; under v35 also the
+    /// combinators, which earlier profiles reject by name.
     pub(in crate::lower) fn promise_static(
         &mut self,
         call: &ast::CallExpr,
@@ -204,6 +343,14 @@ impl Lower<'_> {
                 .locate(rejected("computed Promise member"), member.span));
         };
         let method = name.sym.as_ref();
+        if self.types.profile.promise_values()
+            && let Some(combinator) = super::combinators::Combinator::from_name(method)
+        {
+            return self.promise_combinator(call, combinator);
+        }
+        if method == "withResolvers" && self.types.profile.function_fields() {
+            return self.promise_with_resolvers(call);
+        }
         if !matches!(method, "resolve" | "reject") {
             return Err(self
                 .source
@@ -247,6 +394,12 @@ impl Lower<'_> {
                 }
                 return Ok(value);
             }
+            if self.promise_member(value.ty, value.span)?.is_some() {
+                return self
+                    .resolve_union(span, value, context)?
+                    .ok_or_else(|| CompilerError::Internal("missing promise member".into()));
+            }
+            let value = self.guarded_unknown(value)?;
             let target = context.unwrap_or(value.ty);
             let ty = intern(target, self.types).map_err(|e| self.source.locate(e, span))?;
             let Type::Promise(id) = ty else {

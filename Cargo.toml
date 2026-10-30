@@ -38,7 +38,41 @@ ureq = { version = "=3.5.0", default-features = false }
 url = "=2.5.8"
 
 # Server framing/timers use maintained HTTP and async I/O implementations.
-hyper = { version = "=1.12.0", default-features = false, features = ["server", "http1"] }
+hyper = { version = "=1.12.0", default-features = false, features = ["server", "client", "http1"] }
 hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
 http-body-util = "=0.1.5"
 tokio = { version = "=1.54.1", default-features = false, features = ["rt", "net", "sync", "time", "macros"] }
+# HTTPS for `net.request` (v37 `fetch`): rustls with the ring provider (no
+# OpenSSL, no aws-lc C build) and the compiled-in Mozilla root set, so
+# certificate trust never depends on an ambient system store.
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "=1.0.11"
+# Test-only: certificates for the loopback HTTPS server of the runtime tests.
+rcgen = { version = "=0.13.2", default-features = false, features = ["crypto", "pem", "ring"] }
+
+# Debug and test builds optimize only the Wasm code generator: validating or
+# running a large guest module compiles it with Cranelift, which unoptimized
+# takes seconds per module and let `build --single` launcher probes and
+# wall-clock-bound tests race their deadlines under parallel test load.
+# Release builds and every guest limit are unchanged.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.cranelift-bitset]
+opt-level = 3
+[profile.dev.package.cranelift-control]
+opt-level = 3
+[profile.dev.package.cranelift-assembler-x64]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+[profile.dev.package.wasmtime-environ]
+opt-level = 3

@@ -132,6 +132,57 @@ impl Inference {
                     _ => Ok(()),
                 }
             }
+            // `Promise<T>` against a promise infers `T` from its value (v35).
+            ast::TsType::TsTypeRef(reference)
+                if types.profile.async_methods()
+                    && matches!(&reference.type_name, ast::TsEntityName::Ident(id)
+                    if id.sym == "Promise"
+                        && !in_definition(self.module, &Frame::new(), types, |t| {
+                            named::declared(t, "Promise")
+                        })) =>
+            {
+                match (
+                    reference.type_params.as_deref().map(|p| &p.params[..]),
+                    actual,
+                ) {
+                    (Some([value]), Type::Promise(id)) => {
+                        let stored = types.promises[id as usize].value;
+                        self.unify(value, stored, types, depth + 1)
+                    }
+                    _ => Ok(()),
+                }
+            }
+            // `AsyncIterable<T, TReturn, TNext>` and the other async generator
+            // names against an async generator infer from its types (v36).
+            ast::TsType::TsTypeRef(reference)
+                if types.profile.async_generators()
+                    && matches!(&reference.type_name, ast::TsEntityName::Ident(id)
+                    if promises::async_generator_name(id.sym.as_ref())
+                        && !in_definition(self.module, &Frame::new(), types, |t| {
+                            named::declared(t, id.sym.as_ref())
+                        })) =>
+            {
+                let Type::Generator(id) = actual else {
+                    return Ok(());
+                };
+                let generator = types.generators[id as usize];
+                if generator.asynchronous.is_none() {
+                    return Ok(());
+                }
+                let params = reference
+                    .type_params
+                    .as_deref()
+                    .map(|p| &p.params[..])
+                    .unwrap_or_default();
+                for (pattern, ty) in
+                    params
+                        .iter()
+                        .zip([generator.yielded, generator.returned, generator.next])
+                {
+                    self.unify(pattern, ty, types, depth + 1)?;
+                }
+                Ok(())
+            }
             ast::TsType::TsUnionOrIntersectionType(
                 ast::TsUnionOrIntersectionType::TsUnionType(union),
             ) => self.union(union, actual, types, depth),
@@ -153,6 +204,29 @@ impl Inference {
                     types,
                     depth + 1,
                 )
+            }
+            // `{ [key: string]: T }` (v35 `mixed_index_records`).
+            ast::TsType::TsTypeLit(literal)
+                if types.profile.mixed_index_records()
+                    && let [ast::TsTypeElement::TsIndexSignature(index)] =
+                        literal.members.as_slice()
+                    && let Some(value) = index.type_ann.as_deref() =>
+            {
+                self.index_value(&value.type_ann, actual, types, depth)
+            }
+            ast::TsType::TsTypeRef(reference)
+                if types.profile.mixed_index_records()
+                    && matches!(&reference.type_name, ast::TsEntityName::Ident(id)
+                    if id.sym == "Record"
+                        && !in_definition(self.module, &Frame::new(), types, |t| {
+                            named::declared(t, "Record")
+                        }))
+                    && let Some([key, value]) =
+                        reference.type_params.as_deref().map(|p| &p.params[..])
+                    && matches!(&**key, ast::TsType::TsKeywordType(k)
+                        if k.kind == ast::TsKeywordTypeKind::TsStringKeyword) =>
+            {
+                self.index_value(value, actual, types, depth)
             }
             ast::TsType::TsTypeLit(literal) => {
                 let Type::Record(id) = actual else {
@@ -229,6 +303,33 @@ impl Inference {
             }
         }
         Ok(())
+    }
+    /// The value type of a `Record<string, T>` or index signature pattern:
+    /// a dictionary argument's value type, or the union of the field types of
+    /// a record argument (an object literal), with literal types widened.
+    fn index_value(
+        &mut self,
+        pattern: &ast::TsType,
+        actual: Type,
+        types: &mut ir::ValueTypes,
+        depth: usize,
+    ) -> Result<()> {
+        let value = match actual {
+            Type::Dictionary(id) => types.dictionaries[id as usize].value,
+            Type::Record(id) if types.records[id as usize].class.is_none() => {
+                let fields: Vec<_> = types.records[id as usize]
+                    .fields
+                    .iter()
+                    .map(|field| field.ty.erased())
+                    .collect();
+                if fields.is_empty() {
+                    return Ok(());
+                }
+                unions::intern(fields, types)?
+            }
+            _ => return Ok(()),
+        };
+        self.unify(pattern, value, types, depth + 1)
     }
     fn element(
         &mut self,
@@ -355,7 +456,7 @@ impl Lower<'_> {
         }
         let function = generics::function(self.types, id);
         let inferred = call.type_args.is_none();
-        let (args, mut values) = if let Some(explicit) = &call.type_args {
+        let (args, values) = if let Some(explicit) = &call.type_args {
             let explicit = generics::arguments(explicit, self.types)
                 .map_err(|e| self.source.locate(e, explicit.span))?;
             (explicit.into_iter().map(Some).collect(), Vec::new())
@@ -364,6 +465,27 @@ impl Lower<'_> {
         };
         let signature = generics::instantiate(id, &args, self.next_function, self.types)
             .map_err(|e| self.source.locate(e, span))?;
+        // An object literal typed on its own while it determined the value
+        // type of a `Record<string, T>` parameter (v35) is copied into the
+        // instantiated dictionary, keeping its key order.
+        let values = self.instance_arguments(call, values, &signature)?;
+        let args = self.bind_instance_arguments(values, &signature, &function, inferred, span)?;
+        Ok(Expr {
+            span,
+            ty: signature.result,
+            kind: E::Call(signature.index, args),
+        })
+    }
+    /// Lower the arguments the inference left unlowered against the
+    /// instantiated parameters and bind them; v35 dictionary parameters copy
+    /// an object literal typed on its own.
+    pub(super) fn instance_arguments(
+        &mut self,
+        call: &ast::CallExpr,
+        mut values: Vec<Expr>,
+        signature: &Signature,
+    ) -> Result<Vec<Expr>> {
+        let span = call.span;
         arguments::count(call.args.len(), &signature.shape)
             .map_err(|e| self.source.locate(e, span))?;
         for (index, arg) in call.args.iter().enumerate().skip(values.len()) {
@@ -371,31 +493,52 @@ impl Lower<'_> {
                 arguments::context(index, &signature.params, &signature.shape, self.types);
             values.push(self.expr_expected(&arg.expr, context)?);
         }
-        let args = self
-            .bind_arguments(values, &signature.params, &signature.shape, span)
+        if self.types.profile.mixed_index_records() {
+            for (value, &param) in values.iter_mut().zip(&signature.params) {
+                if matches!(param, Type::Dictionary(_)) && matches!(value.ty, Type::Record(_)) {
+                    let record = std::mem::replace(
+                        value,
+                        Expr {
+                            span,
+                            ty: Type::Undefined,
+                            kind: E::Integer(0),
+                        },
+                    );
+                    *value = self.dictionary_from_record(record, param)?;
+                }
+            }
+        }
+        Ok(values)
+    }
+    /// Bind instantiated arguments; when the type arguments were inferred, a
+    /// mismatch says so.
+    pub(super) fn bind_instance_arguments(
+        &mut self,
+        values: Vec<Expr>,
+        signature: &Signature,
+        function: &generics::Function,
+        inferred: bool,
+        span: swc_common::Span,
+    ) -> Result<Vec<Expr>> {
+        self.bind_arguments(values, &signature.params, &signature.shape, span)
             .map_err(|error| match error.diagnostic() {
                 // An argument typed on its own (without context) fixed the
                 // instantiation; say so instead of only reporting the mismatch.
                 Some(diagnostic) if inferred => self.source.locate(
                     type_error(format!(
-                        "{} (type arguments of function {} were inferred from the arguments \
+                        "{} (type arguments of {} {} were inferred from the arguments \
                          without contextual typing; provide explicit type arguments)",
-                        diagnostic.message, function.name
+                        diagnostic.message, function.kind, function.name
                     )),
                     span,
                 ),
                 _ => error,
-            })?;
-        Ok(Expr {
-            span,
-            ty: signature.result,
-            kind: E::Call(signature.index, args),
-        })
+            })
     }
     /// Lower every argument in source order: against its parameter type when
     /// that type is already determined, otherwise on its own (or against the
     /// constraint of a bare type parameter) and unify the result.
-    fn infer(
+    pub(super) fn infer(
         &mut self,
         function: &generics::Function,
         call: &ast::CallExpr,
@@ -403,7 +546,7 @@ impl Lower<'_> {
     ) -> Result<(Vec<Option<Type>>, Vec<Expr>)> {
         let mut inference = Inference {
             module: function.module,
-            owner: format!("function {}", function.name),
+            owner: format!("{} {}", function.kind, function.name),
             names: function
                 .params
                 .params

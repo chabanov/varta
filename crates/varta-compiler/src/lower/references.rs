@@ -41,6 +41,8 @@ pub(super) enum Guard {
     Nullish,
     /// `local === constant` against an interned singleton literal set (v32).
     Literal(Type),
+    /// `typeof x === "function"` (v36 `function_fields`): the function member.
+    Function,
 }
 impl Guard {
     pub fn matches(self, ty: Type) -> bool {
@@ -51,6 +53,7 @@ impl Guard {
                         || ty.error_class() == Some(class))
             }
             Self::Exact(t) => t == ty.erased(),
+            Self::Function => matches!(ty, Type::Function(_)),
             // Literal guards refine through `literals::refine`, never by member.
             Self::Literal(_) => false,
             Self::Object => matches!(
@@ -80,7 +83,11 @@ impl Guard {
     }
 }
 impl Lower<'_> {
-    pub(super) fn context(&self, expression: &ast::Expr, expected: Option<Type>) -> Option<Type> {
+    pub(super) fn context(
+        &mut self,
+        expression: &ast::Expr,
+        expected: Option<Type>,
+    ) -> Option<Type> {
         if !self.types.profile.reference_unions() {
             return expected;
         }
@@ -89,12 +96,34 @@ impl Lower<'_> {
             return Some(ty);
         }
         let members = unions::members(ty, self.types);
+        // V37: the record member an object literal matches (`shared`).
+        if let ast::Expr::Object(object) = stmt::unparen(expression)
+            && self.types.profile.language_core()
+            && let Some(record) = self.literal_member(object, &members)
+        {
+            return Some(record);
+        }
+        // V37: the array member whose element type a literal first element has.
+        if let ast::Expr::Array(array) = stmt::unparen(expression)
+            && self.types.profile.language_core()
+            && let Some(Some(element)) = array.elems.first()
+            && element.spread.is_none()
+            && let Some(literal) = parameters::literal(&element.expr, self.types)
+            && let Some(array) = members.iter().copied().find(|ty| {
+                matches!(ty, Type::Array(id)
+                    if unions::members(self.types.arrays[*id as usize], self.types)
+                        .iter()
+                        .any(|member| member.erased() == literal.erased()))
+            })
+        {
+            return Some(array);
+        }
         members
             .iter()
             .copied()
             .find(|ty| match expression {
                 ast::Expr::Object(_) => matches!(ty, Type::Record(_)),
-                ast::Expr::Array(_) => matches!(ty, Type::Array(_)),
+                ast::Expr::Array(_) => matches!(ty, Type::Array(_) | Type::Tuple(_)),
                 _ => false,
             })
             .or_else(|| {
@@ -116,6 +145,9 @@ impl Lower<'_> {
         expected: Option<Type>,
         hints: Option<AggregateHints>,
     ) -> Result<Expr> {
+        if let Some(narrowed) = self.narrowed_path_conditional(branch, expected)? {
+            return Ok(narrowed);
+        }
         let test = self.condition(&branch.test)?;
         let saved = self.flow_snapshot();
         self.guard(&branch.test, true)?;
@@ -179,7 +211,9 @@ impl Lower<'_> {
     pub(super) fn refine(&mut self, name: &str, matched: Guard, positive: bool) -> Result<()> {
         self.refine_with(name, |ty, types| {
             if ty == Type::Unknown {
-                unknown::refine(matched, positive)
+                unknown::refine(matched, positive, types)
+            } else if let Type::Object(nullable) = ty {
+                unknown::refine_object(matched, positive, nullable)
             } else if let Guard::Literal(single) = matched {
                 literals::refine(ty, single, positive, types).map(|refined| vec![refined])
             } else if ty.is_union() {
@@ -189,6 +223,12 @@ impl Lower<'_> {
                         .filter(|ty| matched.matches(*ty) == positive)
                         .collect(),
                 )
+            } else if types.profile.language_core()
+                && !matches!(matched, Guard::Truth(_))
+                && matched.matches(ty) != positive
+            {
+                // V37: a narrowed binding the guard excludes becomes `never`.
+                Some(Vec::new())
             } else {
                 None
             }
@@ -213,6 +253,14 @@ impl Lower<'_> {
         let Some(remaining) = select(ty, self.types) else {
             return Ok(());
         };
+        // V37 (`language_core`): a guard that excludes every member of a
+        // union leaves `never` (the branch is unreachable).
+        if remaining.is_empty() && ty != Type::Never && self.types.profile.language_core() {
+            if !self.guard_blocked.contains(&binding.slot) {
+                self.refinements.insert(binding.slot, Type::Never);
+            }
+            return Ok(());
+        }
         if self.types.profile.truth_guards()
             && (remaining.is_empty() || remaining == unions::members(ty, self.types))
         {

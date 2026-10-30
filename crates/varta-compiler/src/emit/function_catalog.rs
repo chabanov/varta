@@ -70,6 +70,24 @@ pub(super) fn build(
                 {
                     CaptureType::Unknown
                 }
+                // A union of several record shapes or arrays (v37
+                // `language_core`) is a shallow cell node too: the guest tells
+                // its members apart by descriptor and element kind.
+                Type::Union(id) | Type::ReferenceUnion(id)
+                    if self.types.profile.language_core()
+                        && (self.types.unions[id as usize]
+                            .iter()
+                            .filter(|member| matches!(member, Type::Record(_) | Type::Class(_)))
+                            .count()
+                            > 1
+                            || self.types.unions[id as usize]
+                                .iter()
+                                .filter(|member| matches!(member, Type::Array(_)))
+                                .count()
+                                > 1) =>
+                {
+                    CaptureType::Unknown
+                }
                 Type::Union(id) | Type::ReferenceUnion(id) => {
                     let members = self.types.unions[id as usize]
                         .clone()
@@ -156,9 +174,15 @@ pub(super) fn build(
         }
     }
     FunctionCatalog {
-        // Frame layouts exist only in the versioned frame catalog.
+        // Frame layouts exist only in the versioned frame catalogs: cell
+        // layouts in version 2, liveness layouts (v35) in version 3.
         version: if frames.is_empty() {
             varta_common::function::CATALOG_VERSION
+        } else if frames
+            .iter()
+            .any(varta_common::function::FrameLayout::liveness)
+        {
+            varta_common::function::frame::FRAME_LIVENESS_CATALOG_VERSION
         } else {
             varta_common::function::frame::FRAME_CATALOG_VERSION
         },

@@ -1,6 +1,7 @@
 //! A bounded, deterministic graph of explicit source modules. No source text is
 //! concatenated and the compiler never performs ambient filesystem/network I/O.
 mod defaults;
+pub(crate) mod engine;
 mod syntax;
 #[cfg(test)]
 mod tests;
@@ -116,8 +117,10 @@ impl Graph {
         Ok(builder.graph)
     }
     pub(crate) fn metadata(&self) -> Vec<varta_common::ModuleInfo> {
+        // Engine preludes are compiler-owned, not program sources.
         self.order
             .iter()
+            .filter(|path| !engine::is_prelude(path))
             .map(|path| {
                 let unit = &self.units[path];
                 varta_common::ModuleInfo {
@@ -126,6 +129,7 @@ impl Graph {
                         .imports
                         .iter()
                         .map(|i| i.target.clone())
+                        .filter(|target| !engine::is_prelude(target))
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .collect(),
@@ -153,6 +157,21 @@ impl Builder<'_> {
             exports,
             stars,
         } = syntax::scan(&mut ast, &source, &input.path, self.loader, self.profile)?;
+        if let Some(import) = imports.iter().find(|i| engine::is_prelude(&i.target)) {
+            return Err(source.locate(
+                module_error(format!(
+                    "module path {} is reserved for an engine prelude",
+                    import.target.display()
+                )),
+                import.span,
+            ));
+        }
+        imports.extend(engine::implicit_imports(
+            &input.path,
+            &ast,
+            &imports,
+            self.profile,
+        ));
         self.imports += imports.len();
         if self.imports > MAX_IMPORTS {
             return Err(source.locate(
@@ -179,9 +198,13 @@ impl Builder<'_> {
                     {
                         return Err(module_error("module graph exceeds module/depth limits"));
                     }
+                    let text = match engine::prelude(&import.target) {
+                        Some(prelude) => prelude.text(self.profile).to_owned(),
+                        None => self.loader.load(&import.target)?,
+                    };
                     self.visit(ModuleSource {
                         path: import.target.clone(),
-                        text: self.loader.load(&import.target)?,
+                        text,
                     })?;
                 }
                 Ok(())

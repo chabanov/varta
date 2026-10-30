@@ -3969,7 +3969,8 @@ export function main(): void {
 Keys enumerate like JavaScript objects: integer-like keys first in numeric
 order, then the rest in insertion order. `varta.json.parse<Record<string, T>>`
 accepts any keys and rejects duplicates. A type that mixes declared fields
-with an index signature, number keys and `{ ...spread }` are not supported yet.
+with an index signature, number keys and `{ ...spread }` are not supported in
+v34; v35 adds them.
 
 #### Recursive types (opt-in v34)
 
@@ -4139,10 +4140,1073 @@ export function main(): void {
 argument or the context (`Promise.reject<number>(e)`). A rejection that still
 has no handler when the microtasks are done terminates the program with
 `unhandled promise rejection: <reason>`; a handler attached by a later
-microtask is in time.
+microtask is in time. A long reason is cut and ends with `[reason truncated]`.
+
+Under v35 the same programs keep only the values live across each `await` or
+`yield` in their suspended frames, so a suspension costs about half the fuel
+it costs under v34; nothing changes in the source.
 
 A promise lives in locals, parameters, results and closures and compares by
 identity; arrays, records, unions, `JSON.stringify`, `console.log` and
 `typeof` reject it, and so do `Promise.all`, `Promise.race`, `allSettled` and
 `any` for now. Async arrows, function expressions and class methods, `for
-await`, async generators and top-level `await` are rejected with a diagnostic.
+await`, async generators and top-level `await` are rejected with a diagnostic
+(v35 admits async methods and closures).
+
+### `checked-f64-utf16-v35`
+
+Profile v35 (in development) adds async methods and closures, promise values,
+the pilot's mixed records and dynamic JSON, and the engine Web types on top
+of v34, and runs every v34 program unchanged.
+
+#### Async methods and closures (opt-in v35)
+
+Class methods, arrows and function expressions may be `async`. A method keeps
+`this` across `await`, overrides and `super.m()` work as for other methods,
+and an async closure shares the bindings it captures with the code around it:
+
+```ts
+class Client {
+  base: string;
+  constructor(base: string) {
+    this.base = base;
+  }
+  async request(path: string, retries?: number): Promise<string> {
+    await null;                                   // one microtask
+    return `${this.base}${path} (retries ${retries ?? 0})`;
+  }
+}
+class Pages {
+  client: Client;
+  constructor(client: Client) {
+    this.client = client;
+  }
+  async list(page?: number): Promise<string> {
+    return await this.client.request(`/pages/${page ?? 1}`);
+  }
+}
+async function withRetry<T>(run: () => Promise<T>, attempts: number): Promise<T> {
+  for (let i = 1; i < attempts; i++) {
+    try {
+      return await run();
+    } catch (error) {
+      console.log(`attempt ${i} failed`);
+    }
+  }
+  return await run();
+}
+export async function main(): Promise<void> {
+  const pages = new Pages(new Client("api"));
+  console.log(await pages.list());                // api/pages/1 (retries 0)
+  let calls = 0;
+  const text = await withRetry(async () => {
+    calls++;                                      // shared with main across await
+    if (calls < 2) {
+      throw new Error("busy");
+    }
+    return pages.list(calls);
+  }, 3);                                          // attempt 1 failed
+  console.log(`${text} after ${calls} calls`);    // api/pages/2 (retries 0) after 2 calls
+}
+```
+
+An async arrow takes its `Promise<T>` from an annotation or its context; an
+unannotated one infers `T` from what it returns. Optional, default and rest
+parameters work in every async function. Generic methods remain unsupported.
+
+#### Promise values and combinators (opt-in v35)
+
+Promises can be kept in arrays, records, dictionaries, unions and `unknown`,
+and combined with `Promise.all`, `Promise.race`, `Promise.any` and
+`Promise.allSettled`:
+
+```ts
+interface Download {
+  name: string;
+  done: Promise<number>;
+}
+async function fetchSize(name: string, ticks: number): Promise<number> {
+  for (let i = 0; i < ticks; i++) {
+    await null;
+  }
+  if (name === "broken") {
+    throw new Error(`cannot fetch ${name}`);
+  }
+  return name.length * 100;
+}
+export async function main(): Promise<void> {
+  const downloads: Download[] = [
+    { name: "a", done: fetchSize("a", 2) },
+    { name: "bb", done: fetchSize("bb", 1) },
+  ];
+  const pending: Promise<number>[] = [];
+  for (let i = 0; i < downloads.length; i++) {
+    pending.push(downloads[i]!.done);
+  }
+  console.log(pending[0]);                        // Promise { <pending> }
+  const sizes = await Promise.all(pending);
+  console.log(`${sizes[0]} ${sizes[1]}`);         // 100 200
+  const fastest = await Promise.race([fetchSize("slow", 3), fetchSize("quick", 1)]);
+  console.log(fastest);                           // 500
+  const results = await Promise.allSettled([fetchSize("ok", 0), fetchSize("broken", 0)]);
+  console.log(JSON.stringify(results));           // [{"status":"fulfilled","value":200},{"status":"rejected","reason":{}}]
+  const cached: Promise<number> | number = sizes[0]!;
+  console.log(await cached);                      // 100
+}
+```
+
+`await` of `T | Promise<T>` waits for the promise when there is one.
+`Promise.any` rejects with an `Error("All promises were rejected")` (there is
+no `AggregateError`), an `allSettled` result's `value` is typed
+`T | undefined`, and awaiting a promise hidden in `unknown` throws a
+`TypeError`: keep promises typed as `Promise<T>`.
+
+#### Mixed index records (opt-in v35)
+
+An object type may declare fields next to a string index signature. Declared
+fields keep their types; other keys read `T | undefined`:
+
+```ts
+interface ProblemDocument {
+  type?: string;
+  title?: string;
+  status?: number;
+  [key: string]: unknown;
+}
+
+export function main(): void {
+  const doc: ProblemDocument = { status: 404, traceId: "t-1" };
+  doc.title = "Not Found";
+  const status = doc.status;                      // number | undefined
+  console.log(JSON.stringify(doc));               // {"status":404,"traceId":"t-1","title":"Not Found"}
+  console.log(String(status) + " " + String(doc["traceId"])); // 404 t-1
+  delete doc.status;
+  console.log(JSON.stringify(Object.keys(doc)));  // ["traceId","title"]
+}
+```
+
+Every declared type must fit the index type (`title?: string` needs an index
+type that admits `undefined`). Because any key can also be written through
+`doc[key]` or a `Record<string, unknown>` alias, a declared read checks the
+stored value and throws `TypeError` if it no longer has the declared type.
+
+Dictionaries also support `for...in`, compound and logical assignment,
+`++`/`--`, spreads, number keys and `Record<string, T>` inference:
+
+```ts
+function keysOf<T>(values: Record<string, T>): string[] {
+  return Object.keys(values);
+}
+
+export function main(): void {
+  const counts: Record<string, number> = { b: 1 };
+  for (const word of ["a", "b", "a"]) {
+    if (word !== undefined) {
+      counts[word] ??= 0;
+      counts[word] += 1;
+    }
+  }
+  counts[7] = 0;                                   // the key "7"
+  const all: Record<string, number> = { ...counts, total: 4 };
+  for (const key in all) {
+    console.log(key + "=" + String(all[key]));     // 7=0, b=2, a=2, total=4
+  }
+  console.log(JSON.stringify(keysOf({ y: 1, x: 2 }))); // ["y","x"]
+}
+```
+
+A spread needs a dictionary type from the context (an annotation or a
+parameter); a long run of dictionary writes in one function stays small,
+because v35 shares one function per dictionary type for reads, writes and
+deletes.
+
+A class may declare optional fields and redeclare an inherited field with the
+same type, such as `readonly cause?: unknown` in an `Error` subclass. As in
+JavaScript, such a redeclaration sets the field to `undefined` after
+`super(...)` unless it is written `declare`.
+
+#### `JSON.parse` and `unknown` (opt-in v35)
+
+`JSON.parse(text)` returns `unknown` (never `any`). Narrow it, or assert the
+type you expect; `JSON.parse(text) as T` checks the whole value against `T`:
+
+```ts
+interface Item { id: number; tags: string[] }
+
+function describe(value: unknown): string {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    if ("status" in value) {
+      return "status " + String(value.status);    // value.status: unknown
+    }
+    return "keys " + JSON.stringify(Object.keys(value));
+  }
+  return typeof value;
+}
+
+export function main(): void {
+  console.log(describe(JSON.parse('{"status":410}')));  // status 410
+  console.log(describe(JSON.parse('{"b":1,"a":2}')));   // keys ["b","a"]
+  const item = JSON.parse('{"id":1,"tags":["x"]}') as Item;
+  console.log(String(item.id));                         // 1
+  const bag = JSON.parse('{"k":true}') as Record<string, unknown>;
+  console.log(String(bag["k"]));                        // true
+}
+```
+
+Parsed objects are `Record<string, unknown>` and arrays `unknown[]`. Duplicate
+keys and numbers too large for a double (`1e400`) throw `TypeError` instead of
+being accepted. After `typeof value === "object"` and a null test you can use
+`in`, `Object.keys`, `Object.entries` and `for...in`; these throw `TypeError`
+when the value is an array, class instance or other non-JSON object.
+
+#### Headers (opt-in v35)
+
+`Headers` and `HeadersInit` are built in: a program that uses them needs no
+import and no permission. Names are case-insensitive, a name's values join
+with `", "`, and iteration is sorted by name:
+
+```ts
+function numericHeader(headers: Headers, name: string): number | undefined {
+  const value = headers.get(name);
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+export function main(): void {
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  headers.append('Retry-After', ' 30 ');           // value whitespace is trimmed
+  headers.append('accept', 'text/plain');
+  headers.append('Accept', 'application/json');
+  console.log(headers.get('ACCEPT'));               // text/plain, application/json
+  console.log(String(numericHeader(headers, 'retry-after'))); // 30
+  for (const [name, value] of headers) {
+    console.log(`${name}: ${value}`);               // accept, content-type, retry-after
+  }
+  headers.forEach((value, name) => {
+    if (name === 'content-type') console.log(value); // application/json
+  });
+  try {
+    headers.set('bad name', 'x');
+  } catch (error) {
+    if (error instanceof TypeError) console.log(error.message);
+    // Headers.set: "bad name" is an invalid header name.
+  }
+}
+```
+
+`new Headers(init)` takes another `Headers`, a `Record<string, string>` or an
+array of `[name, value]` arrays. `get`, `set`, `append`, `has`, `delete`,
+`getSetCookie` and `forEach` behave as in Node, including the `TypeError`
+messages for invalid names and values, and every `set-cookie` value is its own
+entry. `entries()`, `keys()` and `values()` return arrays (snapshots) rather
+than iterators. Tuple types are not supported yet, so a destructured
+`[name, value]` is `string | undefined`: use it in a template, narrow it or
+assert it with `!`. `JSON.stringify` of a `Headers` is rejected. Like
+TypeScript, v35 lets a callback declare fewer parameters than its function
+type, as in `forEach((value, name) => …)`.
+
+#### AbortController and AbortSignal (opt-in v35)
+
+`AbortController`, `AbortSignal` and `DOMException` are built in as well; there
+are no timers, so code checks or throws the signal itself:
+
+```ts
+async function step(n: number, signal: AbortSignal): Promise<number> {
+  signal.throwIfAborted();                          // throws signal.reason
+  await null;
+  return n * 2;
+}
+
+export async function main(): Promise<void> {
+  const controller = new AbortController();
+  const first = await step(1, controller.signal);
+  console.log(String(first));                             // 2
+  controller.abort();
+  console.log(String(controller.signal.aborted));         // true
+  try {
+    await step(2, controller.signal);
+  } catch (error) {
+    if (error instanceof DOMException) {
+      console.log(`${error.name} ${error.code}`);         // AbortError 20
+    }
+  }
+  const stopped = AbortSignal.abort('shutdown');
+  console.log(String(stopped.reason));                    // shutdown
+}
+```
+
+`abort()` without a reason uses a `DOMException` named `AbortError`, which is
+also an `Error`; `signal.reason` is `unknown`. `addEventListener`,
+`removeEventListener`, `onabort`, `AbortSignal.timeout`, `AbortSignal.any` and
+`new AbortSignal()` are rejected with a diagnostic (v36 admits all but the
+constructor, see [abort listeners](#function-fields-opt-in-v36) and
+[timers](#timers-opt-in-v36)).
+
+### `checked-f64-utf16-v36`
+
+Profile v36 (in development) runs every v35 program unchanged and adds
+function values in fields, elements and unions, optional and defaulted
+function-typed parameters, optional chains, abort listeners,
+`AbortSignal.any`, `Promise.withResolvers`, checked declared fields of mixed
+records, timers (including `AbortSignal.timeout`), async generators and
+`for await`. Its values use value layout 17.
+
+#### Function fields (opt-in v36)
+
+A function value can live in an interface or class field, an array, a
+dictionary, a union or `unknown`. Calling a field reads it and calls it
+without `this`; an optional field is called with `?.()` or after narrowing:
+
+```ts
+interface Hooks {
+  onRetry?: (attempt: number) => void;      // optional function field
+  delay: (attempt: number) => number;
+}
+
+function backoff(attempt: number, random: () => number = Math.random): number {
+  return Math.round(100 * attempt * (1 + random()));
+}
+
+function retry(hooks: Hooks, attempts: number): number {
+  let total = 0;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    hooks.onRetry?.(attempt);               // skipped when absent
+    total += hooks.delay(attempt);          // called without `this`
+  }
+  return total;
+}
+
+export function main(): void {
+  const events: string[] = [];
+  const hooks: Hooks = {
+    onRetry: (attempt: number): void => {
+      events.push(`retry ${attempt}`);
+    },
+    delay: (attempt: number): number => backoff(attempt, (): number => 0.5),
+  };
+  console.log(String(retry(hooks, 2)));                 // 450
+  console.log(JSON.stringify(events));                  // ["retry 1","retry 2"]
+  console.log(JSON.stringify(hooks));                   // {} (functions are skipped)
+
+  const controller = new AbortController();
+  controller.signal.addEventListener('abort', (): void => {
+    events.push(`aborted ${String(controller.signal.reason)}`);
+  }, { once: true });
+  controller.abort('shutdown');
+  console.log(events[2] ?? '');                         // aborted shutdown
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  promise.then((value: string): void => {
+    console.log(value);                                 // ready
+  });
+  resolve('ready');
+}
+```
+
+A union may hold one function type (`(() => void) | undefined`), narrowed by
+truthiness, `!== undefined` or `typeof f === "function"`. `x?.p`, `x?.m()` and
+`f?.()` skip the rest of the chain when `x` or `f` is `undefined` or `null`.
+`Math.random` is the only built-in function usable as a value. Listeners take
+no event argument, and a logged function prints `[Function (anonymous)]`.
+Rejected: two function types in one union, a field whose function type has a
+`this` parameter called as `obj.f()`, a function-valued `toJSON` field under
+`JSON.stringify`, `x as () => void` on `unknown`, and `resolve(promise)`.
+
+#### Checked declared fields (opt-in v36)
+
+Next to `[key: string]: unknown`, a declared field may have any type that a
+JSON value can describe: arrays of (optional) records, nested records,
+dictionaries, unions of them and nested mixed records. Values built in the
+program are returned as they are; JSON values are converted on the first
+declared read and stored back:
+
+```ts
+interface ProblemDocument {
+  title?: string;
+  errors?: Array<{ field?: string; message?: string }>;
+  [key: string]: unknown;
+}
+
+function fields(problem: ProblemDocument): string {
+  let out = "";
+  for (const error of problem.errors ?? []) {
+    if (error !== undefined) out += String(error.field) + ";";
+  }
+  return out;
+}
+
+export function main(): void {
+  const built: ProblemDocument = { errors: [{ field: "a" }] };
+  const parsed: unknown = JSON.parse('{"title":"Bad","errors":[{"field":"name"}],"trace":1}');
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const problem = parsed as Record<string, unknown> as ProblemDocument;
+    const list = problem.errors;                          // converted once, stored back
+    if (list !== undefined) list.push({ field: "added" });
+    console.log(fields(problem) + " " + fields(built));  // name;added; a;
+    console.log(String(problem.errors === list));         // true
+    const { title, trace } = problem;                     // string | undefined, unknown
+    const reason = typeof problem.reason === "string" ? problem.reason : "none";
+    console.log(String(title) + " " + String(trace) + " " + reason); // Bad 1 none
+  }
+  const checked = JSON.parse('{"errors":[{"message":"m"}]}') as ProblemDocument;
+  console.log(fields(checked));                           // undefined;
+}
+```
+
+A value that does not fit the declared type throws `TypeError` at the read
+(TypeScript erases the types, so Node would return it); a converted record
+accepts exactly its declared keys. Two reads of an empty array return
+different arrays, and `x as Item[]` from a JSON array builds a fresh array.
+`a ?? []` takes its element type from `a`, `let x: unknown;` starts as
+`undefined`, and a function may end in a `switch` whose `default` returns.
+
+#### Timers (opt-in v36)
+
+`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval` and
+`AbortSignal.timeout` run on the event loop after `main` and its microtasks.
+Arming a timer needs the exact `time.timer` grant:
+
+```json
+{ "languageProfile": "checked-f64-utf16-v36", "capabilities": { "time": { "timer": true } } }
+```
+
+```ts
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function backoffDelay(attempt: number): number {
+  return Math.min(8000, 50 * 2 ** attempt);
+}
+
+function tryOnce(attempt: number): string {
+  if (attempt < 2) {
+    throw new Error(`attempt ${attempt} failed`);
+  }
+  return `ok after ${attempt + 1} attempts`;
+}
+
+async function withRetry(attempts: number): Promise<string> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return tryOnce(attempt);
+    } catch (error) {
+      await sleep(backoffDelay(attempt));                 // 50, 100 ms
+    }
+  }
+  throw new Error("gave up");
+}
+
+export async function main(): Promise<void> {
+  setTimeout((label: string) => console.log(label), 0, "first timer");
+  Promise.resolve(0).then(() => console.log("microtask")); // runs first
+  let ticks = 0;
+  let id = 0;
+  id = setInterval(() => {
+    ticks++;
+    if (ticks === 3) {
+      clearInterval(id);
+    }
+  }, 10);
+  const signal = AbortSignal.timeout(20);
+  const result = await withRetry(3);
+  console.log(result);                                     // ok after 3 attempts
+  console.log(`${ticks} ${signal.aborted}`);               // 3 true
+}
+```
+
+The order is Node's: `main`, its microtasks, then timers by due time (equal
+delays in creation order), each followed by its own microtasks. Differences
+from Node:
+
+- `setTimeout` and `setInterval` return a number id, as in browsers, not a
+  `Timeout` object (no `ref`, `unref` or `refresh`).
+- The whole execution, timers included, has the 5-second deadline: a timer
+  due later ends the run at once with "execution deadline exceeded", and an
+  interval that is never cleared ends that way.
+- Without the `time.timer` grant the run stops at the first `setTimeout` or
+  `setInterval` with `<capability denied: time.timer>`; `clearTimeout` needs
+  no grant.
+- An exception thrown by a timer callback ends the run like one thrown by
+  `main`.
+- A callback cannot refer to the `const` its own timer is assigned to (the
+  binding is not initialized when the closure is created); assign the id to
+  a `let` first, as above.
+- A callback must accept the extra arguments it is given; parameters without
+  an argument must be optional.
+
+`AbortSignal.timeout` signals combine with abort listeners and
+`AbortSignal.any`, so an abortable sleep with a deadline is ordinary code:
+
+```ts
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    let timer = 0;
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+export async function main(): Promise<void> {
+  const user = new AbortController();
+  const deadline = AbortSignal.any([user.signal, AbortSignal.timeout(30)]);
+  await sleep(10, deadline);                     // resolves
+  try {
+    await sleep(100, deadline);
+  } catch (reason) {
+    if (reason instanceof DOMException) console.log(reason.name); // TimeoutError
+  }
+}
+```
+
+An `AbortSignal.any` signal takes its reason from the first source that
+aborts; as in Node, it is aborted before that source's listeners run and its
+own listeners run after them.
+
+#### Async generators and for await (opt-in v36)
+
+An `async function*` (or an `async *method()` of a class) can `await` and
+`yield`; `for await` consumes it, and also arrays and synchronous generators
+whose values may be promises:
+
+```ts
+interface Page {
+  items: string[];
+  next: string | null;
+}
+async function fetchPage(cursor: string): Promise<Page> {
+  await null;                                       // one microtask
+  if (cursor === "") {
+    return { items: ["a", "b"], next: "p2" };
+  }
+  return { items: ["c"], next: null };
+}
+async function* items(): AsyncGenerator<string, void, undefined> {
+  let cursor: string | null = "";
+  while (cursor !== null) {
+    const page = await fetchPage(cursor);
+    for (const item of page.items) {
+      if (item !== undefined) {
+        yield item;
+      }
+    }
+    cursor = page.next;
+  }
+}
+async function* numbered(source: AsyncIterable<string>): AsyncGenerator<string, void, undefined> {
+  let n = 0;
+  try {
+    for await (const item of source) {
+      n++;
+      yield `${n}. ${item}`;
+    }
+  } finally {
+    console.log(`numbered ${n}`);
+  }
+}
+export async function main(): Promise<void> {
+  for await (const line of numbered(items())) {
+    console.log(line);                              // 1. a, 2. b, 3. c
+  }                                                 // numbered 3
+  const it = numbered(items());
+  const first = await it.next();
+  console.log(JSON.stringify(first));               // {"value":"1. a","done":false}
+  const closed = await it.return();                 // numbered 1
+  console.log(JSON.stringify(closed));              // {"done":true}
+  for await (const n of [Promise.resolve(1), 2]) {
+    console.log(String(n));                         // 1, then 2
+  }
+}
+```
+
+The return annotation is required: `AsyncGenerator<T, TReturn, TNext>`, or
+`AsyncIterableIterator<T>`, `AsyncIterable<T>` and `AsyncIterator<T>`, which
+mean the same here. `next()`, `return()` and `throw()` return promises and may
+be called before earlier ones settle; the requests are answered in order.
+`yield` and `return` await their operand, breaking out of a `for await` closes
+the generator after its `finally` blocks, and generic async generators work
+like other generic functions, and `yield* other()` passes on another async
+generator's values (and its `return()` and `throw()`). Not supported yet:
+`yield*` over arrays or synchronous generators, async generator function
+expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
+`await` inside an intrinsic call or template (bind it to a `const` first). `for await` costs a few microtasks per value, like Node.
+
+### `checked-f64-utf16-v37`
+
+Profile v37 (in development) runs every v36 program unchanged and adds the
+language core, class generics, collections and binary text, regular
+expressions and `fetch` below; the last subsection shows how they work
+together.
+
+#### Language core (opt-in v37)
+
+```ts
+interface Settings { cancel?: AbortSignal; label?: string }
+
+function delay(ms: number, settings: Settings): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // The timer callback names `stop`, declared below: a capture before
+    // initialization, legal because the callback runs later.
+    const handle = setTimeout(() => {
+      settings.cancel?.removeEventListener("abort", stop);
+      resolve(describe());
+    }, ms);
+    const stop = () => {
+      clearTimeout(handle);
+      reject(settings.cancel?.reason);
+    };
+    settings.cancel?.addEventListener("abort", stop);
+    // Nested function declarations are hoisted to the block entry.
+    function describe(): string {
+      // Property-path narrowing: `settings.label` is a string here.
+      return settings.label !== undefined ? settings.label : "done";
+    }
+  });
+}
+
+function kind(field: string): string {
+  let out: string;                 // assigned on every path before the read
+  switch (field) {                 // strict equality over strings
+    case "id":
+    case "key":
+      out = "key";
+      break;
+    default:
+      out = "value";
+  }
+  return out;
+}
+
+export async function main(): Promise<void> {
+  console.log(await delay(5, { label: "slept" }));      // slept
+  const parts: string[] = ["id", "x"];
+  let joined = "";
+  for (const part of parts) joined += kind(part);        // part: string
+  console.log(joined + " " + parts[0]);                  // keyvalue id
+  const seen: number[] = [];
+  const record = (n: number): number => seen.push(n);   // returns a number
+  [1, 2].forEach(record);                                // as a void callback
+  const read = (): number => late;
+  try {
+    read();
+  } catch (e) {
+    if (e instanceof Error) console.log(e.name);         // ReferenceError
+  }
+  const late = 1;
+  console.log(String(read()));                           // 1
+}
+```
+
+Run it with the timer grant (`"capabilities": { "time": { "timer": true } }`).
+A closure may capture a `let`/`const` or a nested function before its
+declaration; reading or assigning it through the closure before the
+declaration ran throws an error whose `name` is `"ReferenceError"`, as in
+Node (`instanceof ReferenceError` is not available yet: test `e.name`). The
+binding needs a type that is known at the capture: an annotation, an arrow
+or function whose parameters and result are annotated (or whose block body
+returns nothing), or a literal. A read in the same function before the
+declaration is still a compile-time error.
+
+`let x: T;` may be declared without an initializer when every read is
+preceded by an assignment on every path, including `switch` clauses with a
+`default` and `try` blocks whose `catch` leaves; a closure may capture it only
+after it is assigned. `for (const x of xs)` and `xs[i]` have the element type,
+as in TypeScript; a hole or an index out of range throws a `TypeError` instead
+of producing `undefined` (use `xs.at(i)` or test `i < xs.length` where that can
+happen). A guard on `a.b`, `a.b.c` or `a.b?.c` narrows later reads of the same
+path until a call, a property assignment or a loop that may run code
+intervenes (Varta is stricter than TypeScript there, because objects are
+shared). `switch` works on strings, literal unions and `typeof x`. A function
+that returns a value can be passed where a `void` callback is expected. Class
+fields typed `T | undefined` may be left uninitialized, a field initialized by
+`new C()` has type `C`, and an arrow created in a constructor may use
+`this.field` once the fields it reads are assigned.
+
+#### Unions of object types and module variables (opt-in v37)
+
+```ts
+type Event = { kind: "chunk"; text: string } | { kind: "done" };
+
+let text = "";            // module state: every function sees the current value
+let finished = 0;
+
+export const record = (e: Event): void => {
+  switch (e.kind) {       // narrows `e` by its discriminant
+    case "chunk":
+      text += e.text;
+      break;
+    case "done":
+      finished++;
+      break;
+    default: {
+      const unreachable: never = e;   // exhaustiveness check
+    }
+  }
+};
+
+export function main(): void {
+  record({ kind: "chunk", text: "ab" });
+  record({ kind: "done" });
+  console.log(text + " " + String(finished));          // ab 1
+  const parsed = JSON.parse('{"kind":"chunk","text":"c"}') as Event;
+  record(parsed);
+  console.log(text);                                    // abc
+}
+```
+
+A union may combine several object shapes, interfaces and classes, and
+arrays of different element kinds (`string[] | number[]`, `string | Item[]`,
+but not `A[] | B[]` of two object types). Narrow it with a literal field
+(`if (e.kind === "chunk")`, `switch`), `in`, `instanceof`,
+`Array.isArray` or `typeof`; fields that every member declares can be read,
+and methods every class member has can be called, without narrowing.
+`JSON.parse(text) as T` picks the member by its literal discriminant field and
+throws a `TypeError` when none matches. Module-level `let` (and `var`) hold
+state for the whole program run; other modules may import and read them but
+not assign them. Module constants may hold arrow and function expressions.
+
+#### Generic methods and classes, private names, `implements` (opt-in v37)
+
+Methods and classes may be generic, interfaces may declare methods, classes
+may state `implements`, and `#private` members keep state inside the class:
+
+```ts
+interface ResponseBody {
+  text(): Promise<string>;   // a method signature is a function field
+  close?(): void;            // optional method: call it with `?.()`
+}
+interface Sized {
+  size(): number;
+}
+class Page<T> implements Sized {   // checked at compile time
+  items: T[];
+  constructor(items: T[]) {
+    this.items = items;
+  }
+  size(): number {
+    return this.items.length;
+  }
+  map<U>(f: (item: T) => U): Page<U> {
+    const out: U[] = [];
+    for (let i = 0; i < this.items.length; i++) out.push(f(this.items[i]!));
+    return new Page(out);          // Page<U>, inferred from the argument
+  }
+}
+class Transport {
+  #calls = 0;                                   // private, not a property
+  readonly #fetch: (path: string) => Promise<ResponseBody>;
+  constructor(fetch: (path: string) => Promise<ResponseBody>) {
+    this.#fetch = fetch;
+  }
+  async request<T>(path: string, decode: (text: string) => T): Promise<T> {
+    this.#calls += 1;
+    const body = await this.#fetch(path);
+    const text = await body.text();
+    body.close?.();
+    return decode(text);
+  }
+  get calls(): number {
+    return this.#calls;
+  }
+}
+class Users {
+  readonly #client: Transport;
+  constructor(client: Transport) {
+    this.#client = client;
+  }
+  // `T` is inferred from the declared result `Promise<Page<string>>`.
+  list(): Promise<Page<string>> {
+    return this.#client.request('/users', (text: string): Page<string> => new Page([text, `${text}2`]));
+  }
+}
+export async function main(): Promise<void> {
+  const transport = new Transport(async (path: string): Promise<ResponseBody> => ({
+    async text(): Promise<string> {   // object literal method
+      return `user${path.length}`;
+    },
+  }));
+  const page = await new Users(transport).list();
+  const lengths = page.map((name: string): number => name.length);
+  console.log(`${page.size()} ${lengths.items[1]} ${transport.calls}`);   // 2 6 1
+}
+```
+
+Each type-argument list is compiled separately: `request<Page<string>>` and
+`request<number>` are two functions, `Page<number>` and `Page<string>` two
+classes, so a program with many distinct instantiations reaches the function
+limit sooner (about ten functions per distinct response type in the pattern
+above, 24 distinct types per program). Type arguments are inferred from the
+arguments and then from the expected result; write them explicitly when
+nothing determines them (`t.count<number>()`). Overrides of generic methods
+dispatch like other overrides; static members of a generic class are written
+on the class (`Page.empty()`) and cannot use its type parameters.
+
+Object-literal methods and the values of method signatures are called
+without `this`, so a method that uses `this` is rejected; use the variables
+it closes over instead. A class instance is still not assignable to an
+interface: `implements` only checks the class. `#x in value` is a brand test
+(`value instanceof` the declaring class). Not supported yet: generic method
+signatures such as `json<T>(): T` in interfaces and generic object-literal
+methods, overrides inside generic classes, `instanceof Page` on `unknown`
+values, static or setter private members, `abstract`, and `unknown` for
+values that may contain an instance with private fields (`JSON.stringify`
+skips private fields, as in Node).
+
+#### Collections and binary text (opt-in v37)
+
+`Map`, `Set`, tuples, `Uint8Array`, the UTF-8 text codecs, `btoa`/`atob`,
+`crypto.getRandomValues`/`crypto.randomUUID`, a UTC `Date` subset and the
+string built-ins below work like in Node:
+
+```ts
+interface StreamOptions {
+  terminalEvents?: Set<string>;
+}
+const RETRYABLE = new Set([408, 429, 503]);
+
+function split(line: string): [string, string] {
+  const at = line.indexOf(":");
+  return [line.slice(0, at), line.slice(at + 1).trim()];
+}
+
+export function main(): void {
+  const options: StreamOptions = {};
+  const terminal = options.terminalEvents ?? new Set();   // Set<string>
+  terminal.add("done").add("error");
+  console.log(`${terminal.has("done")} ${terminal.size} ${RETRYABLE.has(429)}`); // true 2 true
+
+  const counts = new Map<string, number>();
+  "a b a".split(" ").forEach((word) => counts.set(word, (counts.get(word) ?? 0) + 1));
+  for (const [word, count] of counts) console.log(`${word}=${count}`);          // a=2, b=1
+
+  const [field, value] = split("event: done");
+  console.log(`${field.toUpperCase()} ${value.padStart(6, ".")}`);              // EVENT ..done
+
+  const bytes = new TextEncoder().encode("é");
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  console.log(`${hex} ${new TextDecoder().decode(bytes)} ${btoa("hi")}`);      // c3a9 é aGk=
+  console.log(crypto.randomUUID().length);                                      // 36
+  console.log(new Date(Date.parse("2024-03-05T06:07:08Z")).toISOString());      // 2024-03-05T06:07:08.000Z
+}
+```
+
+Maps and sets keep insertion order and iterate live (entries added during a
+loop are visited, deleted ones are skipped). Keys are strings, numbers,
+booleans, bigints or objects (by identity); a union key type is not supported
+yet. A tuple such as `[string, number]` needs an annotation or a declared
+return type; `Object.entries` returns tuples, so
+`for (const [key, value] of Object.entries(record))` types both names. The
+string built-ins are `padStart`, `padEnd`, `toUpperCase`, `toLowerCase`,
+`split` with a string separator, `concat`, `codePointAt`,
+`String.fromCharCode`, `String.fromCodePoint` and `Array.prototype.join`.
+
+A map, a set, a `Uint8Array`, a `TextEncoder`/`TextDecoder` or a `Date` cannot
+be logged, passed to `JSON.stringify` or stored in `unknown` yet (log
+`[...set]` or `date.toISOString()` instead). A collection holds at most 1024
+entries and a `Uint8Array` at most 1024 bytes. `Date.now()` and `new Date()`
+read the clock and need the `time.now` capability; `Date.parse` accepts ISO
+8601 and HTTP dates (other text gives `NaN`), and only the UTC accessors
+exist. `subarray`, `ArrayBuffer` and `globalThis.crypto` are not supported
+yet.
+
+#### Regular expressions (opt-in v37)
+
+Regular expression literals work like in JavaScript, and so do `exec`,
+`test`, `lastIndex` and the string methods `search`, `match`, `matchAll`,
+`replace`, `replaceAll` and `split`. Nothing needs importing:
+
+```ts
+function joinUrl(base: string, path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  return base.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
+}
+
+export function main(): void {
+  console.log(joinUrl('https://api.example.com/', '/v1/models'));
+  const m = /(?<key>\w+)=(?<value>\w*)/.exec('a k=v');
+  if (m !== null) {
+    console.log(`${m.index} ${m[0]} ${m[1] ?? '-'}`);   // 2 k=v k
+    const groups = m.groups;
+    console.log(groups === undefined ? '' : groups['value'] ?? ''); // v
+  }
+  console.log('John Smith'.replace(/(\w+)\s(\w+)/, '$2, $1')); // Smith, John
+  console.log('a-b_c'.replace(/[-_](\w)/g, (_, c: string) => c + c)); // abbcc
+  console.log(JSON.stringify('a, b ,c'.split(/\s*,\s*/))); // ["a","b","c"]
+  let found = '';
+  for (const hit of 'x1y22'.matchAll(/\d+/g)) {
+    found += hit![0] + ';';                             // 1;22;
+  }
+  console.log(found);
+}
+```
+
+Patterns are compiled when the program is compiled, so a bad pattern is a
+compile error, and matching takes time proportional to the input: patterns
+such as `/^(a+)+$/` that hang backtracking engines on long inputs cannot hang
+a Varta program (a very long input runs out of fuel instead). `new RegExp`
+works when its pattern and flags are string literals; a pattern built at run
+time is rejected — write a literal instead.
+
+`m[0]` is a `string`; other elements are `string | undefined` because a group
+may not take part. Read them by index, by destructuring
+(`const [all, key] = m`) or with `for…of`; match arrays have no array methods.
+A replacer function receives the match, the captures, the position and the
+input, as in JavaScript; annotate a capture as `string` when the group always
+takes part.
+
+Not supported: backreferences (`\1`, `\k<name>`), lookahead and lookbehind,
+`\p{…}`, `(?i:…)` modifiers, the `d` and `v` flags, `RegExp.prototype.toString`
+and replacers with more than the match for a RegExp that is not written in
+place (the compiler cannot know its groups). `split` with a regex throws
+`TypeError` if a capture group does not take part, because its result is
+`string[]`.
+
+#### Network requests (opt-in v37)
+
+Grant the origins (and optionally the methods) a program may call in
+`varta.config.json`:
+
+```json
+{
+  "languageProfile": "checked-f64-utf16-v37",
+  "capabilities": {
+    "net": { "request": { "urls": ["https://api.example.com/v1/**"], "methods": ["GET", "POST"] } },
+    "time": { "timer": true }
+  }
+}
+```
+
+```ts
+interface Item { id: string; title: string }
+
+async function create(title: string, signal: AbortSignal): Promise<Item> {
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+  const response = await fetch('https://api.example.com/v1/items', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ title }),
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as Item;
+}
+
+async function events(): Promise<void> {
+  const response = await fetch('https://api.example.com/v1/events', {
+    signal: AbortSignal.timeout(4000),
+  });
+  const body = response.body;
+  if (body === null) return;
+  let buffer = '';
+  for await (const chunk of body) {
+    buffer += chunk; // decoded text; SSE frames end with a blank line
+  }
+  console.log(buffer.length);
+}
+
+export async function main(): Promise<void> {
+  try {
+    const item = await create('first', new AbortController().signal);
+    console.log(item.id);
+    await events();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      console.log('not permitted: ' + error.message);
+    } else {
+      throw error;
+    }
+  }
+}
+```
+
+A request outside the grant rejects with a catchable `NotAllowedError` before
+any connection is made, and so does a timer without `time.timer` (thrown by
+`setTimeout`). Redirects are refused unless `redirect: 'follow'` (each hop is
+checked against the grant again) or `'manual'` is given. Body chunks are
+strings (bytes and `ReadableStream<Uint8Array>` come later), `read()` gives
+`{ done, value }` with `value === ''` once done, and `fetch` takes a string, a
+`URL` or a `Request`.
+
+```ts
+const url = new URL('/v1/search', 'https://api.example.com');
+url.searchParams.append('q', 'two words');
+console.log(url.href); // https://api.example.com/v1/search?q=two+words
+const form = new URLSearchParams({ name: 'Ada Lovelace' });
+console.log(form.toString()); // name=Ada+Lovelace
+```
+
+A class can be an async iterable by declaring
+`async *[Symbol.asyncIterator]()`; `for await` over an instance calls it.
+
+#### The streams together (opt-in v37)
+
+```ts
+let received = 0; // module state, updated across awaits
+
+class Events {
+  readonly kind = 'events'; // a readonly literal field keeps its literal type
+  #fields = new Map<string, string>(); // the field type comes from `new`
+  add(line: string): void {
+    const match = line.match(/^(\w+): ?(.*)$/);
+    if (match !== null) this.#fields.set(match[1] ?? '', match[2] ?? '');
+  }
+  read<T>(name: string, parse: (text: string) => T): T | undefined {
+    const text = this.#fields.get(name);
+    return text === undefined ? undefined : parse(text);
+  }
+}
+
+async function* lines(body: ReadableStream): AsyncGenerator<string> {
+  let buffer = '';
+  for await (const chunk of body) {
+    buffer += chunk;
+    const parts = buffer.split(/\r?\n/);
+    buffer = parts.pop() ?? '';
+    for (const line of parts) yield line;
+  }
+}
+
+export async function main(): Promise<void> {
+  const response = await fetch(new URL('/sse', 'http://127.0.0.1:8080'));
+  const body = response.body;
+  if (body === null) return;
+  const events = new Events();
+  for await (const line of lines(body)) {
+    if (line !== '') events.add(line);
+    else received += 1;
+  }
+  console.log(`${received} ${events.read('id', (text: string): number => Number(text))} ${JSON.stringify(response.headers)}`);
+}
+```
+
+`JSON.stringify` skips private state as Node does: `#private` fields, the
+internals of `Headers`, `AbortSignal`, `DOMException`, `Request` and
+`Response` (they serialize as `{}`) and Error slots (`message`, `cause`, and
+`name` unless a constructor assigns it), so `JSON.stringify` of `unknown`
+works in programs that use `fetch`. `URL` and RegExp match arrays cannot be
+serialized or stored in `unknown` yet. Object keys starting with `#` are
+reserved. Index reads give `undefined` where the code expects it — a
+`T | undefined` result or parameter, `xs[i] ?? fallback`, or a binding later
+compared with `undefined` (`const item = items[0]; if (item === undefined)
+…`) — and throw `TypeError` for a hole elsewhere. `Date.now()` and
+`new Date()` throw a catchable `NotAllowedError` without the `time.now` grant.
+Functions a program never reaches, including unused engine built-ins, do not
+count against the 256-function limit. Not supported yet: unions that mix a
+`Map`, `Set` or `Uint8Array` with other objects (and `instanceof Map`), byte
+bodies (`ReadableStream<Uint8Array>`, `Blob`, `FormData`), `globalThis`, and
+`Array.isArray` narrowing of `unknown`.

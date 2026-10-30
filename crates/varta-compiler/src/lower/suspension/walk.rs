@@ -34,6 +34,7 @@ pub(super) fn expression(expr: &Expr, visit: &mut dyn FnMut(&Expr)) {
         | E::Reinterpret(value)
         | E::Suspend { value, .. }
         | E::StringTrim { value, .. }
+        | E::TextUnits { value, .. }
         | E::ArrayEnumerate { value, .. }
         | E::ArrayReserve { length: value, .. }
         | E::NewError(_, value)
@@ -109,6 +110,8 @@ pub(super) fn expression(expr: &Expr, visit: &mut dyn FnMut(&Expr)) {
         E::ArrayFill(a, b, c, d) => [a, b, c, d].into_iter().for_each(|v| expression(v, visit)),
         E::Math(_, args)
         | E::NumberPredicate(_, args)
+        | E::Intrinsic(_, args)
+        | E::RegExp(_, args)
         | E::Call(_, args)
         | E::Host(_, args)
         | E::CheckedBigIntHost { args, .. } => {

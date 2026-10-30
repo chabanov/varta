@@ -1,10 +1,23 @@
-use varta_common::{CapabilityGrant, CapabilityValue, Result, STRICT_POLICY, VartaError};
+use varta_common::{
+    CapabilityGrant, CapabilityValue, RequestScope, Result, STRICT_POLICY, VartaError,
+};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub enum CapabilitySpec {
     Patterns(Vec<String>),
     Enabled(bool),
+    /// `"net": { "request": { "urls": [...], "methods": [...] } }` (v37); a
+    /// plain pattern list admits every method.
+    Requests(RequestSpec),
+}
+
+/// The object form of a `net.request` grant.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestSpec {
+    pub urls: Vec<String>,
+    pub methods: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -62,6 +75,21 @@ impl VartaConfig {
                             {
                                 CapabilityValue::ListenEndpoints(patterns.clone())
                             }
+                            CapabilitySpec::Patterns(patterns)
+                                if namespace == "net" && operation == "request" =>
+                            {
+                                CapabilityValue::Requests(RequestScope {
+                                    urls: patterns.clone(),
+                                    methods: None,
+                                })
+                            }
+                            // Any other operation rejects the shape in validation.
+                            CapabilitySpec::Requests(spec) => {
+                                CapabilityValue::Requests(RequestScope {
+                                    urls: spec.urls.clone(),
+                                    methods: Some(spec.methods.clone()),
+                                })
+                            }
                             CapabilitySpec::Patterns(patterns) if namespace == "net" => {
                                 CapabilityValue::UrlGlobs(patterns.clone())
                             }
@@ -99,6 +127,73 @@ mod tests {
                 .validate()
                 .is_ok()
         );
+    }
+    #[test]
+    fn timer_grants_are_exact_booleans() {
+        // V36 timers: `time.timer` is its own boolean operation.
+        let timers = config(serde_json::json!({"time":{"timer":true,"now":false}}));
+        timers.validate().unwrap();
+        assert_eq!(
+            timers.normalized_capabilities(),
+            [
+                CapabilityGrant {
+                    id: "time.now".into(),
+                    value: CapabilityValue::Boolean(false),
+                },
+                CapabilityGrant {
+                    id: varta_common::scheduler::TIMER_CAPABILITY.into(),
+                    value: CapabilityValue::Boolean(true),
+                },
+            ]
+        );
+        for grants in [
+            serde_json::json!({"time":{"timer":["X"]}}),
+            serde_json::json!({"time":{"sleep":true}}),
+            serde_json::json!({"time":{"timers":true}}),
+        ] {
+            assert!(config(grants).validate().is_err());
+        }
+    }
+    #[test]
+    fn request_grants_take_urls_with_an_optional_method_list() {
+        // V37 `net.request`: HTTPS and HTTP origins, all methods by default.
+        let plain = config(serde_json::json!({"net":{"request":["https://api.test/v1/**"]}}));
+        plain.validate().unwrap();
+        assert_eq!(
+            plain.normalized_capabilities()[0].value,
+            CapabilityValue::Requests(RequestScope {
+                urls: vec!["https://api.test/v1/**".into()],
+                methods: None,
+            })
+        );
+        let scoped = config(serde_json::json!({"net":{"request":{
+            "urls":["http://127.0.0.1:8080/**"],"methods":["GET","POST"]}}}));
+        scoped.validate().unwrap();
+        assert_eq!(
+            scoped.normalized_capabilities()[0].value,
+            CapabilityValue::Requests(RequestScope {
+                urls: vec!["http://127.0.0.1:8080/**".into()],
+                methods: Some(vec!["GET".into(), "POST".into()]),
+            })
+        );
+        for grants in [
+            serde_json::json!({"net":{"request":true}}),
+            serde_json::json!({"net":{"request":["https://*.test/**"]}}),
+            serde_json::json!({"net":{"request":["ws://api.test/**"]}}),
+            serde_json::json!({"net":{"request":{"urls":["https://api.test/**"],"methods":["get"]}}}),
+            serde_json::json!({"net":{"request":{"urls":["https://api.test/**"],"methods":["TRACE"]}}}),
+            serde_json::json!({"net":{"request":{"urls":["https://api.test/**"]}}}),
+            serde_json::json!({"net":{"request":{"urls":[],"methods":[],"extra":1}}}),
+            serde_json::json!({"net":{"fetch":{"urls":["http://api.test/**"],"methods":["GET"]}}}),
+            serde_json::json!({"env":{"get":{"urls":["X"],"methods":["GET"]}}}),
+        ] {
+            let parsed = serde_json::from_value::<VartaConfig>(serde_json::json!({
+                "entry":"src/main.ts","target":"native","out":"dist/app","capabilities":grants}));
+            assert!(
+                parsed.map_or(true, |config| config.validate().is_err()),
+                "{grants}"
+            );
+        }
     }
     #[test]
     fn unsupported_transport_and_profiles_cannot_silently_pass() {

@@ -14,6 +14,10 @@ pub(super) fn primitive(ty: Type) -> bool {
     )
 }
 pub(super) fn members(ty: Type, types: &ir::ValueTypes) -> Vec<Type> {
+    // `never` (v37) has no member.
+    if ty == Type::Never {
+        return Vec::new();
+    }
     if let Type::Union(id) | Type::ReferenceUnion(id) = ty {
         types.unions[id as usize].clone()
     } else {
@@ -34,19 +38,46 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
             "recursive type alias as a direct member of a union; refer to it through an array, record or dictionary",
         ));
     }
+    let never = values.contains(&Type::Never);
     let mut values: Vec<_> = values
         .into_iter()
         .flat_map(|ty| members(ty, types))
         .collect();
+    // `never | T` is `T`, and a union of `never` alone is `never` (v37).
+    if never && values.is_empty() {
+        return Ok(Type::Never);
+    }
     if values.iter().any(|ty| matches!(ty, Type::Generator(_))) {
         return Err(generators::opaque("a union"));
     }
-    if values.iter().any(|ty| matches!(ty, Type::Promise(_))) {
+    if values.iter().any(|ty| matches!(ty, Type::Promise(_))) && !types.profile.promise_values() {
         return Err(promises::opaque("a union"));
     }
     // `unknown` absorbs every other member (v34); `widen` checks admission.
     if values.contains(&Type::Unknown) {
         return Ok(Type::Unknown);
+    }
+    // `object` facts (v35) join with `null` and with the dictionary views of
+    // `in` guards; any other member leaves only `unknown`.
+    let view = |ty: &Type| types.declared(*ty).is_some_and(|members| members.object);
+    let views = {
+        let mut views: Vec<_> = values.iter().copied().filter(view).collect();
+        views.sort();
+        views.dedup();
+        views.len()
+    };
+    if values.iter().any(|ty| matches!(ty, Type::Object(_))) || views > 1 {
+        let objects = values
+            .iter()
+            .all(|ty| matches!(ty, Type::Object(_) | Type::Null) || view(ty));
+        let nullable = values
+            .iter()
+            .any(|ty| matches!(ty, Type::Object(true) | Type::Null));
+        return Ok(if objects {
+            Type::Object(nullable)
+        } else {
+            Type::Unknown
+        });
     }
     if types.profile.error_subclasses() {
         values = classes::join_error_classes(values, types);
@@ -63,6 +94,10 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                         || types.profile.index_signatures() && matches!(ty, Type::Dictionary(_))
                         || types.profile.classes() && matches!(ty, Type::Class(_))
                         || types.profile.bigint_values() && *ty == Type::BigInt
+                        || types.profile.promise_values() && matches!(ty, Type::Promise(_))
+                        || types.profile.function_fields() && matches!(ty, Type::Function(_))
+                        || types.profile.collections()
+                            && matches!(ty, Type::Tuple(_) | Type::Collection(..))
                         || (types.profile.errors() && ty.is_error()))
         })
     {
@@ -78,30 +113,85 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                 | Type::Dictionary(_)
                 | Type::Class(_)
                 | Type::Array(_)
+                | Type::Promise(_)
+                | Type::Function(_)
                 | Type::Error
                 | Type::NativeError(_)
+                | Type::Tuple(_)
+                | Type::Collection(..)
         )
     });
-    // Records and class instances share the record union tag.
-    if values
+    // Records and class instances share the record union tag; so do map and
+    // set storage (v37). Tuples and byte arrays share the array tag. V37
+    // (`language_core`) tells several records and classes apart by their
+    // layout descriptors, and several arrays by distinct element kinds;
+    // collections and tuples take part only as the single member of their
+    // tag.
+    let shared = types.profile.language_core();
+    let byte_array = |ty: &&Type| matches!(ty, Type::Collection(ir::CollectionKind::Uint8Array, _));
+    let record_tag: Vec<&Type> = values
         .iter()
-        .filter(|ty| matches!(ty, Type::Record(_) | Type::Class(_)))
-        .count()
-        > 1
-        || values
-            .iter()
-            .filter(|ty| matches!(ty, Type::Array(_)))
-            .count()
-            > 1
+        .filter(|ty| {
+            matches!(ty, Type::Record(_) | Type::Class(_) | Type::Collection(..)) && !byte_array(ty)
+        })
+        .collect();
+    let array_tag: Vec<&Type> = values
+        .iter()
+        .filter(|ty| matches!(ty, Type::Array(_) | Type::Tuple(_)) || byte_array(ty))
+        .collect();
+    let crowded = |members: &[&Type]| {
+        members.len() > 1
+            && (!shared
+                || members
+                    .iter()
+                    .any(|ty| matches!(ty, Type::Collection(..) | Type::Tuple(_))))
+    };
+    if crowded(&record_tag)
+        || crowded(&array_tag)
         || values
             .iter()
             .filter(|ty| matches!(ty, Type::Dictionary(_)))
             .count()
             > 1
+        || values
+            .iter()
+            .filter(|ty| matches!(ty, Type::Promise(_)))
+            .count()
+            > 1
+        || values
+            .iter()
+            .filter(|ty| matches!(ty, Type::Function(_)))
+            .count()
+            > 1
     {
-        return Err(unsupported(
-            "multiple record shapes or array element types in one union",
-        ));
+        return Err(unsupported(if types.profile.function_fields() {
+            "multiple record shapes, array element types, promise or function types in one union"
+        } else {
+            "multiple record shapes, array element types or promise types in one union"
+        }));
+    }
+    if shared {
+        let kinds: Vec<_> = values
+            .iter()
+            .filter_map(|ty| match ty {
+                Type::Array(id) => Some(
+                    types.arrays[*id as usize]
+                        .profile_kind(types.profile)
+                        .map(|kind| kind as u32),
+                ),
+                _ => None,
+            })
+            .collect();
+        let mut distinct = kinds.clone();
+        distinct.sort();
+        distinct.dedup();
+        if distinct.len() != kinds.len() || kinds.iter().any(Option::is_none) {
+            return Err(unsupported(
+                "array members of one union with the same element kind (they are told apart by \
+                 element kind, so for example string[] | number[] works but A[] | B[] of two \
+                 record types does not)",
+            ));
+        }
     }
     if values.len() == 1 {
         return Ok(values[0]);
@@ -126,7 +216,41 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     })
 }
 pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes) -> Result<Expr> {
+    // `never` (v37) converts to every type: the code is unreachable, so the
+    // placeholder of the target type is never observed.
+    if value.ty == Type::Never
+        && let Some(target) = expected.filter(|target| *target != Type::Never)
+    {
+        let span = value.span;
+        return Ok(Expr {
+            span,
+            ty: target,
+            kind: E::Sequence(
+                Box::new(value),
+                Box::new(Expr {
+                    span,
+                    ty: target,
+                    kind: E::Zero,
+                }),
+            ),
+        });
+    }
     let value = literals::conform(value, expected, types)?;
+    // A tuple (v37) is its physical array where that array, or `unknown`, is
+    // expected (TypeScript's tuple-to-array assignability).
+    let value = match value.ty {
+        Type::Tuple(id)
+            if expected == Some(types.tuples[id as usize].array)
+                || expected == Some(Type::Unknown) =>
+        {
+            Expr {
+                span: value.span,
+                ty: types.tuples[id as usize].array,
+                kind: E::Reinterpret(Box::new(value)),
+            }
+        }
+        _ => value,
+    };
     if expected == Some(Type::Unknown) {
         return unknown::widen(value, types);
     }
@@ -135,11 +259,24 @@ pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes)
     {
         return Ok(Expr { ty, ..value });
     }
+    // A mixed record and its plain dictionary share one storage (v35).
+    if let Some(ty @ Type::Dictionary(_)) = expected
+        && dictionaries::converts(ty, value.ty, types)
+    {
+        return Ok(Expr { ty, ..value });
+    }
     let Some(ty @ (Type::Union(id) | Type::ReferenceUnion(id))) = expected else {
         return Ok(value);
     };
     let target = &types.unions[id as usize];
-    let value = classes::union_upcast(value, ty, types);
+    let mut value = classes::union_upcast(value, ty, types);
+    if !target.contains(&value.ty)
+        && let Some(&member) = target
+            .iter()
+            .find(|member| dictionaries::converts(**member, value.ty, types))
+    {
+        value.ty = member;
+    }
     if members(value.ty, types)
         .iter()
         .any(|m| !literals::member_of(*m, target, types))
@@ -301,7 +438,15 @@ impl Lower<'_> {
                     || (binary.op == ast::BinaryOp::LogicalOr && !yes))
             {
                 self.guard(&binary.left, yes)?;
-                return self.guard(&binary.right, yes);
+                self.guard(&binary.right, yes)?;
+                // `x !== null && typeof x === "object"` (v35): the null test
+                // also applies to the `object | null` fact proved after it.
+                if self.types.profile.unknown_json()
+                    && object_narrowing::typeof_object(&binary.right)
+                {
+                    self.guard(&binary.left, yes)?;
+                }
+                return Ok(());
             }
             if self.types.profile.literal_types()
                 && let ast::Expr::Bin(binary) = test
@@ -316,6 +461,16 @@ impl Lower<'_> {
             && unary.op == ast::UnaryOp::Bang
         {
             return self.guard(&unary.arg, !yes);
+        }
+        if self.path_guard(test, yes)? {
+            return Ok(());
+        }
+        // A truthy optional chain `x?.p` (v36) proves `x` is not nullish.
+        if yes
+            && self.types.profile.function_fields()
+            && let Some(name) = optional_chains::chained_binding(test)
+        {
+            return self.refine(&name, Guard::Nullish, false);
         }
         if self.types.profile.reference_unions()
             && let ast::Expr::Call(call) = test
@@ -352,6 +507,23 @@ impl Lower<'_> {
         let ast::Expr::Bin(binary) = test else {
             return Ok(());
         };
+        // `#x in value` narrows like `value instanceof C` (v37).
+        if binary.op == ast::BinaryOp::In
+            && self.types.profile.class_generics()
+            && let ast::Expr::PrivateName(name) = &*binary.left
+            && let ast::Expr::Ident(id) = &*binary.right
+        {
+            let class = self.private_owner(name)?;
+            return self.refine_class(id.sym.as_ref(), class, yes);
+        }
+        if binary.op == ast::BinaryOp::In
+            && self.property_guard(&binary.left, &binary.right, yes)?
+        {
+            return Ok(());
+        }
+        if binary.op == ast::BinaryOp::In && yes && self.types.profile.unknown_json() {
+            return self.in_guard(&binary.left, &binary.right);
+        }
         let positive = match binary.op {
             ast::BinaryOp::EqEqEq => yes,
             ast::BinaryOp::NotEqEq => !yes,
@@ -377,6 +549,9 @@ impl Lower<'_> {
                     "string" => Type::String,
                     "undefined" => Type::Undefined,
                     "object" => return Some((id.sym.to_string(), Guard::Object)),
+                    "function" if self.types.profile.function_fields() => {
+                        return Some((id.sym.to_string(), Guard::Function));
+                    }
                     _ => return None,
                 };
                 return Some((id.sym.to_string(), Guard::Exact(ty)));

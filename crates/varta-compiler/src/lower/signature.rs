@@ -22,11 +22,13 @@ pub(super) fn check(
         None
     };
     let generator = function.is_generator && types.profile.generators();
-    if generator && function.is_async {
+    // `async function*` (v36 `async_generators`) returns an async generator.
+    let async_generator = generator && function.is_async && types.profile.async_generators();
+    if generator && function.is_async && !async_generator {
         return Err(unsupported("async generator function"));
     }
-    let asynchronous = function.is_async && types.profile.async_functions();
-    if function.is_async && !asynchronous
+    let asynchronous = function.is_async && !async_generator && types.profile.async_functions();
+    if function.is_async && !asynchronous && !async_generator
         || function.is_generator && !generator
         || function.type_params.is_some()
         || !function.decorators.is_empty()
@@ -67,7 +69,9 @@ pub(super) fn check(
             declaration.ident.span,
         ));
     }
-    if asynchronous && shape.extended() {
+    // V35 splits optional, default and rest parameters like any other: the
+    // caller pads and gathers them, so the scheduled body takes fixed slots.
+    if asynchronous && shape.extended() && !types.profile.async_methods() {
         return Err(source.locate(
             promises::rejected("async function with optional or rest parameters"),
             declaration.ident.span,
@@ -76,6 +80,14 @@ pub(super) fn check(
     if asynchronous && function.return_type.is_none() {
         return Err(source.locate(
             type_error("async function requires a Promise<T> return annotation"),
+            result_span,
+        ));
+    }
+    if async_generator && function.return_type.is_none() {
+        return Err(source.locate(
+            type_error(
+                "async generator function requires an AsyncGenerator<T, TReturn, TNext> return annotation",
+            ),
             result_span,
         ));
     }
@@ -96,6 +108,21 @@ pub(super) fn check(
                 Type::Void
             }
         });
+    let async_result = matches!(result, Type::Generator(id) if types.generators[id as usize].asynchronous.is_some());
+    if async_generator && !async_result {
+        return Err(source.locate(
+            type_error(format!(
+                "async generator function must return AsyncGenerator<T, TReturn, TNext>, not {result}"
+            )),
+            result_span,
+        ));
+    }
+    if generator && !async_generator && async_result {
+        return Err(source.locate(
+            type_error("generator function must return Generator<T, TReturn, TNext>, not an async generator"),
+            result_span,
+        ));
+    }
     if generator && !matches!(result, Type::Generator(_)) {
         return Err(source.locate(
             type_error(format!(

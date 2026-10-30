@@ -9,21 +9,28 @@ use varta_common::language::LanguageProfile as P;
 const V34: P = P::CheckedF64Utf16V34;
 
 fn compile(source: &str) -> Vec<u8> {
-    let bytes = varta_compiler::compile_typescript_with_profile(source, V34)
+    compile_with(source, V34)
+}
+fn compile_with(source: &str, profile: P) -> Vec<u8> {
+    let bytes = varta_compiler::compile_typescript_with_profile(source, profile)
         .unwrap_or_else(|e| panic!("{e}\n{source}"));
     // Emitted modules must also pass backend validation, not only compilation.
     wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
     bytes
 }
+/// Each program also runs with the v35 liveness frames (`frame_liveness`).
 fn run(source: &str, expected: &[&str]) {
     let expected: Vec<String> = expected.iter().map(|s| format!("varta log: {s}")).collect();
-    assert_eq!(
-        VartaRuntime::new()
-            .run_wasm_bytes(&compile(source), &[])
-            .unwrap_or_else(|e| panic!("{e:?}\n{source}"))
-            .lines,
-        expected
-    );
+    for profile in [V34, P::CheckedF64Utf16V35] {
+        assert_eq!(
+            VartaRuntime::new()
+                .run_wasm_bytes(&compile_with(source, profile), &[])
+                .unwrap_or_else(|e| panic!("{profile:?} {e:?}\n{source}"))
+                .lines,
+            expected,
+            "{profile:?}"
+        );
+    }
 }
 fn rejected(source: &str) -> String {
     varta_compiler::compile_typescript_with_profile(source, V34)

@@ -21,17 +21,57 @@ fn binary(span: swc_common::Span, op: ast::BinaryOp, left: Expr, right: Expr, ty
         kind: E::Binary(op, Box::new(left), Box::new(right)),
     }
 }
+/// The `Headers` method that is also its `[Symbol.iterator]`.
+const HEADERS_ITERATOR: &str = "entries";
 impl Lower<'_> {
+    /// `for (… of headers)` (v35 `web_headers`) iterates the fresh snapshot of
+    /// the sorted and combined header list that `Headers.prototype.entries`
+    /// returns. Like `[Symbol.iterator]`, it ignores a subclass override.
+    fn headers_iteration(&mut self, value: Expr) -> Result<Expr> {
+        let Type::Class(class) = value.ty else {
+            return Ok(value);
+        };
+        let Some(headers) = self
+            .types
+            .classes
+            .prelude_class(crate::modules::engine::HEADERS_CLASS)
+            .filter(|headers| self.types.classes.descends(class, *headers))
+        else {
+            return Ok(value);
+        };
+        let signature = self
+            .types
+            .classes
+            .get(headers)
+            .methods
+            .get(HEADERS_ITERATOR)
+            .map(|method| method.signature.clone())
+            .ok_or_else(|| CompilerError::Internal("missing Headers iterator".into()))?;
+        Ok(Expr {
+            span: value.span,
+            ty: signature.result,
+            kind: E::Call(
+                signature.index,
+                vec![Expr {
+                    ty: Type::Class(headers),
+                    ..value
+                }],
+            ),
+        })
+    }
     pub(super) fn for_of(&mut self, statement: &ast::ForOfStmt) -> Result<S> {
         if !self.types.profile.closures() {
             return Err(unsupported("for-of requires checked-f64-utf16-v12"));
         }
-        if statement.is_await && self.types.profile.async_functions() {
+        if statement.is_await
+            && self.types.profile.async_functions()
+            && !self.types.profile.async_generators()
+        {
             return Err(promises::rejected(
                 "for await...of (async iteration is not implemented yet)",
             ));
         }
-        if statement.is_await {
+        if statement.is_await && !self.types.profile.async_generators() {
             return Err(unsupported("for-await-of"));
         }
         self.scopes.push(BTreeMap::new());
@@ -60,8 +100,18 @@ impl Lower<'_> {
         // Lexical head names shadow outer names while evaluating the RHS and
         // remain in TDZ; assignment heads do not introduce bindings.
         let value = self.expr(&statement.right)?;
+        let value = self.headers_iteration(value)?;
+        let value = self.match_array_values(value)?;
+        // V37: a Map/Set iterates its live entries through a prelude
+        // generator; a Uint8Array and a tuple iterate their dense storage.
+        let (value, packed) = self.collection_iteration(value)?;
+        let packed = packed || matches!(value.ty, Type::Tuple(_));
+        let value = self.physical_array(value)?;
         if self.types.profile.refinement_writes() {
             self.flow_for_of_effects(statement);
+        }
+        if statement.is_await {
+            return self.for_await(statement, pattern, mode, value);
         }
         if matches!(value.ty, Type::Generator(_)) {
             return self.for_of_generator(statement, pattern, mode, value);
@@ -73,7 +123,15 @@ impl Lower<'_> {
             return Err(invalid("missing for-of array type"));
         };
         let element = self.types.arrays[id as usize];
-        let item = if self.types.profile.sparse_arrays() {
+        // V37: the variable has the element type, read checked (`dense`),
+        // unless the storage has no holes (`packed`: collections, tuples).
+        // A loop variable the enclosing code compares with `undefined` keeps
+        // JavaScript's `undefined` for holes (`dense::undefined_comparisons`).
+        let compared = matches!(pattern, ast::Pat::Ident(binding)
+            if self.core.undefined_checked.contains(binding.id.sym.as_ref()));
+        let checked = self.types.profile.language_core() && !packed && !compared;
+        let sparse = self.types.profile.sparse_arrays() && !packed;
+        let item = if sparse && !checked {
             unions::intern(vec![element, Type::Undefined], self.types)?
         } else {
             element
@@ -84,8 +142,12 @@ impl Lower<'_> {
         init.push(S::Init(index, number(statement.span, 0.0)));
         let read = Expr {
             span: statement.right.span(),
-            ty: item,
-            kind: if self.types.profile.sparse_arrays() {
+            ty: if checked {
+                unions::intern(vec![element, Type::Undefined], self.types)?
+            } else {
+                item
+            },
+            kind: if sparse {
                 E::MaybeIndex(
                     Box::new(local(statement.span, source, array)),
                     Box::new(local(statement.span, index, Type::Float64)),
@@ -96,6 +158,11 @@ impl Lower<'_> {
                     Box::new(local(statement.span, index, Type::Float64)),
                 )
             },
+        };
+        let read = if checked {
+            self.dense_read(read, element, dense::ITERATED_HOLE)?
+        } else {
+            read
         };
         // IteratorStepValue precedes evaluation of an assignment reference.
         // S::Init creates a new managed cell for every captured lexical leaf.
@@ -156,7 +223,7 @@ impl Lower<'_> {
             )],
         ))
     }
-    fn for_of_source(&mut self, value: Expr) -> Result<(u32, Type, Vec<u32>, Vec<S>)> {
+    pub(super) fn for_of_source(&mut self, value: Expr) -> Result<(u32, Type, Vec<u32>, Vec<S>)> {
         let span = value.span;
         let members = unions::members(value.ty, self.types);
         let present: Vec<_> = members

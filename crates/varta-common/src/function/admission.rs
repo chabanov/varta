@@ -3,9 +3,11 @@
 //! Runtime preflight and artifact validation each extract the same
 //! [`FrameSurface`] from portable Wasm with their own parser and apply these
 //! shared rules before compilation or any guest effect. Only a profile with
-//! [`LanguageProfile::resumable_frames`] may carry frame catalog version 2,
-//! frame layouts or the exported dispatcher; every earlier profile keeps the
-//! version 1 catalog reader and rejects the whole surface. Admission never
+//! [`LanguageProfile::resumable_frames`] may carry a frame catalog, frame
+//! layouts or the exported dispatcher: cell layouts (catalog version 2) for
+//! v33/v34 and liveness layouts (version 3) for a
+//! [`LanguageProfile::frame_liveness`] profile (v35). Every earlier profile
+//! keeps the version 1 catalog reader and rejects the whole surface. Admission never
 //! grants call authority: the runtime does not call the dispatcher until a
 //! scheduler exists.
 use super::{CaptureType, FrameLayout, FunctionCatalog, frame};
@@ -80,13 +82,30 @@ pub struct FrameSurface {
 pub enum FramePiece {
     CatalogVersion,
     ResumeExport,
+    /// Catalog version 3 with liveness layouts (v35 `frame_liveness`).
+    LivenessCatalog,
 }
 impl std::fmt::Display for FramePiece {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::CatalogVersion => "function catalog version 2 with frame layouts",
             Self::ResumeExport => "the exported varta_resume dispatcher",
+            Self::LivenessCatalog => "function catalog version 3 with liveness frame layouts",
         })
+    }
+}
+
+/// The frame catalog version a profile's frame layouts must use: liveness
+/// layouts for a [`LanguageProfile::frame_liveness`] profile, cell layouts
+/// for the other [`LanguageProfile::resumable_frames`] profiles.
+#[must_use]
+pub fn frame_catalog_version(profile: LanguageProfile) -> Option<u32> {
+    if profile.frame_liveness() {
+        Some(frame::FRAME_LIVENESS_CATALOG_VERSION)
+    } else if profile.resumable_frames() {
+        Some(frame::FRAME_CATALOG_VERSION)
+    } else {
+        None
     }
 }
 
@@ -126,6 +145,12 @@ impl std::fmt::Display for LayoutMismatch {
 pub enum FrameAdmissionError {
     #[error("the declared language profile does not admit resumable frames: {0}")]
     ProfileForbids(FramePiece),
+    /// A frame profile carried the other frame layout: cell layouts under a
+    /// liveness profile (v35) or liveness layouts under v33/v34.
+    #[error(
+        "the declared language profile requires frame catalog version {expected}, found version {found}"
+    )]
+    FrameLayoutVersion { expected: u32, found: u32 },
     /// A malformed catalog keeps the reader's own diagnostic.
     #[error(transparent)]
     Catalog(ValueAbiError),
@@ -158,23 +183,36 @@ const _: () = {
     assert!(frame::MAX_FRAME_BINDINGS == frame::SEGMENT_BINDINGS * frame::MAX_FRAME_SEGMENTS);
 };
 
-/// Read the function catalog version the profile admits. Only a
-/// [`LanguageProfile::resumable_frames`] profile reads version 2; every other
-/// profile uses the version 1 reader and gets a typed refusal for version 2.
+/// Read the function catalog version the profile admits. A
+/// [`LanguageProfile::frame_liveness`] profile (v35) reads versions 1 and 3,
+/// the other [`LanguageProfile::resumable_frames`] profiles read versions 1
+/// and 2, and every other profile uses the version 1 reader. A well-formed
+/// catalog of another frame version gets a typed refusal, so a module
+/// relabelled to another profile fails before compilation.
 pub fn read_catalog(
     bytes: &[u8],
     profile: LanguageProfile,
 ) -> Result<FunctionCatalog, FrameAdmissionError> {
-    if profile.resumable_frames() {
-        return FunctionCatalog::from_frame_bytes(bytes).map_err(FrameAdmissionError::Catalog);
-    }
-    FunctionCatalog::from_bytes(bytes).map_err(|error| {
-        if FunctionCatalog::from_frame_bytes(bytes)
-            .is_ok_and(|catalog| catalog.version == frame::FRAME_CATALOG_VERSION)
-        {
-            FrameAdmissionError::ProfileForbids(FramePiece::CatalogVersion)
-        } else {
-            FrameAdmissionError::Catalog(error)
+    let read = match frame_catalog_version(profile) {
+        Some(frame::FRAME_LIVENESS_CATALOG_VERSION) => FunctionCatalog::from_liveness_bytes,
+        Some(_) => FunctionCatalog::from_frame_bytes,
+        None => FunctionCatalog::from_bytes,
+    };
+    read(bytes).map_err(|error| {
+        let other = FunctionCatalog::from_frame_bytes(bytes)
+            .or_else(|_| FunctionCatalog::from_liveness_bytes(bytes))
+            .map(|catalog| catalog.version);
+        match (frame_catalog_version(profile), other) {
+            (None, Ok(frame::FRAME_CATALOG_VERSION)) => {
+                FrameAdmissionError::ProfileForbids(FramePiece::CatalogVersion)
+            }
+            (None, Ok(frame::FRAME_LIVENESS_CATALOG_VERSION)) => {
+                FrameAdmissionError::ProfileForbids(FramePiece::LivenessCatalog)
+            }
+            (Some(expected), Ok(found)) if found != expected && found != super::CATALOG_VERSION => {
+                FrameAdmissionError::FrameLayoutVersion { expected, found }
+            }
+            _ => FrameAdmissionError::Catalog(error),
         }
     })
 }
@@ -187,6 +225,15 @@ pub fn admit(
     catalog: Option<&FunctionCatalog>,
 ) -> Result<(), FrameAdmissionError> {
     let layouts = catalog.map_or(&[][..], |catalog| &catalog.frames);
+    if let (Some(expected), Some(catalog)) = (frame_catalog_version(profile), catalog)
+        && !layouts.is_empty()
+        && catalog.version != expected
+    {
+        return Err(FrameAdmissionError::FrameLayoutVersion {
+            expected,
+            found: catalog.version,
+        });
+    }
     if !profile.resumable_frames() {
         return if surface.resume_export.is_some() {
             Err(FrameAdmissionError::ProfileForbids(

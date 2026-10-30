@@ -1,15 +1,34 @@
 //! Erase literal types after lowering (v32 `literal_types`). Every literal set
-//! becomes its base primitive, and function types that become identical are
-//! merged so signature dispatch and the capture catalog stay unambiguous.
+//! becomes its base primitive, every engine collection (v37) its private
+//! storage and every tuple (v37) its dense array, and function types that
+//! become identical are merged so signature dispatch and the capture catalog
+//! stay unambiguous.
 use super::*;
 use std::collections::BTreeMap;
 
 /// Replace every literal type in the lowered program by its base primitive.
 pub(super) fn erase_program(program: &mut ir::Program) {
     let types = &mut program.types;
-    let eraser = Eraser {
-        functions: merge_functions(&mut types.functions),
+    let views = Views {
+        collections: types.collections.iter().map(|c| c.storage).collect(),
+        tuples: types.tuples.iter().map(|t| t.array).collect(),
     };
+    let eraser = Eraser {
+        functions: merge_functions(&mut types.functions, &views),
+        views,
+    };
+    for dictionary in &mut types.dictionaries {
+        for ty in [
+            &mut dictionary.value,
+            &mut dictionary.keys,
+            &mut dictionary.values,
+        ] {
+            *ty = eraser.ty(*ty);
+        }
+    }
+    for promise in &mut types.promises {
+        promise.value = eraser.ty(promise.value);
+    }
     for members in &mut types.unions {
         for member in members.iter_mut() {
             *member = eraser.ty(*member);
@@ -47,9 +66,24 @@ pub(super) fn erase_program(program: &mut ir::Program) {
     }
 }
 
+/// The physical storage of the v37 erased types, by type id.
+struct Views {
+    collections: Vec<Type>,
+    tuples: Vec<Type>,
+}
+impl Views {
+    fn physical(&self, ty: Type) -> Type {
+        match ty.erased() {
+            Type::Collection(_, id) => self.collections[id as usize],
+            Type::Tuple(id) => self.tuples[id as usize],
+            other => other,
+        }
+    }
+}
+
 type FunctionKey = (Option<Type>, Vec<Type>, Type, Vec<bool>, bool);
-fn function_key(function: &ir::FunctionType, map: &[u32]) -> FunctionKey {
-    let rewrite = |ty: Type| match ty.erased() {
+fn function_key(function: &ir::FunctionType, map: &[u32], views: &Views) -> FunctionKey {
+    let rewrite = |ty: Type| match views.physical(ty) {
         Type::Function(id) => Type::Function(map[id as usize]),
         other => other,
     };
@@ -64,7 +98,7 @@ fn function_key(function: &ir::FunctionType, map: &[u32]) -> FunctionKey {
 
 /// Merge function types whose erased signatures coincide (to a fixpoint, since
 /// signatures nest) and compact the table. Returns the old -> new id map.
-fn merge_functions(functions: &mut Vec<ir::FunctionType>) -> Vec<u32> {
+fn merge_functions(functions: &mut Vec<ir::FunctionType>, views: &Views) -> Vec<u32> {
     let count = functions.len();
     let mut map: Vec<u32> = (0..count as u32).collect();
     loop {
@@ -74,7 +108,7 @@ fn merge_functions(functions: &mut Vec<ir::FunctionType>) -> Vec<u32> {
             .enumerate()
             .map(|(id, function)| {
                 *first
-                    .entry(function_key(function, &map))
+                    .entry(function_key(function, &map, views))
                     .or_insert(id as u32)
             })
             .collect();
@@ -92,7 +126,13 @@ fn merge_functions(functions: &mut Vec<ir::FunctionType>) -> Vec<u32> {
         }
     }
     let map: Vec<u32> = map.iter().map(|rep| compact[*rep as usize]).collect();
-    let eraser = Eraser { functions: map };
+    let eraser = Eraser {
+        functions: map,
+        views: Views {
+            collections: views.collections.clone(),
+            tuples: views.tuples.clone(),
+        },
+    };
     for function in &mut kept {
         eraser.signature(
             &mut function.receiver,
@@ -106,10 +146,11 @@ fn merge_functions(functions: &mut Vec<ir::FunctionType>) -> Vec<u32> {
 
 struct Eraser {
     functions: Vec<u32>,
+    views: Views,
 }
 impl Eraser {
     fn ty(&self, ty: Type) -> Type {
-        match ty.erased() {
+        match self.views.physical(ty) {
             Type::Function(id) => Type::Function(self.functions[id as usize]),
             other => other,
         }
@@ -248,6 +289,7 @@ impl Eraser {
             | E::Reinterpret(value)
             | E::Suspend { value, .. }
             | E::StringTrim { value, .. }
+            | E::TextUnits { value, .. }
             | E::ArrayEnumerate { value, .. }
             | E::ArrayReserve { length: value, .. }
             | E::NewError(_, value)
@@ -319,6 +361,8 @@ impl Eraser {
             E::ArrayFill(a, b, c, d) => self.boxed(&mut [a, b, c, d]),
             E::Math(_, args)
             | E::NumberPredicate(_, args)
+            | E::Intrinsic(_, args)
+            | E::RegExp(_, args)
             | E::Call(_, args)
             | E::Host(_, args)
             | E::CheckedBigIntHost { args, .. } => {
