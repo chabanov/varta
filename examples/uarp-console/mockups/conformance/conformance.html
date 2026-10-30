@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L0 conformance: applier vs mockups</title>
+<style>
+  :root { --bg: #fff; --fg: #1b1b1f; --muted: #6b6b76; --ok: #1f7a3a; --bad: #b3261e; --line: #e4e4ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141418; --fg: #ececf1; --muted: #9a9aa6; --ok: #5cc27a; --bad: #ff8a80; --line: #2a2a31; } }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 16px; }
+  li { padding: 4px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; font-size: 13px; }
+  ul { list-style: none; padding: 0; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  #frames { position: absolute; left: -10000px; top: 0; }
+  iframe { border: 0; display: block; }
+</style>
+</head>
+<body>
+<h1>L0 conformance — applier vs mockups</h1>
+<p>Each mockup is encoded as L0 batches from the published tables and rendered by the applier in a same-size frame; structure must match exactly and every element's box within ±1 px. Open dialogs (top layer) and fixed-position subtrees are compared structurally only.</p>
+<div id="summary">Running…</div>
+<ul id="list"></ul>
+<div id="frames"></div>
+<script type="module">
+  const MOCKUPS = ["chat-empty.html", "chat.html", "chat-cards.html", "chat-context.html", "settings.html"];
+  const SIZES = [[1200, 800], [800, 480], [375, 812]];
+  const TOLERANCE = 1;
+  const STATE = { dialog: ["open"], input: ["value", "checked"] };
+  const frames = document.getElementById("frames");
+  const results = [];
+
+  function load(src, width, height) {
+    return new Promise((resolve) => {
+      const frame = document.createElement("iframe");
+      frame.width = width;
+      frame.height = height;
+      frame.onload = () => resolve(frame);
+      frame.src = src;
+      frames.append(frame);
+    });
+  }
+  async function ready(frame) {
+    for (let i = 0; i < 200 && !frame.contentWindow.__ready; i += 1) await new Promise((r) => setTimeout(r, 25));
+  }
+  const attrs = (el) => [...el.attributes].filter((a) => !(STATE[el.localName] ?? []).includes(a.name) && a.name !== "data-l0-root").map((a) => `${a.name}=${a.value}`).sort().join(" ");
+
+  function compare(a, b, rootA, rootB, path, out, layout) {
+    const ra = rootA.getBoundingClientRect();
+    const rb = rootB.getBoundingClientRect();
+    const ka = [...a.childNodes].filter((n) => n.nodeType === 1 || (n.nodeType === 3 && n.data !== ""));
+    const kb = [...b.childNodes].filter((n) => n.nodeType === 1 || (n.nodeType === 3 && n.data !== ""));
+    if (ka.length !== kb.length) return out.push(`${path}: ${ka.length} vs ${kb.length} children`);
+    ka.forEach((x, i) => {
+      const y = kb[i];
+      const here = `${path}>${x.nodeType === 1 ? x.localName + (x.className ? "." + String(x.className).split(" ")[0] : "") : "#text"}`;
+      if (x.nodeType !== y.nodeType) return out.push(`${here}: node type differs`);
+      if (x.nodeType === 3) {
+        if (x.data !== y.data) out.push(`${here}: text differs`);
+        return;
+      }
+      if (x.localName !== y.localName || attrs(x) !== attrs(y)) return out.push(`${here}: element or attributes differ`);
+      const fixed = getComputedStyle(x).position === "fixed" || x.localName === "dialog";
+      const checkLayout = layout && !fixed;
+      if (checkLayout) {
+        const bx = x.getBoundingClientRect();
+        const by = y.getBoundingClientRect();
+        const d = Math.max(Math.abs(bx.left - ra.left - (by.left - rb.left)), Math.abs(bx.top - ra.top - (by.top - rb.top)), Math.abs(bx.width - by.width), Math.abs(bx.height - by.height));
+        if (d > TOLERANCE) out.push(`${here}: box differs by ${d.toFixed(1)} px`);
+      }
+      compare(x, y, rootA, rootB, here, out, checkLayout);
+    });
+  }
+
+  for (const mockup of MOCKUPS) {
+    for (const [width, height] of SIZES) {
+      const [a, b] = await Promise.all([load(`../${mockup}`, width, height), load(`conformance-frame.html?mockup=${mockup}`, width, height)]);
+      await ready(b);
+      const out = [];
+      if (b.contentWindow.__error) out.push(`applier: ${b.contentWindow.__error}`);
+      else {
+        const rootA = a.contentDocument.getElementById("l0-root");
+        const rootB = b.contentWindow.__root;
+        compare(rootA, rootB, rootA, rootB, "root", out, true);
+      }
+      results.push({ label: `${mockup} @ ${width}×${height}`, ok: out.length === 0, detail: out.slice(0, 4).join("; ") + (out.length > 4 ? ` (+${out.length - 4})` : "") });
+      a.remove();
+      b.remove();
+    }
+  }
+
+  const list = document.getElementById("list");
+  for (const r of results) {
+    const li = document.createElement("li");
+    const mark = document.createElement("span");
+    mark.className = r.ok ? "ok" : "bad";
+    mark.textContent = r.ok ? "✓ " : "✗ ";
+    li.append(mark, r.label + (r.detail ? ` — ${r.detail}` : ""));
+    list.append(li);
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  document.getElementById("summary").textContent = `${results.length - failed} passed, ${failed} failed`;
+  window.__conformance = { passed: results.length - failed, failed, failures: results.filter((r) => !r.ok) };
+</script>
+</body>
+</html>

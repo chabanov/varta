@@ -1,0 +1,977 @@
+{
+  "scenario": "delegation",
+  "description": "The Head Agent delegates to a child agent with start_run and waits for it; the parent run carries child_run.completed.",
+  "stream": "GET /api/v1/sessions/{sessionId}/events?event_schema=1",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30, build 34582ffb; frames projected to event_schema=1 with the registry of session/event-schema 6dd964ba8",
+  "not_sent_in_v1": {
+    "run.affect": 7,
+    "streaming.started": 3,
+    "streaming.completed": 3,
+    "llm.response": 3
+  },
+  "requests": [
+    {
+      "step": "create_session",
+      "status": 201,
+      "body": {
+        "session_id": "session-1",
+        "tenant_id": "tenant-1",
+        "agent_id": "agent-head",
+        "created_by": "id-1",
+        "status": "active",
+        "conversation_history": [],
+        "metadata": {
+          "canon_key": "event-fixture-delegation"
+        },
+        "runs": [],
+        "branches": [],
+        "active_branch": "main",
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "expires_at": "2026-01-02T00:00:00.000Z",
+        "title": null
+      },
+      "content_type": "application/json"
+    },
+    {
+      "step": "send_message",
+      "request": {
+        "content": "Use start_run to run agent agent-research with the message \"Reply with: ok\", wait for its result, then reply with that result only."
+      },
+      "status": 202,
+      "body": {
+        "run_id": "run-1"
+      },
+      "content_type": "application/json"
+    }
+  ],
+  "frames": [
+    {
+      "event": "connected",
+      "id": "0",
+      "data": {
+        "session_id": "session-1",
+        "connected_at": "2026-01-01T00:00:00.077Z",
+        "runs": []
+      }
+    },
+    {
+      "event": "run_added",
+      "id": "run-1:added",
+      "data": {
+        "run_id": "run-1"
+      }
+    },
+    {
+      "event": "run.started",
+      "id": "run-1:1",
+      "data": {
+        "event_id": "evt-1",
+        "run_id": "run-1",
+        "type": "run.started",
+        "seq": 1,
+        "payload": {},
+        "timestamp": "2026-01-01T00:00:00.696Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "step.plan",
+      "id": "run-1:3",
+      "data": {
+        "event_id": "evt-2",
+        "run_id": "run-1",
+        "type": "step.plan",
+        "seq": 3,
+        "payload": {
+          "effort": "medium",
+          "skipped": true,
+          "skip_reason": "acp_dont_ask"
+        },
+        "timestamp": "2026-01-01T00:00:02.560Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "run.step_started",
+      "id": "run-1:5",
+      "data": {
+        "event_id": "evt-3",
+        "run_id": "run-1",
+        "type": "run.step_started",
+        "seq": 5,
+        "payload": {
+          "step_index": 1,
+          "streaming": true,
+          "step_id": "step-1"
+        },
+        "timestamp": "2026-01-01T00:00:02.570Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:7",
+      "data": {
+        "event_id": "evt-4",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 7,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "The",
+          "index": 0
+        },
+        "timestamp": "2026-01-01T00:00:03.960Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:9",
+      "data": {
+        "event_id": "evt-5",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 9,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " user wants me to",
+          "index": 1
+        },
+        "timestamp": "2026-01-01T00:00:03.999Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:10",
+      "data": {
+        "event_id": "evt-6",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 10,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " use",
+          "index": 2
+        },
+        "timestamp": "2026-01-01T00:00:04.004Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:11",
+      "data": {
+        "event_id": "evt-7",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 11,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " start_run to run",
+          "index": 3
+        },
+        "timestamp": "2026-01-01T00:00:04.010Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:12",
+      "data": {
+        "event_id": "evt-8",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 12,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " agent 019",
+          "index": 4
+        },
+        "timestamp": "2026-01-01T00:00:04.015Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:13",
+      "data": {
+        "event_id": "evt-9",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 13,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "fa582-",
+          "index": 5
+        },
+        "timestamp": "2026-01-01T00:00:04.021Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:14",
+      "data": {
+        "event_id": "evt-10",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 14,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "74c8-",
+          "index": 6
+        },
+        "timestamp": "2026-01-01T00:00:04.027Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:15",
+      "data": {
+        "event_id": "evt-11",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 15,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "74a8-",
+          "index": 7
+        },
+        "timestamp": "2026-01-01T00:00:04.033Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:16",
+      "data": {
+        "event_id": "evt-12",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 16,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "85e9-",
+          "index": 8
+        },
+        "timestamp": "2026-01-01T00:00:04.041Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:17",
+      "data": {
+        "event_id": "evt-13",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 17,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "24881f",
+          "index": 9
+        },
+        "timestamp": "2026-01-01T00:00:04.053Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:18",
+      "data": {
+        "event_id": "evt-14",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 18,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "8e317",
+          "index": 10
+        },
+        "timestamp": "2026-01-01T00:00:04.059Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:19",
+      "data": {
+        "event_id": "evt-15",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 19,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "a with the message",
+          "index": 11
+        },
+        "timestamp": "2026-01-01T00:00:04.064Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:20",
+      "data": {
+        "event_id": "evt-16",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 20,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " \"Reply with:",
+          "index": 12
+        },
+        "timestamp": "2026-01-01T00:00:04.068Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:21",
+      "data": {
+        "event_id": "evt-17",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 21,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " ok\", wait for",
+          "index": 13
+        },
+        "timestamp": "2026-01-01T00:00:04.072Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:22",
+      "data": {
+        "event_id": "evt-18",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 22,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " its result, then",
+          "index": 14
+        },
+        "timestamp": "2026-01-01T00:00:04.079Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:23",
+      "data": {
+        "event_id": "evt-19",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 23,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " reply with that result",
+          "index": 15
+        },
+        "timestamp": "2026-01-01T00:00:04.089Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:24",
+      "data": {
+        "event_id": "evt-20",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 24,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " only.\n\nLet me",
+          "index": 16
+        },
+        "timestamp": "2026-01-01T00:00:04.100Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:25",
+      "data": {
+        "event_id": "evt-21",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 25,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " do that. First",
+          "index": 17
+        },
+        "timestamp": "2026-01-01T00:00:04.109Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:26",
+      "data": {
+        "event_id": "evt-22",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 26,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " start_run,",
+          "index": 18
+        },
+        "timestamp": "2026-01-01T00:00:04.118Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:27",
+      "data": {
+        "event_id": "evt-23",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 27,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " then get_run_result",
+          "index": 19
+        },
+        "timestamp": "2026-01-01T00:00:04.129Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:28",
+      "data": {
+        "event_id": "evt-24",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 28,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " with wait",
+          "index": 20
+        },
+        "timestamp": "2026-01-01T00:00:04.139Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:29",
+      "data": {
+        "event_id": "evt-25",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 29,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": ".",
+          "index": 21
+        },
+        "timestamp": "2026-01-01T00:00:04.149Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:30",
+      "data": {
+        "event_id": "evt-26",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 30,
+        "payload": {
+          "chunk_type": "tool_call",
+          "delta": "{\"agent_id\":\"agent-research\",\"input\":{\"message\":\"Reply with: ok\"}}",
+          "index": 22
+        },
+        "timestamp": "2026-01-01T00:00:04.280Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "tool.call",
+      "id": "run-1:33",
+      "data": {
+        "event_id": "evt-27",
+        "run_id": "run-1",
+        "type": "tool.call",
+        "seq": 33,
+        "payload": {
+          "tool_call": {
+            "id": "call_hio7klyj",
+            "name": "start_run",
+            "arguments": {
+              "agent_id": "agent-research",
+              "input": {
+                "message": "Reply with: ok"
+              }
+            }
+          },
+          "builtin": true,
+          "parent_event_id": "evt-28",
+          "_event_id": "evt-29"
+        },
+        "timestamp": "2026-01-01T00:00:04.388Z",
+        "stream_type": "tool"
+      }
+    },
+    {
+      "event": "tool.result",
+      "id": "run-1:34",
+      "data": {
+        "event_id": "evt-30",
+        "run_id": "run-1",
+        "type": "tool.result",
+        "seq": 34,
+        "payload": {
+          "tool_call_id": "call_hio7klyj",
+          "tool_result": {
+            "content": "{\"run_id\":\"id-2\",\"agent_id\":\"agent-research\",\"async\":false,\"summary\":\"Started run for agent agent-research\"}"
+          },
+          "latency_ms": 18.18699700012803,
+          "builtin": true,
+          "parent_event_id": "evt-29"
+        },
+        "timestamp": "2026-01-01T00:00:04.404Z",
+        "stream_type": "tool"
+      }
+    },
+    {
+      "event": "run.step_completed",
+      "id": "run-1:36",
+      "data": {
+        "event_id": "evt-31",
+        "run_id": "run-1",
+        "type": "run.step_completed",
+        "seq": 36,
+        "payload": {
+          "step_index": 1,
+          "step_id": "step-1",
+          "has_tool_calls": true,
+          "tool_names": [
+            "start_run"
+          ],
+          "done": false,
+          "duration_ms": 1835,
+          "input_tokens": 30176,
+          "output_tokens": 129,
+          "thinking_tokens": 0,
+          "llm_calls_count": 1
+        },
+        "timestamp": "2026-01-01T00:00:04.435Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "run.step_started",
+      "id": "run-1:38",
+      "data": {
+        "event_id": "evt-32",
+        "run_id": "run-1",
+        "type": "run.step_started",
+        "seq": 38,
+        "payload": {
+          "step_index": 2,
+          "streaming": true,
+          "step_id": "step-2"
+        },
+        "timestamp": "2026-01-01T00:00:04.451Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:40",
+      "data": {
+        "event_id": "evt-33",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 40,
+        "payload": {
+          "chunk_type": "tool_call",
+          "delta": "{\"run_id\":\"id-2\",\"wait_ms\":60000}",
+          "index": 0
+        },
+        "timestamp": "2026-01-01T00:00:06.200Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "tool.call",
+      "id": "run-1:44",
+      "data": {
+        "event_id": "evt-34",
+        "run_id": "run-1",
+        "type": "tool.call",
+        "seq": 44,
+        "payload": {
+          "tool_call": {
+            "id": "call_n447rcvb",
+            "name": "get_run_result",
+            "arguments": {
+              "run_id": "id-2",
+              "wait_ms": 60000
+            }
+          },
+          "builtin": true,
+          "parent_event_id": "evt-35",
+          "_event_id": "evt-36"
+        },
+        "timestamp": "2026-01-01T00:00:06.314Z",
+        "stream_type": "tool"
+      }
+    },
+    {
+      "event": "child_run.completed",
+      "id": "run-1:45",
+      "data": {
+        "event_id": "evt-37",
+        "run_id": "run-1",
+        "type": "child_run.completed",
+        "seq": 45,
+        "payload": {
+          "child_run_id": "id-2",
+          "agent_id": "agent-research",
+          "agent_name": "Canon Research Agent",
+          "status": "completed",
+          "output_preview": "ok",
+          "duration_ms": 1886
+        },
+        "timestamp": "2026-01-01T00:00:06.377Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "tool.result",
+      "id": "run-1:46",
+      "data": {
+        "event_id": "evt-38",
+        "run_id": "run-1",
+        "type": "tool.result",
+        "seq": 46,
+        "payload": {
+          "tool_call_id": "call_n447rcvb",
+          "tool_result": {
+            "content": "{\"run_id\":\"id-2\",\"status\":\"completed\",\"output\":{\"response\":\"ok\"},\"metrics\":{\"steps_count\":1,\"input_tokens\":25345,\"output_tokens\":30,\"thinking_tokens\":0,\"tool_calls_count\":0,\"llm_calls_count\":1,\"guardrail_checks\":0,\"guardrail_violations\":0,\"memory_retrievals\":0,\"memory_extractions\":0,\"context_window_tokens\":524288,\"last_input_tokens\":25345,\"duration_ms\":1886,\"total_cost_usd\":0.005343449999999999,\"pricing_confidence\":\"inferred\"},\"terminal\":true,\"summary\":\"Run completed\"}"
+          },
+          "latency_ms": 516.6042280010879,
+          "builtin": true,
+          "parent_event_id": "evt-36"
+        },
+        "timestamp": "2026-01-01T00:00:06.830Z",
+        "stream_type": "tool"
+      }
+    },
+    {
+      "event": "run.step_completed",
+      "id": "run-1:48",
+      "data": {
+        "event_id": "evt-39",
+        "run_id": "run-1",
+        "type": "run.step_completed",
+        "seq": 48,
+        "payload": {
+          "step_index": 2,
+          "step_id": "step-2",
+          "has_tool_calls": true,
+          "tool_names": [
+            "get_run_result"
+          ],
+          "done": false,
+          "duration_ms": 2380,
+          "input_tokens": 30333,
+          "output_tokens": 46,
+          "thinking_tokens": 0,
+          "llm_calls_count": 1
+        },
+        "timestamp": "2026-01-01T00:00:06.844Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "run.step_started",
+      "id": "run-1:50",
+      "data": {
+        "event_id": "evt-40",
+        "run_id": "run-1",
+        "type": "run.step_started",
+        "seq": 50,
+        "payload": {
+          "step_index": 3,
+          "streaming": true,
+          "step_id": "step-3"
+        },
+        "timestamp": "2026-01-01T00:00:06.856Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:52",
+      "data": {
+        "event_id": "evt-41",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 52,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "The",
+          "index": 0
+        },
+        "timestamp": "2026-01-01T00:00:07.796Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:54",
+      "data": {
+        "event_id": "evt-42",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 54,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " run completed and",
+          "index": 1
+        },
+        "timestamp": "2026-01-01T00:00:07.907Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:55",
+      "data": {
+        "event_id": "evt-43",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 55,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " the agent",
+          "index": 2
+        },
+        "timestamp": "2026-01-01T00:00:07.926Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:56",
+      "data": {
+        "event_id": "evt-44",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 56,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "'s output",
+          "index": 3
+        },
+        "timestamp": "2026-01-01T00:00:07.936Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:57",
+      "data": {
+        "event_id": "evt-45",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 57,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " was \"ok\".",
+          "index": 4
+        },
+        "timestamp": "2026-01-01T00:00:07.947Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:58",
+      "data": {
+        "event_id": "evt-46",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 58,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " The user asked me",
+          "index": 5
+        },
+        "timestamp": "2026-01-01T00:00:07.983Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:59",
+      "data": {
+        "event_id": "evt-47",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 59,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " to reply with that",
+          "index": 6
+        },
+        "timestamp": "2026-01-01T00:00:07.988Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:60",
+      "data": {
+        "event_id": "evt-48",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 60,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " result only.",
+          "index": 7
+        },
+        "timestamp": "2026-01-01T00:00:07.997Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:61",
+      "data": {
+        "event_id": "evt-49",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 61,
+        "payload": {
+          "chunk_type": "content",
+          "delta": "ok",
+          "index": 8
+        },
+        "timestamp": "2026-01-01T00:00:08.003Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "run.step_completed",
+      "id": "run-1:64",
+      "data": {
+        "event_id": "evt-50",
+        "run_id": "run-1",
+        "type": "run.step_completed",
+        "seq": 64,
+        "payload": {
+          "step_index": 3,
+          "step_id": "step-3",
+          "has_tool_calls": false,
+          "tool_names": [],
+          "done": true,
+          "duration_ms": 1164,
+          "input_tokens": 30544,
+          "output_tokens": 26,
+          "thinking_tokens": 0,
+          "llm_calls_count": 1
+        },
+        "timestamp": "2026-01-01T00:00:08.030Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "session.context",
+      "id": "run-1:65",
+      "data": {
+        "event_id": "evt-51",
+        "run_id": "run-1",
+        "type": "session.context",
+        "seq": 65,
+        "payload": {
+          "session_id": "session-1",
+          "window_tokens": 524288,
+          "used_tokens": 30544,
+          "percent": 5,
+          "source": "model",
+          "updated_at": "2026-01-01T00:00:08.041Z"
+        },
+        "timestamp": "2026-01-01T00:00:08.046Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "run.completed",
+      "id": "run-1:67",
+      "data": {
+        "event_id": "evt-52",
+        "run_id": "run-1",
+        "type": "run.completed",
+        "seq": 67,
+        "payload": {
+          "status": "completed",
+          "output": {
+            "response": "ok"
+          },
+          "metrics": {
+            "duration_ms": 7371,
+            "steps_count": 3,
+            "input_tokens": 91203,
+            "output_tokens": 205,
+            "thinking_tokens": 0,
+            "cached_tokens": 53504,
+            "tool_calls_count": 2,
+            "llm_calls_count": 4,
+            "guardrail_checks": 0,
+            "guardrail_violations": 0,
+            "memory_retrievals": 1,
+            "memory_extractions": 0,
+            "total_cost_usd": 0.010307458
+          },
+          "cost_usd": 0.010307458
+        },
+        "timestamp": "2026-01-01T00:00:08.055Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "run_done",
+      "id": "run-1:done",
+      "data": {
+        "run_id": "run-1",
+        "status": "completed",
+        "metrics": {
+          "duration_ms": 7371,
+          "steps_count": 3,
+          "input_tokens": 91203,
+          "output_tokens": 205,
+          "thinking_tokens": 0,
+          "cached_tokens": 53504,
+          "tool_calls_count": 2,
+          "llm_calls_count": 4,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "total_cost_usd": 0.010307458,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.010307458
+      }
+    }
+  ]
+}

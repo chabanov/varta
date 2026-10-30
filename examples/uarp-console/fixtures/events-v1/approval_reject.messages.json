@@ -1,0 +1,31 @@
+{
+  "scenario": "approval_reject",
+  "request": "GET /api/v1/sessions/{sessionId}/messages",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30 13:xxZ, build 3d07d69d, read after the scenario ran; same placeholders and time shift as approval_reject.json",
+  "status": 200,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Call manage_permissions with action \"get\" and agent_id \"agent-probe\". Do not call anything else.",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.755Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      }
+    ],
+    "items": [
+      {
+        "role": "user",
+        "content": "Call manage_permissions with action \"get\" and agent_id \"agent-probe\". Do not call anything else.",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.755Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      }
+    ],
+    "total": 1
+  }
+}

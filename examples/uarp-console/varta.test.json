@@ -1,0 +1,27 @@
+{
+  "entry": "src/tests/main.ts",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "dist/tests",
+  "languageProfile": "checked-f64-utf16-v38",
+  "fs": {
+    "roots": {
+      "project": "."
+    }
+  },
+  "capabilities": {
+    "env": {
+      "get": [
+        "TEST_GROUP"
+      ]
+    },
+    "fs": {
+      "read": [
+        "/project/fixtures/**"
+      ]
+    },
+    "time": {
+      "timer": true
+    }
+  }
+}

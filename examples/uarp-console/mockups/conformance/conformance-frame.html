@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L0 conformance frame</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  #host { height: 100vh; }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<script type="module">
+  // Renders one mockup through the applier, full page, for the conformance runner.
+  import { createApplier } from "../../../varta-web-host/applier.js";
+  import { mockupBatches } from "./mockup-batch.js";
+
+  const mockup = new URL(location.href).searchParams.get("mockup");
+  try {
+    const view = (await (await fetch("../../../varta-web-host/contract.json", { cache: "no-store" })).json()).view;
+    const html = await (await fetch(`../${mockup}`, { cache: "no-store" })).text();
+    const css = await (await fetch("../console.css", { cache: "no-store" })).text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const applier = createApplier(view, { container: document.getElementById("host"), assetBase: new URL("../", location.href).href, onEvent: () => {} });
+    const { tree, states } = mockupBatches(view, doc, css);
+    applier.apply(tree);
+    applier.apply(states);
+    window.__root = applier.debugRoot();
+    window.__ready = true;
+  } catch (error) {
+    window.__error = String(error?.message ?? error);
+    window.__ready = true;
+  }
+</script>
+</body>
+</html>

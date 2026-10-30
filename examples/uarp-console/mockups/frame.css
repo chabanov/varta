@@ -1,0 +1,23 @@
+/* The embedding page around the guest tree; not part of the L0 subset. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+#l0-root {
+  height: 100vh;
+}
+
+/* Static preview of a dialog opened with the show_modal command: the real
+   applier puts it in the top layer, centred, with a backdrop. */
+#l0-root:has(dialog[open]) .app {
+  opacity: 0.35;
+}
+
+dialog[open] {
+  position: fixed;
+  top: 12vh;
+  margin: 0 auto;
+  z-index: 50;
+}

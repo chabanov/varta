@@ -1,0 +1,7 @@
+{"inputs":[
+  {"input":"click","target":"#thinking-run-1"},
+  {"input":"click","target":"#approve-run-2"},
+  {"input":"click","target":"#option-run-3-1"},
+  {"input":"type","target":"#composer","text":"Дякую!"},
+  {"input":"key","target":"#composer","key":"Enter"}
+]}

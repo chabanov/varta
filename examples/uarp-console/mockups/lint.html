@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UARP Console mockups</title>
+<style>
+  :root { --bg: #fff; --fg: #1b1b1f; --muted: #6b6b76; --ok: #1f7a3a; --bad: #b3261e; --line: #e4e4ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141418; --fg: #ececf1; --muted: #9a9aa6; --ok: #5cc27a; --bad: #ff8a80; --line: #2a2a31; } }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 16px; }
+  section { border-top: 1px solid var(--line); padding: 12px 0; }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  a { color: inherit; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--muted); font-size: 13px; }
+  ul { margin: 4px 0 0; padding-left: 20px; font-size: 13px; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+<h1>UARP Console — макети Single Chat</h1>
+<p>Кожен макет перевіряється на відповідність підмножині L0 v1 з генерованих таблиць <code>docs/embedding.md</code>: елементи, атрибути та їхні граматики, класи, inline-стилі, рядки й таблиця стилів.</p>
+<div id="summary">Перевірка…</div>
+<div id="results"></div>
+</main>
+<script type="module">
+  import { lintTree } from "./lint/lint-html.js";
+  import { checkStylesheet } from "../../varta-web-host/view-css.js";
+
+  const MOCKUPS = [
+    ["chat-empty.html", "Початок розмови"],
+    ["chat.html", "Розмова: міркування, делегування, інструменти, Markdown, потокова відповідь"],
+    ["chat-cards.html", "Картки: дозвіл, питання агента, помилка, втрачене з'єднання, тост"],
+    ["chat-context.html", "Бічна панель контексту: агент, запуск, активні запуски"],
+    ["settings.html", "Діалог підключення"],
+  ];
+  const view = (await (await fetch("../../varta-web-host/contract.json", { cache: "no-store" })).json()).view;
+  const results = document.getElementById("results");
+  let errorCount = 0;
+  const report = { mockups: {}, stylesheet: null };
+
+  const sheet = checkStylesheet(await (await fetch("console.css", { cache: "no-store" })).text(), view);
+  errorCount += sheet.errors.length;
+  report.stylesheet = { rules: sheet.rules.length, errors: sheet.errors };
+  results.append(section("console.css", `${sheet.rules.length} правил`, sheet.errors, []));
+
+  const usedClasses = new Set();
+  for (const [file, label] of MOCKUPS) {
+    const html = await (await fetch(file, { cache: "no-store" })).text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const { errors, states, elements, classes } = lintTree(doc, view, { openUrlPatterns: ["https://docs.snaga.ai/*"] });
+    classes.forEach((c) => usedClasses.add(c));
+    errorCount += errors.length;
+    report.mockups[file] = { errors, states, elements };
+    results.append(section(file, `${label} · ${elements} елементів`, errors, states, true));
+  }
+
+  document.getElementById("summary").innerHTML = errorCount
+    ? `<span class="bad">✗ ${errorCount} порушень підмножини</span>`
+    : `<span class="ok">✓ усі макети й таблиця стилів у межах підмножини L0 v1</span>`;
+  window.__lint = { errors: errorCount, report, classes: [...usedClasses] };
+
+  function section(file, label, errors, states, link = false) {
+    const el = document.createElement("section");
+    const title = document.createElement("h2");
+    title.innerHTML = `${errors.length ? '<span class="bad">✗</span>' : '<span class="ok">✓</span>'} `;
+    if (link) {
+      const a = document.createElement("a");
+      a.href = file;
+      a.textContent = file;
+      title.append(a);
+    } else title.append(file);
+    const meta = document.createElement("div");
+    meta.className = "muted";
+    meta.textContent = label;
+    el.append(title, meta);
+    if (errors.length || states.length) {
+      const list = document.createElement("ul");
+      for (const e of errors) list.append(Object.assign(document.createElement("li"), { className: "bad", textContent: e }));
+      for (const s of states) list.append(Object.assign(document.createElement("li"), { className: "muted", textContent: s }));
+      el.append(list);
+    }
+    return el;
+  }
+</script>
+</body>
+</html>

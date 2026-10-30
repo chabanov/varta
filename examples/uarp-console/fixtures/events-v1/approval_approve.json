@@ -1,0 +1,1228 @@
+{
+  "scenario": "approval_approve",
+  "description": "A tool that needs approval (manage_permissions, action get): the run waits, the person approves, the tool runs, the answer follows.",
+  "stream": "GET /api/v1/sessions/{sessionId}/events?event_schema=1",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30, build 34582ffb; frames projected to event_schema=1 with the registry of session/event-schema 6dd964ba8; re-projected from the same raw recording with the registry of bd5dc091 (PR #626) on 2026-10-30",
+  "not_sent_in_v1": {
+    "run.affect": 8,
+    "streaming.started": 2,
+    "streaming.completed": 2,
+    "llm.response": 2
+  },
+  "requests": [
+    {
+      "step": "create_session",
+      "status": 201,
+      "body": {
+        "session_id": "session-1",
+        "tenant_id": "tenant-1",
+        "agent_id": "agent-head",
+        "created_by": "id-1",
+        "status": "active",
+        "conversation_history": [],
+        "metadata": {
+          "canon_key": "event-fixture-approval_approve"
+        },
+        "runs": [],
+        "branches": [],
+        "active_branch": "main",
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "expires_at": "2026-01-02T00:00:00.000Z",
+        "title": null
+      },
+      "content_type": "application/json"
+    },
+    {
+      "step": "send_message",
+      "request": {
+        "content": "Call manage_permissions with action \"get\" and agent_id \"agent-probe\". Do not call anything else."
+      },
+      "status": 202,
+      "body": {
+        "run_id": "run-1"
+      },
+      "content_type": "application/json"
+    },
+    {
+      "step": "approve",
+      "run_id": "run-1",
+      "status": 200,
+      "body": {
+        "approved": true,
+        "run_id": "run-1"
+      },
+      "content_type": "application/json"
+    }
+  ],
+  "frames": [
+    {
+      "event": "connected",
+      "id": "0",
+      "data": {
+        "session_id": "session-1",
+        "connected_at": "2026-01-01T00:00:00.098Z",
+        "runs": []
+      }
+    },
+    {
+      "event": "run_added",
+      "id": "run-1:added",
+      "data": {
+        "run_id": "run-1"
+      }
+    },
+    {
+      "event": "run.started",
+      "id": "run-1:1",
+      "data": {
+        "event_id": "evt-1",
+        "run_id": "run-1",
+        "type": "run.started",
+        "seq": 1,
+        "payload": {},
+        "timestamp": "2026-01-01T00:00:00.699Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "step.plan",
+      "id": "run-1:3",
+      "data": {
+        "event_id": "evt-2",
+        "run_id": "run-1",
+        "type": "step.plan",
+        "seq": 3,
+        "payload": {
+          "effort": "medium",
+          "skipped": true,
+          "skip_reason": "acp_dont_ask"
+        },
+        "timestamp": "2026-01-01T00:00:02.459Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "run.step_started",
+      "id": "run-1:5",
+      "data": {
+        "event_id": "evt-3",
+        "run_id": "run-1",
+        "type": "run.step_started",
+        "seq": 5,
+        "payload": {
+          "step_index": 1,
+          "streaming": true,
+          "step_id": "step-1"
+        },
+        "timestamp": "2026-01-01T00:00:02.478Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:7",
+      "data": {
+        "event_id": "evt-4",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 7,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "The",
+          "index": 0
+        },
+        "timestamp": "2026-01-01T00:00:03.877Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:9",
+      "data": {
+        "event_id": "evt-5",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 9,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " user asks",
+          "index": 1
+        },
+        "timestamp": "2026-01-01T00:00:03.923Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:10",
+      "data": {
+        "event_id": "evt-6",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 10,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " me to call manage",
+          "index": 2
+        },
+        "timestamp": "2026-01-01T00:00:03.928Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:11",
+      "data": {
+        "event_id": "evt-7",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 11,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "_permissions with action \"",
+          "index": 3
+        },
+        "timestamp": "2026-01-01T00:00:03.933Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:12",
+      "data": {
+        "event_id": "evt-8",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 12,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "get\" and agent",
+          "index": 4
+        },
+        "timestamp": "2026-01-01T00:00:03.954Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:13",
+      "data": {
+        "event_id": "evt-9",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 13,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "_id \"01a",
+          "index": 5
+        },
+        "timestamp": "2026-01-01T00:00:03.958Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:14",
+      "data": {
+        "event_id": "evt-10",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 14,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "04a10-",
+          "index": 6
+        },
+        "timestamp": "2026-01-01T00:00:03.964Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:15",
+      "data": {
+        "event_id": "evt-11",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 15,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "2f31-",
+          "index": 7
+        },
+        "timestamp": "2026-01-01T00:00:03.969Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:16",
+      "data": {
+        "event_id": "evt-12",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 16,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "7633-",
+          "index": 8
+        },
+        "timestamp": "2026-01-01T00:00:03.974Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:17",
+      "data": {
+        "event_id": "evt-13",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 17,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "844e-",
+          "index": 9
+        },
+        "timestamp": "2026-01-01T00:00:03.979Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:18",
+      "data": {
+        "event_id": "evt-14",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 18,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "46f2fa",
+          "index": 10
+        },
+        "timestamp": "2026-01-01T00:00:03.984Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:19",
+      "data": {
+        "event_id": "evt-15",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 19,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "7c9e",
+          "index": 11
+        },
+        "timestamp": "2026-01-01T00:00:03.989Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:20",
+      "data": {
+        "event_id": "evt-16",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 20,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "47\". Do not",
+          "index": 12
+        },
+        "timestamp": "2026-01-01T00:00:03.995Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:21",
+      "data": {
+        "event_id": "evt-17",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 21,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " call anything else.",
+          "index": 13
+        },
+        "timestamp": "2026-01-01T00:00:04.001Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:22",
+      "data": {
+        "event_id": "evt-18",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 22,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " This",
+          "index": 14
+        },
+        "timestamp": "2026-01-01T00:00:04.007Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:23",
+      "data": {
+        "event_id": "evt-19",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 23,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " is a read-only",
+          "index": 15
+        },
+        "timestamp": "2026-01-01T00:00:04.012Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:24",
+      "data": {
+        "event_id": "evt-20",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 24,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " operation",
+          "index": 16
+        },
+        "timestamp": "2026-01-01T00:00:04.036Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:25",
+      "data": {
+        "event_id": "evt-21",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 25,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": ". Let me do",
+          "index": 17
+        },
+        "timestamp": "2026-01-01T00:00:04.048Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:26",
+      "data": {
+        "event_id": "evt-22",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 26,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " exactly",
+          "index": 18
+        },
+        "timestamp": "2026-01-01T00:00:04.057Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:27",
+      "data": {
+        "event_id": "evt-23",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 27,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " that.",
+          "index": 19
+        },
+        "timestamp": "2026-01-01T00:00:04.063Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:28",
+      "data": {
+        "event_id": "evt-24",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 28,
+        "payload": {
+          "chunk_type": "tool_call",
+          "delta": "{\"action\":\"get\",\"agent_id\":\"agent-probe\"}",
+          "index": 20
+        },
+        "timestamp": "2026-01-01T00:00:04.159Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "run.awaiting_approval",
+      "id": "run-1:31",
+      "data": {
+        "event_id": "evt-25",
+        "run_id": "run-1",
+        "type": "run.awaiting_approval",
+        "seq": 31,
+        "payload": {
+          "tool_calls": [
+            {
+              "id": "call_rj0hs7ky",
+              "name": "manage_permissions",
+              "arguments": {
+                "action": "get",
+                "agent_id": "agent-probe"
+              },
+              "args": {
+                "action": "get",
+                "agent_id": "agent-probe"
+              }
+            }
+          ]
+        },
+        "timestamp": "2026-01-01T00:00:04.279Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "run.started",
+      "id": "run-1:33",
+      "data": {
+        "event_id": "evt-26",
+        "run_id": "run-1",
+        "type": "run.started",
+        "seq": 33,
+        "payload": {
+          "resumed_from": "awaiting_approval",
+          "approved": true
+        },
+        "timestamp": "2026-01-01T00:00:04.658Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "run.started",
+      "id": "run-1:34",
+      "data": {
+        "event_id": "evt-27",
+        "run_id": "run-1",
+        "type": "run.started",
+        "seq": 34,
+        "payload": {},
+        "timestamp": "2026-01-01T00:00:04.809Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "step.plan",
+      "id": "run-1:36",
+      "data": {
+        "event_id": "evt-28",
+        "run_id": "run-1",
+        "type": "step.plan",
+        "seq": 36,
+        "payload": {
+          "effort": "medium",
+          "skipped": true,
+          "skip_reason": "acp_dont_ask"
+        },
+        "timestamp": "2026-01-01T00:00:06.540Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "tool.call",
+      "id": "run-1:37",
+      "data": {
+        "event_id": "evt-29",
+        "run_id": "run-1",
+        "type": "tool.call",
+        "seq": 37,
+        "payload": {
+          "tool_call": {
+            "id": "call_rj0hs7ky",
+            "name": "manage_permissions",
+            "arguments": {
+              "action": "get",
+              "agent_id": "agent-probe"
+            }
+          },
+          "builtin": true,
+          "_event_id": "evt-30"
+        },
+        "timestamp": "2026-01-01T00:00:06.554Z",
+        "stream_type": "tool"
+      }
+    },
+    {
+      "event": "tool.result",
+      "id": "run-1:39",
+      "data": {
+        "event_id": "evt-31",
+        "run_id": "run-1",
+        "type": "tool.result",
+        "seq": 39,
+        "payload": {
+          "tool_call_id": "call_rj0hs7ky",
+          "tool_result": {
+            "content": "{\"agent_id\":\"agent-probe\",\"exists\":false,\"permissions\":{}}"
+          },
+          "latency_ms": 11.658149000257254,
+          "builtin": true,
+          "parent_event_id": "evt-30"
+        },
+        "timestamp": "2026-01-01T00:00:06.569Z",
+        "stream_type": "tool"
+      }
+    },
+    {
+      "event": "run.step_started",
+      "id": "run-1:42",
+      "data": {
+        "event_id": "evt-32",
+        "run_id": "run-1",
+        "type": "run.step_started",
+        "seq": 42,
+        "payload": {
+          "step_index": 3,
+          "streaming": true,
+          "step_id": "step-2"
+        },
+        "timestamp": "2026-01-01T00:00:06.590Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:44",
+      "data": {
+        "event_id": "evt-33",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 44,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "The",
+          "index": 0
+        },
+        "timestamp": "2026-01-01T00:00:07.521Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:46",
+      "data": {
+        "event_id": "evt-34",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 46,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " tool returned:",
+          "index": 1
+        },
+        "timestamp": "2026-01-01T00:00:07.554Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:47",
+      "data": {
+        "event_id": "evt-35",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 47,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " agent",
+          "index": 2
+        },
+        "timestamp": "2026-01-01T00:00:07.559Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:48",
+      "data": {
+        "event_id": "evt-36",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 48,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "_id \"",
+          "index": 3
+        },
+        "timestamp": "2026-01-01T00:00:07.566Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:49",
+      "data": {
+        "event_id": "evt-37",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 49,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "01a04a",
+          "index": 4
+        },
+        "timestamp": "2026-01-01T00:00:07.571Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:50",
+      "data": {
+        "event_id": "evt-38",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 50,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "10-2f",
+          "index": 5
+        },
+        "timestamp": "2026-01-01T00:00:07.576Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:51",
+      "data": {
+        "event_id": "evt-39",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 51,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "31-763",
+          "index": 6
+        },
+        "timestamp": "2026-01-01T00:00:07.581Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:52",
+      "data": {
+        "event_id": "evt-40",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 52,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "3-844",
+          "index": 7
+        },
+        "timestamp": "2026-01-01T00:00:07.587Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:53",
+      "data": {
+        "event_id": "evt-41",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 53,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "e-46f",
+          "index": 8
+        },
+        "timestamp": "2026-01-01T00:00:07.592Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:54",
+      "data": {
+        "event_id": "evt-42",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 54,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "2fa7c",
+          "index": 9
+        },
+        "timestamp": "2026-01-01T00:00:07.599Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:55",
+      "data": {
+        "event_id": "evt-43",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 55,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "9e47\",",
+          "index": 10
+        },
+        "timestamp": "2026-01-01T00:00:07.609Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:56",
+      "data": {
+        "event_id": "evt-44",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 56,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " exists:",
+          "index": 11
+        },
+        "timestamp": "2026-01-01T00:00:07.620Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:57",
+      "data": {
+        "event_id": "evt-45",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 57,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " false, permissions:",
+          "index": 12
+        },
+        "timestamp": "2026-01-01T00:00:07.629Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:58",
+      "data": {
+        "event_id": "evt-46",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 58,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " {}. The",
+          "index": 13
+        },
+        "timestamp": "2026-01-01T00:00:07.640Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:59",
+      "data": {
+        "event_id": "evt-47",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 59,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " user asked to",
+          "index": 14
+        },
+        "timestamp": "2026-01-01T00:00:07.650Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:60",
+      "data": {
+        "event_id": "evt-48",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 60,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " call only",
+          "index": 15
+        },
+        "timestamp": "2026-01-01T00:00:07.660Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:61",
+      "data": {
+        "event_id": "evt-49",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 61,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " this",
+          "index": 16
+        },
+        "timestamp": "2026-01-01T00:00:07.672Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:62",
+      "data": {
+        "event_id": "evt-50",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 62,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " tool and reply",
+          "index": 17
+        },
+        "timestamp": "2026-01-01T00:00:07.679Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:63",
+      "data": {
+        "event_id": "evt-51",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 63,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": ".",
+          "index": 18
+        },
+        "timestamp": "2026-01-01T00:00:07.694Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:64",
+      "data": {
+        "event_id": "evt-52",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 64,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " I should report the",
+          "index": 19
+        },
+        "timestamp": "2026-01-01T00:00:07.700Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:65",
+      "data": {
+        "event_id": "evt-53",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 65,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " result plainly",
+          "index": 20
+        },
+        "timestamp": "2026-01-01T00:00:07.709Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:66",
+      "data": {
+        "event_id": "evt-54",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 66,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": ". The user wrote",
+          "index": 21
+        },
+        "timestamp": "2026-01-01T00:00:07.732Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:67",
+      "data": {
+        "event_id": "evt-55",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 67,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " in English, so",
+          "index": 22
+        },
+        "timestamp": "2026-01-01T00:00:07.738Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:68",
+      "data": {
+        "event_id": "evt-56",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 68,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " reply in English.",
+          "index": 23
+        },
+        "timestamp": "2026-01-01T00:00:07.744Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:69",
+      "data": {
+        "event_id": "evt-57",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 69,
+        "payload": {
+          "chunk_type": "content",
+          "delta": "Result: no",
+          "index": 24
+        },
+        "timestamp": "2026-01-01T00:00:07.750Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:70",
+      "data": {
+        "event_id": "evt-58",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 70,
+        "payload": {
+          "chunk_type": "content",
+          "delta": " permission record",
+          "index": 25
+        },
+        "timestamp": "2026-01-01T00:00:07.759Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:71",
+      "data": {
+        "event_id": "evt-59",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 71,
+        "payload": {
+          "chunk_type": "content",
+          "delta": " exists for that",
+          "index": 26
+        },
+        "timestamp": "2026-01-01T00:00:07.768Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:72",
+      "data": {
+        "event_id": "evt-60",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 72,
+        "payload": {
+          "chunk_type": "content",
+          "delta": " agent (`",
+          "index": 27
+        },
+        "timestamp": "2026-01-01T00:00:07.779Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:73",
+      "data": {
+        "event_id": "evt-61",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 73,
+        "payload": {
+          "chunk_type": "content",
+          "delta": "exists: false`,",
+          "index": 28
+        },
+        "timestamp": "2026-01-01T00:00:07.792Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:74",
+      "data": {
+        "event_id": "evt-62",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 74,
+        "payload": {
+          "chunk_type": "content",
+          "delta": " empty permissions).",
+          "index": 29
+        },
+        "timestamp": "2026-01-01T00:00:07.808Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "run.step_completed",
+      "id": "run-1:77",
+      "data": {
+        "event_id": "evt-63",
+        "run_id": "run-1",
+        "type": "run.step_completed",
+        "seq": 77,
+        "payload": {
+          "step_index": 3,
+          "step_id": "step-2",
+          "has_tool_calls": false,
+          "tool_names": [],
+          "done": true,
+          "duration_ms": 1299,
+          "input_tokens": 31420,
+          "output_tokens": 90,
+          "thinking_tokens": 0,
+          "llm_calls_count": 1
+        },
+        "timestamp": "2026-01-01T00:00:07.904Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "session.context",
+      "id": "run-1:78",
+      "data": {
+        "event_id": "evt-64",
+        "run_id": "run-1",
+        "type": "session.context",
+        "seq": 78,
+        "payload": {
+          "session_id": "session-1",
+          "window_tokens": 524288,
+          "used_tokens": 31420,
+          "percent": 5,
+          "source": "model",
+          "updated_at": "2026-01-01T00:00:07.919Z"
+        },
+        "timestamp": "2026-01-01T00:00:07.927Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "run.completed",
+      "id": "run-1:80",
+      "data": {
+        "event_id": "evt-65",
+        "run_id": "run-1",
+        "type": "run.completed",
+        "seq": 80,
+        "payload": {
+          "status": "completed",
+          "output": {
+            "response": "Result: no permission record exists for that agent (`exists: false`, empty permissions)."
+          },
+          "metrics": {
+            "duration_ms": 6710,
+            "steps_count": 3,
+            "input_tokens": 63033,
+            "output_tokens": 207,
+            "thinking_tokens": 0,
+            "cached_tokens": 26752,
+            "tool_calls_count": 1,
+            "llm_calls_count": 4,
+            "guardrail_checks": 0,
+            "guardrail_violations": 0,
+            "memory_retrievals": 2,
+            "memory_extractions": 0,
+            "total_cost_usd": 0.008887494
+          },
+          "cost_usd": 0.008887494
+        },
+        "timestamp": "2026-01-01T00:00:07.938Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "run_done",
+      "id": "run-1:done",
+      "data": {
+        "run_id": "run-1",
+        "status": "completed",
+        "metrics": {
+          "duration_ms": 6710,
+          "steps_count": 3,
+          "input_tokens": 63033,
+          "output_tokens": 207,
+          "thinking_tokens": 0,
+          "cached_tokens": 26752,
+          "tool_calls_count": 1,
+          "llm_calls_count": 4,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 2,
+          "memory_extractions": 0,
+          "total_cost_usd": 0.008887494
+        },
+        "cost_usd": 0.008887494
+      }
+    }
+  ]
+}

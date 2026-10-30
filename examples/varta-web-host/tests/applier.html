@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varta L0 applier tests</title>
+<style>
+  :root { --bg: #fff; --fg: #1b1b1f; --muted: #6b6b76; --ok: #1f7a3a; --bad: #b3261e; --line: #e4e4ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141418; --fg: #ececf1; --muted: #9a9aa6; --ok: #5cc27a; --bad: #ff8a80; --line: #2a2a31; } }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 16px; }
+  #summary { font-weight: 600; margin-bottom: 12px; }
+  ul { list-style: none; padding: 0; margin: 0 0 24px; }
+  li { padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  #stage { border: 1px dashed var(--line); padding: 12px; min-height: 40px; }
+</style>
+</head>
+<body>
+<h1>Varta L0 applier — browser tests (draft v0, rounds 1–5)</h1>
+<p>Batches encoded from the published tables, applied to a closed shadow root; malformed batches must fail closed and atomically.</p>
+<div id="summary">Running…</div>
+<ul id="list"></ul>
+<div id="stage"></div>
+<script type="module">
+  import { createApplier, decodeEventRecord, ViewProtocolError } from "../applier.js";
+  import { batchEncoder } from "../view-encoder.js";
+
+  const contract = await (await fetch("../contract.json", { cache: "no-store" })).json();
+  const view = contract.view;
+  const results = [];
+  const check = (label, ok, detail = "") => results.push({ label, ok: Boolean(ok), detail });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const MOD = { shift: view.layout["Event flag `shiftKey`"] && 1, ctrl: 2 };
+
+  function fresh(extra = {}) {
+    const container = document.createElement("div");
+    document.getElementById("stage").replaceChildren(container);
+    const events = [];
+    const opened = [];
+    const copied = [];
+    let title = null;
+    const applier = createApplier(view, {
+      container,
+      assetBase: new URL("./assets/", location.href).href,
+      openUrlPatterns: ["https://docs.snaga.ai/*"],
+      clipboardRequested: true,
+      broker: async (_c, _r, perform) => perform(),
+      clipboard: { writeText: async (t) => copied.push(t) },
+      openWindow: (...args) => opened.push(args),
+      onEvent: (bytes) => events.push(decodeEventRecord(view, bytes)),
+      onTitle: (t) => (title = t),
+      ...extra,
+    });
+    return { applier, events, opened, copied, root: applier.debugRoot(), title: () => title };
+  }
+  const b = () => batchEncoder(view);
+  const rejects = (applier, bytes, pattern) => {
+    try {
+      applier.apply(bytes);
+      return "accepted";
+    } catch (error) {
+      if (!(error instanceof ViewProtocolError)) return `threw ${error}`;
+      return pattern.test(error.message) ? true : error.message;
+    }
+  };
+  const keydown = (el, init) => {
+    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, composed: true, ...init });
+    el.dispatchEvent(event);
+    return event;
+  };
+
+  // 1. Structure, attributes, styles, :root rewrite, title.
+  {
+    const { applier, root, title } = fresh();
+    applier.apply(
+      b()
+        .op("stylesheet", { sheet: 2, text: ":root { --accent: #0a1428; } .row { display: flex; gap: 8px; border-bottom: 1px solid var(--accent); }" })
+        .op("create_element", { node: 2, tag: "form" })
+        .op("create_element", { node: 3, tag: "label" })
+        .op("set_attribute", { node: 3, attribute: "for", text: "base-url" })
+        .op("create_text", { node: 4, text: "Base URL" })
+        .op("insert", { parent: 3, node: 4, before: 0 })
+        .op("create_element", { node: 5, tag: "input" })
+        .op("set_attribute", { node: 5, attribute: "id", text: "base-url" })
+        .op("set_attribute", { node: 5, attribute: "type", text: "text" })
+        .op("create_element", { node: 6, tag: "textarea" })
+        .op("set_attribute", { node: 6, attribute: "rows", text: "3" })
+        .op("set_style", { node: 6, property: "field-sizing", text: "content" })
+        .op("create_element", { node: 9, tag: "button" })
+        .op("set_attribute", { node: 9, attribute: "type", text: "submit" })
+        .op("set_attribute", { node: 9, attribute: "disabled", text: "" })
+        .op("create_text", { node: 10, text: "Зберегти" })
+        .op("insert", { parent: 9, node: 10, before: 0 })
+        .op("set_class", { node: 2, text: "row settings" })
+        .op("set_style", { node: 9, property: "background-color", text: "rgb(10, 20, 30)" })
+        .op("create_element", { node: 11, tag: "aside" })
+        .op("insert", { parent: 2, node: 3, before: 0 })
+        .op("insert", { parent: 2, node: 5, before: 0 })
+        .op("insert", { parent: 2, node: 6, before: 0 })
+        .op("insert", { parent: 2, node: 9, before: 0 })
+        .op("insert", { parent: 1, node: 2, before: 0 })
+        .op("insert", { parent: 1, node: 11, before: 0 })
+        .op("set_title", { text: "UARP Console" })
+        .encode(),
+    );
+    const form = root.querySelector("form");
+    check("builds the form; aside is in the subset", form?.children.length === 4 && form.className === "row settings" && root.querySelector("aside"));
+    check("text is text, never HTML", root.querySelector("button").textContent === "Зберегти" && root.querySelector("button").children.length === 0);
+    check("boolean attribute is presence", root.querySelector("button").disabled);
+    check("rows and field-sizing apply to textarea", root.querySelector("textarea").rows === 3);
+    check("style and :root custom properties cascade through [data-l0-root]", getComputedStyle(root.querySelector("button")).backgroundColor === "rgb(10, 20, 30)" && getComputedStyle(form).borderBottomColor === "rgb(10, 20, 40)");
+    check("guest ids do not leak into the page", document.getElementById("base-url") === null);
+    check("set_title reaches the embedder", title() === "UARP Console");
+    applier.apply(b().op("insert", { parent: 2, node: 9, before: 3 }).encode());
+    check("insert moves an attached node before a sibling", form.firstElementChild.localName === "button");
+    applier.apply(b().op("remove", { node: 6 }).encode());
+    check("remove releases the subtree", !root.querySelector("textarea") && applier.inspect().liveNodes === 8);
+    applier.apply(b().op("stylesheet", { sheet: 2, text: "" }).encode());
+    check("empty stylesheet text removes the sheet", getComputedStyle(form).display !== "flex");
+  }
+
+  // 2. Events: delegation, key filters, seq, preventDefault, stopPropagation.
+  {
+    const { applier, events, root } = fresh();
+    applier.apply(
+      b()
+        .op("create_element", { node: 2, tag: "form" })
+        .op("create_element", { node: 3, tag: "textarea" })
+        .op("create_element", { node: 4, tag: "div" })
+        .op("create_element", { node: 5, tag: "button" })
+        .op("set_attribute", { node: 5, attribute: "type", text: "button" })
+        .op("insert", { parent: 4, node: 5, before: 0 })
+        .op("insert", { parent: 2, node: 3, before: 0 })
+        .op("insert", { parent: 2, node: 4, before: 0 })
+        .op("insert", { parent: 1, node: 2, before: 0 })
+        .op("listen", { node: 2, event: "submit", handler: 10, options: 0 })
+        .op("listen", { node: 2, event: "input", handler: 11, options: 0 })
+        .op("listen", { node: 2, event: "change", handler: 15, options: 0 })
+        .op("listen", { node: 4, event: "click", handler: 12, options: 2 })
+        .op("listen", { node: 1, event: "click", handler: 13, options: 0 })
+        .op("listen", { node: 3, event: "keydown", handler: 20, options: 1 | 4, key: "Enter", required_modifiers: 0, forbidden_modifiers: 1 })
+        .op("listen", { node: 3, event: "keydown", handler: 21, options: 0, key: "Escape" })
+        .encode(),
+    );
+    const area = root.querySelector("textarea");
+    area.value = "abc";
+    area.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
+    const typed = events.at(-1);
+    check("input record carries value, seq, target and status 0", typed?.kind === "input" && typed.value === "abc" && typed.seq === 1 && typed.target === 3 && typed.handler === 11 && typed.status === 0);
+    area.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    check("change carries the current seq without incrementing it", events.at(-1)?.kind === "change" && events.at(-1).seq === 1 && applier.inspect().fieldSeq[3] === 1);
+    const enter = keydown(area, { key: "Enter" });
+    check("Enter matches the send filter and prevents the newline", events.at(-1)?.handler === 20 && enter.defaultPrevented);
+    const before = events.length;
+    const shiftEnter = keydown(area, { key: "Enter", shiftKey: true });
+    check("Shift+Enter matches nothing and is not prevented", events.length === before && !shiftEnter.defaultPrevented);
+    const composing = keydown(area, { key: "Enter", isComposing: true });
+    check("Enter during IME composition matches nothing", events.length === before && !composing.defaultPrevented);
+    keydown(area, { key: "Escape" });
+    check("a second keydown listener with another filter on the same node", events.at(-1)?.handler === 21);
+    root.querySelector("button").click();
+    check("click is delegated and stopPropagation stops it", events.at(-1)?.handler === 12 && !events.some((e) => e.handler === 13));
+    const submit = new SubmitEvent("submit", { bubbles: true, cancelable: true, composed: true });
+    root.querySelector("form").dispatchEvent(submit);
+    check("submit always prevents default", submit.defaultPrevented && events.at(-1)?.kind === "submit");
+    applier.apply(b().op("set_value", { node: 3, text: "server", base_seq: 0 }).encode());
+    check("stale set_value is dropped", area.value === "abc");
+    applier.apply(b().op("set_value", { node: 3, text: "abcd", base_seq: 1 }).encode());
+    check("current set_value applies", area.value === "abcd");
+    area.setSelectionRange(1, 1);
+    applier.apply(b().op("set_value", { node: 3, text: "abcd", base_seq: 1 }).encode());
+    check("equal set_value keeps the caret", area.selectionStart === 1);
+    applier.apply(b().op("unlisten", { node: 3, event: "keydown", handler: 21 }).encode());
+    const count = events.length;
+    keydown(area, { key: "Escape" });
+    check("unlisten names the handler", events.length === count);
+  }
+
+  // 3. Commands, dialog defaults.
+  {
+    const { applier, root } = fresh();
+    applier.apply(
+      b()
+        .op("create_element", { node: 2, tag: "input" })
+        .op("create_element", { node: 3, tag: "dialog" })
+        .op("insert", { parent: 1, node: 2, before: 0 })
+        .op("insert", { parent: 1, node: 3, before: 0 })
+        .op("command", { node: 2, command: "focus", argument: 0 })
+        .op("command", { node: 3, command: "show_modal", argument: 0 })
+        .encode(),
+    );
+    const dialog = root.querySelector("dialog");
+    check("show_modal opens a modal dialog without border or padding", dialog.open && getComputedStyle(dialog).paddingTop === "0px" && getComputedStyle(dialog).borderTopStyle === "none");
+    applier.apply(b().op("command", { node: 3, command: "close", argument: 0 }).encode());
+    check("close closes it", !dialog.open);
+  }
+
+  // 4. Capabilities: copy_text and external links report every outcome.
+  {
+    const { applier, events, copied } = fresh();
+    applier.apply(b().op("copy_text", { request: 7, text: "run_7KQ2" }).encode());
+    await tick();
+    const outside = events.at(-1);
+    check("copy_text outside a gesture turn reports invalid_context", outside?.kind === "command_result" && outside.key === "copy_text" && outside.seq === 7 && outside.status === 3 && copied.length === 0);
+    applier.apply(b().op("copy_text", { request: 7, text: "run_7KQ2" }).encode(), { gesture: true });
+    await tick();
+    check("copy_text in a gesture turn copies and reports ok", events.at(-1)?.status === 0 && copied[0] === "run_7KQ2" && applier.inspect().pendingCopies === 0);
+  }
+  {
+    const denied = fresh({ broker: async (_c, _r, _p, notAllowed) => notAllowed });
+    denied.applier.apply(b().op("copy_text", { request: 1, text: "x" }).encode(), { gesture: true });
+    await tick();
+    check("broker denial reports not_allowed", denied.events.at(-1)?.status === 1 && denied.copied.length === 0);
+    const failing = fresh({ clipboard: { writeText: async () => { throw new Error("blocked"); } } });
+    failing.applier.apply(b().op("copy_text", { request: 1, text: "x" }).encode(), { gesture: true });
+    await tick();
+    check("platform refusal reports refused_by_platform", failing.events.at(-1)?.status === 2);
+    const unrequested = fresh({ clipboardRequested: false });
+    unrequested.applier.apply(b().op("copy_text", { request: 1, text: "x" }).encode(), { gesture: true });
+    await tick();
+    check("without the package request copy_text is not_allowed", unrequested.events.at(-1)?.status === 1);
+  }
+  {
+    const { applier, events, opened, root } = fresh();
+    applier.apply(
+      b()
+        .op("create_element", { node: 2, tag: "a" })
+        .op("set_attribute", { node: 2, attribute: "href", text: "https://docs.snaga.ai/guide" })
+        .op("create_text", { node: 3, text: "Guide" })
+        .op("insert", { parent: 2, node: 3, before: 0 })
+        .op("insert", { parent: 1, node: 2, before: 0 })
+        .op("listen", { node: 2, event: "click", handler: 30, options: 0 })
+        .encode(),
+    );
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true, composed: true });
+    root.querySelector("a").dispatchEvent(click);
+    check("a never navigates; guest click still delivered; untrusted clicks open nothing", click.defaultPrevented && events.at(-1)?.handler === 30 && opened.length === 0);
+    await applier.debugActivateLink(2);
+    check("trusted activation opens through the broker with noopener and reports ok", opened[0]?.[0] === "https://docs.snaga.ai/guide" && opened[0][2] === "noopener,noreferrer" && events.at(-1)?.kind === "command_result" && events.at(-1).key === "open_url" && events.at(-1).target === 2 && events.at(-1).status === 0);
+    const denied = fresh({ broker: async (_c, _r, _p, notAllowed) => notAllowed });
+    denied.applier.apply(b().op("create_element", { node: 2, tag: "a" }).op("set_attribute", { node: 2, attribute: "href", text: "https://docs.snaga.ai/x" }).encode());
+    await denied.applier.debugActivateLink(2);
+    check("denied activation reports not_allowed and opens nothing", denied.events.at(-1)?.status === 1 && denied.opened.length === 0);
+  }
+
+  // 5. Fail closed and atomically.
+  {
+    const { applier, root } = fresh();
+    applier.apply(b().op("create_element", { node: 2, tag: "div" }).op("insert", { parent: 1, node: 2, before: 0 }).op("create_element", { node: 4, tag: "textarea" }).encode());
+    const cases = [
+      ["unknown opcode", b().op("remove", { node: 2 }).encode({ opcodeOverride: 99 }), /unknown opcode/],
+      ["nonzero operation padding", b().op("remove", { node: 2 }).encode({ paddingByte: 1 }), /padding/],
+      ["trailing bytes", b().op("remove", { node: 2 }).encode({ trailing: [0, 0, 0, 0] }), /trailing/],
+      ["unknown tag code", b().op("create_element", { node: 3, tag: 999 }).encode(), /unknown tag/],
+      ["duplicate id", b().op("create_element", { node: 2, tag: "div" }).encode(), /already live/],
+      ["dead id", b().op("set_text", { node: 77, text: "x" }).encode(), /unknown or dead/],
+      ["set_text on an element", b().op("set_text", { node: 2, text: "x" }).encode(), /only to text nodes/],
+      ["cycle", b().op("create_element", { node: 3, tag: "div" }).op("insert", { parent: 2, node: 3, before: 0 }).op("insert", { parent: 3, node: 2, before: 0 }).encode(), /cycle/],
+      ["root removal", b().op("remove", { node: 1 }).encode(), /root/],
+      ["lone surrogate in text", b().op("create_text", { node: 3, text: "a\ud800" }).encode(), /lone surrogate/],
+      ["U+0000 in text", b().op("create_text", { node: 3, text: "a\u0000" }).encode(), /lone surrogate or U\+0000/],
+      ["javascript: href", b().op("create_element", { node: 3, tag: "a" }).op("set_attribute", { node: 3, attribute: "href", text: "javascript:alert(1)" }).encode(), /violates/],
+      ["external href outside the ui.open_url request", b().op("create_element", { node: 3, tag: "a" }).op("set_attribute", { node: 3, attribute: "href", text: "https://evil.test/" }).encode(), /violates/],
+      ["img src outside bundled resources", b().op("create_element", { node: 3, tag: "img" }).op("set_attribute", { node: 3, attribute: "src", text: "https://evil.test/p.png" }).encode(), /violates/],
+      ["boolean attribute with a value", b().op("create_element", { node: 3, tag: "button" }).op("set_attribute", { node: 3, attribute: "disabled", text: "false" }).encode(), /violates/],
+      ["rows on a div", b().op("set_attribute", { node: 2, attribute: "rows", text: "2" }).encode(), /not allowed/],
+      ["url() in style", b().op("set_style", { node: 2, property: "background-color", text: "url(https://evil.test/x)" }).encode(), /forbidden/],
+      ["named colour", b().op("set_style", { node: 2, property: "color", text: "red" }).encode(), /does not match/],
+      ["field-sizing on a div", b().op("set_style", { node: 2, property: "field-sizing", text: "content" }).encode(), /only to textarea/],
+      ["@import in stylesheet", b().op("stylesheet", { sheet: 1, text: "@import 'x.css';" }).encode(), /forbidden token/],
+      ["combinator in stylesheet", b().op("stylesheet", { sheet: 1, text: ".a .b { color: #000; }" }).encode(), /invalid stylesheet/],
+      ["identical filter twice", b().op("listen", { node: 2, event: "click", handler: 1, options: 0 }).op("listen", { node: 2, event: "click", handler: 2, options: 0 }).encode(), /identical/],
+      ["handler id reused", b().op("listen", { node: 2, event: "click", handler: 1, options: 0 }).op("listen", { node: 2, event: "input", handler: 1, options: 0 }).encode(), /unique/],
+      ["key filter on click", b().op("listen", { node: 2, event: "click", handler: 1, options: 0, key: "Enter" }).encode(), /only to keydown/],
+      ["unknown listen option bit", b().op("listen", { node: 2, event: "click", handler: 1, options: 8 }).encode(), /option/],
+      ["unlisten without that handler", b().op("unlisten", { node: 2, event: "click", handler: 9 }).encode(), /not listening/],
+      ["show_modal on a div", b().op("command", { node: 2, command: "show_modal", argument: 0 }).encode(), /not allowed/],
+      ["copy_text request id 0", b().op("copy_text", { request: 0, text: "x" }).encode(), /nonzero/],
+      ["odd string length", (() => { const bytes = b().op("set_title", { text: "ab" }).encode(); bytes[12] = 3; return bytes; })(), /odd|padding|truncated/],
+    ];
+    for (const [label, bytes, pattern] of cases) {
+      const outcome = rejects(applier, bytes, pattern);
+      check(`rejects ${label}`, outcome === true, outcome === true ? "" : String(outcome));
+    }
+    const before = root.innerHTML;
+    const partial = b().op("create_element", { node: 5, tag: "p" }).op("insert", { parent: 1, node: 5, before: 0 }).op("remove", { node: 1 }).encode();
+    rejects(applier, partial, /root/);
+    check("an invalid batch applies nothing", root.innerHTML === before && applier.inspect().liveNodes === 3);
+  }
+
+  const list = document.getElementById("list");
+  for (const r of results) {
+    const li = document.createElement("li");
+    const mark = document.createElement("span");
+    mark.className = r.ok ? "ok" : "bad";
+    mark.textContent = r.ok ? "✓ " : "✗ ";
+    li.append(mark, r.label + (r.detail ? ` — ${r.detail}` : ""));
+    list.append(li);
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  document.getElementById("summary").textContent = `${results.length - failed} passed, ${failed} failed`;
+  window.__applier = { passed: results.length - failed, failed, failures: results.filter((r) => !r.ok) };
+</script>
+</body>
+</html>

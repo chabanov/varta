@@ -1,0 +1,85 @@
+{
+  "scenario": "plain",
+  "request": "GET /api/v1/sessions/{sessionId}/messages",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30 13:xxZ, build 3d07d69d, read after the scenario ran; same placeholders and time shift as plain.json",
+  "status": 200,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply with the single word: ok",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.636Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      },
+      {
+        "role": "assistant",
+        "content": "ok",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:03.456Z",
+        "compacted": false,
+        "thinking": "The user's message is simply \"Reply with the single word: ok\". This is a direct instruction to reply with a single word. No tools needed. The language is English, so I reply in English with just \"ok\".",
+        "run_metrics": {
+          "steps_count": 1,
+          "input_tokens": 42343,
+          "output_tokens": 49,
+          "thinking_tokens": 0,
+          "tool_calls_count": 0,
+          "llm_calls_count": 1,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "context_window_tokens": 524288,
+          "last_input_tokens": 42343,
+          "duration_ms": 2763,
+          "total_cost_usd": 0.00892633,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.00892633,
+        "message_id": "run-1-reply"
+      }
+    ],
+    "items": [
+      {
+        "role": "user",
+        "content": "Reply with the single word: ok",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.636Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      },
+      {
+        "role": "assistant",
+        "content": "ok",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:03.456Z",
+        "compacted": false,
+        "thinking": "The user's message is simply \"Reply with the single word: ok\". This is a direct instruction to reply with a single word. No tools needed. The language is English, so I reply in English with just \"ok\".",
+        "run_metrics": {
+          "steps_count": 1,
+          "input_tokens": 42343,
+          "output_tokens": 49,
+          "thinking_tokens": 0,
+          "tool_calls_count": 0,
+          "llm_calls_count": 1,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "context_window_tokens": 524288,
+          "last_input_tokens": 42343,
+          "duration_ms": 2763,
+          "total_cost_usd": 0.00892633,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.00892633,
+        "message_id": "run-1-reply"
+      }
+    ],
+    "total": 2
+  }
+}

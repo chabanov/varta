@@ -1,0 +1,2038 @@
+{
+  "accessibility": {
+    "children": [
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "Reply with the single word: ok",
+                "role": "text"
+              },
+              {
+                "name": "Chief of Staff",
+                "role": "text"
+              },
+              {
+                "expanded": "true",
+                "name": "Міркування",
+                "role": "button"
+              },
+              {
+                "children": [
+                  {
+                    "name": "The user's message is simply \"Reply with the single word: ok\". This is a direct instruction to reply with a single word. No tools needed. The language is English, so I reply in English with just \"ok\".",
+                    "role": "text"
+                  }
+                ],
+                "role": "paragraph"
+              },
+              {
+                "children": [
+                  {
+                    "name": "ok",
+                    "role": "text"
+                  }
+                ],
+                "role": "paragraph"
+              },
+              {
+                "name": "Call manage_permissions with action \"get\".",
+                "role": "text"
+              },
+              {
+                "name": "Chief of Staff",
+                "role": "text"
+              },
+              {
+                "expanded": "false",
+                "name": "Міркування",
+                "role": "button"
+              },
+              {
+                "level": 2,
+                "name": "Потрібен ваш дозвіл",
+                "role": "heading"
+              },
+              {
+                "name": "надсилається…",
+                "role": "text"
+              },
+              {
+                "children": [
+                  {
+                    "name": "Агент хоче виконати дію, яка потребує підтвердження людиною.",
+                    "role": "text"
+                  }
+                ],
+                "role": "paragraph"
+              },
+              {
+                "name": "Інструмент",
+                "role": "text"
+              },
+              {
+                "name": "manage_permissions",
+                "role": "text"
+              },
+              {
+                "name": "{\"action\":\"get\",\"agent_id\":\"agent-probe\"}",
+                "role": "text"
+              },
+              {
+                "name": "A or B?",
+                "role": "text"
+              },
+              {
+                "name": "Chief of Staff",
+                "role": "text"
+              },
+              {
+                "level": 2,
+                "name": "Агент питає",
+                "role": "heading"
+              },
+              {
+                "name": "надсилається…",
+                "role": "text"
+              },
+              {
+                "children": [
+                  {
+                    "name": "A or B?",
+                    "role": "text"
+                  }
+                ],
+                "role": "paragraph"
+              },
+              {
+                "name": "Count slowly from 1 to 200.",
+                "role": "text"
+              },
+              {
+                "name": "Chief of Staff",
+                "role": "text"
+              },
+              {
+                "level": 2,
+                "name": "Зупинено",
+                "role": "heading"
+              },
+              {
+                "children": [
+                  {
+                    "name": "Stopped by a person.",
+                    "role": "text"
+                  }
+                ],
+                "role": "paragraph"
+              },
+              {
+                "name": "Код",
+                "role": "text"
+              },
+              {
+                "name": "RUN_CANCELLED",
+                "role": "text"
+              },
+              {
+                "name": "Дякую!",
+                "role": "text"
+              },
+              {
+                "name": "надсилається…",
+                "role": "text"
+              }
+            ],
+            "live": "polite",
+            "name": "Розмова",
+            "role": "region"
+          },
+          {
+            "children": [
+              {
+                "focused": true,
+                "multiline": true,
+                "name": "Повідомлення",
+                "role": "textbox",
+                "value": ""
+              },
+              {
+                "name": "Enter — надіслати · Shift+Enter — новий рядок",
+                "role": "text"
+              },
+              {
+                "disabled": true,
+                "name": "Надіслати",
+                "role": "button"
+              }
+            ],
+            "role": "form"
+          }
+        ],
+        "role": "main"
+      }
+    ],
+    "role": "application"
+  },
+  "clipboard": null,
+  "focus": 39,
+  "opened": [],
+  "prompts": 0,
+  "stylesheets": [
+    {
+      "id": 1,
+      "text": ":root {\n  --bg: #ffffff;\n  --bg-subtle: #f5f6f8;\n  --surface: #ffffff;\n  --border: #e2e4e9;\n  --fg: #16181d;\n  --fg-muted: #5b616e;\n  --fg-subtle: #8a909c;\n  --accent: #3b5bdb;\n  --accent-fg: #ffffff;\n  --accent-subtle: #edf1ff;\n  --ok: #2b8a3e;\n  --ok-subtle: #e8f6eb;\n  --warn: #a35200;\n  --warn-subtle: #fff3e3;\n  --danger: #c92a2a;\n  --danger-subtle: #fdeced;\n  --code-bg: #f2f3f5;\n  --toast-bg: #16181d;\n  --toast-fg: #ffffff;\n}\n\n@media (prefers-color-scheme: dark) {\n  :root {\n    --bg: #111317;\n    --bg-subtle: #181b20;\n    --surface: #1b1e24;\n    --border: #2c3038;\n    --fg: #e9ebef;\n    --fg-muted: #a2a8b4;\n    --fg-subtle: #757c88;\n    --accent: #7c95ff;\n    --accent-fg: #0d1020;\n    --accent-subtle: #1f2640;\n    --ok: #69c47e;\n    --ok-subtle: #16281b;\n    --warn: #f0a24a;\n    --warn-subtle: #2c2111;\n    --danger: #ff8787;\n    --danger-subtle: #321619;\n    --code-bg: #15171c;\n    --toast-bg: #e9ebef;\n    --toast-fg: #111317;\n  }\n}\n\n.app {\n  display: grid;\n  grid-template-columns: 1fr;\n  height: 100%;\n  background-color: var(--bg);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 15px;\n  line-height: 1.5;\n}\n\n.app.with-panel {\n  grid-template-columns: 1fr 360px;\n}\n\n.main {\n  display: flex;\n  flex-direction: column;\n  min-height: 0;\n  min-width: 0;\n}\n\n.topbar {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 10px 16px;\n  border-bottom: 1px solid var(--border);\n  background-color: var(--surface);\n}\n\n.avatar {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  flex-shrink: 0;\n  width: 32px;\n  height: 32px;\n  border-radius: 50%;\n  background-color: var(--accent);\n  color: var(--accent-fg);\n  font-size: 13px;\n  font-weight: 600;\n}\n\n.avatar.small {\n  width: 28px;\n  height: 28px;\n  font-size: 12px;\n}\n\n.avatar.user {\n  background-color: var(--bg-subtle);\n  color: var(--fg-muted);\n  border: 1px solid var(--border);\n}\n\n.avatar.agent {\n  background-color: var(--ok-subtle);\n  color: var(--ok);\n}\n\n.heading {\n  display: flex;\n  flex-direction: column;\n  flex-grow: 1;\n  min-width: 0;\n}\n\n.title {\n  margin: 0;\n  font-size: 15px;\n  font-weight: 600;\n  line-height: 1.3;\n}\n\n.subtitle {\n  color: var(--fg-muted);\n  font-size: 13px;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.badge {\n  display: inline;\n  padding: 1px 8px;\n  border-radius: 999px;\n  background-color: var(--bg-subtle);\n  color: var(--fg-muted);\n  font-size: 12px;\n  font-weight: 500;\n  white-space: nowrap;\n}\n\n.badge.ok {\n  background-color: var(--ok-subtle);\n  color: var(--ok);\n}\n\n.badge.warn {\n  background-color: var(--warn-subtle);\n  color: var(--warn);\n}\n\n.badge.danger {\n  background-color: var(--danger-subtle);\n  color: var(--danger);\n}\n\n.badge.accent {\n  background-color: var(--accent-subtle);\n  color: var(--accent);\n}\n\n.button {\n  padding: 6px 12px;\n  border: 1px solid var(--border);\n  border-radius: 8px;\n  background-color: var(--surface);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 14px;\n  font-weight: 500;\n  line-height: 1.4;\n  cursor: pointer;\n  transition-property: background-color, color;\n  transition-duration: 120ms;\n}\n\n.button:hover {\n  background-color: var(--bg-subtle);\n}\n\n.button:active {\n  transform: translateY(1px);\n}\n\n.button:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 2px;\n}\n\n.button:disabled {\n  opacity: 0.5;\n  cursor: not-allowed;\n}\n\n.button.primary {\n  border-color: var(--accent);\n  background-color: var(--accent);\n  color: var(--accent-fg);\n}\n\n.button.danger {\n  border-color: var(--danger);\n  color: var(--danger);\n}\n\n.button.ghost {\n  border-color: transparent;\n  background-color: transparent;\n  color: var(--fg-muted);\n}\n\n.button.ghost:hover {\n  background-color: var(--bg-subtle);\n  color: var(--fg);\n}\n\n.button.small {\n  padding: 2px 8px;\n  font-size: 12px;\n}\n\n.button.round {\n  width: 34px;\n  height: 34px;\n  padding: 0;\n  border-radius: 50%;\n  font-size: 16px;\n}\n\n.link {\n  padding: 0;\n  border: none;\n  background-color: transparent;\n  color: var(--accent);\n  font-family: system-ui, sans-serif;\n  font-size: 15px;\n  text-decoration: underline;\n  cursor: pointer;\n}\n\n.link:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 2px;\n}\n\n.banner {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  background-color: var(--warn-subtle);\n  color: var(--warn);\n  font-size: 13px;\n}\n\n.banner.hidden {\n  display: none;\n}\n\n.timeline {\n  flex-grow: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 24px 16px;\n}\n\n.thread {\n  display: flex;\n  flex-direction: column;\n  gap: 22px;\n  max-width: 48rem;\n  margin: 0 auto;\n}\n\n.separator {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  color: var(--fg-subtle);\n  font-size: 12px;\n}\n\n.separator-line {\n  flex-grow: 1;\n  height: 1px;\n  background-color: var(--border);\n}\n\n.msg {\n  display: flex;\n  gap: 12px;\n}\n\n.msg.user {\n  justify-content: flex-end;\n}\n\n.bubble {\n  max-width: 80%;\n  padding: 10px 14px;\n  border-radius: 14px;\n  background-color: var(--accent-subtle);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.msg-body {\n  display: flex;\n  flex-direction: column;\n  flex-grow: 1;\n  gap: 10px;\n  min-width: 0;\n}\n\n.author {\n  color: var(--fg-muted);\n  font-size: 13px;\n}\n\n.author-name {\n  color: var(--fg);\n  font-weight: 600;\n}\n\n.prose {\n  display: flex;\n  flex-direction: column;\n  gap: 10px;\n  overflow-wrap: anywhere;\n}\n\n.p {\n  margin: 0;\n}\n\n.h {\n  margin: 4px 0 0;\n  font-size: 16px;\n  font-weight: 600;\n}\n\n.list {\n  margin: 0;\n  padding-left: 22px;\n}\n\n.inline-code {\n  padding: 1px 5px;\n  border-radius: 4px;\n  background-color: var(--code-bg);\n  font-family: monospace;\n  font-size: 13px;\n}\n\n.caret {\n  color: var(--accent);\n}\n\n.code-block {\n  display: flex;\n  flex-direction: column;\n  border: 1px solid var(--border);\n  border-radius: 10px;\n  overflow: hidden;\n}\n\n.code-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 4px 6px 4px 12px;\n  background-color: var(--bg-subtle);\n  color: var(--fg-muted);\n  font-size: 12px;\n}\n\n.pre {\n  margin: 0;\n  padding: 12px;\n  background-color: var(--code-bg);\n  font-family: monospace;\n  font-size: 13px;\n  line-height: 1.55;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.pre.small {\n  padding: 8px 10px;\n  font-size: 12px;\n}\n\n.event {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 12px;\n  border: 1px solid var(--border);\n  border-radius: 10px;\n  background-color: var(--surface);\n  font-size: 13px;\n}\n\n.toggle {\n  width: 100%;\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  text-align: left;\n  cursor: pointer;\n}\n\n.toggle:hover {\n  background-color: var(--bg-subtle);\n}\n\n.toggle:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 2px;\n}\n\n.event-icon {\n  flex-shrink: 0;\n  width: 18px;\n  color: var(--fg-muted);\n  text-align: center;\n}\n\n.event-text {\n  flex-grow: 1;\n  min-width: 0;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.event-title {\n  font-weight: 500;\n}\n\n.muted {\n  color: var(--fg-muted);\n}\n\n.subtle {\n  color: var(--fg-subtle);\n}\n\n.mono {\n  font-family: monospace;\n  font-size: 12px;\n}\n\n.details {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 8px 12px 12px 40px;\n  color: var(--fg-muted);\n  font-size: 13px;\n}\n\n.details.collapsed {\n  display: none;\n}\n\n.meta {\n  display: flex;\n  flex-wrap: wrap;\n  align-items: center;\n  gap: 4px 14px;\n  color: var(--fg-subtle);\n  font-size: 12px;\n}\n\n.actions {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px;\n}\n\n.card {\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  padding: 14px 16px;\n  border: 1px solid var(--border);\n  border-radius: 12px;\n  background-color: var(--surface);\n}\n\n.card.attention {\n  border-color: var(--warn);\n  background-color: var(--warn-subtle);\n}\n\n.card.error {\n  border-color: var(--danger);\n  background-color: var(--danger-subtle);\n}\n\n.card-head {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.card-title {\n  margin: 0;\n  flex-grow: 1;\n  font-size: 14px;\n  font-weight: 600;\n}\n\n.kv {\n  display: grid;\n  grid-template-columns: 128px 1fr;\n  gap: 4px 12px;\n  font-size: 13px;\n}\n\n.kv-key {\n  color: var(--fg-muted);\n}\n\n.kv-value {\n  min-width: 0;\n  overflow-wrap: anywhere;\n}\n\n.composer-wrap {\n  padding: 8px 16px 16px;\n  background-color: var(--bg);\n}\n\n.composer {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 48rem;\n  margin: 0 auto;\n  padding: 10px 12px;\n  border: 1px solid var(--border);\n  border-radius: 16px;\n  background-color: var(--surface);\n}\n\n.composer-input {\n  width: 100%;\n  min-height: 24px;\n  max-height: 200px;\n  field-sizing: content;\n  resize: none;\n  padding: 0;\n  border: none;\n  background-color: transparent;\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 15px;\n  line-height: 1.5;\n}\n\n.composer-input:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 4px;\n}\n\n.composer-bar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.hint {\n  flex-grow: 1;\n  color: var(--fg-subtle);\n  font-size: 12px;\n}\n\n.empty {\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 14px;\n  padding: 48px 0 8px;\n  text-align: center;\n}\n\n.empty-title {\n  margin: 0;\n  font-size: 22px;\n  font-weight: 600;\n}\n\n.suggestions {\n  display: grid;\n  grid-template-columns: repeat(2, minmax(0, 1fr));\n  gap: 10px;\n  width: 100%;\n  margin-top: 8px;\n}\n\n.suggestion {\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n  padding: 12px 14px;\n  border: 1px solid var(--border);\n  border-radius: 12px;\n  background-color: var(--surface);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 14px;\n  text-align: left;\n  cursor: pointer;\n}\n\n.suggestion:hover {\n  background-color: var(--bg-subtle);\n}\n\n.suggestion:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 2px;\n}\n\n.panel {\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px;\n  border-left: 1px solid var(--border);\n  background-color: var(--bg-subtle);\n}\n\n.panel-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n}\n\n.panel-title {\n  margin: 0;\n  font-size: 14px;\n  font-weight: 600;\n}\n\n.dialog {\n  width: 440px;\n  max-width: 92%;\n  padding: 0;\n  border: 1px solid var(--border);\n  border-radius: 16px;\n  background-color: var(--surface);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n}\n\n.dialog-body {\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n  padding: 20px;\n}\n\n.dialog-title {\n  margin: 0;\n  font-size: 17px;\n  font-weight: 600;\n}\n\n.field {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.label {\n  font-size: 13px;\n  font-weight: 500;\n}\n\n.input {\n  padding: 8px 10px;\n  border: 1px solid var(--border);\n  border-radius: 8px;\n  background-color: var(--surface);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 14px;\n}\n\n.input:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 1px;\n}\n\n.help {\n  color: var(--fg-muted);\n  font-size: 12px;\n}\n\n.toasts {\n  position: fixed;\n  right: 16px;\n  bottom: 112px;\n  z-index: 10;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  font-family: system-ui, sans-serif;\n}\n\n.toast {\n  padding: 10px 14px;\n  border-radius: 10px;\n  background-color: var(--toast-bg);\n  color: var(--toast-fg);\n  font-size: 14px;\n}\n\n@media (max-width: 900px) {\n  .app.with-panel {\n    grid-template-columns: 1fr;\n  }\n\n  .panel {\n    position: fixed;\n    top: 0;\n    right: 0;\n    bottom: 0;\n    z-index: 20;\n    width: 340px;\n    max-width: 88%;\n    border: 1px solid var(--border);\n  }\n}\n\n@media (max-width: 600px) {\n  .app {\n    font-size: 14px;\n  }\n\n  .timeline {\n    padding: 16px 12px;\n  }\n\n  .bubble {\n    max-width: 90%;\n  }\n\n  .hint {\n    display: none;\n  }\n\n  .composer-wrap {\n    padding: 6px 8px 8px;\n  }\n\n  .suggestions {\n    grid-template-columns: 1fr;\n  }\n\n  .kv {\n    grid-template-columns: 1fr;\n  }\n}\n"
+    }
+  ],
+  "title": "",
+  "tree": {
+    "children": [
+      {
+        "attributes": {
+          "id": "app"
+        },
+        "children": [
+          {
+            "attributes": {
+              "aria-label": "Розмова",
+              "aria-live": "polite"
+            },
+            "children": [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "children": [
+                              {
+                                "id": 6,
+                                "text": "Reply with the single word: ok"
+                              }
+                            ],
+                            "class": "bubble",
+                            "id": 5,
+                            "style": {
+                              "background-color": "#edf1ff",
+                              "border-radius": "14px",
+                              "max-width": "80%",
+                              "overflow-wrap": "anywhere",
+                              "padding": "10px 14px",
+                              "white-space": "pre-wrap"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "id": 8,
+                                "text": ""
+                              }
+                            ],
+                            "class": "badge",
+                            "id": 7,
+                            "style": {
+                              "background-color": "#f5f6f8",
+                              "border-radius": "999px",
+                              "color": "#5b616e",
+                              "display": "none",
+                              "font-size": "12px",
+                              "font-weight": "500",
+                              "padding": "1px 8px",
+                              "white-space": "nowrap"
+                            },
+                            "tag": "span"
+                          }
+                        ],
+                        "class": "msg user",
+                        "id": 4,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px",
+                          "justify-content": "flex-end"
+                        },
+                        "tag": "div"
+                      },
+                      {
+                        "children": [
+                          {
+                            "attributes": {
+                              "aria-hidden": "true"
+                            },
+                            "children": [
+                              {
+                                "id": 35,
+                                "text": "CO"
+                              }
+                            ],
+                            "class": "avatar small",
+                            "id": 34,
+                            "style": {
+                              "align-items": "center",
+                              "background-color": "#3b5bdb",
+                              "border-radius": "50%",
+                              "color": "#ffffff",
+                              "display": "flex",
+                              "flex-shrink": "0",
+                              "font-size": "12px",
+                              "font-weight": "600",
+                              "height": "28px",
+                              "justify-content": "center",
+                              "width": "28px"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 12,
+                                        "text": "Chief of Staff"
+                                      }
+                                    ],
+                                    "class": "author-name",
+                                    "id": 11,
+                                    "style": {
+                                      "color": "#16181d",
+                                      "font-weight": "600"
+                                    },
+                                    "tag": "span"
+                                  },
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 14,
+                                        "text": "пише…"
+                                      }
+                                    ],
+                                    "class": "badge accent",
+                                    "id": 13,
+                                    "style": {
+                                      "background-color": "#edf1ff",
+                                      "border-radius": "999px",
+                                      "color": "#3b5bdb",
+                                      "display": "none",
+                                      "font-size": "12px",
+                                      "font-weight": "500",
+                                      "padding": "1px 8px",
+                                      "white-space": "nowrap"
+                                    },
+                                    "tag": "span"
+                                  }
+                                ],
+                                "class": "author",
+                                "id": 10,
+                                "style": {
+                                  "color": "#5b616e",
+                                  "font-size": "13px"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "aria-expanded": "true",
+                                      "id": "thinking-run-1",
+                                      "type": "button"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "aria-hidden": "true"
+                                        },
+                                        "children": [
+                                          {
+                                            "id": 18,
+                                            "text": "◇"
+                                          }
+                                        ],
+                                        "class": "event-icon",
+                                        "id": 17,
+                                        "style": {
+                                          "color": "#5b616e",
+                                          "flex-shrink": "0",
+                                          "text-align": "center",
+                                          "width": "18px"
+                                        },
+                                        "tag": "span"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 21,
+                                                "text": "Міркування"
+                                              }
+                                            ],
+                                            "class": "event-title",
+                                            "id": 20,
+                                            "style": {
+                                              "font-weight": "500"
+                                            },
+                                            "tag": "span"
+                                          }
+                                        ],
+                                        "class": "event-text",
+                                        "id": 19,
+                                        "style": {
+                                          "flex-grow": "1",
+                                          "min-width": "0",
+                                          "overflow": "hidden",
+                                          "text-overflow": "ellipsis",
+                                          "white-space": "nowrap"
+                                        },
+                                        "tag": "span"
+                                      },
+                                      {
+                                        "attributes": {
+                                          "aria-hidden": "true"
+                                        },
+                                        "children": [
+                                          {
+                                            "id": 23,
+                                            "text": "▾"
+                                          }
+                                        ],
+                                        "class": "subtle",
+                                        "id": 22,
+                                        "style": {
+                                          "color": "#8a909c"
+                                        },
+                                        "tag": "span"
+                                      }
+                                    ],
+                                    "class": "event toggle",
+                                    "id": 16,
+                                    "listeners": [
+                                      "click"
+                                    ],
+                                    "style": {
+                                      "align-items": "center",
+                                      "background-color": "#ffffff",
+                                      "border": "1px solid #e2e4e9",
+                                      "border-radius": "10px",
+                                      "color": "#16181d",
+                                      "cursor": "pointer",
+                                      "display": "flex",
+                                      "font-family": "system-ui, sans-serif",
+                                      "font-size": "13px",
+                                      "gap": "10px",
+                                      "padding": "8px 12px",
+                                      "text-align": "left",
+                                      "width": "100%"
+                                    },
+                                    "tag": "button"
+                                  },
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 25,
+                                        "text": "The user's message is simply \"Reply with the single word: ok\". This is a direct instruction to reply with a single word. No tools needed. The language is English, so I reply in English with just \"ok\"."
+                                      }
+                                    ],
+                                    "class": "p muted",
+                                    "id": 24,
+                                    "style": {
+                                      "color": "#5b616e",
+                                      "display": "block",
+                                      "margin": "0"
+                                    },
+                                    "tag": "p"
+                                  }
+                                ],
+                                "class": "thinking",
+                                "id": 15,
+                                "style": {
+                                  "display": "block"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "class": "tools",
+                                "id": 26,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "children",
+                                "id": 27,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "wait",
+                                "id": 28,
+                                "tag": "div"
+                              },
+                              {
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 31,
+                                        "text": "ok"
+                                      }
+                                    ],
+                                    "class": "p",
+                                    "id": 30,
+                                    "style": {
+                                      "margin": "0"
+                                    },
+                                    "tag": "p"
+                                  }
+                                ],
+                                "class": "prose",
+                                "id": 29,
+                                "style": {
+                                  "display": "block",
+                                  "flex-direction": "column",
+                                  "gap": "10px",
+                                  "overflow-wrap": "anywhere"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "class": "failure",
+                                "id": 32,
+                                "tag": "div"
+                              }
+                            ],
+                            "class": "msg-body",
+                            "id": 9,
+                            "style": {
+                              "display": "flex",
+                              "flex-direction": "column",
+                              "flex-grow": "1",
+                              "gap": "10px",
+                              "min-width": "0"
+                            },
+                            "tag": "div"
+                          }
+                        ],
+                        "class": "msg",
+                        "id": 33,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px"
+                        },
+                        "tag": "div"
+                      }
+                    ],
+                    "class": "segment",
+                    "id": 3,
+                    "tag": "div"
+                  },
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "children": [
+                              {
+                                "id": 49,
+                                "text": "Call manage_permissions with action \"get\"."
+                              }
+                            ],
+                            "class": "bubble",
+                            "id": 48,
+                            "style": {
+                              "background-color": "#edf1ff",
+                              "border-radius": "14px",
+                              "max-width": "80%",
+                              "overflow-wrap": "anywhere",
+                              "padding": "10px 14px",
+                              "white-space": "pre-wrap"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "id": 51,
+                                "text": ""
+                              }
+                            ],
+                            "class": "badge",
+                            "id": 50,
+                            "style": {
+                              "background-color": "#f5f6f8",
+                              "border-radius": "999px",
+                              "color": "#5b616e",
+                              "display": "none",
+                              "font-size": "12px",
+                              "font-weight": "500",
+                              "padding": "1px 8px",
+                              "white-space": "nowrap"
+                            },
+                            "tag": "span"
+                          }
+                        ],
+                        "class": "msg user",
+                        "id": 47,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px",
+                          "justify-content": "flex-end"
+                        },
+                        "tag": "div"
+                      },
+                      {
+                        "children": [
+                          {
+                            "attributes": {
+                              "aria-hidden": "true"
+                            },
+                            "children": [
+                              {
+                                "id": 76,
+                                "text": "CO"
+                              }
+                            ],
+                            "class": "avatar small",
+                            "id": 75,
+                            "style": {
+                              "align-items": "center",
+                              "background-color": "#3b5bdb",
+                              "border-radius": "50%",
+                              "color": "#ffffff",
+                              "display": "flex",
+                              "flex-shrink": "0",
+                              "font-size": "12px",
+                              "font-weight": "600",
+                              "height": "28px",
+                              "justify-content": "center",
+                              "width": "28px"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 55,
+                                        "text": "Chief of Staff"
+                                      }
+                                    ],
+                                    "class": "author-name",
+                                    "id": 54,
+                                    "style": {
+                                      "color": "#16181d",
+                                      "font-weight": "600"
+                                    },
+                                    "tag": "span"
+                                  },
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 57,
+                                        "text": "пише…"
+                                      }
+                                    ],
+                                    "class": "badge accent",
+                                    "id": 56,
+                                    "style": {
+                                      "background-color": "#edf1ff",
+                                      "border-radius": "999px",
+                                      "color": "#3b5bdb",
+                                      "display": "none",
+                                      "font-size": "12px",
+                                      "font-weight": "500",
+                                      "padding": "1px 8px",
+                                      "white-space": "nowrap"
+                                    },
+                                    "tag": "span"
+                                  }
+                                ],
+                                "class": "author",
+                                "id": 53,
+                                "style": {
+                                  "color": "#5b616e",
+                                  "font-size": "13px"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "aria-expanded": "false",
+                                      "id": "thinking-run-2",
+                                      "type": "button"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "aria-hidden": "true"
+                                        },
+                                        "children": [
+                                          {
+                                            "id": 61,
+                                            "text": "◇"
+                                          }
+                                        ],
+                                        "class": "event-icon",
+                                        "id": 60,
+                                        "style": {
+                                          "color": "#5b616e",
+                                          "flex-shrink": "0",
+                                          "text-align": "center",
+                                          "width": "18px"
+                                        },
+                                        "tag": "span"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 64,
+                                                "text": "Міркування"
+                                              }
+                                            ],
+                                            "class": "event-title",
+                                            "id": 63,
+                                            "style": {
+                                              "font-weight": "500"
+                                            },
+                                            "tag": "span"
+                                          }
+                                        ],
+                                        "class": "event-text",
+                                        "id": 62,
+                                        "style": {
+                                          "flex-grow": "1",
+                                          "min-width": "0",
+                                          "overflow": "hidden",
+                                          "text-overflow": "ellipsis",
+                                          "white-space": "nowrap"
+                                        },
+                                        "tag": "span"
+                                      },
+                                      {
+                                        "attributes": {
+                                          "aria-hidden": "true"
+                                        },
+                                        "children": [
+                                          {
+                                            "id": 66,
+                                            "text": "▸"
+                                          }
+                                        ],
+                                        "class": "subtle",
+                                        "id": 65,
+                                        "style": {
+                                          "color": "#8a909c"
+                                        },
+                                        "tag": "span"
+                                      }
+                                    ],
+                                    "class": "event toggle",
+                                    "id": 59,
+                                    "listeners": [
+                                      "click"
+                                    ],
+                                    "style": {
+                                      "align-items": "center",
+                                      "background-color": "#ffffff",
+                                      "border": "1px solid #e2e4e9",
+                                      "border-radius": "10px",
+                                      "color": "#16181d",
+                                      "cursor": "pointer",
+                                      "display": "flex",
+                                      "font-family": "system-ui, sans-serif",
+                                      "font-size": "13px",
+                                      "gap": "10px",
+                                      "padding": "8px 12px",
+                                      "text-align": "left",
+                                      "width": "100%"
+                                    },
+                                    "tag": "button"
+                                  },
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 68,
+                                        "text": "The"
+                                      }
+                                    ],
+                                    "class": "p muted",
+                                    "id": 67,
+                                    "style": {
+                                      "color": "#5b616e",
+                                      "display": "none",
+                                      "margin": "0"
+                                    },
+                                    "tag": "p"
+                                  }
+                                ],
+                                "class": "thinking",
+                                "id": 58,
+                                "style": {
+                                  "display": "block"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "class": "tools",
+                                "id": 69,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "children",
+                                "id": 70,
+                                "tag": "div"
+                              },
+                              {
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "aria-hidden": "true"
+                                            },
+                                            "children": [
+                                              {
+                                                "id": 189,
+                                                "text": "✋"
+                                              }
+                                            ],
+                                            "id": 188,
+                                            "tag": "span"
+                                          },
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 191,
+                                                "text": "Потрібен ваш дозвіл"
+                                              }
+                                            ],
+                                            "class": "card-title",
+                                            "id": 190,
+                                            "style": {
+                                              "flex-grow": "1",
+                                              "font-size": "14px",
+                                              "font-weight": "600",
+                                              "margin": "0"
+                                            },
+                                            "tag": "h2"
+                                          },
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 193,
+                                                "text": "надсилається…"
+                                              }
+                                            ],
+                                            "class": "badge",
+                                            "id": 192,
+                                            "style": {
+                                              "background-color": "#f5f6f8",
+                                              "border-radius": "999px",
+                                              "color": "#5b616e",
+                                              "display": "inline",
+                                              "font-size": "12px",
+                                              "font-weight": "500",
+                                              "padding": "1px 8px",
+                                              "white-space": "nowrap"
+                                            },
+                                            "tag": "span"
+                                          }
+                                        ],
+                                        "class": "card-head",
+                                        "id": 187,
+                                        "style": {
+                                          "align-items": "center",
+                                          "display": "flex",
+                                          "gap": "8px"
+                                        },
+                                        "tag": "div"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "id": 196,
+                                            "text": "Агент хоче виконати дію, яка потребує підтвердження людиною."
+                                          }
+                                        ],
+                                        "class": "p",
+                                        "id": 195,
+                                        "style": {
+                                          "margin": "0"
+                                        },
+                                        "tag": "p"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 199,
+                                                "text": "Інструмент"
+                                              }
+                                            ],
+                                            "class": "kv-key",
+                                            "id": 198,
+                                            "style": {
+                                              "color": "#5b616e"
+                                            },
+                                            "tag": "span"
+                                          },
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 201,
+                                                "text": "manage_permissions"
+                                              }
+                                            ],
+                                            "class": "kv-value mono",
+                                            "id": 200,
+                                            "style": {
+                                              "font-family": "monospace",
+                                              "font-size": "12px",
+                                              "min-width": "0",
+                                              "overflow-wrap": "anywhere"
+                                            },
+                                            "tag": "span"
+                                          }
+                                        ],
+                                        "class": "kv",
+                                        "id": 197,
+                                        "style": {
+                                          "display": "grid",
+                                          "font-size": "13px",
+                                          "gap": "4px 12px",
+                                          "grid-template-columns": "128px 1fr"
+                                        },
+                                        "tag": "div"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "id": 203,
+                                            "text": "{\"action\":\"get\",\"agent_id\":\"agent-probe\"}"
+                                          }
+                                        ],
+                                        "class": "pre small",
+                                        "id": 202,
+                                        "style": {
+                                          "background-color": "#f2f3f5",
+                                          "font-family": "monospace",
+                                          "font-size": "12px",
+                                          "line-height": "1.55",
+                                          "margin": "0",
+                                          "overflow-wrap": "anywhere",
+                                          "padding": "8px 10px",
+                                          "white-space": "pre-wrap"
+                                        },
+                                        "tag": "pre"
+                                      }
+                                    ],
+                                    "class": "card",
+                                    "id": 194,
+                                    "style": {
+                                      "background-color": "#ffffff",
+                                      "border": "1px solid #e2e4e9",
+                                      "border-radius": "12px",
+                                      "display": "flex",
+                                      "flex-direction": "column",
+                                      "gap": "12px",
+                                      "padding": "14px 16px"
+                                    },
+                                    "tag": "div"
+                                  }
+                                ],
+                                "class": "wait",
+                                "id": 71,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "prose",
+                                "id": 72,
+                                "style": {
+                                  "display": "none",
+                                  "flex-direction": "column",
+                                  "gap": "10px",
+                                  "overflow-wrap": "anywhere"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "class": "failure",
+                                "id": 73,
+                                "tag": "div"
+                              }
+                            ],
+                            "class": "msg-body",
+                            "id": 52,
+                            "style": {
+                              "display": "flex",
+                              "flex-direction": "column",
+                              "flex-grow": "1",
+                              "gap": "10px",
+                              "min-width": "0"
+                            },
+                            "tag": "div"
+                          }
+                        ],
+                        "class": "msg",
+                        "id": 74,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px"
+                        },
+                        "tag": "div"
+                      },
+                      {
+                        "children": [
+                          {
+                            "children": [
+                              {
+                                "id": 101,
+                                "text": "A or B?"
+                              }
+                            ],
+                            "class": "bubble",
+                            "id": 100,
+                            "style": {
+                              "background-color": "#edf1ff",
+                              "border-radius": "14px",
+                              "max-width": "80%",
+                              "overflow-wrap": "anywhere",
+                              "padding": "10px 14px",
+                              "white-space": "pre-wrap"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "id": 103,
+                                "text": ""
+                              }
+                            ],
+                            "class": "badge",
+                            "id": 102,
+                            "style": {
+                              "background-color": "#f5f6f8",
+                              "border-radius": "999px",
+                              "color": "#5b616e",
+                              "display": "none",
+                              "font-size": "12px",
+                              "font-weight": "500",
+                              "padding": "1px 8px",
+                              "white-space": "nowrap"
+                            },
+                            "tag": "span"
+                          }
+                        ],
+                        "class": "msg user",
+                        "id": 99,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px",
+                          "justify-content": "flex-end"
+                        },
+                        "tag": "div"
+                      },
+                      {
+                        "children": [
+                          {
+                            "attributes": {
+                              "aria-hidden": "true"
+                            },
+                            "children": [
+                              {
+                                "id": 128,
+                                "text": "CO"
+                              }
+                            ],
+                            "class": "avatar small",
+                            "id": 127,
+                            "style": {
+                              "align-items": "center",
+                              "background-color": "#3b5bdb",
+                              "border-radius": "50%",
+                              "color": "#ffffff",
+                              "display": "flex",
+                              "flex-shrink": "0",
+                              "font-size": "12px",
+                              "font-weight": "600",
+                              "height": "28px",
+                              "justify-content": "center",
+                              "width": "28px"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 107,
+                                        "text": "Chief of Staff"
+                                      }
+                                    ],
+                                    "class": "author-name",
+                                    "id": 106,
+                                    "style": {
+                                      "color": "#16181d",
+                                      "font-weight": "600"
+                                    },
+                                    "tag": "span"
+                                  },
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 109,
+                                        "text": "пише…"
+                                      }
+                                    ],
+                                    "class": "badge accent",
+                                    "id": 108,
+                                    "style": {
+                                      "background-color": "#edf1ff",
+                                      "border-radius": "999px",
+                                      "color": "#3b5bdb",
+                                      "display": "none",
+                                      "font-size": "12px",
+                                      "font-weight": "500",
+                                      "padding": "1px 8px",
+                                      "white-space": "nowrap"
+                                    },
+                                    "tag": "span"
+                                  }
+                                ],
+                                "class": "author",
+                                "id": 105,
+                                "style": {
+                                  "color": "#5b616e",
+                                  "font-size": "13px"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "aria-expanded": "false",
+                                      "id": "thinking-run-3",
+                                      "type": "button"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "aria-hidden": "true"
+                                        },
+                                        "children": [
+                                          {
+                                            "id": 113,
+                                            "text": "◇"
+                                          }
+                                        ],
+                                        "class": "event-icon",
+                                        "id": 112,
+                                        "style": {
+                                          "color": "#5b616e",
+                                          "flex-shrink": "0",
+                                          "text-align": "center",
+                                          "width": "18px"
+                                        },
+                                        "tag": "span"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 116,
+                                                "text": "Міркування"
+                                              }
+                                            ],
+                                            "class": "event-title",
+                                            "id": 115,
+                                            "style": {
+                                              "font-weight": "500"
+                                            },
+                                            "tag": "span"
+                                          }
+                                        ],
+                                        "class": "event-text",
+                                        "id": 114,
+                                        "style": {
+                                          "flex-grow": "1",
+                                          "min-width": "0",
+                                          "overflow": "hidden",
+                                          "text-overflow": "ellipsis",
+                                          "white-space": "nowrap"
+                                        },
+                                        "tag": "span"
+                                      },
+                                      {
+                                        "attributes": {
+                                          "aria-hidden": "true"
+                                        },
+                                        "children": [
+                                          {
+                                            "id": 118,
+                                            "text": "▸"
+                                          }
+                                        ],
+                                        "class": "subtle",
+                                        "id": 117,
+                                        "style": {
+                                          "color": "#8a909c"
+                                        },
+                                        "tag": "span"
+                                      }
+                                    ],
+                                    "class": "event toggle",
+                                    "id": 111,
+                                    "listeners": [
+                                      "click"
+                                    ],
+                                    "style": {
+                                      "align-items": "center",
+                                      "background-color": "#ffffff",
+                                      "border": "1px solid #e2e4e9",
+                                      "border-radius": "10px",
+                                      "color": "#16181d",
+                                      "cursor": "pointer",
+                                      "display": "flex",
+                                      "font-family": "system-ui, sans-serif",
+                                      "font-size": "13px",
+                                      "gap": "10px",
+                                      "padding": "8px 12px",
+                                      "text-align": "left",
+                                      "width": "100%"
+                                    },
+                                    "tag": "button"
+                                  },
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 120,
+                                        "text": ""
+                                      }
+                                    ],
+                                    "class": "p muted",
+                                    "id": 119,
+                                    "style": {
+                                      "color": "#5b616e",
+                                      "display": "none",
+                                      "margin": "0"
+                                    },
+                                    "tag": "p"
+                                  }
+                                ],
+                                "class": "thinking",
+                                "id": 110,
+                                "style": {
+                                  "display": "none"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "class": "tools",
+                                "id": 121,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "children",
+                                "id": 122,
+                                "tag": "div"
+                              },
+                              {
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "aria-hidden": "true"
+                                            },
+                                            "children": [
+                                              {
+                                                "id": 207,
+                                                "text": "?"
+                                              }
+                                            ],
+                                            "id": 206,
+                                            "tag": "span"
+                                          },
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 209,
+                                                "text": "Агент питає"
+                                              }
+                                            ],
+                                            "class": "card-title",
+                                            "id": 208,
+                                            "style": {
+                                              "flex-grow": "1",
+                                              "font-size": "14px",
+                                              "font-weight": "600",
+                                              "margin": "0"
+                                            },
+                                            "tag": "h2"
+                                          },
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 211,
+                                                "text": "надсилається…"
+                                              }
+                                            ],
+                                            "class": "badge ok",
+                                            "id": 210,
+                                            "style": {
+                                              "background-color": "#e8f6eb",
+                                              "border-radius": "999px",
+                                              "color": "#2b8a3e",
+                                              "display": "inline",
+                                              "font-size": "12px",
+                                              "font-weight": "500",
+                                              "padding": "1px 8px",
+                                              "white-space": "nowrap"
+                                            },
+                                            "tag": "span"
+                                          }
+                                        ],
+                                        "class": "card-head",
+                                        "id": 205,
+                                        "style": {
+                                          "align-items": "center",
+                                          "display": "flex",
+                                          "gap": "8px"
+                                        },
+                                        "tag": "div"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "id": 213,
+                                            "text": "A or B?"
+                                          }
+                                        ],
+                                        "class": "p",
+                                        "id": 212,
+                                        "style": {
+                                          "margin": "0"
+                                        },
+                                        "tag": "p"
+                                      }
+                                    ],
+                                    "class": "card",
+                                    "id": 204,
+                                    "style": {
+                                      "background-color": "#ffffff",
+                                      "border": "1px solid #e2e4e9",
+                                      "border-radius": "12px",
+                                      "display": "flex",
+                                      "flex-direction": "column",
+                                      "gap": "12px",
+                                      "padding": "14px 16px"
+                                    },
+                                    "tag": "div"
+                                  }
+                                ],
+                                "class": "wait",
+                                "id": 123,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "prose",
+                                "id": 124,
+                                "style": {
+                                  "display": "none",
+                                  "flex-direction": "column",
+                                  "gap": "10px",
+                                  "overflow-wrap": "anywhere"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "class": "failure",
+                                "id": 125,
+                                "tag": "div"
+                              }
+                            ],
+                            "class": "msg-body",
+                            "id": 104,
+                            "style": {
+                              "display": "flex",
+                              "flex-direction": "column",
+                              "flex-grow": "1",
+                              "gap": "10px",
+                              "min-width": "0"
+                            },
+                            "tag": "div"
+                          }
+                        ],
+                        "class": "msg",
+                        "id": 126,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px"
+                        },
+                        "tag": "div"
+                      },
+                      {
+                        "children": [
+                          {
+                            "children": [
+                              {
+                                "id": 146,
+                                "text": "Count slowly from 1 to 200."
+                              }
+                            ],
+                            "class": "bubble",
+                            "id": 145,
+                            "style": {
+                              "background-color": "#edf1ff",
+                              "border-radius": "14px",
+                              "max-width": "80%",
+                              "overflow-wrap": "anywhere",
+                              "padding": "10px 14px",
+                              "white-space": "pre-wrap"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "id": 148,
+                                "text": ""
+                              }
+                            ],
+                            "class": "badge",
+                            "id": 147,
+                            "style": {
+                              "background-color": "#f5f6f8",
+                              "border-radius": "999px",
+                              "color": "#5b616e",
+                              "display": "none",
+                              "font-size": "12px",
+                              "font-weight": "500",
+                              "padding": "1px 8px",
+                              "white-space": "nowrap"
+                            },
+                            "tag": "span"
+                          }
+                        ],
+                        "class": "msg user",
+                        "id": 144,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px",
+                          "justify-content": "flex-end"
+                        },
+                        "tag": "div"
+                      },
+                      {
+                        "children": [
+                          {
+                            "attributes": {
+                              "aria-hidden": "true"
+                            },
+                            "children": [
+                              {
+                                "id": 173,
+                                "text": "CO"
+                              }
+                            ],
+                            "class": "avatar small",
+                            "id": 172,
+                            "style": {
+                              "align-items": "center",
+                              "background-color": "#3b5bdb",
+                              "border-radius": "50%",
+                              "color": "#ffffff",
+                              "display": "flex",
+                              "flex-shrink": "0",
+                              "font-size": "12px",
+                              "font-weight": "600",
+                              "height": "28px",
+                              "justify-content": "center",
+                              "width": "28px"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 152,
+                                        "text": "Chief of Staff"
+                                      }
+                                    ],
+                                    "class": "author-name",
+                                    "id": 151,
+                                    "style": {
+                                      "color": "#16181d",
+                                      "font-weight": "600"
+                                    },
+                                    "tag": "span"
+                                  },
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 154,
+                                        "text": "пише…"
+                                      }
+                                    ],
+                                    "class": "badge accent",
+                                    "id": 153,
+                                    "style": {
+                                      "background-color": "#edf1ff",
+                                      "border-radius": "999px",
+                                      "color": "#3b5bdb",
+                                      "display": "none",
+                                      "font-size": "12px",
+                                      "font-weight": "500",
+                                      "padding": "1px 8px",
+                                      "white-space": "nowrap"
+                                    },
+                                    "tag": "span"
+                                  }
+                                ],
+                                "class": "author",
+                                "id": 150,
+                                "style": {
+                                  "color": "#5b616e",
+                                  "font-size": "13px"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "aria-expanded": "false",
+                                      "id": "thinking-run-4",
+                                      "type": "button"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "aria-hidden": "true"
+                                        },
+                                        "children": [
+                                          {
+                                            "id": 158,
+                                            "text": "◇"
+                                          }
+                                        ],
+                                        "class": "event-icon",
+                                        "id": 157,
+                                        "style": {
+                                          "color": "#5b616e",
+                                          "flex-shrink": "0",
+                                          "text-align": "center",
+                                          "width": "18px"
+                                        },
+                                        "tag": "span"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 161,
+                                                "text": "Міркування"
+                                              }
+                                            ],
+                                            "class": "event-title",
+                                            "id": 160,
+                                            "style": {
+                                              "font-weight": "500"
+                                            },
+                                            "tag": "span"
+                                          }
+                                        ],
+                                        "class": "event-text",
+                                        "id": 159,
+                                        "style": {
+                                          "flex-grow": "1",
+                                          "min-width": "0",
+                                          "overflow": "hidden",
+                                          "text-overflow": "ellipsis",
+                                          "white-space": "nowrap"
+                                        },
+                                        "tag": "span"
+                                      },
+                                      {
+                                        "attributes": {
+                                          "aria-hidden": "true"
+                                        },
+                                        "children": [
+                                          {
+                                            "id": 163,
+                                            "text": "▸"
+                                          }
+                                        ],
+                                        "class": "subtle",
+                                        "id": 162,
+                                        "style": {
+                                          "color": "#8a909c"
+                                        },
+                                        "tag": "span"
+                                      }
+                                    ],
+                                    "class": "event toggle",
+                                    "id": 156,
+                                    "listeners": [
+                                      "click"
+                                    ],
+                                    "style": {
+                                      "align-items": "center",
+                                      "background-color": "#ffffff",
+                                      "border": "1px solid #e2e4e9",
+                                      "border-radius": "10px",
+                                      "color": "#16181d",
+                                      "cursor": "pointer",
+                                      "display": "flex",
+                                      "font-family": "system-ui, sans-serif",
+                                      "font-size": "13px",
+                                      "gap": "10px",
+                                      "padding": "8px 12px",
+                                      "text-align": "left",
+                                      "width": "100%"
+                                    },
+                                    "tag": "button"
+                                  },
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 165,
+                                        "text": ""
+                                      }
+                                    ],
+                                    "class": "p muted",
+                                    "id": 164,
+                                    "style": {
+                                      "color": "#5b616e",
+                                      "display": "none",
+                                      "margin": "0"
+                                    },
+                                    "tag": "p"
+                                  }
+                                ],
+                                "class": "thinking",
+                                "id": 155,
+                                "style": {
+                                  "display": "none"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "class": "tools",
+                                "id": 166,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "children",
+                                "id": 167,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "wait",
+                                "id": 168,
+                                "tag": "div"
+                              },
+                              {
+                                "class": "prose",
+                                "id": 169,
+                                "style": {
+                                  "display": "none",
+                                  "flex-direction": "column",
+                                  "gap": "10px",
+                                  "overflow-wrap": "anywhere"
+                                },
+                                "tag": "div"
+                              },
+                              {
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "aria-hidden": "true"
+                                            },
+                                            "children": [
+                                              {
+                                                "id": 177,
+                                                "text": "✕"
+                                              }
+                                            ],
+                                            "id": 176,
+                                            "tag": "span"
+                                          },
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 179,
+                                                "text": "Зупинено"
+                                              }
+                                            ],
+                                            "class": "card-title",
+                                            "id": 178,
+                                            "style": {
+                                              "flex-grow": "1",
+                                              "font-size": "14px",
+                                              "font-weight": "600",
+                                              "margin": "0"
+                                            },
+                                            "tag": "h2"
+                                          }
+                                        ],
+                                        "class": "card-head",
+                                        "id": 175,
+                                        "style": {
+                                          "align-items": "center",
+                                          "display": "flex",
+                                          "gap": "8px"
+                                        },
+                                        "tag": "div"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "id": 181,
+                                            "text": "Stopped by a person."
+                                          }
+                                        ],
+                                        "class": "p",
+                                        "id": 180,
+                                        "style": {
+                                          "margin": "0"
+                                        },
+                                        "tag": "p"
+                                      },
+                                      {
+                                        "children": [
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 184,
+                                                "text": "Код"
+                                              }
+                                            ],
+                                            "class": "kv-key",
+                                            "id": 183,
+                                            "style": {
+                                              "color": "#5b616e"
+                                            },
+                                            "tag": "span"
+                                          },
+                                          {
+                                            "children": [
+                                              {
+                                                "id": 186,
+                                                "text": "RUN_CANCELLED"
+                                              }
+                                            ],
+                                            "class": "kv-value mono",
+                                            "id": 185,
+                                            "style": {
+                                              "font-family": "monospace",
+                                              "font-size": "12px",
+                                              "min-width": "0",
+                                              "overflow-wrap": "anywhere"
+                                            },
+                                            "tag": "span"
+                                          }
+                                        ],
+                                        "class": "kv",
+                                        "id": 182,
+                                        "style": {
+                                          "display": "grid",
+                                          "font-size": "13px",
+                                          "gap": "4px 12px",
+                                          "grid-template-columns": "128px 1fr"
+                                        },
+                                        "tag": "div"
+                                      }
+                                    ],
+                                    "class": "card",
+                                    "id": 174,
+                                    "style": {
+                                      "background-color": "#ffffff",
+                                      "border": "1px solid #e2e4e9",
+                                      "border-radius": "12px",
+                                      "display": "flex",
+                                      "flex-direction": "column",
+                                      "gap": "12px",
+                                      "padding": "14px 16px"
+                                    },
+                                    "tag": "div"
+                                  }
+                                ],
+                                "class": "failure",
+                                "id": 170,
+                                "tag": "div"
+                              }
+                            ],
+                            "class": "msg-body",
+                            "id": 149,
+                            "style": {
+                              "display": "flex",
+                              "flex-direction": "column",
+                              "flex-grow": "1",
+                              "gap": "10px",
+                              "min-width": "0"
+                            },
+                            "tag": "div"
+                          }
+                        ],
+                        "class": "msg",
+                        "id": 171,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px"
+                        },
+                        "tag": "div"
+                      },
+                      {
+                        "children": [
+                          {
+                            "children": [
+                              {
+                                "id": 216,
+                                "text": "Дякую!"
+                              }
+                            ],
+                            "class": "bubble",
+                            "id": 215,
+                            "style": {
+                              "background-color": "#edf1ff",
+                              "border-radius": "14px",
+                              "max-width": "80%",
+                              "overflow-wrap": "anywhere",
+                              "padding": "10px 14px",
+                              "white-space": "pre-wrap"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "id": 218,
+                                "text": "надсилається…"
+                              }
+                            ],
+                            "class": "badge",
+                            "id": 217,
+                            "style": {
+                              "background-color": "#f5f6f8",
+                              "border-radius": "999px",
+                              "color": "#5b616e",
+                              "display": "inline",
+                              "font-size": "12px",
+                              "font-weight": "500",
+                              "padding": "1px 8px",
+                              "white-space": "nowrap"
+                            },
+                            "tag": "span"
+                          }
+                        ],
+                        "class": "msg user",
+                        "id": 214,
+                        "style": {
+                          "display": "flex",
+                          "gap": "12px",
+                          "justify-content": "flex-end"
+                        },
+                        "tag": "div"
+                      }
+                    ],
+                    "class": "segment",
+                    "id": 46,
+                    "tag": "div"
+                  }
+                ],
+                "class": "thread",
+                "id": 2,
+                "style": {
+                  "display": "flex",
+                  "flex-direction": "column",
+                  "gap": "22px",
+                  "margin": "0 auto",
+                  "max-width": "48rem"
+                },
+                "tag": "div"
+              }
+            ],
+            "class": "timeline",
+            "id": 36,
+            "style": {
+              "flex-grow": "1",
+              "min-height": "0",
+              "overflow": "auto",
+              "padding": "24px 16px"
+            },
+            "tag": "section"
+          },
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "attributes": {
+                      "aria-label": "Повідомлення",
+                      "id": "composer",
+                      "placeholder": "Напишіть Chief of Staff…",
+                      "rows": "1"
+                    },
+                    "class": "composer-input",
+                    "id": 39,
+                    "listeners": [
+                      "input",
+                      "keydown"
+                    ],
+                    "seq": 1,
+                    "style": {
+                      "background-color": "transparent",
+                      "border": "none",
+                      "color": "#16181d",
+                      "field-sizing": "content",
+                      "font-family": "system-ui, sans-serif",
+                      "font-size": "15px",
+                      "line-height": "1.5",
+                      "max-height": "200px",
+                      "min-height": "24px",
+                      "outline": "2px solid #3b5bdb",
+                      "outline-offset": "4px",
+                      "padding": "0",
+                      "resize": "none",
+                      "width": "100%"
+                    },
+                    "tag": "textarea",
+                    "value": ""
+                  },
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "id": 42,
+                            "text": "Enter — надіслати · Shift+Enter — новий рядок"
+                          }
+                        ],
+                        "class": "hint",
+                        "id": 41,
+                        "style": {
+                          "color": "#8a909c",
+                          "flex-grow": "1",
+                          "font-size": "12px"
+                        },
+                        "tag": "span"
+                      },
+                      {
+                        "attributes": {
+                          "aria-label": "Надіслати",
+                          "disabled": "",
+                          "id": "send",
+                          "type": "submit"
+                        },
+                        "children": [
+                          {
+                            "id": 44,
+                            "text": "↑"
+                          }
+                        ],
+                        "class": "button round primary",
+                        "id": 43,
+                        "style": {
+                          "background-color": "#3b5bdb",
+                          "border": "1px solid #e2e4e9",
+                          "border-color": "#3b5bdb",
+                          "border-radius": "50%",
+                          "color": "#ffffff",
+                          "cursor": "not-allowed",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "16px",
+                          "font-weight": "500",
+                          "height": "34px",
+                          "line-height": "1.4",
+                          "opacity": "0.5",
+                          "padding": "0",
+                          "transition-duration": "120ms",
+                          "transition-property": "background-color, color",
+                          "width": "34px"
+                        },
+                        "tag": "button"
+                      }
+                    ],
+                    "class": "composer-bar",
+                    "id": 40,
+                    "style": {
+                      "align-items": "center",
+                      "display": "flex",
+                      "gap": "8px"
+                    },
+                    "tag": "div"
+                  }
+                ],
+                "class": "composer",
+                "id": 38,
+                "listeners": [
+                  "submit"
+                ],
+                "style": {
+                  "background-color": "#ffffff",
+                  "border": "1px solid #e2e4e9",
+                  "border-radius": "16px",
+                  "display": "flex",
+                  "flex-direction": "column",
+                  "gap": "8px",
+                  "margin": "0 auto",
+                  "max-width": "48rem",
+                  "padding": "10px 12px"
+                },
+                "tag": "form"
+              }
+            ],
+            "class": "composer-wrap",
+            "id": 37,
+            "style": {
+              "background-color": "#ffffff",
+              "padding": "8px 16px 16px"
+            },
+            "tag": "div"
+          }
+        ],
+        "class": "main",
+        "id": 45,
+        "style": {
+          "display": "flex",
+          "flex-direction": "column",
+          "min-height": "0",
+          "min-width": "0"
+        },
+        "tag": "main"
+      }
+    ],
+    "id": 1,
+    "tag": "root"
+  }
+}
+varta dev: completed

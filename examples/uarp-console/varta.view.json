@@ -1,0 +1,17 @@
+{
+  "entry": "src/tests/view/main.tsx",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "dist/view",
+  "languageProfile": "checked-f64-utf16-v38",
+  "capabilities": {
+    "env": {
+      "get": [
+        "TEST_VIEW"
+      ]
+    },
+    "time": {
+      "timer": true
+    }
+  }
+}
