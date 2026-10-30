@@ -474,6 +474,10 @@ fn unsupported_collection_forms_are_rejected_with_their_reason() {
             "export function main(): void { console.log(Array.from([1])); }",
             "Array.from of a value other than",
         ),
+        (
+            "export function main(): void { console.log([1].concat([2]).length); }",
+            "unsupported Array.prototype.concat",
+        ),
     ] {
         let message = rejected(source, V37);
         assert!(message.contains(needle), "{message}\n{source}");

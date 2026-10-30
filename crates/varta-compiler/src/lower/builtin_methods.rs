@@ -79,6 +79,9 @@ impl Lower<'_> {
                 let array = self.physical_array(receiver)?;
                 self.array_join(call, array).map(Some)
             }
+            (Some(_), Type::Array(_) | Type::Tuple(_)) => Err(self
+                .source
+                .locate(unsupported(&format!("Array.prototype.{name}")), call.span)),
             (Some(_), _) => Err(self.source.locate(
                 type_error(format!(
                     "String.prototype.{name} requires a string receiver, found {}",

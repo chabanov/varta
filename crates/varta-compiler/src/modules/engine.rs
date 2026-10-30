@@ -138,8 +138,6 @@ pub(crate) const TEXT_METHODS: &[&str] = &[
     ".join",
     ".concat",
     ".codePointAt",
-    ".flat",
-    ".flatMap",
 ];
 /// `Map` and `Set` (v37 `collections`): generic functions over the private
 /// storage records that `lower::collections` lays out.
