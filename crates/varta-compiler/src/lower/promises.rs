@@ -376,7 +376,7 @@ impl Lower<'_> {
         build: impl FnOnce(&mut Lower<'_>, &[u32], Option<u32>) -> Result<Vec<S>>,
     ) -> Result<usize> {
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid("too many functions including promise jobs"));
         }
         *self.next_function += 1;

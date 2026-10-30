@@ -434,6 +434,18 @@ pub(crate) struct AsyncGeneratorType {
     pub returned: Type,
 }
 impl ValueTypes {
+    /// Function slots lowering may allocate. V37 (`language_core`) removes
+    /// unreachable functions after lowering (`lower::prune`), so it links
+    /// against a wider compile-time cap; the emitted module still holds at
+    /// most `abi::MAX_USER_FUNCTIONS` functions. Earlier profiles allocate
+    /// against that limit directly and keep their diagnostics.
+    pub fn function_limit(&self) -> usize {
+        if self.profile.language_core() {
+            crate::lower::LINKED_FUNCTIONS
+        } else {
+            varta_common::abi::MAX_USER_FUNCTIONS
+        }
+    }
     /// Layout version stamped into descriptors and catalogs; see
     /// `LanguageProfile::value_layout`. The module's value section declares
     /// `LanguageProfile::value_abi` instead.

@@ -207,9 +207,10 @@ pub(super) fn layout_template(
                 let next = next.as_deref_mut().ok_or_else(|| {
                     CompilerError::Internal("template layout without slots".into())
                 })?;
+                let limit = types.function_limit();
                 entry.signature.index = types
                     .classes
-                    .allocate(next, id, Member::Static(name.clone()))
+                    .allocate((next, limit), id, Member::Static(name.clone()))
                     .map_err(|e| source.locate(e, method.span))?;
                 statics.insert(name, entry);
             }
@@ -276,7 +277,7 @@ fn materialize_class(id: u32, types: &mut ir::ValueTypes, next: &mut usize) -> R
     }
     let members = std::mem::take(&mut types.classes.list[id as usize].unallocated);
     for member in members {
-        if *next >= MAX_FUNCTIONS {
+        if *next >= types.function_limit() {
             let class = &types.classes.list[id as usize];
             return Err(class.source.locate(
                 invalid("too many functions including generic class instances"),

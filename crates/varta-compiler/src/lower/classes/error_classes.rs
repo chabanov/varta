@@ -222,6 +222,17 @@ pub(in crate::lower) fn reaches_prelude(ty: Type, types: &ir::ValueTypes) -> boo
     reaches(ty, types, &|id| types.classes.get(id).prelude, unknown)
 }
 
+/// Whether a value of `ty` may reach a prelude class whose JavaScript JSON
+/// form is not its own properties (v37: `URL` has `toJSON`, RegExp match
+/// arrays are arrays). Such instances never enter `unknown` in v37.
+pub(in crate::lower) fn reaches_json_form(ty: Type, types: &ir::ValueTypes) -> bool {
+    reaches(ty, types, &|id| json_form(id, types), false)
+}
+fn json_form(id: u32, types: &ir::ValueTypes) -> bool {
+    let class = types.classes.get(id);
+    class.prelude && crate::modules::engine::JSON_FORM_CLASSES.contains(&class.name.as_str())
+}
+
 /// Whether a value of `ty` may reach an instance of a class selected by
 /// `target`; `unknown` is not followed.
 pub(super) fn reaches_class(

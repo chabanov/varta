@@ -189,10 +189,6 @@ fn class_generic_constructs_are_rejected_with_diagnostics() {
             "#private name #x redeclared by a subclass",
         ),
         (
-            "class A{#x=1;y=2;}export function main():void{console.log(JSON.stringify(new A()));}",
-            "JSON.stringify of a class instance with #private fields",
-        ),
-        (
             "class A{#x=1;}export function main():void{const u:unknown=new A();}",
             "may reach a class instance with #private fields",
         ),
@@ -344,10 +340,15 @@ fn pilot_pattern(resources: usize, distinct: bool) -> String {
             source.push_str(&format!("interface R{n}{{id:number}}"));
         }
     }
-    source.push_str(
-        "export async function main():Promise<void>{const r=new Resource(new Transport());\
-         const a=await r.get0();console.log(`${a.id} ${r.client.calls}`);}",
-    );
+    // Every resource method is called: v37 removes unreachable functions, so
+    // only reachable instances count against the function limit.
+    let calls: String = (1..resources)
+        .map(|n| format!("await r.get{n}();"))
+        .collect();
+    source.push_str(&format!(
+        "export async function main():Promise<void>{{const r=new Resource(new Transport());\
+         const a=await r.get0();{calls}console.log(`${{a.id}} ${{r.client.calls}}`);}}"
+    ));
     source
 }
 
@@ -364,7 +365,7 @@ fn pilot_request_pattern_function_counts() {
         .run_wasm_bytes(&compile(&pilot_pattern(3, true), V37), &[])
         .unwrap()
         .lines;
-    assert_eq!(lines, ["varta log: 3 1"]);
+    assert_eq!(lines, ["varta log: 3 3"]);
     let count =
         |n: usize, distinct: bool| defined_functions(&compile(&pilot_pattern(n, distinct), V37));
     // Equal shapes: one more resource method costs exactly its own function.

@@ -57,6 +57,14 @@ declare function clearInterval(id?: number | null): void;
 // net_request_take (f64 id)->i32 kind, net_request_text (f64 id)->i32 ptr,
 // net_body_read (f64 id)->(), net_request_abort (f64 id)->(), and
 // timer_start_v2 (f64 serial, f64 delay, i32 flags)->f64 id [time.timer].
+// v37 JSON.stringify imports json_stringify_v17 (i32 kind, i32 lo, i32 hi)->
+// (i32 len, i32 error class) [pure, no capability]: like json_stringify_v16,
+// it skips private state (descriptor keys starting with `#`: #private fields,
+// engine prelude state and non-enumerable Error slots), so prelude instances
+// serialize as `{}`. Object keys starting with `#` are rejected in v37; URL and
+// RegExp match arrays stay out of JSON.stringify and unknown. Unreachable
+// functions (unused prelude members included) are removed before the
+// function limit applies.
 type RequestRedirect = 'error' | 'follow' | 'manual';
 type BodyInit = string | URLSearchParams;
 interface RequestInit {

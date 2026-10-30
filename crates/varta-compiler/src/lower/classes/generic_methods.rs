@@ -212,7 +212,7 @@ fn instance(
         )));
     }
     let index = *next;
-    if index >= MAX_FUNCTIONS {
+    if index >= types.function_limit() {
         return Err(invalid(
             "too many functions including generic instantiations",
         ));
@@ -304,7 +304,7 @@ fn instantiate(
             )));
         }
     }
-    if *next >= MAX_FUNCTIONS {
+    if *next >= types.function_limit() {
         return Err(invalid(
             "too many functions including generic instantiations",
         ));

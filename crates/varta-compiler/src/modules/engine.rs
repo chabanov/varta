@@ -347,6 +347,10 @@ pub(crate) const INTERNAL_MEMBERS: &[(&str, &str)] = &[
 pub(crate) const HEADERS_CLASS: &str = "Headers";
 pub(crate) const ABORT_SIGNAL_CLASS: &str = "AbortSignal";
 pub(crate) const REGEXP_CLASS: &str = "RegExp";
+/// Prelude classes whose JavaScript JSON form is not their own properties
+/// (`URL.prototype.toJSON`, array-valued match results); v37 keeps them out
+/// of `JSON.stringify` and `unknown`.
+pub(crate) const JSON_FORM_CLASSES: [&str; 3] = ["URL", EXEC_ARRAY_CLASS, MATCH_ARRAY_CLASS];
 pub(crate) const EXEC_ARRAY_CLASS: &str = "RegExpExecArray";
 pub(crate) const MATCH_ARRAY_CLASS: &str = "RegExpMatchArray";
 /// The reference key of a regular expression literal; no identifier or

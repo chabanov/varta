@@ -408,6 +408,8 @@ mod primitive_comparison;
 mod primitive_string;
 mod primitive_unary;
 pub(crate) mod promises;
+mod prune;
+pub(crate) use prune::LINKED_FUNCTIONS;
 mod property_deletion;
 mod record_reads;
 mod record_writes;

@@ -10,8 +10,8 @@
 use super::*;
 use swc_ecma_visit::{VisitMut, VisitMutWith};
 
-/// The prefix of a rewritten private member name.
-pub(in crate::lower) const PREFIX: char = '#';
+/// The prefix of a rewritten private member name (and of v37 private state).
+pub(in crate::lower) const PREFIX: char = varta_common::value::PRIVATE_KEY_PREFIX;
 
 pub(in crate::lower) fn is_private_name(name: &str) -> bool {
     name.starts_with(PREFIX)
@@ -136,6 +136,89 @@ pub(in crate::lower) fn reaches_private(ty: Type, types: &ir::ValueTypes) -> boo
                 .iter()
                 .any(|field| is_private_name(&field.name))
         })
+}
+
+/// V37: instance fields that are not own enumerable properties in JavaScript
+/// are internal state. After lowering, their descriptor keys take the
+/// private-name prefix, so `json_stringify_v17` skips them like `#x` fields;
+/// guest code reads every field by slot, never by key. They are
+///
+/// - the fields of engine prelude classes (a `Headers` or `AbortSignal` has
+///   no own property), and
+/// - the Error slots of class instances: `message` and `cause` are
+///   non-enumerable own properties, and `name` lives on the prototype unless
+///   a constructor in the class chain assigns `this.name`.
+pub(in crate::lower) fn hide_prelude_state(types: &mut ir::ValueTypes) {
+    if !types.profile.class_generics() {
+        return;
+    }
+    let classes = &types.classes;
+    for record in &mut types.records {
+        let Some(class) = record.class else {
+            continue;
+        };
+        let declared = &classes.get(class).fields;
+        for (field, declared) in record.fields.iter_mut().zip(declared) {
+            if is_private_name(&field.name) {
+                continue;
+            }
+            // A prelude instance has no own property; a subclass field
+            // redeclaring an Error slot is one.
+            let hidden = if classes.get(class).prelude {
+                true
+            } else if classes.root_family(declared.owner).is_some() {
+                declared.redeclared.is_none()
+                    && (field.name != error_classes::NAME || !assigns_name(class, classes))
+            } else {
+                classes.get(declared.owner).prelude
+            };
+            if hidden {
+                field.name = format!("{PREFIX}{}", field.name);
+            }
+        }
+    }
+}
+
+/// Whether `class` or an ancestor assigns `this.name` in a top-level
+/// statement of its constructor, making `name` an own enumerable property.
+fn assigns_name(class: u32, classes: &Classes) -> bool {
+    let mut current = Some(class);
+    while let Some(id) = current {
+        // A prelude class keeps `name` on its prototype (`DOMException`).
+        if classes.get(id).prelude {
+            return false;
+        }
+        let declaration = &classes.get(id).declaration;
+        let assigns = declaration.body.iter().any(|member| {
+            let ast::ClassMember::Constructor(constructor) = member else {
+                return false;
+            };
+            constructor
+                .body
+                .iter()
+                .flat_map(|body| &body.stmts)
+                .any(|statement| {
+                    let ast::Stmt::Expr(statement) = statement else {
+                        return false;
+                    };
+                    let ast::Expr::Assign(assign) = &*statement.expr else {
+                        return false;
+                    };
+                    matches!(
+                        &assign.left,
+                        ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member))
+                            if matches!(&*member.obj, ast::Expr::This(_))
+                                && matches!(&member.prop, ast::MemberProp::Ident(prop)
+                                    if prop.sym == error_classes::NAME)
+                    )
+                })
+        });
+        if assigns {
+            return true;
+        }
+        current = classes.get(id).parent;
+    }
+    false
 }
 
 impl Lower<'_> {

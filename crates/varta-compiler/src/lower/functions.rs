@@ -338,7 +338,7 @@ impl Lower<'_> {
         let block = matches!(&*arrow.body, ast::ArrowFunctionBody::FunctionBody(_));
         let infer_returns = (infer_block || asynchronous) && result.is_none() && block;
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid("too many functions including arrows"));
         }
         *self.next_function += 1;

@@ -308,6 +308,7 @@ fn thrown(
 
 /// Field keys a thrown class-instance record must declare as String slots.
 const INSTANCE_NAME: &str = "name";
+use varta_common::value::PRIVATE_KEY_PREFIX;
 const INSTANCE_MESSAGE: &str = "message";
 
 /// Copy the `name`/`message` String fields of a thrown class instance (channel
@@ -328,16 +329,25 @@ fn error_instance(
     let ptr = record as u32 as usize;
     let descriptor = word(ptr)? as usize;
     let count = word(ptr + size_of::<u32>())? as usize;
+    // `[name, message]` under their own keys, then under the v37 private-state
+    // keys (`#name`, `#message`: Error slots that are not own enumerable
+    // properties). An own key wins, so earlier profiles, whose Error slots
+    // always carry the own keys, read exactly the fields they read before.
     let mut fields = [None, None];
+    let mut private = [None, None];
     for index in 0..count {
         let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
         let key = word(entry)? as usize;
         let len = word(entry + 4)? as usize;
         let raw = word(entry + 8)?;
         let kind = word(entry + 12)?;
-        let position = match key.checked_add(len).and_then(|end| data.get(key..end)) {
-            Some(bytes) if bytes == INSTANCE_NAME.as_bytes() => 0,
-            Some(bytes) if bytes == INSTANCE_MESSAGE.as_bytes() => 1,
+        let bytes = key.checked_add(len).and_then(|end| data.get(key..end));
+        let hidden = bytes.and_then(|bytes| bytes.strip_prefix(&[PRIVATE_KEY_PREFIX as u8][..]));
+        let (target, position) = match (bytes, hidden) {
+            (Some(bytes), _) if bytes == INSTANCE_NAME.as_bytes() => (&mut fields, 0),
+            (Some(bytes), _) if bytes == INSTANCE_MESSAGE.as_bytes() => (&mut fields, 1),
+            (_, Some(bytes)) if bytes == INSTANCE_NAME.as_bytes() => (&mut private, 0),
+            (_, Some(bytes)) if bytes == INSTANCE_MESSAGE.as_bytes() => (&mut private, 1),
             _ => continue,
         };
         if raw & OPTIONAL_FIELD_FLAG != 0 || kind != ValueKind::String as u32 {
@@ -354,13 +364,15 @@ fn error_instance(
             .checked_add(len)
             .and_then(|end| data.get(start..end))
             .ok_or_else(|| invalid("invalid thrown Error instance field"))?;
-        fields[position] = Some(
+        target[position] = Some(
             limit
                 .units(bytes)
                 .map_err(|_| invalid("invalid thrown Error instance field"))?,
         );
     }
-    let [Some(name), Some(message)] = fields else {
+    let [name, message] = fields;
+    let [private_name, private_message] = private;
+    let (Some(name), Some(message)) = (name.or(private_name), message.or(private_message)) else {
         return Err(invalid("thrown record is not an Error instance"));
     };
     Ok(varta_common::exceptions::ThrownValue::ErrorInstance { name, message })

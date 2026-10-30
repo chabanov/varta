@@ -655,7 +655,7 @@ import the operation, as contiguous runs in registry order.
 | `value_typeof_v9` | (i64) → (i32) | 31 | none | yes | yes | `checked-f64-utf16-v35` |
 | `bigint_from_value_v4` | (i64) → (i32, i32) | 32 | none | yes | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `json_parse_v18` | (i32, i32, i32, i32) → (i64) | 32 | none | yes | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `json_stringify_v16` | (i32, i32, i32) → (i32, i32) | 32 | none | yes | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
+| `json_stringify_v16` | (i32, i32, i32) → (i32, i32) | 32 | none | yes | — | `checked-f64-utf16-v36` |
 | `primitive_to_number_v5` | (i64) → (f64) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `primitive_to_string_v5` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `timer_clear` | (f64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
@@ -671,6 +671,7 @@ import the operation, as contiguous runs in registry order.
 | `value_truthy_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_typeof_v10` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `date_now` | () → (f64) | 33 | `time.now` | — | — | `checked-f64-utf16-v37` |
+| `json_stringify_v17` | (i32, i32, i32) → (i32, i32) | 33 | none | — | — | `checked-f64-utf16-v37` |
 | `net_body_read` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` |
 | `net_request_abort` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` |
 | `net_request_start` | (i32, i32) → (f64) | 33 | `net.request` | — | — | `checked-f64-utf16-v37` |

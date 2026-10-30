@@ -109,6 +109,13 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
             value.ty
         )));
     }
+    if types.profile.class_generics() && classes::reaches_json_form(value.ty, types) {
+        return Err(type_error(format!(
+            "{} value is not assignable to unknown; it may reach a URL or a RegExp match \
+             array, whose JSON form is not modelled",
+            value.ty
+        )));
+    }
     if classes::reaches_private(value.ty, types) {
         return Err(type_error(format!(
             "{} value is not assignable to unknown; it may reach a class instance with \

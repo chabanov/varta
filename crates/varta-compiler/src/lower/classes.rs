@@ -12,7 +12,6 @@ use std::rc::Rc;
 use swc_common::Span;
 use varta_common::value::MAX_RECORD_SHAPES;
 
-const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
 /// Synthesized parameter prefix of an implicit derived constructor.
 const IMPLICIT_PARAMETER: &str = "$super";
 fn implicit_parameter(index: usize) -> String {
@@ -247,8 +246,13 @@ impl Classes {
             .find(|(_, field)| field.name == name)
             .map(|(slot, field)| (slot as u32, field))
     }
-    fn allocate(&mut self, next: &mut usize, class: u32, member: Member) -> Result<usize> {
-        if *next >= MAX_FUNCTIONS {
+    fn allocate(
+        &mut self,
+        (next, limit): (&mut usize, usize),
+        class: u32,
+        member: Member,
+    ) -> Result<usize> {
+        if *next >= limit {
             return Err(invalid("too many functions across modules"));
         }
         let index = *next;
@@ -559,12 +563,14 @@ mod members;
 mod private_names;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers, late_dispatch_bodies};
 pub(super) use error_classes::{
-    MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_prelude,
-    root as error_family_root,
+    MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_json_form,
+    reaches_prelude, root as error_family_root,
 };
 pub(super) use generic_classes::{instantiate_class, member_body, next_member};
 pub(super) use generic_methods::{
     generic_dispatch_bodies, generic_method_body, next_generic_method,
 };
 pub(super) use layout::layout_module;
-pub(super) use private_names::{is_private_name, reaches_private};
+pub(super) use private_names::{
+    PREFIX as PRIVATE_PREFIX, hide_prelude_state, is_private_name, reaches_private,
+};

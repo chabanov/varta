@@ -126,7 +126,7 @@ pub(super) fn link_module(
         let reserved = types.profile.language_core() && lifts(chunk)
             || types.profile.collections() && constructs_collection(chunk);
         if reserved {
-            if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+            if index >= types.function_limit() {
                 return Err(source.locate(
                     invalid("too many functions including module initializers"),
                     chunk[0].span,
@@ -206,7 +206,7 @@ pub(super) fn link_module(
         };
         if stored || reserved {
             if !reserved {
-                if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+                if index >= types.function_limit() {
                     return Err(source.locate(
                         invalid("too many functions including module initializers"),
                         span,

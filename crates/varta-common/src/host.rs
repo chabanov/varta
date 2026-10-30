@@ -20,6 +20,12 @@ pub enum HostOperation {
     /// arms nothing, releases the timer frame and returns 0, and the guest
     /// throws a `NotAllowedError` `DOMException`. Capability `time.timer`.
     TimerStartV2,
+    /// v37: `json_stringify_v16` with private state hidden. Record fields
+    /// whose descriptor key starts with `#` (ES private names, and the state
+    /// of engine prelude classes) are not properties and are skipped, as
+    /// JavaScript's `JSON.stringify` skips them. Same signature, no
+    /// capability.
+    JsonStringifyV17,
     /// Value17 (profile v36) readers: each mirrors its value16 counterpart's
     /// signature and contract, reading value17 layouts (which add function
     /// values as tagged values) and nothing else.
@@ -444,6 +450,7 @@ impl HostOperation {
             Self::NetBodyRead => "net_body_read",
             Self::NetRequestAbort => "net_request_abort",
             Self::TimerStartV2 => "timer_start_v2",
+            Self::JsonStringifyV17 => "json_stringify_v17",
             Self::TimerStart => "timer_start",
             Self::TimerClear => "timer_clear",
             Self::TimerTake => "timer_take",
@@ -692,7 +699,13 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
-        if self.text_case() || self == Self::DateNow || self.net() || self == Self::TimerStartV2 {
+        if self.text_case()
+            || self.net()
+            || matches!(
+                self,
+                Self::DateNow | Self::TimerStartV2 | Self::JsonStringifyV17
+            )
+        {
             return crate::abi::NET_REQUEST_VERSION;
         }
         if self.value16_counterpart().is_some() || self.timer() {
@@ -988,7 +1001,8 @@ impl HostOperation {
             | Self::BigIntFromValueV3
             | Self::BigIntFromValueV2
             | Self::BigIntFromValue => (&[I64], &[I32, I32]),
-            Self::JsonStringifyV16
+            Self::JsonStringifyV17
+            | Self::JsonStringifyV16
             | Self::JsonStringifyV15
             | Self::JsonStringifyV14
             | Self::JsonStringifyV13 => (&[I32, I32, I32], &[I32, I32]),
@@ -1204,6 +1218,7 @@ impl HostOperation {
             "net_body_read" => Self::NetBodyRead,
             "net_request_abort" => Self::NetRequestAbort,
             "timer_start_v2" => Self::TimerStartV2,
+            "json_stringify_v17" => Self::JsonStringifyV17,
             "timer_start" => Self::TimerStart,
             "timer_clear" => Self::TimerClear,
             "timer_take" => Self::TimerTake,
@@ -1421,6 +1436,7 @@ impl HostOperation {
             | Self::ValueIsErrorClassV5
             | Self::JsonParseV18
             | Self::JsonParseV17
+            | Self::JsonStringifyV17
             | Self::JsonStringifyV16
             | Self::JsonStringifyV15
             | Self::PrimitiveStringV5

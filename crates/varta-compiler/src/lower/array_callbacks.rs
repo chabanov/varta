@@ -203,7 +203,7 @@ impl Lower<'_> {
             }
         };
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid(
                 "too many functions including array callback wrappers",
             ));

@@ -27,7 +27,7 @@ pub(in crate::lower) fn dispatchers(types: &mut ir::ValueTypes, next: &mut usize
         }
     }
     for (root, name) in roots {
-        if *next >= MAX_FUNCTIONS {
+        if *next >= types.function_limit() {
             let class = &types.classes.list[root as usize];
             return Err(class
                 .source

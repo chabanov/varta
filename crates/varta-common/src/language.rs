@@ -1607,6 +1607,13 @@ impl LanguageProfile {
         if self.net_request() && operation == TimerStart {
             return TimerStartV2;
         }
+        // V37 (`class_generics`) serializes with private state hidden.
+        if self.class_generics() {
+            return match LanguageProfile::CheckedF64Utf16V36.host_operation(operation) {
+                JsonStringifyV16 => JsonStringifyV17,
+                other => other,
+            };
+        }
         if self.function_fields() {
             // Value17 readers replace every value16 reader; nothing else changes.
             let value16 = LanguageProfile::CheckedF64Utf16V35.host_operation(operation);
@@ -1886,9 +1893,8 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V33 => crate::HostOperation::JsonStringifyV13,
             Self::CheckedF64Utf16V34 => crate::HostOperation::JsonStringifyV14,
             Self::CheckedF64Utf16V35 => crate::HostOperation::JsonStringifyV15,
-            Self::CheckedF64Utf16V36 | Self::CheckedF64Utf16V37 => {
-                crate::HostOperation::JsonStringifyV16
-            }
+            Self::CheckedF64Utf16V36 => crate::HostOperation::JsonStringifyV16,
+            Self::CheckedF64Utf16V37 => crate::HostOperation::JsonStringifyV17,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -2611,7 +2617,7 @@ mod tests {
     }
 
     #[test]
-    fn pilot_v37_inherits_v36_with_a_new_host_abi_and_admits_nothing_yet() {
+    fn pilot_v37_inherits_v36_with_a_new_host_abi() {
         use crate::HostOperation as H;
         let new = LanguageProfile::CheckedF64Utf16V37;
         let old = LanguageProfile::CheckedF64Utf16V36;
@@ -2682,14 +2688,16 @@ mod tests {
         ));
         assert_eq!(new.exception_channel(), old.exception_channel());
         assert_eq!(new.json_parse(), old.json_parse());
-        assert_eq!(new.json_stringify(), old.json_stringify());
+        // V37 serializes JSON with private state hidden; v36 is unchanged.
+        assert_eq!(new.json_stringify(), crate::HostOperation::JsonStringifyV17);
+        assert_eq!(old.json_stringify(), crate::HostOperation::JsonStringifyV16);
         assert_eq!(
             crate::function::admission::frame_catalog_version(new),
             crate::function::admission::frame_catalog_version(old)
         );
-        // Every host operation, including the value17 readers and the timer
-        // operations, binds exactly as under v36; no registered operation
-        // requires host ABI 33 yet.
+        // Every host operation shared with v36, including the value17 readers
+        // and the timer bookkeeping operations, binds exactly as under v36;
+        // the batch's own operations require host ABI 33 (below).
         for operation in [
             H::LogString,
             H::LogFloat,
@@ -2700,7 +2708,6 @@ mod tests {
             H::ValueIsError,
             H::ValueLogV10,
             H::JsonParseV17,
-            H::JsonStringifyV15,
             H::PrimitiveStringV4,
             H::BigIntFromValueV3,
             H::TimerClear,
@@ -2718,6 +2725,20 @@ mod tests {
         // (`timer_start_v2`, host ABI 33); v36 keeps the fatal `timer_start`.
         assert_eq!(new.host_operation(H::TimerStart), H::TimerStartV2);
         assert_eq!(old.host_operation(H::TimerStart), H::TimerStart);
+        // V37 serializes JSON with private state hidden (`json_stringify_v17`).
+        assert_eq!(new.json_stringify(), H::JsonStringifyV17);
+        assert_eq!(new.host_operation(H::JsonStringifyV16), H::JsonStringifyV17);
+        assert_eq!(new.host_operation(H::JsonStringifyV15), H::JsonStringifyV17);
+        assert_eq!(old.json_stringify(), H::JsonStringifyV16);
+        assert_eq!(
+            H::JsonStringifyV17.minimum_abi(),
+            crate::abi::NET_REQUEST_VERSION
+        );
+        assert_eq!(
+            H::JsonStringifyV17.scalar_signature(),
+            H::JsonStringifyV16.scalar_signature()
+        );
+        assert_eq!(H::JsonStringifyV17.capability(), None);
         assert_eq!(
             H::TimerStartV2.minimum_abi(),
             crate::abi::NET_REQUEST_VERSION

@@ -73,6 +73,19 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     if fields.len() > types.max_record_fields() {
         return Err(invalid("object field count exceeds limit"));
     }
+    // V37 keeps `#`-prefixed keys for private state (rewritten private names
+    // and engine prelude fields), which `JSON.stringify` skips.
+    if types.profile.class_generics()
+        && let Some(field) = fields
+            .iter()
+            .find(|f| f.name.starts_with(classes::PRIVATE_PREFIX))
+    {
+        return Err(unsupported(&format!(
+            "object key {} starting with {} (reserved for private names)",
+            field.name,
+            classes::PRIVATE_PREFIX
+        )));
+    }
     fields.sort_by(|a, b| a.name.cmp(&b.name));
     if fields.windows(2).any(|p| p[0].name == p[1].name) {
         return Err(unsupported("duplicate object key"));

@@ -1086,19 +1086,28 @@ impl Lower<'_> {
             {
                 return Err(unsupported("JSON.stringify value type"));
             }
-            if classes::reaches_prelude(value.ty, self.types) {
+            // V37 (`json_stringify_v17`) skips private state, so prelude,
+            // Error and #private instances serialize their own properties.
+            let hidden = self.types.profile.class_generics();
+            if hidden && classes::reaches_json_form(value.ty, self.types) {
+                return Err(self.source.locate(
+                    unsupported("JSON.stringify of a URL or a RegExp match array; their JSON forms (toJSON, array) are not modelled"),
+                    value.span,
+                ));
+            }
+            if !hidden && classes::reaches_prelude(value.ty, self.types) {
                 return Err(self.source.locate(
                     unsupported("JSON.stringify of an engine Web type instance (Headers, AbortController, AbortSignal, DOMException); its state is private"),
                     value.span,
                 ));
             }
-            if classes::reaches_instance(value.ty, self.types) {
+            if !hidden && classes::reaches_instance(value.ty, self.types) {
                 return Err(self.source.locate(
                     unsupported("JSON.stringify of an Error subclass instance; own-property enumerability is not modelled"),
                     value.span,
                 ));
             }
-            if classes::reaches_private(value.ty, self.types) {
+            if !hidden && classes::reaches_private(value.ty, self.types) {
                 return Err(self.source.locate(
                     unsupported("JSON.stringify of a class instance with #private fields; private names are not properties"),
                     value.span,

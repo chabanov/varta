@@ -77,7 +77,8 @@ fn allocate(
         return Ok(generic_classes::UNALLOCATED);
     }
     let next = next.ok_or_else(|| CompilerError::Internal("class layout without slots".into()))?;
-    types.classes.allocate(next, id, member)
+    let limit = types.function_limit();
+    types.classes.allocate((next, limit), id, member)
 }
 
 /// A subclass may not redeclare an inherited private name: in JavaScript the

@@ -4,7 +4,6 @@ use super::*;
 use crate::modules::{Export, Graph};
 use std::path::{Path, PathBuf};
 
-const MAX_FUNCTIONS: usize = varta_common::abi::MAX_USER_FUNCTIONS;
 pub(super) type Symbols = BTreeMap<String, Signature>;
 /// Names that no module binding or import may take.
 const RESERVED_BINDINGS: [&str; 4] = ["varta", "console", "log", "JSON"];
@@ -71,7 +70,7 @@ pub(crate) fn lower(
                 generics::declare(declaration, module, entry, &unit.source, &mut types)?;
                 continue;
             }
-            if next >= MAX_FUNCTIONS {
+            if next >= types.function_limit() {
                 return Err(unit.source.locate(
                     invalid("too many functions across modules"),
                     declaration.ident.span,
@@ -225,8 +224,11 @@ pub(crate) fn lower(
     };
     if profile.literal_types() {
         literal_erasure::erase_program(&mut program);
+        classes::hide_prelude_state(&mut program.types);
     }
     super::suspension::prepare(&mut program, graph)?;
+    let entry = &graph.units[&graph.entry];
+    prune::prune(&mut program).map_err(|e| entry.source.locate(e, entry.ast.span()))?;
     Ok(program)
 }
 

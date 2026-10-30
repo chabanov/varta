@@ -394,7 +394,7 @@ fn instance(
         )));
     }
     let index = *next_function;
-    if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+    if index >= types.function_limit() {
         return Err(invalid(
             "too many functions including generic instantiations",
         ));
