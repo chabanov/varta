@@ -42,6 +42,9 @@ mod invocation;
 /// Checked JSON schemas and decoding; without `std` the schema model, its
 /// validation and the shared UTF-16 decoder ([`json::scan`]).
 pub mod json;
+/// Deno KV compatible storage (v38 `kv`).
+#[cfg(feature = "std")]
+pub mod kv;
 #[cfg(feature = "std")]
 pub mod language;
 #[cfg(feature = "std")]

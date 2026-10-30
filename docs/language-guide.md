@@ -5327,6 +5327,70 @@ Without such a mapping the root is unmapped and every read fails with status
 path. A symlink below the root fails with status 3. Under v37 the same
 program reads absolute host paths with absolute grants, unchanged.
 
+#### Deno KV storage (opt-in v38)
+
+A v38 program opens a **Deno KV database file** under a virtual root and
+reads and writes it with Deno's API shape. The same file works with
+`Deno.openKv` in Deno 2.9: no migration in either direction.
+
+```json
+{
+  "languageProfile": "checked-f64-utf16-v38",
+  "entry": "src/main.ts",
+  "target": "native",
+  "out": "dist/app",
+  "fs": { "roots": { "data": "data" } },
+  "capabilities": { "kv": { "read": ["/data/app.kv"], "write": ["/data/app.kv"] } }
+}
+```
+
+```typescript
+interface Run {
+  run_id: string;
+  status: string;
+  metrics: { input_tokens: number; output_tokens: number };
+  error_code?: string;
+}
+
+export async function main(): Promise<void> {
+  const kv = await varta.kv.open("/data/app.kv");
+  const run: Run = { run_id: "r-1", status: "completed", metrics: { input_tokens: 120, output_tokens: 34 } };
+  const written = await kv.set(["tenant", "t-1", "run", "r-1"], run, { expireIn: 86_400_000 });
+  console.log(written.versionstamp);
+
+  // Strict like varta.json.parse<T>: an unknown field or a wrong type throws.
+  const entry = await kv.get<Run>(["tenant", "t-1", "run", "r-1"]);
+  const stored = entry.value;
+  if (stored !== null) {
+    console.log(stored.status);
+  }
+
+  for await (const item of kv.list<Run>({ prefix: ["tenant", "t-1", "run"] }, { limit: 50 })) {
+    console.log(item.key.join("/"));
+  }
+
+  const result = await kv.atomic()
+    .check({ key: ["tenant", "t-1", "run", "r-1"], versionstamp: entry.versionstamp })
+    .sum(["tenant", "t-1", "runs"], 1n)
+    .commit();
+  if (result.ok === true) {
+    console.log(`committed ${result.versionstamp}`);
+  }
+  const count = (await kv.get<KvU64>(["tenant", "t-1", "runs"])).value;
+  console.log(count === null ? "none" : count.toString());
+  kv.close();
+}
+```
+
+Without `kv.read` the open rejects with a `NotAllowedError`; with `kv.read`
+alone the database opens read-only and every write rejects with a
+`NotAllowedError` naming `kv.write`. A file that is not a Deno KV database,
+or one another process holds a write lock on, rejects with a `TypeError`.
+Values are checked JSON types (records, dictionaries, arrays, unions,
+`unknown`, primitives other than BigInt), a top-level `KvU64` or a top-level
+`Uint8Array`; `Date`, `Map`, `Set` and BigInt values are not storable yet,
+and `watch` and queues are not available.
+
 #### Turn budgets and application instances (opt-in v38)
 
 The turn-budgets stream admits event turns with per-turn budgets, long-lived

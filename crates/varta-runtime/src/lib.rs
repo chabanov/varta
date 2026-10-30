@@ -94,6 +94,7 @@ mod json_parse;
 mod json_parse_abi_tests;
 #[cfg(test)]
 mod json_parse_tests;
+mod kv;
 mod language;
 #[cfg(test)]
 mod language_tests;
@@ -291,6 +292,8 @@ pub(crate) struct RuntimeContext {
     scheduler: scheduler::Scheduler,
     /// V37 network requests: ids, completions and transfer tasks.
     net: net::Net,
+    /// V38 Deno KV databases, staged values and the last read.
+    kv: kv::Kv,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
     /// V38 (`fair_fuel`): host imports charge the published fair fuel of
     /// their work (`fair_fuel` module).

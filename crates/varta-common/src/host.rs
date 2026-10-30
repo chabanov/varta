@@ -57,6 +57,39 @@ pub enum HostOperation {
     /// variable checked like `env_get` (absent when unset, a recoverable
     /// denial otherwise). Capability `env.get`.
     EnvSnapshot,
+    /// v38 Deno KV storage (`crate::kv`): open the database file at a UTF-16
+    /// virtual path after the exact `kv.read` grant check (read-write when
+    /// `kv.write` also covers it); returns its id or `kv::FAILED`.
+    /// Capability `kv.read`, host-call budget.
+    KvOpen,
+    /// v38: run one snapshot read (a `kv::DESCRIPTOR_VERSION` descriptor of
+    /// ranges over staged keys); returns the entry count or `kv::FAILED`.
+    /// Capability `kv.read`, host-call budget.
+    KvRead,
+    /// v38: run one atomic commit (checks and mutations over staged keys and
+    /// values); returns `kv::COMMITTED`, `kv::CHECK_FAILED` or `kv::FAILED`.
+    /// Capability `kv.write`, host-call budget.
+    KvCommit,
+    /// v38: hand one guest value (`kv::StageMode`, the value kind word and
+    /// packed slot) to the host, encoded at once; returns its stage id or
+    /// `kv::FAILED`. No capability; host-call budget.
+    KvStage,
+    /// v38: one text field (`kv::EntryField`) of an entry of the last read,
+    /// in the host result buffer. Bookkeeping: no capability or budget.
+    KvEntry,
+    /// v38: the key of an entry of the last read, decoded strictly into the
+    /// checked schema the module names (like `json_parse` under schema 18).
+    /// No capability; host-call budget.
+    KvKey,
+    /// v38: the V8 value of an entry of the last read, decoded strictly into
+    /// the checked schema the module names; a mismatch is a recoverable
+    /// `TypeError`. No capability; host-call budget.
+    KvValue,
+    /// v38: the text of the last outcome: a commit's versionstamp, or
+    /// `<ErrorName>\n<message>` of a failure. Bookkeeping.
+    KvText,
+    /// v38: close a database; unknown ids are a no-op. Bookkeeping.
+    KvClose,
     /// v37: `timer_start` with a recoverable denial: without the grant it
     /// arms nothing, releases the timer frame and returns 0, and the guest
     /// throws a `NotAllowedError` `DOMException`. Capability `time.timer`.
@@ -457,6 +490,8 @@ impl HostOperation {
                 | Self::NetRequestText
                 | Self::EnvSnapshot
                 | Self::EventText
+                | Self::KvEntry
+                | Self::KvText
                 | Self::JsonStringifyV5
                 | Self::StringCharAt16
                 | Self::StringToUpperCase16
@@ -506,7 +541,9 @@ impl HostOperation {
         ) || self.returns_string()
             || matches!(
                 self,
-                Self::JsonParse
+                Self::KvKey
+                    | Self::KvValue
+                    | Self::JsonParse
                     | Self::JsonParseV3
                     | Self::JsonParseV4
                     | Self::JsonParseV5
@@ -566,6 +603,15 @@ impl HostOperation {
             Self::NetRequestStartV2 => "net_request_start_v2",
             Self::NetBodyReadBytes => "net_body_read_bytes",
             Self::EnvSnapshot => "env_snapshot",
+            Self::KvOpen => "kv_open",
+            Self::KvRead => "kv_read",
+            Self::KvCommit => "kv_commit",
+            Self::KvStage => "kv_stage",
+            Self::KvEntry => "kv_entry",
+            Self::KvKey => "kv_key",
+            Self::KvValue => "kv_value",
+            Self::KvText => "kv_text",
+            Self::KvClose => "kv_close",
             Self::TimerStartV2 => "timer_start_v2",
             Self::JsonStringifyV17 => "json_stringify_v17",
             Self::JsonStringifyOwned => "json_stringify_owned",
@@ -910,6 +956,25 @@ impl HostOperation {
             Self::NetRequestStartV2 | Self::NetBodyReadBytes | Self::EnvSnapshot
         )
     }
+    /// The v38 Deno KV operations (`kv`). `kv_open` and `kv_read` take
+    /// `kv.read`, `kv_commit` takes `kv.write`; those three, staging and the
+    /// two decoders are charged to the host-call budget, the entry, text and
+    /// close bookkeeping is not.
+    #[must_use]
+    pub fn kv(self) -> bool {
+        matches!(
+            self,
+            Self::KvOpen
+                | Self::KvRead
+                | Self::KvCommit
+                | Self::KvStage
+                | Self::KvEntry
+                | Self::KvKey
+                | Self::KvValue
+                | Self::KvText
+                | Self::KvClose
+        )
+    }
     /// The v38 permission and host event operations (`turn_budgets`). None
     /// takes a capability or is charged to the host-call budget: querying or
     /// requesting a permission is a broker decision, not an effect, and
@@ -933,7 +998,7 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
-        if self.instance_events() || self.web_bytes() || self == Self::ViewCommit {
+        if self.instance_events() || self.web_bytes() || self.kv() || self == Self::ViewCommit {
             return crate::abi::PROGRAM_LIMITS_VERSION;
         }
         if self.text_case()
@@ -1228,6 +1293,12 @@ impl HostOperation {
             Self::EventSourceClose => (&[F64], &[]),
             Self::NetRequestStart | Self::NetRequestStartV2 => (&[I32, I32], &[F64]),
             Self::EnvSnapshot => (&[I32, I32], &[I32]),
+            Self::KvOpen | Self::KvRead | Self::KvCommit => (&[I32, I32], &[F64]),
+            Self::KvStage => (&[I32, I32, I32, I32], &[F64]),
+            Self::KvEntry => (&[F64, F64], &[I32]),
+            Self::KvKey | Self::KvValue => (&[F64, I32, I32], &[I64]),
+            Self::KvText => (&[], &[I32]),
+            Self::KvClose => (&[F64], &[]),
             Self::NetRequestWatch => (&[F64, F64], &[]),
             Self::NetRequestTake => (&[F64], &[I32]),
             Self::NetRequestText => (&[F64], &[I32]),
@@ -1500,6 +1571,15 @@ impl HostOperation {
             "net_request_start_v2" => Self::NetRequestStartV2,
             "net_body_read_bytes" => Self::NetBodyReadBytes,
             "env_snapshot" => Self::EnvSnapshot,
+            "kv_open" => Self::KvOpen,
+            "kv_read" => Self::KvRead,
+            "kv_commit" => Self::KvCommit,
+            "kv_stage" => Self::KvStage,
+            "kv_entry" => Self::KvEntry,
+            "kv_key" => Self::KvKey,
+            "kv_value" => Self::KvValue,
+            "kv_text" => Self::KvText,
+            "kv_close" => Self::KvClose,
             "timer_start_v2" => Self::TimerStartV2,
             "json_stringify_v17" => Self::JsonStringifyV17,
             "json_stringify_owned" => Self::JsonStringifyOwned,
@@ -1772,6 +1852,12 @@ impl HostOperation {
             | Self::EventTake
             | Self::EventText
             | Self::EventSourceClose
+            | Self::KvStage
+            | Self::KvEntry
+            | Self::KvKey
+            | Self::KvValue
+            | Self::KvText
+            | Self::KvClose
             | Self::PrimitiveCompare
             | Self::PrimitiveEqual
             | Self::BigIntWidthV2
@@ -1918,6 +2004,8 @@ impl HostOperation {
             Self::Time | Self::DateNow => "time.now",
             Self::TimerStart | Self::TimerStartV2 => "time.timer",
             Self::NetRequestStart | Self::NetRequestStartV2 => crate::net::REQUEST_CAPABILITY,
+            Self::KvOpen | Self::KvRead => crate::kv::READ_CAPABILITY,
+            Self::KvCommit => crate::kv::WRITE_CAPABILITY,
             Self::EnvHas | Self::EnvHas16 => "env.has",
             Self::EnvGet | Self::EnvGet16 | Self::EnvSnapshot => "env.get",
             Self::EnvPrint | Self::EnvPrint16 => "env.print",

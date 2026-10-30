@@ -468,6 +468,57 @@ mod tests {
     }
 
     #[test]
+    fn kv_grants_are_virtual_paths_of_v38() {
+        let config = |profile: &str, capabilities: serde_json::Value| {
+            serde_json::from_value::<VartaConfig>(serde_json::json!({
+                "languageProfile": profile, "entry": "src/main.ts", "target": "native",
+                "out": "dist/app", "fs": {"roots": {"data": "data"}},
+                "capabilities": capabilities,
+            }))
+        };
+        let v38 = config(
+            "checked-f64-utf16-v38",
+            serde_json::json!({"kv":{"read":["/data/**"],"write":["/data/app.kv"]}}),
+        )
+        .unwrap();
+        v38.validate().unwrap();
+        let grants = v38.normalized_capabilities();
+        assert_eq!(
+            grants
+                .iter()
+                .map(|grant| grant.id.as_str())
+                .collect::<Vec<_>>(),
+            ["kv.read", "kv.write"]
+        );
+        assert!(
+            grants
+                .iter()
+                .all(|grant| matches!(grant.value, CapabilityValue::PathGlobs(_)))
+        );
+        for capabilities in [
+            serde_json::json!({"kv":{"read":["/other/**"]}}),
+            serde_json::json!({"kv":{"read":["data/app.kv"]}}),
+            serde_json::json!({"kv":{"read":["/data/../app.kv"]}}),
+            serde_json::json!({"kv":{"read":true}}),
+            serde_json::json!({"kv":{"open":["/data/**"]}}),
+        ] {
+            assert!(
+                !config("checked-f64-utf16-v38", capabilities.clone())
+                    .is_ok_and(|config| config.validate().is_ok()),
+                "{capabilities}"
+            );
+        }
+        // Earlier profiles have no file roots and no KV.
+        let v37 = serde_json::from_value::<VartaConfig>(serde_json::json!({
+            "languageProfile": "checked-f64-utf16-v37", "entry": "src/main.ts",
+            "target": "native", "out": "dist/app",
+            "capabilities": {"kv": {"read": ["/data/**"]}},
+        }))
+        .unwrap();
+        assert!(v37.validate().is_err());
+    }
+
+    #[test]
     fn unsupported_numeric_port_lists_are_rejected_by_the_project_schema() {
         for operation in ["fetch", "listen"] {
             let operations = std::collections::BTreeMap::from([(operation, vec![80, 443])]);

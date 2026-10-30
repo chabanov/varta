@@ -108,6 +108,12 @@ with server/HTTP1 and bounded I/O/runtime features. These dependencies provide
 maintained protocol parsing, body framing and timers, instead of a new handwritten
 server parser. See [Hyper's HTTP1 builder](https://docs.rs/hyper/1.12.0/hyper/server/conn/http1/struct.Builder.html)
 and [Tokio runtime bounds](https://docs.rs/tokio/1.54.1/tokio/runtime/struct.Builder.html).
+V38 KV storage uses Deno KV's own SQLite backend at Deno 2.9.4's exact
+versions (`denokv_sqlite`/`denokv_proto` 0.14.0, rusqlite 0.40.1 with the
+bundled SQLite of libsqlite3-sys 0.38.1, `deno_error` 0.7.1, chrono 0.4.42 and
+the locked rand 0.8.8) so files stay compatible with Deno; they are
+dependencies of `varta-runtime` only, which the boundary test checks
+transitively ([KV storage](#kv-storage-kv)).
 
 ## Version matrix
 
@@ -9000,7 +9006,9 @@ by selectors; each admits nothing until its stream adds a subsection below:
   strict record-union conversions; [implemented](#web-bytes-web_bytes));
 - virtual-roots stream (wave 2): `file_roots()` (`fs.*` paths and grants are
   virtual paths under named roots that the host maps;
-  [implemented](#virtual-file-roots-file_roots)).
+  [implemented](#virtual-file-roots-file_roots));
+- KV stream (wave 3): `kv()` (Deno KV database files at virtual paths behind
+  `kv.read`/`kv.write`; [implemented](#kv-storage-kv)).
 
 The view-protocol and TSX streams add
 [their subsection](#v38-view-protocol-and-tsx-view_protocol-tsx). Until a
@@ -10764,6 +10772,241 @@ declared profile (`LanguageProfile::file_roots`), never from the manifest.
   invocation. The older grant-only entry points run a v38 module with no
   roots, so every `fs.*` path is denied.
 
+#### KV storage (`kv`)
+
+Selector `kv()`. V38 opens **Deno KV database files** and reads and writes
+them through Deno KV's own SQLite backend (`denokv_sqlite` 0.14.0 with
+`denokv_proto` 0.14.0, rusqlite 0.40.1 over libsqlite3-sys 0.38.1 with the
+bundled SQLite, exactly the versions Deno 2.9.4 and 2.9.7 lock), so the same
+file serves a Deno program and a Varta program without a migration, in both
+directions. The guest API is Deno-shaped (`varta.kv.open`, `Kv`,
+`AtomicOperation`, `KvListIterator`, `KvU64`); every operation is checked by
+the exact `kv.read`/`kv.write` grants before any effect and decodes strictly
+into the static type the program names. V37 and earlier profiles reject
+`varta.kv.open` as an unknown name and cannot import the `kv_*` operations
+(minimum host ABI 34).
+
+- **Grants.** Two path-scoped operation ids over virtual paths
+  (`GrantKind::Patterns`, the [virtual file roots](#virtual-file-roots-file_roots)
+  rules and roots): `kv.read` opens a database and reads from it, `kv.write`
+  writes to it. Project form `"capabilities": {"kv": {"read":
+  ["/data/*.kv"], "write": ["/data/app.kv"]}}`; manifest form `{"id":
+  "kv.read", "patterns": [...]}`. Both require `abiVersion` 34 (a manifest of
+  an earlier host ABI with a `kv.*` grant is rejected) and, in a package,
+  patterns under a declared root. Opening needs `kv.read` on the path; the
+  database is opened read-write only when `kv.write` also covers it (in the
+  request and the ceiling), and read-only otherwise. A missing file is created
+  only for a writable open; opened read-only it is a `NotFoundError`. Every read
+  checks `kv.read` and every commit `kv.write` again through the
+  [permission broker](#permission-broker-v1-turn_budgets), which audits each
+  decision. Operations are exact: a `kv.write` grant never opens, and a
+  `kv.read` grant never writes. Denials are recoverable: the operation rejects
+  with a `NotAllowedError` `DOMException` (`<capability denied: kv.read>
+  (/data/app.kv)`), logged like other denials.
+- **Pinning.** SQLite opens files by path, never by descriptor, so the file is
+  pinned and the path verified in this order before SQLite writes anything:
+  every directory below the root is opened from the root's pinned descriptor
+  with no-follow, then the file itself no-follow (created exclusively when
+  missing and writable); its device and inode are the database's identity and
+  the descriptor stays open while the database is. The host path is the root's
+  host directory (`FileRoots::open`, `FileRoots::insert_at` or the project
+  configuration; a root inserted without a directory cannot hold a database),
+  canonicalized and checked to be the pinned root directory, joined with the
+  components, and its no-follow metadata must name the pinned file. SQLite then
+  opens it with `SQLITE_OPEN_NOFOLLOW` (a symbolic link in any component fails)
+  and without `SQLITE_OPEN_CREATE`. After the schema check, the process's open
+  descriptors (`/dev/fd`, `/proc/self/fd` on Linux, read with `stat` only, since
+  closing any descriptor of a file drops the process's POSIX locks on it) must
+  show a new descriptor of the pinned file for each SQLite connection (the
+  worker's, and the lock probe of a writable database): a swap of the path between the
+  check and SQLite's open makes SQLite open another file, which this rejects
+  (`the KV database … changed while it was opened`). KV opens are serialized in
+  the process. SQLite opens the `-wal` and `-shm` files beside the verified
+  file by name with `O_NOFOLLOW`; a process that can rename directories inside
+  the host root already controls the database and is outside the check. KV
+  storage needs a Unix host.
+- **Schema.** An empty file is a new database (writable opens only):
+  `denokv_sqlite` creates its schema exactly as Deno does. Any other file must
+  have exactly the tables `data_version`, `kv`, `migration_state`, `queue` and
+  `queue_running` (`kv::SCHEMA_TABLES`), `migration_state` version 3
+  (`kv::SCHEMA_VERSION`) and the `kv` columns `k, v, v_encoding, version, seq,
+  expiration_ms`, checked in a read transaction before anything is written;
+  another file (an older or newer schema, another SQLite database, a non-SQLite
+  file) fails with a `TypeError` and is left unchanged. A writable open then
+  sets WAL mode as Deno does.
+- **Locking.** Varta takes SQLite's own locks, as Deno does (WAL mode,
+  POSIX advisory locks), so a Deno process and a Varta process may share a
+  file. A writable open probes the write lock without waiting (`BEGIN
+  IMMEDIATE`); a file another writer holds fails with `TypeError: the KV
+  database … is locked by another writer`.
+- **Commits fail fast and never outlive their turn.** No guest write commits
+  after its turn has ended or after the guest was told it failed:
+  - A commit first probes the write lock on a second connection to the
+    verified file, waiting at most `kv::LOCK_WAIT_MS` and never past the
+    cutoff (the worker's own expiry collection holds it for a moment); a
+    lock another connection or process holds fails then with `TypeError: … is locked by another writer;
+    nothing was applied`, before anything is submitted.
+  - The **commit cutoff** is `kv::COMMIT_RESERVE_MS` before the turn
+    deadline. A commit started later fails at once with a `TypeError` and
+    applies nothing.
+  - The worker connection's SQLite commit hook decides, at SQLite's commit
+    point (before anything of the transaction is in the file), whether a
+    guest commit may go through: only before the cutoff. A commit it let
+    through is waited for until SQLite reports it durable (WAL with
+    `synchronous = FULL`) and only then reported `ok`.
+  - A commit still undecided at the cutoff (another writer took the lock
+    after the probe, or the worker is still busy) fails with `TypeError: the
+    commit … did not finish in this turn …; nothing was applied`. Whenever
+    the worker later reaches that commit's commit point, the hook refuses it,
+    so it is never applied. The database then accepts no further commit,
+    `denokv_sqlite`'s own maintenance included, and every later operation on
+    it fails with a `TypeError` until it is closed and opened again.
+  - So a commit never ends a turn with the deadline error, and nothing
+    commits in the background on behalf of the guest. The only commits
+    outside a guest commit are `denokv_sqlite`'s schema creation for a new
+    file and its expiry collection (deleting entries whose `expireIn` has
+    passed, as Deno does), which carry no guest data.
+- **Execution.** Each database has one `denokv_sqlite` worker thread (Deno's
+  configuration: one worker, no batching). KV operations are synchronous
+  within the turn: a read or commit is one host call that waits for the
+  worker on a current-thread Tokio runtime (a commit until its cutoff, a read
+  until the turn deadline, after which the database is unavailable), and the
+  guest API returns promises, like `Deno.Kv`, that settle in the same turn.
+  Event-loop completions like `net.request`'s are an
+  [open item](development-plan.md#batch-v38-in-development).
+- **Imports.** Nine host ABI 34 imports. `kv_open (ptr, len) -> f64` (a
+  UTF-16 virtual path; capability `kv.read`), `kv_read (ptr, len) -> f64`
+  (capability `kv.read`) and `kv_commit (ptr, len) -> f64` (capability
+  `kv.write`) take `kv::DESCRIPTOR_VERSION` text descriptors of decimal
+  fields; `kv_stage (mode, kind, lo, hi) -> f64` hands one guest value to the
+  host in a `kv::StageMode`; `kv_key` and `kv_value (index: f64, schema_ptr,
+  schema_len) -> i64` decode an entry of the last read into a JSON schema 18
+  target like `json_parse_v19`; `kv_entry (index, field) -> i32` and `kv_text ()
+  -> i32` return text in the host result buffer; `kv_close (id)`. Open, read,
+  commit, stage and the two decoders are charged to the host-call budget; the
+  entry, text and close bookkeeping observes the deadline only. A read
+  descriptor is the version, the database id, the range count and per range
+  the `kv::Selector`, one or two stage ids, the limit, the reverse flag and the
+  cursor; a commit descriptor is the version, the id, the check count with
+  each check's key stage and versionstamp (empty for null), and the mutation
+  count with each `kv::MutationCode`, key stage, value stage and `expireIn`. A
+  failed operation returns `kv::FAILED` and leaves `<ErrorName>\n<message>` in
+  `kv_text`; a commit returns `kv::COMMITTED` (its versionstamp in `kv_text`)
+  or `kv::CHECK_FAILED`. A malformed descriptor, an unknown stage, database or
+  entry id and more than `kv::MAX_STAGED` staged values are fatal, because
+  only a tampered module produces them. Staged values are consumed by the next
+  read or commit; at most `kv::MAX_OPEN_DATABASES` databases are open at once.
+- **Limits.** Deno 2.9.4's `KvConfig` defaults, with Deno's messages: keys of
+  at most `kv::MAX_WRITE_KEY_BYTES` encoded bytes to write
+  (`kv::MAX_READ_KEY_BYTES` in a range), values of at most `kv::MAX_VALUE_BYTES`
+  encoded bytes, `kv::MAX_READ_RANGES` ranges and `kv::MAX_READ_ENTRIES`
+  entries per read, `kv::MAX_CHECKS` checks and `kv::MAX_MUTATIONS` mutations
+  per commit, `kv::MAX_TOTAL_MUTATION_BYTES` and `kv::MAX_TOTAL_KEY_BYTES` per
+  commit; empty keys cannot be written. Decoding uses the module's data limits
+  (depth, nodes, string and element limits); a stored value beyond them is a
+  recoverable `TypeError`. A list reads at most its batch size per read.
+- **Keys.** Arrays of strings and numbers (`KvKeyPart = string | number`),
+  encoded by `denokv_proto` exactly as Deno encodes them (the FoundationDB
+  tuple order: strings before numbers, numbers by value, `-0` and NaN as
+  distinct doubles). A stored key with a BigInt, boolean or `Uint8Array` part
+  has no checked type yet: reading it is a `TypeError`.
+- **Values.** Deno KV's three encodings (`v_encoding`): `1` V8 serializer
+  bytes, `2` `KvU64` (8 bytes little-endian), `3` raw bytes. The static type
+  chooses: a top-level `KvU64` is stored as `2`, a top-level `Uint8Array` as
+  `3`, any other value as `1`. Storable values are the checked JSON types
+  (records, including optional fields; dictionaries and index signatures;
+  arrays without holes; unions; `unknown`; strings; numbers; booleans; `null`;
+  `undefined`) and literal types; a class instance (`Date`, a `KvU64` inside a
+  value), `Map`, `Set`, a nested `Uint8Array`, BigInt, functions and promises
+  are rejected at compile time (`unsupported KV value type …`), and an
+  `unknown` holding an Error, a function, a promise, a BigInt, an array with
+  holes or a cyclic graph rejects at run time with a `TypeError` before
+  anything is stored.
+- **V8 codec** (`varta-runtime` `kv::v8`, owned code, no V8). The writer emits
+  the header `0xFF 0x10` (serializer version 16, what V8 15.0 in Deno 2.9.x
+  writes) and one value: an integral number in the 32-bit Smi range other than
+  `-0` as `I` (zigzag varint), every other number as `N` (binary64, NaN as the
+  canonical quiet NaN `0x7FF8000000000000`); a string as `"` (Latin-1 bytes)
+  when every UTF-16 code unit is at most 0xFF and otherwise as `c` (UTF-16LE,
+  lone surrogates kept) after one padding byte when the code units would start
+  at an odd offset; an object as `o` … `{`count with its own properties in
+  JavaScript order (array-index keys as numbers, `I` or `N` above the Smi
+  range, ascending, then the other keys in insertion order; a present field
+  holding `undefined` is a property); an array as dense `A` … `$`; `undefined`,
+  `null`, `true`, `false`; an object reached twice as one object and a `^`
+  back-reference (object ids in V8's order). The reader accepts serializer
+  versions 13 to 16, padding, `U` and `S`, sparse arrays `a` … `@`, BigInt `Z`
+  (canonical digits), `Date` `D`, `Map` `;` … `:`, `Set` `'` … `,` and a
+  `Uint8Array` over its own `ArrayBuffer` (`B` then `V` with subtag `B`, flags
+  zero), resolving back-references to completed objects; it rejects every
+  other tag (other typed arrays, standalone or shared buffers, primitive
+  wrappers, `RegExp`, errors, host objects, transfers), cycles, a truncated or
+  overlong field, a non-canonical BigInt, a duplicate key, an array with named
+  properties and trailing bytes with a typed error and no partial value. V8
+  chooses `N` for an integral number it holds as a heap number (for example
+  the result of `Date.now() - start`) and the two-byte form for a Latin-1
+  string sliced from a two-byte one; both read back as the same value, and
+  Varta writes the canonical forms above, which equal Deno's bytes for values
+  written from literals and integer arithmetic. For an integer-valued double
+  V8 holds as a heap number, Varta's bytes (`I`) therefore differ from Deno's
+  (`N`) while the stored values are identical, and Deno reads both. Every Deno 2.9.4 fixture value
+  and every Deno 2.9.7 probe value re-encodes byte-identically.
+- **Strict reads.** `get<T>`, `getMany<T>` and `list<T>` decode each value
+  into `T` exactly like `varta.json.parse<T>`: the same targets (literal types
+  are rejected as parse targets; read the base type and narrow), unions
+  selecting their unique member of the value's kind, records rejecting unknown
+  properties and missing required fields, `Record<string, unknown>` and index
+  signatures admitting any keys, and mixed records validating their declared
+  fields. Unlike JSON a number keeps `-0`, NaN and the infinities, and
+  `undefined` fills an optional or `undefined`-admitting position: a property
+  holding `undefined` fills a required `x: T | undefined` field and reads as
+  absent for an optional `x?: T`. An array that V8 wrote in sparse form
+  because of its holey elements kind (`new Array(n)` filled, or a deleted
+  element written again) but that misses no index reads as a dense array; a
+  missing index is a `TypeError`. A sub-object referenced twice (`^`) reads as
+  two equal, independent copies: Varta values keep no aliasing across
+  storage. Records take the schema's field order, as checked JSON parsing
+  does, so a record read and written back is equal to the stored one but its
+  properties may be written in another order. A stored `Date`, `Map`, `Set`, nested
+  `Uint8Array`, BigInt or an array with holes has no checked type yet. Any
+  mismatch rejects with a catchable `TypeError: KV value does not match the
+  checked type: …`; reading a `KvU64` or `Uint8Array` entry needs that type.
+- **Versionstamps.** 20 lowercase hex digits: the 8-byte big-endian
+  `data_version.version` of the commit followed by two zero bytes, as Deno
+  formats them. `denokv_sqlite` advances the version by a random step of 1 to
+  9 per commit (and by 1 per expiry collection), so a Varta commit never
+  reproduces a Deno versionstamp; values and keys are byte-identical, the
+  versions only grow. `check({ key, versionstamp })` compares exactly; `null`
+  checks absence.
+- **Guest API** (engine prelude `<varta>/app/kv.ts`, loaded when a module
+  names `varta.kv.open` or one of its types): `varta.kv.open(path):
+  Promise<Kv>`; `Kv.get<T>(key)` → `KvEntryMaybe<T>` (`value` and
+  `versionstamp` null when missing), `getMany<T>(keys)` (one entry per key, in
+  order), `list<T>(selector, options)` with `{ prefix }`, `{ prefix, start }`,
+  `{ prefix, end }` or `{ start, end }` and `{ limit, cursor, reverse,
+  batchSize }` (Deno's batch defaults and validation) returning a
+  `KvListIterator<T>` for `for await` with a `cursor` getter (Deno's base64url
+  cursor of the key bytes after the selector's common prefix, empty once
+  exhausted), `set<T>(key, value, { expireIn })` → `{ ok: true, versionstamp }`,
+  `delete(key)`, `atomic()` and `close()`; `AtomicOperation` with
+  `check(...checks)`, `set`, `delete`, `sum`, `min` and `max` (a `bigint`
+  operand checked as a `KvU64`) and `commit()` → `KvCommitResult |
+  KvCommitError` (narrow with `result.ok === true`); `KvU64` with `value` and
+  `toString()` and Deno's `RangeError`s. Keys and values of an atomic operation
+  are staged when it commits. Errors are catchable: `NotAllowedError` and
+  `NotFoundError` `DOMException`s, `TypeError` (storage, schema, limits,
+  strict decoding) and `RangeError` (`KvU64`).
+- **Deviations from Deno.** `KvEntryMaybe<T>` is one record type, not a union;
+  `getMany` is homogeneous in `T`; `consistency` options, `watch`,
+  `enqueue`/`listenQueue`, `commitVersionstamp()` and `Deno.openKv()` without a
+  path or with `:memory:` are not available (a program naming them fails to
+  compile); `sum` takes no `min`/`max`/`clamp`; operations settle in the turn
+  that started them.
+- **Tests** never use production data: the Deno 2.9.4 fixture
+  (`kv_cases/deno-2.9.4`, written in a throwaway container by its generator,
+  with every row in hex) and the Deno 2.9.7 serializer probe
+  (`kv_cases/deno-2.9.7-probe`) are synthetic.
+
 ### V38 closure narrowing (`closure_narrowing()`)
 
 Profile v38 adopts TypeScript 5.4's preserved narrowing in closures created
@@ -11430,6 +11673,14 @@ Only regular files are read. Reads are nonblocking at open, capped before the
 result is allocated unboundedly, and checked for UTF-8 where the ABI returns text.
 OS filesystem operations remain synchronous; a stalled remote filesystem is not
 made cancellable by the guest's fuel budget.
+
+### KV databases
+
+V38 `kv.read` and `kv.write` are path grants over the same virtual paths and
+roots as `fs.*`; a database file is pinned through the root's descriptor and
+SQLite's path open is verified against it ([KV storage](#kv-storage-kv)).
+`kv.read` opens and reads, `kv.write` writes (and makes an open writable);
+neither authorizes the other or any `fs.*` operation.
 
 ### Network
 

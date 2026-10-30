@@ -735,6 +735,13 @@ impl LanguageProfile {
     pub fn file_roots(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, KV stream: `varta.kv.open` opens a Deno KV database file
+    /// (`denokv_sqlite` schema 3) at a virtual path under the file roots,
+    /// behind the exact `kv.read` and `kv.write` grants ([`crate::kv`]).
+    #[must_use]
+    pub fn kv(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Named interface/alias annotations and type-only module bindings (v31).
     #[must_use]
     pub fn named_types(self) -> bool {

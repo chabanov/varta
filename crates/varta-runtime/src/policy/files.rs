@@ -20,6 +20,10 @@ use varta_common::{CapabilityGrant, CapabilityValue, Manifest, abi::MAX_RESULT_B
 #[derive(Clone, Default)]
 pub struct FileRoots {
     roots: BTreeMap<String, Arc<Dir>>,
+    /// The host directory each root was pinned from, when the host named
+    /// it: a database file (v38 `kv`) is opened by SQLite through a path,
+    /// which is verified against these descriptors (`kv::store`).
+    directories: BTreeMap<String, PathBuf>,
 }
 
 impl std::fmt::Debug for FileRoots {
@@ -49,7 +53,35 @@ impl FileRoots {
         let pinned = Dir::open_ambient_dir(directory, cap_std::ambient_authority())
             .map_err(|e| failure(e.to_string()))?;
         self.roots.insert(name.into(), Arc::new(pinned));
+        self.directories
+            .insert(name.into(), directory.to_path_buf());
         Ok(())
+    }
+
+    /// [`Self::insert`] for a host that also names the absolute directory it
+    /// opened, so database files (v38 `kv`) can be opened under the root.
+    pub fn insert_at(
+        &mut self,
+        name: &str,
+        directory: std::fs::File,
+        path: &Path,
+    ) -> Result<(), FileRootError> {
+        if !path.is_absolute() {
+            return Err(FileRootError::Open {
+                name: name.into(),
+                directory: path.display().to_string(),
+                message: "not an absolute path".into(),
+            });
+        }
+        self.insert(name, directory)?;
+        self.directories.insert(name.into(), path.to_path_buf());
+        Ok(())
+    }
+
+    /// The pinned descriptor and host directory of root `name`.
+    pub(crate) fn pinned(&self, name: &str) -> Option<(&Arc<Dir>, Option<&Path>)> {
+        let root = self.roots.get(name)?;
+        Some((root, self.directories.get(name).map(PathBuf::as_path)))
     }
 
     /// Pin an already opened directory as root `name`, for a host that
@@ -200,6 +232,15 @@ fn virtual_granted(grants: &[CapabilityGrant], id: &str, path: &str) -> bool {
     })
 }
 
+/// A granted database path (v38 `kv`): the pinned root, the host directory
+/// it was pinned from (when the host named one) and the path components
+/// below it.
+pub(crate) struct DatabaseTarget {
+    pub root: Arc<Dir>,
+    pub directory: Option<PathBuf>,
+    pub components: Vec<String>,
+}
+
 /// Read the regular file `parts` below `directory`, opening every directory
 /// and the file no-follow, nonblocking, capped before allocation.
 fn read_below(directory: &Dir, parts: &[&OsStr]) -> Result<Vec<u8>, crate::HostFailure> {
@@ -302,6 +343,22 @@ impl FilePolicy {
         // Checked before any effect; an unmapped root denies.
         let root = roots.roots.get(path.root).filter(|_| granted)?;
         Some((root, path))
+    }
+
+    /// The pinned root (descriptor and host directory) and the components of
+    /// a database path (v38 `kv`) that grants `id` of the request and the
+    /// ceiling both cover; `None` denies, before anything is opened.
+    pub(super) fn database_target(&self, id: &str, input: &str) -> Option<DatabaseTarget> {
+        let Authority::Virtual { roots, ceiling } = &self.authority else {
+            return None;
+        };
+        let (_, path) = self.virtual_target(roots, ceiling.as_deref(), id, input)?;
+        let (root, directory) = roots.pinned(path.root)?;
+        Some(DatabaseTarget {
+            root: Arc::clone(root),
+            directory: directory.map(Path::to_path_buf),
+            components: path.components.iter().map(|c| (*c).to_owned()).collect(),
+        })
     }
 
     /// Whether the package's lexical scopes and the pinned authority both

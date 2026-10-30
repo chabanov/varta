@@ -30,6 +30,12 @@ tokio.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
 webpki-roots.workspace = true
+denokv_sqlite.workspace = true
+denokv_proto.workspace = true
+rusqlite.workspace = true
+deno_error.workspace = true
+rand.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 rcgen.workspace = true

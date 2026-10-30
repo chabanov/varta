@@ -18,7 +18,12 @@ pub(crate) fn pin(base: &Path, config: &VartaConfig) -> Result<FileRoots> {
     let base = base.canonicalize()?;
     let directory = Dir::open_ambient_dir(&base, cap_std::ambient_authority())?;
     for root in config.roots() {
-        roots.insert(&root.name, open(&directory, root)?.into_std_file())?;
+        // The host path lets database files (v38 `kv`) be opened under the
+        // root; the runtime verifies it against the pinned descriptor.
+        let path = ProjectRoots::components(&root.directory)
+            .into_iter()
+            .fold(base.clone(), |path, component| path.join(component));
+        roots.insert_at(&root.name, open(&directory, root)?.into_std_file(), &path)?;
     }
     Ok(roots)
 }

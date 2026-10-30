@@ -40,6 +40,7 @@ pub fn capability_kind(id: &str) -> Option<GrantKind> {
     match id {
         "time.now" | "time.timer" | "process.exit" => Some(GrantKind::Boolean),
         "env.has" | "env.print" | "env.get" | "fs.read" | "fs.print" => Some(GrantKind::Patterns),
+        crate::kv::READ_CAPABILITY | crate::kv::WRITE_CAPABILITY => Some(GrantKind::Patterns),
         "net.fetch" | "net.get" => Some(GrantKind::Urls),
         crate::net::REQUEST_CAPABILITY => Some(GrantKind::Requests),
         "net.listen" => Some(GrantKind::Listeners),
@@ -47,6 +48,13 @@ pub fn capability_kind(id: &str) -> Option<GrantKind> {
         crate::view::CLIPBOARD_WRITE_CAPABILITY => Some(GrantKind::Boolean),
         _ => None,
     }
+}
+
+/// Whether `id` is a grant over file paths: `fs.*`, and the v38 `kv.*`
+/// database files, which are virtual paths under the same file roots.
+#[must_use]
+pub fn is_path_grant(id: &str) -> bool {
+    id.starts_with("fs.") || matches!(id, crate::kv::READ_CAPABILITY | crate::kv::WRITE_CAPABILITY)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,7 +96,7 @@ impl CapabilityGrant {
                             self.id
                         )));
                     }
-                    if self.id.starts_with("fs.") {
+                    if is_path_grant(&self.id) {
                         let path = std::path::Path::new(pattern);
                         if !path.is_absolute()
                             || path

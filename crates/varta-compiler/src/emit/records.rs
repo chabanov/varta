@@ -270,6 +270,28 @@ impl Emitter<'_> {
             self.json_result(result)
         }
     }
+    /// V38 (`kv`): `kv_stage(mode, kind, lo, hi) -> f64`, the value passed as
+    /// `json_stringify` passes it (its kind word and packed slot halves).
+    pub(super) fn kv_stage(&mut self, mode: i32, value: &Expr) -> Result<()> {
+        let kind = value
+            .ty
+            .profile_kind(self.profile)
+            .ok_or_else(|| CompilerError::Internal("missing KV value kind".into()))?;
+        self.code
+            .extend([I::I32Const(mode), I::I32Const(kind as i32)]);
+        self.expr(value)?;
+        self.pack_slot(value.ty);
+        self.code.extend([
+            I::LocalTee(self.string_temporary),
+            I::I32WrapI64,
+            I::LocalGet(self.string_temporary),
+            I::I64Const(strings::LENGTH_SHIFT as i64),
+            I::I64ShrU,
+            I::I32WrapI64,
+            I::Call(self.hosts[&varta_common::HostOperation::KvStage]),
+        ]);
+        Ok(())
+    }
     /// V38 (`data_limits`): `(handle:i64, error:i32)` of `json_stringify_owned`.
     /// The handle is an owned string the host already retained, or zero for
     /// an `undefined` result; no host result buffer is involved.

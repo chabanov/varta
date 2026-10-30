@@ -115,7 +115,7 @@ one grant kind:
 | Grant kind | Wire form | Ids |
 | --- | --- | --- |
 | Boolean | `"enabled": true \| false` | `clipboard.write`, `process.exit`, `time.now`, `time.timer` |
-| Name/path patterns | `"patterns": [...]` | `env.get`, `env.has`, `env.print`, `fs.print`, `fs.read` |
+| Name/path patterns | `"patterns": [...]` | `env.get`, `env.has`, `env.print`, `fs.print`, `fs.read`, `kv.read`, `kv.write` |
 | URL patterns | `"patterns": [...]` | `net.fetch`, `net.get` |
 | Request scopes (v37) | `"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) | `net.request` |
 | External-link patterns (v38) | `"patterns": [...]`, `https://` admitted, plus the exact `"https://*"` (any HTTPS link, prompting on every activation; valid for this id only) | `ui.open_url` |
@@ -283,7 +283,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 44 |
+| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 53 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -555,6 +555,7 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | Clock | `time_now` | Requires `time.now` enabled. Unix seconds as i32; a time outside i32 is status 2 with 0 |
 | Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most 256 bytes, no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 1 if the variable is set and 0 otherwise (status 0 either way). For an allowed name whose variable is **unset** (or whose value is not valid Unicode), `env_get` returns 0 with status 3 (I/O) and `env_print` emits nothing but the diagnostic and sets status 3; a value larger than `abi::MAX_RESULT_BYTES` is status 4. `env_get` returns the value as a string result, `env_print` emits `varta env: <name>=<value>` |
 | Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..` rejected; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it. Under v38, paths and patterns are virtual paths under host-mapped roots ([File roots](#file-roots-v38)) |
+| KV storage (v38) | `kv_open`, `kv_read`, `kv_commit`, `kv_stage`, `kv_key`, `kv_value`, `kv_entry`, `kv_text`, `kv_close` | Deno KV database files at virtual paths ([KV storage (v38)](#kv-storage-v38)); `kv_open`/`kv_read` need `kv.read`, `kv_commit` needs `kv.write`, decided before any effect, denials recoverable (`kv::FAILED` with `NotAllowedError` in `kv_text`). Open, read, commit, stage and the decoders are charged to the host-call budget. A malformed descriptor or an unknown id is fatal |
 | Permissions and host events (v38) | `permission_query`, `permission_request`, `event_source_*`, `event_watch`, `event_take`, `event_text` | No capability, not charged to the host-call budget; broker states, descriptors and the one-shot answer source in [Permission broker v1](architecture.md#permission-broker-v1-turn_budgets); named sources, host tasks and ordering in [Host event sources](architecture.md#host-event-sources-turn_budgets). A malformed descriptor, id, watch or take is fatal. The instance and event interfaces are [unstable](#what-is-unstable) |
 | Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; bounds and descriptor in [Network requests](architecture.md#network-requests-net_request) |
 | Network | `net_get*`, `net_fetch*` | `http:` URLs only; parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
@@ -632,6 +633,36 @@ ceiling `fsRoots` object, or the host's own configuration). A v38 host MUST:
 5. Open the remaining components from the root's handle with no-follow at every
    component; a symlink anywhere below the root, a directory or a non-regular
    file is an I/O failure (status 3).
+
+### KV storage (v38)
+
+A v38 module that names `varta.kv.open` imports the nine `kv_*` operations.
+The file format is Deno KV's (`denokv_sqlite` 0.14.0, schema version 3); the
+normative contract, the descriptors and the V8 value subset are in
+[KV storage](architecture.md#kv-storage-kv). A host that does not offer KV
+storage MUST still link the imports and deny every `kv_open` (return
+`kv::FAILED` with `NotAllowedError\n<capability denied: kv.read> (<path>)` in
+`kv_text`), like a host without a grant. A host that does MUST:
+
+1. Resolve the path exactly like a [file root](#file-roots-v38) path and check
+   `kv.read` (and `kv.write` for a writable open) against the request and the
+   ceiling before opening anything; check the operation's id again for every
+   read and commit.
+2. Open the file through the root's handle with no-follow at every component
+   and keep its identity; never let the storage engine open a path that is not
+   verified to be that file (the reference host checks the descriptor SQLite
+   opened).
+3. Reject a file whose schema is not exactly Deno KV's version 3 before any
+   write, and fail clearly on a file another writer locks.
+4. Fail a commit fast when the write lock is busy or too little of the turn
+   is left, report it only once durable, and never let a commit reach the
+   file after its turn or after its failure was reported.
+5. Encode and decode values only in the subset of the contract, failing with a
+   typed error and no partial value, and decode into the module's schema with
+   checked-JSON strictness (a mismatch is a recoverable `TypeError` through the
+   exception channel, as for `json_parse_v19`).
+
+The KV interface is [unstable](#what-is-unstable) until the batch closes.
 
 ### Host operation table
 
@@ -866,6 +897,15 @@ import the operation, as contiguous runs in registry order.
 | `event_watch` | (f64, f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `json_parse_v19` | (i32, i32, i32, i32) → (i64) | 34 | none | yes | — | — |
 | `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `kv_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `kv_commit` | (i32, i32) → (f64) | 34 | `kv.write` | — | — | `checked-f64-utf16-v38` |
+| `kv_entry` | (f64, f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
+| `kv_key` | (f64, i32, i32) → (i64) | 34 | none | yes | — | `checked-f64-utf16-v38` |
+| `kv_open` | (i32, i32) → (f64) | 34 | `kv.read` | — | — | `checked-f64-utf16-v38` |
+| `kv_read` | (i32, i32) → (f64) | 34 | `kv.read` | — | — | `checked-f64-utf16-v38` |
+| `kv_stage` | (i32, i32, i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `kv_text` | () → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
+| `kv_value` | (f64, i32, i32) → (i64) | 34 | none | yes | — | `checked-f64-utf16-v38` |
 | `net_body_read_bytes` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `net_request_start_v2` | (i32, i32) → (f64) | 34 | `net.request` | — | — | `checked-f64-utf16-v38` |
 | `permission_query` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |

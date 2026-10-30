@@ -149,6 +149,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     crate::random::register(linker)?;
     crate::scheduler::register(linker)?;
     crate::net::register(linker)?;
+    crate::kv::register(linker)?;
     crate::events::register(linker)?;
     crate::view::register(linker)?;
     crate::primitive_string::register(linker)?;

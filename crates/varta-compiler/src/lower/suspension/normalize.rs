@@ -637,6 +637,8 @@ impl<'a> Normalizer<'a> {
             E::Length(value) => self.unary(*value, E::Length)?,
             E::Json(value, status) => self.unary(*value, |value| E::Json(value, status))?,
             E::ParseJson(value) => self.unary(*value, E::ParseJson)?,
+            E::KvStage(mode, value) => self.unary(*value, |value| E::KvStage(mode, value))?,
+            E::KvDecode(host, value) => self.unary(*value, |value| E::KvDecode(host, value))?,
             E::StringTrim { value, mode } => {
                 self.unary(*value, |value| E::StringTrim { value, mode })?
             }

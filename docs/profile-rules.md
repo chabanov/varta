@@ -3346,6 +3346,51 @@ Normative contract: [architecture](architecture.md#virtual-file-roots-file_roots
   (run, application, view, HTTP request stores, tool invocation); the
   grant-only APIs stay as they are and run v38 modules with no roots.
 
+### KV storage (`kv`)
+
+Normative contract: [architecture](architecture.md#kv-storage-kv).
+
+- The storage engine is Deno's: `denokv_sqlite`/`denokv_proto` 0.14.0 and
+  rusqlite 0.40.1 with the bundled SQLite of libsqlite3-sys 0.38.1, pinned
+  exactly to what Deno 2.9.4 locks. Never hand-roll SQL for the KV tables, never
+  change those pins without re-checking Deno's lock file, and keep them
+  dependencies of `varta-runtime` alone (`boundaries.rs` checks the graph
+  transitively).
+- Grants: `kv.read` opens and reads, `kv.write` writes and makes an open
+  writable. Decide every open, read and commit through
+  `permission::Broker::database` before any effect; denials are recoverable.
+  Never infer write access from a read grant or from the file's permissions.
+- Pinning: `kv::store::open` is the only way to a database. Keep its order
+  (pinned no-follow walk and file, canonical root path verified against the
+  root descriptor, path identity, `SQLITE_OPEN_NOFOLLOW` without
+  `SQLITE_OPEN_CREATE`, schema check, descriptor check, lock probe). Never
+  open or close a descriptor of the database file outside SQLite: closing any
+  descriptor of a file drops the process's POSIX locks on it, so the
+  descriptor check reads `/dev/fd` with `stat` only and an abandoned database
+  keeps its pinned descriptor.
+- The schema check runs before anything can write; a new database is only an
+  empty file created by a writable open.
+- Values: the static type chooses the encoding in the compiler (`lower::kv`):
+  `KvU64` and a top-level `Uint8Array` by their prelude functions, every other
+  storable type as V8 bytes. Reads use `lower::json::kv_decode`, the checked
+  JSON targets, schema 18 and the shared builder (`json_parse::materialize`);
+  do not add a second decoder or builder. A new value kind (Date, Map, Set,
+  BigInt, nested bytes) needs both directions and Deno-written fixtures.
+- The V8 codec (`kv::v8`) is strict: every Deno fixture value must re-encode
+  byte-identically, unknown tags and malformed input fail with `V8Error`, and
+  no partial value escapes. Add a tag only with a Deno-written fixture row.
+- Operations are synchronous host calls within the turn. Commits go through
+  `Database::commit_with`: lock probe, cutoff (`kv::COMMIT_RESERVE_MS` before
+  the deadline), and the worker connection's commit hook (`Fence`) as the only
+  place a guest commit is admitted. Never return before a commit the hook let
+  through is durable, never let an undecided commit through after the cutoff,
+  and never reopen a fence once closed: the database stays unavailable. A
+  commit must never end a turn with the deadline error. A read that reaches
+  the deadline makes the database unavailable rather than joining its
+  thread.
+- `watch`, queues, `consistency` and in-memory databases are not admitted;
+  keep them compile errors until their own increment.
+
 ### Code generation v2 (`codegen_v2`)
 
 Every codegen path goes through `varta_compiler::codegen_v2(profile)`, which is

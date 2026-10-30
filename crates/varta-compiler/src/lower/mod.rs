@@ -382,6 +382,7 @@ mod guest_logical;
 mod http;
 mod interfaces;
 pub(crate) mod json;
+mod kv;
 mod labels;
 mod link;
 mod literal_erasure;

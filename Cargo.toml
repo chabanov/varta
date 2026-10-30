@@ -56,6 +56,22 @@ tokio = { version = "=1.54.1", default-features = false, features = ["rt", "net"
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 webpki-roots = "=1.0.11"
+# Deno KV file compatibility (v38 `kv`): the SQLite backend and protocol
+# types of Deno KV at exactly the versions Deno 2.9.4 and 2.9.7 lock
+# (denokv_sqlite/denokv_proto 0.14.0, rusqlite 0.40.1 over libsqlite3-sys
+# 0.38.1 with bundled SQLite), so Varta opens the same files with the same
+# engine. Host side only: `varta-runtime` is their one dependent.
+denokv_sqlite = { version = "=0.14.0", default-features = false }
+denokv_proto = "=0.14.0"
+# `hooks` (also on in Deno through `session`): the commit hook that keeps a
+# guest commit from reaching the file after its turn's commit cutoff.
+rusqlite = { version = "=0.40.1", features = ["bundled", "fallible_uint", "hooks"] }
+# The error type of the denokv connection factory and the versionstamp
+# generator it takes (Deno's own `StdRng::from_entropy`); rand stays at its locked 0.8.8.
+deno_error = "=0.7.1"
+rand = "=0.8.8"
+# `denokv_proto::Mutation::expire_at`; no clock feature (denokv's own rule).
+chrono = { version = "=0.4.42", default-features = false, features = ["std"] }
 # Test-only: certificates for the loopback HTTPS server of the runtime tests.
 rcgen = { version = "=0.13.2", default-features = false, features = ["crypto", "pem", "ring"] }
 

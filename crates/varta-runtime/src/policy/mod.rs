@@ -1,8 +1,8 @@
 mod files;
 mod glob;
-pub(crate) use files::FileMode;
 use files::FilePolicy;
 pub use files::FileRoots;
+pub(crate) use files::{DatabaseTarget, FileMode};
 use glob::{glob, wildcard};
 use varta_common::{CapabilityGrant, CapabilityValue};
 
@@ -122,7 +122,7 @@ impl Policy {
         };
         Some(match kind {
             varta_common::GrantKind::Boolean => return None,
-            varta_common::GrantKind::Patterns if id.starts_with("fs.") => {
+            varta_common::GrantKind::Patterns if varta_common::is_path_grant(id) => {
                 self.permits(|grants| grants.iter().any(|g| g.id == id))
                     && self.files.covers(id, resource)
             }
@@ -252,6 +252,16 @@ impl Policy {
             return Err(crate::HostFailure::denied(id, input));
         }
         self.files.read(id, input)
+    }
+
+    /// The pinned target of database `path` (v38 `kv`) when the broker
+    /// leaves `id` open and the request and the ceiling both cover the
+    /// virtual path; nothing is opened here.
+    pub(crate) fn database(&self, id: &str, path: &str) -> Option<DatabaseTarget> {
+        if !self.open(id) {
+            return None;
+        }
+        self.files.database_target(id, path)
     }
 }
 

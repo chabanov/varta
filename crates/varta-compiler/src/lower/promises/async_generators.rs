@@ -1646,6 +1646,20 @@ impl Lower<'_> {
             kind: "for await...of over a class instance".into(),
             detail: detail.into(),
         };
+        // A generic class instance whose type first appeared in a signature
+        // (a generic method returning it) has no member functions allocated
+        // yet: allocate them before taking the method's index. Instances
+        // that are already allocated keep their indices.
+        if self
+            .types
+            .classes
+            .get(class)
+            .methods
+            .get(classes::ASYNC_ITERATOR_METHOD)
+            .is_some_and(|method| method.target().0 == classes::UNALLOCATED)
+        {
+            self.class_functions()?;
+        }
         let Some(method) = self
             .types
             .classes

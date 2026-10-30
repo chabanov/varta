@@ -368,6 +368,8 @@ fn expression(
         | E::Field(a, _)
         | E::Json(a, _)
         | E::ParseJson(a)
+        | E::KvStage(_, a)
+        | E::KvDecode(_, a)
         | E::IndexKey(a)
         | E::Length(a) => expression(a, functions, visited, effects),
         _ => {}

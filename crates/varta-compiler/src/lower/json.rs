@@ -90,7 +90,12 @@ fn parse_stable(field: Type, value: Type, types: &ir::ValueTypes) -> bool {
 
 /// Whether `ty` reaches `unknown`.
 fn reaches_unknown(ty: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) -> bool {
-    if ty == Type::Unknown {
+    reaches_type(ty, Type::Unknown, types, seen)
+}
+
+/// Whether `ty` reaches `target` through unions, fields, elements or values.
+fn reaches_type(ty: Type, target: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) -> bool {
+    if ty == target {
         return true;
     }
     if !seen.insert(ty) {
@@ -100,14 +105,16 @@ fn reaches_unknown(ty: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) 
         Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
             .clone()
             .into_iter()
-            .any(|member| reaches_unknown(member, types, seen)),
+            .any(|member| reaches_type(member, target, types, seen)),
         Type::Record(id) => types.records[id as usize]
             .fields
             .clone()
             .into_iter()
-            .any(|field| reaches_unknown(field.ty, types, seen)),
-        Type::Array(id) => reaches_unknown(types.arrays[id as usize], types, seen),
-        Type::Dictionary(id) => reaches_unknown(types.dictionaries[id as usize].value, types, seen),
+            .any(|field| reaches_type(field.ty, target, types, seen)),
+        Type::Array(id) => reaches_type(types.arrays[id as usize], target, types, seen),
+        Type::Dictionary(id) => {
+            reaches_type(types.dictionaries[id as usize].value, target, types, seen)
+        }
         _ => false,
     }
 }
@@ -199,6 +206,47 @@ impl Lower<'_> {
         }
         self.parse_json_at(&call.args[0].expr, target, span)
             .map(Some)
+    }
+    /// A KV key or value decode at `ty` (v38 `kv`): the targets, schema and
+    /// declared-field checks of checked parsing, over the stored entry
+    /// `index` of the last read instead of JSON text.
+    pub(super) fn kv_decode(
+        &mut self,
+        host: Host,
+        index: Expr,
+        ty: Type,
+        span: swc_common::Span,
+    ) -> Result<Expr> {
+        if literals::contains(ty, self.types) {
+            return Err(self.source.locate(
+                unsupported(
+                    "KV value type with a literal type; read the base primitive and narrow it",
+                ),
+                span,
+            ));
+        }
+        if !json_type(ty, self.types, false, false)
+            || reaches_type(ty, Type::BigInt, self.types, &mut BTreeSet::new())
+        {
+            return Err(self.source.locate(
+                unsupported(&format!(
+                    "KV value type {ty}; KV values are checked JSON types without BigInt"
+                )),
+                span,
+            ));
+        }
+        if reaches_unknown(ty, self.types, &mut BTreeSet::new()) {
+            unknown_graph(self.types)?;
+        }
+        let decoded = Expr {
+            span,
+            ty,
+            kind: E::KvDecode(host, Box::new(index)),
+        };
+        match self.types.declared(ty).cloned() {
+            Some(members) => self.validate_declared(decoded, &members.fields, span),
+            None => Ok(decoded),
+        }
     }
     fn parse_json_at(
         &mut self,

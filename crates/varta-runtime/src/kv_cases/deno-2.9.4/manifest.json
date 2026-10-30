@@ -1,0 +1,448 @@
+{
+  "deno": {
+    "deno": "2.9.4",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "written": 50,
+  "entries": [
+    {
+      "key": [
+        "fixture",
+        "key",
+        "string"
+      ],
+      "shape": "string",
+      "versionstamp": "00000000000000040000"
+    },
+    {
+      "key": [
+        "fixture",
+        "key",
+        0
+      ],
+      "shape": "string",
+      "versionstamp": "00000000000000070000"
+    },
+    {
+      "key": [
+        "fixture",
+        "key",
+        -1
+      ],
+      "shape": "string",
+      "versionstamp": "000000000000000b0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "key",
+        1.5
+      ],
+      "shape": "string",
+      "versionstamp": "000000000000000e0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "key",
+        9007199254740992
+      ],
+      "shape": "string",
+      "versionstamp": "00000000000000140000"
+    },
+    {
+      "key": [
+        "fixture",
+        "key",
+        "ünïcødé-ключ-🔑"
+      ],
+      "shape": "string",
+      "versionstamp": "000000000000001a0000"
+    },
+    {
+      "key": [
+        "tenant",
+        "t-1",
+        "run",
+        "r-1"
+      ],
+      "shape": "string",
+      "versionstamp": "00000000000000220000"
+    },
+    {
+      "key": [
+        "fixture",
+        "str",
+        "ascii"
+      ],
+      "shape": "string one-byte",
+      "versionstamp": "00000000000000230000"
+    },
+    {
+      "key": [
+        "fixture",
+        "str",
+        "latin1"
+      ],
+      "shape": "string one-byte latin1",
+      "versionstamp": "00000000000000260000"
+    },
+    {
+      "key": [
+        "fixture",
+        "str",
+        "utf16"
+      ],
+      "shape": "string two-byte",
+      "versionstamp": "00000000000000280000"
+    },
+    {
+      "key": [
+        "fixture",
+        "str",
+        "empty"
+      ],
+      "shape": "string empty",
+      "versionstamp": "000000000000002d0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "str",
+        "long"
+      ],
+      "shape": "string 60000 one-byte (values are capped at 64 KiB)",
+      "versionstamp": "00000000000000300000"
+    },
+    {
+      "key": [
+        "fixture",
+        "str",
+        "long_utf16"
+      ],
+      "shape": "string 30000 two-byte",
+      "versionstamp": "00000000000000370000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "zero"
+      ],
+      "shape": "number zero",
+      "versionstamp": "000000000000003b0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "small"
+      ],
+      "shape": "number small",
+      "versionstamp": "00000000000000420000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "neg"
+      ],
+      "shape": "number neg",
+      "versionstamp": "000000000000004a0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "smi_max"
+      ],
+      "shape": "number smi_max",
+      "versionstamp": "000000000000004b0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "beyond_smi"
+      ],
+      "shape": "number beyond_smi",
+      "versionstamp": "000000000000004c0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "int53"
+      ],
+      "shape": "number int53",
+      "versionstamp": "000000000000004e0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "float"
+      ],
+      "shape": "number float",
+      "versionstamp": "00000000000000510000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "neg_zero"
+      ],
+      "shape": "number neg_zero",
+      "versionstamp": "00000000000000590000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "nan"
+      ],
+      "shape": "number nan",
+      "versionstamp": "000000000000005f0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "inf"
+      ],
+      "shape": "number inf",
+      "versionstamp": "00000000000000680000"
+    },
+    {
+      "key": [
+        "fixture",
+        "num",
+        "neg_inf"
+      ],
+      "shape": "number neg_inf",
+      "versionstamp": "00000000000000690000"
+    },
+    {
+      "key": [
+        "fixture",
+        "bigint"
+      ],
+      "shape": "bigint",
+      "versionstamp": "000000000000006b0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "bool",
+        "true"
+      ],
+      "shape": "boolean true",
+      "versionstamp": "00000000000000710000"
+    },
+    {
+      "key": [
+        "fixture",
+        "bool",
+        "false"
+      ],
+      "shape": "boolean false",
+      "versionstamp": "00000000000000770000"
+    },
+    {
+      "key": [
+        "fixture",
+        "null"
+      ],
+      "shape": "null",
+      "versionstamp": "00000000000000790000"
+    },
+    {
+      "key": [
+        "fixture",
+        "undefined"
+      ],
+      "shape": "undefined",
+      "versionstamp": "00000000000000820000"
+    },
+    {
+      "key": [
+        "fixture",
+        "obj",
+        "empty"
+      ],
+      "shape": "object empty",
+      "versionstamp": "00000000000000850000"
+    },
+    {
+      "key": [
+        "fixture",
+        "obj",
+        "flat"
+      ],
+      "shape": "object flat",
+      "versionstamp": "00000000000000860000"
+    },
+    {
+      "key": [
+        "fixture",
+        "obj",
+        "nested"
+      ],
+      "shape": "object nested",
+      "versionstamp": "000000000000008a0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "obj",
+        "undefined_field"
+      ],
+      "shape": "object with undefined field",
+      "versionstamp": "000000000000008f0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "obj",
+        "numeric_keys"
+      ],
+      "shape": "object with integer-like keys",
+      "versionstamp": "00000000000000930000"
+    },
+    {
+      "key": [
+        "fixture",
+        "arr",
+        "empty"
+      ],
+      "shape": "array empty",
+      "versionstamp": "00000000000000970000"
+    },
+    {
+      "key": [
+        "fixture",
+        "arr",
+        "dense"
+      ],
+      "shape": "array dense mixed",
+      "versionstamp": "000000000000009f0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "arr",
+        "holes"
+      ],
+      "shape": "array with hole",
+      "versionstamp": "00000000000000a40000"
+    },
+    {
+      "key": [
+        "fixture",
+        "bytes"
+      ],
+      "shape": "Uint8Array (stored as v_encoding 2)",
+      "versionstamp": "00000000000000a70000"
+    },
+    {
+      "key": [
+        "fixture",
+        "bytes_in_obj"
+      ],
+      "shape": "Uint8Array inside object (V8)",
+      "versionstamp": "00000000000000a90000"
+    },
+    {
+      "key": [
+        "fixture",
+        "date"
+      ],
+      "shape": "Date",
+      "versionstamp": "00000000000000ae0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "map"
+      ],
+      "shape": "Map",
+      "versionstamp": "00000000000000b00000"
+    },
+    {
+      "key": [
+        "fixture",
+        "set"
+      ],
+      "shape": "Set",
+      "versionstamp": "00000000000000b30000"
+    },
+    {
+      "key": [
+        "tenant",
+        "t-1",
+        "run",
+        "r-2"
+      ],
+      "shape": "UARP-like run record",
+      "versionstamp": "00000000000000b90000"
+    },
+    {
+      "key": [
+        "fixture",
+        "u64",
+        "plain"
+      ],
+      "shape": "KvU64 (v_encoding 3)",
+      "versionstamp": "00000000000000ba0000"
+    },
+    {
+      "key": [
+        "fixture",
+        "u64",
+        "sum"
+      ],
+      "shape": "KvU64 10 then atomic sum 5 = 15",
+      "versionstamp": "00000000000000c70000"
+    },
+    {
+      "key": [
+        "fixture",
+        "expire"
+      ],
+      "shape": "string",
+      "versionstamp": "00000000000000c90000",
+      "note": "expireIn 86400000"
+    },
+    {
+      "key": [
+        "fixture",
+        "overwrite"
+      ],
+      "shape": "string, overwritten once",
+      "versionstamp": "00000000000000d30000"
+    },
+    {
+      "key": [
+        "fixture",
+        "deleted"
+      ],
+      "shape": "deleted: no row"
+    },
+    {
+      "key": [
+        "fixture",
+        "cas"
+      ],
+      "shape": "object written by atomic check+set",
+      "versionstamp": "00000000000000e70000"
+    },
+    {
+      "key": [
+        "fixture",
+        "cas_stale"
+      ],
+      "shape": "atomic with stale check: ok=false, no row"
+    }
+  ]
+}

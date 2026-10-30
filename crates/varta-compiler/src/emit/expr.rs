@@ -506,6 +506,18 @@ impl Emitter<'_> {
                     ]);
                 }
             }
+            E::KvStage(mode, value) => self.kv_stage(*mode, value)?,
+            E::KvDecode(host, index) => {
+                self.expr(index)?;
+                let (ptr, len) = self.schemas[&expr.ty];
+                self.code.extend([
+                    I::I32Const(ptr as i32),
+                    I::I32Const(len as i32),
+                    I::Call(self.hosts[host]),
+                ]);
+                self.check_exception()?;
+                self.unpack_slot(expr.ty);
+            }
             E::Integer(n) => self.code.push(I::I32Const(*n)),
             E::Float64(n) => self.code.push(I::F64Const((*n).into())),
             E::Local(slot) => self.read_binding(*slot, expr.ty),

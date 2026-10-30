@@ -294,14 +294,18 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     let layouts = collected.layouts;
     let schemas = collected.schemas;
     // The owned JSON serializer (v38) allocates through the same value ABI
-    // helpers as the checked parser.
+    // helpers as the checked parser, and so do the KV decoders (v38 `kv`).
     let has_parser = hosts.contains(&program.types.profile.json_parse())
-        || hosts.contains(&Host::JsonStringifyOwned);
+        || hosts.contains(&Host::JsonStringifyOwned)
+        || hosts.contains(&Host::KvKey)
+        || hosts.contains(&Host::KvValue);
     // V38 (`linked_intrinsics`): linked JSON calls the allocator and the
     // retention helper inside the module, so the host-facing value ABI
-    // exports exist only while the host itself parses or serializes.
+    // exports exist only while the host itself parses, serializes or
+    // decodes KV entries.
     let host_values = hosts.iter().any(|host| {
-        matches!(*host, Host::JsonStringifyOwned) || *host == program.types.profile.json_parse()
+        matches!(*host, Host::JsonStringifyOwned | Host::KvKey | Host::KvValue)
+            || *host == program.types.profile.json_parse()
     } && !crate::link::links(program.types.profile, *host));
     let trace_values = !layouts.is_empty()
         || collected.arrays

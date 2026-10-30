@@ -161,6 +161,109 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                     "backend-specific inspection belongs to the runtime API"
                 );
             }
+            // The Deno KV storage engine (v38 `kv`) and its SQLite build are
+            // host code of the runtime only.
+            assert!(
+                !STORAGE_CRATES.contains(&target) || name == "varta-runtime" && !dev,
+                "the KV storage engine is a runtime host dependency only: {name} -> {target}"
+            );
         }
     }
+}
+
+/// The Deno KV storage crates (`denokv_sqlite` and what Varta names of it).
+const STORAGE_CRATES: [&str; 5] = [
+    "denokv_sqlite",
+    "denokv_proto",
+    "rusqlite",
+    "libsqlite3-sys",
+    "deno_error",
+];
+
+/// No engine contract, compiler, artifact or intrinsic crate reaches SQLite,
+/// even transitively: only the runtime (and what links it) does.
+#[test]
+fn only_the_runtime_reaches_the_kv_storage_engine() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    let output = Command::new(env!("CARGO"))
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--offline",
+            "--locked",
+            "--manifest-path",
+        ])
+        .arg(manifest)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let names: BTreeMap<&str, &str> = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|package| {
+            (
+                package["id"].as_str().unwrap(),
+                package["name"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    let edges: BTreeMap<&str, Vec<&str>> = metadata["resolve"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| {
+            let normal = node["deps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|dep| {
+                    dep["dep_kinds"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|kind| kind["kind"].is_null() || kind["kind"] == "build")
+                })
+                .map(|dep| dep["pkg"].as_str().unwrap())
+                .collect();
+            (node["id"].as_str().unwrap(), normal)
+        })
+        .collect();
+    let reaches_sqlite = |root: &str| {
+        let start = names
+            .iter()
+            .find(|(_, name)| **name == root)
+            .map(|(id, _)| *id)
+            .unwrap();
+        let mut pending = vec![start];
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if names[id] == "libsqlite3-sys" {
+                return true;
+            }
+            pending.extend(edges.get(id).into_iter().flatten().copied());
+        }
+        false
+    };
+    for engine in [
+        "varta-common",
+        "varta-bigint",
+        "varta-compiler",
+        "varta-artifact",
+        "varta-intrinsics",
+        "varta-intrinsics-wasm",
+        "varta-view",
+    ] {
+        assert!(!reaches_sqlite(engine), "{engine} reaches SQLite");
+    }
+    assert!(reaches_sqlite("varta-runtime"));
 }

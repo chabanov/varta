@@ -17369,3 +17369,155 @@ fn view_scripts_run_on_virtual_time_with_wait_steps() {
     let help = varta().args(["dev", "--help"]).output().unwrap();
     assert!(String::from_utf8_lossy(&help.stdout).contains("\"input\":\"wait\""));
 }
+
+/// V38 KV storage (`kv`): each path is opened, its `count` KvU64 summed in
+/// an atomic commit and read back; what rejects is logged with its error.
+const KV_PROGRAM: &str = r"export async function main(): Promise<void> {
+  for (const path of ['/data/app.kv', '/data/../app.kv', '/data/link.kv', '/data/bad.kv']) {
+    try {
+      const kv = await varta.kv.open(path);
+      const result = await kv.atomic().sum(['count'], 1n).commit();
+      const entry = await kv.get<KvU64>(['count']);
+      const count = entry.value;
+      console.log(path + ' count ' + (count === null ? 'none' : count.toString()) + ' ' + String(result.ok === true));
+      kv.close();
+    } catch (error) {
+      if (error instanceof Error) { console.log(path + ' ' + error.name + ': ' + error.message); }
+    }
+  }
+}
+";
+
+/// The log lines of a KV run, without the prefix.
+fn kv_lines(output: &std::process::Output) -> Vec<String> {
+    let text = combined(output);
+    assert!(output.status.success(), "{text}");
+    text.lines()
+        .filter_map(|line| line.strip_prefix("varta log: "))
+        .filter(|line| line.starts_with('/'))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The lines of a run whose grants open `/data/app.kv` writable for the
+/// `count`-th time; the other paths are denied or fail the same way always.
+fn kv_granted(count: u32) -> Vec<String> {
+    vec![
+        format!("/data/app.kv count {count} true"),
+        "/data/../app.kv NotAllowedError: <capability denied: kv.read> (/data/../app.kv)".into(),
+        "/data/link.kv TypeError: cannot open the KV database /data/link.kv: Too many levels of symbolic links (os error 62)".into(),
+        "/data/bad.kv TypeError: cannot open the KV database /data/bad.kv: file is not a database".into(),
+    ]
+}
+
+#[test]
+#[cfg(unix)]
+fn v38_kv_databases_open_with_exact_grants_in_dev_and_packaged_apps() {
+    let project = RegressionProject::new(KV_PROGRAM, serde_json::json!({}));
+    let data = project.0.join("data");
+    fs::create_dir_all(&data).unwrap();
+    let outside = PathBuf::from(format!("{}-outside.kv", project.0.display()));
+    fs::write(&outside, "OUTSIDE").unwrap();
+    std::os::unix::fs::symlink(&outside, data.join("link.kv")).unwrap();
+    fs::write(data.join("bad.kv"), "not a database, just text").unwrap();
+    let configure = |capabilities: serde_json::Value| {
+        fs::write(
+            project.0.join("varta.config.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "languageProfile":"checked-f64-utf16-v38","entry":"src/main.ts",
+                "target":"native","out":"dist/app","fs":{"roots":{"data":"data"}},
+                "capabilities":capabilities}))
+            .unwrap(),
+        )
+        .unwrap();
+    };
+    let read_write = serde_json::json!({"kv":{"read":["/data/*.kv"],"write":["/data/*.kv"]}});
+    configure(read_write.clone());
+    // `varta dev` creates the database, then reopens the same file.
+    let mut lines = kv_lines(&project.command(&["dev"]));
+    // The symlink error text is the host's (`ELOOP`); compare its stable part.
+    let link = |lines: &mut Vec<String>| {
+        if lines[2]
+            .starts_with("/data/link.kv TypeError: cannot open the KV database /data/link.kv")
+        {
+            lines[2] = kv_granted(1)[2].clone();
+        }
+    };
+    link(&mut lines);
+    assert_eq!(lines, kv_granted(1));
+    let mut lines = kv_lines(&project.command(&["dev"]));
+    link(&mut lines);
+    assert_eq!(lines, kv_granted(2));
+    assert_eq!(fs::read(&outside).unwrap(), b"OUTSIDE");
+    assert!(!data.join("bad.kv-wal").exists());
+    // A read grant alone opens read-only and denies the commit; no grant
+    // denies the open. Neither changes the file.
+    let database = fs::read(data.join("app.kv")).unwrap();
+    configure(serde_json::json!({"kv":{"read":["/data/*.kv"]}}));
+    let lines = kv_lines(&project.command(&["dev"]));
+    assert_eq!(
+        lines[0],
+        "/data/app.kv NotAllowedError: <capability denied: kv.write> (/data/app.kv)"
+    );
+    configure(serde_json::json!({}));
+    let lines = kv_lines(&project.command(&["dev"]));
+    assert_eq!(
+        lines[0],
+        "/data/app.kv NotAllowedError: <capability denied: kv.read> (/data/app.kv)"
+    );
+    assert_eq!(fs::read(data.join("app.kv")).unwrap(), database);
+    // The packaged executable and the companion open the database under the
+    // root a host policy maps, within its ceiling.
+    configure(read_write);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let policy = |capabilities: serde_json::Value| {
+        fs::write(
+            project.0.join("host-policy.json"),
+            serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"abiVersion":34,
+                "fsRoots":{"data":data},"capabilities":capabilities}))
+            .unwrap(),
+        )
+        .unwrap();
+    };
+    policy(serde_json::json!([
+        {"id":"kv.read","patterns":["/data/**"]},
+        {"id":"kv.write","patterns":["/data/**"]}
+    ]));
+    let packaged = || {
+        let executable = Command::new(project.0.join("dist/app"))
+            .args(["--policy", "host-policy.json"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        let companion = Command::new(runtime_path())
+            .args(["run", "dist/app.wasm", "--policy", "host-policy.json"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        [executable, companion]
+    };
+    for (index, output) in packaged().iter().enumerate() {
+        let mut lines = kv_lines(output);
+        link(&mut lines);
+        assert_eq!(lines, kv_granted(3 + index as u32));
+    }
+    // A read-only ceiling denies the write; without a mapped root nothing
+    // opens.
+    policy(serde_json::json!([{"id":"kv.read","patterns":["/data/**"]}]));
+    for output in packaged() {
+        assert_eq!(
+            kv_lines(&output)[0],
+            "/data/app.kv NotAllowedError: <capability denied: kv.write> (/data/app.kv)"
+        );
+    }
+    let unmapped = Command::new(project.0.join("dist/app"))
+        .current_dir(&project.0)
+        .output()
+        .unwrap();
+    assert_eq!(
+        kv_lines(&unmapped)[0],
+        "/data/app.kv NotAllowedError: <capability denied: kv.read> (/data/app.kv)"
+    );
+    let _ = fs::remove_file(&outside);
+}
