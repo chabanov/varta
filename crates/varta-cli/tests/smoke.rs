@@ -11820,6 +11820,71 @@ fn pilot_profile_v38_declares_host_abi_34_with_value17_through_both_binaries() {
     rejects("matching host ABI");
 }
 
+/// The v38 multi-page static region through `varta dev`, both artifacts, both
+/// binaries and the packaged executable: about 100 KiB of literals, a record
+/// descriptor and a checked JSON schema spill into the static extension under
+/// production budgets. The same project fails `check` under v37 at the
+/// single static page.
+#[test]
+fn program_limits_static_extension_runs_everywhere_and_v37_rejects_it() {
+    let first = "a".repeat(32_750);
+    let second = "b".repeat(16_000);
+    let project = RegressionProject::new(
+        &format!(
+            "interface Pair{{left:string;right:string}}\
+             export function main():void{{const a=\"{first}\";const b=\"{second}\";\
+             const pair:Pair={{left:a.slice(0,2),right:b.slice(b.length-2)}};\
+             console.log(JSON.stringify(pair));\
+             const parsed=JSON.parse('{{\"left\":\"x\",\"right\":\"y\"}}') as Pair;\
+             console.log(parsed.left+parsed.right+String(a.length+b.length));}}"
+        ),
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v38");
+    let expected = [
+        r#"varta log: {"left":"aa","right":"bb"}"#.to_string(),
+        format!("varta log: xy{}", 32_750 + 16_000),
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let wasm = fs::read(project.0.join("dist/app.wasm")).unwrap();
+    assert!(
+        wasm.windows(varta_common::abi::STATIC_SECTION.len())
+            .any(|window| window == varta_common::abi::STATIC_SECTION.as_bytes())
+    );
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success(), "{}", combined(&check));
+    assert!(
+        combined(&check).contains("static string data exceeds one Wasm page"),
+        "{}",
+        combined(&check)
+    );
+}
+
 /// The v37 language core through `varta dev`, both artifacts, both binaries
 /// and the packaged executable: a timer callback naming the abort listener
 /// declared after it, hoisted helpers, a closure reading its binding before

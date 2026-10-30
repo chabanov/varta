@@ -495,7 +495,8 @@ fn fatal(error: SchedulerError) -> wasmtime::Error {
 /// uncaught-exception readers, as for one escaping `main`.
 fn uncaught(caller: &mut Caller<'_, RuntimeContext>, reason: i64) -> wasmtime::Error {
     let channel =
-        Channel::detect(|name| matches!(caller.get_export(name), Some(Extern::Global(_))));
+        Channel::detect(|name| matches!(caller.get_export(name), Some(Extern::Global(_))))
+            .in_region(caller.data().static_region);
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return wasmtime::Error::msg("missing exception memory");
     };
@@ -553,7 +554,8 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             // readers bounded per string field, so the diagnostic never needs a
             // guest reference later and no host copy grows with guest text.
             let channel =
-                Channel::detect(|name| matches!(caller.get_export(name), Some(Extern::Global(_))));
+                Channel::detect(|name| matches!(caller.get_export(name), Some(Extern::Global(_))))
+                    .in_region(caller.data().static_region);
             let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
                 return Err(wasmtime::Error::msg("missing exception memory"));
             };

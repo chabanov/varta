@@ -608,7 +608,10 @@ impl LanguageProfile {
     /// up to the Wasm limits, a shared descriptor-driven checked decoder,
     /// multi-page static data, table-driven resume dispatch and dead-code
     /// elimination. Owns any memory-layout or value-layout change of the
-    /// batch (value 18 or a static-region ABI change). Admits nothing yet.
+    /// batch (value 18 or a static-region ABI change). Admits the multi-page
+    /// static region ([`crate::abi::StaticRegion`], host ABI 34): static data
+    /// beyond the first page lives in an extension after the root stack,
+    /// declared by [`crate::abi::STATIC_SECTION`], and the heap follows it.
     #[must_use]
     pub fn program_limits(self) -> bool {
         self == Self::CheckedF64Utf16V38

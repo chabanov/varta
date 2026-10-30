@@ -26,6 +26,7 @@ mod repeat;
 mod roots;
 mod schemas;
 mod shared_members;
+mod static_data;
 mod strings;
 mod unions;
 use crate::{
@@ -260,19 +261,16 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             strings::Helper::RootPush,
         ]);
     }
+    let mut placement = static_data::Placement::new(program.types.profile);
     let mut offsets = BTreeMap::new();
-    let mut offset = 0usize;
     for (string, (span, source)) in strings {
-        offsets.insert(string.clone(), offset as u32);
-        offset = offset.checked_add(string.len()).ok_or_else(|| {
-            source.locate(CompilerError::Invalid("static data overflow".into()), span)
-        })?;
-        if offset > varta_common::abi::RESULT_BASE {
-            return Err(source.locate(
+        let at = placement.push(&string).ok_or_else(|| {
+            source.locate(
                 CompilerError::Invalid("static string data exceeds one Wasm page".into()),
                 span,
-            ));
-        }
+            )
+        })?;
+        offsets.insert(string.clone(), at);
     }
     let mut layout_offsets = BTreeMap::new();
     let mut layout_data = Vec::new();
@@ -283,32 +281,29 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             &offsets,
             program.types.value_version(),
         )?;
-        let start = offset;
-        offset += bytes.len();
-        if offset > varta_common::abi::RESULT_BASE {
-            return Err(source.locate(
+        let start = placement.push(&bytes).ok_or_else(|| {
+            source.locate(
                 CompilerError::Invalid("object metadata exceeds static memory budget".into()),
                 span,
-            ));
-        }
-        layout_offsets.insert(key, start as u32);
-        layout_data.push((start as u32, bytes));
+            )
+        })?;
+        layout_offsets.insert(key, start);
+        layout_data.push((start, bytes));
     }
     let mut schema_offsets = BTreeMap::new();
     for (ty, (span, source)) in schemas {
         let bytes = schemas::build(ty, &program.types, &layout_offsets)
             .map_err(|e| source.locate(e, span))?;
-        let start = offset;
-        offset += bytes.len();
-        if offset > varta_common::abi::RESULT_BASE {
-            return Err(source.locate(
+        let start = placement.push(&bytes).ok_or_else(|| {
+            source.locate(
                 CompilerError::Invalid("JSON schema exceeds static memory budget".into()),
                 span,
-            ));
-        }
-        schema_offsets.insert(ty, (start as u32, bytes.len() as u32));
-        layout_data.push((start as u32, bytes));
+            )
+        })?;
+        schema_offsets.insert(ty, (start, bytes.len() as u32));
+        layout_data.push((start, bytes));
     }
+    let static_region = placement.region()?;
     let hosts: BTreeMap<_, _> = hosts
         .into_iter()
         .enumerate()
@@ -409,8 +404,10 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     module.section(&functions);
     let mut memory = wasm_encoder::MemorySection::new();
     memory.memory(wasm_encoder::MemoryType {
-        minimum: if needs_arena {
-            (varta_common::abi::OWNED_STRING_BASE / varta_common::abi::WASM_PAGE_BYTES) as u64
+        // A static extension (v38) lies after the root stack, so its pages
+        // are committed even without a managed heap.
+        minimum: if needs_arena || static_region.extension_pages() > 0 {
+            static_region.minimum_pages()
         } else {
             1
         },
@@ -445,10 +442,11 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         heap: globals.len(),
         free: globals.len() + 1,
         roots: globals.len() + 2,
+        base: static_region.heap_base() as u32,
     };
     if needs_arena {
         for initial in [
-            varta_common::abi::OWNED_STRING_BASE,
+            static_region.heap_base(),
             0,
             varta_common::abi::STRING_ROOT_BASE + reserved_roots,
         ] {
@@ -812,17 +810,35 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     module.section(&code);
     let mut data = wasm_encoder::DataSection::new();
-    for (string, offset) in offsets {
-        data.active(
-            0,
-            &wasm_encoder::ConstExpr::i32_const(offset as i32),
-            string,
-        );
-    }
-    for (offset, bytes) in layout_data {
-        data.active(0, &wasm_encoder::ConstExpr::i32_const(offset as i32), bytes);
+    if program.types.profile.program_limits() {
+        // One segment per region (v38): the static image, not one segment
+        // per literal, so the Wasm data-segment limit never binds.
+        for (offset, bytes) in placement.images() {
+            data.active(
+                0,
+                &wasm_encoder::ConstExpr::i32_const(offset as i32),
+                bytes.iter().copied(),
+            );
+        }
+    } else {
+        for (string, offset) in offsets {
+            data.active(
+                0,
+                &wasm_encoder::ConstExpr::i32_const(offset as i32),
+                string,
+            );
+        }
+        for (offset, bytes) in layout_data {
+            data.active(0, &wasm_encoder::ConstExpr::i32_const(offset as i32), bytes);
+        }
     }
     module.section(&data);
+    if static_region.extension_pages() > 0 {
+        module.section(&wasm_encoder::CustomSection {
+            name: varta_common::abi::STATIC_SECTION.into(),
+            data: static_region.section_bytes().to_vec().into(),
+        });
+    }
     module.section(&wasm_encoder::CustomSection {
         name: varta_common::abi::SECTION.into(),
         data: program
@@ -955,6 +971,14 @@ fn host_type(ty: varta_common::HostScalar) -> ValType {
 }
 
 impl Emitter<'_> {
+    /// First managed-heap address of this module (v38: after its static
+    /// extension).
+    fn heap_base(&self) -> u32 {
+        self.memory
+            .map_or(varta_common::abi::OWNED_STRING_BASE as u32, |globals| {
+                globals.base
+            })
+    }
     fn push_label(&mut self, instruction: I<'static>, breakable: bool, continuable: bool) -> usize {
         self.code.push(instruction);
         let index = self.labels.len();

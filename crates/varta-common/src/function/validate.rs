@@ -33,15 +33,27 @@ struct Walker<'a> {
     initial: u64,
     nodes: usize,
     seen: BTreeSet<(u64, usize)>,
+    /// Where the module's record descriptors and keys may lie.
+    region: abi::StaticRegion,
 }
 /// Validated, immutable metadata owned by the module loader. Guest memory can
 /// never replace the schema. This proves capture layout, not call authority.
 #[derive(Debug, Clone)]
-pub struct VerifiedFunctionCatalog(FunctionCatalog);
+pub struct VerifiedFunctionCatalog(FunctionCatalog, abi::StaticRegion);
 impl VerifiedFunctionCatalog {
     /// Decode and verify metadata once, then retain it without mutable access.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ValueAbiError> {
-        FunctionCatalog::from_bytes(bytes).map(Self)
+        FunctionCatalog::from_bytes(bytes)
+            .map(|catalog| Self(catalog, abi::StaticRegion::SINGLE_PAGE))
+    }
+    /// Bind the owner module's static region (v38 `program_limits`), so
+    /// capture records may use descriptors in its static extension.
+    #[must_use]
+    pub fn with_static_region(self, region: abi::StaticRegion) -> Self {
+        Self(self.0, region)
+    }
+    pub fn static_region(&self) -> abi::StaticRegion {
+        self.1
     }
 
     pub fn as_catalog(&self) -> &FunctionCatalog {
@@ -53,13 +65,16 @@ impl VerifiedFunctionCatalog {
         handle: u64,
         work_budget: u64,
     ) -> Result<CaptureValidation, ValueAbiError> {
-        self.0.walk_closure(data, handle, work_budget)
+        self.0.walk_closure(data, handle, work_budget, self.1)
     }
 }
 impl FunctionCatalog {
     pub fn into_verified(self) -> Result<VerifiedFunctionCatalog, ValueAbiError> {
         self.validate()?;
-        Ok(VerifiedFunctionCatalog(self))
+        Ok(VerifiedFunctionCatalog(
+            self,
+            abi::StaticRegion::SINGLE_PAGE,
+        ))
     }
 
     /// The catalog must come from immutable module metadata. This method never
@@ -71,13 +86,14 @@ impl FunctionCatalog {
         work_budget: u64,
     ) -> Result<CaptureValidation, ValueAbiError> {
         self.validate()?;
-        self.walk_closure(data, handle, work_budget)
+        self.walk_closure(data, handle, work_budget, abi::StaticRegion::SINGLE_PAGE)
     }
     fn walk_closure(
         &self,
         data: &[u8],
         handle: u64,
         work_budget: u64,
+        region: abi::StaticRegion,
     ) -> Result<CaptureValidation, ValueAbiError> {
         let mut walker = Walker {
             catalog: self,
@@ -86,6 +102,7 @@ impl FunctionCatalog {
             initial: work_budget,
             nodes: 0,
             seen: BTreeSet::new(),
+            region,
         };
         walker.function(handle, None, 0)?;
         Ok(CaptureValidation {
@@ -205,11 +222,12 @@ impl Walker<'_> {
                             .map(|field| field.name.len() as u64 * 8)
                             .sum::<u64>(),
                 )?;
-                value::validate_aggregate(
+                value::validate_aggregate_in(
                     self.data,
                     ValueKind::Record,
                     payload,
                     catalog.value_version,
+                    self.region,
                 )?;
                 let ptr = payload as u32 as usize;
                 let descriptor = word(self.data, ptr)? as usize;
@@ -254,22 +272,32 @@ impl Walker<'_> {
             }
             // `unknown` admits any canonical cell; consumers validate children.
             CaptureType::Unknown => {
-                value::ReferenceBox::read_with_version(self.data, payload, catalog.value_version)?;
+                value::ReferenceBox::read_in(
+                    self.data,
+                    payload,
+                    catalog.value_version,
+                    self.region,
+                )?;
                 Ok(())
             }
             // Class field types are nominal and compile-time checked.
             CaptureType::Class => {
-                value::validate_aggregate(
+                value::validate_aggregate_in(
                     self.data,
                     ValueKind::Record,
                     payload,
                     catalog.value_version,
+                    self.region,
                 )?;
                 Ok(())
             }
             CaptureType::Dictionary { value: element } => {
-                let dictionary =
-                    value::Dictionary::read(self.data, payload, catalog.value_version)?;
+                let dictionary = value::Dictionary::read_in(
+                    self.data,
+                    payload,
+                    catalog.value_version,
+                    self.region,
+                )?;
                 self.charge(dictionary.keys.capacity as u64 * 8)?;
                 if Some(dictionary.values.kind) != catalog.types[*element as usize].value_kind() {
                     return Err(invalid());

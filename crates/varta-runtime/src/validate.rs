@@ -6,7 +6,7 @@ pub(crate) fn module(
     engine: &Engine,
     bytes: &[u8],
 ) -> Result<(crate::PreparedModule, Option<varta_common::ToolCatalog>), RuntimeError> {
-    let (language, function_catalog) = preflight(bytes)?;
+    let (language, function_catalog, static_region) = preflight(bytes)?;
     let version = language.profile.map_or(abi::VERSION, |p| p.host_abi());
     if bytes.len() > abi::MAX_WASM_BYTES || !bytes.starts_with(b"\0asm\x01\0\0\0") {
         return Err(wasmtime::Error::msg("expected a bounded portable Wasm module").into());
@@ -62,6 +62,8 @@ pub(crate) fn module(
         crate::PreparedModule {
             module,
             function_catalog,
+            static_region,
+            uncharged_initialization: language.profile.is_some_and(|p| p.program_limits()),
         },
         tools,
     ))
@@ -93,6 +95,7 @@ fn preflight(
     (
         varta_common::language::LanguageInspection,
         Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+        abi::StaticRegion,
     ),
     RuntimeError,
 > {
@@ -108,6 +111,9 @@ fn preflight(
     let mut http = false;
     let mut tools = false;
     let mut value_version = None;
+    let mut static_region = None;
+    let mut memory_initial = None;
+    let mut data_segments = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.map_err(|e| error(&e.to_string()))? {
             Payload::StartSection { .. } if language.profile.is_some_and(|p| p.exceptions()) => {
@@ -212,7 +218,25 @@ fn preflight(
                     {
                         return Err(error("unsupported memory type or initial size"));
                     }
+                    memory_initial = Some(memory.initial);
                 }
+            }
+            Payload::DataSection(reader)
+                if language.profile.is_some_and(|p| p.program_limits()) =>
+            {
+                for segment in reader {
+                    data_segments
+                        .push(active_segment(segment.map_err(|e| error(&e.to_string()))?)?);
+                }
+            }
+            Payload::CustomSection(section) if section.name() == abi::STATIC_SECTION => {
+                if static_region.is_some() || language.profile.is_none_or(|p| !p.program_limits()) {
+                    return Err(error("unsupported or duplicate static region"));
+                }
+                static_region = Some(
+                    abi::StaticRegion::read_section(section.data())
+                        .map_err(|e| error(&e.to_string()))?,
+                );
             }
             Payload::TableSection(reader) => {
                 if reader.count() > 1 {
@@ -254,7 +278,7 @@ fn preflight(
                 {
                     return Err(error("function capture catalog value version mismatch"));
                 }
-                function_catalog = Some(std::sync::Arc::new(catalog));
+                function_catalog = Some(catalog);
             }
             Payload::CustomSection(section)
                 if section.name() == varta_common::value::VALUE_SECTION =>
@@ -303,12 +327,59 @@ fn preflight(
     if (!json_imports.is_empty() || union_imports || profile.exceptions()) && values != 1 {
         return Err(error("JSON import requires structured value ABI metadata"));
     }
+    let static_region = static_region.unwrap_or(abi::StaticRegion::SINGLE_PAGE);
+    check_static_region(static_region, memory_initial, &data_segments)?;
     crate::frames::admit(
         bytes,
         profile,
-        function_catalog.as_deref().map(|c| c.as_catalog()),
+        function_catalog.as_ref().map(|c| c.as_catalog()),
     )?;
-    Ok((language, function_catalog))
+    let function_catalog = function_catalog
+        .map(|catalog| std::sync::Arc::new(catalog.with_static_region(static_region)));
+    Ok((language, function_catalog, static_region))
+}
+
+/// A `program_limits` (v38) data segment: active, in memory 0, at a constant
+/// i32 offset. Earlier profiles keep their unchecked data sections.
+fn active_segment(segment: wasmparser::Data<'_>) -> Result<(usize, usize), RuntimeError> {
+    let wasmparser::DataKind::Active {
+        memory_index: 0,
+        offset_expr,
+    } = segment.kind
+    else {
+        return Err(error("static data must be active in memory 0"));
+    };
+    let mut operators = offset_expr.get_operators_reader();
+    match (operators.read(), operators.read()) {
+        (Ok(wasmparser::Operator::I32Const { value }), Ok(wasmparser::Operator::End))
+            if operators.eof() =>
+        {
+            Ok((value as u32 as usize, segment.data.len()))
+        }
+        _ => Err(error("static data offset must be an i32 constant")),
+    }
+}
+
+/// The static region covers every data segment of a `program_limits` module
+/// (for earlier profiles the list is empty), and a declared extension lies
+/// within the module's initial memory, so the heap starts after it.
+fn check_static_region(
+    region: abi::StaticRegion,
+    memory_initial: Option<u64>,
+    data_segments: &[(usize, usize)],
+) -> Result<(), RuntimeError> {
+    if data_segments
+        .iter()
+        .any(|(offset, len)| !region.contains(*offset, *len))
+    {
+        return Err(error("data segment outside the static region"));
+    }
+    if region.extension_pages() > 0
+        && memory_initial.is_none_or(|initial| initial < region.minimum_pages())
+    {
+        return Err(error("static region exceeds the initial memory"));
+    }
+    Ok(())
 }
 
 fn check_exports(module: &Module) -> Result<(), RuntimeError> {

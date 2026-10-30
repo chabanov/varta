@@ -38,6 +38,7 @@ impl Execution {
                 host_calls: 0,
                 http_control: None,
                 function_catalog: None,
+                static_region: abi::StaticRegion::SINGLE_PAGE,
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
                 net: crate::net::Net::default(),
@@ -63,18 +64,23 @@ impl Execution {
     }
     #[cfg(test)]
     pub fn instantiate(&mut self, module: &Module) -> Result<Instance, wasmtime::Error> {
-        self.instantiate_owned(module, None)
+        self.instantiate_owned(module, None, (abi::StaticRegion::SINGLE_PAGE, false))
     }
     pub fn instantiate_prepared(
         &mut self,
         module: &crate::PreparedModule,
     ) -> Result<Instance, wasmtime::Error> {
-        self.instantiate_owned(&module.module, module.function_catalog.clone())
+        self.instantiate_owned(
+            &module.module,
+            module.function_catalog.clone(),
+            (module.static_region, module.uncharged_initialization),
+        )
     }
     fn instantiate_owned(
         &mut self,
         module: &Module,
         catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+        (static_region, uncharged_initialization): (abi::StaticRegion, bool),
     ) -> Result<Instance, wasmtime::Error> {
         // One instance per execution, including failed attempts. Never replace
         // metadata while an existing instance can still call host operations.
@@ -85,10 +91,23 @@ impl Execution {
         }
         self.instantiation_started = true;
         self.store.data_mut().function_catalog = catalog;
+        self.store.data_mut().static_region = static_region;
         let result = (|| {
             let mut linker = wasmtime::Linker::new(self.store.engine());
             host::register(&mut linker)?;
+            // Wasmtime meters the data-segment copy of instantiation per byte
+            // of the initialized image. Under v38 that copy, bounded by the
+            // initial memory and so by the memory budget, gets its own
+            // allowance and the guest keeps its whole fuel budget.
+            let fuel = self.store.get_fuel()?;
+            if uncharged_initialization {
+                self.store
+                    .set_fuel(fuel.saturating_add(abi::MAX_MEMORY_BYTES as u64))?;
+            }
             let instance = linker.instantiate(&mut self.store, module)?;
+            if uncharged_initialization {
+                self.store.set_fuel(fuel)?;
+            }
             crate::exceptions::initial(&instance, &mut self.store)?;
             Ok(instance)
         })();

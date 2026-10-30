@@ -1,7 +1,7 @@
 //! Host boundary for the primitive guest exception channel. Resource traps and
 //! authorized exits never enter this channel or become catchable guest values.
 use crate::{RuntimeContext, RuntimeError};
-use varta_common::{exceptions as abi, value::*};
+use varta_common::{abi::StaticRegion, exceptions as abi, value::*};
 use wasmtime::{ExternType, Instance, Module, Mutability, Store, ValType};
 fn invalid(message: &str) -> RuntimeError {
     ValueAbiError(message.into()).into()
@@ -128,7 +128,8 @@ pub(crate) fn finish(
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| invalid("missing exception memory"))?;
-    let channel = Channel::detect(|name| instance.get_global(&mut *store, name).is_some());
+    let channel = Channel::detect(|name| instance.get_global(&mut *store, name).is_some())
+        .in_region(store.data().static_region);
     let data = memory.data(&*store);
     let root = data
         .get(abi::ROOT..abi::ROOT + abi::RESERVED_ROOT_BYTES)
@@ -151,6 +152,7 @@ pub(crate) struct Channel {
     instances: bool,
     errors: bool,
     version: u32,
+    region: StaticRegion,
 }
 impl Channel {
     pub(crate) fn detect(mut exported: impl FnMut(&str) -> bool) -> Self {
@@ -181,7 +183,12 @@ impl Channel {
             instances,
             errors,
             version,
+            region: StaticRegion::SINGLE_PAGE,
         }
+    }
+    /// Read thrown records with descriptors in the module's static region.
+    pub(crate) fn in_region(self, region: StaticRegion) -> Self {
+        Self { region, ..self }
     }
     /// Copy one boxed exception-channel value out of guest memory, validating
     /// it exactly like the uncaught-exception path; no guest code runs.
@@ -218,8 +225,9 @@ impl Channel {
             instances,
             errors,
             version,
+            region,
         } = self;
-        thrown(data, value, instances, errors, version, limit)
+        thrown(data, value, (instances, errors), (version, region), limit)
     }
 }
 /// An optional per-field bound on copied UTF-16 text.
@@ -244,13 +252,12 @@ impl Limit {
 fn thrown(
     data: &[u8],
     value: u64,
-    instances: bool,
-    errors: bool,
-    version: u32,
+    (instances, errors): (bool, bool),
+    (version, region): (u32, StaticRegion),
     limit: &mut Limit,
 ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
     let cell = if errors {
-        ReferenceBox::read_with_version(data, value, version)?
+        ReferenceBox::read_in(data, value, version, region)?
     } else {
         let primitive = PrimitiveBox::read(data, value)?;
         ReferenceBox {

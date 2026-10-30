@@ -8950,7 +8950,9 @@ or any change to the static-region ABI lands as an early, separate foundation
 commit, and the other streams rebase onto it. V37 and earlier profiles keep
 their host ABI, value ABI, static region and layouts.
 
-Eight selectors gate the batch's work streams, and all admit nothing yet:
+Eight selectors gate the batch's work streams; `program_limits()` admits the
+[multi-page static region](#multi-page-static-region-program_limits), the
+others admit nothing yet:
 
 - program-limits stream: `program_limits()` (profile-dependent structural
   limits up to the Wasm limits, a shared descriptor-driven checked decoder,
@@ -8976,6 +8978,64 @@ Eight selectors gate the batch's work streams, and all admit nothing yet:
 Until a stream adds its subsection here, a v38 module compiles and runs exactly
 like a v37 module apart from its declared profile and host ABI, and production
 budgets of every profile are unchanged.
+
+#### Multi-page static region (`program_limits`)
+
+The batch's memory-layout foundation, under host ABI 34 and value layout 17
+(no value 18: the value17 readers stay, and only where they look for static
+metadata changes). Every earlier profile keeps static data in the single page
+`[0, 65536)`. A v38 module may extend its static region
+(`abi::StaticRegion`):
+
+| Region | Addresses (v38 with `n` extension pages) |
+| --- | --- |
+| Static page | `[0, 65536)` |
+| Host results | `[65536, 1114112)` (unchanged) |
+| Reference roots | `[1114112, 1179648)` (unchanged) |
+| Static extension | `[1179648, 1179648 + n·65536)` |
+| Managed heap | from `heap_base = 1179648 + n·65536` |
+
+- The custom section `varta.static` (`abi::STATIC_SECTION`) declares `n` as
+  one little-endian u32, `1 ≤ n ≤ abi::MAX_STATIC_EXTENSION_PAGES` (the
+  memory32 address space after the fixed regions). A module whose static data
+  fits the first page omits it, and its layout is the legacy one. Only a
+  `program_limits()` profile may declare it, at most once; earlier profiles,
+  duplicates, zero or malformed counts fail validation before compilation.
+- The compiler places static items (string literals, record descriptors,
+  JSON schemas) first-fit: in the first page while they fit, otherwise in the
+  extension. No item straddles the regions. A v38 module stores each region
+  as one active data segment (earlier profiles keep one segment per item), so
+  the Wasm data-segment limit never binds.
+- Under `program_limits()` every data segment is active in memory 0 at a
+  constant offset and lies wholly inside the declared region, and a declared
+  extension lies inside the initial memory: the memory minimum is
+  `heap_base / 65536` pages whenever the module has a managed heap or an
+  extension, within the module's maximum (the 8 MiB memory budget, so the
+  compiler rejects static data beyond it with `static data exceeds the memory
+  budget`). Validation rejects any other segment before compilation.
+- The guest heap starts at `heap_base`: the allocator's initial bump pointer,
+  the collector's sweep and edge tracing and the root push treat a handle
+  below `heap_base` as static and never mark it. Host results, the root stack
+  and the exception root keep their addresses.
+- Runtime readers accept static metadata (record descriptors and their keys,
+  dictionary descriptors, JSON schemas, the descriptors behind checked
+  parsing, logging, exceptions and value conversions) wholly inside the first
+  page or wholly inside the module's own declared extension, never in the
+  result buffer, the root stack or the heap. The region comes from the
+  validated module (`PreparedModule::static_region`) and is bound to the
+  instance and to its verified function catalog; it never comes from guest
+  memory. Managed-handle lower bounds stay `OWNED_STRING_BASE + 16`, followed
+  by the existing header and flag checks.
+- Wasmtime meters instantiation's data-segment copy per byte of the
+  initialized image (rounded to host pages and including the gap before an
+  extension). For a v38 module instantiation receives its own allowance of at
+  most the memory budget, and the guest's fuel budget is restored before any
+  guest code runs, so v38 startup fuel does not depend on static size (the
+  `FUEL` value is unchanged). Earlier profiles keep being charged.
+
+A v38 module relabelled as v37 still fails at its host ABI section; with the
+host ABI downgraded as well, its `varta.static` section or its extension data
+segment fails validation, before any guest effect.
 
 ## Local modules
 
@@ -9532,6 +9592,8 @@ signatures, result globals and advertised ABI versions fail before instantiation
   `[65536, 1114112)`, exact reference roots `[1114112, 1179648)`, then the managed
   string/record/array heap `[1179648, 8388608)`, including block headers. Unreachable blocks are
   reused during execution; the entire instance is released when execution ends.
+  V38 may insert a static extension before the heap; see
+  [multi-page static region](#multi-page-static-region-program_limits).
 - Every privileged system operation first clears result length/status. Failed string calls
   return pointer 0 and length 0. No previous result length can be reused.
 - Logging and pure JSON serialization/parsing preserve the last system status. Serialization

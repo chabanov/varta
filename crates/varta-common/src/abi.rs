@@ -52,7 +52,9 @@ pub const NET_REQUEST_VERSION: u32 = 33;
 /// view protocol and TSX, structural subtyping and code generation v2): the
 /// minimum host ABI of every import the batch adds. No import requires it yet;
 /// it binds v38 alone, so a v38 module relabelled as v37 fails at its host ABI
-/// section.
+/// section. It also defines the multi-page static region ([`StaticRegion`]):
+/// a [`STATIC_SECTION`] extension after the root stack, with the managed heap
+/// after it, admitted for host ABI 34 profiles only.
 pub const PROGRAM_LIMITS_VERSION: u32 = 34;
 #[must_use]
 pub fn supported(version: u32) -> bool {
@@ -94,6 +96,11 @@ pub fn supported(version: u32) -> bool {
             | PROGRAM_LIMITS_VERSION
     )
 }
+mod static_region;
+pub use static_region::{
+    MAX_STATIC_EXTENSION_PAGES, STATIC_SECTION, StaticRegion, StaticRegionError,
+    WASM_MEMORY32_PAGES,
+};
 pub const SECTION: &str = "varta.abi";
 pub const RESULT_LEN: &str = "env_result_len";
 pub const RESULT_STATUS: &str = "result_status";

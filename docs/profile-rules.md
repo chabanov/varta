@@ -3097,8 +3097,9 @@ Inherit v37 under checked-f64-utf16-v38 with every v37 selector, value layout
 3, the timer and `net.request` operations and the permission broker's
 recoverable denials. V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION`
 (34) and shares value ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`)
-with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams and
-admit nothing yet: program limits (`program_limits`), data limits
+with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams;
+apart from the program-limits rules below they admit nothing yet: program
+limits (`program_limits`), data limits
 (`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
 (`linked_intrinsics`), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
@@ -3128,3 +3129,27 @@ profiles frozen, and add each stream's rules under its own heading here.
   (`pilot_v38_inherits_v37_…` in `varta-common` `language`, the v38 runtime
   language test and the v38 CLI smoke test) change in the stream that
   introduces the difference.
+
+### Program limits (`program_limits`)
+
+- The memory-layout foundation is the multi-page static region
+  (`abi::StaticRegion`, host ABI 34, value layout 17, no value 18). Place
+  static items only through the compiler's `static_data::Placement`
+  (first page first, then the extension, never straddling); never compare a
+  static address with `RESULT_BASE` directly in v38 code.
+- Every guest-side heap classification uses the module's heap base
+  (`strings::Globals::base`, `Emitter::heap_base`), never
+  `abi::OWNED_STRING_BASE`: a handle below the heap base is static and is
+  never marked, traced or pushed as a root. Legacy modules have
+  `base == OWNED_STRING_BASE`, so their bytes do not change.
+- Every runtime reader that checks static metadata takes the module's
+  `StaticRegion` (`ReferenceBox::read_in`, `validate_aggregate_in`,
+  `Dictionary::read_in`, the JSON encoder's `region`, `json_parse` schema and
+  descriptor reads, the exception `Channel::in_region`, the verified function
+  catalog's `with_static_region`). The `*_with_version`/`read` forms are the
+  single-page readers for legacy and test callers; a host function serving a
+  v38 module passes `RuntimeContext::static_region`.
+- Instantiation of a `program_limits()` module gets its own fuel allowance
+  (at most the memory budget) and the guest's budget is restored before any
+  guest code; never charge the data-segment copy to the guest, and never
+  extend this to earlier profiles.

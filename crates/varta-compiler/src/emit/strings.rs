@@ -57,6 +57,10 @@ pub(super) struct Globals {
     pub heap: u32,
     pub free: u32,
     pub roots: u32,
+    /// First managed-heap address: `abi::OWNED_STRING_BASE`, or after the
+    /// static extension of a v38 module (`abi::StaticRegion::heap_base`).
+    /// Handles below it are static and never marked.
+    pub base: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -240,7 +244,7 @@ impl Helper {
                 frames,
                 profile.wide_records(),
             ),
-            Self::RootPush => roots::function(globals.roots),
+            Self::RootPush => roots::function(globals),
             Self::ArraySearch => array_search::function(
                 helpers[&Self::Compare],
                 profile.sparse_arrays(),

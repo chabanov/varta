@@ -11,6 +11,16 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 `program_limits` foundation: a multi-page static region under host ABI
+  34 with value layout 17 (no value 18). Static data that no longer fits the
+  first page goes into an extension after the root stack, declared by the
+  `varta.static` section, and the managed heap starts after it; result buffer,
+  root stack and exception root keep their addresses. Runtime readers accept
+  descriptors, keys and schemas in the module's own extension, data segments
+  must lie in the declared region, and v38 instantiation no longer charges
+  Wasmtime's per-byte data-segment copy to the guest's fuel. V37 and earlier
+  keep the single 64 KiB page, their bytes and diagnostics.
+
 - Opt-in v38 (batch: program and data limits, turn budgets, linked
   intrinsics, view protocol and TSX, structural subtyping and code generation
   v2, in development) is registered. It inherits every v37 feature, shares
