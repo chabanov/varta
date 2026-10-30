@@ -4,10 +4,14 @@ This document is the normative contract for **third-party hosts**: programs othe
 than `varta-runtime` that validate and execute Varta-compiled portable Wasm, for
 example a JavaScript host in Node or a browser, or a host on another Wasm engine.
 It states what exists at this revision of the repository, per host ABI version.
-Planned platform work (a generated browser host, an application lifecycle, view
-output, async `fetch`) is an accepted design in the
+Planned platform work (a generated browser host, view output) is an accepted
+design in the
 [development plan](development-plan.md#platform-targets-and-application-model),
-not implemented and not part of this contract.
+not implemented and not part of this contract. The v38 event turns, long-lived
+application instances, host event sources and permission broker v1 exist in
+the reference host ([architecture](architecture.md#turn-budgets-and-application-instances-turn_budgets));
+their per-turn budgets are normative below, the instance and event interfaces
+are [unstable](#what-is-unstable).
 
 The reference host is `varta-runtime` (Wasmtime). Where this document and the
 reference host disagree, the disagreement is a bug in one of them; report it rather
@@ -91,6 +95,9 @@ engine payloads from package input.
 | `entry` | Optional string, metadata only |
 | `target` | Optional; `"wasm"` or `"native"` |
 | `capabilities` | Required array of grants (`[]` denies everything) |
+| `budgets` | Optional; requires `abiVersion` 34 or later. Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, each in `1..=` its `budget::MAX_*`; in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
+| grant `required` | Optional boolean, default `true`; requires `abiVersion` 34; rejected in a host ceiling. Permission broker v1 ([architecture](architecture.md#permission-broker-v1-turn_budgets)) |
+| grant `purpose` | Optional untrusted text shown as a quote in prompts, at most `permission::MAX_PURPOSE_BYTES` bytes without control characters; requires `abiVersion` 34; rejected in a host ceiling |
 
 Unknown or duplicate fields, unknown capability ids, duplicate ids and a value of
 the wrong kind (a boolean id needs exactly `enabled`, every other id exactly
@@ -409,6 +416,7 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | Clock | `time_now` | Requires `time.now` enabled. Unix seconds as i32; a time outside i32 is status 2 with 0 |
 | Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most 256 bytes, no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 1 if the variable is set and 0 otherwise (status 0 either way). For an allowed name whose variable is **unset** (or whose value is not valid Unicode), `env_get` returns 0 with status 3 (I/O) and `env_print` emits nothing but the diagnostic and sets status 3; a value larger than `abi::MAX_RESULT_BYTES` is status 4. `env_get` returns the value as a string result, `env_print` emits `varta env: <name>=<value>` |
 | Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..` rejected; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it |
+| Permissions and host events (v38) | `permission_query`, `permission_request`, `event_source_*`, `event_watch`, `event_take`, `event_text` | No capability, not charged to the host-call budget; broker states, descriptors and the one-shot answer source in [Permission broker v1](architecture.md#permission-broker-v1-turn_budgets); named sources, host tasks and ordering in [Host event sources](architecture.md#host-event-sources-turn_budgets). A malformed descriptor, id, watch or take is fatal. The instance and event interfaces are [unstable](#what-is-unstable) |
 | Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; bounds and descriptor in [Network requests](architecture.md#network-requests-net_request) |
 | Network | `net_get*`, `net_fetch*` | `http:` URLs only; parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
 | Exit | `process_exit`, `process_exit_f64` | Requires `process.exit` enabled. Authorized: end the execution with the code (not the host process); no result is produced. Denied: status 1 and the guest continues. `process_exit_f64` requires a finite integral value within i32, otherwise status 2 and the guest continues |
@@ -763,7 +771,17 @@ One **execution** owns one fresh store and instance and is never reused:
 1. Validate the module and both policies.
 2. Create the execution budgets (fuel, deadline, memory, host calls, output) from
    the [limits table](architecture.md#resource-limits); they cover the whole
-   execution, including instantiation and every job.
+   execution, including instantiation and every job. **v38 (`turn_budgets`):**
+   resolve the manifest's `budgets` against the host ceiling (each budget is
+   the request or the default, capped by the ceiling's value or by the
+   default), and treat the run as **event turns**: turn 1 is steps 3 to 7 up
+   to the first task; every later task (a fired timer, a network completion, a
+   host task) with the microtasks it queues is one turn. Fuel, host calls and
+   the microtask count MUST be renewed at the start of every turn; memory and
+   output MUST NOT be renewed. A bounded run keeps one deadline for the whole
+   execution; a long-lived application instance renews it per turn. A host
+   that cannot renew a budget per turn MUST NOT claim v38 conformance for that
+   budget (see [Budget guarantees](#budget-guarantees)).
 3. Instantiate exactly once, linking only the imports the module declares. A
    failed instantiation ends the execution; never instantiate the same execution
    twice.
@@ -779,18 +797,18 @@ be 0) and is not an exception. Neither is ever delivered to the guest as a
 catchable value.
 
 **Output of a failed execution.** The reference host captures every output line in
-the execution's store as it is emitted (only an HTTP service streams them through
-its observer). After a successful run or an authorized exit it returns the lines,
-and `varta run`, `varta dev` and the runtime companion print them. When the
-execution **fails** (a trap including fuel or deadline exhaustion, an uncaught
-exception, a scheduler error), the reference host drops the captured lines with the
-store and returns only the error, so the CLI and the companion print only
-`varta failed: …` / `varta runtime failed: …`; a failed tool invocation likewise
-carries no logs. **Normative for third-party hosts:** a host SHOULD deliver the
-lines a failed execution emitted before it failed, in order and before the failure
-diagnostic, marked as belonging to a failed execution; machine envelopes of
-Tool invocation ABI v1 keep carrying no logs on failure. The reference host's
-change is listed under [Proposed changes](#proposed-changes).
+the execution's store as it is emitted (an HTTP service and a long-lived
+application instance with an observer stream them). `VartaRuntime::run_with`
+returns a `RunReport` that keeps the lines a failed execution emitted before it
+failed, with the failure and the budget report; the earlier `Result` entry points
+still return only the error. `varta run`, `varta dev`, the runtime companion and
+packaged applications print those lines, in order, before the failure diagnostic
+(`varta failed: …` / `varta runtime failed: …`), in every profile; with
+`--budget-report` the `varta budget:` lines follow the output on stderr. A failed
+tool invocation still carries no logs, and machine envelopes of Tool invocation
+ABI v1 are unchanged. **Normative for third-party hosts:** a host SHOULD deliver
+the lines a failed execution emitted before it failed, in order and before the
+failure diagnostic, marked as belonging to a failed execution.
 
 ### Exception channel
 
@@ -2035,6 +2053,7 @@ A host that runs Varta modules MUST:
 | Fuel (instructions) | Engine fuel metering | **Not enforceable**: JavaScript engines expose no instruction metering; a host MUST state that fuel is not enforced. The accepted design adds a deterministic metering transform at browser packaging ([decision 5](development-plan.md#accepted-decisions-2026-10-29)), not implemented yet |
 | Deadline | Epoch interruption inside guest code | Checked at host calls only; a guest loop without host calls runs until the embedder terminates it (in a browser: `Worker.terminate()`) |
 | Host calls, output | Counted per call | Counted per call (enforceable) |
+| Per-turn renewal (v38) | Fuel, host calls and microtasks renewed per turn; deadline per turn in application instances | Renewable at turn boundaries the host itself drives; fuel only with the metering transform |
 | Stack | Engine stack limit, trap | Engine stack limit, `RangeError`, treat as a trap |
 
 ## What is unstable
@@ -2054,9 +2073,10 @@ accepts that the format may change in a later profile:
 - HTTP service v1 for third-party hosts;
 - diagnostic and log text, and the order of validation failures;
 - the [view protocol draft v0](#view-protocol-draft-v0-unstable) and every other
-  planned interface: long-lived instances, host-to-guest events, timers outside
-  one execution's event loop (the [v36 timers](#timers) are specified), async I/O
-  and browser capability mappings.
+  planned interface: browser capability mappings, and the v38 long-lived
+  application instances, host event sources, prompts and the reference host's
+  `Application` API, which exist but may change before the view protocol lands
+  (the [v36 timers](#timers) and the v38 per-turn budgets are specified).
 
 Tool invocation ABI v1, the status codes, the string handle and host-buffer rules
 and the call protocol are stable for `checked-i32-utf8-v1` and keep their meaning;
@@ -2074,5 +2094,5 @@ Not normative yet; each needs its own change to the engine, CLI or contract.
 | `varta.functions` structure | Normative minimum here; full rules only in code | Publish the full catalog schema and structural rules in this document, generated from the registry | Documentation and a drift test only |
 | Approximated Math results | Platform `f64` library, last bits host-dependent | Bit-identical results on every host by linking one pure-Rust implementation into the guest (the accepted thin-host decision) | A new profile whose Math imports are guest code |
 | Denial targets | Runtime constants (`clock`, `process`, otherwise the guest input), documented by hand | Move each operation's denial target into the `HostOperation` registry so the target table is generated | `varta-common` registry data read by the runtime handlers; no observable change |
-| Output of a failed execution | Captured lines are dropped; only the error is printed | Return the captured lines with the error (a `RuntimeError` carrying the partial output) and print them before the error in `varta run`/`dev` and the companion, at least in `dev`; optionally a `logs` member in failure envelopes | `varta-runtime` execution result types, the CLI and the companion, their tests; envelopes would need a new version |
+| Logs in failure envelopes | `run_with` keeps the lines of a failed run and the CLI and companion print them before the diagnostic (adopted); failure envelopes carry no `logs` | A `logs` member in failure envelopes | JSON failure envelopes of the CLI and the companion; they would need a new envelope version |
 | Denied `timer_start` | Fatal for the execution | Keep it fatal, or reject the timer's promise so the guest can recover; needs a decision | Runtime scheduler and the timer prelude, in a new profile if changed |

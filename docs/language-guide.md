@@ -5210,3 +5210,75 @@ count against the 256-function limit. Not supported yet: unions that mix a
 `Map`, `Set` or `Uint8Array` with other objects (and `instanceof Map`), byte
 bodies (`ReadableStream<Uint8Array>`, `Blob`, `FormData`), `globalThis`, and
 `Array.isArray` narrowing of `unknown`.
+
+### `checked-f64-utf16-v38`
+
+Batch in development. The turn-budgets stream is the first to admit anything:
+event turns with per-turn budgets, long-lived application instances, host
+events and permission states. Every other v37 program runs unchanged.
+
+Budgets apply per **turn**: `main` with its microtasks is turn 1, and every
+timer, `fetch` completion or host event later is a turn of its own with a fresh
+fuel and host-call allowance. A package may request budgets in its
+configuration; the host's policy caps them, and without one a request can only
+lower the production defaults:
+
+```json
+{
+  "languageProfile": "checked-f64-utf16-v38",
+  "entry": "src/main.ts",
+  "target": "native",
+  "out": "dist/app",
+  "capabilities": { "time": { "timer": true }, "net": { "request": ["https://api.example.com/v1/**"] } },
+  "budgets": { "fuelPerTurn": 500000, "deadlinePerTurnMs": 250 },
+  "permissions": { "net.request": { "required": false, "purpose": "Sync your items" } }
+}
+```
+
+`varta dev --budget-report` prints what each turn used, and a failed run
+prints the lines it logged before the failure:
+
+```text
+varta budget: turn 1 main: fuel 136496/1000000, host calls 5/1024, microtasks 0, wall 2 ms (5000 ms per execution), memory 1245184/8388608 bytes
+varta budget: turn 2 timer: fuel 1576/1000000, host calls 2/1024, microtasks 1, wall 0 ms (5000 ms per execution), memory 1245184/8388608 bytes
+varta budget: total: 2 turns, fuel 138072, peak memory 1245184/8388608 bytes, output 44/1048576 bytes
+```
+
+`varta dev --app` (and `--app` on the runtime companion) runs the program as a
+long-lived application instance: the deadline renews for every turn, so timers
+may fire later than one turn's deadline, and output appears turn by turn.
+
+Permission states follow the W3C Permissions API. `query` never prompts;
+`request` asks only during a user-gesture turn on a host with a prompt UI and
+otherwise answers the current state. A headless run denies optional
+permissions unless a decision file (`--decisions PATH`, keyed by the
+`identity` that `varta inspect` reports) allows them:
+
+```ts
+export async function main(): Promise<void> {
+  const status = await varta.permissions.query({ name: 'net.request', resource: 'https://api.example.com/v1/items' });
+  if (status.state !== 'granted') {
+    console.log(`sync is ${status.state}`);
+    return;
+  }
+  const response = await fetch('https://api.example.com/v1/items');
+  console.log(response.status);
+}
+```
+
+Hosts that drive an application instance deliver events to named sources;
+each record runs the listener in its own turn:
+
+```ts
+export function main(): void {
+  const id: number = varta.events.listen('ui', (record: string) => {
+    console.log(`clicked ${record}`);
+    if (record === 'quit') {
+      varta.events.close(id);
+    }
+  });
+}
+```
+
+A listener that throws, or a turn that runs out of a budget, terminates the
+instance; nothing restarts it automatically.

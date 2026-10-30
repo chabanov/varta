@@ -946,7 +946,56 @@ declare const varta: {
   /** Exit requires an exact finite i32 code in either numeric profile. */
   process: { exit(code: number): void };
   net: { fetch(url: string): number; get(url: string): string };
+  /** checked-f64-utf16-v38: permission broker v1 (W3C Permissions API states). */
+  permissions: {
+    /** The state of a permission for this application; never prompts.
+     * Rejects with TypeError for an unknown name or a resource on a boolean
+     * permission. `denied` means outside the package request or the host
+     * ceiling, or refused; `prompt` means requested, within the ceiling and
+     * not decided (only hosts with a prompt UI report it). */
+    query(descriptor: PermissionDescriptor): Promise<PermissionStatus>;
+    /** Asks the user only in a user-gesture turn of an application instance
+     * whose host has a prompt UI, and only for a permission in `prompt`
+     * state; every other call resolves to the current state. A user decision
+     * never exceeds the package request or the host ceiling. */
+    request(descriptor: PermissionDescriptor): Promise<PermissionStatus>;
+  };
+  /** checked-f64-utf16-v38: host event sources of a long-lived application
+   * instance. Each record the embedder delivers runs the listener in its own
+   * event turn; a listener that throws terminates the instance. */
+  events: {
+    /** Open the source `name` (letters, digits, `.`, `_`, `-`, starting with a
+     * letter, at most 64 bytes); throws TypeError if it is invalid or open. */
+    listen(name: string, listener: (record: string) => void): number;
+    /** Close a source opened by `listen`; unknown ids are ignored. */
+    close(id: number): void;
+  };
 };
+
+// checked-f64-utf16-v38 (batch, in development) turn budgets: an instance runs
+// as event turns (main with its microtasks, then one timer, network
+// completion, host event or permission answer per turn). Fuel, host calls and
+// microtasks renew per turn; long-lived application instances also renew the
+// deadline; memory and output are per instance. Manifests may request budgets
+// ("budgets": {"fuelPerTurn", "deadlinePerTurnMs", "memoryBytes",
+// "hostCallsPerTurn", "outputBytes"}), capped by the host ceiling, and mark
+// grants "required": false with a "purpose". Internal imports, host ABI34
+// minimum, no capability, not charged to the host-call budget:
+// permission_query (i32 ptr, i32 len)->i32 state, permission_request (i32 ptr,
+// i32 len)->f64 source id, event_source_open (i32 ptr, i32 len)->f64 id,
+// event_watch (f64 serial, f64 id)->(), event_take (f64 id)->i32 kind,
+// event_text (f64 id)->i32 ptr and event_source_close (f64 id)->().
+type PermissionState = 'granted' | 'denied' | 'prompt';
+interface PermissionDescriptor {
+  /** A capability id such as "net.request" or "time.timer". */
+  name: string;
+  /** A concrete resource (URL, name or path) for pattern capabilities. */
+  resource?: string;
+}
+interface PermissionStatus {
+  name: string;
+  state: PermissionState;
+}
 
 // checked-f64-utf16-v28: opaque BigInt scalars, ABI27/value12/schema12.
 // Exact literals/operators, BigInt(), String/Number/Boolean/typeof, comparisons,
