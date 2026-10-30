@@ -25,7 +25,8 @@ in [conformance/README.md](conformance/README.md).
   `JSON.stringify` typed `string`, literal `??` fallbacks, `record as
   Record<string, T>`, records held by `unknown` read as JSON objects,
   `Promise<unknown>` arrow contexts, `as void`, `for...of` over strings,
-  exhaustive literal `switch` statements, and `encodeURIComponent`,
+  exhaustive literal `switch` statements, constructor parameter properties,
+  and `encodeURIComponent`,
   `encodeURI` and `URIError` in a new prelude. No host import, value tag or
   layout changes; v37 keeps its bytes.
 

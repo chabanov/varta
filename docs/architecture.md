@@ -9095,6 +9095,12 @@ such members.
 - A `switch` whose literal clauses cover its discriminant's literal union (or
   narrow its binding to `never`) is exhaustive: the missing `default` traps,
   and a value-returning function needs no return after the switch.
+- `constructor(private readonly x: T)` parameter properties are a
+  pre-layout rewrite into the field declaration, a plain parameter and
+  `this.x = x` at the start of the body (after `super(...)` in a derived
+  class); defaults, patterns, `override` and decorators are rejected.
+- `x as void` (a `request<void>` instance of a generic `as T`) evaluates the
+  value and discards it.
 - An arrow whose context expects `(…) => Promise<unknown>` and whose body
   is an expression awaits it: an async arrow fulfilling its own
   `Promise<unknown>` (one more job than returning the promise).
@@ -9104,8 +9110,8 @@ such members.
 
 Not yet admitted: Web byte bodies (`ReadableStream<Uint8Array>`,
 `arrayBuffer()`, `Blob`, `FormData`), typed `globalThis` member access,
-`Promise.race` over differently typed promises, constructor parameter
-properties, `A[] | B[]` of record element types, `instanceof Map/Set/
+`Promise.race` over differently typed promises, `A[] | B[]` of record
+element types, `instanceof Map/Set/
 Uint8Array`, unions mixing collections with other objects, exhaustive switches
 over discriminant paths, and record spreads that keep JavaScript's key order.
 

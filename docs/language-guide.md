@@ -5325,5 +5325,6 @@ the fields that every member provides first (and a view's own members in
 canonical order), and an arrow passed where `(…) => Promise<unknown>` is
 expected takes one more job. Not supported yet: byte bodies
 (`ReadableStream<Uint8Array>`, `Blob`, `FormData`), `globalThis`,
-`Promise.race` over differently typed promises, constructor parameter
-properties and `instanceof Map`.
+`Promise.race` over differently typed promises and `instanceof Map`.
+Constructor parameter properties (`constructor(private readonly client:
+Transport)`) declare and assign their fields.

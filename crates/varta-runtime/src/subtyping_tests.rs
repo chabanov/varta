@@ -557,3 +557,33 @@ fn guide_examples_match_node() {
 fn void_assertions_match_node() {
     run(include_str!("subtyping_cases/void_requests.ts"), &["4 2"]);
 }
+
+/// Constructor parameter properties; Node 24 needs
+/// `--experimental-transform-types` for this case (type stripping alone
+/// rejects parameter properties).
+#[test]
+fn constructor_parameter_properties_match_node() {
+    run(
+        include_str!("subtyping_cases/parameter_properties.ts"),
+        &[
+            "https://api.test x2 1 https://api.test/runs runs",
+            r#"{"baseURL":"https://api.test","retries":1}"#,
+        ],
+    );
+    let error = rejected(
+        "class A{constructor(public x:number=1){}}export function main():void{}",
+        V38,
+    );
+    assert!(
+        error.contains("constructor parameter property with a default value"),
+        "{error}"
+    );
+    let frozen = rejected(
+        "class A{constructor(public x:number){}}export function main():void{}",
+        V37,
+    );
+    assert!(
+        frozen.contains("constructor parameter property"),
+        "{frozen}"
+    );
+}

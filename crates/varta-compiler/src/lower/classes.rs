@@ -510,10 +510,18 @@ pub(super) fn register(
         source: source.clone(),
         span: declaration.ident.span,
         // `#x` members and references become `private` members named `#x` (v37).
-        declaration: if types.profile.class_generics() {
-            private_names::rewrite(&declaration.class, source)?
-        } else {
-            declaration.class.clone()
+        declaration: {
+            let class = if types.profile.class_generics() {
+                private_names::rewrite(&declaration.class, source)?
+            } else {
+                declaration.class.clone()
+            };
+            // `constructor(private readonly x: T)` (v38).
+            if types.profile.structural_subtyping() {
+                parameter_properties::rewrite(class, source)?
+            } else {
+                class
+            }
         },
         parent: None,
         shape: 0,
@@ -560,6 +568,7 @@ mod generic_methods;
 mod implements;
 mod layout;
 mod members;
+mod parameter_properties;
 mod private_names;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers, late_dispatch_bodies};
 pub(super) use error_classes::{
