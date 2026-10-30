@@ -286,6 +286,16 @@ impl Lower<'_> {
         let params: Vec<_> = plans.iter().map(|p| p.incoming).collect();
         let shape = parameters::shape(&plans);
         let annotated = annotation(arrow.return_type.as_deref(), self.types)?;
+        // V37 (`void_functions`): an annotated result in a `void` context
+        // keeps its own type; the value is converted to the context after.
+        let expected_result = if self.types.profile.language_core()
+            && expected_result == Some(Type::Void)
+            && annotated.is_some_and(|result| result != Type::Void)
+        {
+            None
+        } else {
+            expected_result
+        };
         let result = annotated.or(expected_result);
         if annotated
             .is_some_and(|result| expected_result.is_some_and(|expected| expected != result))
@@ -328,7 +338,7 @@ impl Lower<'_> {
         let block = matches!(&*arrow.body, ast::ArrowFunctionBody::FunctionBody(_));
         let infer_returns = (infer_block || asynchronous) && result.is_none() && block;
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid("too many functions including arrows"));
         }
         *self.next_function += 1;
@@ -336,6 +346,7 @@ impl Lower<'_> {
         for scope in &self.scopes {
             outer.extend(scope.clone());
         }
+        self.unassigned_outer(&mut outer);
         if !lexical {
             outer.remove("this");
         }
@@ -390,6 +401,7 @@ impl Lower<'_> {
             generator: None,
             // An unknown promise type until inference fixes it.
             asynchronous: asynchronous.then_some(promise.unwrap_or(u32::MAX)),
+            core: Default::default(),
         };
         if let Some(ty) = receiver {
             child.declare("this", Some(ty), true, false)?;
@@ -405,6 +417,8 @@ impl Lower<'_> {
                 ty: Some(ty),
                 initialized: true,
                 mutable: false,
+                tdz: None,
+                global: None,
                 readonly: false,
             };
             child
@@ -592,7 +606,13 @@ impl Lower<'_> {
                 "arrow capture of an outer binding requires checked-f64-utf16-v12",
             ));
         }
-        if !binding.initialized || binding.ty.is_none() {
+        // V37 (`language_core`): a binding the TDZ scan reserved a flag for may
+        // be captured before its initialization, together with that flag.
+        let early =
+            !binding.initialized && binding.tdz.is_some() && self.types.profile.language_core();
+        if early {
+            self.capture_early(binding)?;
+        } else if !binding.initialized || binding.ty.is_none() {
             return Err(unsupported("capture before binding initialization"));
         }
         let slot = if binding.identity.0 == self.index {
@@ -645,6 +665,20 @@ impl Lower<'_> {
             return Ok(binding);
         }
         if let Some(binding) = self.outer.get(name).cloned() {
+            // A module variable is reached through its root slot, never
+            // captured; this function keeps its own slot for guard facts.
+            if binding.global.is_some() {
+                let slot = self.hidden(binding.ty.ok_or_else(|| invalid("missing type"))?);
+                let local = Binding {
+                    identity: (self.index, slot),
+                    slot,
+                    ..binding
+                };
+                if let Some(scope) = self.scopes.first_mut() {
+                    scope.insert(name.to_owned(), local.clone());
+                }
+                return Ok(local);
+            }
             let slot = self.capture_binding(&binding)?;
             return Ok(Binding { slot, ..binding });
         }

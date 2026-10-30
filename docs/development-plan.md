@@ -284,6 +284,68 @@ dependencies, and contains no explicit `any`, so it meets the
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
 
+**Verified behavior with v37 (2026-10-29).** The same per-file probe on the
+`v37-merge` branch with all five v37 streams integrated (language core, class
+generics, collections, RegExp, `net.request`) and the integration fixes,
+under `checked-f64-utf16-v37` with production budgets unchanged; the v36
+column comes from the same binary:
+
+| First diagnostic under v37 | Files | Under v36 |
+| --- | --- | --- |
+| Compiles and validates: `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts`, `core/errors.ts` | 5 | the same 5 |
+| `core/sse.ts:227` `unsupported generic class type reference` (`ReadableStream<Uint8Array>`, the byte body of `parseEventStream`; reached by `core/sse.ts`, `core/transport.ts`, `core/resource.ts`, `index.ts` and the 55 resource modules) | 59 | `core/sse.ts:227` `unsupported type reference ReadableStream` |
+| `core/util.ts:41` `unknown identifier: globalThis` (`randomId`'s `globalThis.crypto` feature test) | 1 | `core/util.ts:28` capture before binding initialization |
+
+Both v36 blockers are gone: `ReadableStream` exists (text chunks) and the
+`sleep` timer callback captures `onAbort` before its declaration. A
+whole-program walk on a scratch copy (the pilot sources are never edited),
+stubbing each blocker to reach the next, finds in order:
+
+1. `ReadableStream<Uint8Array>` and `ReadableStreamReadResult<Uint8Array>`
+   (`core/sse.ts:227`, `core/transport.ts:300`): byte bodies; v37 streams are
+   text. Deferred to v38.
+2. `core/sse.ts:6` the generic method signature `json<T = JsonValue>(): T`
+   in `UarpEvent`.
+3. `core/sse.ts:80` `implements AsyncIterable<UarpEvent>`: fixed in the
+   integration.
+4. `core/transport.ts:60` the `object` type annotation (`form?: object`).
+5. `core/json.ts:10` `Blob`, `ArrayBuffer`, `ArrayBufferView` in
+   `BinaryInput`; then `core/transport.ts:358` `FormData` and
+   `response.blob()` (multipart and binary bodies).
+6. `generated/models.ts:16453` `object shape count exceeds limit`: the whole
+   program needs more than 128 record shapes (the 1203rd interface).
+7. With a core-only entry (`new Transport(...).request<Item>(...)`):
+   `core/util.ts:41` `globalThis.crypto`, `core/transport.ts:115`
+   `globalThis.fetch as FetchLike | undefined` and `:425`
+   `(globalThis as {...}).process?.env`. Deferred to v38.
+8. `core/util.ts:79` `for (const item of value)` after `Array.isArray(value)`
+   on `unknown` (no array narrowing of `unknown`). `JSON.stringify(value)` of
+   `unknown` on line 85 now compiles.
+9. `core/sse.ts:276` `Promise.race([reader.read(), timeout])`: two promise
+   types in one union.
+10. `core/sse.ts:353` `reader.releaseLock?.()`: an optional call of a class
+    method value.
+11. `core/sse.ts:367` object spread of a parameter with optional fields.
+12. `core/sse.ts:177` and `:111` property-path facts dropped by an
+    intervening call (`if (!response.body) throw …; this.#onState?.(…);
+    parseEventStream(response.body, …)`), where TypeScript keeps the
+    narrowing: the receiver is a union again.
+13. `core/transport.ts:332` `JSON.stringify(value)` typed `string |
+    undefined` where TypeScript declares `string`.
+
+With the stream and binary stubs applied, the per-file probe checks 6 of 65
+files (`core/util.ts` joins); 27 stop at the call of item 12, 25 at the
+record-shape limit and 7 at `Blob` in their resource modules.
+
+*Limits.* Unreachable functions no longer take slots under v37 (only
+functions reachable from the entry points count against 256): a fetch hello
+world went from 228 linked to 154 reachable functions (156 with `URL`
+inputs). Each distinct `request<T>` response type costs 10 functions, so 24
+distinct response types fit one program
+(`class_generic_tests::pilot_request_pattern_function_counts`); the whole SDK
+declares 670. The 128 record-shape limit is now the first program-wide limit:
+interfaces used by a single resource module already exceed it in 25 files.
+
 **Verified behavior with v36 (2026-10-29).** The same probe on the
 `v36-merge` branch with all four v36 streams integrated (checked declared
 fields, function fields with value layout 17, timers and async generators,
@@ -644,18 +706,27 @@ network request capability. V37 inherits every v36 feature with value
 ABI/layout 17 and declares its own host ABI 33 (`abi::NET_REQUEST_VERSION`),
 under which every host import of the batch is added; a v37 module relabelled
 as v36 fails at its host ABI section, and runtimes that do not list v37 reject
-its declared profile name. The collections stream owns any value-layout bump
-(value 18) and lands it as an early foundation commit
+its declared profile name. The collections stream owned any value-layout bump
+and needed none, so v37 keeps value layout 17
 ([contract](architecture.md#checked-f64-utf16-v37--pilot-batch-language-core-class-generics-collections-and-binary-text-regexp-and-netrequest)).
-All selectors are registered and admit nothing yet.
+All five streams are implemented and integrated on `v37-merge`; the
+[batch integration](architecture.md#batch-integration-v37) contract covers
+how they combine (unreachable-function removal, private state in JSON,
+`undefined`-aware index reads, recoverable clock denials, one `split` path,
+`URL` fetch inputs). Pending for v38: byte bodies
+(`ReadableStream<Uint8Array>`, `Blob`, `FormData`, `ArrayBuffer`),
+`globalThis` member access, generic method signatures in interfaces,
+`Array.isArray` narrowing of `unknown`, unions of collections with other
+objects and `instanceof Map`/`Set`, and the record-shape limit
+(see the [v37 measurement](#pilot-acceptance-package-uarp-sdk)).
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
-| `language_core()` | Language core: TDZ-safe closure capture before declaration, deferred `let x: T;` initialization, dense `for…of` typing, property-path narrowing, `switch` on strings, function assignability fixes | M3, M4 | Registered, admits nothing |
-| `class_generics()` | Classes: generic methods and classes, interface method signatures, `implements`, `#private` | M4, M5 | Registered, admits nothing |
-| `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owns any value18 bump) | M4, M6 | Registered, admits nothing |
-| `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Registered, admits nothing |
-| `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Registered, admits nothing |
+| `language_core()` | Language core: TDZ-safe closure capture before declaration, deferred `let x: T;` initialization, dense `for…of` typing, property-path narrowing, `switch` on strings, function assignability fixes | M3, M4 | Implemented ([contract](architecture.md#language-core-language_core)): captures before initialization with run-time TDZ (`ReferenceError`-named Error instances), hoisted nested function declarations, definite assignment of `let x: T;`, element-typed `for…of`/`xs[i]`/`s[i]` with checked holes (TypeError deviation), property-path narrowing with call/write invalidation, `switch` by strict equality with clause narrowing, value functions as `void` callbacks with signature diagnostics, endless-loop return analysis, undefined-capable and `new C()` class fields, constructor closures over `this.field`, unions of several record shapes, classes and arrays (descriptor and element-kind member tests, discriminant/`in` narrowing, field reads and method calls on the union, discriminated JSON conversion), `never` exhaustiveness, module `let`/`var` variables with live exports, function-valued module constants, self-referencing timer handles. Open: `instanceof ReferenceError`, captures of destructured or loop-head bindings before initialization, `Array.isArray` narrowing of `unknown` to an array, `A[] \| B[]` of record element types, class expressions in module initializers |
+| `class_generics()` | Classes: generic methods and classes, interface method signatures, `implements`, `#private` | M4, M5 | Implemented ([contract](architecture.md#class-generics-class_generics)): monomorphized generic instance/static/async methods with inference from arguments and the contextual result, per-instantiation override dispatch, generic classes with generic bases and declared subclasses of instances, method signatures as function fields and object-literal methods without `this`, checked `implements`, `#private` fields/methods/getters and `#x in v`. Pending: generic method signatures (`json<T>(): T`), overrides inside generic classes, `instanceof` of a generic class on `unknown`, abstract classes. Measured: about 10 Wasm functions per distinct `request<T>` response type, 24 distinct types per program against the pilot's 670. Pilot probe (unmodified pilot): first blocker unchanged (`ReadableStream`, net-request stream); with the transport/SSE modules stubbed in a scratch copy 29 of 65 files check (5 before), the rest blocked by other streams (object spread of optional parameters, `Blob`, unions, the shape limit, `encodeURIComponent`) and by checked `as` to `void`/`JsonValue` in `request<T>` instances |
+| `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owned the value-layout bump; needed none) | M4, M6 | Implemented ([contract](architecture.md#collections-and-binary-text-collections)): `Map`/`Set` with hashed lookup and live iteration, tuples (and `Object.entries` pairs), `padStart`/`padEnd`/`split`/case mapping/`join`/`fromCharCode`/`fromCodePoint`, `Uint8Array`, UTF-8 `TextEncoder`/`TextDecoder` with streaming, `btoa`/`atob`, `crypto.getRandomValues`/`randomUUID`, UTC `Date` with ISO/IMF parsing and the `time.now`-gated clock (host ABI 33 imports `string_to_upper_case16`, `string_to_lower_case16`, `date_now`). Private storage (no value tag): logging, JSON and `unknown` reject these values; `subarray`, `ArrayBuffer`, union keys and `globalThis.crypto` open |
+| `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Implemented ([contract](architecture.md#regexp-regexp)): literals and constant `new RegExp` compiled ahead of time to a linear-time guest Pike VM (no host import), `exec`/`test`/`lastIndex`, match arrays, `search`/`match`/`matchAll`/`replace`/`replaceAll`/`split` with templates, replacer functions and string patterns; backreferences, lookaround, `\p{…}`, run-time patterns and the `d`/`v` flags open |
+| `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Implemented ([contract](architecture.md#network-requests-net_request)): `net.request` with URL scopes and methods, hyper + rustls transport, streamed text bodies, abort and timeouts, redirects `error`/`manual`/`follow`, `URL`/`URLSearchParams` subset, `[Symbol.asyncIterator]` async generator methods, a recoverable denial through the [permission broker](architecture.md#permission-broker-v37) for requests and v37 timers; bytes bodies wait for `Uint8Array`, generic `ReadableStream<T>` for class generics |
 
 ### Platform targets and application model
 

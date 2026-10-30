@@ -294,6 +294,38 @@ impl Scheduler {
         self.timers.arm(id, due)?;
         Ok(id as f64)
     }
+    /// A v37 timer start the broker denied: nothing is armed and no id is
+    /// issued; the frame suspended on `serial` is released at once, exactly
+    /// like a cleared timer (`timer_take` answers 0), so the callback never
+    /// runs and the guest's denial is a recoverable exception.
+    pub(crate) fn timer_denied(&mut self, serial: f64) -> Result<(), SchedulerError> {
+        let serial = self::serial(serial, self.next_serial)?;
+        if serial == 0
+            || self.reactions.get(&serial).map(Vec::len) != Some(1)
+            || self.timers.by_serial.contains_key(&serial)
+        {
+            return Err(SchedulerError::TimerState);
+        }
+        if self.timers.entries.len() >= MAX_PENDING_TIMERS {
+            return Err(SchedulerError::TimerBudget);
+        }
+        // Released entries live under ids above every issued one and are
+        // forgotten when taken, so they never collide with a timer id.
+        let key = MAX_PROMISE_SERIALS + serial;
+        self.timers.entries.insert(
+            key,
+            Timer {
+                serial,
+                interval: None,
+                keep_alive: false,
+                armed: None,
+                fired: false,
+                cleared: true,
+            },
+        );
+        self.timers.by_serial.insert(serial, key);
+        self.wake(serial)
+    }
     /// Clear the timer `id`: an armed timer wakes its frame for release.
     /// Ids that name no armed timer are ignored, as in JavaScript.
     pub(crate) fn timer_clear(&mut self, id: f64) -> Result<(), SchedulerError> {
@@ -345,14 +377,44 @@ impl Scheduler {
         self.timers.by_serial.remove(&serial);
         Ok(fired)
     }
+    /// The serial of an engine-internal pending promise with exactly one
+    /// reaction that no timer owns: what a v37 network request may wake.
+    pub(crate) fn watchable(&self, serial: f64) -> Result<u64, SchedulerError> {
+        let serial = self::serial(serial, self.next_serial)?;
+        if serial == 0
+            || self.reactions.get(&serial).map(Vec::len) != Some(1)
+            || self.timers.by_serial.contains_key(&serial)
+        {
+            return Err(SchedulerError::UnknownSerial);
+        }
+        Ok(serial)
+    }
+    /// Queue the reactions of `serial` without settling its promise (a
+    /// network completion, like a fired timer).
+    pub(crate) fn wake(&mut self, serial: u64) -> Result<(), SchedulerError> {
+        let reactions = self
+            .reactions
+            .remove(&serial)
+            .ok_or(SchedulerError::UnknownSerial)?;
+        self.queue.extend(reactions);
+        Ok(())
+    }
+    /// Loop time follows the wall clock once an external completion (a v37
+    /// network response) arrived, so later timers are due relative to it.
+    fn observe(&mut self, elapsed_ms: f64) {
+        self.timers.now = self.timers.now.max(elapsed_ms);
+    }
     /// The due time of the next timer to fire, while a timer that keeps the
-    /// loop alive is armed; unreferenced timers alone end the execution.
-    pub(crate) fn next_due(&self) -> Option<f64> {
-        let alive = self
-            .timers
-            .order
-            .values()
-            .any(|id| self.timers.entries.get(id).is_some_and(|t| t.keep_alive));
+    /// loop alive is armed, or any armed timer while other work (`busy`: a
+    /// network request in flight) keeps it alive; unreferenced timers alone
+    /// end the execution.
+    pub(crate) fn next_due(&self, busy: bool) -> Option<f64> {
+        let alive = busy
+            || self
+                .timers
+                .order
+                .values()
+                .any(|id| self.timers.entries.get(id).is_some_and(|t| t.keep_alive));
         if !alive {
             return None;
         }
@@ -413,6 +475,10 @@ pub(crate) fn typed(error: RuntimeError) -> RuntimeError {
     };
     let source = match source.downcast::<SchedulerError>() {
         Ok(error) => return RuntimeError::Scheduler(error),
+        Err(source) => source,
+    };
+    let source = match source.downcast::<varta_common::net::NetError>() {
+        Ok(error) => return RuntimeError::Net(error),
         Err(source) => source,
     };
     match source.downcast::<varta_common::exceptions::UncaughtException>() {
@@ -536,6 +602,33 @@ fn register_timers(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::
                 .map_err(fatal)
         },
     )?;
+    // V37: a denial is recoverable. The broker decides before anything is
+    // armed; a denied start releases the frame, logs the denial and returns
+    // 0, and the guest throws a `NotAllowedError`.
+    linker.func_wrap(
+        "varta",
+        HostOperation::TimerStartV2.name(),
+        |mut caller: Caller<'_, RuntimeContext>, serial: f64, delay: f64, flags: i32| {
+            caller.data_mut().tick()?;
+            if flags & !(TIMER_INTERVAL | TIMER_UNREF) != 0 {
+                return Err(fatal(SchedulerError::TimerState));
+            }
+            let context = caller.data_mut();
+            match crate::permission::timer(&context.policy) {
+                crate::permission::Decision::Granted(()) => context
+                    .scheduler
+                    .timer_start(serial, delay, flags)
+                    .map_err(fatal),
+                crate::permission::Decision::Denied => {
+                    context.scheduler.timer_denied(serial).map_err(fatal)?;
+                    context.emit(format!(
+                        "varta log: <capability denied: {TIMER_CAPABILITY}> (timer)"
+                    ))?;
+                    Ok(0.0)
+                }
+            }
+        },
+    )?;
     linker.func_wrap(
         "varta",
         HostOperation::TimerClear.name(),
@@ -567,19 +660,71 @@ fn register_timers(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::
     Ok(())
 }
 
-/// Wait until the wall clock reaches loop time `due` (milliseconds after the
-/// execution started), never past the execution deadline.
+/// The wall-clock instant of loop time `due` (milliseconds after the
+/// execution started); now under the test-only virtual clock.
+fn target(context: &RuntimeContext, due: f64) -> Instant {
+    if virtual_clock() {
+        return Instant::now();
+    }
+    let started = context.deadline - Duration::from_secs(abi::DEADLINE_SECONDS);
+    started + Duration::from_secs_f64(due / MILLISECONDS_PER_SECOND)
+}
+
+/// Wait until the wall clock reaches loop time `due`, never past the
+/// execution deadline.
 fn wait(context: &RuntimeContext, due: f64) -> Result<(), wasmtime::Error> {
-    if !virtual_clock() {
-        let started = context.deadline - Duration::from_secs(abi::DEADLINE_SECONDS);
-        let target = started + Duration::from_secs_f64(due / MILLISECONDS_PER_SECOND);
-        let now = Instant::now();
-        if target > now {
-            std::thread::sleep(target.min(context.deadline) - now);
-        }
+    let target = target(context, due);
+    let now = Instant::now();
+    if target > now {
+        std::thread::sleep(target.min(context.deadline) - now);
     }
     if Instant::now() >= context.deadline {
         return Err(wasmtime::Error::msg("execution deadline exceeded"));
+    }
+    Ok(())
+}
+
+/// Advance loop time to the wall clock after a network completion (v37); the
+/// virtual clock of the runtime tests keeps loop time program-defined.
+pub(crate) fn observed_wall_clock(context: &mut RuntimeContext) {
+    if virtual_clock() {
+        return;
+    }
+    let started = context.deadline - Duration::from_secs(abi::DEADLINE_SECONDS);
+    let elapsed = Instant::now().saturating_duration_since(started);
+    context
+        .scheduler
+        .observe(elapsed.as_secs_f64() * MILLISECONDS_PER_SECOND);
+}
+
+/// One turn while network requests are in flight (v37): a due timer fires
+/// first (Node's timers phase precedes its poll phase); otherwise the loop
+/// drives the transfers until a completion arrives, the next timer is due or
+/// the deadline passes. A timer due beyond the deadline cannot fire, but a
+/// completion may still clear it, so the wait continues until the deadline.
+fn network_turn(store: &mut Store<RuntimeContext>, due: Option<f64>) -> Result<(), RuntimeError> {
+    let context = store.data_mut();
+    let deadline = context.deadline;
+    let timer = due.map(|due| (due, target(context, due)));
+    let fires = |instant: Instant| instant < deadline;
+    if let Some((_, at)) = timer
+        && fires(at)
+        && at <= Instant::now()
+    {
+        return context.scheduler.fire().map_err(|e| fatal(e).into());
+    }
+    let until = match timer {
+        Some((_, at)) if fires(at) => at,
+        _ => deadline,
+    };
+    if crate::net::wait(context, until)? {
+        return Ok(());
+    }
+    if Instant::now() >= deadline {
+        return Err(wasmtime::Error::msg("execution deadline exceeded").into());
+    }
+    if timer.is_some_and(|(_, at)| fires(at) && at <= Instant::now()) {
+        context.scheduler.fire().map_err(fatal)?;
     }
     Ok(())
 }
@@ -598,19 +743,33 @@ pub(crate) fn checkpoint(
         if let Some(error) = store.data().scheduler.unhandled_rejection() {
             return Err(error.into());
         }
-        let Some(due) = store.data().scheduler.next_due() else {
+        let busy = store.data().net.alive();
+        let due = store.data().scheduler.next_due(busy);
+        if busy {
+            network_turn(store, due)?;
+            continue;
+        }
+        let Some(due) = due else {
             return Ok(());
         };
-        if due >= Duration::from_secs(abi::DEADLINE_SECONDS).as_millis() as f64 {
-            return Err(SchedulerError::TimerDeadline {
-                due_ms: due.ceil() as u64,
-                deadline_seconds: abi::DEADLINE_SECONDS,
-            }
-            .into());
+        if let Some(error) = beyond_deadline(due) {
+            return Err(error.into());
         }
         wait(store.data(), due)?;
         store.data_mut().scheduler.fire().map_err(fatal)?;
     }
+}
+
+/// The budget error of a next timer due at loop time `due` (milliseconds) at
+/// or beyond the execution deadline; it reports the due time rounded up to a
+/// whole millisecond.
+fn beyond_deadline(due: f64) -> Option<SchedulerError> {
+    (due >= Duration::from_secs(abi::DEADLINE_SECONDS).as_millis() as f64).then(|| {
+        SchedulerError::TimerDeadline {
+            due_ms: due.ceil() as u64,
+            deadline_seconds: abi::DEADLINE_SECONDS,
+        }
+    })
 }
 
 /// The microtask checkpoint: every job through `varta_resume` with a
@@ -689,6 +848,54 @@ mod tests {
         // A dispatched token may be scheduled again (its frame suspended anew).
         assert_eq!(full.next().unwrap(), Some(0));
         full.enqueue(0).unwrap();
+    }
+
+    /// The deadline error reports the next due time rounded up to a whole
+    /// millisecond, and only a due time at or past the deadline fails.
+    #[test]
+    fn timer_deadline_rounds_the_due_time_up() {
+        let deadline = Duration::from_secs(abi::DEADLINE_SECONDS).as_millis() as f64;
+        assert_eq!(beyond_deadline(deadline - 0.25), None);
+        assert_eq!(
+            beyond_deadline(5999.25),
+            Some(SchedulerError::TimerDeadline {
+                due_ms: 6000,
+                deadline_seconds: abi::DEADLINE_SECONDS,
+            })
+        );
+        assert_eq!(
+            beyond_deadline(deadline),
+            Some(SchedulerError::TimerDeadline {
+                due_ms: deadline as u64,
+                deadline_seconds: abi::DEADLINE_SECONDS,
+            })
+        );
+    }
+
+    /// Double faults report the first check in the documented order: a
+    /// timer start validates its flags before its serial, and a reaction
+    /// checks the queue bound before a duplicate token.
+    #[test]
+    fn double_faults_report_the_first_check() {
+        let mut scheduler = Scheduler::default();
+        let unissued = 7.0;
+        let bad_flags = !(TIMER_INTERVAL | TIMER_UNREF);
+        assert_eq!(
+            scheduler.timer_start(unissued, 1.0, bad_flags),
+            Err(SchedulerError::TimerState)
+        );
+        assert_eq!(
+            scheduler.timer_start(unissued, 1.0, 0),
+            Err(SchedulerError::UnknownSerial)
+        );
+        let mut full = Scheduler::default();
+        let held: i64 = 0;
+        let serial = full.react(0.0, held).unwrap();
+        for token in 1..MAX_PENDING_CONTINUATIONS as i64 {
+            full.enqueue(token).unwrap();
+        }
+        // `held` is already held and the queue is full: QueueFull wins.
+        assert_eq!(full.react(serial, held), Err(SchedulerError::QueueFull));
     }
 
     #[test]

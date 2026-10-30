@@ -70,10 +70,17 @@ pub(in crate::lower) fn root(
         fields: Vec::new(),
         methods: BTreeMap::new(),
         statics: BTreeMap::new(),
+        generic_methods: BTreeMap::new(),
+        generic_statics: BTreeMap::new(),
         init: None,
         initializers: Vec::new(),
         state: State::Ready,
         prelude: false,
+        params: None,
+        template: None,
+        frame: generics::Frame::new(),
+        unallocated: Vec::new(),
+        opaque: false,
     });
     types.classes.error_roots.insert(family, id);
     let (fields, mut init) = match parent {
@@ -213,6 +220,27 @@ pub(in crate::lower) fn reaches_instance(ty: Type, types: &ir::ValueTypes) -> bo
 pub(in crate::lower) fn reaches_prelude(ty: Type, types: &ir::ValueTypes) -> bool {
     let unknown = types.classes.has_prelude();
     reaches(ty, types, &|id| types.classes.get(id).prelude, unknown)
+}
+
+/// Whether a value of `ty` may reach a prelude class whose JavaScript JSON
+/// form is not its own properties (v37: `URL` has `toJSON`, RegExp match
+/// arrays are arrays). Such instances never enter `unknown` in v37.
+pub(in crate::lower) fn reaches_json_form(ty: Type, types: &ir::ValueTypes) -> bool {
+    reaches(ty, types, &|id| json_form(id, types), false)
+}
+fn json_form(id: u32, types: &ir::ValueTypes) -> bool {
+    let class = types.classes.get(id);
+    class.prelude && crate::modules::engine::JSON_FORM_CLASSES.contains(&class.name.as_str())
+}
+
+/// Whether a value of `ty` may reach an instance of a class selected by
+/// `target`; `unknown` is not followed.
+pub(super) fn reaches_class(
+    ty: Type,
+    types: &ir::ValueTypes,
+    target: &dyn Fn(u32) -> bool,
+) -> bool {
+    reaches(ty, types, target, false)
 }
 
 fn reaches(ty: Type, types: &ir::ValueTypes, target: &dyn Fn(u32) -> bool, unknown: bool) -> bool {

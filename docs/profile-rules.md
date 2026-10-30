@@ -2780,11 +2780,13 @@ Inherit v36 under checked-f64-utf16-v37 with every v36 selector, value layout
 scheduler, frame catalog version 3, async generators and the timer operations.
 V37 has its own host ABI `abi::NET_REQUEST_VERSION` (33) and shares value
 ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`) with v36; v36 keeps host
-ABI 32. Five selectors gate the streams and admit nothing yet: language core
-(`language_core`), class generics (`class_generics`), collections and binary
-text (`collections`), RegExp (`regexp`) and network requests (`net_request`).
-Gate every admission on its own selector, keep v36 and earlier profiles
-frozen, and add each stream's rules under its own heading here.
+ABI 32. Five selectors gate the streams, all implemented below: language
+core (`language_core`), class generics (`class_generics`), collections and
+binary text (`collections`), RegExp (`regexp`) and network requests
+(`net_request`); [batch integration](#batch-integration-v37) holds the rules
+for their combination. Gate every admission on its own selector, keep v36 and
+earlier profiles frozen, and add each stream's rules under its own heading
+here.
 
 - A v36 rule or binding stated "for v36 only" (value17 readers, timer
   operations, preludes, async generators) extends to v37 through the inherited
@@ -2793,11 +2795,12 @@ frozen, and add each stream's rules under its own heading here.
   minimum ABI in the `HostOperation` registry; do not add another host ABI
   constant in this batch. Add its `.d.ts`, linker, validation and denial tests
   in the same change.
-- The collections stream owns the batch's value-layout bump (value 18) and
-  lands it first as a foundation commit: a new `value` constant,
-  `value_abi`/`value_layout` for v37, value18 variants of every layout-bound
-  reader (minimum ABI 33) and the launcher value maximum. Value17 readers stay
-  frozen for v36. The other streams rebase onto it.
+- The collections stream owned the batch's value-layout bump and needed none
+  (its storage is private and tuples are arrays), so value 18 does not exist.
+  A later stream that needs a value tag lands it first as its own foundation
+  commit: a new `value` constant, `value_abi`/`value_layout` for v37, value18
+  variants of every layout-bound reader (minimum ABI 33) and the launcher
+  value maximum. Value17 readers stay frozen for v36.
 - `net.request` is a new exact capability operation, denied by default and
   checked before any socket is opened; never let `net.fetch`, `net.get` or
   `net.listen` grants authorize it.
@@ -2805,3 +2808,283 @@ frozen, and add each stream's rules under its own heading here.
   (`pilot_v37_inherits_v36_…` in `varta-common` `language`, the v37 runtime
   language test and the v37 CLI smoke test) change in the stream that
   introduces the difference.
+
+### Batch integration (v37)
+
+Contract: [architecture.md](architecture.md#batch-integration-v37).
+
+- Function slots: lowering allocates against `ValueTypes::function_limit()`
+  (never `abi::MAX_USER_FUNCTIONS` directly); `lower::prune` removes
+  unreachable functions and is the only v37 place that enforces the emitted
+  limit. A new IR form that names a function index must be added to
+  `prune::references` and the renumbering in the same change, and the
+  emitter must derive every other function table from `Program`.
+- Private state: descriptor keys with `value::PRIVATE_KEY_PREFIX` are private
+  (`classes::hide_prelude_state` renames prelude and Error slots after
+  lowering; guest code reads by slot). Never add a v37 source path that
+  creates a structural record key with the prefix, and keep URL and RegExp
+  match arrays out of `JSON.stringify` and `unknown`
+  (`engine::JSON_FORM_CLASSES`). Shared host readers keyed by field name must
+  prefer the own key and fall back to the prefixed one, as the exception
+  channel does.
+- Dense reads: undefined contexts go through `dense::optional_index` /
+  `undefined_comparisons`; keep `unknown` elements unchecked.
+- Unions: collections and tuples stay single members of their tag;
+  `instanceof` and `#x in` over class unions must consider every class
+  member, never the first one only.
+- `split` dispatch lives in `builtin_methods::string_split`; RegExp splits go
+  through `regexp_split`.
+- Tests: `varta-runtime` `v37_integration_tests` (Node-pinned cases in
+  `v37_integration_cases`, a loopback SSE loop, forced collections, the
+  relabelled every-stream module and the pruning limits).
+
+### Language core (`language_core`)
+
+Contract: [architecture.md](architecture.md#language-core-language_core).
+
+- Per-function state lives in `lower::core::State` (`early`, `unassigned`,
+  `paths`, `impure_guard`); `unassigned` and `paths` are also fields of the
+  flow `Snapshot`, so every join, alternate, restore and finalizer transform
+  must carry them: unions for `unassigned`, keyed intersections with unions
+  of types for `paths`, and `restore` may never resurrect a fact. Gate every
+  admission on `language_core()`; an empty state must leave earlier profiles
+  byte-identical (`v36_modules_keep_their_bytes`).
+- Temporal dead zones (`lower::tdz`): reserve flags only through
+  `early_names` (simple declarators and nested function declarations),
+  identify the flag by the declaring function's slot (`Binding::tdz`) and
+  resolve its local slot through `tdz_flag`; the owner learns an early
+  capture when it re-captures a closure's captures (`capture_early`, by
+  `identity.1`, never the closure's slot). An early binding's
+  initialization must be `Set` plus the flag, never `Init` (which would
+  allocate a fresh cell the closure does not hold). Any new write path through
+  a closure must go through `prepare_pattern_target`/`early_target` or test the
+  flag itself. The Error root for `ReferenceError` is created in `link::lower`
+  before the first module when `module_has_early_captures`; never create it
+  lazily during body lowering.
+- Deferred bindings (`lower::deferred`): `flow_assigned` is the only place
+  that clears `unassigned`; conservative invalidation (`flow_write` from loop
+  or call effects) must not count as an assignment. Read-modify-write targets
+  call `require_assigned_target` before `prepare_pattern_target`.
+  `unassigned_outer` hides unassigned bindings from closure snapshots.
+- Dense reads (`lower::dense`): every element-typed read of a possibly
+  missing element goes through `dense_read`; element types that admit
+  `undefined` must stay unchecked.
+- Path facts (`lower::paths`): only data fields are path components; a new
+  construct that can run user code or write a property must drop facts
+  (`path_effects`, `drop_paths`) and be listed in `paths::Scan`. Facts are
+  keyed by the root's local slot, so they never leave the function that
+  created them.
+- `switch` by equality (`lower::switches`) reuses the `Switch` statement over
+  the Boolean `true`; its tests are ordinary `===` lowering of the hidden
+  discriminant binding, lowered before any clause body. Keep scalar switches
+  on the original path (`switch_statement`).
+- `void` conversion (`lower::void_functions`) synthesizes an AST arrow over a
+  hidden binding; keep it to receiverless fixed-arity shapes, and keep
+  diagnostics of earlier profiles on `Type`'s `Display` (`mismatch` renders
+  signatures for v37 only).
+- Record unions (`lower::shared_unions`, `emit::shared_members`): a union
+  with several record-tag or array members must be told apart only by the
+  emitted payload test in `is_union_member` (descriptor offsets of every
+  layout of the member shape or class family, or the array element kind);
+  never read a field of such a union except through `dispatch`, and never
+  add a value tag for it. `unions::intern` must keep rejecting array members
+  with equal element kinds. Catalogs describe such unions as `Unknown`
+  (`function_catalog`); do not relax `varta-common` catalog validation.
+  Converting JSON graphs to them goes through `discriminated_build`, which
+  needs a literal discriminant per member.
+- `Type::Never` has width 0 and no value; it comes only from guards that
+  exclude every member and from `never` annotations. Keep `unions::members`
+  empty for it, `widen` converting it to any target, and the trap after a
+  `never` binding.
+- Module variables (`lower::globals`, `module_constants`): a `let`/`var` is
+  `Binding::global` (root slot index and storage type); reads and writes go
+  through `global_read`/`global_store` only, closures re-bind it with their
+  own slot for facts and never capture it, and every new write form must
+  route there or be rejected (`assignment_binding` rejects pattern targets).
+  A chunk whose initializers lift functions reserves its initializer index
+  first (`lifts`), or the lifted function would take it.
+- Return analysis for endless loops is the `loops` completion mode
+  (`exits_function_through_loops`), used only by v37 `finish_body`; never fold
+  it into `normal`, which flow reachability of every profile uses.
+- Stack depth: lowering recursion runs on 2 MiB test threads; keep new
+  per-arm locals out of `statement_inner` and `expr_inner` (call a helper).
+- Tests: Node-pinned `language_core_cases` logs, a forced collection before
+  every job for the async cases and a stress-fuel run for synchronous
+  closures, deviation and diagnostic tables, v36 rejections and frozen v36
+  digests, the public API and CLI smoke tests, and the v36-pinned conformance
+  gaps.
+
+### Class generics (`class_generics`)
+
+Contract: [architecture.md](architecture.md#class-generics-class_generics).
+
+- Monomorphization only, as for [generics](#generics-generics): never emit a
+  generic body. Generic methods live in `Class::generic_methods` /
+  `generic_statics` (`lower/classes/generic_methods.rs`), get no slot at
+  layout and are instantiated per (owner, name, static, arguments) in
+  `Classes::method_instances`; their bodies queue in `pending_methods` and are
+  lowered by the `generics::bodies` fixpoint with the class context and the
+  merged class + method frame. Reuse `Lower::infer`, `instance_arguments` and
+  `bind_instance_arguments`; never re-lower an argument for inference, and
+  lower the receiver first.
+- An overridden generic method dispatches through `generic_dispatchers`
+  (root, name, arguments), instantiating every implementation with the same
+  arguments when the dispatcher is created and synthesizing its body in
+  `generic_dispatch_bodies` after the last body. `super.m<T>()` and statics
+  are direct calls.
+- Generic class templates (`Class::is_template`) own statics only; instances
+  (`Class::template`, `frame`) are created by `instantiate_class` (memoized in
+  `Classes::instances` before layout so self-references resolve), laid out at
+  once when `Classes::ready` and otherwise at `lay_out_deferred` (start of
+  `dispatchers`). Instance members are allocated `UNALLOCATED` and get their
+  slots in `materialize` (end of `dispatchers`, and `Lower::class_functions`
+  before any member call, `new`, getter or `super` use), which also rewrites
+  the inherited entries of descendants; their bodies queue in
+  `pending_members`. Never let an instance member index reach emission
+  unallocated, and never put instance members in `Classes::order`.
+- V37 synthesizes the declared dispatchers late (`late_dispatch_bodies`) so
+  instance shapes created by later bodies join the descriptor tests. Keep
+  `dispatch_bodies` at its v36 position for every earlier profile
+  (`v36_modules_keep_their_bytes`). Instances may not override inherited
+  methods (`override_rejected`): a dispatcher decided before the instance
+  existed would miss the override.
+- Method signatures are function fields (`records::method_signature`); object
+  literal methods are function expressions that may not use `this`/`super`
+  (`uses_receiver`). Never bind a receiver for a function field call.
+- `implements` is a check only (`classes/implements.rs`) after the class (or
+  instance) is laid out; never widen a class instance to a record.
+- Private names are a pre-layout AST rewrite (`classes/private_names.rs`):
+  `#x` becomes a `private` member named `#x`. Keep quoted `'#x'` members and
+  computed `obj['#x']` member accesses rejected under the selector, keep
+  `reaches_private` gating `JSON.stringify` and `unknown::widen`, and keep a
+  subclass from redeclaring an inherited private name. `#x in v` is
+  `class_test` of the declaring class.
+- Tests: `varta-runtime` `class_generic_tests` with Node 24 logs of
+  `class_generic_cases`, the forced-collection driver, v37 diagnostics, v36
+  rejections and `v36_modules_keep_their_bytes`, and the pilot function-count
+  measurement; the public API cross-module test and the CLI smoke test.
+
+### Collections (`collections()`)
+
+Contract: [collections and binary text](architecture.md#collections-and-binary-text-collections).
+
+- Implement built-ins as typed guest code in the reserved `<varta>/builtins/*`
+  preludes (`modules::engine::BUILTINS`), gated by `collections()`. A prelude
+  loads through an export, a static member (`Member`) or a load trigger
+  (`Prelude::loads`: an identifier, or `.property` for a member name); never
+  load one for v36 or earlier, so their bytes stay frozen
+  (`v36_modules_keep_their_bytes`). Call prelude functions only through
+  `lower::engine` (`engine_call`, `engine_apply`, `engine_signature`): it
+  resolves the function in the prelude module itself, instantiating generic
+  ones with explicit type arguments, so callers never depend on per-module
+  import bindings.
+- Prelude-only intrinsics (`varta.text.*`, `varta.array.get`,
+  `varta.collections.*`, `varta.bytes.*`, `varta.date.now`) are checked in
+  `lower::web_text` with `is_prelude_source`; in program modules they stay
+  unknown calls. `varta.array.get` is for densely filled prelude vectors read
+  below their length only. Prefer index appends (`a[a.length] = v`) and
+  `varta.array.get` over `push` and `a[i]!` in prelude hot paths: `push`
+  allocates its argument array and `!` reads through the hole-aware path.
+- `Type::Collection` and `Type::Tuple` are erased to their storage in
+  `literal_erasure` (with dictionaries, promises and merged function types);
+  emission never sees them. Map/Set storage is the prelude's generic
+  `MapStore`/`SetStore` instantiated in the prelude module
+  (`collections::store`); keep the prelude the single layout definition. In
+  unions a map or set counts as a record shape and a tuple or byte array as an
+  array type.
+- Never let collection storage or an `opaque` (v37 builtin) class instance
+  reach a host value reader: check `collections::reaches` before logging,
+  `JSON.stringify` and every widening to `unknown`. Keep `has_prelude`
+  excluding opaque classes.
+- A receiver whose static type is a collection is found without lowering
+  (`collection_receiver`: bindings, fields, `new`, chained `add`/`set`,
+  declared function and class-method results); string/array built-ins lower
+  the receiver once and keep class dispatch for class instances. Built-in
+  method names never shadow a user class method.
+- Module-constant chunks that construct a `Set`/`Map` reserve their
+  initializer slot before lowering (`constructs_collection`), because the
+  constructor instantiates prelude functions.
+- Host imports: `string_to_upper_case16`/`string_to_lower_case16` (pure,
+  capability-free) and `date_now` (exact `time.now`, recoverable denial
+  through the permission broker: NaN, then the prelude's `NotAllowedError`) take host
+  ABI 33. Keep the ASCII fast path in guest code.
+- Tests: Node-pinned runtime cases (`collection_tests`), forced collection
+  with test-only fuel, production-budget workloads, privacy and unsupported
+  diagnostics, the v36 frozen digests, the host-ABI-33 import test
+  (`collection_host_imports_require_host_abi_33`), the public API
+  cross-module test and the CLI smoke test through both binaries.
+
+### RegExp (`regexp`)
+
+- Gate every admission on `LanguageProfile::regexp()`; v36 and earlier must
+  keep rejecting regex literals, `new RegExp` and the regex string methods
+  with their old diagnostics and bytes (`regexp_stays_rejected_before_v37`,
+  `regexp_stays_rejected_by_v36_projects_and_names_v37_limits`).
+- Patterns compile only at compile time (`varta-compiler` `regexp`): literals
+  and `new RegExp` whose arguments are string literals or substitution-free
+  templates. Never add a host regex import or a run-time pattern compiler
+  without a new contract: the linear-time and scratch bounds are proven by
+  the compiler.
+- Keep the matcher backtracking-free: no construct may make a thread's future
+  depend on more than its instruction, its position and which enclosing
+  empty-check registers hold that position; the visited set is keyed by
+  exactly that state (`program::NESTING`, at most `MAX_NESTING` levels).
+  Every optional iteration of a nullable body with captures needs its
+  `CHECK`; differential fuzzing against Node found the cases where keying by
+  the instruction alone is wrong. Backreferences, lookaround, `\p{…}`, modifiers,
+  duplicate group names and the `d`/`v` flags stay rejected by name
+  (`RegExpError::Unsupported`); syntax errors keep V8's text.
+- Program format changes (`regexp::program`) bump `FORMAT_VERSION` and change
+  the compiler and the guest matcher together; programs are data, so their
+  limits (`MAX_PROGRAM_UNITS`, `MAX_SCRATCH_BYTES`) are compile-time errors,
+  never traps.
+- The lean program must give exactly the full program's slots 0 and 1; use it
+  only where no capture is observable.
+- Case-insensitive matching widens characters and classes at compile time
+  (`regexp::case`); the guest matcher never folds case.
+- The prelude (`prelude/regexp.ts`) may call `varta.regexp.*`; it must not
+  make host calls on any path a program reaches (`charCodeAt`, `typeof` and
+  equality on unions, Number formatting and template numbers are host
+  operations), which `regexps_need_no_capability_and_add_no_host_import`
+  checks.
+- Compiler hooks reach prelude members only by name (`RegExp` private statics,
+  match-array fields `first`/`values`); renaming a prelude member changes
+  `lower::regexp` in the same change.
+- Behaviour tests compare against pinned Node 24 output (`regexp_cases`);
+  regenerate expectations only from Node. Adversarial inputs stay small enough
+  for Node to answer, since Node backtracks exponentially on them.
+
+### Network requests (`net_request`)
+
+See the [contract](architecture.md#network-requests-net_request).
+
+- `fetch`, `Request`, `Response`, `ReadableStream`, `URL` and
+  `URLSearchParams` are engine preludes (`prelude/fetch.ts`, `url.ts`,
+  `permission.ts`). Keep them loaded only when named, so programs that do not
+  name them keep their bytes. Their `varta.net.*` and `varta.web.unitAt`
+  intrinsics work only inside prelude modules; engine-internal members
+  (`engine::INTERNAL_MEMBERS`) are unknown members to program modules. Mirror
+  every shared constant of `varta_common::net` in `fetch.ts` by name; the
+  `lower::net` test keeps them in step.
+- The runtime keeps request ids, completions and serials only. A completion
+  wakes the one reaction of the waiting frame (`varta.net.watch`, the timer
+  frame shape); never resolve a guest promise from the host and never retain
+  a guest reference.
+- Every capability decision of an asynchronous operation goes through
+  `runtime::permission` before any effect, and a v37 denial is recoverable
+  (`NotAllowedError`) and logged. Keep v36's fatal timer denial unchanged;
+  v37 binds `timer_start_v2`. A future "pending" broker answer must keep the
+  operation without effect until decided, and a user grant must still satisfy
+  the host ceiling.
+- `net.request` matches the full operation id, URL scopes and exact methods of
+  both the package and the host ceiling; never let `net.fetch`, `net.get` or
+  `net.listen` grant it, never resolve names or connect before the decision,
+  and keep redirects manual in the transport (the prelude re-checks each
+  followed hop).
+- Transfers run only inside the event loop's wait on the execution's
+  current-thread Tokio runtime; bound every phase by the remaining deadline and
+  the `net` limits. Body text is decoded per chunk with a UTF-8 carry; bytes
+  wait for `Uint8Array` (the body element type is the seam).
+- Tests use only 127.0.0.1 with ephemeral ports (`net_loopback.rs`, a
+  test-only HTTPS trust anchor) and pin Node 24 output from
+  `net_cases/server.mjs`; never contact another host.

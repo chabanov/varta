@@ -34,23 +34,55 @@ impl Flow {
         self
     }
 }
+/// Which completion refinements apply.
+#[derive(Clone, Copy, Default)]
+struct Mode {
+    /// V36: exhaustive switches (see [`exits_function_through_switches`]).
+    switches: bool,
+    /// V37 (`language_core`): a loop without a test (or with the literal
+    /// `true`) completes normally only through a `break` that targets it.
+    loops: bool,
+}
 pub(super) fn normal(body: &[S]) -> bool {
-    completions(body, false).kinds & NORMAL != 0
+    completions(body, Mode::default()).kinds & NORMAL != 0
 }
 pub(super) fn exits_function(body: &[S]) -> bool {
-    exits(body, false)
+    exits(body, Mode::default())
 }
 /// [`exits_function`] with exhaustive switches (v36): a `switch` with a
 /// `default` clause completes normally only through a `break` or by falling
 /// off its last clause, as TypeScript's return analysis decides.
 pub(super) fn exits_function_through_switches(body: &[S]) -> bool {
-    exits(body, true)
+    exits(
+        body,
+        Mode {
+            switches: true,
+            loops: false,
+        },
+    )
 }
-fn exits(body: &[S], switches: bool) -> bool {
+/// [`exits_function_through_switches`] that also knows infinite loops (v37),
+/// as TypeScript's return analysis: `for (;;) { ... return x; }`.
+pub(super) fn exits_function_through_loops(body: &[S]) -> bool {
+    exits(
+        body,
+        Mode {
+            switches: true,
+            loops: true,
+        },
+    )
+}
+/// Whether a loop test is absent or the literal `true`.
+fn infinite(test: Option<&super::Expr>) -> bool {
+    test.is_none_or(|test| {
+        test.ty == super::Type::Boolean && matches!(test.kind, super::E::Integer(1))
+    })
+}
+fn exits(body: &[S], switches: Mode) -> bool {
     let flow = completions(body, switches);
     flow.kinds & (NORMAL | BREAK | CONTINUE) == 0 && flow.branches.is_empty()
 }
-fn completions(body: &[S], switches: bool) -> Flow {
+fn completions(body: &[S], switches: Mode) -> Flow {
     let mut flow = Flow::new(NORMAL);
     for statement in body {
         if flow.kinds & NORMAL == 0 {
@@ -112,12 +144,18 @@ fn completions(body: &[S], switches: bool) -> Flow {
                     };
                 inner
             }
+            S::While(test, body) if switches.loops && infinite(Some(test)) => {
+                endless(completions(body, switches))
+            }
+            S::For(_, test, _, body) if switches.loops && infinite(test.as_ref()) => {
+                endless(completions(body, switches))
+            }
             S::While(_, body) | S::For(_, _, _, body) => {
                 let mut inner = completions(body, switches);
                 inner.kinds = NORMAL | THROW | (inner.kinds & RETURN);
                 inner
             }
-            S::Switch { cases, .. } if switches => {
+            S::Switch { cases, .. } if switches.switches => {
                 let exhaustive = cases.iter().any(|(test, _)| test.is_none());
                 let mut flow = Flow::new(THROW);
                 let mut ends = !exhaustive || cases.is_empty();
@@ -148,4 +186,11 @@ fn completions(body: &[S], switches: bool) -> Flow {
         flow = flow.union(next);
     }
     flow
+}
+/// The completions of an endless loop with `body`: only a `break` of the
+/// loop itself ends it normally; labelled branches still propagate.
+fn endless(mut inner: Flow) -> Flow {
+    let broken = inner.kinds & BREAK != 0;
+    inner.kinds = THROW | (inner.kinds & RETURN) | if broken { NORMAL } else { 0 };
+    inner
 }

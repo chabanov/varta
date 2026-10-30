@@ -25,12 +25,14 @@ mod records;
 mod repeat;
 mod roots;
 mod schemas;
+mod shared_members;
 mod strings;
 mod unions;
 use crate::{
     CompilerError,
     ir::{self, Expr, Expression as E, Host, Statement as S, Type},
 };
+use shared_members::{SharedMembers, shared_members};
 use std::collections::{BTreeMap, BTreeSet};
 use swc_ecma_ast::BinaryOp;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
@@ -106,6 +108,10 @@ struct Emitter<'a> {
     frame_resources: Option<frames::Resources>,
     /// `Promise<T>` types (v34) by id: value type and private record shape.
     promises: &'a [ir::PromiseType],
+    /// V37 (`language_core`): unions with several record-tag or array
+    /// members, and the descriptor shapes that identify each record or class
+    /// member (`shared_members`).
+    shared: &'a SharedMembers,
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
@@ -135,6 +141,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             "module constants exceed root stack capacity".into(),
         ));
     }
+    let shared = shared_members(&program.types);
     let canonical_functions: BTreeMap<_, _> = collected
         .canonical_functions
         .iter()
@@ -714,6 +721,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             frame_functions: &program.suspendable,
             frame_resources,
             promises: &program.types.promises,
+            shared: &shared,
         };
         let frame_layout = frame_layouts.iter().find(|layout| layout.function == index);
         if let (Some(layout), Some(resources)) = (frame_layout, frame_resources) {
@@ -932,7 +940,7 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
             | Type::Union(_)
             | Type::ReferenceUnion(_)
             | Type::Unknown => vec![ValType::I64],
-            Type::Void => vec![],
+            Type::Void | Type::Never => vec![],
             _ => vec![ValType::I32],
         }
     }

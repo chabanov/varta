@@ -56,6 +56,11 @@ impl Lower<'_> {
         } else {
             hints.and_then(|h| h.select(expression))
         };
+        if let Some(expected) = expected
+            && unions::members(expected, self.types).contains(&Type::Undefined)
+        {
+            self.optional_index(expression);
+        }
         let result = match expression {
             ast::Expr::Arrow(arrow) => self.arrow(arrow, expected),
             ast::Expr::Fn(function) => self.function_expression(function, expected),
@@ -77,7 +82,20 @@ impl Lower<'_> {
             ast::Expr::Cond(branch) if self.types.profile.reference_unions() => {
                 self.conditional(branch, expected, hints)
             }
-            ast::Expr::Array(array) => self.array(array, context),
+            ast::Expr::Array(array) => match self.tuple_context(context) {
+                Some(id) => self.tuple_literal(array, id),
+                None => match self.spread_copy(array)? {
+                    Some(value) => Ok(value),
+                    None => self.array(array, context),
+                },
+            },
+            ast::Expr::New(new)
+                if let ast::Expr::Ident(id) = stmt::unparen(&new.callee)
+                    && let Some(kind) = collections::builtin(id.sym.as_ref(), self.types)
+                    && self.binding(id.sym.as_ref()).is_err() =>
+            {
+                self.collection_new(new, kind, expected)
+            }
             ast::Expr::Object(object) => self.record(object, context),
             ast::Expr::Paren(paren) => self.expr_contextual(&paren.expr, expected, hints),
             ast::Expr::TsAs(assertion) if self.types.profile.checked_assertions() => {
@@ -94,6 +112,18 @@ impl Lower<'_> {
             {
                 self.new_promise(new, expected)
             }
+            // A generic class (v37) may take its type arguments from context.
+            ast::Expr::New(new)
+                if self.types.profile.class_generics()
+                    && self
+                        .class_callee(&new.callee)
+                        .is_some_and(|class| self.types.classes.get(class).is_template()) =>
+            {
+                match self.class_callee(&new.callee) {
+                    Some(template) => self.generic_class_new(new, template, expected),
+                    None => Err(CompilerError::Internal("missing generic class".into())),
+                }
+            }
             ast::Expr::Await(expression) if self.types.profile.async_functions() => {
                 self.await_expression(expression)
             }
@@ -102,6 +132,9 @@ impl Lower<'_> {
             }
             _ => self.expr_inner(expression),
         };
+        if result.is_ok() {
+            self.path_effects(expression);
+        }
         self.depth -= 1;
         result
             .map(|value| {
@@ -115,6 +148,7 @@ impl Lower<'_> {
                     value
                 }
             })
+            .and_then(|value| self.void_function(value, expected))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }
@@ -132,6 +166,9 @@ impl Lower<'_> {
                     sym: "this".into(),
                     optional: false,
                 }));
+            }
+            ast::Expr::Lit(ast::Lit::Regex(regex)) if self.types.profile.regexp() => {
+                return self.regexp_literal(regex);
             }
             ast::Expr::Lit(ast::Lit::Num(n)) if self.types.profile.binary64() => {
                 (Type::Float64, E::Float64(n.value))
@@ -205,13 +242,32 @@ impl Lower<'_> {
                     ));
                 }
                 let binding = self.resolve_binding(name.sym.as_ref())?;
+                if binding.global.is_some() {
+                    return self.global_read(&binding, expression.span());
+                }
+                if !binding.initialized
+                    && binding.tdz.is_some()
+                    && binding.identity.0 != self.index
+                    && self.types.profile.language_core()
+                {
+                    return self.tdz_ident(name.sym.as_ref(), &binding, expression.span());
+                }
                 if !binding.initialized {
                     return Err(invalid(format!(
                         "binding used before initialization: {}",
                         name.sym
                     )));
                 }
+                self.require_assigned(name.sym.as_ref(), &binding)?;
                 let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
+                // Narrowed to `never` (v37): no value is read.
+                if self.refinements.get(&binding.slot) == Some(&Type::Never) {
+                    return Ok(Expr {
+                        span: expression.span(),
+                        ty: Type::Never,
+                        kind: E::Zero,
+                    });
+                }
                 if let Some(narrow) = self.refinements.get(&binding.slot).copied()
                     // An `object` fact (v35) is read as the `unknown` cell; only
                     // `object_value` consumers use it.
@@ -351,6 +407,9 @@ impl Lower<'_> {
             }
             ast::Expr::New(new) => {
                 if let Some(class) = self.class_callee(&new.callee) {
+                    if self.regexp_constructor(class) {
+                        return self.regexp_new(new);
+                    }
                     return self.class_new(new, class);
                 }
                 return self.new_error(new);
@@ -373,6 +432,16 @@ impl Lower<'_> {
                 ));
             }
             ast::Expr::Bin(binary) => {
+                // `#x in value` (v37 `class_generics`): a class brand test.
+                if binary.op == ast::BinaryOp::In
+                    && self.types.profile.class_generics()
+                    && let ast::Expr::PrivateName(name) = &*binary.left
+                {
+                    return self.private_in(name, &binary.right, expression.span());
+                }
+                if binary.op == ast::BinaryOp::NullishCoalescing {
+                    self.optional_index(&binary.left);
+                }
                 let left = self.expr(&binary.left)?;
                 if self.types.profile.primitive_builtins()
                     && matches!(
@@ -508,12 +577,26 @@ impl Lower<'_> {
                 if left.ty.is_error() && right.ty.is_error() && left.ty != right.ty {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
+                if binary.op == ast::BinaryOp::In
+                    && self.shared_records(right.ty)
+                    && let ast::Expr::Lit(ast::Lit::Str(text)) = stmt::unparen(&binary.left)
+                    && let Some(name) = text.value.as_str()
+                {
+                    let name = name.to_owned();
+                    return self.shared_in(&name, right, expression.span());
+                }
                 if left.ty.is_cell() || right.ty.is_cell() {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
                 let (left, right) = classes::common_operands(left, right, self.types);
                 let (left, right) = if self.types.profile.has_undefined() {
-                    match super::undefined::binary(binary.op, left, right, expression.span()) {
+                    match super::undefined::binary(
+                        binary.op,
+                        left,
+                        right,
+                        expression.span(),
+                        self.types.profile.language_core(),
+                    ) {
                         super::undefined::Binary::Folded(value) => return Ok(value),
                         super::undefined::Binary::Unchanged(left, right) => (left, right),
                     }
@@ -590,7 +673,7 @@ impl Lower<'_> {
                 return self.conditional(branch, None, None);
             }
             ast::Expr::Call(call) => return self.call(call, None, None),
-            ast::Expr::Member(member) => return self.result_field(member),
+            ast::Expr::Member(member) => return self.member_read(member),
             ast::Expr::Tpl(template) if self.types.profile.template_literals() => {
                 return self.template_literal(template);
             }
@@ -636,18 +719,25 @@ impl Lower<'_> {
             }
             if let ast::Callee::Expr(callee) = &call.callee {
                 if let ast::Expr::SuperProp(property) = stmt::unparen(callee) {
-                    return self.super_method_call(call, property);
+                    return self.super_method_call(call, property, expected);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && let Some(class) = self.class_callee(&member.obj)
                     && !self.prelude_member(callee)
                 {
-                    return self.class_static_call(call, member, class);
+                    return self.class_static_call(call, member, class, expected);
+                }
+                if let ast::Expr::Member(member) = stmt::unparen(callee)
+                    && self
+                        .peek_type(&member.obj, 0)
+                        .is_some_and(|ty| self.shared_classes(ty))
+                {
+                    return self.shared_method_call(call, member, expected);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && self.class_receiver(&member.obj, 0).is_some()
                 {
-                    return self.class_method_call(call, member, None);
+                    return self.class_method_call(call, member, None, expected);
                 }
             }
         }
@@ -673,6 +763,13 @@ impl Lower<'_> {
                 let receiver = self.expr(&member.obj)?;
                 return self.promise_method(call, receiver, method.sym.as_ref());
             }
+        }
+        if self.types.profile.collections()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let ast::Expr::Member(member) = stmt::unparen(callee)
+            && let Some(value) = self.builtin_method(call, member, expected)?
+        {
+            return Ok(value);
         }
         if let Some(generic) = self.generic_callee(call) {
             return self.generic_call(call, generic, expected);
@@ -743,6 +840,28 @@ impl Lower<'_> {
         {
             let value = self.expr(&member.obj)?;
             return self.number_format(call, value, mode);
+        }
+        if self.types.profile.regexp()
+            && let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && regexp::STRING_METHODS.contains(&method.sym.as_ref())
+            && !self.prelude_member(callee)
+            && self.class_callee(&member.obj).is_none()
+        {
+            let value = self.expr(&member.obj)?;
+            if value.ty == Type::String {
+                return self.regexp_string_method(call, value, method.sym.as_ref());
+            }
+            if matches!(value.ty, Type::Class(_)) {
+                return self.class_method_call(call, member, Some(value), expected);
+            }
+            return Err(self.source.locate(
+                type_error(format!(
+                    "String.prototype.{} requires a string receiver, found {}",
+                    method.sym, value.ty
+                )),
+                value.span,
+            ));
         }
         if let ast::Expr::Member(member) = &**callee
             && let ast::MemberProp::Ident(method) = &member.prop
@@ -879,7 +998,7 @@ impl Lower<'_> {
             && !self.prelude_member(callee)
         {
             let value = self.expr(&member.obj)?;
-            return self.class_method_call(call, member, Some(value));
+            return self.class_method_call(call, member, Some(value), expected);
         }
         if let ast::Expr::Member(member) = &**callee
             && matches!(&member.prop,ast::MemberProp::Ident(id) if id.sym=="toString")
@@ -890,7 +1009,38 @@ impl Lower<'_> {
         if let Some(value) = self.web_text(call, &name)? {
             return Ok(value);
         }
+        if let Some(value) = self.regexp_intrinsic(call, &name)? {
+            return Ok(value);
+        }
         if let Some(value) = self.prelude_timer(call, &name)? {
+            return Ok(value);
+        }
+        if name == "Array.from"
+            && self.types.profile.collections()
+            && self.binding("Array").is_err()
+            && let [source] = call.args.as_slice()
+            && source.spread.is_none()
+        {
+            // `Array.from(collection)` and `Array.from(collection.keys())` (v37).
+            if self.collection_iterator(&source.expr) {
+                let value = self.expr(&source.expr)?;
+                return self.drain(value);
+            }
+            if self.collection_receiver(&source.expr, 0) {
+                let value = self.expr(&source.expr)?;
+                return self.collection_array(value);
+            }
+            return Err(self.source.locate(
+                unsupported(
+                    "Array.from of a value other than a Map, Set, Uint8Array or their iterators",
+                ),
+                call.span,
+            ));
+        }
+        if let Some(value) = self.prelude_net(call, &name)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.prelude_net_watch(call, &name)? {
             return Ok(value);
         }
         if name == "Array.isArray" && self.types.profile.reference_unions() {
@@ -925,20 +1075,41 @@ impl Lower<'_> {
                 return Err(invalid("JSON.stringify expects one value"));
             }
             let value = self.expr(&call.args[0].expr)?;
+            if collections::reaches(value.ty, self.types) {
+                return Err(self
+                    .source
+                    .locate(collections::opaque("JSON.stringify"), value.span));
+            }
+            let value = self.physical_array(value)?;
             if value.ty.profile_kind(self.types.profile).is_none()
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()
             {
                 return Err(unsupported("JSON.stringify value type"));
             }
-            if classes::reaches_prelude(value.ty, self.types) {
+            // V37 (`json_stringify_v17`) skips private state, so prelude,
+            // Error and #private instances serialize their own properties.
+            let hidden = self.types.profile.class_generics();
+            if hidden && classes::reaches_json_form(value.ty, self.types) {
+                return Err(self.source.locate(
+                    unsupported("JSON.stringify of a URL or a RegExp match array; their JSON forms (toJSON, array) are not modelled"),
+                    value.span,
+                ));
+            }
+            if !hidden && classes::reaches_prelude(value.ty, self.types) {
                 return Err(self.source.locate(
                     unsupported("JSON.stringify of an engine Web type instance (Headers, AbortController, AbortSignal, DOMException); its state is private"),
                     value.span,
                 ));
             }
-            if classes::reaches_instance(value.ty, self.types) {
+            if !hidden && classes::reaches_instance(value.ty, self.types) {
                 return Err(self.source.locate(
                     unsupported("JSON.stringify of an Error subclass instance; own-property enumerability is not modelled"),
+                    value.span,
+                ));
+            }
+            if !hidden && classes::reaches_private(value.ty, self.types) {
+                return Err(self.source.locate(
+                    unsupported("JSON.stringify of a class instance with #private fields; private names are not properties"),
                     value.span,
                 ));
             }
@@ -1058,6 +1229,9 @@ impl Lower<'_> {
                     return Err(invalid("log expects one argument"));
                 }
                 let mut arg = self.expr(&call.args[0].expr)?;
+                if collections::reaches(arg.ty, self.types) {
+                    return Err(self.source.locate(collections::opaque("logging"), arg.span));
+                }
                 if arg.ty == Type::BigInt {
                     arg = self.bigint_text(arg)?;
                 }

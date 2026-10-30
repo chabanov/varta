@@ -94,6 +94,11 @@ mod named_type_tests;
 mod native_math;
 #[cfg(test)]
 mod native_math_tests;
+mod net;
+#[cfg(test)]
+mod net_loopback;
+#[cfg(test)]
+mod net_tests;
 mod number;
 mod number_format;
 #[cfg(test)]
@@ -116,6 +121,7 @@ mod number_value_tests;
 mod numeric_constant_tests;
 #[cfg(test)]
 mod parameter_flow_tests;
+mod permission;
 mod policy;
 #[cfg(test)]
 mod post_write_tests;
@@ -190,6 +196,8 @@ pub enum RuntimeError {
     Policy(#[from] varta_common::VartaError),
     #[error(transparent)]
     Scheduler(#[from] varta_common::scheduler::SchedulerError),
+    #[error(transparent)]
+    Net(#[from] varta_common::net::NetError),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
 }
@@ -210,6 +218,8 @@ pub(crate) struct RuntimeContext {
     http_control: Option<(String, HttpShutdown)>,
     random: random::RandomSource,
     scheduler: scheduler::Scheduler,
+    /// V37 network requests: ids, completions and transfer tasks.
+    net: net::Net,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
 }
 
@@ -560,7 +570,11 @@ mod abort_signal_tests;
 #[cfg(test)]
 mod catch_pattern_tests;
 #[cfg(test)]
+mod class_generic_tests;
+#[cfg(test)]
 mod class_tests;
+#[cfg(test)]
+mod collection_tests;
 #[cfg(test)]
 mod declared_field_tests;
 #[cfg(test)]
@@ -570,7 +584,11 @@ mod error_subclass_tests;
 #[cfg(test)]
 mod generic_tests;
 #[cfg(test)]
+mod language_core_tests;
+#[cfg(test)]
 mod mixed_record_tests;
+#[cfg(test)]
+mod regexp_tests;
 #[cfg(test)]
 mod unknown_json_tests;
 #[cfg(test)]
@@ -585,6 +603,8 @@ mod v34_cross_stream_tests;
 mod v35_cross_stream_tests;
 #[cfg(test)]
 mod v36_cross_stream_tests;
+#[cfg(test)]
+mod v37_integration_tests;
 #[cfg(test)]
 mod value15_tests;
 #[cfg(test)]

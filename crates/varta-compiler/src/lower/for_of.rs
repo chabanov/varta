@@ -101,6 +101,12 @@ impl Lower<'_> {
         // remain in TDZ; assignment heads do not introduce bindings.
         let value = self.expr(&statement.right)?;
         let value = self.headers_iteration(value)?;
+        let value = self.match_array_values(value)?;
+        // V37: a Map/Set iterates its live entries through a prelude
+        // generator; a Uint8Array and a tuple iterate their dense storage.
+        let (value, packed) = self.collection_iteration(value)?;
+        let packed = packed || matches!(value.ty, Type::Tuple(_));
+        let value = self.physical_array(value)?;
         if self.types.profile.refinement_writes() {
             self.flow_for_of_effects(statement);
         }
@@ -117,7 +123,15 @@ impl Lower<'_> {
             return Err(invalid("missing for-of array type"));
         };
         let element = self.types.arrays[id as usize];
-        let item = if self.types.profile.sparse_arrays() {
+        // V37: the variable has the element type, read checked (`dense`),
+        // unless the storage has no holes (`packed`: collections, tuples).
+        // A loop variable the enclosing code compares with `undefined` keeps
+        // JavaScript's `undefined` for holes (`dense::undefined_comparisons`).
+        let compared = matches!(pattern, ast::Pat::Ident(binding)
+            if self.core.undefined_checked.contains(binding.id.sym.as_ref()));
+        let checked = self.types.profile.language_core() && !packed && !compared;
+        let sparse = self.types.profile.sparse_arrays() && !packed;
+        let item = if sparse && !checked {
             unions::intern(vec![element, Type::Undefined], self.types)?
         } else {
             element
@@ -128,8 +142,12 @@ impl Lower<'_> {
         init.push(S::Init(index, number(statement.span, 0.0)));
         let read = Expr {
             span: statement.right.span(),
-            ty: item,
-            kind: if self.types.profile.sparse_arrays() {
+            ty: if checked {
+                unions::intern(vec![element, Type::Undefined], self.types)?
+            } else {
+                item
+            },
+            kind: if sparse {
                 E::MaybeIndex(
                     Box::new(local(statement.span, source, array)),
                     Box::new(local(statement.span, index, Type::Float64)),
@@ -140,6 +158,11 @@ impl Lower<'_> {
                     Box::new(local(statement.span, index, Type::Float64)),
                 )
             },
+        };
+        let read = if checked {
+            self.dense_read(read, element, dense::ITERATED_HOLE)?
+        } else {
+            read
         };
         // IteratorStepValue precedes evaluation of an assignment reference.
         // S::Init creates a new managed cell for every captured lexical leaf.

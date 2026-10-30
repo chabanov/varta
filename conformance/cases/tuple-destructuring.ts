@@ -1,0 +1,1 @@
+function divide(a:number,b:number):[number,number]{return [Math.floor(a/b),a%b];}export function main():void{const [q,r]=divide(17,5);const pair:[string,number]=['n',q+r];console.log(`${q} ${r} ${pair[0]}${pair[1]}`);}

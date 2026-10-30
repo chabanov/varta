@@ -11,6 +11,9 @@ fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
 
 impl Lower<'_> {
     pub(super) fn simple_assignment_value(&mut self, assign: &ast::AssignExpr) -> Result<Expr> {
+        if let Some(value) = self.global_compound(assign)? {
+            return Ok(value);
+        }
         if assign.op != ast::AssignOp::Assign {
             return self.compound_assignment_value(assign);
         }
@@ -27,6 +30,15 @@ impl Lower<'_> {
                 let base = self.write_member_base(member)?;
                 if matches!(base.ty, Type::Dictionary(_)) {
                     return self.dictionary_write(member, base, &assign.right);
+                }
+                if matches!(base.ty, Type::Collection(ir::CollectionKind::Uint8Array, _)) {
+                    return self.bytes_write(member, base, &assign.right);
+                }
+                if let Type::Tuple(_) | Type::Collection(..) = base.ty {
+                    return Err(unsupported(&format!(
+                        "assignment to a {} element or property",
+                        base.ty
+                    )));
                 }
                 if let Type::Record(shape) = base.ty
                     && let ast::MemberProp::Computed(key) = &member.prop

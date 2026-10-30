@@ -78,6 +78,18 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     if value.ty == Type::Unknown {
         return Ok(value);
     }
+    if collections::reaches(value.ty, types) {
+        return Err(collections::opaque("conversion to unknown"));
+    }
+    // A tuple (v37) is an ordinary array to every dynamic reader.
+    let value = match value.ty {
+        Type::Tuple(id) => Expr {
+            span: value.span,
+            ty: types.tuples[id as usize].array,
+            kind: E::Reinterpret(Box::new(value)),
+        },
+        _ => value,
+    };
     if matches!(value.ty, Type::Promise(_)) && !types.profile.promise_values() {
         return Err(type_error(
             "promise value is not assignable to unknown; promises carry no value tag, \
@@ -94,6 +106,20 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
         return Err(type_error(format!(
             "{} value is not assignable to unknown; unknown holds primitives, BigInt, \
              records, dictionaries, arrays and Error or class instances",
+            value.ty
+        )));
+    }
+    if types.profile.class_generics() && classes::reaches_json_form(value.ty, types) {
+        return Err(type_error(format!(
+            "{} value is not assignable to unknown; it may reach a URL or a RegExp match \
+             array, whose JSON form is not modelled",
+            value.ty
+        )));
+    }
+    if classes::reaches_private(value.ty, types) {
+        return Err(type_error(format!(
+            "{} value is not assignable to unknown; it may reach a class instance with \
+             #private fields, which host readers would see as properties",
             value.ty
         )));
     }

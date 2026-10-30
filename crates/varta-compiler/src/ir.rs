@@ -57,6 +57,60 @@ pub(crate) enum Type {
     /// Promise object (v34 `promises`): a guest-heap record with private
     /// fields and no value tag; the id indexes `ValueTypes::promises`.
     Promise(u32),
+    /// TypeScript's `never` (v37 `language_core`): the type of a binding whose
+    /// narrowing excluded every member, or of a `never` annotation. No value
+    /// has it; code that would observe one is unreachable and traps.
+    Never,
+    /// Engine collection object (v37 `collections`): `Map`, `Set` or
+    /// `Uint8Array`, physically its private storage
+    /// (`ValueTypes::collections[id].storage`), with no value tag of its own.
+    /// Erased to the storage before emission; see `lower::collections`.
+    Collection(CollectionKind, u32),
+    /// Tuple type (v37 `collections`): physically the dense array
+    /// `ValueTypes::tuples[id].array` of the union of its element types.
+    /// Erased to that array before emission; see `lower::tuples`.
+    Tuple(u32),
+}
+
+/// The engine collection families of v37 (`Type::Collection`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum CollectionKind {
+    Map,
+    Set,
+    Uint8Array,
+}
+impl CollectionKind {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Map => "Map",
+            Self::Set => "Set",
+            Self::Uint8Array => "Uint8Array",
+        }
+    }
+}
+/// One instantiated engine collection type (v37 `collections`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CollectionType {
+    pub kind: CollectionKind,
+    /// The key type (`Set` elements; `number` for `Uint8Array`).
+    pub key: Type,
+    /// The value type (`Set`: its element type; `number` for `Uint8Array`).
+    pub value: Type,
+    /// The physical storage: the prelude record (`MapStore`/`SetStore`) or,
+    /// for `Uint8Array`, a dense `number[]` of byte values.
+    pub storage: Type,
+}
+/// One tuple type (v37 `collections`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TupleType {
+    /// Element types in position order.
+    pub elements: Vec<Type>,
+    /// Trailing optional elements start at this position.
+    pub required: usize,
+    /// `readonly [..]`: writes through the tuple are rejected.
+    pub readonly: bool,
+    /// The physical dense array type.
+    pub array: Type,
 }
 
 /// Base primitive of a literal set; it fixes the erased physical representation.
@@ -92,6 +146,8 @@ impl Type {
         matches!(
             self,
             Self::BigInt
+                | Self::Collection(..)
+                | Self::Tuple(_)
                 | Self::Dictionary(_)
                 | Self::Class(_)
                 | Self::Generator(_)
@@ -156,7 +212,7 @@ impl Type {
         })
     }
     pub(crate) fn width(self) -> u32 {
-        if self == Self::Void {
+        if matches!(self, Self::Void | Self::Never) {
             0
         } else if self.result_value().is_some() {
             2
@@ -251,6 +307,12 @@ pub(crate) struct ValueTypes {
     pub builtin_functions: std::collections::BTreeMap<&'static str, usize>,
     /// Promise lowering state (v34): synthesized helpers and scheduled frames.
     pub asynchrony: crate::lower::promises::Asynchrony,
+    /// Engine collection types (v37), interned by kind and type arguments.
+    pub collections: Vec<CollectionType>,
+    /// Tuple types (v37), interned.
+    pub tuples: Vec<TupleType>,
+    /// Loaded engine prelude modules and their functions (v37).
+    pub engine: crate::lower::engine::EngineModules,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1).
@@ -372,6 +434,18 @@ pub(crate) struct AsyncGeneratorType {
     pub returned: Type,
 }
 impl ValueTypes {
+    /// Function slots lowering may allocate. V37 (`language_core`) removes
+    /// unreachable functions after lowering (`lower::prune`), so it links
+    /// against a wider compile-time cap; the emitted module still holds at
+    /// most `abi::MAX_USER_FUNCTIONS` functions. Earlier profiles allocate
+    /// against that limit directly and keep their diagnostics.
+    pub fn function_limit(&self) -> usize {
+        if self.profile.language_core() {
+            crate::lower::LINKED_FUNCTIONS
+        } else {
+            varta_common::abi::MAX_USER_FUNCTIONS
+        }
+    }
     /// Layout version stamped into descriptors and catalogs; see
     /// `LanguageProfile::value_layout`. The module's value section declares
     /// `LanguageProfile::value_abi` instead.
@@ -485,6 +559,9 @@ impl Type {
             Self::Union(_) => V::PrimitiveUnion,
             Self::ReferenceUnion(_) | Self::Unknown | Self::Object(_) => V::ReferenceUnion,
             Self::Literal(base, _) => return base.erased().value_kind(),
+            // Physical kinds of the v37 erased types (their storage).
+            Self::Collection(CollectionKind::Uint8Array, _) | Self::Tuple(_) => V::Array,
+            Self::Collection(..) => V::Record,
             _ => return None,
         })
     }
@@ -585,6 +662,8 @@ pub(crate) enum TextUnits {
     Index(UnitClass),
     /// A copy with ASCII `A`-`Z` lowercased.
     AsciiLowercase,
+    /// A copy with ASCII `a`-`z` uppercased (v37 `collections` text prelude).
+    AsciiUppercase,
     /// A copy without leading and trailing HTTP whitespace (TAB, LF, CR, SP).
     TrimHttpWhitespace,
 }
@@ -598,6 +677,36 @@ pub(crate) enum UnitClass {
     NonToken,
     /// NUL, LF or CR: not allowed in a header value.
     ForbiddenValue,
+    /// Above U+007F (v37 text prelude: the ASCII case-mapping fast path).
+    NonAscii,
+}
+
+/// Engine-internal guest operations of the v37 preludes (`lower::engine`
+/// intrinsics); they make no host call and read no capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Intrinsic {
+    /// `(string, index) -> number`: the UTF-16 code unit at a non-negative
+    /// integral index, or NaN outside the string.
+    CodeUnit,
+    /// `(units: number[]) -> string`: a fresh string of the array's code
+    /// units, each an integer in 0..=0xFFFF.
+    FromUnits,
+    /// `(reference) -> number`: the stable address of a managed reference
+    /// (the nonmoving heap never relocates it), a collection key hash.
+    Identity,
+}
+
+/// Engine-internal guest operations of the v37 RegExp prelude
+/// (`lower::regexp`); they make no host call and read no capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RegExpIntrinsic {
+    /// `(program, input, start, sticky)`: one matcher run; the capture slots
+    /// as a string, or the empty string without a match.
+    Exec,
+    /// `(captures, slot)`: one capture slot as a Number, -1 when unset.
+    Slot,
+    /// `(text, index)`: the code unit at `index` as a Number, -1 outside.
+    Unit,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -670,6 +779,8 @@ pub(crate) enum Expression {
         value: Box<Expr>,
         op: TextUnits,
     },
+    /// A v37 engine prelude intrinsic; operands are evaluated in order.
+    Intrinsic(Intrinsic, Vec<Expr>),
     StringRepeat {
         value: Box<Expr>,
         count: Box<Expr>,
@@ -713,6 +824,8 @@ pub(crate) enum Expression {
     NumberSameValue(Box<Expr>, Box<Expr>),
     Negative(Box<Expr>),
     Math(MathIntrinsic, Vec<Expr>),
+    /// A v37 RegExp prelude guest operation.
+    RegExp(RegExpIntrinsic, Vec<Expr>),
     NumberPredicate(NumberPredicate, Vec<Expr>),
     ToBoolean(Box<Expr>),
     Not(Box<Expr>),
@@ -924,10 +1037,13 @@ impl std::fmt::Display for Type {
             Self::Class(_) => "class instance",
             Self::Generator(_) => "generator",
             Self::Promise(_) => "promise",
+            Self::Collection(kind, _) => kind.name(),
+            Self::Tuple(_) => "tuple",
             Self::Array(_) => "array",
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",
             Self::Unknown => "unknown",
+            Self::Never => "never",
             Self::Object(false) => "object",
             Self::Object(true) => "object | null",
             Self::Literal(LiteralBase::String, _) => "string literal type",

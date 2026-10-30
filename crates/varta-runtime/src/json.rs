@@ -98,22 +98,32 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
-    for (operation, version) in [
+    // The bool hides private state (v37 `json_stringify_v17`).
+    for (operation, version, private) in [
         (
             varta_common::HostOperation::JsonStringifyV13,
             BIGINT_VALUE_VERSION,
+            false,
         ),
         (
             varta_common::HostOperation::JsonStringifyV14,
             DYNAMIC_VALUE_VERSION,
+            false,
         ),
         (
             varta_common::HostOperation::JsonStringifyV15,
             PROMISE_VALUE_VERSION,
+            false,
         ),
         (
             varta_common::HostOperation::JsonStringifyV16,
             FUNCTION_FIELD_VALUE_VERSION,
+            false,
+        ),
+        (
+            varta_common::HostOperation::JsonStringifyV17,
+            FUNCTION_FIELD_VALUE_VERSION,
+            true,
         ),
     ] {
         linker.func_wrap(
@@ -129,8 +139,9 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     return Err(error("missing memory"));
                 };
                 let packed = ((hi as u32 as u64) << 32) | (lo as u32 as u64);
-                let encoded = Encoder::with_version(memory.data(&caller), version)
-                    .encode_optional(kind as u32, packed);
+                let mut encoder = Encoder::with_version(memory.data(&caller), version);
+                encoder.hide_private = private;
+                let encoded = encoder.encode_optional(kind as u32, packed);
                 caller.data().check_budget()?;
                 match encoded {
                     Ok(Some(bytes)) => Ok((
@@ -153,6 +164,8 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     }
     Ok(())
 }
+
+pub(crate) use varta_common::value::PRIVATE_KEY_PREFIX;
 
 /// How value17 diagnostics (logged values) show a function value: as Node
 /// shows an anonymous function, since closures carry no source name.
@@ -212,6 +225,10 @@ struct Encoder<'a, 'b> {
     functions: BTreeSet<u64>,
     diagnostic_budget: Option<&'b mut varta_bigint::Budget>,
     version: u32,
+    /// Skip record fields whose key starts with [`PRIVATE_KEY_PREFIX`]
+    /// (v37 `json_stringify_v17`): ES private names and engine prelude state
+    /// are not properties.
+    hide_private: bool,
     data: &'a [u8],
     output: Output,
     path: Vec<usize>,
@@ -229,6 +246,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             functions: BTreeSet::new(),
             diagnostic_budget: None,
             version,
+            hide_private: false,
             data,
             output: Output(Vec::new()),
             path: Vec::new(),
@@ -739,6 +757,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             if !names.insert(key) {
                 return Err(error("duplicate object field"));
             }
+
             let [lo, hi] = self.words::<2>(ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES)?;
             let packed = ((hi as u64) << i32::BITS) | lo as u64;
             let (kind, packed) = self.resolve(kind, packed)?;

@@ -103,7 +103,7 @@ impl Lower<'_> {
     /// the diagnostic when the user-function ceiling is reached.
     pub(super) fn reserve_function(&mut self, limit: &str) -> Result<usize> {
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid(limit));
         }
         *self.next_function += 1;
@@ -159,6 +159,7 @@ impl Lower<'_> {
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         let slots: Vec<u32> = params.iter().map(|ty| child.hidden(*ty)).collect();
         let arguments = slots

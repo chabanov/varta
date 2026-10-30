@@ -1,6 +1,31 @@
 //! Canonical operation names and Wasm signatures shared by compiler and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostOperation {
+    /// v37 network requests (`crate::net`): start a request after the exact
+    /// `net.request` grant check; returns its id. Capability `net.request`.
+    NetRequestStart,
+    /// v37: wake the one reaction of an engine-internal pending promise when
+    /// the request's armed operation completes.
+    NetRequestWatch,
+    /// v37: take the completed operation; returns its `net::CompletionKind`.
+    NetRequestTake,
+    /// v37: the text of the taken completion, in the host result buffer.
+    NetRequestText,
+    /// v37: arm the next body chunk of a request whose head was taken.
+    NetBodyRead,
+    /// v37: cancel the transfer and release the request; unknown ids are a
+    /// no-op.
+    NetRequestAbort,
+    /// v37: `timer_start` with a recoverable denial: without the grant it
+    /// arms nothing, releases the timer frame and returns 0, and the guest
+    /// throws a `NotAllowedError` `DOMException`. Capability `time.timer`.
+    TimerStartV2,
+    /// v37: `json_stringify_v16` with private state hidden. Record fields
+    /// whose descriptor key starts with `#` (ES private names, and the state
+    /// of engine prelude classes) are not properties and are skipped, as
+    /// JavaScript's `JSON.stringify` skips them. Same signature, no
+    /// capability.
+    JsonStringifyV17,
     /// Value17 (profile v36) readers: each mirrors its value16 counterpart's
     /// signature and contract, reading value17 layouts (which add function
     /// values as tagged values) and nothing else.
@@ -183,6 +208,14 @@ pub enum HostOperation {
     JsonParseV5,
     StringCharAt16,
     StringCharCodeAt16,
+    /// V37 (`collections`) default Unicode case conversion of a UTF-16
+    /// string (`String.prototype.toUpperCase`/`toLowerCase`), lone
+    /// surrogates kept; pure and capability-free.
+    StringToUpperCase16,
+    StringToLowerCase16,
+    /// V37 (`collections`) `Date.now()`: milliseconds since the Unix epoch as
+    /// binary64, under the exact `time.now` grant (a denial is fatal).
+    DateNow,
     LogFloatV2,
     LogFloat,
     FloatRemainder,
@@ -332,8 +365,11 @@ impl HostOperation {
                 | Self::EnvGet16
                 | Self::FsRead16
                 | Self::NetGet16
+                | Self::NetRequestText
                 | Self::JsonStringifyV5
                 | Self::StringCharAt16
+                | Self::StringToUpperCase16
+                | Self::StringToLowerCase16
                 | Self::EnvGet
                 | Self::FsRead
                 | Self::NetGet
@@ -407,6 +443,14 @@ impl HostOperation {
             Self::PrimitiveNumberV5 => "primitive_to_number_v5",
             Self::BigIntFromValueV4 => "bigint_from_value_v4",
 
+            Self::NetRequestStart => "net_request_start",
+            Self::NetRequestWatch => "net_request_watch",
+            Self::NetRequestTake => "net_request_take",
+            Self::NetRequestText => "net_request_text",
+            Self::NetBodyRead => "net_body_read",
+            Self::NetRequestAbort => "net_request_abort",
+            Self::TimerStartV2 => "timer_start_v2",
+            Self::JsonStringifyV17 => "json_stringify_v17",
             Self::TimerStart => "timer_start",
             Self::TimerClear => "timer_clear",
             Self::TimerTake => "timer_take",
@@ -550,6 +594,9 @@ impl HostOperation {
             Self::JsonParseV5 => "json_parse_v5",
             Self::StringCharAt16 => "string_char_at16",
             Self::StringCharCodeAt16 => "string_char_code_at16",
+            Self::DateNow => "date_now",
+            Self::StringToUpperCase16 => "string_to_upper_case16",
+            Self::StringToLowerCase16 => "string_to_lower_case16",
             Self::LogFloatV2 => "log_f64_v2",
             Self::LogFloat => "log_f64",
             Self::FloatRemainder => "number_remainder",
@@ -612,6 +659,11 @@ impl HostOperation {
                 | Self::PromiseHandled
         )
     }
+    /// The v37 (`collections`) Unicode case conversions.
+    #[must_use]
+    pub fn text_case(self) -> bool {
+        matches!(self, Self::StringToUpperCase16 | Self::StringToLowerCase16)
+    }
     /// The v36 timer operations. Only `timer_start` takes a capability
     /// (`time.timer`) and is charged to the host-call budget; the others are
     /// scheduler bookkeeping like [`Self::scheduler`].
@@ -619,7 +671,26 @@ impl HostOperation {
     pub fn timer(self) -> bool {
         matches!(
             self,
-            Self::TimerStart | Self::TimerClear | Self::TimerTake | Self::TimerUncaught
+            Self::TimerStart
+                | Self::TimerStartV2
+                | Self::TimerClear
+                | Self::TimerTake
+                | Self::TimerUncaught
+        )
+    }
+    /// The v37 network request operations. Only `net_request_start` takes a
+    /// capability (`net.request`) and is charged to the host-call budget; the
+    /// others are request bookkeeping like the timer operations'.
+    #[must_use]
+    pub fn net(self) -> bool {
+        matches!(
+            self,
+            Self::NetRequestStart
+                | Self::NetRequestWatch
+                | Self::NetRequestTake
+                | Self::NetRequestText
+                | Self::NetBodyRead
+                | Self::NetRequestAbort
         )
     }
     pub fn signature(self) -> (usize, usize) {
@@ -628,6 +699,15 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if self.text_case()
+            || self.net()
+            || matches!(
+                self,
+                Self::DateNow | Self::TimerStartV2 | Self::JsonStringifyV17
+            )
+        {
+            return crate::abi::NET_REQUEST_VERSION;
+        }
         if self.value16_counterpart().is_some() || self.timer() {
             return crate::abi::TIMERS_VERSION;
         }
@@ -900,7 +980,12 @@ impl HostOperation {
         use HostScalar::{F64, I32, I64};
         match self {
             Self::PrimitiveCompare => (&[I64, I64], &[F64]),
-            Self::TimerStart => (&[F64, F64, I32], &[F64]),
+            Self::NetRequestStart => (&[I32, I32], &[F64]),
+            Self::NetRequestWatch => (&[F64, F64], &[]),
+            Self::NetRequestTake => (&[F64], &[I32]),
+            Self::NetRequestText => (&[F64], &[I32]),
+            Self::NetBodyRead | Self::NetRequestAbort => (&[F64], &[]),
+            Self::TimerStart | Self::TimerStartV2 => (&[F64, F64, I32], &[F64]),
             Self::TimerClear => (&[F64], &[]),
             Self::TimerTake => (&[F64], &[I32]),
             Self::TimerUncaught => (&[I64], &[]),
@@ -916,7 +1001,8 @@ impl HostOperation {
             | Self::BigIntFromValueV3
             | Self::BigIntFromValueV2
             | Self::BigIntFromValue => (&[I64], &[I32, I32]),
-            Self::JsonStringifyV16
+            Self::JsonStringifyV17
+            | Self::JsonStringifyV16
             | Self::JsonStringifyV15
             | Self::JsonStringifyV14
             | Self::JsonStringifyV13 => (&[I32, I32, I32], &[I32, I32]),
@@ -1084,6 +1170,8 @@ impl HostOperation {
             Self::HttpStop | Self::HttpService => (&[], &[]),
             Self::StringCharAt16 => (&[I32, I32, F64], &[I32]),
             Self::StringCharCodeAt16 => (&[I32, I32, F64], &[F64]),
+            Self::StringToUpperCase16 | Self::StringToLowerCase16 => (&[I32, I32], &[I32]),
+            Self::DateNow => (&[], &[F64]),
             Self::EnvHas16
             | Self::EnvGet16
             | Self::FsRead16
@@ -1123,6 +1211,14 @@ impl HostOperation {
             "primitive_to_number_v5" => Self::PrimitiveNumberV5,
             "bigint_from_value_v4" => Self::BigIntFromValueV4,
 
+            "net_request_start" => Self::NetRequestStart,
+            "net_request_watch" => Self::NetRequestWatch,
+            "net_request_take" => Self::NetRequestTake,
+            "net_request_text" => Self::NetRequestText,
+            "net_body_read" => Self::NetBodyRead,
+            "net_request_abort" => Self::NetRequestAbort,
+            "timer_start_v2" => Self::TimerStartV2,
+            "json_stringify_v17" => Self::JsonStringifyV17,
             "timer_start" => Self::TimerStart,
             "timer_clear" => Self::TimerClear,
             "timer_take" => Self::TimerTake,
@@ -1266,6 +1362,9 @@ impl HostOperation {
             "json_parse_v5" => Self::JsonParseV5,
             "string_char_at16" => Self::StringCharAt16,
             "string_char_code_at16" => Self::StringCharCodeAt16,
+            "date_now" => Self::DateNow,
+            "string_to_upper_case16" => Self::StringToUpperCase16,
+            "string_to_lower_case16" => Self::StringToLowerCase16,
             "log_f64_v2" => Self::LogFloatV2,
             "log_f64" => Self::LogFloat,
             "number_remainder" => Self::FloatRemainder,
@@ -1337,6 +1436,7 @@ impl HostOperation {
             | Self::ValueIsErrorClassV5
             | Self::JsonParseV18
             | Self::JsonParseV17
+            | Self::JsonStringifyV17
             | Self::JsonStringifyV16
             | Self::JsonStringifyV15
             | Self::PrimitiveStringV5
@@ -1361,6 +1461,11 @@ impl HostOperation {
             | Self::TimerClear
             | Self::TimerTake
             | Self::TimerUncaught
+            | Self::NetRequestWatch
+            | Self::NetRequestTake
+            | Self::NetRequestText
+            | Self::NetBodyRead
+            | Self::NetRequestAbort
             | Self::PrimitiveCompare
             | Self::PrimitiveEqual
             | Self::BigIntWidthV2
@@ -1467,6 +1572,8 @@ impl HostOperation {
             | Self::JsonParseV5
             | Self::StringCharAt16
             | Self::StringCharCodeAt16
+            | Self::StringToUpperCase16
+            | Self::StringToLowerCase16
             | Self::LogInt
             | Self::LogFloatV2
             | Self::LogFloat
@@ -1502,8 +1609,9 @@ impl HostOperation {
             | Self::JsonParseV4
             | Self::LogUndefined
             | Self::HttpService => return None,
-            Self::Time => "time.now",
-            Self::TimerStart => "time.timer",
+            Self::Time | Self::DateNow => "time.now",
+            Self::TimerStart | Self::TimerStartV2 => "time.timer",
+            Self::NetRequestStart => crate::net::REQUEST_CAPABILITY,
             Self::EnvHas | Self::EnvHas16 => "env.has",
             Self::EnvGet | Self::EnvGet16 => "env.get",
             Self::EnvPrint | Self::EnvPrint16 => "env.print",

@@ -13,12 +13,14 @@ mod collect;
 mod compare;
 mod concat;
 mod index_key;
+mod regexp;
 mod roots;
 mod sparse;
 mod string_index;
 mod string_range;
 mod string_search;
 mod string_trim;
+mod text_codes;
 mod text_units;
 use std::collections::BTreeMap;
 use varta_common::abi;
@@ -94,8 +96,20 @@ pub(super) enum Helper {
     UnitIndex(crate::ir::UnitClass),
     /// V35 Web preludes: ASCII-lowercased copy.
     AsciiLowercase,
+    /// V37 text prelude: ASCII-uppercased copy.
+    AsciiUppercase,
+    /// V37 preludes: the code unit at an index, or NaN.
+    CodeUnit,
+    /// V37 preludes: a fresh string of an array's code units.
+    FromUnits,
     /// V35 Web preludes: copy without leading/trailing HTTP whitespace.
     TrimHttpWhitespace,
+    /// V37 RegExp prelude: one matcher run over a compiled program.
+    RegExpExec,
+    /// V37 RegExp prelude: one capture slot of a matcher result.
+    RegExpSlot,
+    /// V37 RegExp prelude: one code unit without a host call, or -1.
+    RegExpUnit,
 }
 impl Helper {
     pub(super) fn string_search(mode: crate::ir::StringSearch) -> Self {
@@ -118,16 +132,33 @@ impl Helper {
         match op {
             crate::ir::TextUnits::Index(class) => Self::UnitIndex(class),
             crate::ir::TextUnits::AsciiLowercase => Self::AsciiLowercase,
+            crate::ir::TextUnits::AsciiUppercase => Self::AsciiUppercase,
             crate::ir::TextUnits::TrimHttpWhitespace => Self::TrimHttpWhitespace,
+        }
+    }
+    pub(super) fn regexp(op: crate::ir::RegExpIntrinsic) -> Self {
+        match op {
+            crate::ir::RegExpIntrinsic::Exec => Self::RegExpExec,
+            crate::ir::RegExpIntrinsic::Slot => Self::RegExpSlot,
+            crate::ir::RegExpIntrinsic::Unit => Self::RegExpUnit,
         }
     }
     pub(super) fn signature(self) -> (Vec<ValType>, Vec<ValType>) {
         match self {
+            Self::RegExpExec => (
+                vec![ValType::I64, ValType::I64, ValType::F64, ValType::I32],
+                vec![ValType::I64],
+            ),
+            Self::RegExpSlot | Self::RegExpUnit => {
+                (vec![ValType::I64, ValType::F64], vec![ValType::F64])
+            }
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
             Self::Concat => (vec![ValType::I64; 2], vec![ValType::I64]),
             Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
             Self::ArrayIndexKey | Self::UnitIndex(_) => (vec![ValType::I64], vec![ValType::F64]),
+            Self::CodeUnit => (vec![ValType::I64, ValType::F64], vec![ValType::F64]),
+            Self::FromUnits => (vec![ValType::I64], vec![ValType::I64]),
             Self::Collect => (vec![], vec![]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArraySearch | Self::ArrayLastIndex => (
@@ -156,6 +187,7 @@ impl Helper {
             | Self::StringTrimStart
             | Self::StringTrimEnd
             | Self::AsciiLowercase
+            | Self::AsciiUppercase
             | Self::TrimHttpWhitespace => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayKeys | Self::ArrayValues => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayPush => (vec![ValType::I64; 2], vec![ValType::I32]),
@@ -177,6 +209,9 @@ impl Helper {
                 | Self::ArrayStringHasOwn
                 | Self::ArrayIndexKey
                 | Self::UnitIndex(_)
+                | Self::RegExpSlot
+                | Self::RegExpUnit
+                | Self::CodeUnit
                 | Self::StringIncludes
                 | Self::StringStartsWith
                 | Self::StringEndsWith
@@ -239,7 +274,15 @@ impl Helper {
                 string_trim::function(helpers[&Self::Allocate], true, true, Whitespace::Http)
             }
             Self::UnitIndex(class) => text_units::index(class),
-            Self::AsciiLowercase => text_units::lowercase(helpers[&Self::Allocate]),
+            Self::AsciiLowercase => text_units::ascii_case(helpers[&Self::Allocate], false),
+            Self::AsciiUppercase => text_units::ascii_case(helpers[&Self::Allocate], true),
+            Self::CodeUnit => text_codes::code_unit(),
+            Self::FromUnits => {
+                text_codes::from_units(helpers[&Self::Allocate], profile.resizable_arrays())
+            }
+            Self::RegExpExec => regexp::exec(helpers[&Self::Allocate]),
+            Self::RegExpSlot => regexp::slot(),
+            Self::RegExpUnit => regexp::unit(),
             Self::ArraySlice => array_slice::function(
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],

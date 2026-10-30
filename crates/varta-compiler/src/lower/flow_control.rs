@@ -160,6 +160,11 @@ impl Lower<'_> {
             state.facts.extend(after.facts.clone());
             state.writes = after.writes.clone();
             state
+                .unassigned
+                .retain(|slot| after.unassigned.contains(slot));
+            // The finalizer started without path facts; its own still hold.
+            state.paths = after.paths.clone();
+            state
         };
         for exit in &mut self.control.exits[start..end] {
             exit.state = transform(exit.state.clone());

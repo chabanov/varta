@@ -35,6 +35,18 @@ impl Lower<'_> {
         if let Some(value) = self.builtin_function_value(member)? {
             return Ok(value);
         }
+        // A prelude static member as a value (v37: `Date.now`, `Date.parse`).
+        if self.types.profile.collections()
+            && let ast::Expr::Ident(object) = stmt::unparen(&member.obj)
+            && let ast::MemberProp::Ident(property) = &member.prop
+            && self.binding(object.sym.as_ref()).is_err()
+            && let Some(signature) = self
+                .functions
+                .get(&format!("{}.{}", object.sym, property.sym))
+                .cloned()
+        {
+            return self.function_reference(&signature, member.span);
+        }
         if let Some(value) = self.numeric_constant(member)? {
             return Ok(value);
         }
@@ -42,11 +54,21 @@ impl Lower<'_> {
             return self.new_target_member(member);
         }
         let value = self.expr(&member.obj)?;
+        // V37: a field read on a union of several record shapes (`shared`).
+        if self.shared_records(value.ty) {
+            return self.shared_field(member, value);
+        }
         if value.ty == Type::Unknown {
             return Err(self.source.locate(
                 type_error("property access on an unknown value; narrow it with typeof, instanceof or a checked `as` first"),
                 member.obj.span(),
             ));
+        }
+        if let Type::Tuple(_) = value.ty {
+            return self.tuple_member(member, value);
+        }
+        if let Type::Collection(..) = value.ty {
+            return self.collection_member(member, value);
         }
         if self.error_value(value.ty) {
             return self.error_field(member, value);
@@ -87,6 +109,11 @@ impl Lower<'_> {
         }
         if matches!(value.ty, Type::Dictionary(_)) {
             return self.dictionary_read(member, value);
+        }
+        if self.match_array(value.ty)
+            && let ast::MemberProp::Computed(key) = &member.prop
+        {
+            return self.match_element(member, value, &key.expr);
         }
         if matches!(value.ty, Type::Class(_)) {
             return self.class_member(member, value, true);

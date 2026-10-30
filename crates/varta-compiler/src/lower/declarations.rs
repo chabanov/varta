@@ -65,7 +65,7 @@ pub(super) fn collect<'a>(
             }
             ast::Decl::TsInterface(_) | ast::Decl::TsTypeAlias(_) => {}
             ast::Decl::Var(var) if profile.module_constants() && !var.declare => {
-                if var.kind != ast::VarDeclKind::Const {
+                if var.kind != ast::VarDeclKind::Const && !profile.language_core() {
                     return Err(source.locate(
                         unsupported("top-level let or var declaration"),
                         declaration.span(),

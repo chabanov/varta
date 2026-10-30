@@ -62,9 +62,9 @@ impl Lower<'_> {
             .classes
             .pending_member(class, name, self.types.profile)
         {
-            Some(reason) => CompilerError::Unsupported {
+            Some((reason, detail)) => CompilerError::Unsupported {
                 kind: reason.into(),
-                detail: "not implemented by the checked-f64-utf16-v35 engine Web types".into(),
+                detail: detail.into(),
             },
             None => invalid(format!("unknown {kind}: {name}")),
         }
@@ -74,6 +74,15 @@ impl Lower<'_> {
             ast::MemberProp::Ident(id) => Ok(id.sym.to_string()),
             ast::MemberProp::PrivateName(_) => Err(unsupported("#private class member")),
             ast::MemberProp::Computed(key) => match stmt::unparen(&key.expr) {
+                // Private names (v37) are not reachable through string keys.
+                ast::Expr::Lit(ast::Lit::Str(text))
+                    if self.types.profile.class_generics()
+                        && text.value.as_str().is_some_and(classes::is_private_name) =>
+                {
+                    Err(unsupported(
+                        "computed access to a class member named like a #private name",
+                    ))
+                }
                 ast::Expr::Lit(ast::Lit::Str(_)) => records::expression_key(&key.expr),
                 _ => Err(unsupported("computed class member access")),
             },
@@ -172,6 +181,9 @@ impl Lower<'_> {
     /// `new C(...)`: allocate every slot with a placeholder (zero handles are
     /// never traced and never observed), then run the initializer.
     pub(in crate::lower) fn class_new(&mut self, new: &ast::NewExpr, class: u32) -> Result<Expr> {
+        if self.types.classes.get(class).is_template() {
+            return self.generic_class_new(new, class, None);
+        }
         if new.type_args.is_some() {
             return Err(unsupported("generic class construction"));
         }
@@ -197,8 +209,6 @@ impl Lower<'_> {
             return Err(unsupported("spread to a class constructor"));
         }
         let info = self.types.classes.get(class);
-        let shape = info.shape;
-        let field_types: Vec<Type> = info.fields.iter().map(|f| f.ty).collect();
         let signature = info
             .init
             .clone()
@@ -212,7 +222,56 @@ impl Lower<'_> {
         }
         let values = self.call_arguments(args, &signature.params, &signature.shape)?;
         let values = self.bind_arguments(values, &signature.params, &signature.shape, new.span)?;
+        self.construct(new.span, class, values)
+    }
+    /// `new Page<A>(...)` or `new Page(...)` of a generic class (v37): the
+    /// instance from explicit, contextual or inferred type arguments.
+    pub(in crate::lower) fn generic_class_new(
+        &mut self,
+        new: &ast::NewExpr,
+        template: u32,
+        expected: Option<Type>,
+    ) -> Result<Expr> {
         let span = new.span;
+        if new
+            .args
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|arg| arg.spread.is_some())
+        {
+            return Err(unsupported("spread to a class constructor"));
+        }
+        let (class, call, values) = self.generic_class_instance(new, template, expected)?;
+        self.class_functions()?;
+        let signature = self
+            .types
+            .classes
+            .get(class)
+            .init
+            .clone()
+            .ok_or_else(|| CompilerError::Internal("missing class initializer".into()))?;
+        let call = call.unwrap_or_else(|| ast::CallExpr {
+            span,
+            ctxt: Default::default(),
+            callee: ast::Callee::Expr(new.callee.clone()),
+            args: new.args.clone().unwrap_or_default(),
+            type_args: None,
+        });
+        let values = self.instance_arguments(&call, values, &signature)?;
+        let values = self.bind_arguments(values, &signature.params, &signature.shape, span)?;
+        self.construct(span, class, values)
+    }
+    /// Allocate an instance of `class` with placeholder slots and run its
+    /// initializer with the bound arguments.
+    fn construct(&mut self, span: Span, class: u32, values: Vec<Expr>) -> Result<Expr> {
+        let info = self.types.classes.get(class);
+        let shape = info.shape;
+        let field_types: Vec<Type> = info.fields.iter().map(|f| f.ty).collect();
+        let signature = info
+            .init
+            .clone()
+            .ok_or_else(|| CompilerError::Internal("missing class initializer".into()))?;
         let mut zeros: BTreeMap<Type, u32> = BTreeMap::new();
         let mut defaults = Vec::new();
         for (slot, ty) in field_types.into_iter().enumerate() {
@@ -283,6 +342,7 @@ impl Lower<'_> {
         let Type::Class(class) = value.ty else {
             return Err(invalid("missing class instance"));
         };
+        self.class_functions()?;
         let name = self.member_key(&member.prop)?;
         let Some((slot, field)) = self.types.classes.field(class, &name) else {
             let method = self.types.classes.get(class).methods.get(&name).cloned();
@@ -296,6 +356,8 @@ impl Lower<'_> {
                         member.prop.span(),
                     )?;
                     let (target, receiver) = method.target();
+                    // A getter runs code (v37 `paths`).
+                    self.drop_paths();
                     Ok(Expr {
                         span: member.span,
                         ty: method.signature.result,
@@ -307,6 +369,18 @@ impl Lower<'_> {
                             }],
                         ),
                     })
+                }
+                None if self
+                    .types
+                    .classes
+                    .get(class)
+                    .generic_methods
+                    .contains_key(&name) =>
+                {
+                    Err(self.source.locate(
+                        unsupported("class method value without a call"),
+                        member.prop.span(),
+                    ))
                 }
                 Some(method) => Err(self.source.locate(
                     if method.getter {
@@ -352,6 +426,7 @@ impl Lower<'_> {
         call: &ast::CallExpr,
         member: &ast::MemberExpr,
         value: Option<Expr>,
+        expected: Option<Type>,
     ) -> Result<Expr> {
         let value = match value {
             Some(value) => value,
@@ -360,9 +435,27 @@ impl Lower<'_> {
         let Type::Class(class) = value.ty else {
             return Err(unsupported("call"));
         };
+        self.class_functions()?;
         let name = self.member_key(&member.prop)?;
         if name == error_classes::TO_STRING && self.types.classes.is_error(class) {
             return self.class_error_to_string(call, value);
+        }
+        if let Some(method) = self
+            .types
+            .classes
+            .get(class)
+            .generic_methods
+            .get(&name)
+            .cloned()
+        {
+            self.check_access(
+                method.owner,
+                method.access,
+                class,
+                &name,
+                member.prop.span(),
+            )?;
+            return self.generic_method_call(call, &method, Some(value), false, expected);
         }
         let Some(method) = self.types.classes.get(class).methods.get(&name).cloned() else {
             return Err(self.source.locate(
@@ -377,6 +470,20 @@ impl Lower<'_> {
         if method.getter {
             return Err(self.source.locate(
                 type_error(format!("class getter {name} is not callable")),
+                member.prop.span(),
+            ));
+        }
+        // Engine-internal members of the v37 `fetch` prelude classes exist
+        // only for other engine prelude modules.
+        let owner = self.types.classes.get(method.owner);
+        if owner.prelude
+            && crate::modules::engine::INTERNAL_MEMBERS
+                .iter()
+                .any(|(class, member)| *class == owner.name && *member == name)
+            && !crate::modules::engine::is_prelude_source(self.source)
+        {
+            return Err(self.source.locate(
+                self.unknown_member(class, &name, "class method"),
                 member.prop.span(),
             ));
         }
@@ -428,8 +535,26 @@ impl Lower<'_> {
         call: &ast::CallExpr,
         member: &ast::MemberExpr,
         class: u32,
+        expected: Option<Type>,
     ) -> Result<Expr> {
         let name = self.member_key(&member.prop)?;
+        if let Some(method) = self
+            .types
+            .classes
+            .get(class)
+            .generic_statics
+            .get(&name)
+            .cloned()
+        {
+            self.check_access(
+                method.owner,
+                method.access,
+                class,
+                &name,
+                member.prop.span(),
+            )?;
+            return self.generic_method_call(call, &method, None, true, expected);
+        }
         let Some(method) = self.types.classes.get(class).statics.get(&name).cloned() else {
             return Err(self.source.locate(
                 self.unknown_member(class, &name, "static class method"),
@@ -481,6 +606,7 @@ impl Lower<'_> {
         if self.types.classes.root_family(class).is_some() {
             return self.error_super_call(call, class);
         }
+        self.class_functions()?;
         let signature = self
             .types
             .classes
@@ -502,6 +628,7 @@ impl Lower<'_> {
         &mut self,
         call: &ast::CallExpr,
         property: &ast::SuperPropExpr,
+        expected: Option<Type>,
     ) -> Result<Expr> {
         let Some(parent) = self
             .types
@@ -514,7 +641,21 @@ impl Lower<'_> {
         let ast::SuperProp::Ident(name) = &property.prop else {
             return Err(unsupported("computed super property"));
         };
+        self.class_functions()?;
         let name = name.sym.to_string();
+        if let Some(method) = self
+            .types
+            .classes
+            .get(parent)
+            .generic_methods
+            .get(&name)
+            .cloned()
+        {
+            let current = self.types.classes.context.map_or(parent, |c| c.class);
+            self.check_access(method.owner, method.access, current, &name, property.span)?;
+            let this = self.this_value(property.span)?;
+            return self.generic_method_call(call, &method, Some(this), true, expected);
+        }
         let Some(method) = self.types.classes.get(parent).methods.get(&name).cloned() else {
             return Err(self.source.locate(
                 invalid(format!("unknown inherited class method: {name}")),
@@ -533,13 +674,61 @@ impl Lower<'_> {
     /// A union holds at most one record-tagged member, which may be a class.
     fn union_instance_of(&mut self, value: Expr, class: u32, span: Span) -> Result<Expr> {
         let union = value.ty;
-        let member = unions::members(union, self.types)
+        let members: Vec<u32> = unions::members(union, self.types)
             .into_iter()
-            .find_map(|ty| match ty {
+            .filter_map(|ty| match ty {
                 Type::Class(member) => Some(member),
                 _ => None,
-            });
+            })
+            .collect();
         let classes = &self.types.classes;
+        // V37 unions may hold several classes (`language_core`): test every
+        // member that is `class` or a subclass, else the nearest ancestor.
+        let below: Vec<u32> = members
+            .iter()
+            .copied()
+            .filter(|member| classes.descends(*member, class))
+            .collect();
+        if below.len() > 1 {
+            let saved = self.hidden(union);
+            let result = self.hidden(Type::Boolean);
+            let marker = self.hidden(Type::Number);
+            let test = below
+                .iter()
+                .rev()
+                .fold(boolean(span, false), |rest, member| Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::Conditional(
+                        Box::new(Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::IsUnionMember(
+                                Box::new(local(span, saved, union)),
+                                Type::Class(*member),
+                            ),
+                        }),
+                        Box::new(boolean(span, true)),
+                        Box::new(rest),
+                    ),
+                });
+            return Ok(Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::ValueBlock {
+                    output: result,
+                    marker,
+                    roots: vec![saved],
+                    body: vec![S::Init(saved, value), S::Init(result, test)],
+                },
+            });
+        }
+        let member = below.first().copied().or_else(|| {
+            members
+                .iter()
+                .copied()
+                .find(|member| classes.descends(class, *member))
+        });
         let kind = match member {
             Some(member) if classes.descends(member, class) => {
                 E::IsUnionMember(Box::new(value), Type::Class(member))
@@ -607,14 +796,38 @@ impl Lower<'_> {
         let Some(ty) = self.refinements.get(&binding.slot).copied().or(binding.ty) else {
             return Ok(());
         };
+        // A generic class narrows to the instantiation the binding holds (v37).
+        let class = if self.types.classes.get(class).is_template() {
+            match self.template_instance(class, ty) {
+                Some(instance) => instance,
+                None => return Ok(()),
+            }
+        } else {
+            class
+        };
         if ty == Type::Unknown {
             // The descriptor test proves the class family (v34 `unknown`).
             return self.refine_with(name, |_, _| yes.then(|| vec![Type::Class(class)]));
         }
-        let member = unions::members(ty, self.types).into_iter().find(
-            |member| matches!(member, Type::Class(m) if self.types.classes.descends(*m, class)),
-        );
-        match member {
+        let descendants: Vec<Type> = unions::members(ty, self.types)
+            .into_iter()
+            .filter(
+                |member| matches!(member, Type::Class(m) if self.types.classes.descends(*m, class)),
+            )
+            .collect();
+        // V37 unions may hold several subclasses (`language_core`): keep (or
+        // drop) all of them, never only the first.
+        if descendants.len() > 1 {
+            return self.refine_with(name, |ty, types| {
+                Some(
+                    unions::members(ty, types)
+                        .into_iter()
+                        .filter(|member| descendants.contains(member) == yes)
+                        .collect(),
+                )
+            });
+        }
+        match descendants.first().copied() {
             Some(member) => self.refine(name, references::Guard::Exact(member), yes),
             None if yes && self.types.classes.is_error(class) => {
                 self.refine_error_downcast(name, class)
@@ -630,7 +843,36 @@ impl Lower<'_> {
         class: u32,
     ) -> Result<Expr> {
         let value = self.expr(&binary.left)?;
+        if self.types.classes.get(class).is_template() {
+            return self.template_instance_of(value, class, binary.span);
+        }
         self.class_test(value, class, binary.span)
+    }
+    /// `value instanceof Page` of a generic class (v37): the test of the
+    /// instantiation the value's static type holds (or descends from). A
+    /// downcast is rejected, because instantiations may still be created by
+    /// later bodies; a value without a class member is never an instance.
+    fn template_instance_of(&mut self, value: Expr, template: u32, span: Span) -> Result<Expr> {
+        if let Some(instance) = self.template_instance(template, value.ty) {
+            return self.class_test(value, instance, span);
+        }
+        let classes = unions::members(value.ty, self.types)
+            .iter()
+            .any(|member| matches!(member, Type::Class(_) | Type::Unknown));
+        if classes {
+            return Err(self.source.locate(
+                unsupported(&format!(
+                    "instanceof generic class {} on a value not typed as one of its instantiations",
+                    self.types.classes.get(template).name
+                )),
+                span,
+            ));
+        }
+        Ok(Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::Sequence(Box::new(value), Box::new(boolean(span, false))),
+        })
     }
     /// `value instanceof C` for an already lowered operand.
     pub(in crate::lower) fn class_test(

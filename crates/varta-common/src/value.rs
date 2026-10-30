@@ -99,6 +99,13 @@ pub fn array_capacity(length: usize) -> usize {
     }
 }
 pub const OPTIONAL_FIELD_FLAG: u32 = 1 << 31;
+/// The descriptor key prefix of private state (profile v37): rewritten ES
+/// private names, the fields of engine prelude classes and Error slots that
+/// are not own enumerable properties. V37 source cannot spell a property key
+/// with it; `json_stringify_v17` skips such fields, and the exception channel
+/// reads a thrown instance's `#name`/`#message` when it has no own
+/// `name`/`message`.
+pub const PRIVATE_KEY_PREFIX: char = '#';
 #[must_use]
 pub fn field_mask(count: usize) -> u32 {
     if count >= MAX_RECORD_FIELDS {

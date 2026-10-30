@@ -43,11 +43,21 @@ pub(super) fn observe(
     grants: &[CapabilityGrant],
     collect: bool,
 ) -> (Vec<String>, Result<(), RuntimeError>) {
+    observe_with_profile(source, grants, collect, V36)
+}
+/// [`observe`] for a program of `profile`.
+pub(super) fn observe_with_profile(
+    source: &str,
+    grants: &[CapabilityGrant],
+    collect: bool,
+    profile: LanguageProfile,
+) -> (Vec<String>, Result<(), RuntimeError>) {
     use varta_compiler::suspension_test_hook as hook;
     let bytes = if collect {
-        hook::compile_with_profile(source, V36).unwrap_or_else(|e| panic!("{e}\n{source}"))
+        hook::compile_with_profile(source, profile).unwrap_or_else(|e| panic!("{e}\n{source}"))
     } else {
-        compile(source)
+        varta_compiler::compile_typescript_with_profile(source, profile)
+            .unwrap_or_else(|e| panic!("{e}\n{source}"))
     };
     let runtime = VartaRuntime::new();
     let module = runtime.prepare_module(&bytes).unwrap();
@@ -81,7 +91,7 @@ pub(super) fn observe(
                 resume.call(&mut *store, (token, 0, 0))?;
             }
             assert!(store.data().scheduler.unhandled_rejection().is_none());
-            if store.data().scheduler.next_due().is_none() {
+            if store.data().scheduler.next_due(false).is_none() {
                 return Ok(());
             }
             store.data_mut().scheduler.fire().unwrap();

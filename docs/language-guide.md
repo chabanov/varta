@@ -4742,3 +4742,471 @@ generator's values (and its `return()` and `throw()`). Not supported yet:
 `yield*` over arrays or synchronous generators, async generator function
 expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
 `await` inside an intrinsic call or template (bind it to a `const` first). `for await` costs a few microtasks per value, like Node.
+
+### `checked-f64-utf16-v37`
+
+Profile v37 (in development) runs every v36 program unchanged and adds the
+language core, class generics, collections and binary text, regular
+expressions and `fetch` below; the last subsection shows how they work
+together.
+
+#### Language core (opt-in v37)
+
+```ts
+interface Settings { cancel?: AbortSignal; label?: string }
+
+function delay(ms: number, settings: Settings): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // The timer callback names `stop`, declared below: a capture before
+    // initialization, legal because the callback runs later.
+    const handle = setTimeout(() => {
+      settings.cancel?.removeEventListener("abort", stop);
+      resolve(describe());
+    }, ms);
+    const stop = () => {
+      clearTimeout(handle);
+      reject(settings.cancel?.reason);
+    };
+    settings.cancel?.addEventListener("abort", stop);
+    // Nested function declarations are hoisted to the block entry.
+    function describe(): string {
+      // Property-path narrowing: `settings.label` is a string here.
+      return settings.label !== undefined ? settings.label : "done";
+    }
+  });
+}
+
+function kind(field: string): string {
+  let out: string;                 // assigned on every path before the read
+  switch (field) {                 // strict equality over strings
+    case "id":
+    case "key":
+      out = "key";
+      break;
+    default:
+      out = "value";
+  }
+  return out;
+}
+
+export async function main(): Promise<void> {
+  console.log(await delay(5, { label: "slept" }));      // slept
+  const parts: string[] = ["id", "x"];
+  let joined = "";
+  for (const part of parts) joined += kind(part);        // part: string
+  console.log(joined + " " + parts[0]);                  // keyvalue id
+  const seen: number[] = [];
+  const record = (n: number): number => seen.push(n);   // returns a number
+  [1, 2].forEach(record);                                // as a void callback
+  const read = (): number => late;
+  try {
+    read();
+  } catch (e) {
+    if (e instanceof Error) console.log(e.name);         // ReferenceError
+  }
+  const late = 1;
+  console.log(String(read()));                           // 1
+}
+```
+
+Run it with the timer grant (`"capabilities": { "time": { "timer": true } }`).
+A closure may capture a `let`/`const` or a nested function before its
+declaration; reading or assigning it through the closure before the
+declaration ran throws an error whose `name` is `"ReferenceError"`, as in
+Node (`instanceof ReferenceError` is not available yet: test `e.name`). The
+binding needs a type that is known at the capture: an annotation, an arrow
+or function whose parameters and result are annotated (or whose block body
+returns nothing), or a literal. A read in the same function before the
+declaration is still a compile-time error.
+
+`let x: T;` may be declared without an initializer when every read is
+preceded by an assignment on every path, including `switch` clauses with a
+`default` and `try` blocks whose `catch` leaves; a closure may capture it only
+after it is assigned. `for (const x of xs)` and `xs[i]` have the element type,
+as in TypeScript; a hole or an index out of range throws a `TypeError` instead
+of producing `undefined` (use `xs.at(i)` or test `i < xs.length` where that can
+happen). A guard on `a.b`, `a.b.c` or `a.b?.c` narrows later reads of the same
+path until a call, a property assignment or a loop that may run code
+intervenes (Varta is stricter than TypeScript there, because objects are
+shared). `switch` works on strings, literal unions and `typeof x`. A function
+that returns a value can be passed where a `void` callback is expected. Class
+fields typed `T | undefined` may be left uninitialized, a field initialized by
+`new C()` has type `C`, and an arrow created in a constructor may use
+`this.field` once the fields it reads are assigned.
+
+#### Unions of object types and module variables (opt-in v37)
+
+```ts
+type Event = { kind: "chunk"; text: string } | { kind: "done" };
+
+let text = "";            // module state: every function sees the current value
+let finished = 0;
+
+export const record = (e: Event): void => {
+  switch (e.kind) {       // narrows `e` by its discriminant
+    case "chunk":
+      text += e.text;
+      break;
+    case "done":
+      finished++;
+      break;
+    default: {
+      const unreachable: never = e;   // exhaustiveness check
+    }
+  }
+};
+
+export function main(): void {
+  record({ kind: "chunk", text: "ab" });
+  record({ kind: "done" });
+  console.log(text + " " + String(finished));          // ab 1
+  const parsed = JSON.parse('{"kind":"chunk","text":"c"}') as Event;
+  record(parsed);
+  console.log(text);                                    // abc
+}
+```
+
+A union may combine several object shapes, interfaces and classes, and
+arrays of different element kinds (`string[] | number[]`, `string | Item[]`,
+but not `A[] | B[]` of two object types). Narrow it with a literal field
+(`if (e.kind === "chunk")`, `switch`), `in`, `instanceof`,
+`Array.isArray` or `typeof`; fields that every member declares can be read,
+and methods every class member has can be called, without narrowing.
+`JSON.parse(text) as T` picks the member by its literal discriminant field and
+throws a `TypeError` when none matches. Module-level `let` (and `var`) hold
+state for the whole program run; other modules may import and read them but
+not assign them. Module constants may hold arrow and function expressions.
+
+#### Generic methods and classes, private names, `implements` (opt-in v37)
+
+Methods and classes may be generic, interfaces may declare methods, classes
+may state `implements`, and `#private` members keep state inside the class:
+
+```ts
+interface ResponseBody {
+  text(): Promise<string>;   // a method signature is a function field
+  close?(): void;            // optional method: call it with `?.()`
+}
+interface Sized {
+  size(): number;
+}
+class Page<T> implements Sized {   // checked at compile time
+  items: T[];
+  constructor(items: T[]) {
+    this.items = items;
+  }
+  size(): number {
+    return this.items.length;
+  }
+  map<U>(f: (item: T) => U): Page<U> {
+    const out: U[] = [];
+    for (let i = 0; i < this.items.length; i++) out.push(f(this.items[i]!));
+    return new Page(out);          // Page<U>, inferred from the argument
+  }
+}
+class Transport {
+  #calls = 0;                                   // private, not a property
+  readonly #fetch: (path: string) => Promise<ResponseBody>;
+  constructor(fetch: (path: string) => Promise<ResponseBody>) {
+    this.#fetch = fetch;
+  }
+  async request<T>(path: string, decode: (text: string) => T): Promise<T> {
+    this.#calls += 1;
+    const body = await this.#fetch(path);
+    const text = await body.text();
+    body.close?.();
+    return decode(text);
+  }
+  get calls(): number {
+    return this.#calls;
+  }
+}
+class Users {
+  readonly #client: Transport;
+  constructor(client: Transport) {
+    this.#client = client;
+  }
+  // `T` is inferred from the declared result `Promise<Page<string>>`.
+  list(): Promise<Page<string>> {
+    return this.#client.request('/users', (text: string): Page<string> => new Page([text, `${text}2`]));
+  }
+}
+export async function main(): Promise<void> {
+  const transport = new Transport(async (path: string): Promise<ResponseBody> => ({
+    async text(): Promise<string> {   // object literal method
+      return `user${path.length}`;
+    },
+  }));
+  const page = await new Users(transport).list();
+  const lengths = page.map((name: string): number => name.length);
+  console.log(`${page.size()} ${lengths.items[1]} ${transport.calls}`);   // 2 6 1
+}
+```
+
+Each type-argument list is compiled separately: `request<Page<string>>` and
+`request<number>` are two functions, `Page<number>` and `Page<string>` two
+classes, so a program with many distinct instantiations reaches the function
+limit sooner (about ten functions per distinct response type in the pattern
+above, 24 distinct types per program). Type arguments are inferred from the
+arguments and then from the expected result; write them explicitly when
+nothing determines them (`t.count<number>()`). Overrides of generic methods
+dispatch like other overrides; static members of a generic class are written
+on the class (`Page.empty()`) and cannot use its type parameters.
+
+Object-literal methods and the values of method signatures are called
+without `this`, so a method that uses `this` is rejected; use the variables
+it closes over instead. A class instance is still not assignable to an
+interface: `implements` only checks the class. `#x in value` is a brand test
+(`value instanceof` the declaring class). Not supported yet: generic method
+signatures such as `json<T>(): T` in interfaces and generic object-literal
+methods, overrides inside generic classes, `instanceof Page` on `unknown`
+values, static or setter private members, `abstract`, and `unknown` for
+values that may contain an instance with private fields (`JSON.stringify`
+skips private fields, as in Node).
+
+#### Collections and binary text (opt-in v37)
+
+`Map`, `Set`, tuples, `Uint8Array`, the UTF-8 text codecs, `btoa`/`atob`,
+`crypto.getRandomValues`/`crypto.randomUUID`, a UTC `Date` subset and the
+string built-ins below work like in Node:
+
+```ts
+interface StreamOptions {
+  terminalEvents?: Set<string>;
+}
+const RETRYABLE = new Set([408, 429, 503]);
+
+function split(line: string): [string, string] {
+  const at = line.indexOf(":");
+  return [line.slice(0, at), line.slice(at + 1).trim()];
+}
+
+export function main(): void {
+  const options: StreamOptions = {};
+  const terminal = options.terminalEvents ?? new Set();   // Set<string>
+  terminal.add("done").add("error");
+  console.log(`${terminal.has("done")} ${terminal.size} ${RETRYABLE.has(429)}`); // true 2 true
+
+  const counts = new Map<string, number>();
+  "a b a".split(" ").forEach((word) => counts.set(word, (counts.get(word) ?? 0) + 1));
+  for (const [word, count] of counts) console.log(`${word}=${count}`);          // a=2, b=1
+
+  const [field, value] = split("event: done");
+  console.log(`${field.toUpperCase()} ${value.padStart(6, ".")}`);              // EVENT ..done
+
+  const bytes = new TextEncoder().encode("é");
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  console.log(`${hex} ${new TextDecoder().decode(bytes)} ${btoa("hi")}`);      // c3a9 é aGk=
+  console.log(crypto.randomUUID().length);                                      // 36
+  console.log(new Date(Date.parse("2024-03-05T06:07:08Z")).toISOString());      // 2024-03-05T06:07:08.000Z
+}
+```
+
+Maps and sets keep insertion order and iterate live (entries added during a
+loop are visited, deleted ones are skipped). Keys are strings, numbers,
+booleans, bigints or objects (by identity); a union key type is not supported
+yet. A tuple such as `[string, number]` needs an annotation or a declared
+return type; `Object.entries` returns tuples, so
+`for (const [key, value] of Object.entries(record))` types both names. The
+string built-ins are `padStart`, `padEnd`, `toUpperCase`, `toLowerCase`,
+`split` with a string separator, `concat`, `codePointAt`,
+`String.fromCharCode`, `String.fromCodePoint` and `Array.prototype.join`.
+
+A map, a set, a `Uint8Array`, a `TextEncoder`/`TextDecoder` or a `Date` cannot
+be logged, passed to `JSON.stringify` or stored in `unknown` yet (log
+`[...set]` or `date.toISOString()` instead). A collection holds at most 1024
+entries and a `Uint8Array` at most 1024 bytes. `Date.now()` and `new Date()`
+read the clock and need the `time.now` capability; `Date.parse` accepts ISO
+8601 and HTTP dates (other text gives `NaN`), and only the UTC accessors
+exist. `subarray`, `ArrayBuffer` and `globalThis.crypto` are not supported
+yet.
+
+#### Regular expressions (opt-in v37)
+
+Regular expression literals work like in JavaScript, and so do `exec`,
+`test`, `lastIndex` and the string methods `search`, `match`, `matchAll`,
+`replace`, `replaceAll` and `split`. Nothing needs importing:
+
+```ts
+function joinUrl(base: string, path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  return base.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
+}
+
+export function main(): void {
+  console.log(joinUrl('https://api.example.com/', '/v1/models'));
+  const m = /(?<key>\w+)=(?<value>\w*)/.exec('a k=v');
+  if (m !== null) {
+    console.log(`${m.index} ${m[0]} ${m[1] ?? '-'}`);   // 2 k=v k
+    const groups = m.groups;
+    console.log(groups === undefined ? '' : groups['value'] ?? ''); // v
+  }
+  console.log('John Smith'.replace(/(\w+)\s(\w+)/, '$2, $1')); // Smith, John
+  console.log('a-b_c'.replace(/[-_](\w)/g, (_, c: string) => c + c)); // abbcc
+  console.log(JSON.stringify('a, b ,c'.split(/\s*,\s*/))); // ["a","b","c"]
+  let found = '';
+  for (const hit of 'x1y22'.matchAll(/\d+/g)) {
+    found += hit![0] + ';';                             // 1;22;
+  }
+  console.log(found);
+}
+```
+
+Patterns are compiled when the program is compiled, so a bad pattern is a
+compile error, and matching takes time proportional to the input: patterns
+such as `/^(a+)+$/` that hang backtracking engines on long inputs cannot hang
+a Varta program (a very long input runs out of fuel instead). `new RegExp`
+works when its pattern and flags are string literals; a pattern built at run
+time is rejected — write a literal instead.
+
+`m[0]` is a `string`; other elements are `string | undefined` because a group
+may not take part. Read them by index, by destructuring
+(`const [all, key] = m`) or with `for…of`; match arrays have no array methods.
+A replacer function receives the match, the captures, the position and the
+input, as in JavaScript; annotate a capture as `string` when the group always
+takes part.
+
+Not supported: backreferences (`\1`, `\k<name>`), lookahead and lookbehind,
+`\p{…}`, `(?i:…)` modifiers, the `d` and `v` flags, `RegExp.prototype.toString`
+and replacers with more than the match for a RegExp that is not written in
+place (the compiler cannot know its groups). `split` with a regex throws
+`TypeError` if a capture group does not take part, because its result is
+`string[]`.
+
+#### Network requests (opt-in v37)
+
+Grant the origins (and optionally the methods) a program may call in
+`varta.config.json`:
+
+```json
+{
+  "languageProfile": "checked-f64-utf16-v37",
+  "capabilities": {
+    "net": { "request": { "urls": ["https://api.example.com/v1/**"], "methods": ["GET", "POST"] } },
+    "time": { "timer": true }
+  }
+}
+```
+
+```ts
+interface Item { id: string; title: string }
+
+async function create(title: string, signal: AbortSignal): Promise<Item> {
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+  const response = await fetch('https://api.example.com/v1/items', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ title }),
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as Item;
+}
+
+async function events(): Promise<void> {
+  const response = await fetch('https://api.example.com/v1/events', {
+    signal: AbortSignal.timeout(4000),
+  });
+  const body = response.body;
+  if (body === null) return;
+  let buffer = '';
+  for await (const chunk of body) {
+    buffer += chunk; // decoded text; SSE frames end with a blank line
+  }
+  console.log(buffer.length);
+}
+
+export async function main(): Promise<void> {
+  try {
+    const item = await create('first', new AbortController().signal);
+    console.log(item.id);
+    await events();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      console.log('not permitted: ' + error.message);
+    } else {
+      throw error;
+    }
+  }
+}
+```
+
+A request outside the grant rejects with a catchable `NotAllowedError` before
+any connection is made, and so does a timer without `time.timer` (thrown by
+`setTimeout`). Redirects are refused unless `redirect: 'follow'` (each hop is
+checked against the grant again) or `'manual'` is given. Body chunks are
+strings (bytes and `ReadableStream<Uint8Array>` come later), `read()` gives
+`{ done, value }` with `value === ''` once done, and `fetch` takes a string, a
+`URL` or a `Request`.
+
+```ts
+const url = new URL('/v1/search', 'https://api.example.com');
+url.searchParams.append('q', 'two words');
+console.log(url.href); // https://api.example.com/v1/search?q=two+words
+const form = new URLSearchParams({ name: 'Ada Lovelace' });
+console.log(form.toString()); // name=Ada+Lovelace
+```
+
+A class can be an async iterable by declaring
+`async *[Symbol.asyncIterator]()`; `for await` over an instance calls it.
+
+#### The streams together (opt-in v37)
+
+```ts
+let received = 0; // module state, updated across awaits
+
+class Events {
+  readonly kind = 'events'; // a readonly literal field keeps its literal type
+  #fields = new Map<string, string>(); // the field type comes from `new`
+  add(line: string): void {
+    const match = line.match(/^(\w+): ?(.*)$/);
+    if (match !== null) this.#fields.set(match[1] ?? '', match[2] ?? '');
+  }
+  read<T>(name: string, parse: (text: string) => T): T | undefined {
+    const text = this.#fields.get(name);
+    return text === undefined ? undefined : parse(text);
+  }
+}
+
+async function* lines(body: ReadableStream): AsyncGenerator<string> {
+  let buffer = '';
+  for await (const chunk of body) {
+    buffer += chunk;
+    const parts = buffer.split(/\r?\n/);
+    buffer = parts.pop() ?? '';
+    for (const line of parts) yield line;
+  }
+}
+
+export async function main(): Promise<void> {
+  const response = await fetch(new URL('/sse', 'http://127.0.0.1:8080'));
+  const body = response.body;
+  if (body === null) return;
+  const events = new Events();
+  for await (const line of lines(body)) {
+    if (line !== '') events.add(line);
+    else received += 1;
+  }
+  console.log(`${received} ${events.read('id', (text: string): number => Number(text))} ${JSON.stringify(response.headers)}`);
+}
+```
+
+`JSON.stringify` skips private state as Node does: `#private` fields, the
+internals of `Headers`, `AbortSignal`, `DOMException`, `Request` and
+`Response` (they serialize as `{}`) and Error slots (`message`, `cause`, and
+`name` unless a constructor assigns it), so `JSON.stringify` of `unknown`
+works in programs that use `fetch`. `URL` and RegExp match arrays cannot be
+serialized or stored in `unknown` yet. Object keys starting with `#` are
+reserved. Index reads give `undefined` where the code expects it — a
+`T | undefined` result or parameter, `xs[i] ?? fallback`, or a binding later
+compared with `undefined` (`const item = items[0]; if (item === undefined)
+…`) — and throw `TypeError` for a hole elsewhere. `Date.now()` and
+`new Date()` throw a catchable `NotAllowedError` without the `time.now` grant.
+Functions a program never reaches, including unused engine built-ins, do not
+count against the 256-function limit. Not supported yet: unions that mix a
+`Map`, `Set` or `Uint8Array` with other objects (and `instanceof Map`), byte
+bodies (`ReadableStream<Uint8Array>`, `Blob`, `FormData`), `globalThis`, and
+`Array.isArray` narrowing of `unknown`.

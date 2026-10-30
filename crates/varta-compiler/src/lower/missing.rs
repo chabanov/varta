@@ -235,6 +235,8 @@ impl Lower<'_> {
                 ))
             && !(self.types.profile.promise_values() && matches!(element, Type::Promise(_)))
             && !(self.types.profile.function_fields() && matches!(element, Type::Function(_)))
+            && !(self.types.profile.collections()
+                && matches!(element, Type::Tuple(_) | Type::Collection(..)))
         {
             return Err(unsupported(
                 "nullable reads of object/array elements require reference unions",
@@ -247,10 +249,22 @@ impl Lower<'_> {
             ));
         }
         let ty = unions::intern(vec![element, Type::Undefined], self.types)?;
-        Ok(Expr {
+        let string = value.ty == Type::String;
+        let maybe = Expr {
             span: member.span,
             ty,
             kind: E::MaybeIndex(Box::new(value), Box::new(index)),
-        })
+        };
+        // V37: `xs[i]` has the element type, read checked (`dense`), unless
+        // its context admits `undefined`.
+        if self.types.profile.language_core() && !self.take_optional_index(member.span) {
+            let message = if string {
+                dense::MISSING_UNIT
+            } else {
+                dense::MISSING_ELEMENT
+            };
+            return self.dense_read(maybe, element, message);
+        }
+        Ok(maybe)
     }
 }

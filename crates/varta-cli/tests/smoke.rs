@@ -11727,6 +11727,132 @@ fn pilot_profile_v37_declares_host_abi_33_with_value17_through_both_binaries() {
     rejects("matching host ABI");
 }
 
+/// The v37 language core through `varta dev`, both artifacts, both binaries
+/// and the packaged executable: a timer callback naming the abort listener
+/// declared after it, hoisted helpers, a closure reading its binding before
+/// initialization (a `ReferenceError`), a deferred `let`, a string `switch`,
+/// dense reads and property-path narrowing. The same project fails `check`
+/// under v36 with that profile's diagnostic.
+#[test]
+fn pilot_profile_v37_language_core_runs_everywhere_and_v36_rejects_it() {
+    const PROFILE: &str = "checked-f64-utf16-v37";
+    let project = RegressionProject::new(
+        "interface Options{signal?:AbortSignal;label?:string}\
+         function delay(ms:number,options:Options):Promise<string>{return new Promise((resolve,reject)=>{\
+         const handle=setTimeout(()=>{options.signal?.removeEventListener('abort',stop);resolve(describe());},ms);\
+         const stop=()=>{clearTimeout(handle);reject(options.signal?.reason);};\
+         options.signal?.addEventListener('abort',stop);\
+         function describe():string{return options.label!==undefined?options.label:'done';}});}\
+         function kind(field:string):string{let out:string;switch(field){case 'id':out='key';break;default:out='value';}return out;}\
+         export async function main():Promise<void>{\
+         console.log(await delay(2,{label:'slept'}));\
+         const controller=new AbortController();const pending=delay(50,{signal:controller.signal});\
+         controller.abort('cancelled');\
+         try{await pending;}catch(e){console.log('rejected '+String(e));}\
+         const parts:string[]=['id','x'];let joined='';for(const part of parts)joined+=kind(part)+parts[0];\
+         console.log(joined);\
+         const early=():number=>late;\
+         try{early();}catch(e){if(e instanceof Error)console.log(e.name+': '+e.message);}\
+         const late=1;console.log(String(early()));}",
+        serde_json::json!({"time":{"timer":true}}),
+    );
+    project.language_profile(PROFILE);
+    let expected = [
+        "varta log: slept",
+        "varta log: rejected cancelled",
+        "varta log: keyidvalueid",
+        "varta log: ReferenceError: Cannot access 'late' before initialization",
+        "varta log: 1",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(validate.status.success(), "{}", combined(&validate));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+    }
+    project.language_profile("checked-f64-utf16-v36");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success(), "{}", combined(&check));
+    assert!(
+        combined(&check).contains("capture before binding initialization"),
+        "{}",
+        combined(&check)
+    );
+}
+
+/// V37 record unions and module variables through `varta dev`, both
+/// artifacts, both binaries and the packaged executable; v36 rejects them.
+#[test]
+fn pilot_profile_v37_record_unions_and_module_variables_run_everywhere() {
+    const PROFILE: &str = "checked-f64-utf16-v37";
+    let project = RegressionProject::new(
+        "import {record,summary} from './state.ts';\
+         export function main():void{record({kind:'chunk',text:'ab'});record({kind:'done'});\
+         record({kind:'chunk',text:'c'});console.log(summary());}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/state.ts"),
+        "export type Event={kind:'chunk';text:string}|{kind:'done'};\
+         let text='';let finished=0;\
+         export const record=(e:Event):void=>{switch(e.kind){case 'chunk':text+=e.text;break;\
+         case 'done':finished++;break;default:{const never:never=e;}}};\
+         export function summary():string{return text+' '+String(finished);}",
+    )
+    .unwrap();
+    project.language_profile(PROFILE);
+    let expected = ["varta log: abc 1"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+    }
+    project.language_profile("checked-f64-utf16-v36");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success(), "{}", combined(&check));
+}
+
 /// V36 timers through `varta dev`, both artifacts, both binaries and the
 /// packaged executable: the sleep/backoff pattern, an interval, timer
 /// arguments and `AbortSignal.timeout` keep Node's order. Arming a timer
@@ -11827,6 +11953,124 @@ fn pilot_profile_v36_timers_run_everywhere_and_are_denied_without_time_timer() {
     assert!(!validate.status.success(), "{}", combined(&validate));
     assert!(
         combined(&validate).contains("requires capability namespace: time.timer"),
+        "{}",
+        combined(&validate)
+    );
+}
+
+/// A loopback HTTP/1.1 server on 127.0.0.1 (ephemeral port) answering every
+/// request with `hello`; returns its origin and the accepted-connection count.
+fn hello_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = accepted.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            count.fetch_add(1, Ordering::SeqCst);
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                line.clear();
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+            );
+        }
+    });
+    (origin, accepted)
+}
+
+#[test]
+fn pilot_profile_v37_fetch_runs_everywhere_and_denials_are_recoverable() {
+    const PROFILE: &str = "checked-f64-utf16-v37";
+    let (origin, accepted) = hello_server();
+    let project = RegressionProject::new(
+        &format!(
+            "async function denied(url:string):Promise<string>{{\
+             try{{await fetch(url);return 'fetched';}}\
+             catch(error){{return error instanceof DOMException?error.name:'other';}}}}\
+             export async function main():Promise<void>{{\
+             const response=await fetch(new Request('{origin}/hello',{{method:'GET'}}));\
+             const text=await response.text();console.log(String(response.status)+' '+text);\
+             const name=await denied('http://127.0.0.1:9/x');console.log('other port '+name);}}"
+        ),
+        serde_json::json!({"net":{"request":{"urls":[format!("{origin}/**")],"methods":["GET"]}}}),
+    );
+    project.language_profile(PROFILE);
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let other = "varta log: <capability denied: net.request> (GET http://127.0.0.1:9/x)";
+    let expected = [
+        "varta log: 200 hello",
+        other,
+        "varta log: other port NotAllowedError",
+    ];
+    let check = project.command(&["check"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info = String::from_utf8_lossy(&inspect.stdout).into_owned();
+    assert!(
+        info.contains("net_request_start") && info.contains("net.request"),
+        "{info}"
+    );
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(validate.status.success(), "{}", combined(&validate));
+    // The host ceiling withholds the origin: every request is denied before
+    // any connection, recoverably, in every runner.
+    project.host_policy(serde_json::json!([]));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let mut restricted = Command::new(command.get_program());
+        restricted.args(command.get_args());
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+        let before = accepted.load(Ordering::SeqCst);
+        let output = restricted
+            .args(["--policy", "host-policy.json"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        // The first request's rejection escapes main: the denial is logged
+        // and the execution reports the uncaught NotAllowedError.
+        assert!(!output.status.success(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("NotAllowedError"),
+            "{}",
+            combined(&output)
+        );
+        assert_eq!(accepted.load(Ordering::SeqCst), before);
+    }
+    // Without any grant validation refuses the reviewed import, and running
+    // denies recoverably without a socket.
+    project.set_capabilities(serde_json::json!({}));
+    let build = project.command(&["build"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(!validate.status.success(), "{}", combined(&validate));
+    assert!(
+        combined(&validate).contains("net.request"),
         "{}",
         combined(&validate)
     );
@@ -12065,6 +12309,102 @@ fn function_fields_stay_rejected_by_v35_projects() {
     let text = combined(&dev);
     assert!(text.contains("function-valued record fields"), "{text}");
     assert!(!text.contains("varta log:"), "{text}");
+}
+
+/// V37 RegExp through `varta dev`, both artifacts, both binaries and the
+/// packaged executable: two modules use regex literals, a constant `new
+/// RegExp`, match arrays and the regex string methods without importing
+/// anything, and no capability is granted or needed.
+#[test]
+fn pilot_profile_v37_runs_regexp_in_dev_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {joinUrl,lines} from './util.ts';export function main():void{\
+         console.log(joinUrl('https://api.example.com//','/v1/models'));\
+         console.log(JSON.stringify(lines('event:a\\r\\ndata:1\\n\\n')));\
+         const m=/(?<key>\\w+)=(?<value>\\w+)/.exec('x k=v');\
+         if(m!==null){console.log(`${m.index} ${m[0]} ${m[1]??'-'} ${m.length}`);}\
+         const words=new RegExp('\\\\b\\\\w','g');\
+         console.log('one two'.replace(words,(c)=>'['+c+']')+' '+'a1b22'.split(/\\d+/).length);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/util.ts"),
+        "export function joinUrl(base:string,path:string):string{\
+         if(/^https?:\\/\\//i.test(path))return path;\
+         return base.replace(/\\/+$/,'')+'/'+path.replace(/^\\/+/,'');}\
+         export function lines(buffer:string):string[]{const found:string[]=[];\
+         let at=buffer.search(/\\r\\n|\\r|\\n/);\
+         for(;at!==-1;at=buffer.search(/\\r\\n|\\r|\\n/)){\
+         const matched=/\\r\\n|\\r|\\n/.exec(buffer.slice(at))![0];\
+         found.push(buffer.slice(0,at));buffer=buffer.slice(at+matched.length);}return found;}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v37");
+    let expected = [
+        "varta log: https://api.example.com/v1/models",
+        r#"varta log: ["event:a","data:1",""]"#,
+        "varta log: 2 k=v k 3",
+        "varta log: [o]ne [t]wo 3",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    // `check --json` lists the program's modules, not the RegExp prelude.
+    let check = project.command(&["check", "--json"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    assert!(!String::from_utf8_lossy(&check.stdout).contains("<varta>"));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn regexp_stays_rejected_by_v36_projects_and_names_v37_limits() {
+    let project = RegressionProject::new(
+        "export function main():void{console.log(String(/a+/.test('aa')));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v36");
+    let old = project.command(&["dev"]);
+    assert!(!old.status.success());
+    let text = combined(&old);
+    assert!(!text.contains("varta log:"), "{text}");
+    assert!(!text.contains("v37"), "{text}");
+    fs::write(
+        project.0.join("src/main.ts"),
+        "export function main():void{console.log(String(/(a)\\1/.test('aa')));}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v37");
+    let backreference = project.command(&["dev"]);
+    assert!(!backreference.status.success());
+    let text = combined(&backreference);
+    assert!(
+        text.contains("unsupported RegExp backreference \\1"),
+        "{text}"
+    );
+    assert!(text.contains("src/main.ts:1:"), "{text}");
 }
 
 #[test]
@@ -14780,4 +15120,168 @@ fn property_deletion_v30_runs_modules_and_source_free_artifacts() {
             ]
         );
     }
+}
+
+#[test]
+fn pilot_profile_v37_runs_class_generics_in_dev_and_artifacts() {
+    // The pilot's transport across two modules: a generic page class, a
+    // client with `#private` state and a generic async `request<T>` whose
+    // `T` comes from the resource method's declared `Promise<R>`, an
+    // interface with method signatures satisfied by an object literal, and
+    // `implements`; no capability is granted.
+    let project = RegressionProject::new(
+        "import {Client,Page} from './client.ts';import type {Body} from './client.ts';\
+         class Users{readonly client:Client;constructor(client:Client){this.client=client;}\
+         list():Promise<Page<string>>{return this.client.request('/users',(t:string):Page<string>=>new Page([t,t+'!']));}}\
+         export async function main():Promise<void>{\
+         const client=new Client(async(path:string):Promise<Body>=>({async text():Promise<string>{return path;}}));\
+         const page=await new Users(client).list();const sizes=page.map((s:string):number=>s.length);\
+         console.log(`${page.size()} ${sizes.items[1]} ${client.calls} ${client.has(client)}`);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/client.ts"),
+        "export interface Body{text():Promise<string>;close?():void}\
+         interface Sized{size():number}\
+         export class Page<T> implements Sized{items:T[];constructor(items:T[]){this.items=items;}\
+         size():number{return this.items.length;}\
+         map<U>(f:(item:T)=>U):Page<U>{const out:U[]=[];for(let i=0;i<this.items.length;i++){out.push(f(this.items[i]!));}return new Page(out);}}\
+         export class Client{#calls=0;readonly #fetch:(path:string)=>Promise<Body>;\
+         constructor(fetch:(path:string)=>Promise<Body>){this.#fetch=fetch;}\
+         async request<T>(path:string,decode:(text:string)=>T):Promise<T>{this.#calls+=1;\
+         const body=await this.#fetch(path);const text=await body.text();body.close?.();return decode(text);}\
+         get calls():number{return this.#calls;}\
+         has(value:Client):boolean{return #calls in value;}}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v37");
+    let expected = ["varta log: 2 7 1 true"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn class_generics_stay_rejected_by_v36_projects() {
+    let project = RegressionProject::new(
+        "class Page<T>{items:T[]=[];}export function main():void{const p=new Page<number>();}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v36");
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success());
+    let text = combined(&dev);
+    assert!(text.contains("unsupported generic class"), "{text}");
+    assert!(!text.contains("varta log:"), "{text}");
+}
+
+/// V37 collections through `varta dev`, both artifacts, both binaries and the
+/// packaged executable: a module-constant `Set`, a `Map` with tuple entries,
+/// string built-ins, UTF-8 bytes, base64, random bytes and `Date` parsing.
+/// `Date.now()` needs the exact `time.now` grant: without it, or under a host
+/// ceiling that withholds it, the execution fails before any output.
+#[test]
+fn pilot_profile_v37_collections_run_everywhere_and_the_clock_needs_time_now() {
+    const PROFILE: &str = "checked-f64-utf16-v37";
+    let project = RegressionProject::new(
+        "const RETRYABLE=new Set([408,429,503]);\
+         export function main():void{\
+         const cache=new Map<string,[number,string]>();\
+         cache.set('a',[1,'one']).set('b',[2,'two']);\
+         const keys:string[]=[];for(const [key,[n,word]] of cache){keys.push(key+String(n)+word);}\
+         const bytes=crypto.getRandomValues(new Uint8Array(4));\
+         const hex=[...new TextEncoder().encode('é')].map((b)=>b.toString(16).padStart(2,'0')).join('');\
+         console.log(`${RETRYABLE.has(429)} ${RETRYABLE.has(200)} ${keys.join(',')} ${hex} ${bytes.length}`);\
+         console.log(`${btoa('hi')} ${'A,B'.split(',').map((s)=>s.toLowerCase()).join('')} ${Date.parse('Sun, 06 Nov 1994 08:49:37 GMT')}`);\
+         console.log(String(Date.now()>0));}",
+        serde_json::json!({"time":{"now":true}}),
+    );
+    project.language_profile(PROFILE);
+    let expected = [
+        "varta log: true false a1one,b2two c3a9 4",
+        "varta log: aGk= ab 784111777000",
+        "varta log: true",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info = String::from_utf8_lossy(&inspect.stdout).into_owned();
+    assert!(
+        info.contains("date_now") && info.contains("time.now"),
+        "{info}"
+    );
+    // The host ceiling withholds the grant the package requested.
+    project.host_policy(serde_json::json!([]));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let mut restricted = Command::new(command.get_program());
+        restricted.args(command.get_args());
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+        let output = restricted
+            .args(["--policy", "host-policy.json"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{}", combined(&output));
+        assert!(logs(&output).is_empty(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("capability denied: time.now"),
+            "{}",
+            combined(&output)
+        );
+    }
+    // Without the grant, `Date.now()` fails before any later output.
+    project.set_capabilities(serde_json::json!({}));
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success(), "{}", combined(&dev));
+    assert!(logs(&dev).is_empty(), "{}", combined(&dev));
+    assert!(
+        combined(&dev).contains("capability denied: time.now"),
+        "{}",
+        combined(&dev)
+    );
 }

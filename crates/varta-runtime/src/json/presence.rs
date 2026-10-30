@@ -146,6 +146,11 @@ impl Encoder<'_, '_> {
             if kind == ValueKind::Undefined as u32 {
                 continue;
             }
+            // V37 private state is not a property (`json_stringify_v17`).
+            if self.hide_private && name.starts_with(PRIVATE_KEY_PREFIX) {
+                self.visit(depth + 1)?;
+                continue;
+            }
             if written {
                 self.write(b",")?;
             }

@@ -16,7 +16,7 @@ mod async_functions;
 mod async_generators;
 mod combinators;
 mod methods;
-mod timers;
+pub(in crate::lower) mod timers;
 mod values;
 pub(super) use async_functions::AsyncSplit;
 pub(super) use async_generators::{
@@ -376,7 +376,7 @@ impl Lower<'_> {
         build: impl FnOnce(&mut Lower<'_>, &[u32], Option<u32>) -> Result<Vec<S>>,
     ) -> Result<usize> {
         let index = *self.next_function;
-        if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+        if index >= self.types.function_limit() {
             return Err(invalid("too many functions including promise jobs"));
         }
         *self.next_function += 1;
@@ -419,6 +419,7 @@ impl Lower<'_> {
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         let params: Vec<u32> = spec.params.iter().map(|ty| child.hidden(*ty)).collect();
         let captured = spec
@@ -755,6 +756,7 @@ impl Lower<'_> {
     /// later reads: an `await` or a callback that runs user code acts like an
     /// unknown call for write-aware refinements.
     fn flow_reentry(&mut self) {
+        self.drop_paths();
         if !self.types.profile.refinement_writes() {
             return;
         }

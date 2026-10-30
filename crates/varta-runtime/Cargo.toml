@@ -23,7 +23,11 @@ hyper.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
 tokio.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
+rcgen.workspace = true
 # The test-only hook produces v33 frame modules for runtime admission tests.
 varta-compiler = { path = "../varta-compiler", features = ["suspension-test-hook"] }

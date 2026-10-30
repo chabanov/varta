@@ -166,7 +166,12 @@ impl Builder<'_> {
                 import.span,
             ));
         }
-        imports.extend(engine::implicit_imports(&ast, &imports, self.profile));
+        imports.extend(engine::implicit_imports(
+            &input.path,
+            &ast,
+            &imports,
+            self.profile,
+        ));
         self.imports += imports.len();
         if self.imports > MAX_IMPORTS {
             return Err(source.locate(

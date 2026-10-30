@@ -18,6 +18,7 @@ impl Emitter<'_> {
             I::I32Const(tag as i32),
             I::I32Eq,
         ]);
+        self.shared_member(value.ty, member)?;
         if let Some(class) = member.error_class() {
             // All Error families share a union tag. Only after that tag matches
             // may we dereference the Error payload and test its exact class.

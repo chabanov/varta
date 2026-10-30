@@ -160,7 +160,7 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 | `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
-| `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
+| `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
@@ -5607,7 +5607,8 @@ generated resource classes; classes extending the native errors follow the
   catalog](#typed-private-capture-catalog); its fields are compile-time checked,
   so class field cycles never become catalog cycles.
 - **Rejected with diagnostics.** Generic, abstract, decorated (parser) and
-  `implements` classes; index signatures; `static` fields, blocks and
+  `implements` classes (generic classes, `implements` and `#private` members
+  are admitted by v37 [class generics](#class-generics-class_generics)); index signatures; `static` fields, blocks and
   accessors; static method values without a call; setters; `#private` fields and methods; auto-accessors; constructor parameter
   properties; optional, definite (`!`), `declare` and overriding fields;
   function-valued fields; `toJSON` methods; explicit `this` parameters on methods;
@@ -7879,23 +7880,28 @@ iteration is not implemented yet)`) and the annotations below.
 
 ### `checked-f64-utf16-v37` — Pilot batch: language core, class generics, collections and binary text, RegExp and net.request
 
-V37 is registered and inherits every v36 feature and selector, including value
+V37 inherits every v36 feature and selector, including value
 layout 17 (`function_fields()`) with the value17 host readers, exception
-channel v8, JSON schema 17 (`json_stringify_v16`, `json_parse_v18`), the
+channel v8, JSON schema 17 (`json_parse_v18`; serialization moves to
+`json_stringify_v17`, [below](#batch-integration-v37)), the
 microtask scheduler, frame catalog version 3 (`frame_liveness()`), async
 generators and the timer operations with their `time.timer` grant. Wherever a
 v36 subsection above admits a feature, layout or binding for v36 only, it
 applies to v36 and v37; v35 and earlier profiles stay frozen. V37 declares one
 version identity of its own (see the [version matrix](#version-matrix)):
 
-- **Host ABI** `abi::NET_REQUEST_VERSION` (33), for v37 alone. It adds no host
-  import yet: every v36 operation, including the value17 readers and the timer
-  operations, keeps its signature, binding and minimum ABI, and no registered
-  operation requires host ABI 33. Host imports added in this batch (the
-  asynchronous `net.request` operations behind `fetch` first) use host ABI 33
-  as their minimum.
+- **Host ABI** `abi::NET_REQUEST_VERSION` (33), for v37 alone. Every host
+  import added in this batch uses host ABI 33 as its minimum: the collections
+  stream's `string_to_upper_case16`, `string_to_lower_case16` and `date_now`
+  ([collections](#collections-and-binary-text-collections)), the six
+  `net.request` operations behind `fetch`, `json_stringify_v17`
+  ([batch integration](#batch-integration-v37)), and `timer_start_v2`, which v37
+  binds instead of `timer_start` for its recoverable denial
+  ([permission broker](#permission-broker-v37)). Every other v36 operation,
+  including the value17 readers and the other timer operations, keeps its
+  signature, binding and minimum ABI.
 - **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17),
-  shared with v36. V37 adds no value tag or layout yet;
+  shared with v36. V37 adds no value tag or layout:
   `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
   catalogs, frames and exception cells are stamped and read exactly as under
   v36.
@@ -7909,31 +7915,998 @@ or a missing value section fails validation before any guest effect.
 
 Each ABI is bumped at most once per batch. The host ABI bump is already made at
 registration and every stream adds its imports under it. The collections
-stream owns any value-layout bump (value 18: a new `value` constant,
+stream owned the batch's value-layout bump and needed none: its maps, sets,
+byte arrays and builtin classes are private storage that no host reader sees,
+and tuples are ordinary arrays. Value 18 (a new `value` constant,
 `value_abi`, `value_layout`, value18 variants of every layout-bound reader with
-their minimum host ABI 33, and the launcher maximum) and lands it as an early
-foundation commit; the other streams rebase onto it. V36 and earlier profiles
-keep their host ABI, value ABI and layouts.
+their minimum host ABI 33, and the launcher maximum) is therefore not
+introduced; a later stream that needs a value tag introduces it as its own
+early foundation commit. V36 and earlier profiles keep their host ABI, value
+ABI and layouts.
 
-Five selectors gate the batch's work streams, and all admit nothing yet:
+Five selectors gate the batch's work streams, and every stream is
+implemented in its subsection below:
 
-- language-core stream: `language_core()` (TDZ-safe closure capture before
-  declaration, deferred `let x: T;` initialization, dense `for…of` typing,
-  property-path narrowing, `switch` on strings and function assignability
-  fixes);
+- language-core stream: `language_core()`, implemented below
+  ([language core](#language-core-language_core)): TDZ-safe closure capture
+  before declaration, deferred `let x: T;` initialization, dense `for…of`
+  typing, property-path narrowing, `switch` on strings and function
+  assignability fixes;
 - class-generics stream: `class_generics()` (generic methods and classes,
-  interface method signatures, `implements` and `#private` members);
+  interface method signatures, `implements` and `#private` members;
+  [implemented](#class-generics-class_generics));
 - collections stream: `collections()` (`Map`/`Set`, tuples, `Array.join`,
   `String.fromCharCode`, a `Date` subset, `Uint8Array`,
-  `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` and base64);
-- RegExp stream: `regexp()` (`RegExp` and the regex string methods);
+  `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` and base64;
+  [implemented](#collections-and-binary-text-collections));
+- RegExp stream: `regexp()` (`RegExp` and the regex string methods;
+  [implemented](#regexp-regexp));
 - net-request stream: `net_request()` (asynchronous `fetch`, `Request`,
   `Response`, `Headers`, `URL` and `ReadableStream` over the exact
-  `net.request` capability, and `Symbol.asyncIterator` for async iterables).
+  `net.request` capability, and `Symbol.asyncIterator` for async iterables;
+  [implemented](#network-requests-net_request)).
 
-Until a stream adds its subsection here, a v37 module compiles and runs exactly
-like a v36 module apart from its declared profile and host ABI, and production
-budgets of every profile are unchanged.
+The streams were developed in parallel and integrated together; the
+[batch integration](#batch-integration-v37) subsection states the rules that
+govern their combination. Production budgets of every profile are unchanged.
+
+#### Batch integration (v37)
+
+These rules hold for every v37 module and decide how the streams combine.
+V36 and earlier keep their bytes and diagnostics.
+
+- **Unreachable functions.** Every function and class member of a loaded
+  engine prelude used to take a function slot. V37 lowering allocates against
+  a compile-time linking cap of four times `abi::MAX_USER_FUNCTIONS`, then
+  keeps only the functions reachable from `main`, the tool exports, the HTTP
+  handler and the module-constant initializers through direct calls, function
+  values, scheduled frames and async-generator relays (`lower::prune`),
+  renumbers them densely in their original order and enforces
+  `abi::MAX_USER_FUNCTIONS` on the result (`too many functions across
+  modules: N reachable functions exceed the limit of 256`). Unused program
+  functions take no slot either. The emitter derives dispatch targets, frame
+  layouts and catalogs from the kept functions only. The runtime limit on the
+  function section is unchanged.
+- **Private state in JSON.** After lowering, v37 gives private state a
+  descriptor key starting with `value::PRIVATE_KEY_PREFIX` (`#`): rewritten
+  `#private` fields, every field of an engine prelude class instance, and the
+  Error slots of class instances that are not own enumerable properties
+  (`message` and `cause` always, `name` unless a constructor of a non-prelude
+  class in the chain assigns `this.name` in a top-level statement, and none
+  that a subclass field redeclares). V37 source cannot spell an object key
+  with that prefix: object literals, type literals and interfaces reject
+  such keys by name. `JSON.stringify` imports `json_stringify_v17` (host ABI
+  33, same signature and contract as `json_stringify_v16`, no capability),
+  which skips `#`-keyed fields while still charging their traversal. Prelude
+  instances therefore serialize as `{}` (`Headers`, `AbortSignal`,
+  `DOMException`, `Request`, `Response`), Error subclass instances as their
+  own properties and `#private` classes without their private fields, as in
+  Node, and v37 lifts the v35/v36 rejections of `JSON.stringify` for prelude,
+  Error-subclass and `#private` instances and for `unknown` once such classes
+  exist. One deviation remains: an assigned `name` keeps the Error slot's
+  insertion position, so it precedes the subclass's own fields in the output.
+  `URL` (whose JSON form is its `toJSON` string) and RegExp match arrays
+  (arrays) stay rejected for `JSON.stringify` and are not assignable to
+  `unknown`. `#private` instances stay outside `unknown`, because other host
+  readers see descriptor keys. The exception channel reads a thrown
+  instance's `#name`/`#message` when it has no own `name`/`message` key, so
+  earlier profiles read exactly the fields they read before.
+- **Index reads in `undefined` contexts.** The language core's dense reads
+  (`xs[i]`, `s[i]`, `for…of` variables) check for holes, except where
+  JavaScript's `undefined` is wanted: a read whose expected type has an
+  `undefined` member (a `T | undefined` return, parameter or annotated
+  binding), the left operand of `??`, an inferred `const`/`let` binding or a
+  `for…of` variable whose name the enclosing block compares with `undefined`
+  (`x === undefined`, `x != undefined`, `typeof x === 'undefined'`, either
+  operand order), and every element of `unknown[]` (`unknown` holds
+  `undefined` itself). Those reads produce `T | undefined` unchecked. A
+  `Uint8Array` read out of range follows the same rule.
+- **Unions of collections.** Records, classes and arrays may share a union
+  (language core); a `Map`, `Set`, `Uint8Array` or tuple takes part only as
+  the single member of its union tag, and `instanceof Map`/`Set`/`Uint8Array`
+  is not modelled. Union members may hold collections in their fields and
+  stay traced through every collection.
+- **`instanceof` over several classes.** On a union of several classes,
+  `x instanceof C` tests every member that is `C` or a subclass by
+  descriptor, and narrows to all of them (or removes all of them); otherwise
+  the nearest ancestor member is tested. `#x in v` uses the same test, also
+  inside generic class instances.
+- **Class fields.** A readonly field with a string, number or boolean literal
+  initializer has that literal type, as TypeScript infers it, so it
+  discriminates class unions; a field initialized by `new Map<K, V>()`,
+  `new Set<T>()` or `new Uint8Array(n)` has that collection type.
+- **`split`.** String `split` has one dispatch path: the separator is lowered
+  once; a RegExp separator splits through the RegExp prelude, every other
+  separator through the text prelude. Own methods and function fields named
+  `split` dispatch as usual.
+- **Prelude bindings.** A module that binds the name of a prelude value
+  export locally (a parameter named `fetch`) keeps its own binding and does
+  not import the global; prelude classes keep their load triggers.
+- **`fetch` inputs.** `fetch` and `new Request` accept `string | URL |
+  Request`; a `URL` contributes its `href`.
+- **`implements AsyncIterable<T>`.** A class may implement `AsyncIterable<T>`
+  when it declares `[Symbol.asyncIterator]()` returning exactly that async
+  generator type.
+- **Recoverable clock denials.** See the
+  [permission broker](#permission-broker-v37): `Date.now()` and `new Date()`
+  throw a `NotAllowedError` without the `time.now` grant.
+
+#### Language core (`language_core`)
+
+Selector `language_core()`. V37 admits the everyday TypeScript patterns below
+with no value tag, layout, host import, JSON schema, frame catalog or budget
+change; every v37 module of this stream imports exactly what the same v36
+operations import. V36 and earlier keep their bytes and diagnostics (frozen
+by digest in `varta-runtime` `language_core_tests`).
+
+- **Captures before initialization (temporal dead zone).** A closure may
+  capture a `let`/`const` binding (simple identifier declarators only) or a
+  nested function declaration of its block before the binding's
+  initialization runs. A syntactic scan of each block finds the bindings
+  that a function body at or before their declaration position mentions
+  (nested function declarations count as positioned at the block entry);
+  only those reserve a Boolean flag binding. When a closure actually
+  captures one before its initialization, the declaring block allocates the
+  binding cell with the all-zero payload of its type and the cleared flag
+  cell at its entry; the initialization stores into that cell and sets the
+  flag, and the capturing closure captures both cells. Each read through such
+  a closure, and each simple, compound, logical or update assignment through
+  it, tests the flag first and throws an Error-class instance of the Error
+  root with `name` `"ReferenceError"` and Node's message ``Cannot access 'x'
+  before initialization``; a simple assignment evaluates its right side
+  before the test. The zero payload is never observed. A program with such a
+  block creates the Error root before any function body, so every catch
+  union agrees. The binding needs a type at the capture: its annotation, a
+  function initializer whose parameters are annotated and whose result is
+  annotated or a block body without value returns (`void`), or a literal;
+  otherwise the capture is rejected with `capture before initialization of a
+  binding whose type is inferred from its initializer`. Direct reads in the
+  declaring function before the initialization stay the compile-time error
+  `binding used before initialization`, and destructured names, loop heads
+  and catch parameters keep `capture before binding initialization`.
+- **Nested function declarations.** `function f(...) {...}` in a block is a
+  constant binding of that block, initialized at the block entry, in source
+  order, by the equivalent function expression (named, for direct
+  recursion, when it has a return annotation). Mutually recursive and
+  forward-referencing declarations use the captures above. Generators,
+  generic and ambient declarations keep the function-expression rules.
+- **Deferred initialization.** `let x: T;` without an initializer, where `T`
+  does not admit `undefined`, declares `x` with the zero payload of `T` and
+  starts it *unassigned*. As in TypeScript's definite assignment analysis,
+  every read, and every compound, logical or update assignment, requires an
+  assignment on every path to it (`binding used before being assigned: x`).
+  The unassigned set is flow state: branch and `switch` joins take the union
+  of the reachable paths, a `catch` handler and a `finally` block start from
+  the set at `try` entry, loops keep their entry set, and an assignment in a
+  loop test counts for its body. A closure may capture `x` only where it is
+  definitely assigned (JavaScript would read `undefined` through an earlier
+  closure), and `x` may not be captured before its declaration.
+- **Dense element typing.** `for (const x of xs)` over `T[]` binds `x: T`, and
+  `xs[i]` and `s[i]` (strings) read `T` and `string`, as TypeScript types them
+  without `noUncheckedIndexedAccess` (contexts that admit `undefined` read
+  like JavaScript; see [batch integration](#batch-integration-v37)). The read
+  is checked: a hole or an index
+  out of range throws `TypeError` (`array element is missing (a hole or an
+  index out of range)`, `array element is a hole` in `for...of`, `string
+  index out of range`) where Node reads `undefined`; this is a documented
+  deviation, so a value of type `T` is never missing. Element types that
+  admit `undefined` read as before, without a test, and `at` keeps
+  `T | undefined`. A read whose context admits `undefined` (an expected type
+  with an `undefined` member, such as a `T | undefined` return, parameter or
+  annotated binding, or the left operand of `??`) reads `T | undefined`
+  unchecked, as Node does. Comparing a function value with `null` or `undefined` is the
+  constant TypeScript admits (`f !== undefined` is `true`).
+- **Property-path narrowing.** A guard on a property path (an identifier or
+  `this`, then data fields of records and class instances; a getter is never
+  a component) narrows later reads of the same path: `!== undefined`,
+  `=== null`, `typeof`, truthiness, literal comparisons, `switch` clauses and a
+  truthy optional chain `a.b?.c` (every object of the chain is not nullish).
+  Facts are flow state; a join keeps a path only when every reachable path
+  has a fact for it, with the union of the narrowed types. Records are
+  mutable and aliased, so every fact is dropped by any construct that may
+  write a property or run other code: calls other than the checked
+  intrinsics that never reach user code or properties (`Object.*` and
+  `JSON.stringify` drop facts too), `new`, `await`, `yield`, getters, tagged
+  templates, assignments and updates to anything but a plain binding,
+  `delete`, the entry of a loop whose test, update or body contains such a
+  construct, every `for...of`/`for...in` entry, and `catch`/`finally` entries.
+  A write to the root binding drops the facts rooted at it. A guard whose
+  test contains such a construct creates no path fact, and facts never enter
+  closures. A literal comparison of `x.kind` also narrows `x` itself when
+  it is a union of record shapes (below).
+- **`switch` by strict equality.** A discriminant that is not a number or
+  Boolean (strings, literal unions, `typeof x`, unions) is evaluated once
+  into a hidden binding; each clause value is compared with `===` in source
+  order until one matches, `default` is selected when every test fails
+  wherever it appears, and clauses fall through until `break`. A clause value
+  whose type shares no member with the discriminant's is the type error
+  `switch case type mismatch`. When the discriminant is an identifier, a
+  member path or `typeof` of one and every clause value is a literal (so no
+  test can change it), each clause is entered under the facts of
+  `discriminant === value` (joined with the previous clause's fallthrough),
+  later clauses and the end under the facts of every earlier test failing. Number and Boolean switches keep their
+  lowering.
+- **Function assignability to `void`.** A function value whose result is any
+  value converts to a function type with the same receiverless fixed-arity
+  parameters and a `void` result, where a value of that type is expected
+  (arguments, annotated bindings, record and class fields, returns): the
+  value is evaluated once into a hidden binding and wrapped in a synthesized
+  closure that calls it and discards the result, so the closed call dispatch
+  still sees exact signatures. Where a union is expected (an optional
+  function field), the conversion targets its function member. An arrow or function expression with an
+  annotated non-`void` result in a `void` context keeps its own type and is
+  converted the same way. Mismatches between two function types name both
+  signatures (`expected (p0: number) => void, found (p0: string) => void`).
+- **Return analysis.** A loop without a test (or with the literal `true`)
+  completes normally only through a `break` that targets it, so
+  `for (;;) { ... return x; }` ends a value-returning function.
+- **Class fields.** A field without an initializer whose type admits
+  `undefined` starts as `undefined`, as TypeScript (with class fields
+  defined) does; other fields must still be assigned in the constructor. A
+  field initialized by `new C(...)` of a declared class without type
+  arguments has type `C`. An arrow created in a constructor after
+  `super(...)` may read the fields assigned before it and write any field
+  through `this.field`; `this` itself still never escapes, and methods are
+  still not called on it.
+- **Unions of record shapes, classes and arrays.** A union may hold several
+  records, interfaces and classes (all share the record tag of a union
+  cell) and several arrays whose element kinds differ (`string[] |
+  number[]`, `string | Item[]`; `A[] | B[]` of two record types is rejected
+  because arrays are told apart by element kind). No value tag or layout
+  changes: the emitted member test of such a union adds, after the tag, the
+  payload's layout descriptor (any layout of the record shape, or of a class
+  and its subclasses) or the array's element kind. Lowering adds field reads
+  of a field every member declares (one read per member, with the union of
+  the field types), method calls on unions of classes, `"key" in x`
+  (`HasOwn` for records, declared members for classes), indexed reads of
+  unions of arrays, object and array literals typed by the member their
+  discriminant or first element selects, and narrowing: `x.kind === "lit"`
+  (and `!==`, `switch`) keeps the members whose `kind` can hold the literal
+  or drops those whose `kind` is exactly it, for bindings and property
+  paths; `in`, `instanceof`, `typeof`, `Array.isArray` and truthiness filter
+  members as before. Capture and frame catalogs describe such a union with
+  the shallow `unknown` cell node, as for recursive unions. Promise and
+  function members stay limited to one per union.
+- **`never`.** A guard that excludes every remaining member of a binding
+  (or a single record by its discriminant) leaves `never`; joins keep it
+  only when every path proved it. `never` annotates bindings and parameters;
+  a `never` value converts to any type, and a `never` binding's
+  initialization is followed by a trap (the code is unreachable), so
+  `default: { const unreachable: never = x; }` checks exhaustiveness.
+- **Checked conversion of record unions.** `JSON.parse(text) as T`,
+  `unknown` assertions and declared reads to a union with several record
+  members select the member by a literal discriminant: each record member
+  needs a required literal-typed field whose values no other member's same
+  field admits (otherwise the conversion is rejected at compile time); the
+  object's value of that field picks the member, which is then built, and an
+  object no discriminant selects throws `TypeError` (Node keeps any parsed
+  object). Host-schema checked parsing (`varta.json.parse<T>`) still rejects
+  literal types.
+- **Module variables.** Module-level `let` and `var` declarations (`var` is
+  treated as `let`: initializers run before any other code, so hoisting is
+  not observable) live in permanent root slots, a primitive boxed in a union
+  cell so the slot holds a handle. Functions, closures and importing modules
+  never copy them: every read loads the slot and every write stores it, so
+  exports are live bindings; importers may not assign them. Simple,
+  compound, logical and update assignments are admitted; destructuring and
+  loop-head targets are rejected. Guard facts on a module variable are
+  invalidated by any call, like those of mutable captured bindings. A `let`
+  without an initializer needs a type that admits `undefined`. Initializers
+  stay the checked pure subset of module constants, plus arrow and function
+  expressions (module constants and variables may hold functions; their
+  bodies run later). An initializer may not reference a later declaration;
+  class expressions stay unsupported.
+- **Self-referencing timers.** `const id = setInterval(() => clearInterval(id),
+  ms)` (and `setTimeout`) captures `id` before its initialization: the timer
+  handle's type is known from the call, so the capture uses the temporal
+  dead zone above; `new C(...)` initializers of declared classes are typed
+  the same way.
+- **Timer handles.** `ReturnType<typeof setTimeout>` and
+  `ReturnType<typeof setInterval>` (the built-in timers, unless a type named
+  `ReturnType` is declared) are `number`, the handle type of these timers;
+  other `ReturnType` queries stay unsupported.
+
+#### Class generics (`class_generics`)
+
+V37 admits generic methods, generic classes, method signatures in object
+types, `implements` and ES private names. Everything is resolved at compile
+time: no value tag, layout, host import, helper, catalog entry or budget is
+added, an instantiation is indistinguishable from the hand-written specialized
+method or class, and v36 and earlier profiles keep rejecting every construct
+below with their diagnostics and compile to unchanged bytes.
+
+- **Generic methods.** Instance, static, `async` and async generator methods
+  (synchronous generator methods stay rejected for every class) may declare
+  type parameters with constraints and defaults
+  (`async request<T>(spec: RequestSpec): Promise<T>`). They follow the
+  [generic function](#generics-generics) rules per call: explicit type
+  arguments, or inference from the arguments (lowered once, in source order,
+  after the receiver) and then from the contextual result type, so
+  `return this.client.request(spec)` in a method declared
+  `(): Promise<User>` instantiates `request<User>`. Calls through `this`, any
+  class-typed receiver, `super.m<T>()` (a direct call) and `C.m<T>()` are
+  admitted. Each distinct type-argument list is one method function of the
+  declaring class with the class receiver, lowered in that class's module and
+  member context, and counts against `abi::MAX_USER_FUNCTIONS`;
+  instantiations requested from instance bodies nest at most
+  `MAX_INSTANTIATION_DEPTH` deep. A subclass may override an inherited generic
+  method with a generic method of the same accessibility and number of type
+  parameters. An overridden generic method is called through one dispatcher
+  per root class and type-argument list, synthesized after every body; every
+  overriding implementation is instantiated with the same arguments and must
+  then have the root's parameter, shape and result types (the override is
+  checked per instantiation, not once generically as in TypeScript). A generic
+  method may not override or be overridden by a non-generic member. Rejected:
+  generic methods used as values, spread arguments to them, and type-parameter
+  defaults or constraints of a method that name the class's own parameters.
+- **Generic classes.** `class Page<T> { … }` is a template; every distinct
+  argument list (`Page<number>`, from an annotation, `new Page<number>(…)`,
+  `new Page(items)` inferred from the constructor's parameters, a contextual
+  `const p: Page<number> = new Page(…)`, or `extends Page<T>`) is an ordinary
+  nominal class with its own record shape, descriptor, initializer and
+  methods, laid out in the declaring module with the arguments bound and
+  memoized by (template, arguments). `Page<number>` and `Page<string>` are
+  unrelated classes; instances are admitted wherever class instances are
+  (fields, arrays, unions, `unknown`, `JSON.stringify`). A reference must
+  supply every parameter without a default (`class P requires a type argument
+  for T`). Generic classes may extend declared or generic classes
+  (`class CursorPage<T> extends Page<T>`), and declared classes may extend
+  instances (`class Numbers extends Page<number>`, which may override its
+  methods). Static members belong to the template (`Page.empty()`); as in
+  TypeScript they cannot name the class's type parameters. Generic methods of
+  a generic class see the class's arguments. Because instances can be created
+  while bodies are lowered, their member functions are allocated after every
+  declared class and dispatcher and lowered into the generated function table;
+  dispatchers are synthesized after the last body, so instance shapes created
+  late join the descriptor tests of the methods they inherit. Members of an
+  instance are checked when the instance is created; a template that is never
+  instantiated is only checked for its static members. `value instanceof Page`
+  tests the instantiation the static type holds (or descends from) and narrows
+  like a class test. Rejected: overriding an inherited method in a generic
+  class (its instances are created after dispatch is fixed), generic Error
+  subclasses, `instanceof` of a generic class on a value not typed as one of
+  its instantiations (including `unknown`: instantiations may still appear in
+  later bodies), and inference without the class's own constructor.
+- **Method signatures.** In an interface or object type, `m(params): R` and
+  `m?(params): R` are the function fields `m: (params) => R` and
+  `m?: ((params) => R) | undefined` of the [function fields](#function-fields-function_fields)
+  rules, so `interface Body { text(): Promise<string>; close?(): void }` is
+  satisfied by object literals, arrows and async functions, and
+  `body.close?.()` works. A method signature needs a return annotation.
+  Object literals admit method shorthand (`{ async text(): Promise<string> { … } }`),
+  lowered as a function expression stored in the field. **`this` binding:**
+  calls through a function field never pass a receiver (JavaScript passes the
+  object), so an object-literal method whose body (or a nested arrow) uses
+  `this` or `super` is rejected; methods that do not use `this` behave
+  exactly as in JavaScript. Generic method signatures (`json<T>(): T`) and
+  generic object-literal methods are rejected: a generic method has no
+  function value. Class instances stay nominal: assigning one to an
+  interface-typed binding remains a type error.
+- **`implements`.** `class C implements I, J<T>` checks, when the class (or
+  instance) is laid out, that every member of each clause, resolved like the
+  annotation in the class's module, is provided by a public field (of an
+  assignable type), getter (of an assignable result) or method (matching the
+  function type: same shape and parameter count, interface arguments
+  assignable to the method's parameters, result assignable to the
+  interface's) of the class or its ancestors; optional members may be
+  missing. It has no runtime effect and makes no instance assignable to the
+  interface. Clauses that name classes, built-in iteration protocols
+  (`AsyncIterable<T>`) or anything other than a closed object type are
+  rejected.
+- **`#private` members.** Instance fields (`#count = 0`, `readonly #fetch:
+  Fetcher`), methods (`#send()`, `async #send()`, `#m<T>()`) and getters
+  (`get #size()`) are admitted. Before layout every `#x` member and every
+  `obj.#x` inside the class body becomes a `private` member named `#x`, so
+  private names never collide with public members (`#count` and `count`
+  coexist) and their scope is the class body, including nested closures,
+  with the class-scoped `private` check (another instance of the class may be
+  read: `other.#step`). A private field is an ordinary slot, initialized and
+  checked by the constructor discipline like any field. `#x in value` tests
+  the brand of the class whose body declares `#x` (exactly `value
+  instanceof C`, so subclass instances pass) and narrows like it; its operand
+  must have an object type (TypeScript rule; JavaScript throws for
+  primitives). Private fields are not properties in JavaScript; v37's
+  `json_stringify_v17` skips them ([batch integration](#batch-integration-v37)),
+  while other host readers see every slot, so a value whose type may reach an
+  instance of a class with private fields cannot become `unknown`. Rejected: static private members, private setters, a subclass
+  redeclaring an inherited private name (in JavaScript a distinct member),
+  quoted members named like private names (`'#x'`) and computed `obj['#x']`
+  accesses of class members.
+
+A class field initialized by `new C(…)` or `new C<A>(…)` without an annotation
+(the pilot's `readonly #controller = new AbortController()`) takes that class
+type; a generic class there needs explicit type arguments. Abstract classes and
+methods stay rejected.
+
+#### Collections and binary text (`collections()`)
+
+V37 admits `Map`, `Set`, tuples, the string and array built-ins below,
+`Uint8Array`, the UTF-8 `TextEncoder`/`TextDecoder`, `btoa`/`atob`,
+`crypto.getRandomValues`/`crypto.randomUUID` and a `Date` subset. V36 and
+earlier profiles keep rejecting every form with their earlier diagnostics and
+keep their bytes: no v37 prelude loads there and no tuple or collection type
+exists (`v36_modules_keep_their_bytes` pins the digests of v36 programs
+recorded before this stream).
+
+**No value tag or layout.** The stream adds no value tag, layout, JSON schema,
+exception channel or launcher maximum: v37 keeps value ABI/layout 17. A map, a
+set and a byte array are private guest storage, like v34 promises before
+value16 tagged them. The compiler rejects, at compile time, every value that
+may hold one where a host value reader would see it: `console.log` (directly
+or through a union), `JSON.stringify` and conversion to `unknown`
+(`unsupported logging/JSON.stringify/conversion to unknown of a value holding
+a Map, Set, Uint8Array or another v37 builtin object`). Instances of the v37
+builtin classes (`TextEncoder`, `TextDecoder`, `Date` and the preludes'
+internal classes) are `opaque` the same way; unlike the v35 Web types they
+never enter `unknown`, so they do not make `JSON.stringify` of `unknown`
+conservative. A later value layout can tag them; nothing in layout 17 changes.
+
+**Engine builtin preludes.** The implementation is typed guest code in five
+reserved prelude modules compiled with the program through the shared module
+pipeline: `<varta>/builtins/text.ts` (string and array methods),
+`<varta>/builtins/collections.ts` (`Map`/`Set`), `<varta>/builtins/binary.ts`
+(`Uint8Array`, text codecs, `crypto`), `<varta>/builtins/base64.ts` and
+`<varta>/builtins/date.ts`. A prelude loads when any module of the program
+names one of its exports or static members, or one of its load triggers
+(`Prelude::loads`: `Map`, `Set`, `ReadonlyMap`, `ReadonlySet`, `Uint8Array`,
+or a member property such as `.padStart`, `.split` or `.join`); a trigger
+imports the module with no binding. The compiler calls prelude functions by
+name for receivers of the matching static type (`lower::engine`), so a module
+that only receives a set through another module's interface reaches them
+without naming `Set`. Module metadata never lists a prelude.
+
+Prelude modules alone may call these engine intrinsics (in program modules the
+names are ordinary unknown calls). None reads a capability:
+
+| Intrinsic | Lowering |
+| --- | --- |
+| `varta.text.unit(s, i)` | Guest read of one UTF-16 code unit (NaN outside the string) |
+| `varta.text.fromUnits(units)` | Guest allocation of a string from at most `MAX_ARRAY_ELEMENTS` code units |
+| `varta.text.indexNonAscii(s)`, `varta.text.asciiUppercase(s)` | Guest scans like the v35 `varta.web.*` intrinsics |
+| `varta.text.toUpperCase(s)`, `varta.text.toLowerCase(s)` | Host operations `string_to_upper_case16`/`string_to_lower_case16` |
+| `varta.text.identity(r)` | The stable address of a managed reference (the heap never moves) |
+| `varta.array.get(a, i)` | A checked dense element read that traps outside the array instead of yielding `undefined` |
+| `varta.collections.hash(k)`, `varta.collections.key(k)` | Selected by the key's static type (below) |
+| `varta.bytes.view(b)`, `varta.bytes.adopt(a)` | Reinterpret a `Uint8Array` as its `number[]` storage and back |
+| `varta.date.now()` | Host operation `date_now` |
+
+**Host operations.** Three imports, all with minimum host ABI
+`abi::NET_REQUEST_VERSION` (33), so a module that imports one fails host ABI
+validation under any older host ABI before instantiation:
+
+- `string_to_upper_case16(i32, i32) -> i32` and
+  `string_to_lower_case16(i32, i32) -> i32`: pure and capability-free, one
+  host call each; they read a bounded UTF-16 range and return the converted
+  string through the result buffer (snapshotted at once). Default Unicode
+  case conversion without locale, applied to every run of well-formed UTF-16
+  as a whole (context rules such as the final sigma see the run); lone
+  surrogates are copied unchanged. The result is bounded by the 1 MiB string
+  limit. The text prelude converts ASCII-only text with guest scans and calls
+  the host only for text above U+007F.
+- `date_now() -> f64`: whole milliseconds since the Unix epoch. The
+  [permission broker](#permission-broker-v37) checks the exact `time.now`
+  grant before the clock is read, as it does for `varta.time.now`. A denial
+  is recoverable, like every v37 permission denial: the runtime logs
+  `<capability denied: time.now> (Date.now)` and returns NaN, which no clock
+  reading produces, and the `Date` prelude throws a `NotAllowedError`
+  `DOMException` from `Date.now()` or `new Date()`; the run continues.
+  `time.now` never authorizes timers, and `time.timer` never authorizes the
+  clock.
+
+**Map and Set.** `Map<K, V>`, `Set<T>`, `ReadonlyMap<K, V>` and
+`ReadonlySet<T>` (the readonly names denote the same types) are nominal types
+(`Type::Collection`) whose storage is the prelude's own generic interfaces
+`MapStore<K, V>` and `SetStore<T>`, instantiated through the generics
+pipeline so the prelude source is the single layout definition:
+`{ index: CollectionIndex; keys: K[]; values: V[] }` and
+`{ index: CollectionIndex; keys: T[] }`, with `CollectionIndex =
+{ buckets, chain, hashes, serials: number[]; size, serial: number }`. The
+types are erased to that record before emission; storage fields are exact heap
+edges, so keys, values and nested collections are traced like any record.
+
+- *Keys.* `string`, `number`, `boolean`, `bigint` and every reference type
+  (records, class instances, arrays, tuples, functions, collections) are
+  admitted; a union or `unknown` key type is rejected (`Map key type …`).
+  Literal types key as their base primitive. Keys compare by SameValueZero
+  (`NaN` equals `NaN`, `-0` is stored as `+0`); references compare by
+  identity.
+- *Hashing.* A chained hash index with a power-of-two bucket count finds a
+  key in expected constant time: strings hash by FNV-1a over their code units
+  (cost linear in the key's length), numbers by value (every `NaN` and both
+  zeros share a hash), booleans by value and references by their stable heap
+  address. BigInt keys compare by value but share one chain (a documented
+  linear cost, bounded by the entry ceiling).
+- *Order and deletion.* Entries live in insertion order in parallel vectors.
+  `delete` negates the entry's insertion serial; an insertion into full
+  vectors first compacts the deleted entries away. A collection holds at most
+  `MAX_ARRAY_ELEMENTS` (1024) entries, deleted ones included until
+  compaction; inserting into a full collection of live entries throws
+  `RangeError: Map maximum size exceeded` (`Set …`). V8's bound is 2^24.
+- *Live iteration.* A cursor remembers the serial of the last visited entry
+  and resumes after it (directly when no entry moved, by binary search after
+  compaction), so iteration visits entries added during iteration, skips
+  deleted ones, revisits a deleted and re-added key at its new position and
+  continues after `clear()` (whose new entries get later serials), as in
+  ECMAScript.
+- *Operations.* `new Map()`/`new Set()` with type arguments or a contextual
+  type (a binding annotation, a parameter, `left ?? new Set()`); `new
+  Set(array)`, `new Map(entries)` with `[K, V][]` entries (an array literal of
+  pair literals infers `K` and `V` like TypeScript) and copies of another
+  collection of the same kind; `has`, `get`, `add`/`set` (returning the
+  collection, so calls chain), `delete`, `clear`, `size`, `forEach` with a
+  `(value, key)` callback, `keys`, `values` and `entries`, `for…of` over a
+  map (`[key, value]` tuples) or a set, `[...collection]`,
+  `[...collection.keys()]` and `Array.from` of either. `keys`, `values` and
+  `entries` return the prelude's generators, so they iterate with `for…of`
+  and spread, not as `Iterator` objects with helper methods. A `forEach`
+  callback's third (collection) parameter, `thisArg`, the ES2025 set methods
+  and `Map.groupBy` are rejected with their names. Stored module constants
+  may be initialized with `new Set(…)`/`new Map(…)` of admitted values.
+
+**Tuples.** `[A, B]`, `readonly [A, B]` and trailing optional elements
+`[A, B?]` (`Type::Tuple`); rest elements and labels with rest are rejected. A
+tuple is physically the dense array of the union of its element types (plus
+`undefined` with optional elements), so logs, JSON, `unknown` and
+`Array.isArray` see an ordinary array, and the element union must be
+admissible (at most one record shape, array type and function type). A tuple
+literal needs a tuple context (an annotation, a parameter or return type, an
+element of a typed array of tuples, a union with one tuple member); without
+one an array literal stays an array. A read at a literal index and
+destructuring yield the position's own type through a checked union unbox; a
+literal index past the tuple is a type error, and other indexes read the
+physical element. `length`, `for…of`, `JSON.stringify` and the array methods
+see the physical array; a tuple is assignable to its physical array type.
+Element and property assignment through a tuple are rejected. Under v37,
+`Object.entries` returns `[string, T][]`, physically the same pair arrays as
+before.
+
+**Strings and arrays.** `padStart`/`padEnd` (ToIntegerOrInfinity of the
+length; the filler repeats and truncates), `toUpperCase`/`toLowerCase`
+(above), `split` with an optional string separator and limit (ToUint32; a
+RegExp separator belongs to the RegExp stream), `concat`, `codePointAt`,
+`String.fromCharCode` (ToUint16) and `String.fromCodePoint` (`RangeError:
+Invalid code point …`), and `Array.prototype.join` over primitive elements
+(`undefined`, `null` and holes join as empty strings; object elements are
+rejected because object-to-string conversion is not modelled). A class
+instance receiver keeps ordinary method dispatch.
+
+**Uint8Array.** A fixed-length dense `number[]` of byte values in eight-byte
+slots, at most `MAX_ARRAY_ELEMENTS` (1024) elements; a larger length throws a
+`RangeError`. `new Uint8Array()`, `new Uint8Array(length)` (`RangeError:
+Invalid typed array length` for a negative or fractional length), `new
+Uint8Array(numbers)` and `new Uint8Array(bytes)` (a copy); index reads like
+array reads (`number | undefined` outside); index writes convert with ToUint8
+and are ignored outside the array; `length`/`byteLength`; `set(source,
+offset?)`, `slice`, `fill`, `indexOf`, `includes`, `at` and `join`;
+`for…of` yields `number`; `[...bytes]` and `Array.from(bytes)` copy to
+`number[]`. `subarray` (a view sharing the buffer), `ArrayBuffer`,
+`DataView` and the other typed arrays are not modelled and are rejected.
+
+**Text codecs and base64.** `TextEncoder.encode(input?)` writes UTF-8, a lone
+surrogate as U+FFFD; output beyond the 1024-byte `Uint8Array` bound throws a
+`RangeError`. `new TextDecoder(label?, { fatal?, ignoreBOM? })` accepts the
+WHATWG UTF-8 labels only (`RangeError: The "…" encoding is not supported`
+otherwise; Node with full ICU accepts more); `decode(bytes?, { stream? })`
+runs the WHATWG UTF-8 decoder with maximal-subpart U+FFFD replacement or, when
+`fatal`, `TypeError: The encoded data was not valid for encoding utf-8`;
+streaming keeps a partial sequence across calls and a leading BOM is skipped
+unless `ignoreBOM`. `btoa`/`atob` follow the HTML standard (forgiving base64
+over Latin-1 code units) and throw a `DOMException` named
+`InvalidCharacterError`; they load the abort prelude for `DOMException`.
+
+**Random values.** `crypto.getRandomValues(bytes)` fills and returns the same
+array from the `Math.random` entropy path (fresh OS entropy per sample, no
+capability, the accepted decision): six bytes from each 48-bit slice of a
+sample, so 16 bytes cost three host calls. `crypto.randomUUID()` formats 16
+such bytes as an RFC 9562 version 4 UUID. `globalThis.crypto` and feature
+detection through `typeof crypto.randomUUID` are not modelled.
+
+**Date.** `Date` is an engine prelude class over one private time value
+(UTC milliseconds, TimeClip). `new Date()` reads the clock (`time.now`), `new
+Date(number)` clips and `new Date(string)` parses; `Date.now()` and
+`Date.parse(text)` are static members that are also function values. There is
+no time zone: `Date.parse` reads the ECMAScript date time string format
+(including V8's lowercase `t`/`z`, a space separator, any number of fraction
+digits and day overflow up to 31; a date-time without an offset is UTC, where
+V8 uses local time) and the RFC 9110 IMF-fixdate, and returns NaN for every
+other form (V8 also accepts implementation-defined legacy forms).
+`getTime`, `setTime`, `toISOString` (`RangeError: Invalid time value`,
+six-digit signed years outside 0–9999) and the `getUTC*` accessors exist;
+local-time accessors, `toString`, `toJSON` and arithmetic through `valueOf`
+are not modelled, and `JSON.stringify` of a `Date` is rejected (opaque).
+
+**Costs.** Operations run in guest code under the unchanged production
+budgets. In a debug measurement a `Set.add` of a number costs about 5 000
+fuel and a `has` about 1 400 (the 1 000 000 fuel budget runs a few hundred
+operations next to other work), string hashing adds work linear in the key,
+and no operation makes a host call except case conversion of non-ASCII text,
+`String(…)` conversions inside `join` of non-string elements, random values
+and the clock.
+
+#### RegExp (`regexp()`)
+
+Selector `regexp()`. V37 admits regular expression literals, `new RegExp`
+with constant arguments, `RegExp.prototype.exec`/`test`, `lastIndex`, match
+arrays and the regex string methods `search`, `match`, `matchAll`, `replace`,
+`replaceAll` and `split` (with RegExp and string patterns). It adds no value
+tag, layout, host import, capability or budget: patterns are compiled ahead
+of time into matcher programs, and a guest matcher runs them in time linear
+in the input. V36 and earlier keep rejecting regex literals and these
+methods with their existing diagnostics and bytes.
+
+- **Design: ahead of time, guest only.** The compiler parses every pattern
+  (`varta-compiler` `regexp`) and compiles it to a *matcher program*, a static
+  string of UTF-16 code units in the data section (deduplicated like other
+  literals). One guest helper, `RegExpExec`, runs any program: a Pike VM that
+  steps all threads of a Thompson NFA in lockstep over the input and drops a
+  thread that reaches an instruction another thread already reached at the
+  same position in the same empty-check state. A run therefore executes at
+  most `O(program × input)` instructions (times at most 16 empty-check
+  states per instruction), all metered as ordinary guest fuel, and no pattern can
+  backtrack catastrophically (ReDoS). Under the [thin-host decision](development-plan.md#thin-host-guest-intrinsics)
+  the matcher is pure guest code: hosts implement nothing and every host
+  (Wasmtime, a browser applier, Raspberry Pi 5) runs the same semantics. The
+  alternatives were rejected: a host regex import would be reimplemented per
+  host and drift from ECMAScript (and the host engines backtrack); a
+  per-pattern Wasm matcher would multiply code size; a matcher written in TS
+  prelude code costs about 100 fuel per guest loop step and would exhaust the
+  production fuel on a few hundred characters.
+- **Run-time patterns are rejected.** `new RegExp(pattern, flags)` is admitted
+  only when both arguments are string literals (or templates without
+  substitutions); it is compiled at compile time like a literal, with
+  `source` escaped as V8's EscapeRegExpPattern (`/` and line terminators,
+  `(?:)` for the empty pattern). A non-constant pattern, `new RegExp(regexp)`,
+  `RegExp(...)` without `new`, `RegExp.escape` and Annex B `compile` are
+  compile-time errors. Admitting them would need a guest pattern compiler run
+  under its own budget, so that untrusted text could choose the program; the
+  compile-time path keeps every program's size, scratch memory and step bound
+  known and reviewed before deployment. This is a deliberate v37 decision, not
+  a permanent limit.
+- **Syntax.** The ECMAScript 2025 Pattern grammar (§22.2.1); without `u` the
+  web-compatibility grammar of Annex B.1.2 (literal `]`, `{`, `}`, identity
+  escapes, legacy octal escapes, `\c` forms, `\8`/`\9`, class ranges with class
+  escapes). Early errors are compile-time `invalid` diagnostics with V8's text
+  (`Invalid regular expression: /(/: Unterminated group`, `Invalid flags
+  supplied to RegExp constructor 'gg'`); SWC itself reports duplicated literal
+  flags. Flags `g i m s u y` are admitted.
+- **Admitted subset.** Characters, `.`, classes and negated classes with
+  ranges, `\d \D \s \S \w \W`, control/hex/Unicode escapes (`\u{…}` and
+  surrogate pairs under `u`), `^ $` (with `m`), `\b \B`, greedy and lazy
+  `* + ? {n} {n,} {n,m}`, alternation, capturing, non-capturing and named
+  groups. Under `u` the matcher reads code points: a surrogate pair is one
+  character for `.`, classes and literals, a lone surrogate matches itself,
+  and a `lastIndex` inside a pair backs up to the pair as V8 does.
+- **Rejected constructs** fail with `unsupported RegExp …: outside the
+  checked-f64-utf16-v37 linear-time RegExp subset`, naming the construct:
+  backreferences `\1` and `\k<name>` (they need backtracking), lookahead and
+  lookbehind assertions, Unicode property escapes `\p{…}`/`\P{…}` (no property
+  tables), pattern modifiers `(?ims-ims:…)`, duplicate named groups, escapes in
+  group names, the `d` (`hasIndices`) and `v` (`unicodeSets`) flags,
+  quantified groups that can match empty nested more than four deep, and
+  programs larger than 16384 code units (counted repetitions are expanded, so
+  `a{100000}` is rejected) or whose matcher scratch exceeds 256 KiB.
+- **Matching semantics.** Leftmost-first priority equals ECMAScript's
+  backtracking order: alternatives and greedy quantifiers prefer their first
+  branch, lazy quantifiers the exit. Every iteration of a quantified group
+  clears its captures first (RepeatMatcher step 4). An iteration that
+  consumes nothing is rejected as RepeatMatcher's empty check does: every
+  optional iteration (`*`, `+` after the first, `?`, `{n,m}` beyond `n`) of a
+  body that can match empty records its start in a register and fails if it
+  ends there (`CHECK`), so `/(a?)?/.exec('')` is `['', undefined]` as in Node.
+  The visited set is keyed by instruction and by which enclosing empty-checked
+  iterations started at the current position, which with the instruction
+  decides every later check; threads in equal states have equal futures, so
+  the earlier (higher-priority) one is kept, and a later iteration of an
+  enclosing loop is explored before an inner lazy loop continues, as
+  backtracking does (`/(.*?)+?!/.exec('ab!')` captures `b`). Programs without
+  captures (see below) cannot observe empty iterations and need no checks. Case-insensitive matching is resolved at
+  compile time: a character or class widens to every character with the same
+  Canonicalize value (toUppercase per code unit without `u`, simple case
+  folding with `u`, from the Rust standard library's Unicode tables; the
+  Turkic dotted and dotless I fold to themselves), and `\w`/`\b` add U+017F and
+  U+212A under `u`+`i`. The matcher compares characters exactly.
+- **Programs.** A program is a header (flags, capture and register slots,
+  instruction, thread and stack bounds, an ASCII first-unit bitmap, up to two
+  direct first units, the closure index, the empty-check nesting), three-unit
+  instructions whose first unit holds the opcode (`MATCH`, `CHAR`, `ANY`,
+  `CLASS`, `JUMP`, `SPLIT`, `SAVE`, `RESET`, `CHECK`, `ASSERT`) and the
+  instruction's empty-check depth,
+  sorted class range tables and precomputed epsilon closures: for each
+  instruction after a character, the compiler stores the threads it adds with
+  their slot writes, so the matcher follows only closures that contain an
+  assertion or empty check at run time. Each pattern has a second, *lean*
+  program without group captures, empty checks or resets that yields the same
+  match bounds; `test`, `search`, global `match`, `split` without groups and
+  `replace` with a template that cannot reference a group use it. A pattern
+  that cannot match empty skips input positions whose first code unit cannot
+  start a match; a pattern that starts with `^` (without `m`) matches only at
+  position 0.
+- **Resources.** One run allocates one managed scratch block whose size the
+  header fixes (at most 256 KiB, checked at compile time) and returns the
+  capture slots as a string; the block is garbage afterwards and no
+  allocation happens during matching. Inputs, results and replacements are
+  ordinary strings under the existing per-value and memory limits. Measured
+  with the production budgets (`regexp_tests`): a run costs about 3 000 fuel
+  of fixed work (including the RegExp object of a literal), a search for one
+  or two possible first units about 23 fuel per skipped unit and a class-led
+  search about 35, while nested quantifiers such as `/^(a+)+$/` cost about
+  1 450 fuel per unit (every live thread steps per unit). Doubling an
+  adversarial input at most doubles its fuel; a 100 000-unit adversarial
+  input exhausts the production fuel and fails the execution instead of
+  hanging. Production budgets are unchanged.
+- **Engine prelude.** `RegExp`, `RegExpExecArray` and `RegExpMatchArray` are
+  classes of the engine prelude `<varta>/text/regexp.ts`, loaded like the
+  [Web types](#engine-web-types-web_headers-abort_signals) when a module names
+  one of them, contains a regex literal or has a member named `match`,
+  `matchAll`, `replace`, `replaceAll`, `search` or `split` (a program's own
+  methods of those names then load it too, without changing their meaning).
+  A program that does none of these is byte-identical to one compiled without
+  preludes. The prelude adds about 28 functions and three classes to the user
+  function and record-shape budgets. Prelude modules (only) may call the guest
+  operations `varta.regexp.exec(program, input, start, sticky)`,
+  `varta.regexp.slot(captures, slot)` and `varta.regexp.unit(text, index)`
+  (`ir::RegExpIntrinsic`); in program modules they are unknown calls. Every
+  evaluation of a literal constructs a new RegExp through the private static
+  `RegExp.compiled`, like ECMAScript.
+- **RegExp objects.** `source`, `flags` (canonical order), `global`,
+  `ignoreCase`, `multiline`, `dotAll`, `unicode`, `sticky`, `hasIndices` and
+  `unicodeSets` are read-only fields; `lastIndex` is a writable number read
+  with ToLength by global and sticky operations. `exec` follows
+  RegExpBuiltinExec: global and sticky runs start at `lastIndex`, set it to the
+  match end and reset it to 0 on failure; sticky runs match only at the start.
+  `test` is `exec` without building the array. RegExps are nominal values in
+  fields, unions, closures and `instanceof`.
+- **Match arrays.** `exec` and `matchAll` produce `RegExpExecArray` (`index:
+  number`, `input: string`), `match` produces `RegExpMatchArray` (`index` and
+  `input` are `undefined` for a global match, which lists every match), and
+  both have `length` and `groups` (a `Record<string, string | undefined>` in
+  group order when the pattern has named groups, otherwise `undefined`).
+  `m[0]` is a `string`; other elements are `string | undefined` (a group that
+  did not take part, or an index past the end). Array destructuring and
+  `for…of` read the elements. Match arrays are read-only and have no array
+  methods (`slice`, `map`, … are rejected with a named diagnostic);
+  `JSON.stringify` rejects them (their JSON form is an array) and they are
+  not assignable to `unknown`.
+- **String methods.** `search` runs from 0 and leaves `lastIndex` alone;
+  `match` without `g` is `exec`, with `g` it collects every match string or
+  returns `null`; `matchAll` requires `g` (`TypeError` as in Node), copies the
+  RegExp with its `lastIndex` and returns the `RegExpExecArray`s as a fresh
+  array; `replace`/`replaceAll` (which requires `g`) follow
+  RegExp.prototype[@@replace] including empty-match advancement by code point
+  under `u`, GetSubstitution for `$$ $& $\` $' $n $nn $<name>`, and replacer
+  functions; `split` follows @@split (a sticky splitter resumed at every
+  position, captures spliced in, the limit as ToUint32). A string, a pattern
+  string or no separator selects the string forms of `split`, `replace` and
+  `replaceAll`; `search`, `match` and `matchAll` compile a string literal
+  argument as `new RegExp(text)` (`'g'` for `matchAll`). Arguments are
+  evaluated once, receiver first.
+- **Replacer functions.** A replacer (a function literal or a binding of a
+  function type) is adapted at compile time to the prelude's
+  `(match: RegExpExecArray) => string`: its parameters become constants read
+  in the order ECMAScript passes them — the match, each capture, the
+  position, the input and, with named groups, the groups object. A capture
+  parameter is `string | undefined`, or `string` when annotated so, which
+  asserts that the group took part (`TypeError` otherwise). The group count
+  is known only for a pattern compiled in place (a literal or constant `new
+  RegExp`); a RegExp value from elsewhere admits a replacer of the match
+  alone. String-pattern replacers receive `(match, offset, input)`.
+- **Deviations.** Besides the rejected constructs: case folding uses Rust's
+  Unicode tables, not ICU; `matchAll` returns an array, not an iterator;
+  match arrays are read-only without array methods; `split` throws
+  `TypeError` for a capture that did not take part, because its result is
+  typed `string[]` (JavaScript inserts `undefined`); `RegExp.prototype.toString`
+  is not provided (it cannot be declared beside the inherited `toString`);
+  `Symbol.match`/`replace`/`split` protocols, RegExp subclassing semantics,
+  legacy static properties (`RegExp.$1`) and `exec` on objects other than
+  strings are not modelled. Behaviour tests pin Node 24 output
+  (`varta-runtime` `regexp_cases`, `regexp_tests`).
+
+#### Network requests (`net_request`)
+
+V37 adds asynchronous HTTP(S) requests behind the WHATWG `fetch` API, over one
+exact capability, `net.request`, which replaces `net.get`/`net.fetch` for new
+code (those keep their v1–v36 contracts and stay importable only by the
+profiles that already had them). V36 and earlier profiles keep rejecting
+`fetch`, `Request`, `Response`, `ReadableStream`, `URL` and `URLSearchParams`
+as unknown names and keep their bytes and diagnostics.
+
+- **Capability.** `net.request` is a URL-scoped grant with an optional method
+  list. Project form: `"net": {"request": ["https://api.example.com/v1/**"]}`
+  (every method) or `"net": {"request": {"urls": [...], "methods": ["GET",
+  "POST"]}}`; manifest form: `{"id": "net.request", "patterns": [...],
+  "methods": [...]}`, where `methods` is accepted for `net.request` only and
+  absent means every method. Patterns follow the [network rules](#network)
+  with `http://` and `https://`: exact scheme, normalized host and effective
+  port, wildcards only after the authority, no credentials, fragments, control
+  characters, whitespace or encoded paths, at most `net::MAX_URL_BYTES` per
+  URL. Methods are RFC 9110 tokens matched exactly; the six methods `fetch`
+  normalizes (`DELETE GET HEAD OPTIONS POST PUT`) must be written in uppercase,
+  `CONNECT`, `TRACE` and `TRACK` are never grantable, duplicates are errors and
+  at most `net::MAX_GRANT_METHODS` are listed. An empty URL list or an empty
+  method list denies every request. With a host ceiling, the URL and method of
+  every request must satisfy both sides; a ceiling never adds a request. The
+  operation is distinct from `net.fetch`, `net.get` and `net.listen` (exact
+  operation ids; none authorizes another). Inspection and `validate` list
+  `net_request_start` with `net.request` through the shared registry.
+- **Check before effect.** `net_request_start` parses the URL and asks the
+  [permission broker](#permission-broker-v37) before anything is resolved or
+  connected; transfers run only while the event loop waits, so no socket
+  exists before the decision. A denial is recoverable: the request completes at
+  once as denied, the runtime logs `varta log: <capability denied:
+  net.request> (METHOD URL)`, and `fetch` rejects with a catchable
+  `DOMException` whose `name` is `NotAllowedError` and whose message is that
+  text. The program continues.
+- **Async model.** The runtime holds request ids, completions and promise
+  serials, never a guest reference. `fetch` starts a request and waits on
+  `varta.net.watch(id, resolve)`, a prelude-only intrinsic that schedules a
+  frame awaiting an engine-internal pending `Promise<void>` (exactly like a
+  timer frame) and registers its one reaction with `net_request_watch`. Each
+  armed operation (the response head, then one body chunk per `net_body_read`)
+  completes once; its completion wakes the frame, which reads the kind
+  (`net_request_take`, `net::CompletionKind`) and text (`net_request_text`).
+  The waiting frame roots the callback, the promise and everything the caller
+  captured while the request is in flight. After the microtask checkpoint the
+  event loop fires a due timer first (Node's timers phase precedes its poll
+  phase), otherwise drives the transfers until a completion arrives, the next
+  timer is due or the deadline passes, and delivers one completion per turn
+  (in completion order) before draining microtasks again. Loop time follows the
+  wall clock after a completion, so later timers are due relative to it; an
+  execution whose only timers are unreferenced stays alive while a request is
+  in flight. A request in flight at the deadline ends the execution with
+  `execution deadline exceeded`, like a timer.
+- **Imports.** Six host ABI 33 imports: `net_request_start (ptr:i32,
+  len:i32) -> f64` (the request descriptor below; capability `net.request`,
+  charged to the host-call budget), and the bookkeeping operations
+  `net_request_watch (serial:f64, id:f64) -> ()`, `net_request_take (id:f64)
+  -> i32`, `net_request_text (id:f64) -> i32` (a string in the host result
+  buffer), `net_body_read (id:f64) -> ()` and `net_request_abort (id:f64) ->
+  ()`, which take no capability and are not charged to the host-call budget but
+  observe the deadline. The descriptor is UTF-16 text of at most
+  `net::MAX_REQUEST_BYTES`: the line `net::DESCRIPTOR_VERSION`, the method, the
+  URL, the header count, each header name and value, the body flag, then the
+  body as the rest (lone surrogates become U+FFFD; the body is sent as UTF-8).
+  A malformed descriptor, an operation on an unknown or released id, a second
+  waiter, a read while an operation is armed, and starting more than
+  `net::MAX_PENDING_REQUESTS` requests are fatal `NetError`s, because only a
+  tampered module can cause them.
+- **Transport.** HTTP/1.1 through hyper's client on a current-thread Tokio
+  runtime created by the first request; HTTPS through rustls (ring provider,
+  TLS 1.2 and 1.3, ALPN `http/1.1`) verifying the server against the
+  compiled-in Mozilla roots (`webpki-roots`), never an ambient trust store. One
+  connection per request, no proxies, no cookies, no ambient credentials, no
+  automatic redirects and no decompression. The runtime sets `host` and the
+  framing headers; a request that sets one of `net::RUNTIME_HEADERS` fails.
+  Name resolution, connect, TLS, the request and every body read share the
+  remaining execution deadline. Response heads are bounded by
+  `net::MAX_RESPONSE_HEADERS` fields and `net::MAX_RESPONSE_HEADER_BYTES`;
+  request headers by `net::MAX_REQUEST_HEADERS` and
+  `net::MAX_REQUEST_HEADER_BYTES`. A body chunk carries every frame already
+  received up to `net::MAX_CHUNK_BYTES` without waiting for more (so SSE events
+  arrive as soon as they are sent) and is decoded as UTF-8 across chunk
+  boundaries (U+FFFD for invalid bytes, as a non-fatal `TextDecoder`). A body
+  beyond `net::MAX_RESPONSE_BODY_BYTES` fails the read. Each body read costs
+  guest fuel proportional to its text (about 2.6 fuel per byte measured), and
+  a request head about 65 000 fuel, so under the production budget an
+  execution makes roughly ten requests or reads a few hundred kilobytes;
+  budgets are unchanged.
+- **Guest API.** Engine preludes (`<varta>/web/fetch.ts`, `url.ts`,
+  `permission.ts`), loaded only when a module names one of their exports, so
+  other programs keep their bytes: `fetch(input: string | URL | Request, init?)`;
+  `Request` (`method` normalized and validated like Node, `url`, `headers`,
+  `signal`, `redirect`); `Response` (`status`, `statusText`, `ok`, `headers`,
+  `url`, `redirected`, `type`, `body`, `bodyUsed`, `text()`, `json()` →
+  `unknown`, and `new Response(body?, init?)` with a text or stream body);
+  `ReadableStream` (`getReader()`, `cancel()`, `locked`, `values()` and
+  `[Symbol.asyncIterator]`), `ReadableStreamDefaultReader` (`read()` in call
+  order, `cancel()`, `releaseLock()`), a stream constructed from an
+  `UnderlyingSource` with `start`, `pull` (returning `Promise<void>`) and
+  `cancel` function fields and a controller with `enqueue`, `close` and
+  `error`; `URL` and `URLSearchParams` (below). `RequestInit` has `method`,
+  `headers` (`HeadersInit`), `body` (a string or `URLSearchParams`, which sets
+  `text/plain;charset=UTF-8` or `application/x-www-form-urlencoded;
+  charset=UTF-8` unless a content type is given), `signal` and `redirect`.
+  Under `net_request` a class may declare `async *[Symbol.asyncIterator]()`
+  (an async generator method without parameters, registered under a name no
+  string key can spell), and `for await` over an instance of such a class
+  calls it; other iterator objects are not modelled.
+- **Cancellation.** A request follows its `signal` with an abort listener: an
+  already aborted signal rejects with its reason before anything starts;
+  aborting while the head is pending cancels the transfer (its connection
+  closes at once) and rejects with the signal's reason; aborting during the
+  body rejects the pending or next `read()` with the reason; `cancel()` on
+  the body releases the request. `AbortSignal.timeout(ms)` therefore bounds a
+  request, as in Node.
+- **Redirects** default to `"error"`, as the accepted platform design
+  requires (WHATWG and Node default to `"follow"`): a 3xx response with a
+  `Location` rejects with `TypeError: fetch failed` (cause `unexpected
+  redirect`). `"manual"` returns the 3xx response itself (as Node does, not an
+  opaque response); `"follow"` issues a new request for the resolved location,
+  checked against the grant again, changing `303` (and `301`/`302` after a
+  `POST`) to a bodiless `GET`, at most 20 times; `redirected` and `url` report
+  it.
+- **Errors.** Name resolution, connection, TLS and protocol failures reject
+  with `TypeError: fetch failed` whose `cause` is an `Error` with the
+  runtime's reason; a failure while reading the body rejects the read with
+  `TypeError: terminated` (Node's messages). An unparseable or relative URL
+  rejects with `TypeError: fetch failed` (cause `Invalid URL: …`).
+- **Deviations from Node and WHATWG.** Bodies are text: response chunks are
+  decoded strings rather than `Uint8Array` bytes, `ReadableStream` is not
+  generic (`ReadableStream<Uint8Array>` is rejected until generic classes and
+  `Uint8Array` land in the class-generics and collections streams; the body
+  type is the seam), and `read()` returns `{ done, value }` with `value` the
+  empty string once `done`. `fetch` and `new Request` take a string, a `URL`
+  (its `href`) or a `Request`, and `new Response` takes a string, a stream or
+  `null`. Prelude instances serialize as `{}` and `JSON.stringify` of
+  `unknown` is admitted ([batch integration](#batch-integration-v37)). There are no
+  `clone()`, `blob()`, `arrayBuffer()`, `formData()`, `Response.json()`,
+  `Response.error()`, `Response.redirect()`, `keepalive`, `mode`,
+  `credentials`, `cache`, `referrer` or `integrity`; request headers are sent
+  as given, without Node's default `accept`, `accept-language`, `user-agent`
+  and `accept-encoding`.
+- **URL subset** (pure guest code; `varta.web.unitAt` reads one code unit in
+  place): the special schemes `http`, `https`, `ws` and `wss` (other schemes
+  throw `TypeError: Invalid URL`), lowercased ASCII hosts (IPv6 literals kept
+  as written; no IDNA, no IPv4 number normalization, forbidden host code
+  points rejected), ports with defaults dropped, dot segments, backslashes as
+  slashes, relative references (scheme-relative, path-absolute, path-relative,
+  query-only, fragment-only) and the WHATWG path, query, fragment and userinfo
+  percent-encode sets, with non-ASCII text encoded as UTF-8. `URL` exposes
+  `href`, `origin`, `protocol`, `username`, `password`, `host`, `hostname`,
+  `port`, `pathname`, `search`, `hash`, `searchParams` (live: its mutations
+  rewrite the query), `toString()` and `URL.canParse`; setters are not
+  admitted (class setters are not in the subset). `URLSearchParams` takes a
+  query string, a `Record<string, string>` or `string[][]`, and offers
+  `append`, `delete`, `get`, `getAll`, `has`, `set`, `forEach`, `size`,
+  snapshot `entries`/`keys`/`values` and `toString()` with
+  `application/x-www-form-urlencoded` serialization; decoding turns `+` into a
+  space and decodes percent escapes of printable ASCII, keeping other escapes
+  as written until a code-unit constructor exists.
+- **Tests** never use the network beyond 127.0.0.1: a loopback server with an
+  ephemeral port (HTTPS with a test-generated certificate and a test-only
+  trust anchor compiled only into the runtime tests), with expectations
+  produced by Node.js v24.20.0 against a mirror server.
+
+#### Permission broker (v37)
+
+V37 routes the capability decisions of the operations it adds or rebinds
+(`net.request`, `time.timer` and the `time.now` clock) through one broker in
+the runtime. Today it answers synchronously from the package's requests
+intersected with the host ceiling, before the operation has any effect, and a
+denial is recoverable rather than fatal:
+
+- a denied request rejects `fetch` with a `NotAllowedError` `DOMException`
+  (above);
+- a denied timer start (`timer_start_v2`, the v37 form of `timer_start` with
+  the same signature and minimum host ABI 33) arms nothing, releases the timer
+  frame as if it were cleared, logs `varta log: <capability denied:
+  time.timer> (timer)` and returns 0, and the guest throws the
+  `NotAllowedError` of the permission prelude synchronously from `setTimeout`,
+  `setInterval` or `AbortSignal.timeout`, so the sleep pattern
+  `new Promise<void>((resolve) => setTimeout(resolve, ms))` rejects. V36 keeps
+  its fatal `TimerDenied` (`timer_start` is frozen); v37 imports
+  `timer_start_v2` only, so a v37 module relabelled as v36 fails at its host
+  ABI section;
+- a denied clock read (`date_now`, a v37-only import) logs `varta log:
+  <capability denied: time.now> (Date.now)` and returns NaN, and the `Date`
+  prelude throws a `NotAllowedError` from `Date.now()` and `new Date()`;
+  `varta.time.now` keeps the failed host status (`denied`, a failed
+  `VartaResult` when captured) that every profile reports.
+
+Every other capability check a v37 program can reach already reports a
+recoverable failed status: `env.*`, `fs.*`, `net.fetch`/`net.get`,
+`process.exit` and the HTTP `stop` call set the host status, which
+`varta.result.capture` reads. Two checks stay outside the broker by design:
+`net.listen` is decided when the host starts an HTTP service, before any
+guest code runs, and v36's `timer_start` keeps its frozen fatal denial (v37
+never imports it).
+
+The broker is the seam for a later consent prompt: a third answer, "pending
+until the user decides", would leave the operation in its slot without an
+effect (a request with no transfer, a timer not yet armed) while its frame
+waits on its engine-internal promise through the scheduler; the user's answer
+would then complete it as granted or denied. A user grant is checked against
+the host ceiling like any grant, so a prompt can never exceed the ceiling.
+No prompt or user interface exists yet.
 
 ## Local modules
 
@@ -8199,7 +9172,9 @@ made cancellable by the guest's fuel budget.
 
 ### Network
 
-HTTP only is implemented. HTTPS grants and unsupported schemes are rejected.
+`net.get` and `net.fetch` implement HTTP only: HTTPS grants and unsupported
+schemes are rejected for them. V37's `net.request` admits `http` and `https`
+under the same URL rules ([network requests](#network-requests-net_request)).
 URLs are parsed before authorization; scheme, normalized hostname and effective
 port must match exactly. Wildcards are permitted only after the authority; `*`
 can match path/query characters and `?` retains its URL query-separator meaning.

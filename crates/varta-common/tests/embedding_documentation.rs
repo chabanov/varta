@@ -716,6 +716,10 @@ fn grant_kind(kind: GrantKind) -> (&'static str, &'static str) {
         GrantKind::Patterns => ("Name/path patterns", r#"`"patterns": [...]`"#),
         GrantKind::Urls => ("URL patterns", r#"`"patterns": [...]`"#),
         GrantKind::Listeners => ("Listen endpoints", r#"`"patterns": ["127.0.0.1:8080"]`"#),
+        GrantKind::Requests => (
+            "Request scopes (v37)",
+            r#"`"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies)"#,
+        ),
     }
 }
 
@@ -729,6 +733,7 @@ fn grant_kinds() -> String {
         GrantKind::Boolean,
         GrantKind::Patterns,
         GrantKind::Urls,
+        GrantKind::Requests,
         GrantKind::Listeners,
     ];
     table(

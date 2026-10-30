@@ -12,6 +12,8 @@ pub mod language;
 pub mod launcher;
 mod manifest;
 mod module;
+/// Asynchronous network requests (v37 `net_request`).
+pub mod net;
 pub mod scheduler;
 pub mod text;
 mod tool;

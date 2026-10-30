@@ -27,6 +27,7 @@ mod promise_tests;
 mod promise_value_tests;
 #[cfg(test)]
 mod record_tests;
+mod regexp;
 #[cfg(test)]
 mod result_tests;
 mod source;
