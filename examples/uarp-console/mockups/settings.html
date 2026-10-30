@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UARP Console — налаштування</title>
+<link rel="stylesheet" href="frame.css">
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<div id="l0-root">
+  <div class="app">
+    <main class="main">
+      <header class="topbar">
+        <div class="avatar" aria-hidden="true">CS</div>
+        <div class="heading">
+          <h1 class="title">Chief of Staff</h1>
+          <span class="subtitle">Не підключено</span>
+        </div>
+        <button class="button ghost round" type="button" aria-label="Налаштування">⚙</button>
+      </header>
+      <section class="timeline" aria-label="Розмова"><div class="thread"></div></section>
+      <div class="composer-wrap">
+        <form class="composer">
+          <textarea class="composer-input" rows="1" id="composer-input" placeholder="Спершу підключіться до простору" aria-label="Повідомлення" disabled></textarea>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <dialog class="dialog" open aria-labelledby="settings-title">
+    <form class="dialog-body">
+      <h2 class="dialog-title" id="settings-title">Підключення до UARP</h2>
+      <div class="field">
+        <label class="label" for="base-url">Адреса API</label>
+        <input class="input" id="base-url" type="text" value="https://api.snaga.ai">
+        <span class="help">Зазвичай змінювати не потрібно.</span>
+      </div>
+      <div class="field">
+        <label class="label" for="api-key">Ключ API</label>
+        <input class="input" id="api-key" type="password" placeholder="uarp_…" aria-describedby="api-key-help" aria-invalid="false">
+        <span class="help" id="api-key-help">Ключ зберігається лише на цьому пристрої. Створити його можна в налаштуваннях простору на snaga.ai.</span>
+      </div>
+      <div class="field">
+        <span class="label">Простір</span>
+        <span class="help">Визначиться автоматично після перевірки ключа.</span>
+      </div>
+      <div class="actions">
+        <button class="button primary" type="submit">Перевірити й підключитись</button>
+        <button class="button" type="button">Скасувати</button>
+      </div>
+    </form>
+  </dialog>
+</div>
+</body>
+</html>

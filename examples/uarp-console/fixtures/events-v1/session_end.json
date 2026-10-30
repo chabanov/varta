@@ -1,0 +1,389 @@
+{
+  "scenario": "session_end",
+  "description": "A run, then DELETE /sessions/{id}: the stream ends with session_closed and [DONE] (since build 43f78a92).",
+  "stream": "GET /api/v1/sessions/{sessionId}/events?event_schema=1",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30, build 43f78a92; frames projected to event_schema=1 with the registry of session/event-schema 6dd964ba8",
+  "not_sent_in_v1": {
+    "run.affect": 3,
+    "streaming.started": 1,
+    "streaming.completed": 1,
+    "llm.response": 1
+  },
+  "requests": [
+    {
+      "step": "create_session",
+      "status": 201,
+      "body": {
+        "session_id": "session-1",
+        "tenant_id": "tenant-1",
+        "agent_id": "agent-head",
+        "created_by": "id-1",
+        "status": "active",
+        "conversation_history": [],
+        "metadata": {
+          "canon_key": "event-fixture-session_end"
+        },
+        "runs": [],
+        "branches": [],
+        "active_branch": "main",
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "expires_at": "2026-01-02T00:00:00.000Z",
+        "title": null
+      },
+      "content_type": "application/json"
+    },
+    {
+      "step": "send_message",
+      "request": {
+        "content": "Reply with the single word: bye"
+      },
+      "status": 202,
+      "body": {
+        "run_id": "run-1"
+      },
+      "content_type": "application/json"
+    },
+    {
+      "step": "delete_session",
+      "status": 200,
+      "body": {
+        "deleted": true,
+        "session_id": "session-1"
+      },
+      "content_type": "application/json"
+    }
+  ],
+  "frames": [
+    {
+      "event": "connected",
+      "id": "0",
+      "data": {
+        "session_id": "session-1",
+        "connected_at": "2026-01-01T00:00:00.095Z",
+        "runs": []
+      }
+    },
+    {
+      "event": "run_added",
+      "id": "run-1:added",
+      "data": {
+        "run_id": "run-1"
+      }
+    },
+    {
+      "event": "run.started",
+      "id": "run-1:1",
+      "data": {
+        "event_id": "evt-1",
+        "run_id": "run-1",
+        "type": "run.started",
+        "seq": 1,
+        "payload": {},
+        "timestamp": "2026-01-01T00:00:00.723Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "step.plan",
+      "id": "run-1:3",
+      "data": {
+        "event_id": "evt-2",
+        "run_id": "run-1",
+        "type": "step.plan",
+        "seq": 3,
+        "payload": {
+          "effort": "low",
+          "skipped": true,
+          "skip_reason": "acp_dont_ask"
+        },
+        "timestamp": "2026-01-01T00:00:01.375Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "run.step_started",
+      "id": "run-1:5",
+      "data": {
+        "event_id": "evt-3",
+        "run_id": "run-1",
+        "type": "run.step_started",
+        "seq": 5,
+        "payload": {
+          "step_index": 1,
+          "streaming": true,
+          "step_id": "step-1"
+        },
+        "timestamp": "2026-01-01T00:00:01.392Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:7",
+      "data": {
+        "event_id": "evt-4",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 7,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "The",
+          "index": 0
+        },
+        "timestamp": "2026-01-01T00:00:02.870Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:9",
+      "data": {
+        "event_id": "evt-5",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 9,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " user says \"Reply",
+          "index": 1
+        },
+        "timestamp": "2026-01-01T00:00:02.913Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:10",
+      "data": {
+        "event_id": "evt-6",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 10,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " with the single word: bye",
+          "index": 2
+        },
+        "timestamp": "2026-01-01T00:00:02.919Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:11",
+      "data": {
+        "event_id": "evt-7",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 11,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "\". Language is",
+          "index": 3
+        },
+        "timestamp": "2026-01-01T00:00:02.926Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:12",
+      "data": {
+        "event_id": "evt-8",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 12,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " English. Reply with",
+          "index": 4
+        },
+        "timestamp": "2026-01-01T00:00:02.933Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:13",
+      "data": {
+        "event_id": "evt-9",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 13,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " single",
+          "index": 5
+        },
+        "timestamp": "2026-01-01T00:00:02.939Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:14",
+      "data": {
+        "event_id": "evt-10",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 14,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " word: bye",
+          "index": 6
+        },
+        "timestamp": "2026-01-01T00:00:02.949Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:15",
+      "data": {
+        "event_id": "evt-11",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 15,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": ".",
+          "index": 7
+        },
+        "timestamp": "2026-01-01T00:00:02.956Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:16",
+      "data": {
+        "event_id": "evt-12",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 16,
+        "payload": {
+          "chunk_type": "content",
+          "delta": "bye",
+          "index": 8
+        },
+        "timestamp": "2026-01-01T00:00:02.962Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "run.step_completed",
+      "id": "run-1:19",
+      "data": {
+        "event_id": "evt-13",
+        "run_id": "run-1",
+        "type": "run.step_completed",
+        "seq": 19,
+        "payload": {
+          "step_index": 1,
+          "step_id": "step-1",
+          "has_tool_calls": false,
+          "tool_names": [],
+          "done": true,
+          "duration_ms": 1649,
+          "input_tokens": 43880,
+          "output_tokens": 26,
+          "thinking_tokens": 0,
+          "llm_calls_count": 1
+        },
+        "timestamp": "2026-01-01T00:00:03.052Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "session.context",
+      "id": "run-1:20",
+      "data": {
+        "event_id": "evt-14",
+        "run_id": "run-1",
+        "type": "session.context",
+        "seq": 20,
+        "payload": {
+          "session_id": "session-1",
+          "window_tokens": 524288,
+          "used_tokens": 43880,
+          "percent": 8,
+          "source": "model",
+          "updated_at": "2026-01-01T00:00:03.067Z"
+        },
+        "timestamp": "2026-01-01T00:00:03.071Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "run.completed",
+      "id": "run-1:22",
+      "data": {
+        "event_id": "evt-15",
+        "run_id": "run-1",
+        "type": "run.completed",
+        "seq": 22,
+        "payload": {
+          "status": "completed",
+          "output": {
+            "response": "bye"
+          },
+          "metrics": {
+            "duration_ms": 2366,
+            "steps_count": 1,
+            "input_tokens": 43880,
+            "output_tokens": 26,
+            "thinking_tokens": 0,
+            "cached_tokens": 13184,
+            "tool_calls_count": 0,
+            "llm_calls_count": 1,
+            "guardrail_checks": 0,
+            "guardrail_violations": 0,
+            "memory_retrievals": 1,
+            "memory_extractions": 0,
+            "total_cost_usd": 0.0130467456
+          },
+          "cost_usd": 0.0130467456
+        },
+        "timestamp": "2026-01-01T00:00:03.081Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "run_done",
+      "id": "run-1:done",
+      "data": {
+        "run_id": "run-1",
+        "status": "completed",
+        "metrics": {
+          "duration_ms": 2366,
+          "steps_count": 1,
+          "input_tokens": 43880,
+          "output_tokens": 26,
+          "thinking_tokens": 0,
+          "cached_tokens": 13184,
+          "tool_calls_count": 0,
+          "llm_calls_count": 1,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "total_cost_usd": 0.0130467456,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.0130467456
+      }
+    },
+    {
+      "event": "session_closed",
+      "id": "session_closed",
+      "data": {
+        "session_id": "session-1"
+      }
+    },
+    {
+      "event": "message",
+      "data": "[DONE]"
+    }
+  ]
+}

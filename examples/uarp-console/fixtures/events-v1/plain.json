@@ -1,0 +1,486 @@
+{
+  "scenario": "plain",
+  "description": "A streamed answer from the Head Agent.",
+  "stream": "GET /api/v1/sessions/{sessionId}/events?event_schema=1",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30, build 34582ffb; frames projected to event_schema=1 with the registry of session/event-schema 6dd964ba8",
+  "not_sent_in_v1": {
+    "run.affect": 3,
+    "streaming.started": 1,
+    "streaming.completed": 1,
+    "llm.response": 1
+  },
+  "requests": [
+    {
+      "step": "create_session",
+      "status": 201,
+      "body": {
+        "session_id": "session-1",
+        "tenant_id": "tenant-1",
+        "agent_id": "agent-head",
+        "created_by": "id-1",
+        "status": "active",
+        "conversation_history": [],
+        "metadata": {
+          "canon_key": "event-fixture-plain"
+        },
+        "runs": [],
+        "branches": [],
+        "active_branch": "main",
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "expires_at": "2026-01-02T00:00:00.000Z",
+        "title": null
+      },
+      "content_type": "application/json"
+    },
+    {
+      "step": "send_message",
+      "request": {
+        "content": "Reply with the single word: ok"
+      },
+      "status": 202,
+      "body": {
+        "run_id": "run-1"
+      },
+      "content_type": "application/json"
+    }
+  ],
+  "frames": [
+    {
+      "event": "connected",
+      "id": "0",
+      "data": {
+        "session_id": "session-1",
+        "connected_at": "2026-01-01T00:00:00.102Z",
+        "runs": []
+      }
+    },
+    {
+      "event": "run_added",
+      "id": "run-1:added",
+      "data": {
+        "run_id": "run-1"
+      }
+    },
+    {
+      "event": "run.started",
+      "id": "run-1:1",
+      "data": {
+        "event_id": "evt-1",
+        "run_id": "run-1",
+        "type": "run.started",
+        "seq": 1,
+        "payload": {},
+        "timestamp": "2026-01-01T00:00:00.693Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "step.plan",
+      "id": "run-1:3",
+      "data": {
+        "event_id": "evt-2",
+        "run_id": "run-1",
+        "type": "step.plan",
+        "seq": 3,
+        "payload": {
+          "effort": "low",
+          "skipped": true,
+          "skip_reason": "acp_dont_ask"
+        },
+        "timestamp": "2026-01-01T00:00:01.515Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "run.step_started",
+      "id": "run-1:5",
+      "data": {
+        "event_id": "evt-3",
+        "run_id": "run-1",
+        "type": "run.step_started",
+        "seq": 5,
+        "payload": {
+          "step_index": 1,
+          "streaming": true,
+          "step_id": "step-1"
+        },
+        "timestamp": "2026-01-01T00:00:01.528Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:7",
+      "data": {
+        "event_id": "evt-4",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 7,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "The",
+          "index": 0
+        },
+        "timestamp": "2026-01-01T00:00:03.202Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:9",
+      "data": {
+        "event_id": "evt-5",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 9,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " user's message is simply",
+          "index": 1
+        },
+        "timestamp": "2026-01-01T00:00:03.246Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:10",
+      "data": {
+        "event_id": "evt-6",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 10,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " \"Reply with the",
+          "index": 2
+        },
+        "timestamp": "2026-01-01T00:00:03.256Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:11",
+      "data": {
+        "event_id": "evt-7",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 11,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " single word: ok",
+          "index": 3
+        },
+        "timestamp": "2026-01-01T00:00:03.263Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:12",
+      "data": {
+        "event_id": "evt-8",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 12,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": "\". This is a",
+          "index": 4
+        },
+        "timestamp": "2026-01-01T00:00:03.269Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:13",
+      "data": {
+        "event_id": "evt-9",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 13,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " direct",
+          "index": 5
+        },
+        "timestamp": "2026-01-01T00:00:03.297Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:14",
+      "data": {
+        "event_id": "evt-10",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 14,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " instruction to",
+          "index": 6
+        },
+        "timestamp": "2026-01-01T00:00:03.308Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:15",
+      "data": {
+        "event_id": "evt-11",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 15,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " reply with",
+          "index": 7
+        },
+        "timestamp": "2026-01-01T00:00:03.314Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:16",
+      "data": {
+        "event_id": "evt-12",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 16,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " a single word.",
+          "index": 8
+        },
+        "timestamp": "2026-01-01T00:00:03.321Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:17",
+      "data": {
+        "event_id": "evt-13",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 17,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " No tools needed.",
+          "index": 9
+        },
+        "timestamp": "2026-01-01T00:00:03.334Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:18",
+      "data": {
+        "event_id": "evt-14",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 18,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " The language is English",
+          "index": 10
+        },
+        "timestamp": "2026-01-01T00:00:03.342Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:19",
+      "data": {
+        "event_id": "evt-15",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 19,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": ", so I reply",
+          "index": 11
+        },
+        "timestamp": "2026-01-01T00:00:03.351Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:20",
+      "data": {
+        "event_id": "evt-16",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 20,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " in English with",
+          "index": 12
+        },
+        "timestamp": "2026-01-01T00:00:03.367Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:21",
+      "data": {
+        "event_id": "evt-17",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 21,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " just",
+          "index": 13
+        },
+        "timestamp": "2026-01-01T00:00:03.374Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:22",
+      "data": {
+        "event_id": "evt-18",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 22,
+        "payload": {
+          "chunk_type": "thinking",
+          "delta": " \"ok\".",
+          "index": 14
+        },
+        "timestamp": "2026-01-01T00:00:03.379Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "llm.chunk",
+      "id": "run-1:23",
+      "data": {
+        "event_id": "evt-19",
+        "run_id": "run-1",
+        "type": "llm.chunk",
+        "seq": 23,
+        "payload": {
+          "chunk_type": "content",
+          "delta": "ok",
+          "index": 15
+        },
+        "timestamp": "2026-01-01T00:00:03.384Z",
+        "stream_type": "assistant"
+      }
+    },
+    {
+      "event": "run.step_completed",
+      "id": "run-1:26",
+      "data": {
+        "event_id": "evt-20",
+        "run_id": "run-1",
+        "type": "run.step_completed",
+        "seq": 26,
+        "payload": {
+          "step_index": 1,
+          "step_id": "step-1",
+          "has_tool_calls": false,
+          "tool_names": [],
+          "done": true,
+          "duration_ms": 1875,
+          "input_tokens": 42343,
+          "output_tokens": 49,
+          "thinking_tokens": 0,
+          "llm_calls_count": 1
+        },
+        "timestamp": "2026-01-01T00:00:03.414Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "session.context",
+      "id": "run-1:27",
+      "data": {
+        "event_id": "evt-21",
+        "run_id": "run-1",
+        "type": "session.context",
+        "seq": 27,
+        "payload": {
+          "session_id": "session-1",
+          "window_tokens": 524288,
+          "used_tokens": 42343,
+          "percent": 8,
+          "source": "model",
+          "updated_at": "2026-01-01T00:00:03.431Z"
+        },
+        "timestamp": "2026-01-01T00:00:03.439Z",
+        "stream_type": "other"
+      }
+    },
+    {
+      "event": "run.completed",
+      "id": "run-1:29",
+      "data": {
+        "event_id": "evt-22",
+        "run_id": "run-1",
+        "type": "run.completed",
+        "seq": 29,
+        "payload": {
+          "status": "completed",
+          "output": {
+            "response": "ok"
+          },
+          "metrics": {
+            "duration_ms": 2763,
+            "steps_count": 1,
+            "input_tokens": 42343,
+            "output_tokens": 49,
+            "thinking_tokens": 0,
+            "tool_calls_count": 0,
+            "llm_calls_count": 1,
+            "guardrail_checks": 0,
+            "guardrail_violations": 0,
+            "memory_retrievals": 1,
+            "memory_extractions": 0,
+            "total_cost_usd": 0.00892633
+          },
+          "cost_usd": 0.00892633
+        },
+        "timestamp": "2026-01-01T00:00:03.449Z",
+        "stream_type": "lifecycle"
+      }
+    },
+    {
+      "event": "run_done",
+      "id": "run-1:done",
+      "data": {
+        "run_id": "run-1",
+        "status": "completed",
+        "metrics": {
+          "duration_ms": 2763,
+          "steps_count": 1,
+          "input_tokens": 42343,
+          "output_tokens": 49,
+          "thinking_tokens": 0,
+          "tool_calls_count": 0,
+          "llm_calls_count": 1,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "total_cost_usd": 0.00892633,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.00892633
+      }
+    }
+  ]
+}

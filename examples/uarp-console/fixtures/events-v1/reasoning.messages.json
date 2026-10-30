@@ -1,0 +1,85 @@
+{
+  "scenario": "reasoning",
+  "request": "GET /api/v1/sessions/{sessionId}/messages",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30 13:xxZ, build 3d07d69d, read after the scenario ran; same placeholders and time shift as reasoning.json",
+  "status": 200,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Think step by step, then answer with only the number: 17*23?",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.757Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      },
+      {
+        "role": "assistant",
+        "content": "391",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:04.883Z",
+        "compacted": false,
+        "thinking": "The user asks a simple math question: 17*23. They want step-by-step thinking, then answer with only the number.\n\n17*23 = 17*20 + 17*3 = 340 + 51 = 391.\n\nThey said \"answer with only the number\". So my reply should be just \"391\". The affect tag must be the very last characters. Hmm, the instruction says answer with only the number, but the affect tag is required and removed before the user sees it. So I should output \"391\" followed by the affect tag.\n\nNo tool needed — simple arithmetic. The thinking tool could be used but it's trivial. The user said \"think step by step\" — I can do that internally. I'll just answer.\n\n391⟦affect:0⟧",
+        "run_metrics": {
+          "steps_count": 1,
+          "input_tokens": 51080,
+          "output_tokens": 184,
+          "thinking_tokens": 0,
+          "tool_calls_count": 0,
+          "llm_calls_count": 2,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "context_window_tokens": 524288,
+          "last_input_tokens": 50968,
+          "duration_ms": 4064,
+          "total_cost_usd": 0.010855599999999998,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.010855599999999998,
+        "message_id": "run-1-reply"
+      }
+    ],
+    "items": [
+      {
+        "role": "user",
+        "content": "Think step by step, then answer with only the number: 17*23?",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.757Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      },
+      {
+        "role": "assistant",
+        "content": "391",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:04.883Z",
+        "compacted": false,
+        "thinking": "The user asks a simple math question: 17*23. They want step-by-step thinking, then answer with only the number.\n\n17*23 = 17*20 + 17*3 = 340 + 51 = 391.\n\nThey said \"answer with only the number\". So my reply should be just \"391\". The affect tag must be the very last characters. Hmm, the instruction says answer with only the number, but the affect tag is required and removed before the user sees it. So I should output \"391\" followed by the affect tag.\n\nNo tool needed — simple arithmetic. The thinking tool could be used but it's trivial. The user said \"think step by step\" — I can do that internally. I'll just answer.\n\n391⟦affect:0⟧",
+        "run_metrics": {
+          "steps_count": 1,
+          "input_tokens": 51080,
+          "output_tokens": 184,
+          "thinking_tokens": 0,
+          "tool_calls_count": 0,
+          "llm_calls_count": 2,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "context_window_tokens": 524288,
+          "last_input_tokens": 50968,
+          "duration_ms": 4064,
+          "total_cost_usd": 0.010855599999999998,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.010855599999999998,
+        "message_id": "run-1-reply"
+      }
+    ],
+    "total": 2
+  }
+}

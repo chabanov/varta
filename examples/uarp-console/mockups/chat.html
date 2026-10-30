@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UARP Console — розмова</title>
+<link rel="stylesheet" href="frame.css">
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<div id="l0-root">
+  <div class="app">
+    <main class="main">
+      <header class="topbar">
+        <div class="avatar" aria-hidden="true">CS</div>
+        <div class="heading">
+          <h1 class="title">Chief of Staff</h1>
+          <span class="subtitle">Головний агент простору Snaga · <span class="badge ok">активний</span></span>
+        </div>
+        <button class="button ghost" type="button" aria-label="Контекст розмови">Контекст</button>
+        <button class="button ghost round" type="button" aria-label="Налаштування">⚙</button>
+      </header>
+
+      <section class="timeline" aria-label="Розмова" aria-live="polite">
+        <div class="thread">
+          <div class="separator"><span class="separator-line"></span><span>Сьогодні</span><span class="separator-line"></span></div>
+
+          <div class="msg user">
+            <div class="bubble">Підготуй короткий огляд конкурентів для запуску в Польщі й збережи його в робочий простір.</div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar small" aria-hidden="true">CS</div>
+            <div class="msg-body">
+              <div class="author"><span class="author-name">Chief of Staff</span> · 14:02</div>
+
+              <button class="event toggle" type="button" aria-expanded="false">
+                <span class="event-icon" aria-hidden="true">◇</span>
+                <span class="event-text"><span class="event-title">Міркування</span> <span class="muted">· 12 с</span></span>
+                <span class="subtle" aria-hidden="true">▸</span>
+              </button>
+
+              <div class="event">
+                <span class="event-icon" aria-hidden="true">⇄</span>
+                <span class="event-text"><span class="event-title">Делеговано «Аналітик ринку»</span> <span class="muted">· зібрати дані про 5 конкурентів</span></span>
+                <span class="badge ok">завершено</span>
+              </div>
+
+              <div class="event">
+                <span class="event-icon" aria-hidden="true">⌕</span>
+                <span class="event-text"><span class="event-title mono">web.search</span> <span class="muted">· «PL market AI agent platforms 2026»</span></span>
+                <span class="badge">8 результатів</span>
+              </div>
+
+              <div class="event">
+                <span class="event-icon" aria-hidden="true">✎</span>
+                <span class="event-text"><span class="event-title mono">workspace.write_file</span> <span class="muted">· research/poland-competitors.md</span></span>
+                <span class="badge ok">записано</span>
+              </div>
+
+              <div class="prose">
+                <p class="p">Готово. Огляд збережено у <code class="inline-code">research/poland-competitors.md</code>. Коротко:</p>
+                <ul class="list">
+                  <li><strong>3 прямі конкуренти</strong> мають локалізацію польською, але жоден не пропонує оркестрацію команд агентів.</li>
+                  <li>Ціни: від 49 до 199 € на місяць за робочий простір.</li>
+                  <li>Найближчий за функціями — <em>AgentFlow</em>; джерело: <button class="link" type="button">agentflow.example/pricing</button></li>
+                </ul>
+                <div class="code-block">
+                  <div class="code-head"><span>markdown</span><button class="button ghost small" type="button">⧉ Копіювати</button></div>
+                  <pre class="pre">| Компанія   | Ціна, €/міс | Команди агентів |
+| AgentFlow  | 99          | ні              |
+| Orkestra   | 149         | частково        |</pre>
+                </div>
+                <p class="p">Підготувати лист для партнерів у Варшаві?</p>
+              </div>
+
+              <div class="meta">
+                <span>14 238 токенів</span><span>0,084 $</span><span>41 с</span><span>6 кроків</span>
+                <button class="button ghost small" type="button">⧉ Копіювати відповідь</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg user">
+            <div class="bubble">Так, коротко, англійською.</div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar small" aria-hidden="true">CS</div>
+            <div class="msg-body">
+              <div class="author"><span class="author-name">Chief of Staff</span> · 14:04 · <span class="badge accent">пише…</span></div>
+              <div class="prose">
+                <p class="p">Dear partners, we are preparing the launch of the UARP platform in Poland and would like to<span class="caret">▍</span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="composer-wrap">
+        <form class="composer">
+          <textarea class="composer-input" rows="1" id="composer-input" placeholder="Напишіть Chief of Staff…  / — команди" aria-label="Повідомлення"></textarea>
+          <div class="composer-bar">
+            <span class="hint">Enter — надіслати · Shift+Enter — новий рядок</span>
+            <button class="button round" type="button" aria-label="Зупинити відповідь">■</button>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UARP Console — початок розмови</title>
+<link rel="stylesheet" href="frame.css">
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<div id="l0-root">
+  <div class="app">
+    <main class="main">
+      <header class="topbar">
+        <div class="avatar" aria-hidden="true">CS</div>
+        <div class="heading">
+          <h1 class="title">Chief of Staff</h1>
+          <span class="subtitle">Головний агент простору Snaga · <span class="badge ok">активний</span></span>
+        </div>
+        <button class="button ghost round" type="button" aria-label="Налаштування">⚙</button>
+      </header>
+
+      <section class="timeline" aria-label="Розмова">
+        <div class="thread">
+          <div class="empty">
+            <div class="avatar" aria-hidden="true">CS</div>
+            <h2 class="empty-title">Чим допомогти сьогодні?</h2>
+            <p class="p muted">Chief of Staff керує всіма агентами простору: делегує задачі, стежить за запусками і питає вашого дозволу на важливі дії.</p>
+            <div class="suggestions">
+              <button class="suggestion" type="button"><strong>Що зараз відбувається?</strong><span class="muted">Активні запуски й агенти, що чекають на мене</span></button>
+              <button class="suggestion" type="button"><strong>Підсумок за тиждень</strong><span class="muted">Витрати, успішні й невдалі запуски</span></button>
+              <button class="suggestion" type="button"><strong>Створи агента для підтримки</strong><span class="muted">Відповіді клієнтам з бази знань</span></button>
+              <button class="suggestion" type="button"><strong>/команди</strong><span class="muted">Що ще можна попросити</span></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="composer-wrap">
+        <form class="composer">
+          <textarea class="composer-input" rows="1" id="composer-input" placeholder="Напишіть Chief of Staff…  / — команди" aria-label="Повідомлення" autofocus></textarea>
+          <div class="composer-bar">
+            <span class="hint">Enter — надіслати · Shift+Enter — новий рядок</span>
+            <button class="button round primary" type="submit" aria-label="Надіслати" disabled>↑</button>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>

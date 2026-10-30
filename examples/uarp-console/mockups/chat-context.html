@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UARP Console — контекст розмови</title>
+<link rel="stylesheet" href="frame.css">
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<div id="l0-root">
+  <div class="app with-panel">
+    <main class="main">
+      <header class="topbar">
+        <div class="avatar" aria-hidden="true">CS</div>
+        <div class="heading">
+          <h1 class="title">Chief of Staff</h1>
+          <span class="subtitle">Головний агент простору Snaga · <span class="badge ok">активний</span></span>
+        </div>
+        <button class="button ghost" type="button" aria-label="Сховати контекст" aria-expanded="true">Контекст</button>
+        <button class="button ghost round" type="button" aria-label="Налаштування">⚙</button>
+      </header>
+
+      <section class="timeline" aria-label="Розмова">
+        <div class="thread">
+          <div class="msg">
+            <div class="avatar small" aria-hidden="true">CS</div>
+            <div class="msg-body">
+              <div class="author"><span class="author-name">Chief of Staff</span> · 14:02</div>
+              <button class="event toggle" type="button" aria-current="true">
+                <span class="event-icon" aria-hidden="true">⇄</span>
+                <span class="event-text"><span class="event-title">Делеговано «Аналітик ринку»</span> <span class="muted">· зібрати дані про 5 конкурентів</span></span>
+                <span class="badge ok">завершено</span>
+              </button>
+              <div class="details">
+                <span>Запуск <span class="mono">run_7KQ2…F9</span> · 23 с · 3 виклики інструментів</span>
+                <span>Результат передано Chief of Staff</span>
+              </div>
+              <div class="prose">
+                <p class="p">Готово. Огляд збережено у <code class="inline-code">research/poland-competitors.md</code>.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="composer-wrap">
+        <form class="composer">
+          <textarea class="composer-input" rows="1" id="composer-input" placeholder="Напишіть Chief of Staff…  / — команди" aria-label="Повідомлення"></textarea>
+          <div class="composer-bar">
+            <span class="hint">Enter — надіслати · Shift+Enter — новий рядок</span>
+            <button class="button round primary" type="submit" aria-label="Надіслати" disabled>↑</button>
+          </div>
+        </form>
+      </div>
+    </main>
+
+    <aside class="panel" aria-label="Контекст розмови">
+      <div class="panel-head">
+        <h2 class="panel-title">Контекст</h2>
+        <button class="button ghost round" type="button" aria-label="Закрити контекст">✕</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="avatar small agent" aria-hidden="true">АР</div>
+          <h3 class="card-title">Аналітик ринку</h3>
+          <span class="badge ok">активний</span>
+        </div>
+        <div class="kv">
+          <span class="kv-key">Режим</span><span class="kv-value">async</span>
+          <span class="kv-key">Підпорядкування</span><span class="kv-value">Chief of Staff</span>
+          <span class="kv-key">Запусків сьогодні</span><span class="kv-value">7</span>
+          <span class="kv-key">Створено</span><span class="kv-value">12 жовтня</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title">Запуск <span class="mono">run_7KQ2…F9</span></h3>
+          <span class="badge ok">completed</span>
+        </div>
+        <div class="kv">
+          <span class="kv-key">Тривалість</span><span class="kv-value">23 с</span>
+          <span class="kv-key">Токени</span><span class="kv-value">5 912 вх. · 1 204 вих.</span>
+          <span class="kv-key">Вартість</span><span class="kv-value">0,031 $</span>
+          <span class="kv-key">Кроки</span><span class="kv-value">4</span>
+          <span class="kv-key">Інструменти</span><span class="kv-value mono">web.search ×2, web.fetch</span>
+        </div>
+        <div class="actions">
+          <button class="button small" type="button">Події запуску</button>
+          <button class="button ghost small" type="button">⧉ ID</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title">Активні запуски</h3>
+          <span class="badge accent">2</span>
+        </div>
+        <div class="event">
+          <span class="event-icon" aria-hidden="true">●</span>
+          <span class="event-text"><span class="event-title">Підтримка клієнтів</span> <span class="muted">· running</span></span>
+          <span class="badge accent">1 хв</span>
+        </div>
+        <div class="event">
+          <span class="event-icon" aria-hidden="true">◐</span>
+          <span class="event-text"><span class="event-title">Фінансовий звіт</span> <span class="muted">· awaiting_approval</span></span>
+          <span class="badge warn">чекає</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,105 @@
+{
+  "scenario": "approval_approve",
+  "request": "GET /api/v1/sessions/{sessionId}/messages",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30 13:xxZ, build 3d07d69d, read after the scenario ran; same placeholders and time shift as approval_approve.json",
+  "status": 200,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Call manage_permissions with action \"get\" and agent_id \"agent-probe\". Do not call anything else.",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.651Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      },
+      {
+        "role": "assistant",
+        "content": "Result: no permission record exists for that agent (`exists: false`, empty permissions).",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:07.953Z",
+        "compacted": false,
+        "tool_calls": [
+          {
+            "id": "call_rj0hs7ky",
+            "name": "manage_permissions",
+            "status": "done",
+            "input": "{\"action\":\"get\",\"agent_id\":\"agent-probe\"}",
+            "output": "{\"agent_id\":\"agent-probe\",\"exists\":false,\"permissions\":{}}"
+          }
+        ],
+        "thinking": "The tool returned: agent_id \"agent-probe\", exists: false, permissions: {}. The user asked to call only this tool and reply. I should report the result plainly. The user wrote in English, so reply in English.",
+        "run_metrics": {
+          "steps_count": 3,
+          "input_tokens": 63033,
+          "output_tokens": 207,
+          "thinking_tokens": 0,
+          "tool_calls_count": 1,
+          "llm_calls_count": 4,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 2,
+          "memory_extractions": 0,
+          "context_window_tokens": 524288,
+          "last_input_tokens": 31420,
+          "cached_tokens": 26752,
+          "duration_ms": 6710,
+          "total_cost_usd": 0.008887494,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.008887494,
+        "message_id": "run-1-reply"
+      }
+    ],
+    "items": [
+      {
+        "role": "user",
+        "content": "Call manage_permissions with action \"get\" and agent_id \"agent-probe\". Do not call anything else.",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.651Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      },
+      {
+        "role": "assistant",
+        "content": "Result: no permission record exists for that agent (`exists: false`, empty permissions).",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:07.953Z",
+        "compacted": false,
+        "tool_calls": [
+          {
+            "id": "call_rj0hs7ky",
+            "name": "manage_permissions",
+            "status": "done",
+            "input": "{\"action\":\"get\",\"agent_id\":\"agent-probe\"}",
+            "output": "{\"agent_id\":\"agent-probe\",\"exists\":false,\"permissions\":{}}"
+          }
+        ],
+        "thinking": "The tool returned: agent_id \"agent-probe\", exists: false, permissions: {}. The user asked to call only this tool and reply. I should report the result plainly. The user wrote in English, so reply in English.",
+        "run_metrics": {
+          "steps_count": 3,
+          "input_tokens": 63033,
+          "output_tokens": 207,
+          "thinking_tokens": 0,
+          "tool_calls_count": 1,
+          "llm_calls_count": 4,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 2,
+          "memory_extractions": 0,
+          "context_window_tokens": 524288,
+          "last_input_tokens": 31420,
+          "cached_tokens": 26752,
+          "duration_ms": 6710,
+          "total_cost_usd": 0.008887494,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.008887494,
+        "message_id": "run-1-reply"
+      }
+    ],
+    "total": 2
+  }
+}

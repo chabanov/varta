@@ -1,0 +1,119 @@
+{
+  "scenario": "delegation",
+  "request": "GET /api/v1/sessions/{sessionId}/messages",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30 13:xxZ, build 3d07d69d, read after the scenario ran; same placeholders and time shift as delegation.json",
+  "status": 200,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Use start_run to run agent agent-research with the message \"Reply with: ok\", wait for its result, then reply with that result only.",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.643Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      },
+      {
+        "role": "assistant",
+        "content": "ok",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:08.064Z",
+        "compacted": false,
+        "tool_calls": [
+          {
+            "id": "call_hio7klyj",
+            "name": "start_run",
+            "status": "done",
+            "input": "{\"agent_id\":\"agent-research\",\"input\":{\"message\":\"Reply with: ok\"}}",
+            "output": "{\"run_id\":\"id-2\",\"agent_id\":\"agent-research\",\"async\":false,\"summary\":\"Started run for agent agent-research\"}"
+          },
+          {
+            "id": "call_n447rcvb",
+            "name": "get_run_result",
+            "status": "done",
+            "input": "{\"run_id\":\"id-2\",\"wait_ms\":60000}",
+            "output": "{\"run_id\":\"id-2\",\"status\":\"completed\",\"output\":{\"response\":\"ok\"},\"metrics\":{\"steps_count\":1,\"input_tokens\":25345,\"output_tokens\":30,\"thinking_tokens\":0,\"tool_calls_count\":0,\"llm_calls_count\":1,\"guardrail_checks\":0,\"guardrail_violations\":0,\"memory_retrievals\":0,\"memory_extractions\":0,\"context_window_tokens\":524288,\"last_input_tokens\":25345,\"duration_ms\":1886,\"total_cost_usd\":0.005343449999999999,\"pricing_confidence\":\"inferred\"},\"terminal\":true,\"summary\":\"Run completed\"}"
+          }
+        ],
+        "thinking": "The run completed and the agent's output was \"ok\". The user asked me to reply with that result only.",
+        "run_metrics": {
+          "steps_count": 3,
+          "input_tokens": 91203,
+          "output_tokens": 205,
+          "thinking_tokens": 0,
+          "tool_calls_count": 2,
+          "llm_calls_count": 4,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "context_window_tokens": 524288,
+          "last_input_tokens": 30544,
+          "cached_tokens": 53504,
+          "duration_ms": 7371,
+          "total_cost_usd": 0.010307458,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.010307458,
+        "message_id": "run-1-reply"
+      }
+    ],
+    "items": [
+      {
+        "role": "user",
+        "content": "Use start_run to run agent agent-research with the message \"Reply with: ok\", wait for its result, then reply with that result only.",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:00.643Z",
+        "compacted": false,
+        "importance": "high",
+        "message_id": "run-1"
+      },
+      {
+        "role": "assistant",
+        "content": "ok",
+        "run_id": "run-1",
+        "timestamp": "2026-01-01T00:00:08.064Z",
+        "compacted": false,
+        "tool_calls": [
+          {
+            "id": "call_hio7klyj",
+            "name": "start_run",
+            "status": "done",
+            "input": "{\"agent_id\":\"agent-research\",\"input\":{\"message\":\"Reply with: ok\"}}",
+            "output": "{\"run_id\":\"id-2\",\"agent_id\":\"agent-research\",\"async\":false,\"summary\":\"Started run for agent agent-research\"}"
+          },
+          {
+            "id": "call_n447rcvb",
+            "name": "get_run_result",
+            "status": "done",
+            "input": "{\"run_id\":\"id-2\",\"wait_ms\":60000}",
+            "output": "{\"run_id\":\"id-2\",\"status\":\"completed\",\"output\":{\"response\":\"ok\"},\"metrics\":{\"steps_count\":1,\"input_tokens\":25345,\"output_tokens\":30,\"thinking_tokens\":0,\"tool_calls_count\":0,\"llm_calls_count\":1,\"guardrail_checks\":0,\"guardrail_violations\":0,\"memory_retrievals\":0,\"memory_extractions\":0,\"context_window_tokens\":524288,\"last_input_tokens\":25345,\"duration_ms\":1886,\"total_cost_usd\":0.005343449999999999,\"pricing_confidence\":\"inferred\"},\"terminal\":true,\"summary\":\"Run completed\"}"
+          }
+        ],
+        "thinking": "The run completed and the agent's output was \"ok\". The user asked me to reply with that result only.",
+        "run_metrics": {
+          "steps_count": 3,
+          "input_tokens": 91203,
+          "output_tokens": 205,
+          "thinking_tokens": 0,
+          "tool_calls_count": 2,
+          "llm_calls_count": 4,
+          "guardrail_checks": 0,
+          "guardrail_violations": 0,
+          "memory_retrievals": 1,
+          "memory_extractions": 0,
+          "context_window_tokens": 524288,
+          "last_input_tokens": 30544,
+          "cached_tokens": 53504,
+          "duration_ms": 7371,
+          "total_cost_usd": 0.010307458,
+          "pricing_confidence": "inferred"
+        },
+        "cost_usd": 0.010307458,
+        "message_id": "run-1-reply"
+      }
+    ],
+    "total": 2
+  }
+}

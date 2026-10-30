@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varta JS host conformance</title>
+<style>
+  :root { --bg: #fff; --fg: #1b1b1f; --muted: #6b6b76; --ok: #1f7a3a; --bad: #b3261e; --line: #e4e4ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141418; --fg: #ececf1; --muted: #9a9aa6; --ok: #5cc27a; --bad: #ff8a80; --line: #2a2a31; } }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 16px; }
+  #summary { font-weight: 600; margin-bottom: 12px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  pre { white-space: pre-wrap; font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+</style>
+</head>
+<body>
+<h1>Varta JS host — browser conformance</h1>
+<p>Runs the shared cases in a module Worker and compares them with the native observations in <code>out/expected.json</code>.</p>
+<div id="summary">Running…</div>
+<ul id="list"></ul>
+<script type="module">
+  const summary = document.getElementById("summary");
+  const list = document.getElementById("list");
+  const expected = await (await fetch("out/expected.json", { cache: "no-store" })).json();
+  const worker = new Worker("browser-worker.js", { type: "module" });
+  const DEADLINE_MS = 30000;
+  const timer = setTimeout(() => {
+    worker.terminate();
+    summary.textContent = "Terminated: the Worker exceeded the page deadline";
+  }, DEADLINE_MS);
+  worker.onmessage = ({ data }) => {
+    clearTimeout(timer);
+    worker.terminate();
+    if (data.error) {
+      summary.textContent = "Error";
+      list.innerHTML = "";
+      const pre = document.createElement("pre");
+      pre.textContent = data.error;
+      list.append(pre);
+      window.__varta = { error: data.error };
+      return;
+    }
+    let failures = 0;
+    expected.forEach(({ label, expected: want }, i) => {
+      const got = data.results[i]?.observed;
+      const ok = JSON.stringify(want) === JSON.stringify(got);
+      if (!ok) failures += 1;
+      const item = document.createElement("li");
+      const mark = document.createElement("span");
+      mark.className = ok ? "ok" : "bad";
+      mark.textContent = ok ? "✓ " : "✗ ";
+      item.append(mark, label);
+      if (!ok) {
+        const pre = document.createElement("pre");
+        pre.textContent = `native: ${JSON.stringify(want)}\nbrowser: ${JSON.stringify(got)}`;
+        item.append(pre);
+      }
+      list.append(item);
+    });
+    summary.textContent = `${expected.length - failures} passed, ${failures} failed · fuel: ${data.guarantees.fuel}`;
+    window.__varta = { passed: expected.length - failures, failed: failures, userAgent: navigator.userAgent };
+  };
+  worker.postMessage("start");
+</script>
+</body>
+</html>

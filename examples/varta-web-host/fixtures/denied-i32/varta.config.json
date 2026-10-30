@@ -1,0 +1,7 @@
+{
+  "entry": "src/main.ts",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "dist/app",
+  "capabilities": { "env": { "print": ["APP_NAME"] } }
+}

@@ -1,0 +1,8 @@
+{
+  "entry": "src/main.ts",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "dist/app",
+  "languageProfile": "checked-f64-utf16-v36",
+  "capabilities": {}
+}

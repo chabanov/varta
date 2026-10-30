@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UARP Console — картки в розмові</title>
+<link rel="stylesheet" href="frame.css">
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<div id="l0-root">
+  <div class="app">
+    <main class="main">
+      <header class="topbar">
+        <div class="avatar" aria-hidden="true">CS</div>
+        <div class="heading">
+          <h1 class="title">Chief of Staff</h1>
+          <span class="subtitle">Головний агент простору Snaga · <span class="badge warn">чекає на вас</span></span>
+        </div>
+        <button class="button ghost" type="button" aria-label="Контекст розмови">Контекст</button>
+        <button class="button ghost round" type="button" aria-label="Налаштування">⚙</button>
+      </header>
+      <div class="banner" role="status"><span aria-hidden="true">⚠</span><span>З'єднання втрачено. Перепідключаємось і продовжимо з останньої події…</span></div>
+
+      <section class="timeline" aria-label="Розмова" aria-live="polite">
+        <div class="thread">
+          <div class="separator"><span class="separator-line"></span><span>Сесію завершено · продовжуємо в новій</span><span class="separator-line"></span></div>
+
+          <div class="msg user">
+            <div class="bubble">Надішли лист партнерам і заплануй дзвінок на четвер.</div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar small" aria-hidden="true">CS</div>
+            <div class="msg-body">
+              <div class="author"><span class="author-name">Chief of Staff</span> · 14:06</div>
+
+              <div class="card attention" role="alert">
+                <div class="card-head">
+                  <span aria-hidden="true">✋</span>
+                  <h2 class="card-title">Потрібен ваш дозвіл</h2>
+                  <span class="badge warn">очікує</span>
+                </div>
+                <p class="p">Агент хоче виконати дію, яка потребує підтвердження людиною.</p>
+                <div class="kv">
+                  <span class="kv-key">Інструмент</span><span class="kv-value mono">email.send</span>
+                  <span class="kv-key">Кому</span><span class="kv-value">partners@warsaw-hub.example</span>
+                  <span class="kv-key">Тема</span><span class="kv-value">UARP launch in Poland</span>
+                </div>
+                <pre class="pre small">{ "to": "partners@warsaw-hub.example", "subject": "UARP launch in Poland", "attachments": 1 }</pre>
+                <div class="actions">
+                  <button class="button primary" type="button">Дозволити</button>
+                  <button class="button" type="button">Відхилити</button>
+                  <button class="button ghost" type="button">Переглянути лист</button>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head">
+                  <span aria-hidden="true">?</span>
+                  <h2 class="card-title">Агент питає</h2>
+                  <span class="badge accent">потрібна відповідь</span>
+                </div>
+                <p class="p">На який час у четвер запланувати дзвінок? Календарі учасників вільні у ці слоти:</p>
+                <div class="actions">
+                  <button class="button" type="button">10:00</button>
+                  <button class="button" type="button">13:30</button>
+                  <button class="button" type="button">16:00</button>
+                </div>
+                <div class="field">
+                  <label class="label" for="answer-input">Або своя відповідь</label>
+                  <input class="input" id="answer-input" type="text" placeholder="Наприклад: 11:00 за Варшавою">
+                </div>
+              </div>
+
+              <div class="card error" role="alert">
+                <div class="card-head">
+                  <span aria-hidden="true">✕</span>
+                  <h2 class="card-title">Запуск не вдався</h2>
+                  <span class="badge danger">помилка</span>
+                </div>
+                <p class="p">Досягнуто ліміту запитів до календаря. Повторіть за 30 секунд.</p>
+                <div class="kv">
+                  <span class="kv-key">Код</span><span class="kv-value mono">QUOTA_EXCEEDED</span>
+                  <span class="kv-key">Статус</span><span class="kv-value mono">429</span>
+                  <span class="kv-key">Correlation ID</span><span class="kv-value mono">01JC9X2T4Q8VKM3F7R5N6B</span>
+                </div>
+                <div class="actions">
+                  <button class="button" type="button">Повторити</button>
+                  <button class="button ghost small" type="button">⧉ Копіювати ID</button>
+                </div>
+              </div>
+
+              <div class="event">
+                <span class="event-icon" aria-hidden="true">⦸</span>
+                <span class="event-text"><span class="event-title mono">calendar.create_event</span> <span class="muted">· відхилено політикою guardrails</span></span>
+                <span class="badge danger">заблоковано</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="composer-wrap">
+        <form class="composer">
+          <textarea class="composer-input" rows="1" id="composer-input" placeholder="Напишіть Chief of Staff…  / — команди" aria-label="Повідомлення"></textarea>
+          <div class="composer-bar">
+            <span class="hint">Агент чекає на ваше рішення вище</span>
+            <button class="button round primary" type="submit" aria-label="Надіслати" disabled>↑</button>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+  <div class="toasts" role="status" aria-live="polite">
+    <div class="toast">Скопійовано в буфер обміну</div>
+  </div>
+</div>
+</body>
+</html>

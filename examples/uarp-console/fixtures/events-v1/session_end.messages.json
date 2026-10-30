@@ -1,0 +1,15 @@
+{
+  "scenario": "session_end",
+  "request": "GET /api/v1/sessions/{sessionId}/messages",
+  "recorded": "e2e-canon on production api.snaga.ai, 2026-10-30 13:xxZ, build 3d07d69d, read after the scenario ran; same placeholders and time shift as session_end.json",
+  "status": 404,
+  "body": {
+    "type": "about:blank",
+    "title": "Not Found",
+    "status": 404,
+    "detail": "session \"session-1\" not found",
+    "correlationId": "id-2",
+    "correlation_id": "id-2",
+    "code": "NOT_FOUND"
+  }
+}
