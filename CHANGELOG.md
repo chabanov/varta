@@ -11,6 +11,17 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Opt-in v38 (batch: program and data limits, turn budgets, linked
+  intrinsics, view protocol and TSX, structural subtyping and code generation
+  v2, in development) is registered. It inherits every v37 feature, shares
+  value ABI/layout 17 with v37 and declares its own host ABI 34
+  (`PROGRAM_LIMITS_VERSION`) without a new import yet; the launcher advertises
+  host ABI 34. A v38 module relabelled as v37 fails at its host ABI section,
+  and runtimes that do not list v38 reject its declared profile name before
+  any guest effect. Its `program_limits`, `data_limits`, `turn_budgets`,
+  `linked_intrinsics`, `view_protocol`, `tsx`, `structural_subtyping` and
+  `codegen_v2` selectors admit nothing yet.
+
 - The v37 streams integrated, with their cross-stream rules. Unreachable
   functions, including unused engine prelude members, are removed before the
   256-function limit applies (a `fetch` hello world went from 228 linked to

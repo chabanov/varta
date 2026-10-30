@@ -161,10 +161,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 | `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
 | `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
+| `checked-f64-utf16-v38` | 34 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **33**, value ABI **17**, HTTP contract **1** and **40** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **34**, value ABI **17**, HTTP contract **1** and **41** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -5990,7 +5991,7 @@ guest effect. The runtime reports a failure as the typed
 `RuntimeError::Frames`; artifact I/O reports it as an invalid artifact.
 
 - **Catalog reader.** A `resumable_frames()` profile reads catalog versions 1
-  and 2 (v35 to v37, the `frame_liveness()` profiles, read versions 1 and 3 instead, see
+  and 2 (v35 to v38, the `frame_liveness()` profiles, read versions 1 and 3 instead, see
   [frame liveness](#frame-liveness-frame_liveness)). Every other profile keeps
   the version 1 reader, which never accepts versions 2 or 3; a frame catalog
   under such a profile fails as a profile that does not admit resumable frames. Duplicate catalog sections, unknown fields,
@@ -6585,7 +6586,7 @@ trap before any effect.
   `<reason not retained>`. These bounds change no guest-observable behaviour
   (the same reports are made and withdrawn, and the same executions
   terminate), only the diagnostic text, so they apply to every scheduler
-  profile (v34 to v37). Values are in the [limits table](#resource-limits).
+  profile (v34 to v38). Values are in the [limits table](#resource-limits).
 - **Entry points.** Only `main` gets a checkpoint. Tool and HTTP contracts are
   rejected in every binary64 profile, so async tool handlers and HTTP adapters
   cannot be declared; a request-scoped isolate with its own checkpoint is the
@@ -8907,6 +8908,74 @@ waits on its engine-internal promise through the scheduler; the user's answer
 would then complete it as granted or denied. A user grant is checked against
 the host ceiling like any grant, so a prompt can never exceed the ceiling.
 No prompt or user interface exists yet.
+
+### `checked-f64-utf16-v38` — Batch: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping and codegen v2
+
+V38 is registered and inherits every v37 feature and selector, including value
+layout 17 (`function_fields()`) with the value17 host readers, exception
+channel v8, JSON schema 17 (`json_stringify_v17`, `json_parse_v18`), the
+microtask scheduler, frame catalog version 3 (`frame_liveness()`), async
+generators, the timer operations with the recoverable `timer_start_v2`, the
+`net.request` operations and the [permission broker](#permission-broker-v37)
+with its recoverable denials. Wherever a v37 subsection above admits a
+feature, layout, binding or diagnostic for v37 only, it applies to v37 and
+v38; v36 and earlier profiles stay frozen. V38 declares one version identity
+of its own (see the [version matrix](#version-matrix)):
+
+- **Host ABI** `abi::PROGRAM_LIMITS_VERSION` (34), for v38 alone. It adds no
+  host import yet: every v37 operation, including the value17 readers, the
+  timer and `net.request` operations and `json_stringify_v17`, keeps its
+  signature, binding and minimum ABI, and no registered operation requires
+  host ABI 34. Host imports added in this batch use host ABI 34 as their
+  minimum.
+- **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17),
+  shared with v36 and v37. V38 adds no value tag or layout yet;
+  `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
+  catalogs, frames and exception cells are stamped and read exactly as under
+  v37.
+
+An older runtime that does not list v38 rejects the unknown profile name in
+`varta.language` validation, before compilation or any guest effect. A v38
+module relabelled as v37 declares host ABI 34 against v37's 33 and fails at its
+host ABI section before instantiation; as for every profile, a v38 declaration
+with a downgraded or missing host ABI section, a value ABI other than value17
+or a missing value section fails validation before any guest effect.
+
+Each ABI is bumped at most once per batch. The host ABI bump is already made at
+registration and every stream adds its imports under it. The program-limits
+stream owns the batch's memory-layout and value-layout foundation: any value 18
+(a new `value` constant, `value_abi`, `value_layout`, value18 variants of every
+layout-bound reader with their minimum host ABI 34, and the launcher maximum)
+or any change to the static-region ABI lands as an early, separate foundation
+commit, and the other streams rebase onto it. V37 and earlier profiles keep
+their host ABI, value ABI, static region and layouts.
+
+Eight selectors gate the batch's work streams, and all admit nothing yet:
+
+- program-limits stream: `program_limits()` (profile-dependent structural
+  limits up to the Wasm limits, a shared descriptor-driven checked decoder,
+  multi-page static data, table-driven resume dispatch and dead-code
+  elimination);
+- data-limits stream: `data_limits()` (arrays, dictionaries, `Map`, `Set`,
+  `Uint8Array`, strings and JSON bounded only by the memory budget, and more
+  than 64 live frames without a trap);
+- turn-budgets stream: `turn_budgets()` (per-event-turn fuel and deadline
+  configurable by the manifest within the host ceiling, a fuel profiler and
+  logs before failure in `varta dev`);
+- linked-intrinsics stream: `linked_intrinsics()` (Rust pure intrinsics linked
+  into the guest Wasm so third-party hosts stay thin);
+- view-protocol stream: `view_protocol()` (the L0 `view_commit` protocol,
+  event delivery and a headless renderer);
+- TSX stream: `tsx()` (TSX parsing and template compilation);
+- structural-subtyping stream: `structural_subtyping()` (width and structural
+  subtyping of records, interfaces and classes, plus the remaining pilot
+  language items);
+- codegen-v2 stream: `codegen_v2()` (cheaper code generation for loops, string
+  comparison and concatenation, and dictionaries).
+
+Until a stream adds its subsection here, a v38 module compiles and runs exactly
+like a v37 module apart from its declared profile and host ABI, and production
+budgets of every profile are unchanged.
 
 ## Local modules
 

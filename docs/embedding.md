@@ -244,6 +244,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
+| `checked-f64-utf16-v38` | 34 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -291,6 +292,7 @@ Acceptance details per profile (used by validation steps 3, 7 and 9):
 | `checked-f64-utf16-v35` | 16 | 1 (no frames), 3 (frames) | 13 | 270 |
 | `checked-f64-utf16-v36` | 17 | 1 (no frames), 3 (frames) | 13 | 270 |
 | `checked-f64-utf16-v37` | 17 | 1 (no frames), 3 (frames) | 13 | 270 |
+| `checked-f64-utf16-v38` | 17 | 1 (no frames), 3 (frames) | 13 | 270 |
 <!-- generated:embedding-profile-acceptance:end -->
 
 Numbers are signed i32 in `checked-i32-utf8-v1` (wrapping arithmetic, truncating
@@ -474,35 +476,35 @@ import the operation, as contiguous runs in registry order.
 | `fs_print` | (i32, i32) → () | 1 | `fs.print` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `fs_read` | (i32, i32) → (i32) | 1 | `fs.read` | yes | yes | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `http_service` | () → () | 1 | none | — | — | `checked-i32-utf8-v1` |
-| `http_stop` | () → () | 1 | `net.listen` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v37` |
+| `http_stop` | () → () | 1 | `net.listen` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v38` |
 | `json_parse` | (i32, i32, i32, i32) → (i32) | 1 | none | yes | — | `checked-i32-utf8-v1` |
 | `json_stringify` | (i32, i32, i32) → (i32) | 1 | none | yes | yes | `checked-i32-utf8-v1` |
-| `log_i32` | (i32) → () | 1 | none | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v37` |
+| `log_i32` | (i32) → () | 1 | none | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v38` |
 | `log_string` | (i32, i32) → () | 1 | none | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `net_fetch` | (i32, i32) → (i32) | 1 | `net.fetch` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `net_get` | (i32, i32) → (i32) | 1 | `net.get` | yes | yes | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
-| `process_exit` | (i32) → () | 1 | `process.exit` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v37` |
-| `time_now` | () → (i32) | 1 | `time.now` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v37` |
+| `process_exit` | (i32) → () | 1 | `process.exit` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v38` |
+| `time_now` | () → (i32) | 1 | `time.now` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v38` |
 | `json_parse_v3` | (i32, i32, i32, i32) → (i64) | 2 | none | yes | — | `checked-f64-utf8-v1` |
 | `json_stringify_v3` | (i32, i32, i32) → (i32) | 2 | none | yes | yes | `checked-f64-utf8-v1` |
 | `log_f64` | (f64) → () | 2 | none | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v17` |
-| `number_remainder` | (f64, f64) → (f64) | 2 | none | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v37` |
-| `process_exit_f64` | (f64) → () | 2 | `process.exit` | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v37` |
+| `number_remainder` | (f64, f64) → (f64) | 2 | none | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v38` |
+| `process_exit_f64` | (f64) → () | 2 | `process.exit` | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v38` |
 | `json_parse_v4` | (i32, i32, i32, i32) → (i64) | 3 | none | yes | — | `checked-f64-utf8-v2` |
 | `json_stringify_v4` | (i32, i32, i32) → (i32) | 3 | none | yes | yes | `checked-f64-utf8-v2` |
-| `log_undefined` | (i32) → () | 3 | none | — | — | `checked-f64-utf8-v2` – `checked-f64-utf16-v37` |
-| `env_get16` | (i32, i32) → (i32) | 4 | `env.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
-| `env_has16` | (i32, i32) → (i32) | 4 | `env.has` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
-| `env_print16` | (i32, i32) → () | 4 | `env.print` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
-| `fs_print16` | (i32, i32) → () | 4 | `fs.print` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
-| `fs_read16` | (i32, i32) → (i32) | 4 | `fs.read` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
+| `log_undefined` | (i32) → () | 3 | none | — | — | `checked-f64-utf8-v2` – `checked-f64-utf16-v38` |
+| `env_get16` | (i32, i32) → (i32) | 4 | `env.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `env_has16` | (i32, i32) → (i32) | 4 | `env.has` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `env_print16` | (i32, i32) → () | 4 | `env.print` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `fs_print16` | (i32, i32) → () | 4 | `fs.print` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `fs_read16` | (i32, i32) → (i32) | 4 | `fs.read` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
 | `json_parse_v5` | (i32, i32, i32, i32) → (i64) | 4 | none | yes | — | `checked-f64-utf16-v1` |
 | `json_stringify_v5` | (i32, i32, i32) → (i32) | 4 | none | yes | yes | `checked-f64-utf16-v1` |
-| `log_string16` | (i32, i32) → () | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
-| `net_fetch16` | (i32, i32) → (i32) | 4 | `net.fetch` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
-| `net_get16` | (i32, i32) → (i32) | 4 | `net.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
-| `string_char_at16` | (i32, i32, f64) → (i32) | 4 | none | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
-| `string_char_code_at16` | (i32, i32, f64) → (f64) | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
+| `log_string16` | (i32, i32) → () | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `net_fetch16` | (i32, i32) → (i32) | 4 | `net.fetch` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `net_get16` | (i32, i32) → (i32) | 4 | `net.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `string_char_at16` | (i32, i32, f64) → (i32) | 4 | none | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `string_char_code_at16` | (i32, i32, f64) → (f64) | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
 | `json_parse_v6` | (i32, i32, i32, i32) → (i64) | 5 | none | yes | — | `checked-f64-utf16-v2` |
 | `json_stringify_v6` | (i32, i32, i32) → (i32) | 5 | none | yes | yes | `checked-f64-utf16-v2` |
 | `union_log` | (i64) → () | 5 | none | — | — | `checked-f64-utf16-v2` – `checked-f64-utf16-v3` |
@@ -563,55 +565,55 @@ import the operation, as contiguous runs in registry order.
 | `value_strict_equal_v6` | (i64, i64) → (i32) | 16 | none | — | — | `checked-f64-utf16-v13` – `checked-f64-utf16-v28` |
 | `value_truthy_v6` | (i64) → (i32) | 16 | none | — | — | `checked-f64-utf16-v13` – `checked-f64-utf16-v28` |
 | `value_typeof_v6` | (i64) → (i32) | 16 | none | yes | yes | `checked-f64-utf16-v13` – `checked-f64-utf16-v28` |
-| `number_power` | (f64, f64) → (f64) | 18 | none | — | — | `checked-f64-utf16-v15` – `checked-f64-utf16-v37` |
-| `number_acos` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_acosh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_asin` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_asinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_atan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_atan2` | (f64, f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_atanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_cbrt` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_cos` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_cosh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_exp` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_expm1` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_log` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_log10` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_log1p` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_log2` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_sin` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_sinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_tan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_tanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
-| `number_random` | () → (f64) | 20 | none | — | — | `checked-f64-utf16-v17` – `checked-f64-utf16-v37` |
-| `log_f64_v2` | (f64) → () | 21 | none | — | — | `checked-f64-utf16-v18` – `checked-f64-utf16-v37` |
+| `number_power` | (f64, f64) → (f64) | 18 | none | — | — | `checked-f64-utf16-v15` – `checked-f64-utf16-v38` |
+| `number_acos` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_acosh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_asin` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_asinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_atan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_atan2` | (f64, f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_atanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_cbrt` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_cos` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_cosh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_exp` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_expm1` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_log` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_log10` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_log1p` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_log2` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_sin` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_sinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_tan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_tanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_random` | () → (f64) | 20 | none | — | — | `checked-f64-utf16-v17` – `checked-f64-utf16-v38` |
+| `log_f64_v2` | (f64) → () | 21 | none | — | — | `checked-f64-utf16-v18` – `checked-f64-utf16-v38` |
 | `value_log_v7` | (i64) → () | 21 | none | — | — | `checked-f64-utf16-v18` – `checked-f64-utf16-v28` |
-| `primitive_to_string` | (i64) → (i32) | 22 | none | yes | yes | `checked-f64-utf16-v19` – `checked-f64-utf16-v37` |
-| `primitive_to_number` | (i64) → (f64) | 23 | none | — | — | `checked-f64-utf16-v20` – `checked-f64-utf16-v37` |
-| `number_to_string` | (f64, f64) → (i32) | 24 | none | yes | yes | `checked-f64-utf16-v21` – `checked-f64-utf16-v37` |
-| `number_to_exponential` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v37` |
-| `number_to_fixed` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v37` |
-| `number_to_precision` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v37` |
-| `number_parse_float` | (i64) → (f64) | 26 | none | — | — | `checked-f64-utf16-v23` – `checked-f64-utf16-v37` |
-| `number_parse_int` | (i64, i64) → (f64) | 26 | none | — | — | `checked-f64-utf16-v23` – `checked-f64-utf16-v37` |
-| `bigint_binary` | (i32, i64, i64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_compare` | (i64, i64) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_compare_number` | (i64, f64) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_compare_string` | (i64, i32, i32) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_from_number` | (f64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_from_string` | (i32, i32) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_to_number` | (i64) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_to_string` | (i64, f64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_unary` | (i32, i64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
-| `bigint_width` | (i32, i64, f64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v37` |
+| `primitive_to_string` | (i64) → (i32) | 22 | none | yes | yes | `checked-f64-utf16-v19` – `checked-f64-utf16-v38` |
+| `primitive_to_number` | (i64) → (f64) | 23 | none | — | — | `checked-f64-utf16-v20` – `checked-f64-utf16-v38` |
+| `number_to_string` | (f64, f64) → (i32) | 24 | none | yes | yes | `checked-f64-utf16-v21` – `checked-f64-utf16-v38` |
+| `number_to_exponential` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v38` |
+| `number_to_fixed` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v38` |
+| `number_to_precision` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v38` |
+| `number_parse_float` | (i64) → (f64) | 26 | none | — | — | `checked-f64-utf16-v23` – `checked-f64-utf16-v38` |
+| `number_parse_int` | (i64, i64) → (f64) | 26 | none | — | — | `checked-f64-utf16-v23` – `checked-f64-utf16-v38` |
+| `bigint_binary` | (i32, i64, i64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_compare` | (i64, i64) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_compare_number` | (i64, f64) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_compare_string` | (i64, i32, i32) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_from_number` | (f64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_from_string` | (i32, i32) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_to_number` | (i64) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_to_string` | (i64, f64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_unary` | (i32, i64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
+| `bigint_width` | (i32, i64, f64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
 | `bigint_from_value` | (i64) → (i32, i32) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
-| `bigint_to_string_v2` | (i64, i64) → (i32, i32) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v37` |
-| `bigint_width_v2` | (i32, i64, i64) → (i32, i32) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v37` |
+| `bigint_to_string_v2` | (i64, i64) → (i32, i32) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v38` |
+| `bigint_width_v2` | (i32, i64, i64) → (i32, i32) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v38` |
 | `json_parse_v15` | (i32, i32, i32, i32) → (i64) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
 | `json_stringify_v13` | (i32, i32, i32) → (i32, i32) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
-| `primitive_compare` | (i64, i64) → (f64) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v37` |
-| `primitive_equal` | (i32, i64, i64) → (i32) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v37` |
+| `primitive_compare` | (i64, i64) → (f64) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v38` |
+| `primitive_equal` | (i32, i64, i64) → (i32) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v38` |
 | `primitive_to_number_v2` | (i64) → (f64) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
 | `primitive_to_string_v2` | (i64) → (i32) | 28 | none | yes | yes | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
 | `value_is_array_v7` | (i64) → (i32) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
@@ -627,11 +629,11 @@ import the operation, as contiguous runs in registry order.
 | `json_stringify_v14` | (i32, i32, i32) → (i32, i32) | 30 | none | yes | — | `checked-f64-utf16-v34` |
 | `primitive_to_number_v3` | (i64) → (f64) | 30 | none | — | — | `checked-f64-utf16-v34` |
 | `primitive_to_string_v3` | (i64) → (i32) | 30 | none | yes | yes | `checked-f64-utf16-v34` |
-| `promise_handled` | (f64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v37` |
-| `promise_react` | (f64, i64) → (f64) | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v37` |
-| `promise_settle` | (f64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v37` |
-| `promise_unhandled` | (i64) → (f64) | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v37` |
-| `scheduler_enqueue` | (i64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v37` |
+| `promise_handled` | (f64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v38` |
+| `promise_react` | (f64, i64) → (f64) | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v38` |
+| `promise_settle` | (f64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v38` |
+| `promise_unhandled` | (i64) → (f64) | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v38` |
+| `scheduler_enqueue` | (i64) → () | 30 | none (scheduler) | — | — | `checked-f64-utf16-v34` – `checked-f64-utf16-v38` |
 | `value_is_array_v8` | (i64) → (i32) | 30 | none | — | — | `checked-f64-utf16-v34` |
 | `value_is_error_class_v4` | (i64, i32) → (i32) | 30 | none | — | — | `checked-f64-utf16-v34` |
 | `value_log_v9` | (i64) → () | 30 | none | — | — | `checked-f64-utf16-v34` |
@@ -653,34 +655,34 @@ import the operation, as contiguous runs in registry order.
 | `value_strict_equal_v9` | (i64, i64) → (i32) | 31 | none | — | — | `checked-f64-utf16-v35` |
 | `value_truthy_v9` | (i64) → (i32) | 31 | none | — | — | `checked-f64-utf16-v35` |
 | `value_typeof_v9` | (i64) → (i32) | 31 | none | yes | yes | `checked-f64-utf16-v35` |
-| `bigint_from_value_v4` | (i64) → (i32, i32) | 32 | none | yes | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `json_parse_v18` | (i32, i32, i32, i32) → (i64) | 32 | none | yes | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
+| `bigint_from_value_v4` | (i64) → (i32, i32) | 32 | none | yes | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `json_parse_v18` | (i32, i32, i32, i32) → (i64) | 32 | none | yes | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
 | `json_stringify_v16` | (i32, i32, i32) → (i32, i32) | 32 | none | yes | — | `checked-f64-utf16-v36` |
-| `primitive_to_number_v5` | (i64) → (f64) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `primitive_to_string_v5` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `timer_clear` | (f64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
+| `primitive_to_number_v5` | (i64) → (f64) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `primitive_to_string_v5` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `timer_clear` | (f64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
 | `timer_start` | (f64, f64, i32) → (f64) | 32 | `time.timer` | — | — | `checked-f64-utf16-v36` |
-| `timer_take` | (f64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `timer_uncaught` | (i64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `value_is_array_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `value_is_error_class_v6` | (i64, i32) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `value_log_v11` | (i64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `value_nullish_equal_v10` | (i64, i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `value_nullish_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `value_strict_equal_v10` | (i64, i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `value_truthy_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `value_typeof_v10` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `date_now` | () → (f64) | 33 | `time.now` | — | — | `checked-f64-utf16-v37` |
-| `json_stringify_v17` | (i32, i32, i32) → (i32, i32) | 33 | none | — | — | `checked-f64-utf16-v37` |
-| `net_body_read` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` |
-| `net_request_abort` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` |
-| `net_request_start` | (i32, i32) → (f64) | 33 | `net.request` | — | — | `checked-f64-utf16-v37` |
-| `net_request_take` | (f64) → (i32) | 33 | none | — | — | `checked-f64-utf16-v37` |
-| `net_request_text` | (f64) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
-| `net_request_watch` | (f64, f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` |
-| `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
-| `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
-| `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` |
+| `timer_take` | (f64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `timer_uncaught` | (i64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `value_is_array_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `value_is_error_class_v6` | (i64, i32) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `value_log_v11` | (i64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `value_nullish_equal_v10` | (i64, i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `value_nullish_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `value_strict_equal_v10` | (i64, i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `value_truthy_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `value_typeof_v10` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
+| `date_now` | () → (f64) | 33 | `time.now` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `json_stringify_v17` | (i32, i32, i32) → (i32, i32) | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `net_body_read` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `net_request_abort` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `net_request_start` | (i32, i32) → (f64) | 33 | `net.request` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `net_request_take` | (f64) → (i32) | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `net_request_text` | (f64) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `net_request_watch` | (f64, f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 <!-- generated:embedding-host-operations:end -->
 
 ## Status and control codes

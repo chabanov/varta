@@ -728,6 +728,32 @@ objects and `instanceof Map`/`Set`, and the record-shape limit
 | `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Implemented ([contract](architecture.md#regexp-regexp)): literals and constant `new RegExp` compiled ahead of time to a linear-time guest Pike VM (no host import), `exec`/`test`/`lastIndex`, match arrays, `search`/`match`/`matchAll`/`replace`/`replaceAll`/`split` with templates, replacer functions and string patterns; backreferences, lookaround, `\p{…}`, run-time patterns and the `d`/`v` flags open |
 | `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Implemented ([contract](architecture.md#network-requests-net_request)): `net.request` with URL scopes and methods, hyper + rustls transport, streamed text bodies, abort and timeouts, redirects `error`/`manual`/`follow`, `URL`/`URLSearchParams` subset, `[Symbol.asyncIterator]` async generator methods, a recoverable denial through the [permission broker](architecture.md#permission-broker-v37) for requests and v37 timers; bytes bodies wait for `Uint8Array`, generic `ReadableStream<T>` for class generics |
 
+### Batch v38 (in development)
+
+The next batch addresses the scale limits and platform gaps that remain after
+the v37 batch and the [v37 measurement](#pilot-acceptance-package-uarp-sdk) in
+profile `checked-f64-utf16-v38`, developed in eight parallel streams. V38
+inherits every v37 feature with value ABI/layout 17 and declares its own host
+ABI 34 (`abi::PROGRAM_LIMITS_VERSION`), under which every host import of the
+batch is added; a v38 module relabelled as v37 fails at its host ABI section,
+and runtimes that do not list v38 reject its declared profile name. The
+program-limits stream owns the batch's memory-layout and value-layout
+foundation (any value 18 or static-region ABI change) and lands it as an early
+separate foundation commit
+([contract](architecture.md#checked-f64-utf16-v38--batch-program-and-data-limits-turn-budgets-linked-intrinsics-view-protocol-and-tsx-structural-subtyping-and-codegen-v2)).
+All selectors are registered and admit nothing yet.
+
+| Selector | Work stream | State |
+| --- | --- | --- |
+| `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Registered, admits nothing |
+| `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Registered, admits nothing |
+| `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Registered, admits nothing |
+| `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Registered, admits nothing |
+| `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Registered, admits nothing |
+| `tsx()` | TSX: TSX parsing and template compilation | Registered, admits nothing |
+| `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Registered, admits nothing |
+| `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionaries | Registered, admits nothing |
+
 ### Platform targets and application model
 
 **Status: design accepted by the owner on 2026-10-29

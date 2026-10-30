@@ -48,6 +48,12 @@ pub const TIMERS_VERSION: u32 = 32;
 /// `fetch`. No import requires it yet; it binds v37 alone, so a v37 module
 /// relabelled as v36 fails at its host ABI section.
 pub const NET_REQUEST_VERSION: u32 = 33;
+/// Batch v38 (program and data limits, turn budgets, linked intrinsics, the
+/// view protocol and TSX, structural subtyping and code generation v2): the
+/// minimum host ABI of every import the batch adds. No import requires it yet;
+/// it binds v38 alone, so a v38 module relabelled as v37 fails at its host ABI
+/// section.
+pub const PROGRAM_LIMITS_VERSION: u32 = 34;
 #[must_use]
 pub fn supported(version: u32) -> bool {
     matches!(
@@ -85,6 +91,7 @@ pub fn supported(version: u32) -> bool {
             | PROMISE_VALUES_VERSION
             | TIMERS_VERSION
             | NET_REQUEST_VERSION
+            | PROGRAM_LIMITS_VERSION
     )
 }
 pub const SECTION: &str = "varta.abi";

@@ -3088,3 +3088,43 @@ See the [contract](architecture.md#network-requests-net_request).
 - Tests use only 127.0.0.1 with ephemeral ports (`net_loopback.rs`, a
   test-only HTTPS trust anchor) and pin Node 24 output from
   `net_cases/server.mjs`; never contact another host.
+
+## Profile v38 (in development)
+
+Inherit v37 under checked-f64-utf16-v38 with every v37 selector, value layout
+17 and the value17 host operations, exception channel v8, JSON schema 17
+(`json_stringify_v17`, `json_parse_v18`), the scheduler, frame catalog version
+3, the timer and `net.request` operations and the permission broker's
+recoverable denials. V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION`
+(34) and shares value ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`)
+with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams and
+admit nothing yet: program limits (`program_limits`), data limits
+(`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
+(`linked_intrinsics`), the view protocol (`view_protocol`), TSX (`tsx`),
+structural subtyping (`structural_subtyping`) and code generation v2
+(`codegen_v2`). Gate every admission on its own selector, keep v37 and earlier
+profiles frozen, and add each stream's rules under its own heading here.
+
+- A v37 rule or binding stated "for v37 only" (prelude pruning, private JSON
+  state, `timer_start_v2`, `date_now`, the permission broker, `net.request`)
+  extends to v38 through the inherited selectors; never widen it to v36 or
+  earlier.
+- Every host import the batch adds takes `abi::PROGRAM_LIMITS_VERSION` as its
+  minimum ABI in the `HostOperation` registry; do not add another host ABI
+  constant in this batch. Add its `.d.ts`, linker, validation and denial tests
+  in the same change.
+- The program-limits stream owns the batch's memory-layout and value-layout
+  foundation and lands it first as a separate foundation commit: any value 18
+  (a new `value` constant, `value_abi`/`value_layout` for v38, value18 variants
+  of every layout-bound reader with minimum ABI 34 and the launcher value
+  maximum) or any static-region ABI change. Value17 readers and the
+  single-page static region stay frozen for v37 and earlier. The other streams
+  rebase onto it.
+- Limits that grow stay profile-dependent: v38 may admit larger structural or
+  data limits up to the Wasm limits and the memory budget, but production
+  budgets and the limits of earlier profiles never change. Turn budgets set by
+  a manifest stay within the host ceiling.
+- Tests that assert v38 equals v37 apart from its host ABI
+  (`pilot_v38_inherits_v37_…` in `varta-common` `language`, the v38 runtime
+  language test and the v38 CLI smoke test) change in the stream that
+  introduces the difference.
