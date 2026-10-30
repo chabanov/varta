@@ -3458,6 +3458,25 @@ Contract: [architecture.md](architecture.md#structural-subtyping-structural_subt
 - Writes through a view require the identical field type in every source;
   never convert a value on a write (it would break the narrower source's
   layout). Arrays and other containers stay invariant.
+- Callable signatures (extra optional/default/rest source parameters):
+  `Check::call_through` is the one rule, used by view members
+  (`Check::member`), function values (`Check::function`) and v38
+  `implements` (`method_reasons`). Parameters stay contravariant; never add
+  TypeScript's method bivariance, and keep the bivariance note in the
+  diagnostic when only the reverse direction holds. Receiver-typed and
+  generic-marked signatures convert only to themselves.
+- The callee always receives its full physical parameter list from
+  `forwarded` (converted shared arguments, `undefined`, an empty rest
+  array); never leave a parameter unpassed or read an uninitialized local.
+  A view's method call passes them directly. A function value converts only
+  through `subtyping::adapt`: a `Reinterpret` between two function types
+  that is noted in `Views::adapters`, which `resolve` replaces by a call of
+  the pair's wrapper (`Rewriter::adapter`: the wrapper's parameter is a cell
+  the fresh adapter closure captures). Other code must not produce a
+  `Reinterpret` between such a noted pair. Synthesized functions are walked
+  once more with `adapt_only` (views stay exact) because their conversions
+  may create further wrappers. Function literals whose context has fewer
+  parameters (`wider_literal`) are lowered without the context's shape.
 - Identity comparisons of two object types compare handles
   (`identity_operands`); never fold them to `false` by type under v38.
 - Generic method signatures: the erased type carries
@@ -3475,9 +3494,11 @@ Contract: [architecture.md](architecture.md#structural-subtyping-structural_subt
 - The URI prelude (`<varta>/builtins/uri.ts`) loads only when a module names
   one of its exports; keep it free of host imports.
 - Tests: `varta-runtime` `subtyping_tests` with Node 24 logs of
-  `subtyping_cases`, two forced-collection drivers, the deviation table,
-  diagnostics and v37 rejections; the public API cross-module test and the
-  CLI smoke test through both binaries.
+  `subtyping_cases`, three forced-collection drivers, the deviation table,
+  diagnostics and v37 rejections, the function counts of
+  `only_view_accesses_get_accessors` and
+  `only_converted_signatures_get_adapters`; the public API cross-module test
+  and the CLI smoke tests through both binaries.
 
 ### Strict members and wide unions (`strict_members`)
 

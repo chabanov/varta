@@ -36,11 +36,22 @@ impl Lower<'_> {
             }
             None => None,
         };
+        // V38: a literal with extra optional parameters keeps its own shape.
+        let shape = context
+            .as_ref()
+            .filter(|t| {
+                !subtyping::wider_literal(
+                    expression.function.params.iter().map(|p| &p.pat),
+                    t,
+                    self.types,
+                )
+            })
+            .map(|t| t.shape.clone());
         self.function_expression_context(
             expression,
             context.as_ref().map(|t| t.params.clone()),
             context.as_ref().map(|t| t.result),
-            context.as_ref().map(|t| t.shape.clone()),
+            shape,
             context.and_then(|t| t.receiver),
         )
     }

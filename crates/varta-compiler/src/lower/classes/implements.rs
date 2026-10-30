@@ -134,6 +134,20 @@ fn conforms(
         let Some(wanted) = callable else {
             return Err(format!("method {name} is not a {}", field.ty));
         };
+        // V38: the rule of structural views (extra optional, default and
+        // rest parameters; contravariant parameters; a discarded result).
+        if types.profile.structural_subtyping() {
+            let reasons = subtyping::method_reasons(signature, &wanted, types);
+            return if reasons.is_empty() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "method {name} does not match {}: {}",
+                    subtyping::describe(field.ty, types),
+                    reasons.join("; ")
+                ))
+            };
+        }
         let matches = wanted.receiver.is_none()
             && wanted.shape == signature.shape
             && wanted.params.len() == signature.params.len()

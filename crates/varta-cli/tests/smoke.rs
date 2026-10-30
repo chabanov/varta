@@ -16657,6 +16657,61 @@ fn structural_subtyping_stays_rejected_by_v37_projects() {
     assert!(!text.contains("varta log:"), "{text}");
 }
 
+/// V38 narrower ports over methods and functions with extra optional,
+/// default and rest parameters through `varta dev`, both artifacts, both
+/// binaries and the packaged executable; v37 keeps rejecting the port.
+#[test]
+fn v38_ports_accept_extra_optional_parameters_in_dev_and_artifacts() {
+    let source = "import {Client} from './client.ts';\
+         interface Api{send(id:string):string}type Unary=(id:string)=>string;\
+         function tag(id:string,...rest:string[]):string{return id+rest.length;}\
+         export function main():void{const c=new Client();const a:Api=c;\
+         const fs:Unary[]=[tag,(id:string,n:number=2):string=>id+n];\
+         let out='';for(const f of fs)out+=f('t');console.log(`${a.send('x')} ${a.send('y')} ${out}`);}";
+    let client = "export interface Options{timeout?:number}\
+         export class Client{calls=0;send(id:string,options?:Options):string{\
+         this.calls+=1;return `ok ${id}#${this.calls} ${options?.timeout??-1}`;}}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    fs::write(project.0.join("src/client.ts"), client).unwrap();
+    project.language_profile("checked-f64-utf16-v38");
+    // Node 24 prints the same line.
+    let expected = ["varta log: ok x#1 -1 ok y#2 -1 t0t2"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let rejected = project.command(&["dev"]);
+    assert!(!rejected.status.success());
+    let text = combined(&rejected);
+    assert!(
+        text.contains("expected object, found class instance"),
+        "{text}"
+    );
+    assert!(!text.contains("varta log:"), "{text}");
+}
+
 #[test]
 fn linked_intrinsics_v38_run_identically_through_dev_build_single_and_both_binaries() {
     use varta_common::HostOperation;

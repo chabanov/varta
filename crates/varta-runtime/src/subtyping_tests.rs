@@ -433,6 +433,13 @@ fn checked_deviations_are_pinned() {
          export function main():void{const b:P={tag:'t',limit:2};console.log(keys({...b,cursor:'c'}));console.log(keys(b));}",
         &["cursor,limit,tag cursor;limit;tag;", "tag,limit tag;limit;"],
     );
+    // A function value converted to a narrower signature is a fresh adapter
+    // closure, so two conversions of one function differ (Node: true).
+    run(
+        "type Unary=(a:string)=>string;function wide(a:string,b?:number):string{return a;}\
+         export function main():void{const f:Unary=wide;const g:Unary=wide;console.log(String(f===g));}",
+        &["false"],
+    );
     // A stale property narrowing throws instead of reading the new value.
     run(
         "class B{t='x';}class R{#b:B|null=new B();get body():B|null{return this.#b;}drop():void{this.#b=null;}}\
@@ -549,6 +556,10 @@ fn guide_examples_match_node() {
         include_str!("subtyping_cases/guide_items.ts"),
         &["2 J 2 [h][é][😀] a%20b"],
     );
+    run(
+        include_str!("subtyping_cases/guide_parameters.ts"),
+        &["r1#1 t=30 r2#2 t=30 1.50"],
+    );
 }
 
 /// `request<void>` instances of the pilot's transport: `x as T` with
@@ -586,4 +597,193 @@ fn constructor_parameter_properties_match_node() {
         frozen.contains("constructor parameter property"),
         "{frozen}"
     );
+}
+
+const METHOD_PARAMETERS_LOG: [&str; 13] = [
+    "ok x",
+    "ok y;rec y0;ok y;",
+    "lit z a40 e-",
+    "client/a t=-1 r=2 #1",
+    "client/b t=-1 r=2 #2",
+    "11 j:0: client",
+    "102",
+    "r1 h6 r4",
+    "p?,p+dflt,p0,s:p,",
+    "c1 d2 m? none",
+    "7",
+    "v:k:cached",
+    "g3;g!;g?;abc f/0 client/late t=-1 r=2 #1",
+];
+
+/// Methods, function fields and function values with extra optional,
+/// default and rest parameters called through narrower function types.
+#[test]
+fn extra_optional_parameters_match_node() {
+    run(
+        include_str!("subtyping_cases/method_parameters.ts"),
+        &METHOD_PARAMETERS_LOG,
+    );
+    // The reported program: a narrower port over a client method with a
+    // trailing `options?` parameter.
+    run(
+        "interface Options { timeout?: number }\
+         interface Api { send(id: string): string }\
+         class Impl { send(id: string, options?: Options): string { return \"ok \" + id; } }\
+         export function main(): void { const a: Api = new Impl(); console.log(a.send(\"x\")); }",
+        &["ok x"],
+    );
+}
+
+/// A full collection forced before every job: adapter closures, their
+/// captured function values and the viewed client survive in a suspended
+/// frame.
+#[test]
+fn function_adapters_survive_forced_collections() {
+    use varta_compiler::suspension_test_hook as hook;
+    let bytes =
+        hook::compile_with_profile(include_str!("subtyping_cases/method_parameters.ts"), V38)
+            .unwrap();
+    let runtime = crate::VartaRuntime::new();
+    let module = runtime.prepare_module(&bytes).unwrap();
+    let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+    let instance = execution.instantiate_prepared(&module).unwrap();
+    let store = &mut execution.store;
+    let start = instance.get_func(&mut *store, "_start").unwrap();
+    start.call(&mut *store, &[], &mut []).unwrap();
+    let collect = instance
+        .get_typed_func::<(), ()>(&mut *store, hook::COLLECT)
+        .unwrap();
+    let resume = instance
+        .get_typed_func::<(i64, i32, i64), i32>(
+            &mut *store,
+            varta_common::function::frame::RESUME_EXPORT,
+        )
+        .unwrap();
+    let mut jobs = 0;
+    while let Some(token) = store.data_mut().scheduler.next().unwrap() {
+        // Test-only budget for the forced collections.
+        let remaining = store.get_fuel().unwrap();
+        store.set_fuel(abi::FUEL).unwrap();
+        collect.call(&mut *store, ()).unwrap();
+        store.set_fuel(remaining).unwrap();
+        resume.call(&mut *store, (token, 0, 0)).unwrap();
+        jobs += 1;
+    }
+    assert!(jobs >= 3, "{jobs}");
+    assert!(store.data().scheduler.unhandled_rejection().is_none());
+    let expected: Vec<String> = METHOD_PARAMETERS_LOG
+        .iter()
+        .map(|line| format!("varta log: {line}"))
+        .collect();
+    assert_eq!(store.data().output.lines, expected);
+}
+
+/// Shapes and function values without wider sources keep v37's functions;
+/// one wrapper and one adapter per converted signature pair.
+#[test]
+fn only_converted_signatures_get_adapters() {
+    let program = |value: &str| {
+        format!(
+            "function wide(a:string,b?:number):string{{return a;}}\
+             function exact(a:string):string{{return a;}}\
+             interface P{{f(a:string):string}}\
+             export function main():void{{const f:(a:string)=>string={value};\
+             const g:(a:string)=>string={value};const p:P={{f:exact}};\
+             console.log(f('x')+g('y')+p.f('z')+wide('w'));}}"
+        )
+    };
+    let direct = program("exact");
+    let adapted = program("wide");
+    assert_eq!(
+        defined_functions(&compile(&direct, V38)),
+        defined_functions(&compile(&direct, V37))
+    );
+    assert_eq!(
+        defined_functions(&compile(&adapted, V38)),
+        defined_functions(&compile(&direct, V38)) + 2
+    );
+    run(&adapted, &["xyzw"]);
+}
+
+#[test]
+fn parameter_mismatches_are_diagnosed() {
+    let prelude = "interface Options{timeout?:number}\
+                   interface Api{send(id:string):string}\
+                   interface H{handle(x:string|number):void}\
+                   interface R{all(...xs:string[]):void}";
+    for (body, expected) in [
+        (
+            "class I{send(id:string,o:Options):string{return id;}}\
+             export function main():void{const a:Api=new I();}",
+            "expected Api, found I (method send does not match (p0: string) => string: \
+             parameter 2 (o) is required, but the target does not pass it)",
+        ),
+        (
+            "class C{handle(x:string):void{}}export function main():void{const h:H=new C();}",
+            "method handle does not match (p0: number | string) => void: parameter 1 (x): \
+             the target passes number | string, the source accepts string; parameters are \
+             checked contravariantly: TypeScript's method parameter bivariance, which \
+             accepts a narrower source parameter, is not adopted",
+        ),
+        (
+            "class C{send(id:number):string{return '';}}\
+             export function main():void{const a:Api=new C();}",
+            "parameter 1 (id): the target passes string, the source accepts number)",
+        ),
+        (
+            "class C{send(id:string):number{return 1;}}\
+             export function main():void{const a:Api=new C();}",
+            "method send does not match (p0: string) => string: result: expected string, \
+             found number",
+        ),
+        (
+            "class C{all(a:string,b?:string):void{}}\
+             export function main():void{const r:R=new C();}",
+            "parameter 1 (a): the target's rest parameter cannot fill it",
+        ),
+        (
+            "function two(a:string,b:number):string{return a;}\
+             export function main():void{const f:(a:string)=>string=two;}",
+            "type mismatch for f: expected (p0: string) => string, found (p0: string, p1: \
+             number) => string (parameter 2 is required, but the target does not pass it)",
+        ),
+        (
+            "class I implements Api{send(id:string,o:Options):string{return id;}}\
+             export function main():void{}",
+            "class I incorrectly implements Api: method send does not match (p0: string) => \
+             string: parameter 2 (o) is required",
+        ),
+    ] {
+        let source = format!("{prelude}{body}");
+        let error = rejected(&source, V38);
+        assert!(error.contains(expected), "{error}\n{source}");
+    }
+}
+
+/// V37 keeps rejecting wider sources with its old diagnostics.
+#[test]
+fn v37_keeps_rejecting_extra_parameters() {
+    for (source, expected) in [
+        (
+            "interface Options{timeout?:number}interface Api{send(id:string):string}\
+             class Impl{send(id:string,options?:Options):string{return id;}}\
+             export function main():void{const a:Api=new Impl();}",
+            "expected object, found class instance",
+        ),
+        (
+            "function wide(a:string,b?:number):string{return a;}\
+             export function main():void{const f:(a:string)=>string=wide;}",
+            "type mismatch for f: expected (p0: string) => string, found (p0: string, p1?: \
+             number | undefined) => string",
+        ),
+        (
+            "interface Api{send(id:string):string}\
+             class I implements Api{send(id:string,o?:number):string{return id;}}\
+             export function main():void{}",
+            "class I incorrectly implements Api: method send does not match",
+        ),
+    ] {
+        let error = rejected(source, V37);
+        assert!(error.contains(expected), "{error}\n{source}");
+    }
 }

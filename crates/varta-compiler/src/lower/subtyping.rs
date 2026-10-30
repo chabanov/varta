@@ -16,6 +16,14 @@
 //! descriptor and accesses the source's own slot (or calls a class getter or
 //! method). Shapes that never receive a wider value keep their direct slot
 //! accesses, so programs without coercions keep their code.
+//!
+//! Function members and values are callable through another function type
+//! when extra source parameters are optional, defaulted or rest, shared
+//! parameters are contravariant and the result covariant (or discarded by a
+//! `void` target), `Check::call_through`. The callee always receives its full
+//! parameter list (`forwarded`): a view calls a class method directly, and a
+//! converted function value becomes a call of one synthesized wrapper per
+//! signature pair that returns an adapter closure over the value.
 use super::*;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -44,6 +52,11 @@ pub(crate) struct Views {
     /// field that holds a `Uint8Array` (its storage cannot be held by
     /// `unknown`).
     bytes_error: Option<ir::Statement>,
+    /// Function values converted to another signature (`coerce`): (source
+    /// function type, target function type). Each conversion is a
+    /// `Reinterpret` of the value that `resolve` replaces by a call of the
+    /// pair's synthesized wrapper (`Rewriter::adapter`).
+    adapters: RefCell<BTreeSet<(u32, u32)>>,
 }
 impl Views {
     /// Note the closed record shapes a value of `ty` entering an `unknown`
@@ -87,6 +100,24 @@ impl Views {
         shapes.dedup();
         shapes
     }
+}
+
+/// A callee whose call through another function type is checked: a class
+/// method (with its parameter names) or a function value.
+struct Callee<'a> {
+    params: &'a [Type],
+    shape: &'a ir::ParameterShape,
+    result: Type,
+    names: &'a [Option<String>],
+}
+
+/// The function member of the union members `target`; a union admits at
+/// most one (v36).
+fn function_member(target: &[Type]) -> Option<u32> {
+    target.iter().find_map(|member| match member {
+        Type::Function(id) => Some(*id),
+        _ => None,
+    })
 }
 
 /// One structural check: assumed pairs (cyclic shapes are checked
@@ -212,18 +243,14 @@ impl<'a> Check<'a> {
                     describe(wanted.ty, types)
                 ));
             };
-            let wanted = &types.functions[function as usize];
-            let matches = wanted.receiver.is_none()
-                && wanted.shape == signature.shape
-                && wanted.params == signature.params
-                && (wanted.result == Type::Void
-                    || self.convertible(signature.result, wanted.result));
-            return if matches {
+            let reasons = self.method_call(signature, &types.functions[function as usize]);
+            return if reasons.is_empty() {
                 Ok(())
             } else {
                 Err(format!(
-                    "method {name} does not match {}",
-                    describe(Type::Function(function), types)
+                    "method {name} does not match {}: {}",
+                    describe(Type::Function(function), types),
+                    reasons.join("; ")
                 ))
             };
         }
@@ -239,9 +266,150 @@ impl<'a> Check<'a> {
             Err(format!("missing member {name}"))
         }
     }
+    /// Why a callee described by `from` cannot be called through the
+    /// function type `into`; empty when it can. Shared positions are checked
+    /// contravariantly: the target's parameter type must be assignable to
+    /// the source's. Extra source parameters must be optional (or have a
+    /// default) or be the rest parameter; extra target arguments are
+    /// ignored. The result is covariant, and a `void` target discards it.
+    fn call_through(&mut self, from: Callee<'_>, into: &ir::FunctionType) -> Vec<String> {
+        let types = self.types;
+        let label = |index: usize| match from.names.get(index).and_then(Option::as_deref) {
+            Some(name) => format!("parameter {} ({name})", index + 1),
+            None => format!("parameter {}", index + 1),
+        };
+        let from_rest = from.shape.rest.then(|| from.shape.fixed_count());
+        let into_rest = into.shape.rest.then(|| into.shape.fixed_count());
+        let mut reasons = Vec::new();
+        for (index, taken) in from.params.iter().copied().enumerate() {
+            if into_rest.is_some_and(|rest| index >= rest) {
+                if from_rest == Some(index) && into_rest == Some(index) {
+                    let given = into.params[index];
+                    if given != taken {
+                        reasons.push(format!(
+                            "{}: rest parameter types must be equal (arrays are not \
+                             covariant): the target passes {}, the source accepts {}",
+                            label(index),
+                            describe(given, types),
+                            describe(taken, types)
+                        ));
+                    }
+                } else {
+                    reasons.push(format!(
+                        "{}: the target's rest parameter cannot fill it",
+                        label(index)
+                    ));
+                }
+                continue;
+            }
+            if from_rest == Some(index) {
+                if index < into.params.len() {
+                    reasons.push(format!(
+                        "{}: a rest parameter cannot receive the target's fixed parameters",
+                        label(index)
+                    ));
+                }
+                continue;
+            }
+            let Some(&given) = into.params.get(index) else {
+                if !from.shape.optional[index] {
+                    reasons.push(format!(
+                        "{} is required, but the target does not pass it",
+                        label(index)
+                    ));
+                }
+                continue;
+            };
+            if given != taken && !self.convertible(given, taken) {
+                let mut reason = format!(
+                    "{}: the target passes {}, the source accepts {}",
+                    label(index),
+                    describe(given, types),
+                    describe(taken, types)
+                );
+                if Check::new(types).convertible(taken, given) {
+                    reason.push_str(
+                        "; parameters are checked contravariantly: TypeScript's method \
+                         parameter bivariance, which accepts a narrower source parameter, is \
+                         not adopted",
+                    );
+                }
+                reasons.push(reason);
+            }
+        }
+        if into.result != Type::Void
+            && from.result != into.result
+            && !self.convertible(from.result, into.result)
+        {
+            reasons.push(format!(
+                "result: expected {}, found {}",
+                describe(into.result, types),
+                describe(from.result, types)
+            ));
+        }
+        reasons
+    }
+    /// Why a class method with implementation `signature` cannot be called
+    /// through the function type `wanted`; empty when it can.
+    fn method_call(&mut self, signature: &Signature, wanted: &ir::FunctionType) -> Vec<String> {
+        if wanted.receiver.is_some() || wanted.generic.is_some() {
+            return vec!["the member has a this parameter or a generic signature".to_owned()];
+        }
+        self.call_through(
+            Callee {
+                params: &signature.params,
+                shape: &signature.shape,
+                result: signature.result,
+                names: &signature.names,
+            },
+            wanted,
+        )
+    }
+    /// Whether a function value of type `actual` may be called through the
+    /// function type `expected` by a synthesized adapter (`call_through`);
+    /// otherwise the reasons. Signatures with a `this` parameter or a
+    /// generic marker convert only to themselves.
+    fn function(&mut self, actual: u32, expected: u32) -> std::result::Result<(), Vec<String>> {
+        if actual == expected {
+            return Ok(());
+        }
+        let types = self.types;
+        let (from, into) = (
+            &types.functions[actual as usize],
+            &types.functions[expected as usize],
+        );
+        if from.receiver.is_some()
+            || into.receiver.is_some()
+            || from.generic.is_some()
+            || into.generic.is_some()
+        {
+            return Err(vec![
+                "functions with a this parameter or a generic signature convert only to \
+                 their own type"
+                    .to_owned(),
+            ]);
+        }
+        let mark = self.edges.len();
+        let reasons = self.call_through(
+            Callee {
+                params: &from.params,
+                shape: &from.shape,
+                result: from.result,
+                names: &[],
+            },
+            into,
+        );
+        if reasons.is_empty() {
+            Ok(())
+        } else {
+            self.edges.truncate(mark);
+            Err(reasons)
+        }
+    }
     /// Whether a value of `actual` converts to `expected` without a copy:
     /// the nominal rules, or a view of a record shape, or a union whose
-    /// members each convert to a member of the expected union.
+    /// members each convert to a member of the expected union. A function
+    /// value converts to another signature through an adapter (`function`).
     fn convertible(&mut self, actual: Type, expected: Type) -> bool {
         let types = self.types;
         if arguments::nominal_accepts(expected, actual, types) {
@@ -251,6 +419,10 @@ impl<'a> Check<'a> {
             Type::Record(target) if matches!(actual, Type::Record(_) | Type::Class(_)) => {
                 self.object(actual, target).is_ok()
             }
+            Type::Function(target) => match actual {
+                Type::Function(source) => self.function(source, target).is_ok(),
+                _ => false,
+            },
             union if union.is_union() => {
                 let target = unions::members(union, types);
                 let mark = self.edges.len();
@@ -263,6 +435,14 @@ impl<'a> Check<'a> {
                             && target.iter().any(
                                 |t| matches!(t, Type::Record(r) if self.object(member, *r).is_ok()),
                             )
+                        // A function value (not a union holding one)
+                        // converts to the function member.
+                        || match (member, function_member(&target)) {
+                            (Type::Function(source), Some(into)) if !actual.is_union() => {
+                                self.function(source, into).is_ok()
+                            }
+                            _ => false,
+                        }
                 });
                 if !all {
                     self.edges.truncate(mark);
@@ -328,6 +508,37 @@ fn shallow(ty: Type, types: &ir::ValueTypes) -> String {
     }
 }
 
+/// Whether a function literal with parameters `params` declares, beyond
+/// those of its context `context`, only optional, default or rest parameters
+/// (v38): it is then lowered with its own signature and converted to the
+/// context through an adapter.
+pub(super) fn wider_literal<'a>(
+    params: impl ExactSizeIterator<Item = &'a ast::Pat>,
+    context: &ir::FunctionType,
+    types: &ir::ValueTypes,
+) -> bool {
+    let count = context.params.len();
+    types.profile.structural_subtyping()
+        && !context.shape.rest
+        && params.len() > count
+        && params.skip(count).all(|param| match param {
+            ast::Pat::Assign(_) | ast::Pat::Rest(_) => true,
+            ast::Pat::Ident(id) => id.id.optional,
+            _ => false,
+        })
+}
+
+/// Why a class method with implementation `signature` cannot implement the
+/// member function type `wanted` (v38 `implements`, no edge is committed);
+/// empty when it can, by the rule of views.
+pub(super) fn method_reasons(
+    signature: &Signature,
+    wanted: &ir::FunctionType,
+    types: &ir::ValueTypes,
+) -> Vec<String> {
+    Check::new(types).method_call(signature, wanted)
+}
+
 /// Whether a value of `actual` is assignable to `expected` through a view
 /// (no edge is committed).
 pub(super) fn assignable(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
@@ -348,6 +559,12 @@ pub(super) fn reasons(expected: Type, actual: Type, types: &ir::ValueTypes) -> O
              viewed through a wider element type; copy it, e.g. with map"
                 .to_owned()
         });
+    }
+    if let (Type::Function(wanted), Type::Function(given)) = (expected, actual) {
+        return Check::new(types)
+            .function(given, wanted)
+            .err()
+            .map(|reasons| reasons.join("; "));
     }
     let Type::Record(target) = expected else {
         return None;
@@ -398,8 +615,17 @@ pub(super) fn coerce(value: Expr, expected: Option<Type>, types: &ir::ValueTypes
             }
             Ok(value)
         }
+        Type::Function(target) => Ok(adapt(value, target, types)),
         union if union.is_union() => {
             let target = unions::members(union, types);
+            // A function value entering a union converts to its function
+            // member; the union widening boxes it.
+            if matches!(value.ty, Type::Function(_))
+                && !target.contains(&value.ty)
+                && let Some(into) = function_member(&target)
+            {
+                return Ok(adapt(value, into, types));
+            }
             let records: Vec<u32> = target
                 .iter()
                 .filter_map(|t| match t {
@@ -455,6 +681,31 @@ pub(super) fn coerce(value: Expr, expected: Option<Type>, types: &ir::ValueTypes
             })
         }
         _ => Ok(value),
+    }
+}
+
+/// A function value converted to the function type `target` when its own
+/// signature may be called through it (`Check::function`): a `Reinterpret`
+/// that `resolve` replaces by a call of the pair's wrapper, which returns an
+/// adapter closure over the value. Any other value is returned unchanged.
+fn adapt(value: Expr, target: u32, types: &ir::ValueTypes) -> Expr {
+    let Type::Function(source) = value.ty else {
+        return value;
+    };
+    let mut check = Check::new(types);
+    if source == target || check.function(source, target).is_err() {
+        return value;
+    }
+    check.commit();
+    types
+        .subtyping
+        .adapters
+        .borrow_mut()
+        .insert((source, target));
+    Expr {
+        span: value.span,
+        ty: Type::Function(target),
+        kind: E::Reinterpret(Box::new(value)),
     }
 }
 
@@ -536,7 +787,10 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
         return Ok(());
     }
     let edges = program.types.subtyping.edges.borrow().clone();
-    if edges.is_empty() && program.types.subtyping.graph.is_none() {
+    if edges.is_empty()
+        && program.types.subtyping.graph.is_none()
+        && program.types.subtyping.adapters.borrow().is_empty()
+    {
         return Ok(());
     }
     let mut sources: BTreeMap<u32, Vec<Type>> = BTreeMap::new();
@@ -576,6 +830,8 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
         source: None,
         span: swc_common::DUMMY_SP,
         locals: Vec::new(),
+        wrappers: BTreeMap::new(),
+        adapt_only: false,
     };
     for function in &mut program.functions {
         rewriter.source = Some(function.source.clone());
@@ -600,6 +856,23 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
     if let Some((index, graph)) = program.types.subtyping.graph {
         let dispatch = rewriter.graph_branches(graph)?;
         program.functions[index].body.splice(0..0, dispatch);
+    }
+    // Synthesized functions read exact layouts: only their function
+    // conversions are rewritten, which may append further wrappers.
+    rewriter.adapt_only = true;
+    let mut index = 0;
+    while index < rewriter.created.len() {
+        let function = &mut rewriter.created[index];
+        let mut body = std::mem::take(&mut function.body);
+        rewriter.source = Some(function.source.clone());
+        rewriter.span = function.span;
+        rewriter.locals = std::mem::take(&mut function.locals);
+        let rewritten = rewriter.statements(&mut body);
+        let function = &mut rewriter.created[index];
+        function.body = body;
+        function.locals = std::mem::take(&mut rewriter.locals);
+        rewritten?;
+        index += 1;
     }
     let created = std::mem::take(&mut rewriter.created);
     if program.types.subtyping.edges.borrow().len() != edges.len() {
@@ -635,9 +908,17 @@ struct Rewriter<'a> {
     /// The span and locals of the function being rewritten.
     span: swc_common::Span,
     locals: Vec<Type>,
+    /// The wrapper function of each converted (source, target) function
+    /// type pair (`adapter`).
+    wrappers: BTreeMap<(u32, u32), usize>,
+    /// Rewriting synthesized functions: member accesses stay exact.
+    adapt_only: bool,
 }
 impl Rewriter<'_> {
     fn view(&self, ty: Type) -> Option<u32> {
+        if self.adapt_only {
+            return None;
+        }
         match ty {
             Type::Record(shape) if self.types.subtyping.sources.contains_key(&shape) => Some(shape),
             _ => None,
@@ -1074,7 +1355,131 @@ impl Rewriter<'_> {
             };
             value.kind = E::Call(index, vec![*base]);
         }
+        // A function value converted to another signature (`adapt`).
+        let converted = match (&value.kind, value.ty) {
+            (E::Reinterpret(inner), Type::Function(into)) => match inner.ty {
+                Type::Function(from) => self
+                    .types
+                    .subtyping
+                    .adapters
+                    .borrow()
+                    .contains(&(from, into))
+                    .then_some((from, into)),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((from, into)) = converted {
+            let index = self.adapter(from, into, span)?;
+            let E::Reinterpret(inner) = std::mem::replace(&mut value.kind, E::Zero) else {
+                unreachable!("matched above");
+            };
+            value.kind = E::Call(index, vec![*inner]);
+        }
         Ok(())
+    }
+
+    /// The wrapper of function type pair (`from`, `into`): `(f: from) =>
+    /// into` returns a fresh adapter closure that captures `f` and, called
+    /// with the arguments of `into`, calls `f` with its full parameter list
+    /// (`forwarded`) and converts or discards the result. The wrapper and its
+    /// adapter are created once per pair.
+    fn adapter(&mut self, from: u32, into: u32, span: swc_common::Span) -> Result<usize> {
+        if let Some(index) = self.wrappers.get(&(from, into)) {
+            return Ok(*index);
+        }
+        if self.next + 1 >= self.types.function_limit() {
+            return Err(self.locate(invalid("too many functions across modules"), span));
+        }
+        let types = self.types;
+        let (source, target) = (Type::Function(from), Type::Function(into));
+        let callee = types.functions[from as usize].clone();
+        let wanted = types.functions[into as usize].clone();
+        let file = self
+            .source
+            .clone()
+            .ok_or_else(|| CompilerError::Internal("function adapter source".into()))?;
+        // The adapter's locals: the parameters of `into`, the captured value,
+        // then the hidden callee, argument and output slots of its call.
+        let mut locals = wanted.params.clone();
+        let captured = locals.len() as u32;
+        locals.extend([source, source]);
+        let slot = captured + 1;
+        let arguments: Vec<u32> = callee
+            .params
+            .iter()
+            .map(|ty| {
+                locals.push(*ty);
+                locals.len() as u32 - 1
+            })
+            .collect();
+        let output = (callee.result != Type::Void).then(|| {
+            locals.push(callee.result);
+            locals.len() as u32 - 1
+        });
+        let args = forwarded(&wanted, &callee.params, &callee.shape, 0, span, types)
+            .map_err(|error| self.locate(error, span))?;
+        let call = Expr {
+            span,
+            ty: callee.result,
+            kind: E::FunctionCall {
+                callee: Box::new(local(span, captured, source)),
+                ignored_receiver: None,
+                args,
+                slot,
+                arguments,
+                output,
+            },
+        };
+        let body = if wanted.result == Type::Void {
+            vec![S::Expr(call), S::Return(None)]
+        } else {
+            vec![S::Return(Some(
+                convert(call, wanted.result, types).map_err(|error| self.locate(error, span))?,
+            ))]
+        };
+        let (wrapper, adapter) = (self.next, self.next + 1);
+        self.next += 2;
+        self.created.push(ir::Function {
+            shape: ir::ParameterShape::fixed(1),
+            self_slot: None,
+            receiver: None,
+            source: file.clone(),
+            span,
+            params: vec![source],
+            result: target,
+            locals: vec![source],
+            body: vec![S::Return(Some(Expr {
+                span,
+                ty: target,
+                kind: E::FunctionRef {
+                    index: adapter,
+                    fresh: true,
+                    captures: vec![0],
+                },
+            }))],
+            cells: BTreeSet::from([0]),
+            captures: Vec::new(),
+            environment: false,
+            generator: None,
+        });
+        self.created.push(ir::Function {
+            shape: wanted.shape.clone(),
+            self_slot: None,
+            receiver: None,
+            source: file,
+            span,
+            params: wanted.params.clone(),
+            result: wanted.result,
+            locals,
+            body,
+            cells: BTreeSet::from([captured]),
+            captures: vec![captured],
+            environment: true,
+            generator: None,
+        });
+        self.wrappers.insert((from, into), wrapper);
+        Ok(wrapper)
     }
 
     /// The accessor function of `access` to member `slot` of view `shape`.
@@ -1200,20 +1605,23 @@ impl Rewriter<'_> {
                         return Err(CompilerError::Internal("view call".into()));
                     };
                     match self.method(*source, name) {
-                        Some((index, owner, returned)) => {
+                        Some((index, owner, method)) => {
+                            // The method receives its full parameter list.
+                            let args = forwarded(
+                                &types.functions[id as usize],
+                                &method.params,
+                                &method.shape,
+                                1,
+                                span,
+                                types,
+                            )?;
                             let call = Expr {
                                 span,
-                                ty: returned,
+                                ty: method.result,
                                 kind: E::Call(
                                     index,
                                     std::iter::once(receiver(Type::Class(owner)))
-                                        .chain(
-                                            types.functions[id as usize]
-                                                .params
-                                                .iter()
-                                                .enumerate()
-                                                .map(|(i, ty)| local(span, i as u32 + 1, *ty)),
-                                        )
+                                        .chain(args)
                                         .collect(),
                                 ),
                             };
@@ -1578,8 +1986,8 @@ impl Rewriter<'_> {
         }
     }
     /// The direct method call target of member `name` of a class source:
-    /// (function, receiver class, result type).
-    fn method(&self, source: Type, name: &str) -> Option<(usize, u32, Type)> {
+    /// (function, receiver class, implementation signature).
+    fn method(&self, source: Type, name: &str) -> Option<(usize, u32, Signature)> {
         let Type::Class(class) = source else {
             return None;
         };
@@ -1591,8 +1999,55 @@ impl Rewriter<'_> {
             return None;
         }
         let (index, owner) = method.target();
-        Some((index, owner, method.signature.result))
+        Some((index, owner, method.signature.clone()))
     }
+}
+
+/// The arguments of a call of a callee with parameters `params` (shape
+/// `shape`) through the function type `into`, whose arguments are the locals
+/// from slot `first` (`Check::call_through` admitted the pair): each shared
+/// argument converted to the callee's parameter type, `undefined` for a
+/// missing optional or default parameter (the callee's prologue runs the
+/// default), an empty array for a rest parameter the target does not pass,
+/// and the target's own rest array for a rest parameter at its position.
+fn forwarded(
+    into: &ir::FunctionType,
+    params: &[Type],
+    shape: &ir::ParameterShape,
+    first: u32,
+    span: swc_common::Span,
+    types: &ir::ValueTypes,
+) -> Result<Vec<Expr>> {
+    let rest = shape.rest.then(|| shape.fixed_count());
+    let into_rest = into.shape.rest.then(|| into.shape.fixed_count());
+    params
+        .iter()
+        .enumerate()
+        .map(|(index, taken)| {
+            let argument = |ty: Type| local(span, first + index as u32, ty);
+            match (rest == Some(index), into.params.get(index).copied()) {
+                (true, Some(given)) if into_rest == Some(index) => Ok(argument(given)),
+                (true, None) => Ok(Expr {
+                    span,
+                    ty: *taken,
+                    kind: E::Array(Vec::new()),
+                }),
+                (true, Some(_)) => Err(CompilerError::Internal(
+                    "adapted rest parameter at a fixed target position".into(),
+                )),
+                (false, Some(given)) => convert(argument(given), *taken, types),
+                (false, None) => convert(
+                    Expr {
+                        span,
+                        ty: Type::Undefined,
+                        kind: E::Integer(0),
+                    },
+                    *taken,
+                    types,
+                ),
+            }
+        })
+        .collect()
 }
 
 /// `value` as type `target`: a view of a record (retyped) or the nominal

@@ -249,6 +249,26 @@ impl Lower<'_> {
                 "dynamic this context for an arrow; use a function expression",
             ));
         }
+        // V38: a literal with extra optional, default or rest parameters
+        // keeps its own signature; the context types the shared parameters
+        // and the result, and the value converts through an adapter.
+        if let Some(context) = expected
+            .as_ref()
+            .filter(|ty| subtyping::wider_literal(arrow.params.iter(), ty, self.types))
+        {
+            return self.arrow_context(
+                arrow,
+                LiftContext {
+                    params: Some(context.params.clone()),
+                    shape: None,
+                    result: Some(context.result),
+                    infer: false,
+                    receiver: None,
+                    lexical: true,
+                    self_name: None,
+                },
+            );
+        }
         // `(x) => promise` where `() => Promise<unknown>` is expected (v38):
         // TypeScript's promise covariance. The body's promise has its own
         // value type, so the arrow awaits it and fulfills its own
