@@ -791,6 +791,12 @@ impl EventKind {
     pub fn edits(self) -> bool {
         self == Self::Input
     }
+    /// Whether a turn whose task is a trusted record of this kind is a
+    /// user-gesture turn (the applier's `gesture` flag for its batch).
+    #[must_use]
+    pub fn user_gesture(self) -> bool {
+        matches!(self, Self::Click | Self::Keydown | Self::Submit)
+    }
 }
 
 /// Primitive CSS value types used by [`CssProperty::grammar`].
@@ -1042,6 +1048,43 @@ pub enum ResultOperation {
     CopyText,
     OpenUrl,
 }
+/// Renderer families whose platform behaviour differs for command results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Renderer {
+    Browser,
+    Native,
+}
+impl Renderer {
+    pub const ALL: &[Self] = &[Self::Browser, Self::Native];
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Browser => "browser",
+            Self::Native => "native shell",
+        }
+    }
+}
+
+impl ResultOperation {
+    /// When the renderer reports `refused_by_platform` for a granted operation;
+    /// in every other case a granted operation reports `ok`.
+    #[must_use]
+    pub fn refusal(self, renderer: Renderer) -> &'static str {
+        match (self, renderer) {
+            (Self::OpenUrl, Renderer::Browser) => {
+                "only when `window.open` throws; with `noopener` it returns `null` even on success, so a blocked popup cannot be detected and reports `ok`"
+            }
+            (Self::OpenUrl, Renderer::Native) => {
+                "when the system browser cannot be launched or the URL is rejected by the OS"
+            }
+            (Self::CopyText, Renderer::Browser) => {
+                "when `navigator.clipboard.writeText` rejects or throws"
+            }
+            (Self::CopyText, Renderer::Native) => "when the system clipboard write fails",
+        }
+    }
+}
+
 impl ResultOperation {
     pub const ALL: &[Self] = &[Self::CopyText, Self::OpenUrl];
     #[must_use]
@@ -1822,6 +1865,25 @@ mod tests {
         );
         assert!(!EventKind::CommandResult.coalescible());
         assert!(EVENT_FIELDS.iter().any(|field| field.name == "status"));
+    }
+
+    #[test]
+    fn gesture_turns_and_refusals_cover_every_case() {
+        let gestures: Vec<EventKind> = EventKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| kind.user_gesture())
+            .collect();
+        assert_eq!(
+            gestures,
+            [EventKind::Click, EventKind::Submit, EventKind::Keydown]
+        );
+        assert!(!EventKind::CommandResult.user_gesture());
+        for &operation in ResultOperation::ALL {
+            for &renderer in Renderer::ALL {
+                assert!(!operation.refusal(renderer).is_empty());
+            }
+        }
     }
 
     #[test]
