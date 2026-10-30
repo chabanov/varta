@@ -11,6 +11,22 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 callable signatures (`structural_subtyping`): a class method, function
+  field, function value or function literal may declare more parameters than
+  the type it is assigned to when every extra one is optional, has a default
+  or is a rest parameter, so `const a: Api = new Impl()` accepts
+  `send(id, options?)` for `send(id)`, as uarp-sdk's trailing
+  `options?: RequestOptions` needs. Calls through the narrower type pass
+  `undefined` (defaults run in the callee) or an empty rest array. Parameters
+  are contravariant (a wider source parameter is adapted, TypeScript's method
+  bivariance is rejected with a note), results covariant or discarded by a
+  `void` target, and v38 `implements` uses the same rule. Views call methods
+  with the full parameter list; a converted function value is a fresh
+  adapter closure from one synthesized wrapper per signature pair, so two
+  conversions of one function are not `===`. Diagnostics name the parameter
+  and both types. Programs without such conversions keep their functions;
+  v37 keeps its bytes and diagnostics.
+
 - V38 `typeof` of engine globals (`web_bytes`): `typeof NAME` of a global
   the engine provides and the program does not shadow is its constant
   JavaScript `typeof` (`"function"` for classes and functions such as

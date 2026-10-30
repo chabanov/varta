@@ -9886,15 +9886,52 @@ the same name, or a public class field, getter or method. Optional target
 members may be missing; extra source members are allowed. Member types are
 assignable when they are equal, nominally assignable (literal, union, class
 and dictionary rules), structurally assignable records (checked recursively,
-cyclic shapes coinductively), or unions whose members each convert. A class
-method provides a target member only as a required function type with the
-same parameters (its result assignable or the target `void`). Arrays are not
-covariant: `Signal[]` is not assignable to `Readable[]`, because a write
+cyclic shapes coinductively), unions whose members each convert, or
+function types callable through each other (below). A class method provides
+a target member only as a required function type it is callable through.
+Arrays are not covariant: `Signal[]` is not assignable to `Readable[]`, because a write
 through the wider element type would not fit the narrower array; copy with
 `map`. A value entering a union of several record shapes is viewed by every
 member it is assignable to, and is rejected when it has a key that only
 members it is not assignable to declare (an `in` test of that key could
 otherwise narrow to a member that cannot view it).
+
+**Callable signatures.** A callee (a class method, a function value, or a
+function literal) with parameters `S` and result `R` is callable through a
+function type with parameters `T` and result `U` when neither has a `this`
+parameter or a generic method marker and:
+
+- at every position both declare, the target's parameter type is assignable
+  to the source's (contravariance; an optional parameter's type includes
+  `undefined`). TypeScript's method parameter bivariance is not adopted: a
+  method taking `string` does not provide `handle(x: string | number)`, and
+  the diagnostic says so when only the reverse direction holds;
+- every source parameter beyond `T` is optional, has a default or is the rest
+  parameter; extra target arguments are ignored (a source may declare fewer
+  parameters);
+- a rest parameter of the target lines up with a source rest parameter of the
+  identical array type; it never fills fixed source parameters, and a source
+  rest parameter never receives fixed target arguments;
+- `U` is `void` (the result is discarded) or `R` is assignable to `U`.
+
+Mismatch diagnostics name the parameter by position and, for methods, by
+name, with both types, for example `method send does not match (p0: string)
+=> string: parameter 2 (o) is required, but the target does not pass it`. The
+same rule checks `implements` clauses under v38. Calls through the target
+type always give the callee its full physical parameter list: `undefined`
+for a missing optional or default parameter (the callee's prologue runs the
+default, as for a direct call), an empty array for a missing rest parameter,
+each shared argument converted to the callee's parameter type. A view's call
+of a class method passes them directly. Every other conversion of a function
+value is explicit in the IR (a `Reinterpret` of the value between the two
+function types, noted per pair) and becomes a call of one synthesized wrapper
+per (source, target) pair, which returns a fresh adapter closure of the
+target signature that captures the value and calls it. A function literal
+whose context has fewer parameters keeps its own signature and converts the
+same way. Consequences: a converted function value is a new function value
+(two conversions of one function are not `===`, unlike JavaScript), each
+conversion allocates one closure, and each call through it costs one more
+indirect call. Programs without such conversions emit no wrapper.
 
 **Representation: views.** The value is not copied. Lowering records an edge
 (source type → target shape) for every admitted coercion. After all bodies are
@@ -10003,8 +10040,10 @@ such members.
   (Varta has no native `URIError`), in guest code without a host import.
 
 Not yet admitted: `A[] | B[]` of record element types, `instanceof
-Map/Set/Uint8Array`, a `Uint8Array` held by `unknown`, and record spreads that
-keep JavaScript's key order. Exhaustive switches over discriminant paths are
+Map/Set/Uint8Array`, a `Uint8Array` held by `unknown`, record spreads that
+keep JavaScript's key order, and converting a function value already held by
+a union (`F | undefined`, such as an optional function member) to another
+signature. Exhaustive switches over discriminant paths are
 admitted by [strict members](#strict-members-and-wide-unions-strict_members).
 Web byte bodies, `Blob`/`FormData`/`ArrayBuffer`, typed `globalThis`,
 `Promise.race` over differently typed promises and strict conversions to

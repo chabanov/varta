@@ -5448,6 +5448,47 @@ write through a view must have the member's exact type in every object
 assigned to it, and a class method is reachable through a view only by a
 call.
 
+A method or function may declare more parameters than the type it is
+assigned to when every extra one is optional, has a default or is a rest
+parameter, so a narrower port fits a client whose methods take a trailing
+`options?`:
+
+```ts
+interface RequestOptions {
+  timeout?: number;
+}
+class Runs {
+  calls = 0;
+  get(id: string, options?: RequestOptions): string {
+    this.calls += 1;
+    return `${id}#${this.calls} t=${options?.timeout ?? 30}`;
+  }
+}
+// A narrower port over the client.
+interface RunReader {
+  get(id: string): string;
+}
+type Format = (value: number) => string;
+
+function fixed(value: number, digits: number = 2): string {
+  return value.toFixed(digits);
+}
+
+export function main(): void {
+  const reader: RunReader = new Runs();
+  const format: Format = fixed;
+  console.log(`${reader.get('r1')} ${reader.get('r2')} ${format(1.5)}`);
+  // r1#1 t=30 r2#2 t=30 1.50
+}
+```
+
+A call through the narrower type passes `undefined` for the missing
+parameters (defaults run in the callee) and an empty rest array. Parameter
+types are checked contravariantly: a method taking `string` does not
+implement `handle(x: string | number)`, although TypeScript's method
+parameter bivariance accepts it. A function value converted to another
+signature is a new function: two conversions of `fixed` are not `===`.
+
 The same profile admits the pilot's remaining language items:
 
 ```ts
