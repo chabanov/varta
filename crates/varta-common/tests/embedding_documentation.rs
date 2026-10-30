@@ -320,6 +320,79 @@ fn linked_intrinsics() -> String {
     )
 }
 
+/// The v38 fair host fuel rates (`varta_common::fuel`).
+fn fair_fuel() -> String {
+    use varta_common::fuel;
+    table(
+        &["Work", "Fuel", "Constant", "Charged"],
+        [
+            (
+                "every host import call",
+                fuel::CALL,
+                "CALL",
+                "before the import runs",
+            ),
+            (
+                "each byte of a string argument read",
+                fuel::BYTE,
+                "BYTE",
+                "before the effect",
+            ),
+            (
+                "each byte of a string result written",
+                fuel::BYTE,
+                "BYTE",
+                "before the result is published",
+            ),
+            (
+                "each UTF-16 unit of checked JSON input",
+                fuel::JSON_PARSE_UNIT,
+                "JSON_PARSE_UNIT",
+                "before the first guest allocation",
+            ),
+            (
+                "each checked JSON value decoded",
+                fuel::JSON_PARSE_VALUE,
+                "JSON_PARSE_VALUE",
+                "before the first guest allocation",
+            ),
+            (
+                "each schema type checked",
+                fuel::JSON_SCHEMA_TYPE,
+                "JSON_SCHEMA_TYPE",
+                "before the first guest allocation",
+            ),
+            (
+                "each schema record field or union member checked",
+                fuel::JSON_SCHEMA_FIELD,
+                "JSON_SCHEMA_FIELD",
+                "before the first guest allocation",
+            ),
+            (
+                "each value JSON serialization visits",
+                fuel::JSON_STRINGIFY_VALUE,
+                "JSON_STRINGIFY_VALUE",
+                "before the result is published",
+            ),
+            (
+                "each UTF-16 unit of serialized JSON",
+                fuel::JSON_STRINGIFY_UNIT,
+                "JSON_STRINGIFY_UNIT",
+                "before the result is published",
+            ),
+        ]
+        .into_iter()
+        .map(|(work, rate, name, when)| {
+            vec![
+                work.to_owned(),
+                rate.to_string(),
+                format!("`fuel::{name}`"),
+                when.to_owned(),
+            ]
+        }),
+    )
+}
+
 fn layout() -> String {
     let range = |start: usize, end: usize| format!("[{start}, {end})");
     table(
@@ -1171,6 +1244,11 @@ fn embedding_profiles_match_registry() {
 }
 
 #[test]
+fn embedding_fair_fuel_matches_the_rates() {
+    assert_block(DOCUMENT, "embedding-fair-fuel", &fair_fuel());
+}
+
+#[test]
 fn embedding_layout_names_and_codes_match_constants() {
     assert_block(DOCUMENT, "embedding-layout", &layout());
     assert_block(DOCUMENT, "embedding-names", &names());
@@ -1194,8 +1272,9 @@ fn every_profile_admits_its_own_json_pair() {
     let json = json_operations();
     for &profile in language::SUPPORTED_PROFILES {
         for operation in [profile.json_parse(), profile.json_stringify()] {
+            // A linked operation (v38's checked parse) is never imported.
             assert!(
-                admitted(operation, profile, &json),
+                admitted(operation, profile, &json) || profile.links(operation),
                 "{} does not admit {}",
                 profile_name(profile),
                 operation.name()

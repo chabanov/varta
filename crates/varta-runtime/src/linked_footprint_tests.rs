@@ -227,7 +227,11 @@ fn redirect_overflow(bytes: &[u8], heap: usize) -> Vec<u8> {
                 && matches!(
                     operators.as_slice(),
                     [wasmparser::Operator::GlobalGet { global_index }, wasmparser::Operator::End]
-                        if globals.get(*global_index as usize).is_some_and(|g| g.0)
+                        // Not the root-stack top (`roots`, linked JSON's
+                        // scratch path), which starts in the root region.
+                        if globals.get(*global_index as usize).is_some_and(|g| {
+                            g.0 && !(abi::STRING_ROOT_BASE..=abi::STRING_ROOT_END).contains(&g.1)
+                        })
                 )
                 || matches!(
                     operators.as_slice(),

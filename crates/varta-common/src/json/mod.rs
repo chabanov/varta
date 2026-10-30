@@ -1,9 +1,25 @@
 //! Versioned closed JSON schemas, including checked optional fields and unions.
+//!
+//! Without `std` this module is the schema model, its validation, the
+//! hand-written schema reader ([`JsonSchema::read`]) and the shared UTF-16
+//! decoder ([`scan`]) that both the host imports of the recoverable profiles
+//! and the linked v38 decoder run. The `serde_json` decoders of the earlier
+//! profiles (and the reference classifier the shared decoder is tested
+//! against) need `std`.
+use alloc::{boxed::Box, string::String, vec::Vec};
+pub mod build;
+#[cfg(feature = "std")]
 mod classified;
+#[cfg(feature = "std")]
 mod decode;
-pub use classified::{JsonDecodeError, JsonInputLimit};
+mod descriptor;
+pub use descriptor::DescriptorError;
+mod error;
+pub use error::{JsonDecodeError, JsonInputLimit, LINKED_LIMIT_BASE};
+mod read;
+pub mod scan;
 mod schema;
-pub use schema::{JsonField, JsonSchema, JsonType};
+pub use schema::{JsonField, JsonSchema, JsonType, SchemaBounds};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const NUMBER_SCHEMA_VERSION: u32 = 2;

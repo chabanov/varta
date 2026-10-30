@@ -30,6 +30,10 @@ pub(crate) fn input(
     if ptr < 0 || len < 0 || len as usize > limit {
         return Err(HostFailure::invalid());
     }
+    // V38 fair fuel: the argument's bytes, before any effect.
+    if crate::fair_fuel::bytes(caller, len as usize).is_err() {
+        return Err(HostFailure::exhausted());
+    }
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(HostFailure::invalid());
     };
@@ -53,6 +57,9 @@ pub(super) fn failure(
     caller: &mut Caller<'_, RuntimeContext>,
     error: HostFailure,
 ) -> Result<(), wasmtime::Error> {
+    if error.exhausted {
+        return Err(wasmtime::Error::new(wasmtime::Trap::OutOfFuel));
+    }
     global(caller, abi::RESULT_LEN, 0)?;
     global(caller, abi::RESULT_STATUS, error.status as i32)?;
     caller
@@ -88,6 +95,10 @@ pub(super) fn result_bytes(
 ) -> Result<i32, HostFailure> {
     if bytes.len() > abi::MAX_RESULT_BYTES {
         return Err(HostFailure::too_large());
+    }
+    // V38 fair fuel: the result's bytes, before the guest sees them.
+    if crate::fair_fuel::bytes(caller, bytes.len()).is_err() {
+        return Err(HostFailure::exhausted());
     }
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(HostFailure::invalid());

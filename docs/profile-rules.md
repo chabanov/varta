@@ -3708,6 +3708,41 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   `StringNumber`) roots a reference operand while the cell is allocated and
   restores the root stack before the linked call (which allocates nothing in
   the guest heap).
+- Checked JSON has one decoder: `varta_common::json::scan` (`no_std`,
+  UTF-16 in place, iterative) for every recoverable parse, and
+  `varta_common::json::build` for every top-down (v38) build, host and
+  linked. Change its outcome order only together with the reference
+  classifier (`JsonSchema::parse_json_classified`), and extend the
+  differential tests (`json::scan` tests: the hand corpus and the seeded
+  random inputs and mutations under small limits) for every grammar or
+  schema rule. Shared JSON code must not format through `core::fmt` or
+  dispatch through trait objects: linked code cannot link function tables.
+- Every v38 host import charges fair fuel (`varta_common::fuel`, the
+  runtime's `fair_fuel` module): a new host import, or one that reads or
+  writes guest strings or does work proportional to its input outside
+  `host::input`/`host::result*`, charges its work there, before the effect
+  or before the result is published; a host failure caused by a charge
+  must stay the typed fuel error (`HostFailure::exhausted`). New work units
+  get a rate in `varta_common::fuel`, calibrated against the linked
+  equivalent (development plan, fair host fuel) and published through the
+  `embedding-fair-fuel` block. Fuel comparisons with v37 rate v37's host
+  work at the same rates (`Execution::rate_host_work`). Never raise
+  production budgets for a test: declare test-only budgets.
+- Linked JSON (`json_parse_v19`, linked under v38; the compiler test
+  switch `host_json_test_hook` compiles the host-import variant for
+  comparisons) takes its scratch only from rooted guest blocks
+  (`arena::scratch`): the guest allocator through the `allocate` accessor,
+  each block rooted with `retain`, unrooted (its root slot zeroed) once its
+  allocations are freed and in any case by resetting `roots` on return,
+  before the result alone is retained. It roots the input string before
+  the builder allocates, publishes every block before the next allocation,
+  throws `SyntaxError`/`TypeError` through the exception channel exactly as
+  the host import and reports input limits as `JsonInputLimit::linked_code`.
+  `linked_json_tests` compares it with the host import on the case corpus,
+  a differential corpus, wide unions, depth and size, the typed limits and
+  collections amid failed parses. Index only `static` lookup tables in
+  linked code: indexing a `const` array may copy it per call, and
+  `memory.copy` costs one fuel per byte.
 - Linked code runs in memory 0. The linker places its stack and reached data
   in the module's intrinsic region (`varta.intrinsics`, sized at emission by
   `link::region_pages` before any code that depends on the heap base is

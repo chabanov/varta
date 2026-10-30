@@ -32,7 +32,8 @@ ryu-js = "=1.0.3"
 getrandom = "=0.3.4"
 # Already locked via the compiler; bounded exact intervals for numeric radix text.
 num-bigint = "=0.4.8"
-wasmtime = { version = "48.0.5", default-features = false, features = ["runtime", "cranelift", "parallel-compilation"] }
+# `call-hook`: the v38 fair host fuel charge of every host import call.
+wasmtime = { version = "48.0.5", default-features = false, features = ["runtime", "cranelift", "parallel-compilation", "call-hook"] }
 wasm-encoder = "0.241"
 wasmparser = "0.241"
 cap-std = "=4.0.3"

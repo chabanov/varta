@@ -63,7 +63,7 @@ pub(crate) fn module_with(
                 varta_common::HostScalar::F64 => matches!(actual, wasmtime::ValType::F64),
                 varta_common::HostScalar::I64 => matches!(actual, wasmtime::ValType::I64),
             };
-        if language.profile.is_some_and(|p| p.links(host)) {
+        if language.profile.is_some_and(|p| p.links(host)) && !host_json_import(host) {
             return Err(wasmtime::Error::msg(format!(
                 "pure intrinsic must be linked into the module, not imported: {}",
                 import.name()
@@ -546,4 +546,23 @@ fn check_exports(module: &Module) -> Result<(), RuntimeError> {
         }
     }
     Ok(())
+}
+
+/// Test-only: the comparisons of linked JSON with the host import admit
+/// v38 modules that import `json_parse_v19` (`host_json_test_hook`).
+#[cfg(test)]
+fn host_json_import(host: varta_common::HostOperation) -> bool {
+    host == varta_common::HostOperation::JsonParseV19
+        && host_json::ADMITTED.with(std::cell::Cell::get)
+}
+#[cfg(not(test))]
+fn host_json_import(_: varta_common::HostOperation) -> bool {
+    false
+}
+#[cfg(test)]
+pub(crate) mod host_json {
+    use std::cell::Cell;
+    thread_local! {
+        pub(crate) static ADMITTED: Cell<bool> = const { Cell::new(false) };
+    }
 }

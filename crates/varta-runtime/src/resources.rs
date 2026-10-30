@@ -39,6 +39,13 @@ pub(crate) fn classify(
             resource,
             requested: requested as u32,
         }),
-        None => error,
+        // V38 linked JSON: an input limit, reported as the host import
+        // reports it.
+        None => match varta_common::json::JsonInputLimit::from_linked_code(code) {
+            Some(limit) => RuntimeError::Execution(wasmtime::Error::new(
+                varta_common::json::JsonDecodeError::Limit(limit),
+            )),
+            None => error,
+        },
     }
 }

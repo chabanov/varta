@@ -122,19 +122,23 @@ fn v38_static_data_beyond_one_page_runs_with_the_heap_after_the_extension() {
         })
         .unwrap();
     assert!(extension > 4 * UNITS, "{extension}");
-    // The conversions this program makes link intrinsics, whose region
-    // follows the extension (`linked_intrinsics`).
-    let region = abi::StaticRegion::with_extension_pages(pages)
+    // The conversions and the parse this program makes link intrinsics,
+    // whose region follows the extension (`linked_intrinsics`).
+    let expected = abi::StaticRegion::with_extension_pages(pages)
         .and_then(|region| region.with_intrinsic_pages(intrinsic_pages(&bytes)))
         .unwrap();
     let memory = module
         .exports()
         .find_map(|export| export.ty().memory().cloned())
         .unwrap();
-    assert_eq!(memory.minimum(), region.minimum_pages());
     let runtime = VartaRuntime::new();
     let prepared = runtime.prepare_module(&bytes).unwrap();
-    assert_eq!(prepared.static_region(), region);
+    // The extension, then the intrinsic region of its linked code.
+    let region = prepared.static_region();
+    assert_eq!(region, expected);
+    assert_eq!(region.extension_pages(), pages);
+    assert!(region.intrinsic_pages() > 0);
+    assert_eq!(memory.minimum(), region.minimum_pages());
     let run = runtime.run_wasm_bytes(&bytes, &[]).unwrap();
     assert_eq!(
         run.lines,

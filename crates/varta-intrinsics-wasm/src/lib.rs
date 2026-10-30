@@ -16,7 +16,9 @@
 //! the free memory above the guest heap. Guest values are reached only
 //! through the `varta_link` accessors, which bound every copy, and nothing
 //! survives a call: the arena is reset on every entry, and a nested entry
-//! traps.
+//! traps. The linked JSON decoder (`json`, linked only under the compiler's
+//! test switch) instead takes its scratch from guest heap blocks rooted for
+//! the call and builds its result through the guest's allocator.
 #[cfg(target_arch = "wasm32")]
 extern crate alloc;
 #[cfg(target_arch = "wasm32")]
@@ -27,5 +29,7 @@ mod bigint;
 mod exports;
 #[cfg(target_arch = "wasm32")]
 mod guest;
+#[cfg(target_arch = "wasm32")]
+mod json;
 #[cfg(target_arch = "wasm32")]
 mod values;

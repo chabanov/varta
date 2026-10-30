@@ -47,6 +47,8 @@ pub(super) struct Guest<'a> {
     globals: u32,
     result_len: Option<u32>,
     resource: (Option<u32>, Option<u32>),
+    /// The exported exception globals (version selector, pending, value).
+    exceptions: (Option<u32>, Option<u32>, Option<u32>),
     /// The module's declared layout (`varta.static`, `varta.intrinsics`).
     pub region: abi::StaticRegion,
 }
@@ -60,6 +62,7 @@ impl<'a> Guest<'a> {
             globals: 0,
             result_len: None,
             resource: (None, None),
+            exceptions: (None, None, None),
             region: abi::StaticRegion::SINGLE_PAGE,
         };
         let mut intrinsic_section = None;
@@ -103,6 +106,17 @@ impl<'a> Guest<'a> {
                         }
                         if export.kind == ExternalKind::Global && export.name == abi::RESULT_LEN {
                             guest.result_len = Some(export.index);
+                        }
+                        if export.kind == ExternalKind::Global {
+                            use varta_common::exceptions as channel;
+                            match export.name {
+                                channel::HASHED_DICTIONARY_VERSION => {
+                                    guest.exceptions.0 = Some(export.index);
+                                }
+                                channel::PENDING => guest.exceptions.1 = Some(export.index),
+                                channel::VALUE => guest.exceptions.2 = Some(export.index),
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -156,8 +170,26 @@ enum Accessor {
     ResourceFailure,
     /// `() -> i32`: end of the reserved arena.
     ArenaReservedEnd,
-    /// `() -> i32`: the module's static extension pages (`varta.static`),
-    /// the static region of the linked value readers.
+    /// `(len) -> ptr`: the guest allocator (a managed heap's `Allocate`
+    /// helper), which collects and reports exhausted memory itself.
+    Allocate,
+    /// `(handle) -> handle`: the guest retention helper, pushing a root.
+    Retain,
+    /// `() -> i32`: the root-stack top.
+    Roots,
+    /// `(i32)`: reset the root-stack top (dropping the roots above it).
+    SetRoots,
+    /// `() -> i32`: the exception channel version of a v38 module (its
+    /// `exceptions::HASHED_DICTIONARY_VERSION` global), or -1 without one.
+    ExceptionVersion,
+    /// `() -> i32`: the channel's pending flag, or -1 without one.
+    ExceptionPending,
+    /// `() -> i64`: the channel's thrown value, or -1 without one.
+    ExceptionValue,
+    /// `(cell)`: throw `cell`: set the channel's value and pending flag.
+    Raise,
+    /// `() -> i64`: the static region's extension pages (low word) and
+    /// intrinsic pages (high word).
     StaticPages,
 }
 /// What the accessors read from the guest module and its placement.
@@ -171,7 +203,12 @@ struct AccessorTargets {
     heap_base: usize,
     arena: usize,
     arena_end: usize,
-    static_pages: u32,
+    /// The guest value helpers in merged function numbering.
+    values: Option<super::GuestValues>,
+    /// The exported exception globals: version selector, pending flag and
+    /// value.
+    exceptions: (Option<u32>, Option<u32>, Option<u32>),
+    region: abi::StaticRegion,
 }
 impl Accessor {
     fn from_name(name: &str) -> Option<Self> {
@@ -183,25 +220,103 @@ impl Accessor {
             "arena_reserved" => Self::ArenaReserved,
             "arena_reserved_end" => Self::ArenaReservedEnd,
             "resource_failure" => Self::ResourceFailure,
+            "allocate" => Self::Allocate,
+            "retain" => Self::Retain,
+            "roots" => Self::Roots,
+            "set_roots" => Self::SetRoots,
+            "exception_version" => Self::ExceptionVersion,
+            "exception_pending" => Self::ExceptionPending,
+            "exception_value" => Self::ExceptionValue,
+            "raise" => Self::Raise,
             "static_pages" => Self::StaticPages,
             _ => return None,
         })
     }
     fn signature(self) -> (&'static [ValType], &'static [ValType]) {
         const I32: ValType = ValType::I32;
+        const I64: ValType = ValType::I64;
         match self {
             Self::MemoryRead | Self::MemoryWrite => (&[I32, I32, I32], &[]),
-            Self::ResultLen => (&[I32], &[]),
-            Self::ArenaBase | Self::ArenaReserved | Self::ArenaReservedEnd | Self::StaticPages => {
-                (&[], &[I32])
-            }
+            Self::ResultLen | Self::SetRoots => (&[I32], &[]),
+            Self::ArenaBase
+            | Self::ArenaReserved
+            | Self::ArenaReservedEnd
+            | Self::Roots
+            | Self::ExceptionVersion
+            | Self::ExceptionPending => (&[], &[I32]),
             Self::ResourceFailure => (&[I32, I32], &[]),
+            Self::Allocate => (&[I32], &[I32]),
+            Self::Retain => (&[I64], &[I64]),
+            Self::ExceptionValue | Self::StaticPages => (&[], &[I64]),
+            Self::Raise => (&[I64], &[]),
         }
     }
     fn body(self, targets: AccessorTargets) -> Result<encoder::Function, String> {
         use encoder::Instruction as I;
         let mut function = encoder::Function::new([]);
+        // Every allocating intrinsic reaches the guest-block scratch path
+        // of the library's allocator, which only linked JSON enters; in a
+        // module without a managed heap (or exception channel) the value
+        // accessors it reaches trap.
+        match (self, targets.values) {
+            (Self::Allocate | Self::Retain | Self::Roots | Self::SetRoots, None) => {
+                function.instruction(&I::Unreachable);
+            }
+            (Self::Allocate | Self::Retain, Some(values)) => {
+                function.instruction(&I::LocalGet(0)).instruction(&I::Call(
+                    if matches!(self, Self::Allocate) {
+                        values.allocate
+                    } else {
+                        values.retain
+                    },
+                ));
+            }
+            (Self::Roots, Some(values)) => {
+                function.instruction(&I::GlobalGet(values.roots));
+            }
+            (Self::SetRoots, Some(values)) => {
+                function
+                    .instruction(&I::LocalGet(0))
+                    .instruction(&I::GlobalSet(values.roots));
+            }
+            _ => {}
+        }
         match self {
+            Self::Allocate | Self::Retain | Self::Roots | Self::SetRoots => {}
+            Self::ExceptionVersion | Self::ExceptionPending => {
+                let global = if matches!(self, Self::ExceptionVersion) {
+                    targets.exceptions.0
+                } else {
+                    targets.exceptions.1
+                };
+                match global {
+                    Some(global) => function.instruction(&I::GlobalGet(global)),
+                    None => function.instruction(&I::I32Const(-1)),
+                };
+            }
+            Self::ExceptionValue => {
+                match targets.exceptions.2 {
+                    Some(global) => function.instruction(&I::GlobalGet(global)),
+                    None => function.instruction(&I::I64Const(-1)),
+                };
+            }
+            Self::Raise => match (targets.exceptions.1, targets.exceptions.2) {
+                (Some(pending), Some(value)) => {
+                    function
+                        .instruction(&I::LocalGet(0))
+                        .instruction(&I::GlobalSet(value))
+                        .instruction(&I::I32Const(1))
+                        .instruction(&I::GlobalSet(pending));
+                }
+                _ => {
+                    function.instruction(&I::Unreachable);
+                }
+            },
+            Self::StaticPages => {
+                let pages = u64::from(targets.region.extension_pages())
+                    | u64::from(targets.region.intrinsic_pages()) << u32::BITS;
+                function.instruction(&I::I64Const(pages as i64));
+            }
             Self::MemoryRead | Self::MemoryWrite => {
                 for local in 0..3 {
                     function.instruction(&I::LocalGet(local));
@@ -240,11 +355,6 @@ impl Accessor {
                         i32::try_from(targets.heap_base).map_err(|e| e.to_string())?,
                     )),
                 };
-            }
-            Self::StaticPages => {
-                function.instruction(&I::I32Const(
-                    i32::try_from(targets.static_pages).map_err(|e| e.to_string())?,
-                ));
             }
             Self::ArenaReserved | Self::ArenaReservedEnd => {
                 let address = if matches!(self, Self::ArenaReserved) {
@@ -631,6 +741,7 @@ impl<'a> Plan<'a> {
         library: &'a Library,
         linked: &[(u32, HostOperation)],
         heap: Option<u32>,
+        values: Option<super::GuestValues>,
     ) -> Result<Self, String> {
         let sections = Sections::read(bytes)?;
         let roots = roots(guest, library, linked)?;
@@ -701,7 +812,14 @@ impl<'a> Plan<'a> {
             heap_base: guest.region.heap_base(),
             arena: placement.arena,
             arena_end: placement.arena_end(),
-            static_pages: guest.region.extension_pages(),
+            // Defined guest functions move down past the removed imports.
+            values: values.map(|values| super::GuestValues {
+                allocate: values.allocate - imported + kept,
+                retain: values.retain - imported + kept,
+                ..values
+            }),
+            exceptions: guest.exceptions,
+            region: guest.region,
         };
         let mut plan = Self {
             guest,
@@ -1044,6 +1162,7 @@ pub(super) fn merge(
     library: &Library,
     linked: &[(u32, HostOperation)],
     heap: Option<u32>,
+    values: Option<super::GuestValues>,
 ) -> Result<Vec<u8>, String> {
-    Plan::new(bytes, guest, library, linked, heap)?.emit()
+    Plan::new(bytes, guest, library, linked, heap, values)?.emit()
 }

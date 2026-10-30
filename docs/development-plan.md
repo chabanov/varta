@@ -906,13 +906,13 @@ before). `typeof Blob` in `binaryContentType` folds to `"function"` and
 | Item | Scope | State |
 | --- | --- | --- |
 | (a) Inline conversions and comparisons | `primitive_to_string_v5`, `primitive_to_number_v5` (under value 18: `primitive_to_string_v6`, `primitive_to_number_v6`), `primitive_compare` and `primitive_equal` get an inline codegen fast path for integers, ASCII strings and same-tag comparisons, with the linked general path (`varta_intrinsics::bigint`, already shared with the host imports) behind it, removing those host imports without a fuel regression. Measured when they were linked without it: the codegen v2 dictionary workload (50 inserts + 50 reads) rose from 456 K to 1.1 M fuel, and the v37 case `generator_cases/lifetime.ts` exhausted the production fuel budget under v38 | Implemented on `v38-p2-conversions` ([contract](architecture.md#linked-intrinsics-linked_intrinsics), [measurement](#wave-3-conversions-and-readers-measurement-v38)): fast paths for safe integers (two digits at a time), unboxed Numbers and strings, digit strings, booleans, `null`, `undefined`, same-kind and Number-like comparisons and BigInts below 2^32; the BigInt-free `primitive_to_string`/`primitive_to_number` behind Numbers and strings, the value18 operations only for BigInts. Dictionary workload 157,733 fuel (162,075 with the host imports), `generator_cases/lifetime.ts` 341,359 (v37 628,080). Pending: fractional Number text, non-digit string parsing and comparisons with large BigInts cost the linked code's instructions (thousands of fuel per call) |
-| (b) Linked JSON | `json_parse_v18` (under value 18: `json_parse_v19`) and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | Open |
-| (c) Owned string results | Results larger than the 1 MiB result buffer (case mapping) are returned as owned guest strings | Open; `String(x)` of a string cell returns the cell's string since (a) |
+| (b) Linked JSON | `json_parse_v18` (under value 18: `json_parse_v19`) and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | `json_parse_v19` linked on `v38-p2-json` ([contract](architecture.md#shared-checked-json-decoder-and-linked-json-wave-3)): one `no_std` UTF-16 decoder (`json::scan`) and top-down builder (`json::build`) shared with the host imports of v10–v38, a serde-equivalent `no_std` schema reader, rooted guest scratch blocks, the host's exceptions and typed limits; fair host fuel for every v38 import ([rates](#fair-host-fuel-v38), [measurement](#linked-json-measurement-v38)). Open: `json_stringify_owned` stays a fair-charged import (its encoder is not in the `no_std` core yet; the value18 readers it needs are, item (h)); simd128 scanning and a schema-specialized decoder (measured, not built) |
+| (c) Owned string results | Results larger than the 1 MiB result buffer (case mapping) are returned as owned guest strings | Open; `String(x)` of a string cell returns the cell's string since (a); the linker's `allocate`/`retain` accessors of (b) are the allocation path, the case-mapping call sites still read the result buffer |
 | (d) ASCII case mapping inline | An inline ASCII fast path for `toUpperCase`/`toLowerCase` in front of the linked case mapping, which costs about 820 (upper) and 595 (lower) fuel per unit through the core Unicode tables | Open |
 | (e) Coalescing intrinsic arena | A merging (coalescing) arena for linked scratch, so linked BigInt work near a million bits fits the memory budget as the host import does (today its size-class free lists do not coalesce and such operands exhaust the 8 MiB budget) | Open |
 | (f) Collection work per turn | Owner decision: first idle collection between turns with a deterministic per-instance maintenance budget reported by `--budget-report`; then an incremental collector with bounded work per allocation (write barriers on every reference store, exact rooting kept provable). Motivated by a console turn costing about 910k fuel instead of about 430k when a collection fires inside it | Open |
 | (g) Network wait in scripted sessions | A bounded, explicit network-wait step for `--view-script` sessions, so scripted views that await responses stay deterministic on virtual time | Open |
-| (h) Linked value18 readers | Link the value18 readers (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12` as linked rendering plus the `log_string16` effect, `json_parse_v19`, `primitive_to_string_v6`/`primitive_to_number_v6` with (a)); `bigint_from_value_v5` is already linked at the integration, since it reads only primitive and BigInt cells | Implemented in part on `v38-p2-conversions`: the reference, vector, dictionary (with its full table validation), Error and closure-envelope readers are generic over `Memory` in the `no_std` core; `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11` and `value_is_error_class_v7` are `varta_intrinsics::value` (also the value8–value17 host readers), linked behind tag fast paths. Pending: `value_log_v12` (its record, array and dictionary rendering is the JSON diagnostic renderer, with the JSON stream) and `json_parse_v19` (b) |
+| (h) Linked value18 readers | Link the value18 readers (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12` as linked rendering plus the `log_string16` effect, `json_parse_v19`, `primitive_to_string_v6`/`primitive_to_number_v6` with (a)); `bigint_from_value_v5` is already linked at the integration, since it reads only primitive and BigInt cells | Implemented in part on `v38-p2-conversions`: the reference, vector, dictionary (with its full table validation), Error and closure-envelope readers are generic over `Memory` in the `no_std` core; `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11` and `value_is_error_class_v7` are `varta_intrinsics::value` (also the value8–value17 host readers), linked behind tag fast paths. Pending: `value_log_v12` (its record, array and dictionary rendering is the JSON diagnostic renderer, with the JSON stream); `json_parse_v19` is linked by (b) |
 | (i) L0 open choices | The L0 view protocol's open choices, including `role="separator"` and `role="group"` | Open |
 
 #### Code generation v2 measurements
@@ -1263,6 +1263,109 @@ for its work):
   dictionary, a TypeError and a function; no JSON) with a 20-line host that
   implements only `log_string16` and refuses any other import: one memory,
   one import, output identical to `varta dev` and to v37, first run 2–14 ms.
+
+#### Linked JSON measurement (v38)
+
+Owner decisions (2026-10-30): one shared `no_std` decoder for the host path
+of `json_parse_v13`…`v19` (implementation unified, output unchanged);
+fair host fuel for every v38 host import; then link checked JSON under v38
+and re-baseline like with like.
+
+Fuel of one `JSON.parse(text) as T` beyond the same program without the
+parse (`linked_json_fuel_measurement`, `--nocapture`), test-only budgets,
+debug build. "Fair" charges the host import's work at the published rates
+([fair host fuel](#fair-host-fuel-v38)); v37 "at fair rates" is the
+test-only like-with-like accounting of a v37 module.
+
+| Workload | Source chars | v37 | v37 at fair rates | v38 import, free | v38 import, fair | v38 linked (production) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 record `{id, name, tags}` | 54 | 737 | 36,547 | 433 | 36,243 | 30,012 |
+| 40 records (codegen v2 "JSON.parse ~2 KB") | 2,181 | 18,755 | 455,335 | 10,495 | 447,075 | 366,979 |
+| 1,000 numbers `1.5` | 4,001 | 275 | 1,627,855 | 175 | 1,627,755 | 886,545 |
+| one RunEventV1-like member, as `unknown` | 76 | 1,995 | 66,967 | 1,192 | 66,164 | 43,762 |
+
+The linked decoder before wave-3 tuning took 380,454 and 936,657 fuel on the
+middle rows; kept optimizations: a plain-unit string scan, ASCII field-name
+comparison, two-word slot sets (wasm32 has no 128-bit shifts), an exact
+number path (at most 15 digits, exponent within 22), a canonical schema
+fast path, a small `Copy` stop type, a fast path for arrays of numbers and
+strings, cached record order words and word-wise presence bitmaps. What
+remains: about 30 fuel per text unit of a long string, 400 to 600 per
+scalar value (bounds-checked unit reads, the tape, per-value budgets and
+dispatch), 200 to 300 per built block beyond the guest allocator, and 2,000
+to 4,000 per schema node read and checked on every call (the schema is not
+cached across calls: nothing survives a linked call). A Wasmtime fuel
+calibration loop that only loads and compares each unit costs 18 fuel per
+unit. A schema-specialized decoder emitted by the compiler was not built:
+the per-call schema work it would remove is the largest remaining term on
+small documents (the schema read alone measured 9,923 fuel for the
+five-type record schema in a standalone wasm32 build) and is the next
+measured step; a per-module schema cache in the library would remove it
+too but breaks the "nothing survives a call" rule.
+
+Memory: the linked scratch (tape and frames) is guest heap, 16 bytes per
+tape node, rooted for the call and unrooted per block once free; a growing
+tape holds its old and new capacity. A 100,000-number round trip runs in
+`round_trip.ts`; `v38_json_round_trip_costs` pins 10,000 and 50,000 numbers
+(25.1M and 125.0M fuel with fair serialization).
+
+**SIMD (`simd128`).** Validates in Wasmtime with the production engine
+configuration (`simd128_validates_in_the_production_engine`) and in Node 24
+(`WebAssembly.validate`); browser support (not tested here, no browser
+automation): Chrome 91+, Firefox 89+, Safari 16.4+. Not used yet: the
+measured cost is per value and per schema node, not per scanned unit (a
+200-unit string costs about 30 fuel per unit), so a SIMD unit scanner would
+change the long-string term only.
+
+#### Fair host fuel (v38)
+
+Rates (`varta_common::fuel`, published in the
+[embedding contract](embedding.md#fair-host-fuel-v38)):
+
+| Work | Fuel | Calibration |
+| --- | ---: | --- |
+| host import call (`CALL`) | 50 | the cheapest linked call with an argument (`charAt`, 46) |
+| string argument or result byte (`BYTE`) | 1 | Wasmtime's `memory.copy` rate |
+| JSON input unit (`JSON_PARSE_UNIT`) | 30 | linked scan of long strings (28 per unit) |
+| JSON value decoded (`JSON_PARSE_VALUE`) | 1,500 | fitted upper bound of the linked decoder and builder per value (400 to 1,200 measured) |
+| schema type (`JSON_SCHEMA_TYPE`) | 3,000 | linked schema read, validation and descriptor check per type |
+| schema field or union member (`JSON_SCHEMA_FIELD`) | 3,000 | the same per field (the 40-field `wide_json.ts` case) |
+| JSON value serialized (`JSON_STRINGIFY_VALUE`) | 1,500 | by symmetry with the parse rate (no linked encoder yet) |
+| JSON output unit (`JSON_STRINGIFY_UNIT`) | 30 | by symmetry with the parse rate |
+
+Method: run each workload linked and through the host import without
+charges; the difference is the work the host import does not meter; fit
+`a·units + b·values + c·schema nodes` and round up to the bound the
+measured shapes need, so a host import never costs less than its linked
+equivalent (the parse rows above: fair import 1.2 to 1.8 times linked). The
+v37/v38 corpus check (`case_corpus_behaves_identically_under_v38`) now
+states "v38 never charges more than v37, with the host work of both at the
+published rates" (v37 rated by a test-only switch); with a lower value rate
+(800, 450) the 40-field `wide_json.ts` and `v35_cases/mixed.ts` cases broke
+it, which fixed the final rates. Re-pinned: the codegen v2
+"JSON.parse ~2 KB" ceiling is 485,000 (measured 421,398; v37 at fair rates
+769,036, ratio at least 1.6 instead of 4.5); every other ceiling and ratio
+holds unchanged against v37 at fair rates (table:
+`codegen_v2_fuel_ceilings_hold`).
+
+**Per-turn fuel (recommendation, the owner sets it).** Production stays at
+1,000,000 fuel per turn. Measured v38 turns (`console_turn_fuel`):
+
+| Turn | v38 fuel |
+| --- | ---: |
+| keyed view mount, 50 rows | 401,356 |
+| keyed view update, 50 rows | 764,901 |
+| Markdown blocks, 3 replies | 170,543 |
+| 24-member union events, 25 parses | 1,196,812 |
+| response of 2 KB parsed | 469,103 |
+| response of 10 KB parsed | 2,274,081 |
+| response of 20 KB parsed | 4,832,673 |
+
+A console turn that receives a 20 KB response and updates a 50-row view
+needs about 5.6M; the 24-member event fixture already exceeds 1M in one
+turn (its tests now declare 4M test-only per-turn fuel). Recommendation: a
+v38 per-turn default of 8,000,000 fuel (about 40% headroom over the 20 KB
+turn), with the host-call budget unchanged.
 
 ### Platform targets and application model
 

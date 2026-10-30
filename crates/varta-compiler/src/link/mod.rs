@@ -22,13 +22,58 @@ use library::library;
 use crate::CompilerError;
 use varta_common::{HostOperation, abi, language::LanguageProfile};
 
+/// The guest functions and global linked JSON builds values with, as
+/// emitted (before linking): the allocator (`(len) -> ptr`), the retention
+/// helper (`(handle) -> handle`, pushing a root) and the root-stack top.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GuestValues {
+    pub allocate: u32,
+    pub retain: u32,
+    pub roots: u32,
+}
+
+/// Whether a module of `profile` links `operation`: the profile's linked
+/// intrinsics, except (test-only, [`json_hook`]) the checked JSON parse.
+pub(crate) fn links(profile: LanguageProfile, operation: HostOperation) -> bool {
+    profile.links(operation) && !(operation == HostOperation::JsonParseV19 && json_hook::enabled())
+}
+
+/// Test-only switch: while enabled on the current thread, v38 modules import
+/// `json_parse_v19` from the host instead of linking it, so tests compare the
+/// linked decoder with the host import (the same shared code).
+pub(crate) mod json_hook {
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    use std::cell::Cell;
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    thread_local! {
+        static ENABLED: Cell<bool> = const { Cell::new(false) };
+    }
+    /// Whether the switch is on for this thread.
+    pub(crate) fn enabled() -> bool {
+        #[cfg(any(test, feature = "suspension-test-hook"))]
+        return ENABLED.with(Cell::get);
+        #[cfg(not(any(test, feature = "suspension-test-hook")))]
+        false
+    }
+    /// Run `f` with the switch on for this thread.
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    pub(crate) fn with<T>(f: impl FnOnce() -> T) -> T {
+        ENABLED.with(|enabled| enabled.set(true));
+        let result = f();
+        ENABLED.with(|enabled| enabled.set(false));
+        result
+    }
+}
+
 /// Link the intrinsics `guest` imports when `profile` links them; modules of
 /// every other profile are returned unchanged. `heap` is the guest
-/// allocator's heap-end global, when the module has a managed heap.
+/// allocator's heap-end global and `values` its value helpers, when the
+/// module has a managed heap.
 pub(crate) fn link(
     guest: Vec<u8>,
     profile: LanguageProfile,
     heap: Option<u32>,
+    values: Option<GuestValues>,
 ) -> Result<Vec<u8>, CompilerError> {
     if !profile.linked_intrinsics() {
         return Ok(guest);
@@ -42,16 +87,14 @@ pub(crate) fn link(
             let operation = (import.module == "varta")
                 .then(|| HostOperation::from_name(import.name))
                 .flatten()?;
-            profile
-                .links(operation)
-                .then_some((index as u32, operation))
+            links(profile, operation).then_some((index as u32, operation))
         })
         .collect();
     if linked.is_empty() {
         return Ok(guest);
     }
     let library = library().map_err(CompilerError::Internal)?;
-    merge::merge(&guest, &parts, library, &linked, heap).map_err(CompilerError::Internal)
+    merge::merge(&guest, &parts, library, &linked, heap, values).map_err(CompilerError::Internal)
 }
 
 /// Pages of the intrinsic region a module of `profile` importing `hosts`
@@ -64,7 +107,7 @@ pub(crate) fn region_pages(
 ) -> Result<u32, CompilerError> {
     let operations: Vec<HostOperation> = hosts
         .into_iter()
-        .filter(|&operation| profile.links(operation))
+        .filter(|&operation| links(profile, operation))
         .collect();
     if operations.is_empty() {
         return Ok(0);

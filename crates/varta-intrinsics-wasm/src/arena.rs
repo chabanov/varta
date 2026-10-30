@@ -7,8 +7,10 @@
 //! fills the memory budget) and refuses a nested entry, so no allocation,
 //! pointer or state survives a call. An allocation that no longer fits the
 //! reserved arena continues at the guest heap's end
-//! (`varta_link.arena_base`). Linked code never calls the guest allocator, so
-//! nothing else writes above the heap end while an entry runs; afterwards the
+//! (`varta_link.arena_base`). Such an entry never calls the guest allocator,
+//! so nothing else writes above the heap end while it runs (an entry that
+//! does, linked JSON, uses [`scratch`] and its rooted guest blocks instead);
+//! afterwards the
 //! guest allocator uses those bytes as fresh heap space (it initializes every
 //! block it hands out). The newest block returns to the bump pointer and
 //! other freed blocks to size-class free lists, reused within the call.
@@ -64,6 +66,161 @@ pub fn entry<T>(body: impl FnOnce() -> T) -> T {
     result
 }
 
+/// While set, the entry allocates from guest blocks ([`scratch`]).
+static GUEST: AtomicBool = AtomicBool::new(false);
+/// The size of the newest guest scratch block.
+static CHUNK: AtomicUsize = AtomicUsize::new(0);
+/// The smallest guest scratch block.
+const MIN_CHUNK_BYTES: usize = 1024;
+/// The largest guest scratch block shared by several allocations.
+const SHARED_CHUNK_BYTES: usize = 64 * 1024;
+/// Guest scratch blocks whose live allocations are counted, so a block is
+/// unrooted as soon as nothing in it is live; later blocks of a call stay
+/// rooted until it returns.
+const TRACKED_CHUNKS: usize = 64;
+
+/// One tracked guest scratch block: its payload range, the root slot that
+/// keeps it and its live allocations.
+#[derive(Clone, Copy)]
+struct Chunk {
+    start: usize,
+    end: usize,
+    root: usize,
+    live: usize,
+}
+struct Chunks {
+    list: [Chunk; TRACKED_CHUNKS],
+    count: usize,
+}
+/// The tracked blocks of the running [`scratch`] entry.
+struct Tracked(core::cell::UnsafeCell<Chunks>);
+// SAFETY: wasm32 guest code is single-threaded, and only the allocator
+// (which a nested entry cannot reach) touches the table.
+unsafe impl Sync for Tracked {}
+static TRACKED: Tracked = Tracked(core::cell::UnsafeCell::new(Chunks {
+    list: [Chunk {
+        start: 0,
+        end: 0,
+        root: 0,
+        live: 0,
+    }; TRACKED_CHUNKS],
+    count: 0,
+}));
+/// The tracked block table.
+///
+/// SAFETY (callers): no other reference to the table is live.
+unsafe fn chunks() -> &'static mut Chunks {
+    // SAFETY: per the caller.
+    unsafe { &mut *TRACKED.0.get() }
+}
+
+/// Run one export whose scratch lives in ordinary guest heap blocks: blocks
+/// from the guest allocator, rooted on the guest root stack (`hint` bytes in
+/// the first, then doubling), unrooted once nothing in them is live and in
+/// any case when the body returns, so the guest's collector, memory budget
+/// and root rules govern them like any other block. Such an export calls
+/// the guest allocator, so nothing may live above the guest heap's end. A
+/// nested entry traps.
+pub fn scratch<T>(hint: usize, body: impl FnOnce() -> T) -> T {
+    if ACTIVE.swap(true, Relaxed) {
+        core::arch::wasm32::unreachable();
+    }
+    let roots = crate::guest::root_top();
+    GUEST.store(true, Relaxed);
+    TOP.store(0, Relaxed);
+    LIMIT.store(0, Relaxed);
+    CHUNK.store(hint.max(MIN_CHUNK_BYTES) / 2, Relaxed);
+    // SAFETY: no reference to the table is live.
+    unsafe { chunks() }.count = 0;
+    let result = body();
+    GUEST.store(false, Relaxed);
+    TOP.store(0, Relaxed);
+    ACTIVE.store(false, Relaxed);
+    crate::guest::reset_roots(roots);
+    result
+}
+
+/// Count an allocation at `ptr` in its tracked block.
+fn track(ptr: usize, delta: isize) {
+    // SAFETY: no other reference to the table is live.
+    let chunks = unsafe { chunks() };
+    let count = chunks.count;
+    let Some(index) = chunks.list[..count]
+        .iter()
+        .rposition(|chunk| (chunk.start..chunk.end).contains(&ptr))
+    else {
+        return;
+    };
+    let chunk = &mut chunks.list[index];
+    chunk.live = chunk.live.saturating_add_signed(delta);
+    // An empty block other than the current one is unrooted: a zero root
+    // slot is skipped by the collector.
+    if chunk.live == 0 && chunk.end != LIMIT.load(Relaxed) && chunk.root != 0 {
+        // SAFETY: `root` is the root-stack slot this call pushed the block
+        // into, below the current top.
+        unsafe { (chunk.root as *mut u64).write_unaligned(0) };
+        chunk.root = 0;
+    }
+}
+
+/// A guest scratch range of `size` bytes at `align`.
+fn guest_range(align: usize, size: usize) -> *mut u8 {
+    let top = TOP.load(Relaxed);
+    let start = top.checked_next_multiple_of(align);
+    if top != 0
+        && let Some(end) = start.and_then(|start| start.checked_add(size))
+        && end <= LIMIT.load(Relaxed)
+    {
+        TOP.store(end, Relaxed);
+        let start = top.next_multiple_of(align);
+        track(start, 1);
+        return start as *mut u8;
+    }
+    // A fresh block: twice the last one up to [`SHARED_CHUNK_BYTES`], at
+    // least the request; a larger request gets a block of its own, which
+    // is unrooted as soon as it is freed (a growing buffer then holds at
+    // most its old and new capacity).
+    let need = size.saturating_add(align);
+    let chunk = if need > SHARED_CHUNK_BYTES {
+        need
+    } else {
+        let chunk = CHUNK
+            .load(Relaxed)
+            .saturating_mul(2)
+            .min(SHARED_CHUNK_BYTES)
+            .max(need);
+        CHUNK.store(chunk, Relaxed);
+        chunk
+    };
+    let ptr = crate::guest::allocate_block(chunk);
+    let header = ptr - varta_common::abi::STRING_HEADER_BYTES;
+    // SAFETY: the allocator returned a block of at least `chunk` payload
+    // bytes whose header precedes `ptr`. Stamped as an edge-free block, the
+    // collector keeps it without reading its contents.
+    unsafe {
+        ((header + varta_common::value::HEAP_FLAGS_OFFSET) as *mut u32)
+            .write_unaligned(varta_common::value::HEAP_ALLOCATED_FLAG);
+        ((header + varta_common::value::HEAP_LINK_OFFSET) as *mut u32).write_unaligned(0);
+    }
+    let root = crate::guest::root_top();
+    crate::guest::retain_root(((chunk as u64) << u32::BITS) | ptr as u64);
+    let start = ptr.next_multiple_of(align);
+    TOP.store(start + size, Relaxed);
+    LIMIT.store(ptr + chunk, Relaxed);
+    // SAFETY: no other reference to the table is live.
+    let chunks = unsafe { chunks() };
+    if chunks.count < TRACKED_CHUNKS {
+        chunks.list[chunks.count] = Chunk {
+            start: ptr,
+            end: ptr + chunk,
+            root,
+            live: 1,
+        };
+        chunks.count += 1;
+    }
+    start as *mut u8
+}
+
 /// Make `[0, end)` addressable in memory 0.
 fn reserve(end: usize) -> bool {
     let available = core::arch::wasm32::memory_size(MEMORY) * WASM_PAGE_BYTES;
@@ -94,9 +251,16 @@ fn fit(top: usize, align: usize, size: usize, limit: usize) -> Option<(usize, us
 /// through the guest's `resource_failure`/`resource_request` globals) and
 /// trap, as the guest allocator does; the runtime reports a typed error.
 fn exhausted(requested: usize) -> ! {
-    let requested = u32::try_from(requested).unwrap_or(u32::MAX);
+    report(
+        Resource::Memory as i32,
+        u32::try_from(requested).unwrap_or(u32::MAX),
+    )
+}
+/// Store a failure code and its request in the guest's failure globals and
+/// trap; the runtime reports the trap as typed.
+pub fn report(code: i32, requested: u32) -> ! {
     // SAFETY: the accessor only sets the two exported i32 globals.
-    unsafe { resource_failure(Resource::Memory as i32, requested as i32) };
+    unsafe { resource_failure(code, requested as i32) };
     core::arch::wasm32::unreachable()
 }
 
@@ -184,6 +348,9 @@ struct Arena;
 // request it holds.
 unsafe impl GlobalAlloc for Arena {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if GUEST.load(Relaxed) {
+            return guest_range(layout.align(), layout.size());
+        }
         let top = TOP.load(Relaxed);
         if top == 0 {
             return core::ptr::null_mut();
@@ -217,6 +384,15 @@ unsafe impl GlobalAlloc for Arena {
         let start = ptr as usize;
         // The newest block returns to the bump pointer; any other joins the
         // free list of its requested size (a reused block may be larger).
+        if GUEST.load(Relaxed) {
+            // The newest range returns to the bump pointer; a block whose
+            // ranges are all free is unrooted.
+            if start.checked_add(layout.size()) == Some(TOP.load(Relaxed)) {
+                TOP.store(start, Relaxed);
+            }
+            track(start, -1);
+            return;
+        }
         if start.checked_add(layout.size()) == Some(TOP.load(Relaxed)) {
             TOP.store(start, Relaxed);
             return;
@@ -244,8 +420,16 @@ unsafe impl GlobalAlloc for Arena {
         let start = ptr as usize;
         // The newest allocation grows in place, so a growing buffer costs
         // its final size rather than the sum of its doublings.
+        let guest = GUEST.load(Relaxed);
+        let fits = |limit: usize| {
+            if guest {
+                start.checked_add(new_size).is_some_and(|end| end <= limit)
+            } else {
+                fit(start, 1, new_size, limit).is_some()
+            }
+        };
         if start.checked_add(layout.size()) == Some(TOP.load(Relaxed))
-            && (new_size <= layout.size() || fit(start, 1, new_size, LIMIT.load(Relaxed)).is_some())
+            && (new_size <= layout.size() || fits(LIMIT.load(Relaxed)))
         {
             TOP.store(start + new_size, Relaxed);
             return ptr;

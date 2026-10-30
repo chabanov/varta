@@ -102,8 +102,11 @@ fn v38_modules_import_only_value18_readers_and_channel_v9() {
             );
             replaced += 1;
         } else if *op != H::JsonStringifyV17 {
+            // The checked JSON parse is linked under v38.
+            let linked =
+                H::JsonParseV19.value17_counterpart() == Some(*op) && V38.links(H::JsonParseV19);
             assert!(
-                new.contains(op) || V38.links(*op),
+                new.contains(op) || V38.links(*op) || linked,
                 "{op:?} missing from {new:?}"
             );
         }
@@ -148,10 +151,10 @@ fn value17_and_value18_readers_reject_each_others_profiles() {
     let old = compile(source, V37);
     assert!(runtime.validate_module(&new).is_ok());
     assert!(runtime.validate_module(&old).is_ok());
-    for (from, to) in [
-        ("value_log_v12", "value_log_v11"),
-        ("json_parse_v19", "json_parse_v18"),
-    ] {
+    // `json_parse_v19` is linked under v38: the v38 module imports neither.
+    assert!(!imports(&new).contains(&H::JsonParseV19));
+    {
+        let (from, to) = ("value_log_v12", "value_log_v11");
         // A v38 module may not read value18 graphs through value17 readers ...
         let downgraded = rename(&new, from, to);
         assert!(runtime.validate_module(&downgraded).is_err(), "{to}");

@@ -29,13 +29,26 @@ pub(crate) fn run_with(bytes: &[u8], grants: &[CapabilityGrant], budgets: u64) -
     let execution = execution::Execution::new(&runtime.engine, grants, None).unwrap();
     execute(&runtime, execution, bytes, budgets)
 }
+/// [`run_with`] charging the module's host work at the v38 fair rates
+/// (`varta_common::fuel`) whatever its profile: the like-with-like fuel of
+/// an earlier profile.
+pub(crate) fn run_rated(bytes: &[u8], grants: &[CapabilityGrant], budgets: u64) -> Run {
+    let runtime = VartaRuntime::new();
+    let mut execution = execution::Execution::new(&runtime.engine, grants, None).unwrap();
+    execution.rate_host_work(true);
+    execute(&runtime, execution, bytes, budgets)
+}
 /// Run with test-only budgets (CLAUDE.md §11): `budgets` production fuel
 /// budgets and host calls beyond the production per-turn count, so a
 /// workload is measured by its guest work alone.
 pub(crate) fn run_test_budgets(bytes: &[u8], budgets: u64) -> Run {
+    run_budgets(bytes, budgets, false)
+}
+/// [`run_test_budgets`], with host work at the fair rates when `rated`.
+fn run_budgets(bytes: &[u8], budgets: u64, rated: bool) -> Run {
     const HOST_CALLS: u32 = 1 << 20;
     let runtime = VartaRuntime::new();
-    let execution = execution::Execution::with_test_budgets(
+    let mut execution = execution::Execution::with_test_budgets(
         &runtime.engine,
         varta_common::budget::Budgets {
             fuel_per_turn: budgets * abi::FUEL,
@@ -44,6 +57,9 @@ pub(crate) fn run_test_budgets(bytes: &[u8], budgets: u64) -> Run {
         },
     )
     .unwrap();
+    if rated {
+        execution.rate_host_work(true);
+    }
     execute(&runtime, execution, bytes, budgets)
 }
 fn execute(
@@ -269,12 +285,14 @@ const PATTERNS: &[Pattern] = &[
         ceiling: 75_000,
         speedup: 4.5,
     },
+    // Re-pinned for wave 3: v38 decodes JSON in guest code (421,398) and
+    // v37's host decoding is charged at the fair rates (769,036).
     Pattern {
         name: "JSON.parse ~2 KB",
         source: json_parse,
         size: 40,
-        ceiling: 75_000,
-        speedup: 4.5,
+        ceiling: 485_000,
+        speedup: 1.6,
     },
     Pattern {
         name: "list render 100 rows",
@@ -326,8 +344,14 @@ const MEASURED_BUDGETS: u64 = 40;
 
 /// Fuel of `source(n)` under `profile`, with generous test-only budgets
 /// (fuel and host calls, so v37's host calls do not end a scan early).
+/// V37 is measured with its host work at the v38 fair rates, so both
+/// profiles pay for the same work (v38 charges them anyway).
 fn fuel(pattern: &Pattern, n: usize, profile: P) -> Run {
-    run_test_budgets(&compile(&(pattern.source)(n), profile), MEASURED_BUDGETS)
+    run_budgets(
+        &compile(&(pattern.source)(n), profile),
+        MEASURED_BUDGETS,
+        profile == V37,
+    )
 }
 
 #[test]
@@ -386,6 +410,35 @@ fn codegen_v2_fuel_ceilings_hold() {
             },
             show(old),
             show(new),
+        );
+    }
+}
+
+/// Fuel of console-shaped turns under v38 (fair host fuel, JSON decoded in
+/// guest code), for the per-turn fuel recommendation of the development
+/// plan: `cargo test -p varta-runtime --lib console_turn_fuel -- --ignored
+/// --nocapture`.
+#[test]
+#[ignore]
+fn console_turn_fuel() {
+    let measure = |label: &str, source: &str| {
+        let run = run_test_budgets(&compile(source, V38), MEASURED_BUDGETS);
+        assert_eq!(run.error, None, "{label}");
+        println!("| {label} | {} |", run.fuel);
+    };
+    println!("| turn | v38 fuel |");
+    measure("keyed view mount, 50 rows", &view_mount(50));
+    measure("keyed view update, 50 rows", &view_update(50));
+    measure("Markdown blocks, 3 replies", &markdown_blocks(3));
+    measure(
+        "24-member union events, 25 parses",
+        include_str!("strict_member_cases/events.ts"),
+    );
+    // A response of `n` records (about 45 bytes each) parsed and summed.
+    for records in [45, 225, 450] {
+        measure(
+            &format!("response of {} KB parsed", records * 45 / 1000),
+            &json_parse(records),
         );
     }
 }
@@ -514,8 +567,12 @@ fn v37_modules_keep_their_bytes() {
 const V38_LIMIT_CASES: [&str; 2] = ["data_limit_cases", "json_limit_cases"];
 
 /// Every runtime case program behaves identically under v37 and v38: same
-/// acceptance, output lines and failure cause, never more fuel. HTTP services
-/// are not started; network requests are denied (no grant), timers granted.
+/// acceptance, output lines and failure cause, and never more fuel like with
+/// like: v38 charges no more for guest instructions than v37 does, with the
+/// host work of both charged at the published fair rates
+/// (`varta_common::fuel`; v37 is rated by a test-only switch). HTTP
+/// services are not started; network requests are denied (no grant),
+/// timers granted.
 #[test]
 fn case_corpus_behaves_identically_under_v38() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -554,17 +611,30 @@ fn case_corpus_behaves_identically_under_v38() {
         if http_contract::read(old).unwrap().is_some() {
             continue;
         }
-        let (before, after) = (run_with(old, &grants, 1), run_with(new, &grants, 1));
+        let (before, after) = (run_rated(old, &grants, 1), run_with(new, &grants, 1));
+        // Fuel, or the BigInt work budget derived from it.
+        let exhausted = |run: &Run| {
+            run.error
+                .as_ref()
+                .is_some_and(|e| e.contains("fuel") || e.contains("work budget"))
+        };
+        // Both may run out of the same budget (a fair charge empties it).
         assert!(
-            after.fuel <= before.fuel,
-            "{}: v38 {} > v37 {}",
+            after.fuel <= before.fuel || exhausted(&before) && exhausted(&after),
+            "{}: v38 {} > v37 {} ({:?} / {:?})",
             path.display(),
             after.fuel,
-            before.fuel
+            before.fuel,
+            after.error,
+            before.error
         );
         match &before.error {
             // V38 may finish where v37 ran out of fuel or host calls.
-            Some(error) if error.contains("fuel") || error.contains("host operation budget") => {
+            Some(error)
+                if error.contains("fuel")
+                    || error.contains("work budget")
+                    || error.contains("host operation budget") =>
+            {
                 assert!(after.lines.starts_with(&before.lines), "{}", path.display());
             }
             _ => {

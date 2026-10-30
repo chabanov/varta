@@ -305,7 +305,8 @@ fn unread_module_constants_cost_nothing_at_startup() {
              let counter = 5;\n\
              function bump(): number { counter = counter + 1; return counter; }\n\
              export function main(): void {\n\
-               console.log(E7.A + \":\" + PICK() + \":\" + String(bump()) + \":\" + String(DERIVED.n));\n\
+               // No Number text: it links intrinsics (`linked_intrinsics`).\n\
+               console.log(E7.A + \":\" + PICK() + \":\" + (bump() === 6 ? \"6\" : \"?\") + \":\" + (DERIVED.n === 1 ? \"1\" : \"?\"));\n\
              }\n",
         );
         source
@@ -340,7 +341,7 @@ fn unread_module_constants_cost_nothing_at_startup() {
         fuel(&v38),
         fuel(&v37)
     );
-    assert!(v38.len() < v37.len());
+    assert!(v38.len() < v37.len(), "{} vs {}", v38.len(), v37.len());
 }
 
 /// V38 removes unreachable async functions and methods with their frame

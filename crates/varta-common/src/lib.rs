@@ -7,7 +7,8 @@
 //! value tags, layout constants, the cell, record, array, dictionary and
 //! Error readers and the error classes ([`value`]), the closure envelope
 //! readers ([`function`]), the BigInt transport ([`bigint`]), the data and
-//! v38 program limits ([`limits`]) and the UTF-16 helpers ([`text`]). The linked
+//! v38 program limits ([`limits`]), the UTF-16 helpers ([`text`]) and the
+//! checked JSON schema model with its shared decoder ([`json`]). The linked
 //! intrinsic library (`varta-intrinsics`, compiled to wasm32) reads guest
 //! memory through that core, so the layout has one owner.
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -25,18 +26,21 @@ mod diagnostic;
 /// Host event sources and host tasks (v38 `turn_budgets`).
 #[cfg(feature = "std")]
 pub mod events;
-#[cfg(feature = "std")]
+/// The exception channel's exports and layout; its diagnostics need `std`.
 pub mod exceptions;
 /// Virtual file roots (v38 `file_roots`).
 #[cfg(feature = "std")]
 pub mod files;
+/// Fair host fuel rates (v38): the published charge of host work.
+pub mod fuel;
 #[cfg(feature = "std")]
 mod host;
 #[cfg(feature = "std")]
 pub mod http;
 #[cfg(feature = "std")]
 mod invocation;
-#[cfg(feature = "std")]
+/// Checked JSON schemas and decoding; without `std` the schema model, its
+/// validation and the shared UTF-16 decoder ([`json::scan`]).
 pub mod json;
 #[cfg(feature = "std")]
 pub mod language;

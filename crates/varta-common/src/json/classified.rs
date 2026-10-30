@@ -1,5 +1,8 @@
-//! Grammar and whole-input budgets precede checked schema decoding. Classification
-//! uses typed limit state, never matching or parsing a decoder's error message.
+//! The reference classification of recoverable checked parses over UTF-8:
+//! grammar and whole-input budgets precede checked schema decoding.
+//! Classification uses typed limit state, never matching or parsing a
+//! decoder's error message. The host imports run the shared UTF-16 decoder
+//! ([`super::scan`]), whose differential tests compare it with this one.
 use super::*;
 use crate::limits::DataLimits;
 use serde::{
@@ -9,37 +12,6 @@ use serde::{
 use serde_json::value::RawValue;
 use std::{cell::Cell, fmt, time::Instant};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum JsonInputLimit {
-    #[error("input byte")]
-    Bytes,
-    #[error("depth")]
-    Depth,
-    #[error("node")]
-    Nodes,
-    #[error("array element")]
-    ArrayElements,
-    #[error("string byte")]
-    StringBytes,
-    /// Schema 15 dictionaries: more than `value::MAX_DICTIONARY_ENTRIES` keys.
-    #[error("dictionary entry")]
-    DictionaryEntries,
-    /// V38 (`data_limits`): the execution deadline passed while the host was
-    /// still decoding.
-    #[error("deadline")]
-    Deadline,
-}
-#[derive(Debug, thiserror::Error)]
-pub enum JsonDecodeError {
-    #[error(transparent)]
-    Schema(#[from] CheckedJsonError),
-    #[error("invalid JSON syntax at line {line} column {column}")]
-    Syntax { line: usize, column: usize },
-    #[error("JSON value does not match the checked schema")]
-    Type,
-    #[error("checked JSON {0} limit")]
-    Limit(JsonInputLimit),
-}
 impl JsonSchema {
     /// Recoverable syntax/type classification with fatal, schema-independent budgets.
     /// Syntax locations are serde_json's one-based lines/byte columns in UTF-8 input.

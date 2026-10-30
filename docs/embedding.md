@@ -283,7 +283,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 45 |
+| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 44 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -353,7 +353,7 @@ under [Linked intrinsics pending](#linked-intrinsics-pending).
 <!-- generated:embedding-linked-intrinsics:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Profile | Linked, never imported | Linked stack |
 | --- | --- | --- |
-| `checked-f64-utf16-v38` | `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
+| `checked-f64-utf16-v38` | `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 <!-- generated:embedding-linked-intrinsics:end -->
 
 - **One memory.** A linked module has exactly one memory, so every engine
@@ -395,17 +395,20 @@ V38 links the value18 primitive conversions (`primitive_to_string_v6`,
 `value_strict_equal_v11`, `value_nullish_equal_v11`,
 `value_is_error_class_v7`): the compiler answers their common cases inline
 and links the shared library code behind that
-([fast paths](architecture.md#linked-intrinsics-linked_intrinsics)). Three
+([fast paths](architecture.md#linked-intrinsics-linked_intrinsics)).
+`json_parse_v19` is linked too (the shared `no_std` decoder
+`varta_common::json::scan` and builder `varta_common::json::build`, which the
+reference host's recoverable imports of earlier profiles run too). Two
 imports still read value layouts beyond primitive and BigInt cells:
-`json_parse_v19` and `json_stringify_owned` (checked JSON over records,
-arrays, dictionaries and schemas; the parser also allocates through the
-guest's value ABI exports) and `value_log_v12` (logging stays a host effect,
-but its rendering of records, arrays and dictionaries is the JSON diagnostic
-renderer). A host that implements only the documented effects runs every v38
-module that imports none of the three; their contracts stay
-[unstable](#what-is-unstable). Linking them needs the JSON encoder and
-decoder in the `no_std` core and allocating linked call sites, the remaining
-work of the v38 linked-intrinsics stream
+`json_stringify_owned` (checked JSON over records, arrays, dictionaries and
+schemas; it allocates through the guest's value ABI exports and is charged at
+the [fair rates](#fair-host-fuel-v38)) and `value_log_v12` (logging stays a
+host effect, but its rendering of records, arrays and dictionaries is the JSON
+diagnostic renderer). A host that implements only the documented effects runs
+every v38 module that imports neither; their contracts stay
+[unstable](#what-is-unstable). Linking them needs the JSON encoder in the
+`no_std` core and allocating linked call sites, the remaining work of the v38
+linked-intrinsics stream
 ([development plan](development-plan.md#batch-v38-in-development)).
 
 ## Memory layout and encodings
@@ -448,6 +451,37 @@ work of the v38 linked-intrinsics stream
   [unstable](#what-is-unstable) for third-party hosts.
 
 ## Host operations
+
+### Fair host fuel (v38)
+
+A host of `checked-f64-utf16-v38` charges the module's fuel for the work of
+every host import it implements, at these fixed rates
+(`varta_common::fuel`), so a fuel budget means the same on every host. Each
+charge is deducted from the turn's fuel exactly like guest instructions;
+when the remaining fuel cannot cover a charge, the host sets it to zero and
+ends the turn with the ordinary fuel-budget error, before the import's
+effect or before its result reaches the guest. Fuel the import's guest
+callbacks consume (the value allocator and retention helper) is guest fuel.
+Earlier profiles charge nothing for host work. A host that implements fuel
+differently (a browser counting with its own instrumentation) must still
+charge these amounts for these units of work.
+
+<!-- generated:embedding-fair-fuel:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
+| Work | Fuel | Constant | Charged |
+| --- | --- | --- | --- |
+| every host import call | 50 | `fuel::CALL` | before the import runs |
+| each byte of a string argument read | 1 | `fuel::BYTE` | before the effect |
+| each byte of a string result written | 1 | `fuel::BYTE` | before the result is published |
+| each UTF-16 unit of checked JSON input | 30 | `fuel::JSON_PARSE_UNIT` | before the first guest allocation |
+| each checked JSON value decoded | 1500 | `fuel::JSON_PARSE_VALUE` | before the first guest allocation |
+| each schema type checked | 3000 | `fuel::JSON_SCHEMA_TYPE` | before the first guest allocation |
+| each schema record field or union member checked | 3000 | `fuel::JSON_SCHEMA_FIELD` | before the first guest allocation |
+| each value JSON serialization visits | 1500 | `fuel::JSON_STRINGIFY_VALUE` | before the result is published |
+| each UTF-16 unit of serialized JSON | 30 | `fuel::JSON_STRINGIFY_UNIT` | before the result is published |
+<!-- generated:embedding-fair-fuel:end -->
+
+How the rates were calibrated is recorded in the
+[development plan](development-plan.md#fair-host-fuel-v38).
 
 ### Call protocol
 
@@ -830,7 +864,7 @@ import the operation, as contiguous runs in registry order.
 | `event_take` | (f64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_text` | (f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
 | `event_watch` | (f64, f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `json_parse_v19` | (i32, i32, i32, i32) → (i64) | 34 | none | yes | — | `checked-f64-utf16-v38` |
+| `json_parse_v19` | (i32, i32, i32, i32) → (i64) | 34 | none | yes | — | — |
 | `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `net_body_read_bytes` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `net_request_start_v2` | (i32, i32) → (f64) | 34 | `net.request` | — | — | `checked-f64-utf16-v38` |

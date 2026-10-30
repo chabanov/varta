@@ -25,6 +25,7 @@ mod events;
 pub use events::{Delivery, HostEvent};
 mod exceptions;
 mod execution;
+mod fair_fuel;
 mod fuel_profile;
 #[cfg(test)]
 mod fuel_profile_tests;
@@ -291,6 +292,9 @@ pub(crate) struct RuntimeContext {
     /// V37 network requests: ids, completions and transfer tasks.
     net: net::Net,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+    /// V38 (`fair_fuel`): host imports charge the published fair fuel of
+    /// their work (`fair_fuel` module).
+    fair_fuel: bool,
     /// The instantiated module's bounds (v38 `program_limits`): where its
     /// record descriptors, keys and JSON schemas may lie, and its profile's
     /// structural limits.
@@ -382,32 +386,46 @@ impl RuntimeContext {
 pub(crate) struct HostFailure {
     status: HostStatus,
     message: String,
+    /// V38 fair fuel: the work charge emptied the fuel; the call fails like
+    /// guest code running out of fuel, before its effect.
+    exhausted: bool,
 }
 impl HostFailure {
+    fn exhausted() -> Self {
+        Self {
+            status: HostStatus::Io,
+            message: String::new(),
+            exhausted: true,
+        }
+    }
     fn denied(id: &str, target: &str) -> Self {
         // Keep the existing human-readable denial while ABI status remains structured.
         let label = if id.starts_with("env.") { "env" } else { id };
         Self {
             status: HostStatus::Denied,
             message: format!("<capability denied: {label}> ({target})"),
+            exhausted: false,
         }
     }
     fn io(error: impl std::fmt::Display) -> Self {
         Self {
             status: HostStatus::Io,
             message: format!("<host I/O error: {error}>"),
+            exhausted: false,
         }
     }
     fn too_large() -> Self {
         Self {
             status: HostStatus::TooLarge,
             message: "<result too large>".into(),
+            exhausted: false,
         }
     }
     fn invalid() -> Self {
         Self {
             status: HostStatus::InvalidInput,
             message: "<invalid host input>".into(),
+            exhausted: false,
         }
     }
 }
@@ -862,6 +880,8 @@ impl RunReport {
 mod linked_footprint_tests;
 #[cfg(test)]
 mod linked_intrinsic_tests;
+#[cfg(test)]
+mod linked_json_tests;
 #[cfg(test)]
 mod linked_value_tests;
 #[cfg(test)]

@@ -51,6 +51,31 @@ in [conformance/README.md](conformance/README.md).
   only `log_string16` or `view_commit`, and Node 24 runs such a module with a
   host that implements only `log_string16`.
 
+- V38 fair host fuel: every host import of a v38 module charges published,
+  fixed rates for its work (`varta_common::fuel`, in the embedding contract):
+  50 per call, 1 per string argument or result byte, and for checked JSON
+  per input unit, value and schema node; a charge the fuel cannot cover is
+  the ordinary typed fuel-budget error. A `JSON.parse` of a megabyte is no
+  longer free. Earlier profiles charge nothing. The v37/v38 corpus check
+  and the codegen v2 ceilings compare like with like (v37 rated at the same
+  rates by a test-only switch); the "JSON.parse ~2 KB" ceiling is re-pinned
+  at 485,000.
+
+- V38 links checked JSON parsing (`json_parse_v19`): the shared decoder and
+  builder run as guest code, with scratch in guest heap blocks rooted for
+  the call, the host's `SyntaxError`/`TypeError` and its typed input-limit
+  errors. A v38 host implements one import fewer. The 24-member event
+  fixture now takes about 1.2M fuel in one turn; the development plan
+  recommends a v38 per-turn default of 8M fuel (the owner sets it).
+
+- Checked JSON: implementation unified, output unchanged. The host imports
+  `json_parse_v13` to `json_parse_v19` (profiles v10 to v38) run one `no_std`
+  decoder over the guest's UTF-16 text (`varta_common::json::scan`), with
+  the outcome order of the earlier `serde_json` classification, which the
+  differential tests compare it against (a hand corpus and 36,000 seeded
+  random inputs and mutations). The descriptor check, a serde-equivalent
+  schema reader and the v38 top-down builder are shared `no_std` code too.
+
 - V38 `typeof` of engine globals (`web_bytes`): `typeof NAME` of a global
   the engine provides and the program does not shadow is its constant
   JavaScript `typeof` (`"function"` for classes and functions such as

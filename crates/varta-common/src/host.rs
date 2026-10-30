@@ -859,6 +859,10 @@ impl HostOperation {
                 | Self::BigIntCompare
                 | Self::BigIntCompareNumber
                 | Self::BigIntCompareString
+                // Checked JSON of schema 18: the shared decoder and builder
+                // (`varta_common::json::scan`, `build`) building through the
+                // guest's own allocator and roots.
+                | Self::JsonParseV19
         )
     }
     /// The v37 (`collections`) Unicode case conversions.
