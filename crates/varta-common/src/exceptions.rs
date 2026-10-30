@@ -25,6 +25,10 @@ pub const PROMISE_CHANNEL_VERSION: i32 = 7;
 /// fields). Function values themselves are never thrown.
 pub const FUNCTION_FIELD_VERSION: &str = "varta.exception.version_v8";
 pub const FUNCTION_FIELD_CHANNEL_VERSION: i32 = 8;
+/// Channel v9 (v38 `dictionary_hashing`): the channel v8 contents in value18
+/// layouts.
+pub const HASHED_DICTIONARY_VERSION: &str = "varta.exception.version_v9";
+pub const HASHED_DICTIONARY_CHANNEL_VERSION: i32 = 9;
 pub const VALUE: &str = "varta.exception.value";
 pub const ROOT: usize = abi::STRING_ROOT_BASE;
 pub const RESERVED_ROOT_BYTES: usize = abi::STRING_ROOT_SLOT_BYTES;

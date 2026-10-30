@@ -206,8 +206,9 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             })?)
         },
     )?;
-    // Value13, value15, value16 and value17 cells share these conversions:
-    // for primitive and BigInt cells every one of those layouts is the same.
+    // Value13, value15, value16, value17 and value18 cells share these
+    // conversions: for primitive and BigInt cells every one of those layouts
+    // is the same.
     for (string, number, from_value) in [
         (
             H::PrimitiveStringV2,
@@ -228,6 +229,11 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             H::PrimitiveStringV5,
             H::PrimitiveNumberV5,
             H::BigIntFromValueV4,
+        ),
+        (
+            H::PrimitiveStringV6,
+            H::PrimitiveNumberV6,
+            H::BigIntFromValueV5,
         ),
     ] {
         linker.func_wrap(

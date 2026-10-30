@@ -219,25 +219,48 @@ fn node<'a>(
                 return Err(error("dictionary type"));
             };
             let kind = schema.types[value as usize].kind();
-            // The storage record: canonical `keys`/`values` slots, both present.
-            let mut data =
-                Vec::with_capacity(record_bytes(schema.value_version(), DICTIONARY_FIELDS));
+            // The storage record: canonical `keys`/`values` vector slots
+            // (and under value18 zero holes and the zero table handle:
+            // unindexed), all present; every array slot is an edge. The
+            // vectors are published into their slots by the tasks below.
+            let version = schema.value_version();
+            let storage = dictionary_storage(version);
+            let mut data = Vec::with_capacity(record_bytes(version, storage.len()));
             data.extend(descriptor.to_le_bytes());
-            data.extend((DICTIONARY_FIELDS as u32).to_le_bytes());
-            data.extend([0; DICTIONARY_FIELDS * RECORD_SLOT_BYTES]);
-            let both = wide_field_mask(DICTIONARY_FIELDS) as u32;
-            data.extend(both.to_le_bytes());
-            for slot in 0..DICTIONARY_FIELDS as u32 {
+            data.extend((storage.len() as u32).to_le_bytes());
+            data.resize(RECORD_META_BYTES + storage.len() * RECORD_SLOT_BYTES, 0);
+            let all = wide_field_mask(storage.len()) as u32;
+            data.extend(all.to_le_bytes());
+            for slot in 0..storage.len() as u32 {
                 data.extend(slot.to_le_bytes());
             }
-            let handle = publish(writer, caller, &data, HEAP_RECORD_FLAG, both, destination)?;
-            let slot = |index: usize| {
-                Destination::Slot(
+            let edges = storage
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, kind))| kind.is_reference())
+                .fold(0u32, |edges, (slot, _)| edges | 1 << slot);
+            let handle = publish(writer, caller, &data, HEAP_RECORD_FLAG, edges, destination)?;
+            let slot = |name: &str| {
+                let index = storage
+                    .iter()
+                    .position(|(field, _)| *field == name)
+                    .ok_or_else(|| error("dictionary storage slot"))?;
+                Ok::<_, wasmtime::Error>(Destination::Slot(
                     handle as u32 as usize + RECORD_META_BYTES + index * RECORD_SLOT_BYTES,
-                )
+                ))
             };
-            tasks.push(Task::Entries(entries, false, kind, slot(1)));
-            tasks.push(Task::Entries(entries, true, ValueKind::String, slot(0)));
+            tasks.push(Task::Entries(
+                entries,
+                false,
+                kind,
+                slot(DICTIONARY_VALUES_FIELD)?,
+            ));
+            tasks.push(Task::Entries(
+                entries,
+                true,
+                ValueKind::String,
+                slot(DICTIONARY_KEYS_FIELD)?,
+            ));
             handle
         }
         JsonValue::Record { ty, fields: values } => {

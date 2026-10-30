@@ -16,9 +16,9 @@ in [conformance/README.md](conformance/README.md).
   value13+ primitive conversions and the abstract comparisons are
   `varta_intrinsics::bigint`, which the v28–v37 host imports now call too.
   Operations with two i32 results are exported packed in one i64 and
-  unpacked by a linker-synthesized adapter. The value17 conversions and
+  unpacked by a linker-synthesized adapter. The value18 conversions and
   comparisons stay host imports (linked, they cost far more fuel on string
-  concatenation and union comparisons), as do JSON and the value17 readers.
+  concatenation and union comparisons), as do JSON and the value18 readers.
   The intrinsic region gains a reserved arena, so small linked calls need no
   memory growth when the guest heap fills the memory budget.
 
@@ -49,6 +49,18 @@ in [conformance/README.md](conformance/README.md).
   checks every stack-pointer write against the region, and starts the
   per-call arena at the guest heap's end. Validation admits one memory for
   every profile and the library's data only inside the declared region.
+
+- V38 hashes dictionaries and mixed records under value ABI and layout 18
+  (`dictionary_hashing`): a four-slot storage record (`holes`, `keys`,
+  `table`, `values`) with an open-addressing table probed from a seedless
+  FNV-1a hash of the UTF-16 key units by allocation-free guest helpers,
+  tombstones and vector holes for deletions, compaction before enumeration and
+  amortized rebuilds at half load. Key order, output and errors are v37's
+  (pinned against Node 24); every reader validates the table against the
+  entries and rejects a corrupt one. V38 binds twelve value18 readers (host
+  ABI 34), JSON schema 18 and exception channel v9; v37 keeps value17.
+  Operations cost 1,200–2,500 fuel at 1k–10k entries where the linear layout
+  took 54,000–2,100,000; a dictionary holds at most 2^26 entries.
 
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A

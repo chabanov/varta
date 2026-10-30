@@ -11728,7 +11728,7 @@ fn pilot_profile_v37_declares_host_abi_33_with_value17_through_both_binaries() {
 }
 
 #[test]
-fn pilot_profile_v38_declares_host_abi_34_with_value17_through_both_binaries() {
+fn pilot_profile_v38_declares_host_abi_34_with_value18_through_both_binaries() {
     use varta_common::{abi, value};
     const PROFILE: &str = "checked-f64-utf16-v38";
     // An unregistered successor of the same length: every binary sees it as a
@@ -11754,7 +11754,10 @@ fn pilot_profile_v38_declares_host_abi_34_with_value17_through_both_binaries() {
         let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
         assert_eq!(info["language"]["profile"], PROFILE);
         assert_eq!(info["abiVersion"], abi::PROGRAM_LIMITS_VERSION);
-        assert_eq!(info["valueAbiVersion"], value::FUNCTION_FIELD_VALUE_VERSION);
+        assert_eq!(
+            info["valueAbiVersion"],
+            value::HASHED_DICTIONARY_VALUE_VERSION
+        );
     }
     fs::remove_dir_all(project.0.join("src")).unwrap();
     fs::remove_file(project.0.join("varta.config.json")).unwrap();
@@ -11818,6 +11821,22 @@ fn pilot_profile_v38_declares_host_abi_34_with_value17_through_both_binaries() {
     // ABI section before any guest output.
     fs::write(&wasm, rename(PREDECESSOR)).unwrap();
     rejects("matching host ABI");
+    // A v38 module declaring the v37 value layout 17 fails at its value
+    // section before any guest output.
+    let mut downgraded = original.clone();
+    let section = value::VALUE_SECTION.as_bytes();
+    let at = downgraded
+        .windows(section.len())
+        .position(|window| window == section)
+        .unwrap()
+        + section.len();
+    assert_eq!(
+        downgraded[at..at + 4],
+        value::HASHED_DICTIONARY_VALUE_VERSION.to_le_bytes()
+    );
+    downgraded[at..at + 4].copy_from_slice(&value::FUNCTION_FIELD_VALUE_VERSION.to_le_bytes());
+    fs::write(&wasm, downgraded).unwrap();
+    rejects("value ABI");
 }
 
 /// The v38 multi-page static region through `varta dev`, both artifacts, both
@@ -16409,4 +16428,39 @@ fn view_capabilities_are_exact_and_scripts_fail_closed() {
         "{}",
         combined(&unknown)
     );
+}
+
+// Profile v38 hashed dictionaries (`dictionary_hashing`, value layout 18):
+// the same program logs the same lines through `dev`, the packaged artifact
+// and both binaries, and its artifact declares value ABI 18.
+const HASHED_DICTIONARY_V38: &str = r#"export function main(): void {
+  const d: Record<string, number> = {};
+  for (let i = 0; i < 40; i++) { d["k" + String(i)] = i; }
+  delete d["k3"];
+  d["7"] = 7;
+  d["k3"] = 33;
+  console.log(String(d["k39"]) + " " + String("k3" in d) + " " + Object.keys(d).slice(0, 3).join(","));
+  console.log(String(JSON.stringify(d).length));
+}"#;
+
+#[test]
+fn hashed_dictionaries_run_in_dev_and_single_artifacts() {
+    let project = RegressionProject::new(HASHED_DICTIONARY_V38, serde_json::json!({}));
+    project.language_profile(V38_PROFILE);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let expected = ["varta log: 39 true 7,k0,k1", "varta log: 348"];
+    for output in [
+        project.command(&["dev"]),
+        project.command(&["run", "dist/app.wasm"]),
+        project.run_in(Command::new(runtime_path()), &["run", "dist/app.wasm"]),
+        project.run_in(Command::new(project.0.join("dist/app")), &[]),
+    ] {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(stdout_lines(&output), expected, "{}", combined(&output));
+    }
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(info["valueAbiVersion"], 18, "{info}");
 }

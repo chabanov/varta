@@ -1404,13 +1404,16 @@ impl Rewriter<'_> {
                     branch.extend(entry);
                 }
             }
+            // Value18: built unindexed.
             branch.push(S::Return(Some(Expr {
                 span,
                 ty: graph,
-                kind: E::Record(vec![
-                    (dictionaries::KEYS, local(span, keys, dictionary.keys)),
-                    (dictionaries::VALUES, local(span, values, dictionary.values)),
-                ]),
+                kind: E::Record(dictionary_hashing::storage_fields(
+                    span,
+                    dictionary,
+                    local(span, keys, dictionary.keys),
+                    local(span, values, dictionary.values),
+                )),
             })));
             body.push(S::If(
                 Expr {

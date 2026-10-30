@@ -302,13 +302,18 @@ impl Walker<'_> {
                     catalog.value_version,
                     self.module,
                 )?;
-                self.charge(dictionary.keys.capacity as u64 * 8)?;
+                self.charge(
+                    (dictionary.keys.capacity as u64
+                        + dictionary.table.map_or(0, |t| t.length as u64))
+                        * 8,
+                )?;
                 if Some(dictionary.values.kind) != catalog.types[*element as usize].value_kind() {
                     return Err(invalid());
                 }
                 for index in 0..dictionary.keys.length {
-                    let (_, entry) = dictionary.entry(self.data, index)?;
-                    self.value(*element, entry, depth + 1)?;
+                    if let Some((_, entry)) = dictionary.entry(self.data, index)? {
+                        self.value(*element, entry, depth + 1)?;
+                    }
                 }
                 Ok(())
             }

@@ -183,7 +183,7 @@ impl Seed<'_> {
                 self.limit.set(Some(JsonInputLimit::StringBytes));
                 return Err(de::Error::custom("string byte limit"));
             }
-            if entries.len() == self.limits.array_elements {
+            if entries.len() == dictionary_entry_limit(self.schema.value_version(), self.limits) {
                 self.limit.set(Some(JsonInputLimit::DictionaryEntries));
                 return Err(de::Error::custom("dictionary entry limit"));
             }

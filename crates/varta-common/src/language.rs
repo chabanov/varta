@@ -677,6 +677,16 @@ impl LanguageProfile {
     pub fn codegen_v2(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, wave-2 dictionary-hashing stream: value layout 18
+    /// ([`crate::value::HASHED_DICTIONARY_VALUE_VERSION`]) with hashed
+    /// dictionaries and mixed records (an open-addressing table of entry
+    /// positions next to insertion-ordered entry vectors with holes), the
+    /// value18 readers ([`crate::HostOperation::value17_counterpart`], host
+    /// ABI 34), JSON schema 18 and exception channel v9. Admits no syntax.
+    #[must_use]
+    pub fn dictionary_hashing(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Named interface/alias annotations and type-only module bindings (v31).
     #[must_use]
     pub fn named_types(self) -> bool {
@@ -1770,8 +1780,22 @@ impl LanguageProfile {
         // V38 (`data_limits`) serializes into an owned guest string instead
         // of the 1 MiB host result buffer; everything else is v37's.
         if self.data_limits() {
-            return match LanguageProfile::CheckedF64Utf16V37.host_operation(operation) {
+            // Value18 readers replace every value17 reader (`dictionary_hashing`).
+            let value17 = LanguageProfile::CheckedF64Utf16V37.host_operation(operation);
+            return match value17 {
                 JsonStringifyV17 => JsonStringifyOwned,
+                ValueLogV11 => ValueLogV12,
+                ValueTypeOfV10 => ValueTypeOfV11,
+                ValueTruthyV10 => ValueTruthyV11,
+                ValueNullishV10 => ValueNullishV11,
+                ValueStrictEqualV10 => ValueStrictEqualV11,
+                ValueNullishEqualV10 => ValueNullishEqualV11,
+                ValueIsArrayV10 => ValueIsArrayV11,
+                ValueIsErrorClassV6 => ValueIsErrorClassV7,
+                JsonParseV18 => JsonParseV19,
+                PrimitiveStringV5 => PrimitiveStringV6,
+                PrimitiveNumberV5 => PrimitiveNumberV6,
+                BigIntFromValueV4 => BigIntFromValueV5,
                 other => other,
             };
         }
@@ -1979,7 +2003,12 @@ impl LanguageProfile {
     #[must_use]
     pub fn exception_channel(self) -> (&'static str, i32) {
         use crate::exceptions as e;
-        if self.function_fields() {
+        if self.dictionary_hashing() {
+            (
+                e::HASHED_DICTIONARY_VERSION,
+                e::HASHED_DICTIONARY_CHANNEL_VERSION,
+            )
+        } else if self.function_fields() {
             (e::FUNCTION_FIELD_VERSION, e::FUNCTION_FIELD_CHANNEL_VERSION)
         } else if self.promise_values() {
             (e::PROMISE_VERSION, e::PROMISE_CHANNEL_VERSION)
@@ -2005,9 +2034,10 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V33 => crate::value::BIGINT_VALUE_VERSION,
             Self::CheckedF64Utf16V34 => crate::value::DYNAMIC_VALUE_VERSION,
             Self::CheckedF64Utf16V35 => crate::value::PROMISE_VALUE_VERSION,
-            Self::CheckedF64Utf16V36 | Self::CheckedF64Utf16V37 | Self::CheckedF64Utf16V38 => {
+            Self::CheckedF64Utf16V36 | Self::CheckedF64Utf16V37 => {
                 crate::value::FUNCTION_FIELD_VALUE_VERSION
             }
+            Self::CheckedF64Utf16V38 => crate::value::HASHED_DICTIONARY_VALUE_VERSION,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -2048,8 +2078,10 @@ impl LanguageProfile {
     /// ([`crate::value::DYNAMIC_VALUE_VERSION`]) read by its value15 operations,
     /// v35 stamps the value16 layouts
     /// ([`crate::value::PROMISE_VALUE_VERSION`]) read by the value16 operations,
-    /// and v36, v37 and v38 stamp the value17 layouts
+    /// v36 and v37 stamp the value17 layouts
     /// ([`crate::value::FUNCTION_FIELD_VALUE_VERSION`]) read by the value17
+    /// operations, and v38 stamps the value18 layouts
+    /// ([`crate::value::HASHED_DICTIONARY_VALUE_VERSION`]) read by the value18
     /// operations.
     #[must_use]
     pub fn value_layout(self) -> u32 {
@@ -2113,9 +2145,10 @@ impl LanguageProfile {
             | Self::CheckedF64Utf16V33 => crate::HostOperation::JsonParseV15,
             Self::CheckedF64Utf16V34 => crate::HostOperation::JsonParseV16,
             Self::CheckedF64Utf16V35 => crate::HostOperation::JsonParseV17,
-            Self::CheckedF64Utf16V36 | Self::CheckedF64Utf16V37 | Self::CheckedF64Utf16V38 => {
+            Self::CheckedF64Utf16V36 | Self::CheckedF64Utf16V37 => {
                 crate::HostOperation::JsonParseV18
             }
+            Self::CheckedF64Utf16V38 => crate::HostOperation::JsonParseV19,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -2696,12 +2729,13 @@ mod tests {
         assert_eq!(old.value_abi(), crate::value::PROMISE_VALUE_VERSION);
         assert_eq!(new.value_layout(), new.value_abi());
         assert!(!crate::value::supported_version(
-            crate::value::FUNCTION_FIELD_VALUE_VERSION + 1
+            crate::value::HASHED_DICTIONARY_VALUE_VERSION + 1
         ));
         for &profile in SUPPORTED_PROFILES {
+            // V38 moves on to value18 (`dictionary_hashing`).
             assert_eq!(
                 profile.value_abi() == crate::value::FUNCTION_FIELD_VALUE_VERSION,
-                inherited(profile),
+                inherited(profile) && !profile.dictionary_hashing(),
                 "{profile:?}"
             );
         }
@@ -2791,7 +2825,7 @@ mod tests {
         let mut launcher = crate::launcher::LauncherInfo::current();
         assert!(launcher.language_profiles.contains(&new));
         assert!(launcher.host_abi > new.host_abi());
-        assert_eq!(launcher.value_abi, new.value_abi());
+        assert!(launcher.value_abi > new.value_abi());
         launcher.language_profiles.retain(|p| *p != new);
         assert!(launcher.validate_current().is_err());
     }
@@ -2866,7 +2900,7 @@ mod tests {
         assert_eq!(new.value_abi(), old.value_abi());
         assert_eq!(new.value_layout(), old.value_layout());
         assert!(!crate::value::supported_version(
-            crate::value::FUNCTION_FIELD_VALUE_VERSION + 1
+            crate::value::HASHED_DICTIONARY_VALUE_VERSION + 1
         ));
         assert_eq!(new.exception_channel(), old.exception_channel());
         assert_eq!(new.json_parse(), old.json_parse());
@@ -2945,7 +2979,7 @@ mod tests {
         let mut launcher = crate::launcher::LauncherInfo::current();
         assert!(launcher.language_profiles.contains(&new));
         assert!(launcher.host_abi > new.host_abi());
-        assert_eq!(launcher.value_abi, new.value_abi());
+        assert!(launcher.value_abi > new.value_abi());
         launcher.language_profiles.retain(|p| *p != new);
         assert!(launcher.validate_current().is_err());
     }
@@ -2964,7 +2998,7 @@ mod tests {
             H::PrimitiveString,
             H::StringToUpperCase16,
             H::BigIntBinary,
-            H::BigIntFromValueV4,
+            H::BigIntFromValueV5,
         ] {
             assert!(operation.linked() && v38.links(operation), "{operation:?}");
             assert!(operation.capability().is_none(), "{operation:?}");
@@ -2981,9 +3015,13 @@ mod tests {
             H::PromiseReact,
             H::TimerStartV2,
             H::JsonParseV18,
+            H::JsonParseV19,
             H::JsonStringifyV17,
             H::ValueTypeOfV10,
+            H::ValueTypeOfV11,
             H::PrimitiveStringV5,
+            H::PrimitiveStringV6,
+            H::BigIntFromValueV4,
             H::PrimitiveCompare,
         ] {
             assert!(!v38.links(operation), "{operation:?}");
@@ -3047,13 +3085,15 @@ mod tests {
                 profile.tsx(),
                 profile.structural_subtyping(),
                 profile.codegen_v2(),
+                profile.dictionary_hashing(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }
         }
-        // V38 has its own host ABI 34 for the batch's host imports (none yet)
-        // and shares value ABI/layout 17, exception channel v8, JSON schema 17
-        // (`json_stringify_v17`) and frame catalog version 3 with v37.
+        // V38 has its own host ABI 34 for the batch's host imports and its
+        // own value ABI/layout 18 (`dictionary_hashing`) with exception
+        // channel v9 and JSON schema 18; it shares frame catalog version 3
+        // with v37.
         assert_eq!(new.host_abi(), crate::abi::PROGRAM_LIMITS_VERSION);
         assert_eq!(old.host_abi(), crate::abi::NET_REQUEST_VERSION);
         assert!(new.host_abi() > old.host_abi());
@@ -3068,14 +3108,31 @@ mod tests {
                 "{profile:?}"
             );
         }
-        assert_eq!(new.value_abi(), crate::value::FUNCTION_FIELD_VALUE_VERSION);
-        assert_eq!(new.value_abi(), old.value_abi());
-        assert_eq!(new.value_layout(), old.value_layout());
+        assert_eq!(
+            new.value_abi(),
+            crate::value::HASHED_DICTIONARY_VALUE_VERSION
+        );
+        assert_eq!(old.value_abi(), crate::value::FUNCTION_FIELD_VALUE_VERSION);
+        assert_eq!(new.value_layout(), new.value_abi());
         assert!(!crate::value::supported_version(
-            crate::value::FUNCTION_FIELD_VALUE_VERSION + 1
+            crate::value::HASHED_DICTIONARY_VALUE_VERSION + 1
         ));
-        assert_eq!(new.exception_channel(), old.exception_channel());
-        assert_eq!(new.json_parse(), old.json_parse());
+        for &profile in SUPPORTED_PROFILES {
+            assert_eq!(
+                profile.value_abi() == crate::value::HASHED_DICTIONARY_VALUE_VERSION,
+                profile == new,
+                "{profile:?}"
+            );
+        }
+        assert_eq!(
+            new.exception_channel(),
+            (
+                crate::exceptions::HASHED_DICTIONARY_VERSION,
+                crate::exceptions::HASHED_DICTIONARY_CHANNEL_VERSION
+            )
+        );
+        assert_eq!(new.json_parse(), H::JsonParseV19);
+        assert_eq!(old.json_parse(), H::JsonParseV18);
         // The data-limits stream serializes into owned strings (host ABI 34).
         assert_eq!(old.json_stringify(), H::JsonStringifyV17);
         assert_eq!(new.json_stringify(), H::JsonStringifyOwned);
@@ -3113,13 +3170,6 @@ mod tests {
             H::LogFloat,
             H::FsRead,
             H::PromiseReact,
-            H::UnionLog,
-            H::ValueTypeOf,
-            H::ValueIsError,
-            H::ValueLogV10,
-            H::JsonParseV17,
-            H::PrimitiveStringV4,
-            H::BigIntFromValueV3,
             H::TimerStart,
             H::TimerClear,
             H::TimerTake,
@@ -3135,6 +3185,31 @@ mod tests {
             assert!(new.host_operation(operation).minimum_abi() <= old.host_abi());
         }
         assert_eq!(new.host_operation(H::TimerStart), H::TimerStartV2);
+        // Every value17 reader is replaced by its value18 counterpart, which
+        // requires host ABI 34; v37 keeps the value17 reader.
+        for operation in [
+            H::UnionLog,
+            H::ValueTypeOf,
+            H::ValueIsError,
+            H::ValueLogV10,
+            H::JsonParseV17,
+            H::PrimitiveStringV4,
+            H::PrimitiveNumberV4,
+            H::BigIntFromValueV3,
+        ] {
+            let (value17, value18) = (old.host_operation(operation), new.host_operation(operation));
+            assert_eq!(
+                value18.value17_counterpart(),
+                Some(value17),
+                "{operation:?}"
+            );
+            assert_eq!(value18.minimum_abi(), crate::abi::PROGRAM_LIMITS_VERSION);
+            assert_eq!(value18.signature(), value17.signature());
+            assert_eq!(value18.capability(), value17.capability());
+            assert_eq!(H::from_name(value18.name()), Some(value18));
+            assert_eq!(old.host_operation(value18), value18);
+            assert!(value18.minimum_abi() > old.host_abi());
+        }
         assert_eq!(
             serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v38\"").unwrap(),
             new
@@ -3268,7 +3343,7 @@ mod tests {
             assert!(operation.timer() && operation.value16_counterpart().is_none());
         }
         assert!(launcher.host_abi > new.host_abi());
-        assert_eq!(launcher.value_abi, new.value_abi());
+        assert!(launcher.value_abi > new.value_abi());
         for &profile in SUPPORTED_PROFILES {
             assert!(profile.host_abi() <= launcher.host_abi, "{profile:?}");
             assert!(profile.value_abi() <= launcher.value_abi, "{profile:?}");
@@ -3411,7 +3486,16 @@ mod tests {
             );
             assert_eq!(
                 channel == (e::FUNCTION_FIELD_VERSION, e::FUNCTION_FIELD_CHANNEL_VERSION),
-                profile.function_fields(),
+                profile.function_fields() && !profile.dictionary_hashing(),
+                "{profile:?}"
+            );
+            assert_eq!(
+                channel
+                    == (
+                        e::HASHED_DICTIONARY_VERSION,
+                        e::HASHED_DICTIONARY_CHANNEL_VERSION
+                    ),
+                profile.dictionary_hashing(),
                 "{profile:?}"
             );
         }

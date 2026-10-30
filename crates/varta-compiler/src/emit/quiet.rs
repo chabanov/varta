@@ -44,10 +44,11 @@ impl Emitter<'_> {
             | E::Reinterpret(value) => self.quiet(value),
             E::Index(array, index) => self.quiet(array) && self.quiet(index),
             E::Math(_, args) | E::NumberPredicate(_, args) => args.iter().all(|a| self.quiet(a)),
-            // Code-unit reads load from the string in place.
-            E::Intrinsic(ir::Intrinsic::CodeUnit | ir::Intrinsic::CharCodeAt, args) => {
-                args.iter().all(|a| self.quiet(a))
-            }
+            // Code-unit reads and table probes load from memory in place.
+            E::Intrinsic(
+                ir::Intrinsic::CodeUnit | ir::Intrinsic::CharCodeAt | ir::Intrinsic::DictionaryFind,
+                args,
+            ) => args.iter().all(|a| self.quiet(a)),
             E::ValueBlock { body, .. } => body.iter().all(|s| self.quiet_statement(s)),
             E::Assignment {
                 value, input, body, ..

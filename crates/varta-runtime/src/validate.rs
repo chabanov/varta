@@ -249,6 +249,7 @@ fn preflight(
                                 | varta_common::HostOperation::JsonStringifyV17
                                 | varta_common::HostOperation::JsonStringifyOwned
                                 | varta_common::HostOperation::JsonParseV18
+                                | varta_common::HostOperation::JsonParseV19
                         )
                     {
                         json_imports.insert(operation);

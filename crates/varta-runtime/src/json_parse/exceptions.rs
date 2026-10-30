@@ -13,7 +13,15 @@ pub(super) fn deadline(caller: &Caller<'_, RuntimeContext>) -> Result<(), wasmti
     }
 }
 pub(super) fn ready(caller: &mut Caller<'_, RuntimeContext>) -> Result<(), wasmtime::Error> {
-    let selector = if caller.get_export(channel::FUNCTION_FIELD_VERSION).is_some() {
+    let selector = if caller
+        .get_export(channel::HASHED_DICTIONARY_VERSION)
+        .is_some()
+    {
+        (
+            channel::HASHED_DICTIONARY_VERSION,
+            channel::HASHED_DICTIONARY_CHANNEL_VERSION,
+        )
+    } else if caller.get_export(channel::FUNCTION_FIELD_VERSION).is_some() {
         (
             channel::FUNCTION_FIELD_VERSION,
             channel::FUNCTION_FIELD_CHANNEL_VERSION,

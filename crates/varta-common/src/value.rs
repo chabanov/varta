@@ -35,32 +35,57 @@ pub const PROMISE_VALUE_VERSION: u32 = 16;
 /// dictionary values, reference unions and `unknown` cells. Only value17
 /// readers accept it.
 pub const FUNCTION_FIELD_VALUE_VERSION: u32 = 17;
+/// Value ABI and layout of batch v38 (value18, `dictionary_hashing`): every
+/// value17 tag and layout with its value17 meaning, except that a dictionary's
+/// storage record gains a third canonical slot, its open-addressing hash
+/// table ([`DICTIONARY_TABLE_FIELD`]), and its entry vectors may hold holes
+/// (deleted entries) while the dictionary is indexed. Only value18 readers
+/// accept it.
+pub const HASHED_DICTIONARY_VALUE_VERSION: u32 = 18;
 /// Whether `version` is a layout of the dynamic-value family (value15 and its
-/// value16 and value17 extensions), which share the dictionary and
-/// wide-record layouts.
+/// value16, value17 and value18 extensions), which share the dictionary tag
+/// and the wide-record layout (value18 adds the dictionary hash table).
 #[must_use]
 pub fn dynamic_layout(version: u32) -> bool {
     matches!(
         version,
-        DYNAMIC_VALUE_VERSION | PROMISE_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION
+        DYNAMIC_VALUE_VERSION
+            | PROMISE_VALUE_VERSION
+            | FUNCTION_FIELD_VALUE_VERSION
+            | HASHED_DICTIONARY_VALUE_VERSION
     )
 }
-/// Whether `version` tags promise values (value16 and its value17 extension).
+/// Whether `version` lays dictionaries out with a hash table (value18).
+#[must_use]
+pub fn hashed_dictionaries(version: u32) -> bool {
+    version == HASHED_DICTIONARY_VALUE_VERSION
+}
+/// Whether `version` tags promise values (value16 and its value17 and
+/// value18 extensions).
 #[must_use]
 pub fn promise_layout(version: u32) -> bool {
     matches!(
         version,
-        PROMISE_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION
+        PROMISE_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION | HASHED_DICTIONARY_VALUE_VERSION
     )
 }
 /// Whether `version` admits the function tag: value14 (closure transport with
-/// an owner catalog) and value17 (function fields read through their closure
-/// envelope).
+/// an owner catalog) and value17 and value18 (function fields read through
+/// their closure envelope).
 #[must_use]
 pub fn function_layout(version: u32) -> bool {
     matches!(
         version,
-        FUNCTION_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION
+        FUNCTION_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION | HASHED_DICTIONARY_VALUE_VERSION
+    )
+}
+/// Whether `version` reads function values as tagged values through their
+/// closure envelope (value17 and value18).
+#[must_use]
+pub fn function_field_layout(version: u32) -> bool {
+    matches!(
+        version,
+        FUNCTION_FIELD_VALUE_VERSION | HASHED_DICTIONARY_VALUE_VERSION
     )
 }
 pub const SPARSE_BITMAP_BYTES: usize = MAX_ARRAY_ELEMENTS / u8::BITS as usize;
@@ -83,10 +108,65 @@ pub const DICTIONARY_FIELDS: usize = 2;
 pub const MAX_DICTIONARY_ENTRIES: usize = MAX_ARRAY_ELEMENTS;
 /// Largest canonical array index (2^32 - 2); such keys enumerate first.
 pub const MAX_ARRAY_INDEX: u64 = u32::MAX as u64 - 1;
+/// Value18 dictionaries (v38 `dictionary_hashing`): the storage record has
+/// four required canonical slots, sorted by name: `holes` (a Number, the
+/// count of deleted entries still in the vectors), `keys`, `table` (an array
+/// slot) and `values`. With the zero `table` handle the dictionary is
+/// unindexed: its vectors are dense exactly as in value15 and `holes` is 0.
+/// Otherwise `table` is an open-addressing `number[]` whose capacity equals
+/// its power-of-two length, between [`DICTIONARY_TABLE_MIN`] and the element
+/// limit and at least twice the vectors' length. A hole of the table is an
+/// empty slot, a present `+0` a tombstone and a present `p + 1` references
+/// the live entry at position `p`; every live entry is referenced exactly
+/// once and found by linear probing from [`dictionary_hash`] of its key, and
+/// the tombstones and live references together number the vectors' length.
+/// A deleted entry of an indexed dictionary is a hole of both vectors.
+pub const DICTIONARY_HOLES_FIELD: &str = "holes";
+pub const DICTIONARY_TABLE_FIELD: &str = "table";
+pub const HASHED_DICTIONARY_FIELDS: usize = 4;
+/// Canonical value18 storage slots (fields sorted by name).
+pub const HASHED_DICTIONARY_HOLES_SLOT: usize = 0;
+pub const HASHED_DICTIONARY_KEYS_SLOT: usize = 1;
+pub const HASHED_DICTIONARY_TABLE_SLOT: usize = 2;
+pub const HASHED_DICTIONARY_VALUES_SLOT: usize = 3;
+/// The smallest table: a dictionary is indexed once it holds more entries
+/// than [`DICTIONARY_LINEAR_ENTRIES`], which are searched linearly.
+pub const DICTIONARY_TABLE_MIN: usize = 16;
+pub const DICTIONARY_LINEAR_ENTRIES: usize = 8;
+/// 32-bit FNV-1a over UTF-16 code units, the deterministic key hash of
+/// value18 dictionaries (no seed: identical on every host).
+pub const DICTIONARY_HASH_OFFSET: u32 = 0x811c_9dc5;
+pub const DICTIONARY_HASH_PRIME: u32 = 0x0100_0193;
+#[must_use]
+pub fn dictionary_hash(units: &[u16]) -> u32 {
+    units.iter().fold(DICTIONARY_HASH_OFFSET, |hash, unit| {
+        (hash ^ u32::from(*unit)).wrapping_mul(DICTIONARY_HASH_PRIME)
+    })
+}
+/// Canonical storage fields of a dictionary of value layout `version`.
+#[must_use]
+pub fn dictionary_fields(version: u32) -> usize {
+    if hashed_dictionaries(version) {
+        HASHED_DICTIONARY_FIELDS
+    } else {
+        DICTIONARY_FIELDS
+    }
+}
+/// Entry ceiling of one dictionary of value layout `version` under `limits`:
+/// a value18 table holds at most the element limit of slots at load one half,
+/// so a value18 dictionary holds at most half the element limit of entries.
+#[must_use]
+pub fn dictionary_entry_limit(version: u32, limits: crate::limits::DataLimits) -> usize {
+    if hashed_dictionaries(version) {
+        limits.array_elements / 2
+    } else {
+        limits.array_elements
+    }
+}
 #[cfg(feature = "std")]
 mod dictionary;
 #[cfg(feature = "std")]
-pub use dictionary::{Dictionary, array_index};
+pub use dictionary::{Dictionary, array_index, dictionary_storage};
 pub const HEAP_VECTOR_FLAG: i32 = 32;
 pub const VECTOR_BYTES: usize = 16;
 pub const VECTOR_STORAGE_OFFSET: u64 = 8;
@@ -215,6 +295,7 @@ pub fn record_bytes(version: u32, count: usize) -> usize {
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
                 | FUNCTION_FIELD_VALUE_VERSION
+                | HASHED_DICTIONARY_VALUE_VERSION
         ) {
             size_of::<u32>() * (count + presence_words(count))
         } else {
@@ -290,6 +371,7 @@ pub fn supported_version(version: u32) -> bool {
             | DYNAMIC_VALUE_VERSION
             | PROMISE_VALUE_VERSION
             | FUNCTION_FIELD_VALUE_VERSION
+            | HASHED_DICTIONARY_VALUE_VERSION
     )
 }
 #[must_use]
@@ -398,6 +480,7 @@ impl ValueKind {
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
                         | FUNCTION_FIELD_VALUE_VERSION
+                        | HASHED_DICTIONARY_VALUE_VERSION
                 ),
                 Self::Float64 => matches!(
                     version,
@@ -416,6 +499,7 @@ impl ValueKind {
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
                         | FUNCTION_FIELD_VALUE_VERSION
+                        | HASHED_DICTIONARY_VALUE_VERSION
                 ),
                 Self::Undefined => matches!(
                     version,
@@ -433,6 +517,7 @@ impl ValueKind {
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
                         | FUNCTION_FIELD_VALUE_VERSION
+                        | HASHED_DICTIONARY_VALUE_VERSION
                 ),
                 Self::PrimitiveUnion => {
                     matches!(
@@ -449,6 +534,7 @@ impl ValueKind {
                             | DYNAMIC_VALUE_VERSION
                             | PROMISE_VALUE_VERSION
                             | FUNCTION_FIELD_VALUE_VERSION
+                            | HASHED_DICTIONARY_VALUE_VERSION
                     )
                 }
                 Self::ReferenceUnion => {
@@ -464,6 +550,7 @@ impl ValueKind {
                             | DYNAMIC_VALUE_VERSION
                             | PROMISE_VALUE_VERSION
                             | FUNCTION_FIELD_VALUE_VERSION
+                            | HASHED_DICTIONARY_VALUE_VERSION
                     )
                 }
                 Self::Error => matches!(
@@ -476,6 +563,7 @@ impl ValueKind {
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
                         | FUNCTION_FIELD_VALUE_VERSION
+                        | HASHED_DICTIONARY_VALUE_VERSION
                 ),
                 Self::I32 => matches!(version, LEGACY_VALUE_VERSION | VALUE_VERSION),
                 _ => true,

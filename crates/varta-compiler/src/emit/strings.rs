@@ -12,6 +12,7 @@ mod array_slice;
 mod collect;
 mod compare;
 mod concat;
+mod dictionary_probe;
 mod index_key;
 mod regexp;
 mod remainder;
@@ -137,6 +138,17 @@ pub(super) enum Helper {
     ArrayResize,
     /// Value15 dictionaries: canonical array index of a key, or -1.
     ArrayIndexKey,
+    /// Value18 dictionaries: `(keys, table, key) -> position | -1`.
+    DictionaryFind,
+    /// Value18 dictionaries: as `DictionaryFind`, tombstoning the slot.
+    DictionaryUnlink,
+    /// Value18 dictionaries: `(table, key, position) -> 0`, one placed slot.
+    DictionaryPlace,
+    /// Value18 dictionaries: `(keys, table) -> 0`, every dense key placed.
+    DictionaryIndex,
+    /// Value18 dictionaries: `(keys, values, table, position) -> 0`, the
+    /// appended entry rotated to an own-key position.
+    DictionaryInsertAt,
     /// V35 Web preludes: index of the first code unit of a class, or -1.
     UnitIndex(crate::ir::UnitClass),
     /// V35 Web preludes: ASCII-lowercased copy.
@@ -215,6 +227,18 @@ impl Helper {
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
             Self::Concat | Self::StringGrow => (vec![ValType::I64; 2], vec![ValType::I64]),
             Self::StringEquals => (vec![ValType::I64; 2], vec![ValType::I32]),
+            Self::DictionaryFind | Self::DictionaryUnlink => {
+                (vec![ValType::I64; 3], vec![ValType::F64])
+            }
+            Self::DictionaryPlace => (
+                vec![ValType::I64, ValType::I64, ValType::F64],
+                vec![ValType::F64],
+            ),
+            Self::DictionaryIndex => (vec![ValType::I64; 2], vec![ValType::F64]),
+            Self::DictionaryInsertAt => (
+                vec![ValType::I64, ValType::I64, ValType::I64, ValType::F64],
+                vec![ValType::F64],
+            ),
             Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
             Self::ArrayIndexKey | Self::UnitIndex(_) => (vec![ValType::I64], vec![ValType::F64]),
@@ -276,6 +300,11 @@ impl Helper {
                 | Self::StringEquals
                 | Self::ArrayStringHasOwn
                 | Self::ArrayIndexKey
+                | Self::DictionaryFind
+                | Self::DictionaryUnlink
+                | Self::DictionaryPlace
+                | Self::DictionaryIndex
+                | Self::DictionaryInsertAt
                 | Self::UnitIndex(_)
                 | Self::RegExpSlot
                 | Self::RegExpUnit
@@ -420,6 +449,11 @@ impl Helper {
             Self::ArraySetPresent => sparse::function(true, profile.data()),
             Self::ArrayIndex => array_index::function(profile.resizable_arrays()),
             Self::ArrayIndexKey => index_key::function(),
+            Self::DictionaryFind => dictionary_probe::find(helpers[&Self::StringEquals], false),
+            Self::DictionaryUnlink => dictionary_probe::find(helpers[&Self::StringEquals], true),
+            Self::DictionaryPlace => dictionary_probe::place(),
+            Self::DictionaryIndex => dictionary_probe::index(),
+            Self::DictionaryInsertAt => dictionary_probe::insert_at(),
         }
     }
 }

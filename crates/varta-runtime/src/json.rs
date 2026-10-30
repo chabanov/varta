@@ -356,7 +356,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
         if kind == ValueKind::Function as u32 {
             self.function(value)?;
             // JSON drops functions like `undefined`; value17 diagnostics show them.
-            if self.version == FUNCTION_FIELD_VALUE_VERSION && self.diagnostic_budget.is_some() {
+            if function_field_layout(self.version) && self.diagnostic_budget.is_some() {
                 return Ok((kind, value));
             }
             return Ok((ValueKind::Undefined as u32, 0));
@@ -374,6 +374,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
                     | FUNCTION_FIELD_VALUE_VERSION
+                    | HASHED_DICTIONARY_VALUE_VERSION
             ) {
                 return Err(error("incompatible reference union"));
             }
@@ -402,6 +403,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
                 | FUNCTION_FIELD_VALUE_VERSION
+                | HASHED_DICTIONARY_VALUE_VERSION
         ) {
             return Err(error("incompatible primitive union"));
         }
@@ -410,7 +412,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
         Ok((cell.kind as u32, cell.payload))
     }
     fn function(&mut self, handle: u64) -> Result<(), wasmtime::Error> {
-        if self.version == FUNCTION_FIELD_VALUE_VERSION {
+        if function_field_layout(self.version) {
             // Value17 function fields: the closure envelope is checked; the
             // captured payloads stay opaque and nothing is invoked.
             varta_common::function::ClosureView::read_envelope_within(
@@ -570,6 +572,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
                         | FUNCTION_FIELD_VALUE_VERSION
+                        | HASHED_DICTIONARY_VALUE_VERSION
                 ) {
                     validate_aggregate_in(
                         self.data,
@@ -617,6 +620,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
                 | FUNCTION_FIELD_VALUE_VERSION
+                | HASHED_DICTIONARY_VALUE_VERSION
         ) {
             HEAP_ERROR_FLAG as u32
         } else {
@@ -634,6 +638,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
                     | FUNCTION_FIELD_VALUE_VERSION
+                    | HASHED_DICTIONARY_VALUE_VERSION
             ) {
                 HEAP_VECTOR_FLAG as u32
             } else {
@@ -652,6 +657,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
                     | FUNCTION_FIELD_VALUE_VERSION
+                    | HASHED_DICTIONARY_VALUE_VERSION
             ) {
                 HEAP_UNION_FLAG as u32
             } else {
@@ -682,6 +688,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
                 | FUNCTION_FIELD_VALUE_VERSION
+                | HASHED_DICTIONARY_VALUE_VERSION
         ) {
             return self.vector(packed, depth);
         }
@@ -727,9 +734,13 @@ impl<'a, 'b> Encoder<'a, 'b> {
         self.write(b"{")?;
         let mut written = false;
         for index in 0..dictionary.keys.length {
-            let (key, value) = dictionary
+            // Holes are deleted entries of an indexed value18 dictionary.
+            let Some((key, value)) = dictionary
                 .entry(self.data, index)
-                .map_err(wasmtime::Error::new)?;
+                .map_err(wasmtime::Error::new)?
+            else {
+                continue;
+            };
             let (kind, value) = self.resolve(dictionary.values.kind as u32, value)?;
             if kind == ValueKind::Undefined as u32 {
                 self.visit(depth + 1)?;
@@ -800,6 +811,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
                 | FUNCTION_FIELD_VALUE_VERSION
+                | HASHED_DICTIONARY_VALUE_VERSION
         ) {
             return self.record_present(packed, depth);
         }

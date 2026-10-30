@@ -229,6 +229,7 @@ impl Writer {
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
                 | FUNCTION_FIELD_VALUE_VERSION
+                | HASHED_DICTIONARY_VALUE_VERSION
         ) {
             let bitmap = ARRAY_META_BYTES + array_capacity(payloads.len()) * ARRAY_SLOT_BYTES;
             let sparse = matches!(
@@ -239,6 +240,7 @@ impl Writer {
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
                     | FUNCTION_FIELD_VALUE_VERSION
+                    | HASHED_DICTIONARY_VALUE_VERSION
             );
             data.resize(bitmap + if sparse { SPARSE_BITMAP_BYTES } else { 0 }, 0);
             if sparse {
@@ -258,6 +260,7 @@ impl Writer {
                             | DYNAMIC_VALUE_VERSION
                             | PROMISE_VALUE_VERSION
                             | FUNCTION_FIELD_VALUE_VERSION
+                            | HASHED_DICTIONARY_VALUE_VERSION
                     ) {
                         HEAP_SPARSE_FLAG
                     } else {
@@ -283,6 +286,7 @@ impl Writer {
                             | DYNAMIC_VALUE_VERSION
                             | PROMISE_VALUE_VERSION
                             | FUNCTION_FIELD_VALUE_VERSION
+                            | HASHED_DICTIONARY_VALUE_VERSION
                     ) {
                         HEAP_SPARSE_FLAG
                     } else {
@@ -362,19 +366,32 @@ impl Writer {
                 }
                 let kind = schema.types[value as usize].kind();
                 let values = self.vector(caller, schema, kind, &values)?;
-                // The storage record: canonical `keys`/`values` slots, both present.
-                let mut data =
-                    Vec::with_capacity(record_bytes(schema.value_version(), DICTIONARY_FIELDS));
+                // The storage record: canonical `keys`/`values` vector slots
+                // (and under value18 zero holes and the zero table handle:
+                // unindexed), all present; every array slot is an edge.
+                let version = schema.value_version();
+                let storage = dictionary_storage(version);
+                let mut data = Vec::with_capacity(record_bytes(version, storage.len()));
                 data.extend(descriptor.to_le_bytes());
-                data.extend((DICTIONARY_FIELDS as u32).to_le_bytes());
-                data.extend(keys.to_le_bytes());
-                data.extend(values.to_le_bytes());
-                let both = wide_field_mask(DICTIONARY_FIELDS) as u32;
-                data.extend(both.to_le_bytes());
-                for slot in 0..DICTIONARY_FIELDS as u32 {
+                data.extend((storage.len() as u32).to_le_bytes());
+                let mut edges = 0u32;
+                for (slot, (name, kind)) in storage.iter().enumerate() {
+                    let payload = match *name {
+                        DICTIONARY_KEYS_FIELD => keys,
+                        DICTIONARY_VALUES_FIELD => values,
+                        _ => 0,
+                    };
+                    data.extend(payload.to_le_bytes());
+                    if kind.is_reference() {
+                        edges |= 1 << slot;
+                    }
+                }
+                let all = wide_field_mask(storage.len()) as u32;
+                data.extend(all.to_le_bytes());
+                for slot in 0..storage.len() as u32 {
                     data.extend(slot.to_le_bytes());
                 }
-                self.owned(caller, &data, HEAP_RECORD_FLAG, both)
+                self.owned(caller, &data, HEAP_RECORD_FLAG, edges)
             }
             JsonValue::Record { ty, fields: values } => {
                 let JsonType::Record { descriptor, fields } = &schema.types[*ty as usize] else {
@@ -413,6 +430,7 @@ impl Writer {
                         | DYNAMIC_VALUE_VERSION
                         | PROMISE_VALUE_VERSION
                         | FUNCTION_FIELD_VALUE_VERSION
+                        | HASHED_DICTIONARY_VALUE_VERSION
                 ) {
                     let absent = |slot: usize| {
                         fields[slot].optional

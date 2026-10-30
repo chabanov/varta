@@ -122,7 +122,7 @@ pub extern "C" fn bigint_to_string_v2(receiver: i64, radix: i64) -> i64 {
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn bigint_from_value_v4(cell: i64) -> i64 {
+pub extern "C" fn bigint_from_value_v5(cell: i64) -> i64 {
     entry(|| {
         pair(shared::from_value(
             &Guest,

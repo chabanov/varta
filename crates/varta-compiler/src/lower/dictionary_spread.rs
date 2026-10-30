@@ -54,28 +54,20 @@ impl Lower<'_> {
             .unwrap_or_default();
         let output = self.hidden(ty);
         let marker = self.hidden(Type::Number);
-        let empty = Expr {
+        let empty = self.dictionary_storage(
             span,
             ty,
-            kind: E::Record(vec![
-                (
-                    dictionaries::KEYS,
-                    Expr {
-                        span,
-                        ty: dictionary.keys,
-                        kind: E::Array(vec![]),
-                    },
-                ),
-                (
-                    dictionaries::VALUES,
-                    Expr {
-                        span,
-                        ty: dictionary.values,
-                        kind: E::Array(vec![]),
-                    },
-                ),
-            ]),
-        };
+            Expr {
+                span,
+                ty: dictionary.keys,
+                kind: E::Array(vec![]),
+            },
+            Expr {
+                span,
+                ty: dictionary.values,
+                kind: E::Array(vec![]),
+            },
+        )?;
         let mut body = vec![S::Init(output, empty)];
         let mut roots = vec![output];
         let mut names: Vec<String> = Vec::new();
@@ -192,28 +184,20 @@ impl Lower<'_> {
         let dictionary = self.types.dictionaries[id as usize];
         let output = self.hidden(target);
         let marker = self.hidden(Type::Number);
-        let empty = Expr {
+        let empty = self.dictionary_storage(
             span,
-            ty: target,
-            kind: E::Record(vec![
-                (
-                    dictionaries::KEYS,
-                    Expr {
-                        span,
-                        ty: dictionary.keys,
-                        kind: E::Array(vec![]),
-                    },
-                ),
-                (
-                    dictionaries::VALUES,
-                    Expr {
-                        span,
-                        ty: dictionary.values,
-                        kind: E::Array(vec![]),
-                    },
-                ),
-            ]),
-        };
+            target,
+            Expr {
+                span,
+                ty: dictionary.keys,
+                kind: E::Array(vec![]),
+            },
+            Expr {
+                span,
+                ty: dictionary.values,
+                kind: E::Array(vec![]),
+            },
+        )?;
         let declared = self
             .types
             .declared(target)
@@ -306,10 +290,12 @@ impl Lower<'_> {
                 if !related {
                     return Err(self.source.locate(mismatch(from.value), span));
                 }
+                // Value18: copy dense, own-key-ordered entries.
+                body.extend(self.dictionary_compact(local(span, held, source_ty))?);
                 let keys = Expr {
                     span,
                     ty: from.keys,
-                    kind: E::Field(Box::new(local(span, held, source_ty)), dictionaries::KEYS),
+                    kind: E::Field(Box::new(local(span, held, source_ty)), from.keys_slot()),
                 };
                 let entry = |vector: Expr, ty: Type| Expr {
                     span,
@@ -319,13 +305,13 @@ impl Lower<'_> {
                 let values = Expr {
                     span,
                     ty: from.values,
-                    kind: E::Field(Box::new(local(span, held, source_ty)), dictionaries::VALUES),
+                    kind: E::Field(Box::new(local(span, held, source_ty)), from.values_slot()),
                 };
                 let key = entry(
                     Expr {
                         span,
                         ty: from.keys,
-                        kind: E::Field(Box::new(local(span, held, source_ty)), dictionaries::KEYS),
+                        kind: E::Field(Box::new(local(span, held, source_ty)), from.keys_slot()),
                     },
                     Type::String,
                 );

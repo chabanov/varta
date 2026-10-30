@@ -772,7 +772,8 @@ objects and `instanceof Map`/`Set`, and the record-shape limit
 The next batch addresses the scale limits and platform gaps that remain after
 the v37 batch and the [v37 measurement](#pilot-acceptance-package-uarp-sdk) in
 profile `checked-f64-utf16-v38`, developed in eight parallel streams. V38
-inherits every v37 feature with value ABI/layout 17 and declares its own host
+inherits every v37 feature, with value ABI/layout 18 since wave 2 (hashed
+dictionaries, below; value17 before), and declares its own host
 ABI 34 (`abi::PROGRAM_LIMITS_VERSION`), under which every host import of the
 batch is added; a v38 module relabelled as v37 fails at its host ABI section,
 and runtimes that do not list v38 reject its declared profile name. The
@@ -785,9 +786,9 @@ The selectors are registered; the table records what each stream admits.
 | Selector | Work stream | State |
 | --- | --- | --- |
 | `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Implemented ([contract](architecture.md#program-limits-program_limits)): multi-page static region (host ABI 34, no value 18; the foundation), profile limits registry with the Wasm limits, table-driven `varta_resume`, unreachable async frames and unread constants removed, startup fuel independent of static size. Pending: per-type `request<T>` code (async frame and promise helpers, about 11 functions per response type) |
-| `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Implemented ([contract](architecture.md#data-limits-data_limits)): `DataLimits` registry (2^27 elements, 2^30 string bytes, JSON depth host ceiling 10000), value17 sparse backings above 1024 slots with one bit per slot, typed `RuntimeError::Resource` failures through the `resource_failure`/`resource_request` globals, geometric heap growth and a worklist mark, a hashed growable live-frame table and memory-derived scheduler bounds, `json_stringify_owned` (host ABI 34) into owned guest strings, iterative JSON parsing, lifted `Map`/`Set`/`Uint8Array` preludes and an O(n log n) `join`. Pending: dictionary and mixed-record hashing (needs a value18 storage slot from the program-limits stream), per-element host calls of `String(x)` against the 1024 host-call budget (`%` no longer calls the host), frozen limits in `console.log` diagnostics and primitive conversions |
+| `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Implemented ([contract](architecture.md#data-limits-data_limits)): `DataLimits` registry (2^27 elements, 2^30 string bytes, JSON depth host ceiling 10000), value17 sparse backings above 1024 slots with one bit per slot, typed `RuntimeError::Resource` failures through the `resource_failure`/`resource_request` globals, geometric heap growth and a worklist mark, a hashed growable live-frame table and memory-derived scheduler bounds, `json_stringify_owned` (host ABI 34) into owned guest strings, iterative JSON parsing, lifted `Map`/`Set`/`Uint8Array` preludes and an O(n log n) `join`. Dictionary and mixed-record hashing landed in wave 2 (b) under value layout 18. Pending: per-element host calls of `String(x)` against the 1024 host-call budget (`%` no longer calls the host), frozen limits in `console.log` diagnostics and primitive conversions |
 | `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Admits event turns with per-turn budgets, manifest budgets capped by the ceiling, long-lived application instances, host event sources and permission broker v1; logs before failure and `--budget-report` in `dev`/`run`/companion ([contract](architecture.md#turn-budgets-and-application-instances-turn_budgets)). Pending: per-function fuel attribution (codegen stream), per-turn UI values from measurements on the targets |
-| `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Implemented in part ([contract](architecture.md#linked-intrinsics-linked_intrinsics)): 47 pure operations (Math, `**`/`%`, Number text and parsing, primitive-cell conversions, UTF-16 access and case mapping; since wave 2 every BigInt operation) are guest code from the shared `varta-intrinsics` crate, linked function by function into the module's intrinsic region of memory 0 (one memory); a v38 host implements 54 imports. Measured below ([linked intrinsics measurement](#linked-intrinsics-measurement-v38)). Pending: the value17 conversions and comparisons (shared code, fuel-bound on hot paths), JSON and the value17 readers, which need the reference, aggregate and closure-envelope readers in the `no_std` core |
+| `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Implemented in part ([contract](architecture.md#linked-intrinsics-linked_intrinsics)): 47 pure operations (Math, `**`/`%`, Number text and parsing, primitive-cell conversions, UTF-16 access and case mapping; since wave 2 every BigInt operation) are guest code from the shared `varta-intrinsics` crate, linked function by function into the module's intrinsic region of memory 0 (one memory); a v38 host implements 54 imports. Measured below ([linked intrinsics measurement](#linked-intrinsics-measurement-v38)). Pending: the value18 conversions and comparisons (shared code, fuel-bound on hot paths), JSON and the value18 readers, which need the reference, aggregate and closure-envelope readers in the `no_std` core |
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Implemented (P7): `view_commit` (host ABI 34), synthesized event export, `varta-view` headless renderer (tree, cascade, accessibility; no layout), `ui.open_url`/`clipboard.write` decided by permission broker v1 with `command_result`; every view record is a host task of an application instance and runs as its own turn |
 | `tsx()` | TSX: TSX parsing and template compilation | Implemented (start of P8): `.tsx` parsing, AOT templates with getter holes, typed `JSX` namespace; L1 stays a package outside the engine |
 | `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Implemented in part ([contract](architecture.md#structural-subtyping-structural_subtyping)): width subtyping of records, interfaces and class instances through views (one accessor call plus one descriptor test per source layout; direct slots for shapes without wider sources), identity-preserving comparisons and `instanceof`, diagnostics naming both types and the missing/mismatched/extra members, erased generic method signatures with checked results, `object` annotations, `Array.isArray` narrowing of `unknown`, record and optional spreads, `obj.m?.()` on class methods, property narrowing kept across calls and getters with checked reads, `JSON.stringify` typed `string` and of `never`, literal `??` fallbacks, record-to-dictionary assertions and records held by `unknown` read as JSON objects, `Promise<unknown>` arrow contexts, `as void`, string `for...of`, exhaustive literal `switch`, constructor parameter properties, `encodeURIComponent`/`encodeURI`. Pending: Web byte bodies (`ReadableStream<Uint8Array>`, `arrayBuffer()`, `Blob`, `FormData`), typed `globalThis`/`process.env`, `Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views. Pilot probe below |
@@ -836,8 +837,8 @@ union of record shapes without a literal discriminant (4).
 
 | Stream | Scope | State |
 | --- | --- | --- |
-| (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Implemented in part (branch `v38-intrinsics-region`): one memory with the relocated intrinsic region (`varta.intrinsics`: stack, packed data, reserved arena), the `no_std` core (`abi`, `memory`, `value` cells and error classes, `bigint` transport, `limits`, `text`) as the one owner of the cell layout, `varta-bigint` without `std`, and the 13 BigInt operations linked; the value17 conversions and comparisons run the same shared code as host imports. Linked code reads strings within the v38 data limit; results above the 1 MiB result buffer still trap. Open: a cheap number/string conversion path, JSON and the value17 readers ([next increment](#linked-intrinsics-measurement-v38)), owned string results |
-| (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Open |
+| (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Implemented in part (branch `v38-intrinsics-region`): one memory with the relocated intrinsic region (`varta.intrinsics`: stack, packed data, reserved arena), the `no_std` core (`abi`, `memory`, `value` cells and error classes, `bigint` transport, `limits`, `text`) as the one owner of the cell layout, `varta-bigint` without `std`, and the 13 BigInt operations linked; the value conversions and comparisons run the same shared code as host imports. Linked code reads strings within the v38 data limit; results above the 1 MiB result buffer still trap. Open: a cheap number/string conversion path, JSON and the value18 readers ([next increment](#linked-intrinsics-measurement-v38)), owned string results |
+| (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Implemented on `v38-dictionary-hashing` (selector `dictionary_hashing()`, [contract](architecture.md#dictionary-hashing-dictionary_hashing)): value ABI/layout 18 for v38 with a four-slot dictionary storage record (`holes`, `keys`, `table`, `values`), an open-addressing `number[]` table probed from a seedless FNV-1a hash of the UTF-16 key units by allocation-free guest helpers, tombstones and holes for deletions, compaction before enumeration and amortized rebuilds at half load; twelve value18 readers (host ABI 34), JSON schema 18 and exception channel v9; every table validated against its entries at every reader. Measured below ([dictionary hashing measurement](#dictionary-hashing-measurement-v38)). Pending: array-index keys inserted below an existing key stay linear (an ordered rotation), and allocation-heavy loops at 20k+ entries are bound by the first-fit allocator (stream d) |
 | (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Open; first pilot blockers |
 | (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Open |
 
@@ -883,6 +884,47 @@ call site and in the callee, and allocation-heavy workloads spend most fuel in
 the first-fit allocator and the fixpoint mark phase of the collector. These are
 the next codegen and runtime candidates; none needs a layout change except the
 union cell.
+
+#### Dictionary hashing measurement (v38)
+
+Fuel per operation on `n` distinct keys (`"k" + i`, built into an array
+before the measured loop) under v38 with test-only fuel and the production
+8 MiB memory: before is the integrated v38 at cb6795d (linear key search,
+shifting insertion and deletion), after is value layout 18
+(`varta-runtime` `dictionary_fuel_measurements`, `--ignored --nocapture`, and
+the baseline copy of the same workload run at cb6795d). Deterministic fuel,
+not wall-clock.
+
+| Entries | Insert before | Insert after | Lookup before | Lookup after | Delete before | Delete after |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 54,385 | 1,874 | 54,114 | 1,250 | 201,200 | 1,161 |
+| 10,000 | 628,116 | 2,499 | 700,275 | 1,949 | 2,095,900 | 1,385 |
+| 20,000 | 1,187,358 | 17,714 | 950,645 | 113,018 | 4,190,900 | 112,421 |
+| 30,000 | 2,126,057 | 2,600 | 1,953,995 | 260,779 | 6,417,544 | 1,404 |
+| 50,000 | 3,298,734 | memory budget | 2,859,370 | — | 10,535,787 | — |
+| 100,000 | memory budget | memory budget | — | — | — | — |
+
+- **Constant cost.** Up to 10,000 entries an operation costs 1,200–2,500 fuel
+  (the per-type helper call with its roots, one probe through an
+  allocation-free helper, two vector appends, amortized rebuilds), 30–1,500
+  times less than the linear search; a lookup also allocates its `T |
+  undefined` cell. The 251M-fuel shape the data-limits stream recorded
+  (1,000 insertions with 500 keys deleted again) takes 2.7M.
+- **Allocator bound beyond.** At 20,000 and 30,000 entries the fuel profile attributes
+  most of the hashed run to the first-fit allocator (about 4,100 fuel per
+  allocation over a free list fragmented by the key strings' garbage); the
+  dictionary helpers themselves cost about 1,800 fuel per insertion there.
+  Rebuilding tables of growing power-of-two sizes adds large garbage blocks
+  the linear layout does not have. The allocator belongs to wave-2 stream (d).
+- **Memory.** The table adds two to four `number[]` slots (16–32 bytes) per
+  entry, so 50,000 hashed entries with their keys exhaust the 8 MiB memory
+  budget (typed `Memory`), where the linear layout still fits; the 100,000-key
+  array alone exhausts it in both. Production budgets are unchanged.
+- **Ordered insertion.** An array-index key below an existing key (for example
+  ids inserted in descending order) is rotated into place with one
+  `memory.copy` per vector and one pass over the table: linear, as before, but
+  2,000 descending ids with 1,000 deletions and a 6,000-entry string-key
+  workload together run in 185M fuel (`dictionary_hashing_cases/large.ts`).
 
 #### Linked intrinsics measurement (v38)
 
@@ -958,12 +1000,13 @@ conversions, JSON and owned results):
    `memory::Memory` like `PrimitiveBox`. They name `ModuleBounds`, the limits
    tables and `function` (which names `language`, `serde` and the catalog),
    so the profile-independent parts move into the core or the readers take
-   their bounds as plain values. Value layout 18 (the dictionary-hashing
-   stream) lands first or together. Then `value_typeof_v10`,
-   `value_truthy_v10`, `value_nullish_v10`, `value_is_array_v10`,
-   `value_strict_equal_v10`, `value_nullish_equal_v10` and
-   `value_is_error_class_v6` link as plain readers.
-2. `value_log_v11` as linked rendering followed by the `log_string16` effect,
+   their bounds as plain values. Value layout 18 landed in wave 2 (b): the
+   readers must validate its dictionary table exactly as
+   `value::Dictionary::read_in` does. Then `value_typeof_v11`,
+   `value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`,
+   `value_strict_equal_v11`, `value_nullish_equal_v11` and
+   `value_is_error_class_v7` link as plain readers.
+2. `value_log_v12` as linked rendering followed by the `log_string16` effect,
    so logging stays the only host output.
 3. A coalescing arena (or arena blocks from the guest allocator) so linked
    BigInt work near the bit capacity fits the memory budget as the host

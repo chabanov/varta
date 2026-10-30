@@ -60,6 +60,7 @@ fn register_log(
                             | Host::ValueLogV9
                             | Host::ValueLogV10
                             | Host::ValueLogV11
+                            | Host::ValueLogV12
                     ) {
                         number::canonical_display(value)
                     } else {
@@ -102,6 +103,7 @@ fn register_log(
                             | varta_common::value::DYNAMIC_VALUE_VERSION
                             | varta_common::value::PROMISE_VALUE_VERSION
                             | varta_common::value::FUNCTION_FIELD_VALUE_VERSION
+                            | varta_common::value::HASHED_DICTIONARY_VALUE_VERSION
                     ) {
                         caller.data().check_budget()?;
                         let fuel = caller.get_fuel()?;
@@ -233,6 +235,16 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             Host::ValueIsArrayV10,
             Host::ValueStrictEqualV10,
             Host::ValueNullishEqualV10,
+        ),
+        (
+            varta_common::value::HASHED_DICTIONARY_VALUE_VERSION,
+            Host::ValueLogV12,
+            Host::ValueTypeOfV11,
+            Host::ValueTruthyV11,
+            Host::ValueNullishV11,
+            Host::ValueIsArrayV11,
+            Host::ValueStrictEqualV11,
+            Host::ValueNullishEqualV11,
         ),
     ] {
         register_log(linker, version, log)?;
@@ -371,6 +383,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (
             Host::ValueIsErrorClassV6,
             varta_common::value::FUNCTION_FIELD_VALUE_VERSION,
+        ),
+        (
+            Host::ValueIsErrorClassV7,
+            varta_common::value::HASHED_DICTIONARY_VALUE_VERSION,
         ),
     ] {
         linker.func_wrap(

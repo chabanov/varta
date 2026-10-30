@@ -562,6 +562,7 @@ mod recursive {
                     value: Type::Void,
                     keys: Type::Void,
                     values: Type::Void,
+                    table: None,
                     storage: 0,
                     declared: None,
                 });

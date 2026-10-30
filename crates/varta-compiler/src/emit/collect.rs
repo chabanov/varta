@@ -387,6 +387,27 @@ impl<'a> Collected<'a> {
                     ir::Intrinsic::CharCodeAt => {
                         self.helpers.insert(strings::Helper::CharCodeAt);
                     }
+                    ir::Intrinsic::DictionaryFind => {
+                        self.helpers.extend([
+                            strings::Helper::DictionaryFind,
+                            strings::Helper::StringEquals,
+                        ]);
+                    }
+                    ir::Intrinsic::DictionaryUnlink => {
+                        self.helpers.extend([
+                            strings::Helper::DictionaryUnlink,
+                            strings::Helper::StringEquals,
+                        ]);
+                    }
+                    ir::Intrinsic::DictionaryPlace => {
+                        self.helpers.insert(strings::Helper::DictionaryPlace);
+                    }
+                    ir::Intrinsic::DictionaryIndex => {
+                        self.helpers.insert(strings::Helper::DictionaryIndex);
+                    }
+                    ir::Intrinsic::DictionaryInsertAt => {
+                        self.helpers.insert(strings::Helper::DictionaryInsertAt);
+                    }
                 }
                 for arg in args {
                     self.expression(arg, source);

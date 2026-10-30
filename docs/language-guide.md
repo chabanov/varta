@@ -5248,6 +5248,33 @@ the memory budget fails with a reported resource error, for example
 anonymous trap. Indices at or beyond 2^27 still trap, and the same program
 under v37 still fails at its 1024-element ceiling.
 
+#### Hashed dictionaries (v38)
+
+Dictionaries (`Record<string, T>`, index signatures) and mixed records find
+keys through a hash table under v38, so reads, writes, `in`, `Object.hasOwn`
+and `delete` cost about the same at any size instead of growing with the
+entry count. Nothing else changes: keys keep JavaScript's order (array-index
+keys ascending first, then insertion order), and output, errors and JSON are
+exactly v37's:
+
+```typescript
+export function main(): void {
+  const index: Record<string, number> = {};
+  for (let i = 0; i < 5000; i++) {
+    index["row" + String(i)] = i;
+  }
+  delete index["row7"];
+  index["2"] = -2;
+  console.log(`${index["row4999"]} ${"row7" in index} ${Object.keys(index).slice(0, 2).join(",")}`);
+}
+```
+
+prints `4999 false 2,row0` (with a manifest fuel budget above production's,
+as for the data limits). A dictionary holds at most 2^26 entries under v38
+(half the array element limit); the memory budget is reached far earlier.
+Inserting an array-index key below an existing one (for example numeric ids
+in descending order) still moves the entries behind it.
+
 #### Turn budgets and application instances (opt-in v38)
 
 The turn-budgets stream admits event turns with per-turn budgets, long-lived

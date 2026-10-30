@@ -351,6 +351,7 @@ mod declared_fields;
 mod deferred;
 mod dense;
 mod dictionaries;
+mod dictionary_hashing;
 mod dictionary_helpers;
 mod dictionary_spread;
 mod dictionary_updates;
