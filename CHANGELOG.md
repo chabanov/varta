@@ -11,6 +11,29 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- The v37 streams integrated, with their cross-stream rules. Unreachable
+  functions, including unused engine prelude members, are removed before the
+  256-function limit applies (a `fetch` hello world went from 228 linked to
+  154 reachable functions). `JSON.stringify` imports the new
+  `json_stringify_v17` (host ABI 33), which skips private state: `#private`
+  fields, engine prelude internals (`Headers`, `AbortSignal`, `Request`, … as
+  `{}`) and non-enumerable Error slots, so `JSON.stringify` of `unknown` works
+  in programs that load Web types; object keys starting with `#` are reserved,
+  and `URL` and RegExp match arrays stay out of `JSON.stringify` and
+  `unknown`. `Date.now()`/`new Date()` without `time.now` throw a catchable
+  `NotAllowedError` through the permission broker instead of ending the run.
+  Index reads produce `undefined` where code expects it (`T | undefined`
+  contexts, `??`, bindings and loop variables compared with `undefined`,
+  `unknown[]`). String `split` has one dispatch path for string and RegExp
+  separators. `fetch` and `Request` accept `URL` inputs; classes may
+  `implements AsyncIterable<T>`; `instanceof` and `#x in` test every class
+  member of a union; readonly literal fields keep literal types; fields take
+  their type from `new Map<K, V>()`, `new Set<T>()` and `new Uint8Array(n)`;
+  a local named like a prelude value (`fetch`) shadows it. The conformance
+  inventory is pinned to v37. Debug and test builds optimize the Cranelift
+  crates, removing a `build --single` probe timeout under parallel test
+  load. V36 and earlier keep their bytes and diagnostics.
+
 - The language core under opt-in v37 (selector `language_core`). Closures may
   capture `let`/`const` bindings and hoisted nested function declarations
   before their initialization, with JavaScript's temporal dead zone: an
@@ -109,8 +132,8 @@ in [conformance/README.md](conformance/README.md).
 - Opt-in v37 (pilot batch: language core, class generics, collections and
   binary text, RegExp and `net.request`, in development) is registered. It
   inherits every v36 feature, shares value ABI/layout 17 with v36 and declares
-  its own host ABI 33 (`NET_REQUEST_VERSION`) without a new import yet; the
-  launcher advertises host ABI 33. A v37 module relabelled as v36 fails at its
+  its own host ABI 33 (`NET_REQUEST_VERSION`), under which the batch's
+  imports were added later; the launcher advertises host ABI 33. A v37 module relabelled as v36 fails at its
   host ABI section, and runtimes that do not list v37 reject its declared
   profile name before any guest effect. Its `language_core`, `class_generics`,
   `collections`, `regexp` and `net_request` selectors admitted nothing at

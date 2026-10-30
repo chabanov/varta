@@ -4745,8 +4745,10 @@ expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
 
 ### `checked-f64-utf16-v37`
 
-Profile v37 (in development) runs every v36 program unchanged. Its streams
-add their features below as they land.
+Profile v37 (in development) runs every v36 program unchanged and adds the
+language core, class generics, collections and binary text, regular
+expressions and `fetch` below; the last subsection shows how they work
+together.
 
 #### Language core (opt-in v37)
 
@@ -4958,8 +4960,9 @@ interface: `implements` only checks the class. `#x in value` is a brand test
 (`value instanceof` the declaring class). Not supported yet: generic method
 signatures such as `json<T>(): T` in interfaces and generic object-literal
 methods, overrides inside generic classes, `instanceof Page` on `unknown`
-values, static or setter private members, `abstract`, and `JSON.stringify` or
-`unknown` for values that may contain an instance with private fields.
+values, static or setter private members, `abstract`, and `unknown` for
+values that may contain an instance with private fields (`JSON.stringify`
+skips private fields, as in Node).
 
 #### Collections and binary text (opt-in v37)
 
@@ -5136,8 +5139,8 @@ any connection is made, and so does a timer without `time.timer` (thrown by
 `setTimeout`). Redirects are refused unless `redirect: 'follow'` (each hop is
 checked against the grant again) or `'manual'` is given. Body chunks are
 strings (bytes and `ReadableStream<Uint8Array>` come later), `read()` gives
-`{ done, value }` with `value === ''` once done, and `fetch` takes a string or
-a `Request` (pass `url.href` for a `URL`).
+`{ done, value }` with `value === ''` once done, and `fetch` takes a string, a
+`URL` or a `Request`.
 
 ```ts
 const url = new URL('/v1/search', 'https://api.example.com');
@@ -5149,3 +5152,61 @@ console.log(form.toString()); // name=Ada+Lovelace
 
 A class can be an async iterable by declaring
 `async *[Symbol.asyncIterator]()`; `for await` over an instance calls it.
+
+#### The streams together (opt-in v37)
+
+```ts
+let received = 0; // module state, updated across awaits
+
+class Events {
+  readonly kind = 'events'; // a readonly literal field keeps its literal type
+  #fields = new Map<string, string>(); // the field type comes from `new`
+  add(line: string): void {
+    const match = line.match(/^(\w+): ?(.*)$/);
+    if (match !== null) this.#fields.set(match[1] ?? '', match[2] ?? '');
+  }
+  read<T>(name: string, parse: (text: string) => T): T | undefined {
+    const text = this.#fields.get(name);
+    return text === undefined ? undefined : parse(text);
+  }
+}
+
+async function* lines(body: ReadableStream): AsyncGenerator<string> {
+  let buffer = '';
+  for await (const chunk of body) {
+    buffer += chunk;
+    const parts = buffer.split(/\r?\n/);
+    buffer = parts.pop() ?? '';
+    for (const line of parts) yield line;
+  }
+}
+
+export async function main(): Promise<void> {
+  const response = await fetch(new URL('/sse', 'http://127.0.0.1:8080'));
+  const body = response.body;
+  if (body === null) return;
+  const events = new Events();
+  for await (const line of lines(body)) {
+    if (line !== '') events.add(line);
+    else received += 1;
+  }
+  console.log(`${received} ${events.read('id', (text: string): number => Number(text))} ${JSON.stringify(response.headers)}`);
+}
+```
+
+`JSON.stringify` skips private state as Node does: `#private` fields, the
+internals of `Headers`, `AbortSignal`, `DOMException`, `Request` and
+`Response` (they serialize as `{}`) and Error slots (`message`, `cause`, and
+`name` unless a constructor assigns it), so `JSON.stringify` of `unknown`
+works in programs that use `fetch`. `URL` and RegExp match arrays cannot be
+serialized or stored in `unknown` yet. Object keys starting with `#` are
+reserved. Index reads give `undefined` where the code expects it — a
+`T | undefined` result or parameter, `xs[i] ?? fallback`, or a binding later
+compared with `undefined` (`const item = items[0]; if (item === undefined)
+…`) — and throw `TypeError` for a hole elsewhere. `Date.now()` and
+`new Date()` throw a catchable `NotAllowedError` without the `time.now` grant.
+Functions a program never reaches, including unused engine built-ins, do not
+count against the 256-function limit. Not supported yet: unions that mix a
+`Map`, `Set` or `Uint8Array` with other objects (and `instanceof Map`), byte
+bodies (`ReadableStream<Uint8Array>`, `Blob`, `FormData`), `globalThis`, and
+`Array.isArray` narrowing of `unknown`.

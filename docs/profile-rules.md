@@ -2780,12 +2780,13 @@ Inherit v36 under checked-f64-utf16-v37 with every v36 selector, value layout
 scheduler, frame catalog version 3, async generators and the timer operations.
 V37 has its own host ABI `abi::NET_REQUEST_VERSION` (33) and shares value
 ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`) with v36; v36 keeps host
-ABI 32. Five selectors gate the streams: language core (`language_core`,
-implemented below) and, admitting nothing yet, class generics
-(`class_generics`), collections and binary text (`collections`), RegExp
-(`regexp`) and network requests (`net_request`).
-Gate every admission on its own selector, keep v36 and earlier profiles
-frozen, and add each stream's rules under its own heading here.
+ABI 32. Five selectors gate the streams, all implemented below: language
+core (`language_core`), class generics (`class_generics`), collections and
+binary text (`collections`), RegExp (`regexp`) and network requests
+(`net_request`); [batch integration](#batch-integration-v37) holds the rules
+for their combination. Gate every admission on its own selector, keep v36 and
+earlier profiles frozen, and add each stream's rules under its own heading
+here.
 
 - A v36 rule or binding stated "for v36 only" (value17 readers, timer
   operations, preludes, async generators) extends to v37 through the inherited
@@ -2807,6 +2808,35 @@ frozen, and add each stream's rules under its own heading here.
   (`pilot_v37_inherits_v36_…` in `varta-common` `language`, the v37 runtime
   language test and the v37 CLI smoke test) change in the stream that
   introduces the difference.
+
+### Batch integration (v37)
+
+Contract: [architecture.md](architecture.md#batch-integration-v37).
+
+- Function slots: lowering allocates against `ValueTypes::function_limit()`
+  (never `abi::MAX_USER_FUNCTIONS` directly); `lower::prune` removes
+  unreachable functions and is the only v37 place that enforces the emitted
+  limit. A new IR form that names a function index must be added to
+  `prune::references` and the renumbering in the same change, and the
+  emitter must derive every other function table from `Program`.
+- Private state: descriptor keys with `value::PRIVATE_KEY_PREFIX` are private
+  (`classes::hide_prelude_state` renames prelude and Error slots after
+  lowering; guest code reads by slot). Never add a v37 source path that
+  creates a structural record key with the prefix, and keep URL and RegExp
+  match arrays out of `JSON.stringify` and `unknown`
+  (`engine::JSON_FORM_CLASSES`). Shared host readers keyed by field name must
+  prefer the own key and fall back to the prefixed one, as the exception
+  channel does.
+- Dense reads: undefined contexts go through `dense::optional_index` /
+  `undefined_comparisons`; keep `unknown` elements unchecked.
+- Unions: collections and tuples stay single members of their tag;
+  `instanceof` and `#x in` over class unions must consider every class
+  member, never the first one only.
+- `split` dispatch lives in `builtin_methods::string_split`; RegExp splits go
+  through `regexp_split`.
+- Tests: `varta-runtime` `v37_integration_tests` (Node-pinned cases in
+  `v37_integration_cases`, a loopback SSE loop, forced collections, the
+  relabelled every-stream module and the pruning limits).
 
 ### Language core (`language_core`)
 

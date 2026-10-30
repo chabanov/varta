@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 70 feature rows and 118 cases:
-101 pass, 17 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 73 feature rows and 127 cases:
+123 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -303,3 +303,17 @@ reviewed `unsupported_syntax` gap under the v36 pin (`URL` is a v37 prelude).
 server, and the reviewed per-case `grants` field admits only `time.timer`.
 That stays a recorded gap; the runtime tests compare `fetch` with Node.js
 v24.20.0 against a loopback server instead.
+
+The v37 integration moves the pin to `checked-f64-utf16-v37`. Under it the 22
+v37 cases kept as known gaps under the v36 pin (the eight language-core cases,
+the three class-generics cases, the Map, Set, Uint8Array, Date, tuple, string
+built-in and UTF-8 text cases of the collections stream, the three RegExp
+cases and `url-search-params`) were observed as unexpected support with
+exactly their pinned hashes and expected output, which matches Node.js
+v24.20.0 type stripping, and were promoted. The move first exposed three
+regressions of supported cases (`unknown-narrowing`, `module-constants`,
+`generics`): dense index reads threw on `undefined` checks that the cases
+rely on, which the integration fixed in the compiler rather than in the
+cases. The four remaining known gaps (`symbol-type`, `class-instance`,
+`define-data-property`, `generator-next`) are unchanged, and `fetch` remains
+the recorded gap above.

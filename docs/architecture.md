@@ -7880,9 +7880,10 @@ iteration is not implemented yet)`) and the annotations below.
 
 ### `checked-f64-utf16-v37` — Pilot batch: language core, class generics, collections and binary text, RegExp and net.request
 
-V37 is registered and inherits every v36 feature and selector, including value
+V37 inherits every v36 feature and selector, including value
 layout 17 (`function_fields()`) with the value17 host readers, exception
-channel v8, JSON schema 17 (`json_stringify_v16`, `json_parse_v18`), the
+channel v8, JSON schema 17 (`json_parse_v18`; serialization moves to
+`json_stringify_v17`, [below](#batch-integration-v37)), the
 microtask scheduler, frame catalog version 3 (`frame_liveness()`), async
 generators and the timer operations with their `time.timer` grant. Wherever a
 v36 subsection above admits a feature, layout or binding for v36 only, it
@@ -7893,7 +7894,8 @@ version identity of its own (see the [version matrix](#version-matrix)):
   import added in this batch uses host ABI 33 as its minimum: the collections
   stream's `string_to_upper_case16`, `string_to_lower_case16` and `date_now`
   ([collections](#collections-and-binary-text-collections)), the six
-  `net.request` operations behind `fetch`, and `timer_start_v2`, which v37
+  `net.request` operations behind `fetch`, `json_stringify_v17`
+  ([batch integration](#batch-integration-v37)), and `timer_start_v2`, which v37
   binds instead of `timer_start` for its recoverable denial
   ([permission broker](#permission-broker-v37)). Every other v36 operation,
   including the value17 readers and the other timer operations, keeps its
@@ -7922,7 +7924,8 @@ introduced; a later stream that needs a value tag introduces it as its own
 early foundation commit. V36 and earlier profiles keep their host ABI, value
 ABI and layouts.
 
-Five selectors gate the batch's work streams:
+Five selectors gate the batch's work streams, and every stream is
+implemented in its subsection below:
 
 - language-core stream: `language_core()`, implemented below
   ([language core](#language-core-language_core)): TDZ-safe closure capture
@@ -7934,17 +7937,99 @@ Five selectors gate the batch's work streams:
   [implemented](#class-generics-class_generics));
 - collections stream: `collections()` (`Map`/`Set`, tuples, `Array.join`,
   `String.fromCharCode`, a `Date` subset, `Uint8Array`,
-  `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` and base64);
+  `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` and base64;
+  [implemented](#collections-and-binary-text-collections));
 - RegExp stream: `regexp()` (`RegExp` and the regex string methods;
   [implemented](#regexp-regexp));
 - net-request stream: `net_request()` (asynchronous `fetch`, `Request`,
   `Response`, `Headers`, `URL` and `ReadableStream` over the exact
-  `net.request` capability, and `Symbol.asyncIterator` for async iterables).
+  `net.request` capability, and `Symbol.asyncIterator` for async iterables;
+  [implemented](#network-requests-net_request)).
 
-The other four admit nothing yet. Until a stream adds its subsection here, a
-v37 module compiles and runs exactly like a v36 module apart from its declared
-profile and host ABI and the subsections below, and production budgets of every
-profile are unchanged.
+The streams were developed in parallel and integrated together; the
+[batch integration](#batch-integration-v37) subsection states the rules that
+govern their combination. Production budgets of every profile are unchanged.
+
+#### Batch integration (v37)
+
+These rules hold for every v37 module and decide how the streams combine.
+V36 and earlier keep their bytes and diagnostics.
+
+- **Unreachable functions.** Every function and class member of a loaded
+  engine prelude used to take a function slot. V37 lowering allocates against
+  a compile-time linking cap of four times `abi::MAX_USER_FUNCTIONS`, then
+  keeps only the functions reachable from `main`, the tool exports, the HTTP
+  handler and the module-constant initializers through direct calls, function
+  values, scheduled frames and async-generator relays (`lower::prune`),
+  renumbers them densely in their original order and enforces
+  `abi::MAX_USER_FUNCTIONS` on the result (`too many functions across
+  modules: N reachable functions exceed the limit of 256`). Unused program
+  functions take no slot either. The emitter derives dispatch targets, frame
+  layouts and catalogs from the kept functions only. The runtime limit on the
+  function section is unchanged.
+- **Private state in JSON.** After lowering, v37 gives private state a
+  descriptor key starting with `value::PRIVATE_KEY_PREFIX` (`#`): rewritten
+  `#private` fields, every field of an engine prelude class instance, and the
+  Error slots of class instances that are not own enumerable properties
+  (`message` and `cause` always, `name` unless a constructor of a non-prelude
+  class in the chain assigns `this.name` in a top-level statement, and none
+  that a subclass field redeclares). V37 source cannot spell an object key
+  with that prefix: object literals, type literals and interfaces reject
+  such keys by name. `JSON.stringify` imports `json_stringify_v17` (host ABI
+  33, same signature and contract as `json_stringify_v16`, no capability),
+  which skips `#`-keyed fields while still charging their traversal. Prelude
+  instances therefore serialize as `{}` (`Headers`, `AbortSignal`,
+  `DOMException`, `Request`, `Response`), Error subclass instances as their
+  own properties and `#private` classes without their private fields, as in
+  Node, and v37 lifts the v35/v36 rejections of `JSON.stringify` for prelude,
+  Error-subclass and `#private` instances and for `unknown` once such classes
+  exist. One deviation remains: an assigned `name` keeps the Error slot's
+  insertion position, so it precedes the subclass's own fields in the output.
+  `URL` (whose JSON form is its `toJSON` string) and RegExp match arrays
+  (arrays) stay rejected for `JSON.stringify` and are not assignable to
+  `unknown`. `#private` instances stay outside `unknown`, because other host
+  readers see descriptor keys. The exception channel reads a thrown
+  instance's `#name`/`#message` when it has no own `name`/`message` key, so
+  earlier profiles read exactly the fields they read before.
+- **Index reads in `undefined` contexts.** The language core's dense reads
+  (`xs[i]`, `s[i]`, `for…of` variables) check for holes, except where
+  JavaScript's `undefined` is wanted: a read whose expected type has an
+  `undefined` member (a `T | undefined` return, parameter or annotated
+  binding), the left operand of `??`, an inferred `const`/`let` binding or a
+  `for…of` variable whose name the enclosing block compares with `undefined`
+  (`x === undefined`, `x != undefined`, `typeof x === 'undefined'`, either
+  operand order), and every element of `unknown[]` (`unknown` holds
+  `undefined` itself). Those reads produce `T | undefined` unchecked. A
+  `Uint8Array` read out of range follows the same rule.
+- **Unions of collections.** Records, classes and arrays may share a union
+  (language core); a `Map`, `Set`, `Uint8Array` or tuple takes part only as
+  the single member of its union tag, and `instanceof Map`/`Set`/`Uint8Array`
+  is not modelled. Union members may hold collections in their fields and
+  stay traced through every collection.
+- **`instanceof` over several classes.** On a union of several classes,
+  `x instanceof C` tests every member that is `C` or a subclass by
+  descriptor, and narrows to all of them (or removes all of them); otherwise
+  the nearest ancestor member is tested. `#x in v` uses the same test, also
+  inside generic class instances.
+- **Class fields.** A readonly field with a string, number or boolean literal
+  initializer has that literal type, as TypeScript infers it, so it
+  discriminates class unions; a field initialized by `new Map<K, V>()`,
+  `new Set<T>()` or `new Uint8Array(n)` has that collection type.
+- **`split`.** String `split` has one dispatch path: the separator is lowered
+  once; a RegExp separator splits through the RegExp prelude, every other
+  separator through the text prelude. Own methods and function fields named
+  `split` dispatch as usual.
+- **Prelude bindings.** A module that binds the name of a prelude value
+  export locally (a parameter named `fetch`) keeps its own binding and does
+  not import the global; prelude classes keep their load triggers.
+- **`fetch` inputs.** `fetch` and `new Request` accept `string | URL |
+  Request`; a `URL` contributes its `href`.
+- **`implements AsyncIterable<T>`.** A class may implement `AsyncIterable<T>`
+  when it declares `[Symbol.asyncIterator]()` returning exactly that async
+  generator type.
+- **Recoverable clock denials.** See the
+  [permission broker](#permission-broker-v37): `Date.now()` and `new Date()`
+  throw a `NotAllowedError` without the `time.now` grant.
 
 #### Language core (`language_core`)
 
@@ -7998,7 +8083,9 @@ by digest in `varta-runtime` `language_core_tests`).
   closure), and `x` may not be captured before its declaration.
 - **Dense element typing.** `for (const x of xs)` over `T[]` binds `x: T`, and
   `xs[i]` and `s[i]` (strings) read `T` and `string`, as TypeScript types them
-  without `noUncheckedIndexedAccess`. The read is checked: a hole or an index
+  without `noUncheckedIndexedAccess` (contexts that admit `undefined` read
+  like JavaScript; see [batch integration](#batch-integration-v37)). The read
+  is checked: a hole or an index
   out of range throws `TypeError` (`array element is missing (a hole or an
   index out of range)`, `array element is a hole` in `for...of`, `string
   index out of range`) where Node reads `undefined`; this is a documented
@@ -8218,10 +8305,10 @@ below with their diagnostics and compile to unchanged bytes.
   the brand of the class whose body declares `#x` (exactly `value
   instanceof C`, so subclass instances pass) and narrows like it; its operand
   must have an object type (TypeScript rule; JavaScript throws for
-  primitives). Private fields are not properties in JavaScript, while host
-  readers see every slot, so a value whose type may reach an instance of a
-  class with private fields is rejected by `JSON.stringify` and cannot become
-  `unknown`. Rejected: static private members, private setters, a subclass
+  primitives). Private fields are not properties in JavaScript; v37's
+  `json_stringify_v17` skips them ([batch integration](#batch-integration-v37)),
+  while other host readers see every slot, so a value whose type may reach an
+  instance of a class with private fields cannot become `unknown`. Rejected: static private members, private setters, a subclass
   redeclaring an inherited private name (in JavaScript a distinct member),
   quoted members named like private names (`'#x'`) and computed `obj['#x']`
   accesses of class members.
@@ -8578,7 +8665,8 @@ methods with their existing diagnostics and bytes.
   did not take part, or an index past the end). Array destructuring and
   `for…of` read the elements. Match arrays are read-only and have no array
   methods (`slice`, `map`, … are rejected with a named diagnostic);
-  `JSON.stringify` rejects them like every prelude instance.
+  `JSON.stringify` rejects them (their JSON form is an array) and they are
+  not assignable to `unknown`.
 - **String methods.** `search` runs from 0 and leaves `lastIndex` alone;
   `match` without `g` is `exec`, with `g` it collects every match string or
   returns `null`; `matchAll` requires `g` (`TypeError` as in Node), copies the
@@ -8746,11 +8834,10 @@ as unknown names and keep their bytes and diagnostics.
   generic (`ReadableStream<Uint8Array>` is rejected until generic classes and
   `Uint8Array` land in the class-generics and collections streams; the body
   type is the seam), and `read()` returns `{ done, value }` with `value` the
-  empty string once `done`. `fetch` takes a string or a `Request` (not a
-  `URL`, because a union of two classes is not admitted: pass `url.href`), and
-  `new Response` takes a string, a stream or `null`. `JSON.stringify` of
-  `unknown` is rejected in programs that load engine Web types (a v35 rule),
-  so parsed bodies are typically narrowed with a checked `as`. There are no
+  empty string once `done`. `fetch` and `new Request` take a string, a `URL`
+  (its `href`) or a `Request`, and `new Response` takes a string, a stream or
+  `null`. Prelude instances serialize as `{}` and `JSON.stringify` of
+  `unknown` is admitted ([batch integration](#batch-integration-v37)). There are no
   `clone()`, `blob()`, `arrayBuffer()`, `formData()`, `Response.json()`,
   `Response.error()`, `Response.redirect()`, `keepalive`, `mode`,
   `credentials`, `cache`, `referrer` or `integrity`; request headers are sent
