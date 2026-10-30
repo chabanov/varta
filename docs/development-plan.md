@@ -1219,7 +1219,16 @@ web-developer peer.
   `aria-label`, `aria-labelledby`, `aria-describedby`, `aria-live`,
   `aria-expanded`, `aria-selected`, `aria-current`, `aria-busy`, `aria-invalid`,
   `aria-hidden`. A visible focus outline is mandatory. The headless renderer outputs
-  the accessibility tree.
+  the accessibility tree; names follow the accname 1.2 steps the subset admits
+  ([contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)).
+- **Open L0 v0/v1 choices (owner decision).** Raised by the first UARP console
+  chat screen (2026-10-30) and not part of the subset until decided:
+  `role="separator"` (a divider between message groups; ARIA gives it an
+  orientation and, when focusable, a value) and `role="group"` (a set of
+  related controls such as a message's action buttons, named by its author).
+  Either needs a registry entry in `view::ROLES`, its accname step, the
+  AccessKit mapping and a browser/native conformance page; until then the
+  application uses `div` without a role.
 - **Window (native targets).** Title, initial and minimum size, DPI handled by the
   renderer, the OS colour scheme, system copy/paste shortcuts.
 - **Freeze criterion for L0 v1.** A set of conformance pages where the same patch

@@ -3460,6 +3460,15 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   other host denies. A denial or refusal is a `command_result`, never a trap
   or a batch error (except the patch-time check of an external `href`
   against the package request).
+- Accessible names follow the accname 1.2 steps of the
+  [architecture contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)
+  in `varta-view/src/name.rs`: hidden nodes (`aria-hidden="true"`, computed
+  `display: none`, a closed `dialog`) never contribute unless the relation
+  started at a hidden node; name from content only for the listed roles at
+  the root; the `label` relation only at the root so every traversal stays
+  finite. A new element, attribute or role decides its step there and in the
+  contract in the same change. `role` values stay within `view::ROLES`:
+  `separator` and `group` are open L0 decisions, not additions.
 - The headless renderer (`varta-view`) stays free of Wasm, I/O and clocks;
   host decisions reach it through `Broker`. Production budgets never change
   for views; every view turn has its own per-turn allowance.

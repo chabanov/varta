@@ -9971,6 +9971,56 @@ styles win; custom properties inherit and `var()` is substituted; other
 properties report their cascaded value. Layout rectangles are not computed:
 Taffy and Parley are not dependencies yet.
 
+**Accessible names.** The accessibility tree names a node by the steps of
+[accname 1.2](https://www.w3.org/TR/accname-1.2/) that the L0 v1 subset
+admits (`varta-view/src/name.rs`). An element is *hidden* when it has
+`aria-hidden="true"`, a computed `display: none`, or is a `dialog` that is not
+open; a hidden element and its subtree are absent from the accessibility tree.
+The name of an element E with role R is computed by visiting nodes, starting
+at E (the root step):
+
+1. **2A, hidden.** A hidden element contributes the empty string, unless the
+   relation (`aria-labelledby` or `label`) that reached it started at a hidden
+   node (the referenced node or an ancestor is hidden): then its hidden
+   descendants take part.
+2. **2B, `aria-labelledby`.** Outside an `aria-labelledby` traversal, the
+   attribute's ASCII-whitespace-separated ids that name attached elements are
+   visited in order, each as a referenced node of a traversal that does not
+   apply 2B again, and the results are joined with one space. A blank result,
+   or no id that resolves, falls through to 2C.
+3. **2C, embedded control.** Below the root step, a text field gives its
+   live value (a `password` field its masked value) and a `select` the text of
+   the `option` whose `value` equals its value.
+4. **2D, `aria-label`.** A value that is not blank after trimming ASCII
+   whitespace.
+5. **2E, host language label.** An `img` gives its `alt` when present. At the
+   root step only, an `input`, `textarea`, `select` or `progress` with an `id`
+   gives the names of the attached `label` elements whose `for` equals that
+   id, in document order, each visited as a referenced node and joined with
+   one space, when not blank. Below the root step the `label` relation is not
+   followed (a field already gave its value at 2C), so every traversal is
+   finite.
+6. **2F and 2H, name from content.** At the root step when R is one of
+   `button`, `link`, `heading`, `option`, `cell`, `columnheader`, `row`,
+   `tab`, `checkbox` or `radio` (ARIA 1.2 "name from contents"), and at every
+   step below the root, the results of visiting the children in order are
+   concatenated without separators; at the root step a blank result falls
+   through. A text node (2G) gives its text. E met again below the root step
+   (a field inside its own label, for example) gives the empty string.
+7. **HTML-AAM last resort.** A text field gives its `placeholder`.
+
+The name is the result as a flat string: every run of ASCII whitespace
+becomes one space and the ends are trimmed. A node whose name is empty has
+no `name` member. Every other role (`list`, `listitem`, `dialog`,
+`navigation` and the other landmarks, `alert`, `status`, `table`, `tablist`,
+`tabpanel`, `paragraph`, `progressbar`, `image`, the fields) is named only by
+its author through 2B–2E. The subset has no `title` attribute (2I), no
+`presentation`/`none` role, no generated content (`::before`/`::after`) and
+no layout, so a block-level child adds no separating space; these parts of
+accname do not apply. Example: `<button><span aria-hidden="true">◇</span>
+<span>Reasoning</span><span aria-hidden="true">▸</span></button>` is
+`button "Reasoning"`.
+
 **View prelude.** `<varta>/view/view.ts`, loaded when a module names a
 `View.*` member or `ViewEvent` (TSX compiles to `View.*` calls). It encodes
 operations into a string whose UTF-16 code units are the batch bytes, packing

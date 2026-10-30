@@ -5481,3 +5481,13 @@ prompts on every activation). Denials arrive as statuses, never as failures.
 Unknown elements or attributes, invalid static values (`rows="0"`,
 `style="color: red"`), unknown filters, fragments, spreads and component
 children are compile errors.
+
+Accessible names follow accname 1.2: `aria-hidden="true"` content (and
+`display: none` or a closed dialog) is left out of a name from content, so
+this button is `button "Reasoning"`:
+
+```tsx
+<button type="button">
+  <span aria-hidden="true">◇</span><span>Reasoning</span><span aria-hidden="true">▸</span>
+</button>
+```

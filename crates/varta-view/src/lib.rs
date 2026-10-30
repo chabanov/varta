@@ -16,6 +16,7 @@
 //! criterion is not a dependency yet, so snapshots carry the tree, the
 //! cascaded styles and the accessibility tree only.
 mod events;
+mod name;
 mod snapshot;
 mod style;
 mod tree;

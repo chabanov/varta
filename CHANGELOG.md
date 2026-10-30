@@ -1013,6 +1013,14 @@ in [conformance/README.md](conformance/README.md).
 
 ### Fixed
 
+- V38 accessible names follow the accname 1.2 steps the L0 subset admits:
+  `aria-hidden="true"`, `display: none` and closed-dialog descendants no
+  longer enter a name from content (`button "Reasoning"`, not
+  `"◇Reasoning▸"`), `aria-labelledby` and `label` traversals include hidden
+  content only when the referenced node is hidden, blank `aria-label` is
+  ignored, embedded fields give their value, names are flat strings and only
+  ARIA "name from contents" roles take their content (a `listitem` no longer
+  has a name). The headless snapshot omits empty names.
 - Dispatch Array.lastIndexOf to reverse search instead of Array.indexOf. Omitted
   positions start at the final element; explicit undefined/NaN select zero,
   positive infinity clamps to the final index and positions below -length miss.
