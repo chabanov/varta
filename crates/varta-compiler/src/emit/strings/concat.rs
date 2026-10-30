@@ -152,3 +152,114 @@ pub(super) fn grow(allocate: u32) -> Function {
     function.instruction(&I::End);
     function
 }
+
+/// V38 (`codegen_v2`): the most operands one flattened concatenation takes.
+pub(in crate::emit) const MAX_OPERANDS: usize = 8;
+
+/// V38 (`codegen_v2`): concatenate `count` evaluated operands with one
+/// allocation instead of one per `+`. It behaves as the left-nested
+/// two-operand helper chain: an overflowing length traps, a running total
+/// above the allocation limit fails with that total (where the nested chain's
+/// allocation would fail), and with at most one nonempty operand that operand
+/// (or the last one) is returned without allocating.
+pub(super) fn many(
+    count: u8,
+    allocate: u32,
+    globals: Globals,
+    limits: varta_common::limits::DataLimits,
+) -> Function {
+    use varta_common::limits::Resource;
+    let operands = u32::from(count);
+    let total = operands;
+    let nonempty = operands + 1;
+    let len = operands + 2;
+    let dest = operands + 3;
+    let last = operands + 4;
+    let mut f = Function::new([(4, ValType::I32), (1, ValType::I64)]);
+    instructions(&mut f, [I::LocalGet(operands - 1), I::LocalSet(last)]);
+    for operand in 0..operands {
+        length(&mut f, operand, len);
+        instructions(
+            &mut f,
+            [
+                I::LocalGet(len),
+                I::If(BlockType::Empty),
+                I::LocalGet(total),
+                I::LocalGet(len),
+                I::I32Add,
+                I::LocalTee(total),
+                I::LocalGet(len),
+                I::I32LtU,
+                I::If(BlockType::Empty),
+                I::Unreachable,
+                I::End,
+                // The nested chain allocates once both sides are nonempty.
+                I::LocalGet(total),
+                I::I32Const(limits.allocation_bytes as i32),
+                I::I32GtU,
+                I::LocalGet(nonempty),
+                I::I32Const(0),
+                I::I32Ne,
+                I::I32And,
+                I::If(BlockType::Empty),
+            ],
+        );
+        instructions(&mut f, globals.fail(Resource::ValueSize, total));
+        instructions(
+            &mut f,
+            [
+                I::End,
+                I::LocalGet(nonempty),
+                I::I32Const(1),
+                I::I32Add,
+                I::LocalSet(nonempty),
+                I::LocalGet(operand),
+                I::LocalSet(last),
+                I::End,
+            ],
+        );
+    }
+    instructions(
+        &mut f,
+        [
+            I::LocalGet(nonempty),
+            I::I32Const(2),
+            I::I32LtU,
+            I::If(BlockType::Empty),
+            I::LocalGet(last),
+            I::Return,
+            I::End,
+            I::LocalGet(total),
+            I::Call(allocate),
+            I::LocalTee(dest),
+            // `len` now holds the end of the copied bytes.
+            I::LocalSet(len),
+        ],
+    );
+    for operand in 0..operands {
+        instructions(
+            &mut f,
+            [
+                I::LocalGet(len),
+                I::LocalGet(operand),
+                I::I32WrapI64,
+                I::LocalGet(operand),
+                I::I64Const(LENGTH_SHIFT as i64),
+                I::I64ShrU,
+                I::I32WrapI64,
+                I::LocalTee(nonempty),
+                I::MemoryCopy {
+                    src_mem: MEMORY,
+                    dst_mem: MEMORY,
+                },
+                I::LocalGet(len),
+                I::LocalGet(nonempty),
+                I::I32Add,
+                I::LocalSet(len),
+            ],
+        );
+    }
+    pack(&mut f, total, dest);
+    f.instruction(&I::End);
+    f
+}

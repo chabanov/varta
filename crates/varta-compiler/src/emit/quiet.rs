@@ -8,8 +8,10 @@
 //! binding it reads stays rooted by its own frame slot, because a quiet
 //! subtree writes no binding outside its own hidden value-block slots. The
 //! result of a quiet expression is still rooted when it is a reference and its
-//! consumer may allocate. Earlier profiles never take these paths and keep
-//! their bytes.
+//! consumer may allocate. A checked element read (`dense`) is quiet although
+//! its missing-element path allocates an error: that path throws, abandoning
+//! every operand the enclosing quiet expression held. Earlier profiles never
+//! take these paths and keep their bytes.
 use super::*;
 
 impl Emitter<'_> {
@@ -49,7 +51,11 @@ impl Emitter<'_> {
                 ir::Intrinsic::CodeUnit | ir::Intrinsic::CharCodeAt | ir::Intrinsic::DictionaryFind,
                 args,
             ) => args.iter().all(|a| self.quiet(a)),
-            E::ValueBlock { body, .. } => body.iter().all(|s| self.quiet_statement(s)),
+            // A checked element read throws on its only allocating path.
+            E::ValueBlock { body, .. } => match super::dense::dense_read(expr) {
+                Some(read) => self.quiet(read.base) && self.quiet(read.index),
+                None => body.iter().all(|s| self.quiet_statement(s)),
+            },
             E::Assignment {
                 value, input, body, ..
             } => {
@@ -67,7 +73,14 @@ impl Emitter<'_> {
     /// result is rooted.
     pub(super) fn stable_operands(&self, expr: &Expr) -> bool {
         let operands: Vec<&Expr> = match &expr.kind {
-            E::Binary(BinaryOp::Add, a, b) if a.ty == Type::String => vec![a, b],
+            // A chain within one helper call: its operands are its leaves.
+            E::Binary(BinaryOp::Add, a, _) if a.ty == Type::String => {
+                let leaves = super::concat_chain::leaves(expr);
+                if leaves.len() > strings::MAX_CONCATENATED {
+                    return false;
+                }
+                leaves
+            }
             E::StringRange {
                 value, start, end, ..
             } => vec![value, start, end],
@@ -75,11 +88,45 @@ impl Emitter<'_> {
             E::Intrinsic(ir::Intrinsic::CharAt | ir::Intrinsic::FromUnits, args) => {
                 args.iter().collect()
             }
+            // An appended argument list (no argument array): the target and
+            // every slot stay reachable from their bindings while it grows.
+            E::ArrayPush(base, items) => match super::arrays::appended(self.profile, items) {
+                Some(values) => std::iter::once(&**base).chain(values).collect(),
+                None => return false,
+            },
             _ => return false,
         };
         operands
             .into_iter()
             .all(|operand| self.quiet(operand) && operand.write_free())
+    }
+    /// A call of a function value whose callee is quiet and write-free and
+    /// whose arguments are quiet, with no suspendable or self-referencing
+    /// target: the callee value stays reachable from its binding until the
+    /// checked dispatch has read it, and the target roots its parameters and
+    /// captured cells before any allocation and never reads the value again,
+    /// so the call needs no mark and no operand roots. (A named function
+    /// expression keeps its own value in an unrooted local, which only the
+    /// caller's expression root keeps alive.)
+    pub(super) fn quiet_function_call(&self, expr: &Expr) -> bool {
+        let E::FunctionCall {
+            callee,
+            ignored_receiver: None,
+            args,
+            ..
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let Type::Function(signature) = callee.ty else {
+            return false;
+        };
+        self.quiet(callee)
+            && callee.write_free()
+            && args.iter().all(|arg| self.quiet(arg))
+            && self.function_targets[&signature].iter().all(|target| {
+                !self.frame_functions.contains_key(target) && !self.self_functions.contains(target)
+            })
     }
     /// A statement that allocates nothing and leaves the root stack pointer
     /// unchanged, so it needs no temporary-root reset after it.

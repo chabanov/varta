@@ -1,5 +1,9 @@
 //! Nonmoving immutable strings with exact compiler roots and a bounded reusable heap.
 mod allocate;
+mod free_classes;
+pub(super) use free_classes::CLASSES as FREE_CLASSES;
+mod array_append;
+pub(super) use array_append::{MAX_VALUES as MAX_APPENDED, MIN_CAPACITY as MIN_APPEND_CAPACITY};
 mod array_enumeration;
 mod array_fill;
 mod array_index;
@@ -12,6 +16,7 @@ mod array_slice;
 mod collect;
 mod compare;
 mod concat;
+pub(super) use concat::MAX_OPERANDS as MAX_CONCATENATED;
 mod dictionary_probe;
 mod index_key;
 mod regexp;
@@ -70,6 +75,10 @@ pub(super) struct Globals {
     /// V38 (`codegen_v2`): the heap end up to which memory grows without a
     /// collection (`allocate`).
     pub collect_at: Option<u32>,
+    /// V38 (`codegen_v2`): the first of the [`free_classes::CLASSES`] globals
+    /// heading the exact-size free lists of small blocks; the i64 mask of
+    /// nonempty classes follows them.
+    pub classes: Option<u32>,
 }
 impl Globals {
     /// Trap, first recording `resource` and the amount in local `amount` when
@@ -97,6 +106,8 @@ impl Globals {
 pub(super) enum Helper {
     Snapshot,
     Concat,
+    /// V38 (`codegen_v2`): one concatenation of this many operands.
+    ConcatMany(u8),
     /// V38 (`codegen_v2`): a builder block with doubled capacity holding
     /// both operands (`string_builder`).
     StringGrow,
@@ -127,6 +138,9 @@ pub(super) enum Helper {
     ArrayKeys,
     ArrayValues,
     ArrayPush,
+    /// V38 (`codegen_v2`): `push` of this many evaluated slots, without an
+    /// argument array (`array_append`).
+    ArrayAppend(u8),
     ArraySlice,
     ArrayReverse,
     ArrayFill,
@@ -226,6 +240,7 @@ impl Helper {
             }
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
             Self::Concat | Self::StringGrow => (vec![ValType::I64; 2], vec![ValType::I64]),
+            Self::ConcatMany(count) => (vec![ValType::I64; usize::from(count)], vec![ValType::I64]),
             Self::StringEquals => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::DictionaryFind | Self::DictionaryUnlink => {
                 (vec![ValType::I64; 3], vec![ValType::F64])
@@ -282,6 +297,10 @@ impl Helper {
             | Self::TrimHttpWhitespace => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayKeys | Self::ArrayValues => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayPush => (vec![ValType::I64; 2], vec![ValType::I32]),
+            Self::ArrayAppend(count) => (
+                vec![ValType::I64; 1 + usize::from(count)],
+                vec![ValType::I32],
+            ),
             Self::ArrayResize => (vec![ValType::I64, ValType::I32], vec![]),
             Self::ArrayReverse => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayFill => (
@@ -327,15 +346,14 @@ impl Helper {
         frames: Option<super::frames::Resources>,
         linked: Linked,
     ) -> Function {
-        let Linked {
-            ascii,
-            remainder,
-            char_at,
-        } = linked;
+        let Linked { ascii, remainder } = linked;
         // Emission adds the complete allocator dependency set before indexing.
         match self {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
             Self::Concat => concat::function(helpers[&Self::Allocate]),
+            Self::ConcatMany(count) => {
+                concat::many(count, helpers[&Self::Allocate], globals, profile.data())
+            }
             Self::StringGrow => concat::grow(helpers[&Self::Allocate]),
             Self::StringEquals => compare::equals(profile.utf16()),
             Self::Compare => compare::function(profile.utf16(), crate::codegen_v2(profile)),
@@ -398,17 +416,7 @@ impl Helper {
             Self::CodeUnit => text_codes::code_unit(),
             Self::CharCodeAt => text_codes::char_code_at(),
             Self::FloatRemainder => remainder::function(remainder.unwrap_or(0)),
-            Self::CharAt => {
-                let (char_at, result_len) = char_at.unwrap_or_default();
-                text_codes::char_at(
-                    ascii.unwrap_or(0),
-                    text_codes::CharAtFallback {
-                        char_at,
-                        result_len,
-                        snapshot: helpers[&Self::Snapshot],
-                    },
-                )
-            }
+            Self::CharAt => text_codes::char_at(ascii.unwrap_or(0), helpers[&Self::Allocate]),
             Self::FromUnits => {
                 text_codes::from_units(helpers[&Self::Allocate], profile.resizable_arrays())
             }
@@ -441,6 +449,12 @@ impl Helper {
                 profile.sparse_arrays(),
                 profile.data(),
             ),
+            Self::ArrayAppend(count) => array_append::function(
+                count,
+                helpers[&Self::Allocate],
+                profile.sparse_arrays(),
+                profile.data(),
+            ),
             Self::ArrayResize => array_resize::function(helpers[&Self::Allocate], profile.data()),
             Self::ArrayPresent => sparse::function(false, profile.data()),
             Self::ArrayStringHasOwn => {
@@ -463,9 +477,6 @@ impl Helper {
 pub(super) struct Linked {
     pub ascii: Option<u32>,
     pub remainder: Option<u32>,
-    /// V38 `charAt`'s general path: the `string_char_at16` import and the
-    /// result-length global.
-    pub char_at: Option<(u32, u32)>,
 }
 /// The code units a trimming helper removes.
 #[derive(Clone, Copy, PartialEq, Eq)]

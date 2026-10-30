@@ -4,6 +4,8 @@ mod bitwise;
 mod classes;
 mod closures;
 mod collect;
+mod concat_chain;
+mod dense;
 mod errors;
 mod exceptions;
 mod expr;
@@ -555,6 +557,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         base: static_region.heap_base() as u32,
         failure: None,
         collect_at: collect_policy.then_some(globals.len() + 3),
+        classes: collect_policy.then_some(globals.len() + 4),
     };
     if needs_arena {
         for initial in [
@@ -563,9 +566,17 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             varta_common::abi::STRING_ROOT_BASE + reserved_roots,
         ]
         .into_iter()
-        // V38: no growth without a collection until the first one.
+        // V38: no growth without a collection until the first one, then
+        // the empty exact-size free lists.
         .chain(collect_policy.then_some(static_region.heap_base()))
-        {
+        .chain(std::iter::repeat_n(
+            0,
+            if collect_policy {
+                strings::FREE_CLASSES as usize
+            } else {
+                0
+            },
+        )) {
             globals.global(
                 wasm_encoder::GlobalType {
                     val_type: ValType::I32,
@@ -573,6 +584,17 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
                     shared: false,
                 },
                 &wasm_encoder::ConstExpr::i32_const(initial as i32),
+            );
+        }
+        if collect_policy {
+            // The mask of nonempty exact-size free lists.
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I64,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i64_const(0),
             );
         }
     }
@@ -962,22 +984,17 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     }
     for helper in helpers.keys() {
         name(&|| format!("<helper {helper:?}>"));
-        code.function(
-            &helper.body(
-                memory_globals,
-                &helpers,
-                trace_values,
-                program.types.profile,
-                frame_resources,
-                strings::Linked {
-                    ascii: offsets.get(&strings::ascii_units()).copied(),
-                    remainder: hosts.get(&Host::FloatRemainder).copied(),
-                    char_at: hosts
-                        .get(&Host::StringCharAt16)
-                        .map(|host| (*host, result_len)),
-                },
-            ),
-        );
+        code.function(&helper.body(
+            memory_globals,
+            &helpers,
+            trace_values,
+            program.types.profile,
+            frame_resources,
+            strings::Linked {
+                ascii: offsets.get(&strings::ascii_units()).copied(),
+                remainder: hosts.get(&Host::FloatRemainder).copied(),
+            },
+        ));
     }
     for (body, layout) in resume_code.iter().zip(&frame_layouts) {
         let function = &program.functions[layout.function];

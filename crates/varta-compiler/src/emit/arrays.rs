@@ -13,7 +13,10 @@ impl Emitter<'_> {
         for value in elements.iter().flatten() {
             self.expr(value)?;
         }
-        let capacity = if self.profile.resizable_arrays() {
+        let capacity = if self.codegen_v2() && self.profile.resizable_arrays() {
+            // V38: room for the first pushes, as `push` grows a backing.
+            values::array_capacity(elements.len()).max(strings::MIN_APPEND_CAPACITY)
+        } else if self.profile.resizable_arrays() {
             values::array_capacity(elements.len())
         } else {
             elements.len()
@@ -28,7 +31,10 @@ impl Emitter<'_> {
         self.code.push(I::I32Const(size as i32));
         self.string_helper(strings::Helper::Allocate)?;
         self.code.push(I::LocalSet(self.temporary));
-        if self.profile.resizable_arrays() {
+        // V38 (`codegen_v2`): small backings store their absent slots and
+        // presence words directly, since `memory.fill` is charged per byte.
+        let stored = self.codegen_v2() && size <= STORED_BACKING_BYTES;
+        if self.profile.resizable_arrays() && !stored {
             self.code.extend([
                 I::LocalGet(self.temporary),
                 I::I32Const(0),
@@ -60,7 +66,9 @@ impl Emitter<'_> {
                 I::I64Store(slot(index as u32)),
             ]);
         }
-        if self.profile.sparse_arrays() {
+        if self.profile.resizable_arrays() && stored {
+            self.store_backing(elements, capacity, bitmap, size);
+        } else if self.profile.sparse_arrays() {
             for (index, value) in elements.iter().enumerate() {
                 if value.is_some() {
                     let at = wasm_encoder::MemArg {
@@ -102,6 +110,72 @@ impl Emitter<'_> {
             self.pack_value(values::VECTOR_BYTES);
         }
         Ok(())
+    }
+}
+
+/// V38 (`codegen_v2`): the arguments of `xs.push(...)` when the list is
+/// static, has no hole and is short enough to append without an argument
+/// array (`Helper::ArrayAppend`); `None` keeps the argument-array path.
+pub(super) fn appended(
+    profile: varta_common::language::LanguageProfile,
+    items: &Expr,
+) -> Option<Vec<&Expr>> {
+    let E::Array(values) = &items.kind else {
+        return None;
+    };
+    (crate::codegen_v2(profile)
+        && profile.resizable_arrays()
+        && (1..=strings::MAX_APPENDED).contains(&values.len()))
+    .then(|| values.iter().flatten().collect::<Vec<_>>())
+    .filter(|present| present.len() == values.len())
+}
+
+/// V38: the largest literal backing initialized by word stores (a fixed
+/// bitmap and at most 16 slots) instead of `memory.fill`.
+const STORED_BACKING_BYTES: usize =
+    values::ARRAY_META_BYTES + 16 * values::ARRAY_SLOT_BYTES + values::SPARSE_BITMAP_BYTES;
+
+impl Emitter<'_> {
+    /// V38: zero the absent and spare slots of the literal backing in
+    /// `temporary` and store its presence bitmap word by word (the present
+    /// elements' bits, then zero words). Present slots were stored already.
+    fn store_backing(
+        &mut self,
+        elements: &[Option<Expr>],
+        capacity: usize,
+        bitmap: usize,
+        size: usize,
+    ) {
+        const WORD_BITS: usize = u64::BITS as usize;
+        for index in 0..capacity {
+            if elements.get(index).is_none_or(Option::is_none) {
+                self.code.extend([
+                    I::LocalGet(self.temporary),
+                    I::I64Const(0),
+                    I::I64Store(slot(index as u32)),
+                ]);
+            }
+        }
+        if !self.profile.sparse_arrays() {
+            return;
+        }
+        for (word, offset) in (bitmap..size).step_by(size_of::<u64>()).enumerate() {
+            let bits = elements
+                .iter()
+                .enumerate()
+                .skip(word * WORD_BITS)
+                .take(WORD_BITS)
+                .filter(|(_, value)| value.is_some())
+                .fold(0u64, |bits, (index, _)| bits | 1 << (index % WORD_BITS));
+            self.code.extend([
+                I::LocalGet(self.temporary),
+                I::I64Const(bits as i64),
+                I::I64Store(wasm_encoder::MemArg {
+                    offset: offset as u64,
+                    ..strings::ROOT
+                }),
+            ]);
+        }
     }
 }
 

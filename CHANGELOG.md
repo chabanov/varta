@@ -62,6 +62,20 @@ in [conformance/README.md](conformance/README.md).
   Operations cost 1,200–2,500 fuel at 1k–10k entries where the linear layout
   took 54,000–2,100,000; a dictionary holds at most 2^26 entries.
 
+- V38 code generator hotspots: `push` with one to four arguments appends
+  without an argument array, checked element reads load the slot without a
+  union cell, string `+` chains concatenate up to eight operands per
+  allocation, calls of function values with quiet operands take no roots,
+  small literal and grown array backings zero their presence bitmap word by
+  word (Wasmtime charges bulk memory per byte) and literals reserve four
+  slots, and the allocator keeps blocks up to 280 bytes in exact-size free
+  lists. Against the integrated v38 tip: array push + index sum 464,755 →
+  112,049 fuel, list render of 100 rows 292,803 → 160,137, the 100-row keyed
+  diff 1,785,586 → 1,445,572 (73% of it is now the dictionary's linear key
+  search), and a reactive keyed view fits 129 instead of 74 mounted and 51
+  instead of 35 updated rows in one production budget. V37 and earlier keep
+  their bytes.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of
@@ -1064,6 +1078,17 @@ in [conformance/README.md](conformance/README.md).
 
 ### Fixed
 
+- V38 `charAt` and string index reads of a non-ASCII unit copy the unit into a
+  one-unit string in the guest instead of calling the linked
+  `string_char_at16`, which copied the whole string per call (about 670 fuel
+  on a 4-unit string, 23,600 on a 1002-unit one, more than v37's host call).
+  A non-ASCII read now costs about 100 fuel at any length; a Markdown-like
+  block parser of one chat reply fell from 80,042 to 59,276 fuel.
+- `varta dev --profile-fuel` profiles programs with checked JSON, tools or
+  HTTP: the host-free value, tool and HTTP ABI helpers and their call graph
+  stay uninstrumented (validation rejected their probes as host imports), and
+  their fuel counts toward the caller, so the profile still equals the
+  ordinary run's fuel.
 - Dispatch Array.lastIndexOf to reverse search instead of Array.indexOf. Omitted
   positions start at the final element; explicit undefined/NaN select zero,
   positive infinity clamps to the final index and positions below -length miss.

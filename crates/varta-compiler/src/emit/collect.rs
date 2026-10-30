@@ -48,8 +48,7 @@ impl<'a> Collected<'a> {
     /// with its snapshot.
     fn char_at(&mut self, span: swc_common::Span, source: &'a crate::source::Source) {
         self.helpers
-            .extend([strings::Helper::CharAt, strings::Helper::Snapshot]);
-        self.hosts.insert(Host::StringCharAt16);
+            .extend([strings::Helper::CharAt, strings::Helper::Allocate]);
         self.strings
             .entry(strings::ascii_units())
             .or_insert((span, source));
@@ -199,9 +198,18 @@ impl<'a> Collected<'a> {
                 self.expression(index, source);
             }
             E::ArrayPush(base, values) => {
-                self.helpers.insert(strings::Helper::ArrayPush);
                 self.expression(base, source);
-                self.expression(values, source);
+                if let Some(appended) = super::arrays::appended(self.types.profile, values) {
+                    self.arrays = true;
+                    self.helpers
+                        .insert(strings::Helper::ArrayAppend(appended.len() as u8));
+                    for value in appended {
+                        self.expression(value, source);
+                    }
+                } else {
+                    self.helpers.insert(strings::Helper::ArrayPush);
+                    self.expression(values, source);
+                }
             }
             E::ArrayPop(base) => {
                 self.helpers.insert(strings::Helper::Allocate);
@@ -431,6 +439,28 @@ impl<'a> Collected<'a> {
                 }
                 if a.ty == Type::Float64 && *op == BinaryOp::Exp {
                     self.hosts.insert(Host::FloatPower);
+                }
+                if a.ty == Type::String
+                    && *op == BinaryOp::Add
+                    && crate::codegen_v2(self.types.profile)
+                {
+                    // V38: one helper call per chunk of the whole chain.
+                    // A builder append (`s = s + chain`) emits the right
+                    // chain alone.
+                    let appended = super::concat_chain::leaves(b).len();
+                    let leaves = super::concat_chain::leaves(expr);
+                    for count in [leaves.len(), appended] {
+                        for step in super::concat_chain::steps(count)
+                            .into_iter()
+                            .filter(|s| *s > 1)
+                        {
+                            self.helpers.insert(super::concat_chain::helper(step));
+                        }
+                    }
+                    for leaf in leaves {
+                        self.expression(leaf, source);
+                    }
+                    return;
                 }
                 if a.ty == Type::String {
                     self.helpers.insert(if *op == BinaryOp::Add {

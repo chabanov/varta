@@ -9737,24 +9737,79 @@ which the case-corpus parity test checks; only its fuel use is lower.
   (including scope exit and a catch binding) resets both locals, so the bytes in
   `[tail, cap)` belong to no other value. A total above the per-value limit traps
   in the allocator as concatenation does.
-- **Code units and remainders.** Each operation has exactly one v38 path: an
-  inline fast path with the [linked intrinsic](#linked-intrinsics-linked_intrinsics)
-  as its general fallback, and no host import. `charAt`, string index reads
+- **Code units and remainders.** Each operation has exactly one v38 path and
+  no host import: guest code only (`charAt`, string index reads,
+  `charCodeAt`), or an inline fast path with the
+  [linked intrinsic](#linked-intrinsics-linked_intrinsics) as its general
+  fallback (`%`). `charAt`, string index reads
   (`s[i]`) and `charCodeAt` take `ToIntegerOrInfinity` positions in the guest
   (NaN and `-0` select 0; outside the string, `""`, `undefined` and NaN);
   `charCodeAt` reads the unit in place, and `charAt` of an ASCII unit returns a
   static one-unit slice of a 256-byte table in static data while any other unit
-  takes the linked `string_char_at16` and a snapshot of its result. Number `%`
+  (a lone surrogate half included) is copied into a fresh one-unit string, in
+  constant time. (The linked `string_char_at16`, the earlier general path,
+  copied the whole string per call: about 670 fuel on a 4-unit string and
+  23,600 on a 1002-unit one.) Number `%`
   is exact in the guest for integral operands below 2^53 in magnitude with a
   nonzero divisor (a zero result takes the dividend's sign); every other
   operand pair calls the linked `number_remainder`.
-- **Allocator.** The first free-list scan of a request examines at most eight
-  blocks before taking fresh heap space, and the heap grows without a
-  collection while its end stays below twice the heap left by the previous
-  collection. A request that would exceed the memory budget or whose growth the
-  store refuses still collects first and then scans the whole free list, so an
-  allocation fails only when no block fits after a collection, as before. The
-  collector, its exact roots and the heap block layout are unchanged.
+- **Appended `push`.** `xs.push(a, ...)` with one to four arguments and no
+  spread or hole evaluates the receiver and then each argument in source order
+  (rooted as operands, or unrooted when every operand is quiet and write-free)
+  and calls a per-arity append helper (`ArrayAppend(n)`) instead of building an
+  argument array. The helper reads the backing only after every argument has
+  run, so arguments that push to the same array land first. A full backing
+  grows geometrically from at least four slots; the new backing zeroes only its
+  spare slots and presence bitmap (the fixed 128-byte bitmap by word stores)
+  and copies the live slots and the presence bytes of the first `length` bits.
+  The backing layout is unchanged: power-of-two capacity, zero spare slots and
+  no presence bit at or beyond the length. Longer argument lists keep the
+  argument array.
+- **Checked element reads.** The checked read of an array element whose type
+  is not itself a union cell (`xs[i]` with the element type, and `for...of`
+  items; the lowered value block that reads `T | undefined`, throws the
+  missing-element `TypeError` and unboxes) applies the same index and presence
+  tests and then loads and unpacks the slot, allocating no union cell. The
+  missing path builds the same error and throws; since it never falls through,
+  the read is quiet when its receiver and index are.
+- **Function-value calls.** A call through a function value whose callee
+  expression is quiet and write-free, whose arguments are quiet and whose
+  possible targets are not suspendable takes no expression mark and no operand
+  roots, like a direct call. The checked dispatch (function-cell guard,
+  signature and code index) and the target's entry checks of its environment
+  and captured cells are unchanged.
+- **Concatenation chains.** A chain of string `+` (`a + b + c ...`) evaluates
+  its operands in source order and concatenates up to eight of them per
+  allocation (`ConcatMany(n)`), rooting an intermediate result before later
+  operands run. With at most one nonempty operand the helper returns that
+  operand (or the last) without allocating; an overflowing length traps and a
+  running total above the allocation limit fails with that total, exactly
+  where the nested chain's allocation would.
+- **Literal backings.** A resizable array literal reserves at least four
+  slots, and a backing of at most sixteen slots stores its absent and spare
+  slots and its presence words (present bits included) directly instead of a
+  `memory.fill`, which Wasmtime charges per byte.
+- **Allocator.** Blocks of at most 280 bytes (header included) are kept in
+  34 exact-size free lists, one per size in steps of the heap alignment, headed
+  by module globals with an i64 mask of the nonempty lists after them. A
+  request first pops its own list, then bumps the heap end while it stays
+  within the committed memory (which never collects), then takes the smallest
+  nonempty larger list through the mask, splitting off a remainder of at least
+  one header and alignment unit into its own list; each of these steps takes
+  constant time. Only then does the request scan the address-ordered list of
+  larger free blocks, at most eight blocks before growing the heap, and the
+  heap grows without a collection while its end stays below twice the heap
+  left by the previous collection. A request that would exceed the memory
+  budget or whose growth the store refuses still collects first, retries every
+  list, and then scans the whole free list, so an allocation fails only when
+  no block of any list fits after a collection, as before, with the same typed
+  resource failure. The sweep coalesces each run of dead blocks as before and
+  pushes a finished run onto its exact list or, above 280 bytes, appends it to
+  the address-ordered list; a trailing run returns to the heap end. Free
+  blocks keep the ordinary header (size, zero flags, link), the lists and the
+  mask live in globals outside every static, host and root region, and the
+  collector, its exact roots, the worklist mark and the heap block layout are
+  unchanged.
 
 #### Fuel profile builds (`varta dev --profile-fuel`)
 
@@ -9771,7 +9826,15 @@ calls `enter(id)` first and `exit(id)` before every `return` and its final
 bodies, the frame dispatcher and generator steps. The frame dispatcher
 (`varta_resume`) is named but not instrumented: frame admission requires that
 it calls only defined functions, and its fuel counts as outside guest
-functions.
+functions. The host-free ABI exports (`varta_common::HOST_FREE_EXPORTS`: the
+value, tool and HTTP copy and retain helpers) and every function they reach
+through direct calls (in practice the allocator, the collector and the root
+push of a module with checked JSON, tools or HTTP) are named but not
+instrumented either, since validation rejects any host import, probes
+included, in that call graph; their fuel counts toward the innermost open
+activation (the caller of the allocator or of the host operation that called
+the export), so the profile still sums to the consumed fuel. Validation of
+profile builds is otherwise the ordinary validation.
 
 Only a run with `RunOptions::fuel_profile` (`VartaRuntime::run_with`,
 `run_application`, and the `run_fuel_profile` shorthand) links the probes; it

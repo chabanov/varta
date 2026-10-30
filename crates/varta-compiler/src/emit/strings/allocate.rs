@@ -11,6 +11,16 @@
 //! scan instead of collecting for every request the bounded scan misses.
 //! V38 (`data_limits`) grows memory geometrically and reports an exhausted
 //! resource before trapping.
+//!
+//! V38 (`codegen_v2`) also keeps small blocks in exact-size free lists
+//! ([`free_classes`], filled by the sweep): a
+//! request first pops its own class, then takes fresh heap space within the
+//! committed memory, both in constant time.
+//! Only then does it scan the address-ordered list of larger free blocks as
+//! before. Every unbounded retry (before a collection and after it) also
+//! takes the first block of a larger class, splitting off a remainder of at
+//! least one header and alignment unit, so a request still fails only when no
+//! free block of any list fits after a collection.
 use super::*;
 
 // Locals of the allocator (parameter 0 is the requested byte count).
@@ -33,6 +43,12 @@ const RETRY_FROM_IF: u32 = 1;
 /// V38: free blocks examined before fresh heap space is used, unless the
 /// request already collected.
 const SCAN_LIMIT: i32 = 8;
+/// V38 (`codegen_v2`): the class of the request or remainder, the next block
+/// of a popped list, and the i64 mask of nonempty classes above the request's
+/// (`free_classes`).
+const CLASS: u32 = 11;
+const NEXT: u32 = 12;
+const CLASS_MASK: u32 = 13;
 
 pub(super) fn function(
     globals: Globals,
@@ -41,7 +57,12 @@ pub(super) fn function(
 ) -> Function {
     use varta_common::limits::Resource;
     let bounded = globals.collect_at.is_some();
-    let mut function = Function::new([(if bounded { FULL } else { RETRIED }, ValType::I32)]);
+    let locals = if bounded { FULL } else { RETRIED };
+    let mut groups = vec![(locals, ValType::I32)];
+    if globals.classes.is_some() {
+        groups = vec![(NEXT, ValType::I32), (1, ValType::I64)];
+    }
+    let mut function = Function::new(groups);
     let mut code = vec![
         I::LocalGet(LEN),
         I::I32Const(limits.allocation_bytes as i32),
@@ -58,6 +79,24 @@ pub(super) fn function(
         I::I32And,
         I::LocalSet(NEED),
         I::Loop(BlockType::Empty),
+    ]);
+    if let Some(classes) = globals.classes {
+        code.extend(free_classes::allocate(
+            globals.heap,
+            free_classes::Lists::new(classes),
+            free_classes::AllocateLocals {
+                need: NEED,
+                current: CURRENT,
+                end: END,
+                rest: REST,
+                replacement: REPLACEMENT,
+                class: CLASS,
+                next: NEXT,
+                mask: CLASS_MASK,
+            },
+        ));
+    }
+    code.extend([
         I::GlobalGet(globals.free),
         I::LocalSet(CURRENT),
         I::I32Const(0),

@@ -94,6 +94,20 @@ pub enum VartaError {
 #[cfg(feature = "std")]
 pub type Result<T> = std::result::Result<T, VartaError>;
 
+/// Guest exports the host calls to copy or retain values in guest memory
+/// (tool, value and HTTP string ABIs). Runtime validation rejects a module in
+/// which any function they reach through direct calls calls a host import;
+/// fuel profile builds leave that call graph uninstrumented.
+#[cfg(feature = "std")]
+pub const HOST_FREE_EXPORTS: [&str; 6] = [
+    TOOL_COPY_STRING,
+    TOOL_RETAIN_STRING,
+    value::VALUE_ALLOCATE,
+    value::VALUE_RETAIN,
+    http::COPY,
+    http::RETAIN,
+];
+
 /// Host declarations for editors; semantic checking is implemented by the compiler.
 #[cfg(feature = "std")]
 pub const HOST_DECLARATIONS: &str = include_str!("varta.d.ts");

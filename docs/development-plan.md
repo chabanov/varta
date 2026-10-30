@@ -840,7 +840,7 @@ union of record shapes without a literal discriminant (4).
 | (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Implemented in part (branch `v38-intrinsics-region`): one memory with the relocated intrinsic region (`varta.intrinsics`: stack, packed data, reserved arena), the `no_std` core (`abi`, `memory`, `value` cells and error classes, `bigint` transport, `limits`, `text`) as the one owner of the cell layout, `varta-bigint` without `std`, and the 13 BigInt operations linked; the value conversions and comparisons run the same shared code as host imports. Linked code reads strings within the v38 data limit; results above the 1 MiB result buffer still trap. Open: a cheap number/string conversion path, JSON and the value18 readers ([next increment](#linked-intrinsics-measurement-v38)), owned string results |
 | (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Implemented on `v38-dictionary-hashing` (selector `dictionary_hashing()`, [contract](architecture.md#dictionary-hashing-dictionary_hashing)): value ABI/layout 18 for v38 with a four-slot dictionary storage record (`holes`, `keys`, `table`, `values`), an open-addressing `number[]` table probed from a seedless FNV-1a hash of the UTF-16 key units by allocation-free guest helpers, tombstones and holes for deletions, compaction before enumeration and amortized rebuilds at half load; twelve value18 readers (host ABI 34), JSON schema 18 and exception channel v9; every table validated against its entries at every reader. Measured below ([dictionary hashing measurement](#dictionary-hashing-measurement-v38)). Pending: array-index keys inserted below an existing key stay linear (an ordered rotation), and allocation-heavy loops at 20k+ entries are bound by the first-fit allocator (stream d) |
 | (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Open; first pilot blockers |
-| (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Open |
+| (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Implemented on `v38-codegen-hotspots` ([contract](architecture.md#code-generation-v2-codegen_v2), [measurements](#code-generation-v2-measurements)): appended `push`, checked element reads without union cells, word-stored literal and grown backings, concatenation chains, quiet function-value calls, exact-size free lists. `charAt` of non-ASCII units in constant time; `--profile-fuel` of programs with checked JSON fixed. Pending: the 100-row keyed diff under 1M fuel needs (b); closure entry checks stay as decided; incremental collection deferred (open) |
 
 **Wave 3 (recorded, owner decisions of the wave-2 linked-intrinsics review).**
 
@@ -852,38 +852,82 @@ union of record shapes without a literal discriminant (4).
 
 #### Code generation v2 measurements
 
-Fuel of the measured web workloads under the production budget model
-(`codegen_v2_fuel_ceilings_hold`, `--nocapture`): totals at the checked size,
-the v37/v38 ratio, the marginal fuel per iteration between half and full size,
-and the largest size one production budget (1,000,000 fuel) runs. The v38
-column of the size limit was found by bisection over the same sources. V37
-spends one host call per `charAt`/`charCodeAt`/`%`, so its scans also stop at
-the 1024 host calls of an execution.
+Fuel of the measured web workloads (`codegen_v2_fuel_ceilings_hold`,
+`--nocapture`): totals at the checked size under test-only budgets of 40
+production fuel budgets and unbounded host calls, the v37/v38 ratio, the
+marginal fuel per iteration between half and full size, and the largest size
+one production budget (1,000,000 fuel, 1024 host calls) runs, found by
+bisection (`codegen_v2_largest_sizes`, ignored by default). "v38 before" is the
+integrated v38 tip (cb6795d) before the wave-2 hotspot stream; "v38" is after
+it. The keyed view is a generic fine-grained reactive keyed list modelled on a
+UI library's signal/effect/mapKeyed layer
+(`codegen_v2_fixtures/keyed_view.ts`): mount mounts the rows, update mounts
+them, reverses their order and changes every row's text.
 
-| Workload | Size | v37 fuel | v38 fuel | Ratio | v37 / iteration | v38 / iteration | Max size v37 → v38 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `x = x + i` loop | 10,000 | 950,477 | 140,453 | 6.77× | 95.0 | 14.0 | 10,496 → 71,168 |
-| 3-char string `===` | 4,000 | 1,129,277 | 321,117 | 3.52× | 278.0 | 76.0 | 3,520 → 12,928 |
-| string `===` literal | 4,000 | 1,517,333 | 149,095 | 10.18× | 375.0 | 33.0 | 2,608 → 29,696 |
-| `s = s + "x"` | 800 | 999,604 | 66,679 | 14.99× | 1,638.7 | 61.5 | 800 → 16,128 |
-| dictionary 50 inserts + 50 reads | 50 | 628,459 | 456,275 | 1.38× | 15,712.7 | 11,303.4 | 67 → 81 |
-| record field reads | 1,000 | 180,012 | 38,966 | 4.62× | 163.0 | 22.0 | 6,016 → 44,544 |
-| direct function calls | 1,000 | 129,469 | 27,445 | 4.72× | 129.0 | 27.0 | 7,744 → 36,864 |
-| closure calls | 1,000 | 426,855 | 330,829 | 1.29× | 426.0 | 330.0 | 2,336 → 3,024 |
-| array `push` + index sum | 500 | 649,595 | 542,676 | 1.20× | 1,413.9 | 1,211.1 | 736 → 776 |
-| Markdown-like scan (lines) | 10 | 335,140 | 82,362 | 4.07× | 31,852.6 | 6,450.6 | 27 → 141 |
-| `JSON.parse` of ~2 KB (records) | 40 | 327,996 | 118,086 | 2.78× | 10,034.5 | 2,498.0 | 80 → 340 |
-| list render (rows) | 100 | 2,928,606 | 508,776 | 5.76× | 50,624.7 | 6,953.1 | 74 → 204 |
-| keyed-list diff (rows) | 100 | 4,969,154 | 2,170,657 | 2.29× | 73,483.8 | 26,044.2 | 45 → 56 |
+| Workload | Size | v37 fuel | v38 before | v38 fuel | Ratio v37/v38 | v37 / iteration | v38 / iteration | Max size v37 → before → v38 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `x = x + i` loop | 10,000 | 950,477 | 140,552 | 140,669 | 6.76× | 95.0 | 14.0 | 10,521 → 71,391 → 71,382 |
+| 3-char string `===` | 4,000 | 1,129,277 | 304,913 | 305,002 | 3.70× | 278.0 | 76.0 | 3,535 → 13,146 → 13,145 |
+| string `===` literal | 4,000 | 1,517,333 | 132,875 | 132,964 | 11.41× | 375.0 | 33.0 | 2,620 → 30,277 → 30,274 |
+| `s = s + "x"` | 800 | 999,604 | 50,471 | 50,392 | 19.84× | 1,638.7 | 61.4 | 800 → 16,501 → 16,504 |
+| dictionary 50 inserts + 50 reads | 50 | 628,459 | 446,490 | 374,901 | 1.68× | 15,712.7 | 10,071.3 | 67 → 81 → 87 |
+| record field reads | 1,000 | 180,012 | 22,698 | 22,787 | 7.90× | 163.0 | 22.0 | 6,030 → 45,424 → 45,420 |
+| direct function calls | 1,000 | 129,469 | 27,544 | 27,661 | 4.68× | 129.0 | 27.0 | 7,748 → 37,017 → 37,013 |
+| closure calls | 1,000 | 426,855 | 330,982 | 305,015 | 1.40× | 426.0 | 304.0 | 2,345 → 3,027 → 3,286 |
+| array `push` + index sum | 500 | 649,595 | 464,755 | 112,049 | 5.80× | 1,413.9 | 220.3 | 738 → 1,045 → 4,096 |
+| Markdown-like scan (lines) | 10 | 335,140 | 68,458 | 66,002 | 5.08× | 31,852.6 | 6,410.0 | 27 → 145 → 150 |
+| `JSON.parse` of ~2 KB (records) | 40 | 327,996 | 98,913 | 64,371 | 5.10× | 10,034.5 | 1,549.6 | 80 → 415 → 510 |
+| list render (rows) | 100 | 2,928,606 | 292,803 | 160,137 | 18.29× | 50,624.7 | 1,582.6 | 74 → 341 → 511 |
+| keyed-list diff (rows) | 100 | 4,969,154 | 1,785,586 | 1,445,572 | 3.44× | 73,483.8 | 19,708.1 | 45 → 68 → 80 |
+| keyed-list diff (rows) | 500 | > 40,000,000 | 30,048,681 | 27,131,549 | — | — | 80,568.3 | as above |
+| Markdown blocks (chat replies) | 1 | 218,887 | 104,367 | 59,276 | 3.69× | 195,850.0 | 54,727.0 | 3 → — → 18 |
+| keyed view mount (rows) | 10 | 179,358 | 146,005 | 82,809 | 2.17× | 15,170.0 | 7,760.4 | 19 → 74 → 129 |
+| keyed view update (rows) | 10 | 891,462 | 278,593 | 159,116 | 5.60× | 141,673.8 | 15,774.6 | 11 → 35 → 51 |
 
-The profiler attributes what remains: dictionary reads and writes are linear
-searches (the data-limits stream replaces their storage), `push` allocates an
-argument array per call, an index read of `number[]` allocates a union cell
-for `number | undefined`, closure calls revalidate the function value at the
-call site and in the callee, and allocation-heavy workloads spend most fuel in
-the first-fit allocator and the fixpoint mark phase of the collector. These are
-the next codegen and runtime candidates; none needs a layout change except the
-union cell.
+The hotspot stream removed the costs the profiler attributed at the
+integrated tip: `push` with a static argument list appends through a
+per-arity helper without an argument array (array push + sum 4.1× cheaper);
+checked element reads load the slot without a union cell; small literal and
+grown backings zero their 128-byte presence bitmap word by word, since
+Wasmtime charges `memory.fill` and `memory.copy` one fuel per byte, and
+literals reserve four slots; string `+` chains concatenate up to eight
+operands per allocation; calls of function values with quiet operands take no
+roots; and small blocks come from exact-size free lists (about 42 instead of
+70 fuel per allocation in the list workloads, constant time after
+collections). List render now stops at the 1024 host calls of a turn
+(`String(i)` twice per row), not at fuel. `charAt` and `s[i]` of a non-ASCII
+unit copy the unit in the guest: the linked `string_char_at16` they called
+before copied the whole string per call (about 670 fuel on a 4-unit string,
+23,600 on a 1002-unit one, more than v37's host call), so a Markdown-like
+block parser (`codegen_v2_fixtures/markdown.ts`: heading, list, fence, table
+and paragraph with a few non-ASCII characters) spent 30,376 fuel in 215
+`CharAt` calls (141 each) and now 9,876 (46 each, about 100 for a non-ASCII
+unit). The per-call copy-in of whole strings is a cost of the linked
+library's private memory, for wave-2 stream (a). Fuel profiles of programs
+with checked JSON, tools or HTTP work again: the host-free ABI helpers stay
+uninstrumented and their fuel counts toward the caller.
+
+What remains: the 100-row keyed diff spends 1,052,379 of its 1,445,572 fuel
+(73%) in the dictionary's linear key search (`ArraySearch` and `StringEquals`,
+10,200 comparisons), which wave-2 stream (b) replaces with hashing; the rest
+of the workload is about 0.39M fuel, so the 1M target needs that stream. A
+closure call still validates the function cell at the call site and its
+environment and each captured binding cell at entry (about 70 fuel per object,
+the v12 entry-check contract and its malformed-environment tests). Decision
+(2026-10-30): the full v12 entry checks stay, so a binding cell corrupted after
+creation is still detected; closure calls are not made cheaper by trusting
+guest-built environments.
+
+**Open: incremental or generational collection (deferred, 2026-10-30).** A
+v38 collection marks the live heap once through the worklist and then sweeps
+the whole heap: about 300k fuel per collection at 6000 live and 9000 dead
+blocks (a 3000-node linked list built while dropping small arrays; two
+collections took 619k fuel), so one turn with a large live heap can still
+exhaust its fuel in a single collection. Bounding that per turn needs an
+incremental (or generational, remembered-set) collector, which needs a write
+barrier on every reference store (record and class fields, array elements,
+binding cells, environments, frames, promise and timer state) with exact
+rooting kept provable. Not scheduled.
 
 #### Dictionary hashing measurement (v38)
 

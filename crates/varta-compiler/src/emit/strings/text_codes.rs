@@ -255,22 +255,12 @@ pub(super) fn char_code_at() -> Function {
     f
 }
 
-/// The general path of v38 `charAt`: the `string_char_at16` import (linked
-/// into the module from the intrinsic library, `linked_intrinsics`), the
-/// result-length global it sets and the snapshot helper that owns its result.
-#[derive(Clone, Copy)]
-pub(super) struct CharAtFallback {
-    pub char_at: u32,
-    pub result_len: u32,
-    pub snapshot: u32,
-}
-
 /// V38 `(input: string, index: f64) -> string`: `charAt` and string index
-/// reads. The fast path serves an ASCII unit as a static slice of the `ascii`
-/// table; any other unit takes the general path, the linked
-/// `string_char_at16` intrinsic, whose result is snapshotted. The input stays
-/// rooted by its caller.
-pub(super) fn char_at(ascii: u32, fallback: CharAtFallback) -> Function {
+/// reads, without a host or linked call. An ASCII unit is a static one-unit
+/// slice of the `ascii` table; any other unit (including a lone surrogate) is
+/// copied into a fresh one-unit string from the allocator. The input is not
+/// read after the allocation.
+pub(super) fn char_at(ascii: u32, allocate: u32) -> Function {
     const INPUT: u32 = 0;
     const INDEX: u32 = 1;
     const BYTES: u32 = 2;
@@ -298,13 +288,15 @@ pub(super) fn char_at(ascii: u32, fallback: CharAtFallback) -> Function {
             I::I64Or,
             I::Return,
             I::End,
-            I::LocalGet(INPUT),
-            I::I32WrapI64,
-            I::LocalGet(BYTES),
-            I::LocalGet(INDEX),
-            I::Call(fallback.char_at),
-            I::GlobalGet(fallback.result_len),
-            I::Call(fallback.snapshot),
+            I::I32Const(UNIT_BYTES),
+            I::Call(allocate),
+            I::LocalTee(AT),
+            I::LocalGet(UNIT),
+            I::I32Store16(UNIT_MEMORY),
+            I::LocalGet(AT),
+            I::I64ExtendI32U,
+            I::I64Const(one_unit),
+            I::I64Or,
             I::End,
         ],
     );

@@ -309,14 +309,7 @@ fn check_effects(
     }
     // Input transfer executes before a handler. It must not hide host effects
     // outside the handler's declared call graph (including unprivileged logging).
-    for name in [
-        varta_common::TOOL_COPY_STRING,
-        varta_common::TOOL_RETAIN_STRING,
-        varta_common::value::VALUE_ALLOCATE,
-        varta_common::value::VALUE_RETAIN,
-        varta_common::http::COPY,
-        varta_common::http::RETAIN,
-    ] {
+    for name in varta_common::HOST_FREE_EXPORTS {
         if let Some(index) = exports.get(name) {
             let imported = module.imports().len();
             if reachable(*index, &calls)?

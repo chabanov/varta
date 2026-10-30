@@ -16012,7 +16012,7 @@ fn application_mode_renews_the_deadline_for_every_turn() {
 #[test]
 fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     let project = RegressionProject::new(
-        "function square(n:number):number{return n*n;}\nexport function main():void{let t=0;for(let i=0;i<40;i++){t=t+square(i);}let s=\"\";for(let i=0;i<20;i++){s+=\"ab\";}console.log(String(t)+\" \"+String(s.length));}",
+        "function square(n:number):number{return n*n;}\nexport function main():void{let t=0;for(let i=0;i<40;i++){t=t+square(i);}let s=\"\";for(let i=0;i<20;i++){s+=\"ab\";}const xs:number[]=[];for(let i=0;i<5;i++){xs.push(i);}console.log(String(t)+\" \"+String(s.length)+\" \"+String(xs.length));}",
         serde_json::json!({}),
     );
     project.language_profile("checked-f64-utf16-v38");
@@ -16022,7 +16022,7 @@ fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     assert!(profiled.status.success(), "{}", combined(&profiled));
     // The profile run prints exactly the ordinary output on stdout.
     assert_eq!(profiled.stdout, plain.stdout);
-    assert!(String::from_utf8_lossy(&plain.stdout).contains("varta log: 20540 40"));
+    assert!(String::from_utf8_lossy(&plain.stdout).contains("varta log: 20540 40 5"));
     let report = String::from_utf8_lossy(&profiled.stderr);
     assert!(report.contains("varta fuel profile: "), "{report}");
     assert!(report.contains("of 1000000 fuel"), "{report}");
@@ -16040,6 +16040,8 @@ fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     assert_eq!(square[2], 40, "{report}");
     assert_eq!(row("function main():void")[2], 1, "{report}");
     assert!(row("<helper StringGrow>")[2] >= 1, "{report}");
+    // V38 appends without an argument array (`codegen_v2` hotspots).
+    assert_eq!(row("<helper ArrayAppend(1)>")[2], 5, "{report}");
     // JSON: consumed = attributed + outside.
     let json = project.command(&["dev", "--profile-fuel", "--json"]);
     assert!(json.status.success(), "{}", combined(&json));
@@ -16099,6 +16101,56 @@ fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     assert!(!usage.status.success(), "{}", combined(&usage));
     let help = varta().args(["dev", "--help"]).output().unwrap();
     assert!(String::from_utf8_lossy(&help.stdout).contains("--profile-fuel"));
+}
+
+/// `varta dev --profile-fuel` of a program with checked JSON: the host-free
+/// value ABI helpers stay uninstrumented, so the profile build passes
+/// validation, prints the ordinary output and accounts for exactly the fuel
+/// of the ordinary run.
+#[test]
+fn dev_profile_fuel_profiles_json_programs_with_the_ordinary_fuel() {
+    let project = RegressionProject::new(
+        "interface Item{id:number;tags:string[]}\nfunction total(items:Item[]):number{let t=0;for(const item of items){t=t+item.id+item.tags.length;}return t;}\nexport function main():void{const items=JSON.parse('[{\"id\":1,\"tags\":[\"a\"]},{\"id\":2,\"tags\":[]}]') as Item[];console.log(String(total(items))+\" \"+JSON.stringify(items[0]));console.log(JSON.stringify(\"x\"));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v38");
+    let plain = project.command(&["dev", "--budget-report"]);
+    assert!(plain.status.success(), "{}", combined(&plain));
+    let profiled = project.command(&["dev", "--profile-fuel", "--json"]);
+    assert!(profiled.status.success(), "{}", combined(&profiled));
+    assert_eq!(profiled.stdout, plain.stdout);
+    assert!(
+        String::from_utf8_lossy(&plain.stdout)
+            .contains("varta log: 4 {\"id\":1,\"tags\":[\"a\"]}\nvarta log: \"x\""),
+        "{}",
+        combined(&plain)
+    );
+    let profile: serde_json::Value = serde_json::from_slice(&profiled.stderr).unwrap();
+    let consumed = profile["consumed"].as_u64().unwrap();
+    let report = String::from_utf8_lossy(&plain.stderr);
+    let total = report
+        .lines()
+        .find(|line| line.starts_with("varta budget: total: "))
+        .unwrap_or_else(|| panic!("{report}"));
+    assert!(
+        total.contains(&format!("fuel {consumed},")),
+        "{total} vs {consumed}"
+    );
+    let attributed: u64 = profile["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["selfFuel"].as_u64().unwrap())
+        .sum();
+    assert_eq!(attributed + profile["outside"].as_u64().unwrap(), consumed);
+    assert!(
+        profile["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["name"].as_str().unwrap().contains("function total")),
+        "{profile}"
+    );
 }
 
 /// V38 structural subtyping through `varta dev`, both artifacts, both
