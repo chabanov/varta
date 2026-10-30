@@ -633,14 +633,16 @@ impl LanguageProfile {
     pub fn linked_intrinsics(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
-    /// Batch v38, view-protocol stream: the L0 `view_commit` protocol, event
-    /// delivery and a headless renderer. Admits nothing yet.
+    /// Batch v38, view-protocol stream: the L0 `view_commit` import (host ABI
+    /// 34), the synthesized `varta.view_abi.event` export, the engine view
+    /// prelude (`View.*`, `ViewEvent`) and the `ui.open_url`/`clipboard.write`
+    /// capabilities, applied by the headless renderer (`varta-view`).
     #[must_use]
     pub fn view_protocol(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
-    /// Batch v38, TSX stream: TSX parsing and template compilation. Admits
-    /// nothing yet.
+    /// Batch v38, TSX stream: `.tsx` modules parse JSX, and templates compile
+    /// ahead of time into static L0 operations with getter holes.
     #[must_use]
     pub fn tsx(self) -> bool {
         self == Self::CheckedF64Utf16V38

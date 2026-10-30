@@ -102,6 +102,9 @@ pub(super) enum Helper {
     CodeUnit,
     /// V37 preludes: a fresh string of an array's code units.
     FromUnits,
+    /// V38 view prelude: a fresh string of this many code units, passed as
+    /// numbers.
+    Units(u8),
     /// V35 Web preludes: copy without leading/trailing HTTP whitespace.
     TrimHttpWhitespace,
     /// V37 RegExp prelude: one matcher run over a compiled program.
@@ -159,6 +162,7 @@ impl Helper {
             Self::ArrayIndexKey | Self::UnitIndex(_) => (vec![ValType::I64], vec![ValType::F64]),
             Self::CodeUnit => (vec![ValType::I64, ValType::F64], vec![ValType::F64]),
             Self::FromUnits => (vec![ValType::I64], vec![ValType::I64]),
+            Self::Units(count) => (vec![ValType::F64; usize::from(count)], vec![ValType::I64]),
             Self::Collect => (vec![], vec![]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArraySearch | Self::ArrayLastIndex => (
@@ -280,6 +284,7 @@ impl Helper {
             Self::FromUnits => {
                 text_codes::from_units(helpers[&Self::Allocate], profile.resizable_arrays())
             }
+            Self::Units(count) => text_codes::units(helpers[&Self::Allocate], u32::from(count)),
             Self::RegExpExec => regexp::exec(helpers[&Self::Allocate]),
             Self::RegExpSlot => regexp::slot(),
             Self::RegExpUnit => regexp::unit(),

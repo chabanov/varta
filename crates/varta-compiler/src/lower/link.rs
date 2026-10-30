@@ -212,11 +212,13 @@ pub(crate) fn lower(
             entry.ast.span(),
         ));
     }
+    let view_event = view::event_function(&types);
     let mut program = ir::Program {
         functions,
         main,
         tools,
         http,
+        view_event,
         types,
         constants: constants.stored,
         initializers: constants.initializers,

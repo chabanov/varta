@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 varta-bigint = { path = "../varta-bigint" }
 varta-common = { path = "../varta-common" }
+varta-view = { path = "../varta-view" }
 thiserror.workspace = true
 wasmtime.workspace = true
 wasmparser.workspace = true

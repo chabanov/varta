@@ -43,6 +43,7 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     let mut stack = vec![program.main];
     stack.extend(program.tools.iter().map(|(index, _)| *index));
     stack.extend(program.http.iter().map(|(index, _)| *index));
+    stack.extend(program.view_event);
     stack.extend(program.initializers.iter().copied());
     stack.extend(program.suspendable.keys().copied());
     let mut live = vec![false; count];
@@ -116,6 +117,9 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
         *index = remap(*index)?;
     }
     if let Some((index, _)) = &mut program.http {
+        *index = remap(*index)?;
+    }
+    if let Some(index) = &mut program.view_event {
         *index = remap(*index)?;
     }
     for index in &mut program.initializers {

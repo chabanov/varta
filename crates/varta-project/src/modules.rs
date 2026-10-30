@@ -17,6 +17,8 @@ pub(crate) struct SourceLoader {
     directory: Dir,
     /// TypeScript's ESM convention: `./x.js` names the `./x.ts` source (v31+).
     js_specifiers: bool,
+    /// V38 (`tsx()`): `./x.tsx` names a TSX module.
+    tsx_specifiers: bool,
 }
 impl SourceLoader {
     pub(crate) fn new(
@@ -29,6 +31,7 @@ impl SourceLoader {
             root,
             directory,
             js_specifiers: profile.named_types(),
+            tsx_specifiers: profile.tsx(),
         })
     }
     pub(crate) fn entry(&self, path: &Path) -> Result<ModuleSource> {
@@ -103,10 +106,14 @@ impl ModuleLoader for SourceLoader {
             || !(specifier.starts_with("./") || specifier.starts_with("../"))
             || specifier.chars().any(|c| c.is_control())
             || specifier.contains(['\\', '?', '#'])
-            || !(specifier.ends_with(".ts") || self.js_specifiers && specifier.ends_with(".js"))
+            || !(specifier.ends_with(".ts")
+                || self.js_specifiers && specifier.ends_with(".js")
+                || self.tsx_specifiers && specifier.ends_with(".tsx"))
         {
             return Err(CompilerError::Module(
-                if self.js_specifiers {
+                if self.tsx_specifiers {
+                    "imports require explicit relative .ts, .tsx or .js paths without URL/query syntax"
+                } else if self.js_specifiers {
                     "imports require explicit relative .ts or .js paths without URL/query syntax"
                 } else {
                     "imports require explicit relative .ts paths without URL/query syntax"

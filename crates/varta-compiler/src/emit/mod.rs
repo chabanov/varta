@@ -240,7 +240,8 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         || collected.unions
         || program.types.profile.exceptions();
     let tool_strings = program.tools.iter().any(|(_, tool)| tool.uses_strings());
-    if tool_strings || program.http.is_some() {
+    // The v38 view event export copies its record with the snapshot helper.
+    if tool_strings || program.http.is_some() || program.view_event.is_some() {
         helpers.insert(strings::Helper::Snapshot);
     }
     if program.types.profile.sparse_arrays() {
@@ -371,6 +372,16 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         .iter()
         .map(|helper| (*helper, intern(helper.signature())))
         .collect();
+    let view_type = program.view_event.map(|_| {
+        intern((
+            varta_common::view::EVENT_EXPORT_PARAMS
+                .iter()
+                .copied()
+                .map(host_type)
+                .collect(),
+            vec![],
+        ))
+    });
     if types.len() as usize > varta_common::abi::MAX_WASM_SIGNATURES {
         return Err(CompilerError::Invalid(
             "Wasm signature complexity exceeds limits".into(),
@@ -405,6 +416,10 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         for _ in 0..generator_types {
             functions.function(dispatcher);
         }
+    }
+    // The v38 view event export follows every other function.
+    if let Some(ty) = view_type {
+        functions.function(ty);
     }
     module.section(&functions);
     let mut memory = wasm_encoder::MemorySection::new();
@@ -536,7 +551,15 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     let generator_steps: Vec<u32> = (0..generator_types as u32)
         .map(|id| steps_begin + id)
         .collect();
+    let view_export = steps_begin + generator_types as u32;
     let mut exports = wasm_encoder::ExportSection::new();
+    if program.view_event.is_some() {
+        exports.export(
+            varta_common::view::EVENT_EXPORT,
+            wasm_encoder::ExportKind::Func,
+            view_export,
+        );
+    }
     if !frame_layouts.is_empty() {
         exports.export(
             varta_common::function::frame::RESUME_EXPORT,
@@ -810,6 +833,12 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             "generators without an exception channel".into(),
         ));
     }
+    if let Some(dispatch) = program.view_event {
+        code.function(&view_event_body(
+            helpers[&strings::Helper::Snapshot],
+            functions_begin + dispatch as u32,
+        ));
+    }
     module.section(&code);
     let mut data = wasm_encoder::DataSection::new();
     for (string, offset) in offsets {
@@ -944,6 +973,24 @@ fn wasm_types(ty: Type) -> Vec<ValType> {
             _ => vec![ValType::I32],
         }
     }
+}
+
+/// The v38 view event export `(len: i32) -> ()`: copy the record the host
+/// wrote at the result buffer into an owned string before any other host
+/// operation, then hand it to the view prelude's dispatcher. A pending
+/// exception stays in the exception channel for the host to finish.
+fn view_event_body(snapshot: u32, dispatch: u32) -> wasm_encoder::Function {
+    let mut body = wasm_encoder::Function::new([]);
+    for instruction in [
+        I::I32Const(varta_common::abi::RESULT_BASE as i32),
+        I::LocalGet(0),
+        I::Call(snapshot),
+        I::Call(dispatch),
+        I::End,
+    ] {
+        body.instruction(&instruction);
+    }
+    body
 }
 
 fn host_type(ty: varta_common::HostScalar) -> ValType {

@@ -435,6 +435,7 @@ mod undefined;
 mod unions;
 mod unknown;
 mod updates;
+mod view;
 mod void_functions;
 mod web_text;
 

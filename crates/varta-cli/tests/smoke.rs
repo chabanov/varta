@@ -15378,3 +15378,178 @@ fn pilot_profile_v37_collections_run_everywhere_and_the_clock_needs_time_now() {
         combined(&dev)
     );
 }
+
+/// The v38 view example: a TSX counter, a message box with an Enter key
+/// filter and a copy button (`varta-runtime/src/view_cases`).
+const VIEW_APP: &str = include_str!("../../varta-runtime/src/view_cases/app.tsx");
+const VIEW_SIGNALS: &str = include_str!("../../varta-runtime/src/view_cases/signals.ts");
+const VIEW_SCRIPT: &str = r##"{"viewport":{"width":375},"inputs":[
+  {"input":"click","target":"#inc"},
+  {"input":"click","target":"#inc"},
+  {"input":"type","target":"#box","text":"hello"},
+  {"input":"key","target":"#box","key":"Enter"},
+  {"input":"type","target":"#box","text":"two"},
+  {"input":"key","target":"#box","key":"Enter","shift":true},
+  {"input":"click","target":"#copy"}
+]}"##;
+
+fn view_project(capabilities: serde_json::Value) -> RegressionProject {
+    let project = RegressionProject::new("", capabilities);
+    fs::remove_file(project.0.join("src/main.ts")).unwrap();
+    fs::write(project.0.join("src/main.tsx"), VIEW_APP).unwrap();
+    fs::write(project.0.join("src/signals.ts"), VIEW_SIGNALS).unwrap();
+    fs::write(project.0.join("script.json"), VIEW_SCRIPT).unwrap();
+    let path = project.0.join("varta.config.json");
+    let mut config: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    config["entry"] = serde_json::json!("src/main.tsx");
+    config["languageProfile"] = serde_json::json!("checked-f64-utf16-v38");
+    fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
+    project
+}
+
+/// The snapshot JSON `varta dev --view-script` prints after the logs.
+fn view_snapshot(output: &std::process::Output) -> serde_json::Value {
+    let text = String::from_utf8_lossy(&output.stdout);
+    let start = text.find("\n{").map_or(0, |at| at + 1);
+    let end = text.rfind("}\n").unwrap() + 1;
+    serde_json::from_str(&text[start..end]).unwrap()
+}
+
+fn view_node<'a>(node: &'a serde_json::Value, ident: &str) -> &'a serde_json::Value {
+    fn find<'a>(node: &'a serde_json::Value, ident: &str) -> Option<&'a serde_json::Value> {
+        if node["attributes"]["id"] == ident {
+            return Some(node);
+        }
+        node["children"]
+            .as_array()?
+            .iter()
+            .find_map(|child| find(child, ident))
+    }
+    find(&node["tree"], ident).unwrap_or_else(|| panic!("no #{ident}"))
+}
+
+fn view_text(node: &serde_json::Value) -> String {
+    if let Some(text) = node["text"].as_str() {
+        return text.into();
+    }
+    node["children"]
+        .as_array()
+        .map(|children| children.iter().map(view_text).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_tsx_view_app_runs_headless_through_varta_dev_and_packages_as_a_single_binary() {
+    let project = view_project(serde_json::json!({"clipboard": {"write": true}}));
+    let check = project.command(&["check"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    let dev = project.command(&["dev", "--view-script", "script.json"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert!(
+        combined(&dev).ends_with("varta dev: completed\n"),
+        "{}",
+        combined(&dev)
+    );
+    let snapshot = view_snapshot(&dev);
+    assert_eq!(view_text(view_node(&snapshot, "count")), "3");
+    assert_eq!(view_text(view_node(&snapshot, "sent")), "hello");
+    assert_eq!(view_node(&snapshot, "box")["value"], "two\n");
+    assert_eq!(view_text(view_node(&snapshot, "status")), "copied");
+    assert_eq!(snapshot["clipboard"], "hello");
+    assert_eq!(snapshot["accessibility"]["children"][0]["role"], "main");
+    // A host ceiling without the clipboard grant reports a recoverable denial.
+    fs::write(
+        project.0.join("host-policy.json"),
+        r#"{"capabilities":[{"id":"clipboard.write","enabled":false}]}"#,
+    )
+    .unwrap();
+    let denied = project.command(&[
+        "--policy",
+        "host-policy.json",
+        "dev",
+        "--view-script",
+        "script.json",
+    ]);
+    assert!(denied.status.success(), "{}", combined(&denied));
+    let snapshot = view_snapshot(&denied);
+    assert_eq!(view_text(view_node(&snapshot, "status")), "failed 1");
+    assert!(snapshot["clipboard"].is_null());
+    // The packaged app runs its first turn headlessly from the source-free
+    // artifact, through both binaries and as a single executable.
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    let inspect = project.command(&["inspect", "dist/app", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert!(
+        info["imports"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("varta.view_commit"))
+    );
+    assert!(
+        info["exports"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("varta.view_abi.event"))
+    );
+    let mut commands = vec![
+        Command::new(project.0.join("dist/app")),
+        Command::new(runtime_path()),
+    ];
+    commands[1].args(["run", "dist/app.wasm"]);
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+    }
+}
+
+#[test]
+fn view_capabilities_are_exact_and_scripts_fail_closed() {
+    // `https://*` is valid for `ui.open_url` only, and `http://*` nowhere.
+    for capabilities in [
+        serde_json::json!({"ui": {"open_url": ["http://*"]}}),
+        serde_json::json!({"net": {"request": ["https://*"]}}),
+        serde_json::json!({"clipboard": {"write": ["x"]}}),
+    ] {
+        let project = view_project(capabilities.clone());
+        let check = project.command(&["check"]);
+        assert!(
+            !check.status.success(),
+            "{capabilities}: {}",
+            combined(&check)
+        );
+    }
+    let project = view_project(serde_json::json!({"ui": {"open_url": ["https://*"]}}));
+    let check = project.command(&["check"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    // Without `clipboard.write` the copy is denied, recoverably.
+    let dev = project.command(&["dev", "--view-script", "script.json"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(
+        view_text(view_node(&view_snapshot(&dev), "status")),
+        "failed 1"
+    );
+    // A script naming a missing element, or with unknown fields, fails.
+    fs::write(
+        project.0.join("bad.json"),
+        r##"{"inputs":[{"input":"click","target":"#missing"}]}"##,
+    )
+    .unwrap();
+    let missing = project.command(&["dev", "--view-script", "bad.json"]);
+    assert!(!missing.status.success());
+    assert!(
+        combined(&missing).contains("#missing"),
+        "{}",
+        combined(&missing)
+    );
+    fs::write(project.0.join("bad.json"), r#"{"inputs":[],"extra":1}"#).unwrap();
+    let unknown = project.command(&["dev", "--view-script", "bad.json"]);
+    assert!(!unknown.status.success());
+    assert!(
+        combined(&unknown).contains("invalid view script"),
+        "{}",
+        combined(&unknown)
+    );
+}

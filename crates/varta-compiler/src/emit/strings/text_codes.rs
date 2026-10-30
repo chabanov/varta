@@ -60,6 +60,41 @@ pub(super) fn code_unit() -> Function {
     f
 }
 
+/// `(u0: f64, …, uN: f64) -> string` (v38 view prelude): a fresh string of
+/// `count` code units, each argument truncated to an integer and stored as
+/// its low 16 bits (callers pass integers in `0..=0xFFFF`).
+pub(super) fn units(allocate: u32, count: u32) -> Function {
+    let bytes = count;
+    let dest = count + 1;
+    let mut f = Function::new([(2, ValType::I32)]);
+    instructions(
+        &mut f,
+        [
+            I::I32Const(count as i32 * UNIT_BYTES),
+            I::LocalTee(bytes),
+            I::Call(allocate),
+            I::LocalSet(dest),
+        ],
+    );
+    for index in 0..count {
+        instructions(
+            &mut f,
+            [
+                I::LocalGet(dest),
+                I::LocalGet(index),
+                I::I32TruncSatF64U,
+                I::I32Store16(MemArg {
+                    offset: u64::from(index) * UNIT_BYTES as u64,
+                    ..UNIT_MEMORY
+                }),
+            ],
+        );
+    }
+    pack(&mut f, bytes, dest);
+    f.instruction(&I::End);
+    f
+}
+
 /// `(units: number[]) -> string`: a fresh string whose code units are the
 /// array's elements, each truncated to its low 16 bits (callers pass
 /// integers in `0..=0xFFFF`). The array stays rooted by its caller.

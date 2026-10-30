@@ -4,8 +4,8 @@
 use super::DOCUMENT;
 use crate::support::{assert_block, table};
 use varta_common::view::{
-    self, Attribute, Command, CommandStatus, CssProperty, CssValue, DraftCapability, DraftGrant,
-    EventFlag, EventKind, Key, ListenOption, Opcode, Renderer, ResultOperation, Tag, Tags,
+    self, Attribute, Command, CommandStatus, CssProperty, CssValue, EventFlag, EventKind, Key,
+    ListenOption, Opcode, Renderer, ResultOperation, Tag, Tags, ViewCapability, ViewGrant,
 };
 
 fn codes(rows: impl Iterator<Item = (u32, &'static str)>) -> String {
@@ -44,7 +44,7 @@ fn layout() -> String {
     let mut rows: Vec<(String, String)> = vec![
         ("Draft version".into(), view::DRAFT_VERSION.to_string()),
         (
-            "Patch import (not registered)".into(),
+            "Patch import (v38, host ABI 34)".into(),
             format!(
                 "`varta.{}` ({}) → ({})",
                 view::COMMIT_IMPORT,
@@ -53,7 +53,7 @@ fn layout() -> String {
             ),
         ),
         (
-            "Event export (not registered)".into(),
+            "Event export (v38)".into(),
             format!(
                 "`{}` ({}) → ()",
                 view::EVENT_EXPORT,
@@ -275,10 +275,10 @@ fn keys() -> String {
 fn capabilities() -> String {
     table(
         &["Capability", "Grant", "Authorizes (user gesture only)"],
-        DraftCapability::ALL.iter().map(|&capability| {
+        ViewCapability::ALL.iter().map(|&capability| {
             let grant = match capability.grant() {
-                DraftGrant::Boolean => "boolean `enabled`",
-                DraftGrant::Urls => "URL `patterns` (`https://` admitted)",
+                ViewGrant::Boolean => "boolean `enabled`",
+                ViewGrant::Urls => "URL `patterns` (`https://` admitted, and `https://*`)",
             };
             vec![
                 format!("`{}`", capability.id()),

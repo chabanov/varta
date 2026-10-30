@@ -749,16 +749,17 @@ All selectors are registered and admit nothing yet.
 | `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Registered, admits nothing |
 | `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Registered, admits nothing |
 | `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Registered, admits nothing |
-| `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Registered, admits nothing |
-| `tsx()` | TSX: TSX parsing and template compilation | Registered, admits nothing |
+| `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Implemented (P7): `view_commit` (host ABI 34), synthesized event export, `varta-view` headless renderer (tree, cascade, accessibility; no layout), `ui.open_url`/`clipboard.write` with `command_result`; turns share one execution until application instances host views |
+| `tsx()` | TSX: TSX parsing and template compilation | Implemented (start of P8): `.tsx` parsing, AOT templates with getter holes, typed `JSX` namespace; L1 stays a package outside the engine |
 | `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Registered, admits nothing |
 | `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionaries | Registered, admits nothing |
 
 ### Platform targets and application model
 
 **Status: design accepted by the owner on 2026-10-29
-([accepted decisions](#accepted-decisions-2026-10-29)). Nothing in this section is
-implemented yet.** The contract that exists today for third-party hosts is
+([accepted decisions](#accepted-decisions-2026-10-29)). Implemented so far: P7
+(the L0 view protocol and the headless renderer) and the start of P8 (TSX
+templates), in profile v38 ([contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)).** The contract that exists today for third-party hosts is
 [embedding.md](embedding.md). This section is the agreed design for the owner's
 stated goal:
 
@@ -1708,7 +1709,7 @@ Later the same day the owner chose the console's **Single Chat** UX and accepted
 two L0 v1 capabilities, user-gesture only with exact grants: `ui.open_url`
 (external links opened by the renderer) and `clipboard.write` (`copy_text`). Their
 contract is the [round 3 draft](embedding.md#view-draft-v0-round-3-chat-requirements);
-the runtime implements neither yet.
+v38 implements both in the headless renderer.
 
 ### Deferred external validation scenarios
 

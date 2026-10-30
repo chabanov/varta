@@ -170,6 +170,10 @@ mod update_coercion_tests;
 #[cfg(test)]
 mod update_tests;
 mod validate;
+mod view;
+#[cfg(test)]
+mod view_tests;
+pub use varta_view::{Script as ViewScript, ScriptError as ViewScriptError, ViewError};
 
 use std::time::Instant;
 use varta_common::{
@@ -198,8 +202,25 @@ pub enum RuntimeError {
     Scheduler(#[from] varta_common::scheduler::SchedulerError),
     #[error(transparent)]
     Net(#[from] varta_common::net::NetError),
+    /// V38: an invalid view batch, a second commit in one turn or an
+    /// overflowing view event queue; fatal for the instance.
+    #[error(transparent)]
+    View(ViewError),
+    /// V38: a headless script input that names no attached element.
+    #[error(transparent)]
+    ViewInput(varta_view::InputError),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
+}
+
+/// A headless view run (v38): the output and the final view snapshot.
+#[derive(Debug)]
+pub struct ViewRun {
+    pub output: RunOutput,
+    /// The headless tree and accessibility snapshot after the last turn.
+    pub snapshot: serde_json::Value,
+    /// Batches applied.
+    pub commits: usize,
 }
 
 #[derive(Debug, Default)]
@@ -221,6 +242,8 @@ pub(crate) struct RuntimeContext {
     /// V37 network requests: ids, completions and transfer tasks.
     net: net::Net,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+    /// V38 view protocol: the headless renderer, its queue and turn state.
+    view: view::Session,
 }
 
 impl RuntimeContext {
@@ -394,6 +417,58 @@ impl VartaRuntime {
         observer: RuntimeObserver,
     ) -> Result<RunOutput, RuntimeError> {
         self.execute(bytes, requested, ceiling, Some(observer))
+    }
+
+    /// Run a view application headlessly (v38 `view_protocol()`): `main` and
+    /// every turn after it, with `script`'s inputs performed as trusted
+    /// platform inputs whenever no record is pending, then return the final
+    /// tree and accessibility snapshot. Broker decisions use the package
+    /// requests and, when supplied, the host ceiling.
+    pub fn run_view(
+        &self,
+        bytes: &[u8],
+        requested: &[CapabilityGrant],
+        ceiling: Option<&[CapabilityGrant]>,
+        script: &ViewScript,
+    ) -> Result<ViewRun, RuntimeError> {
+        let module = self.prepare_module(bytes)?;
+        let mut execution = execution::Execution::new(&self.engine, requested, ceiling)?;
+        execution.store.data_mut().view = view::Session::scripted(script);
+        let result = Self::main_turns(&mut execution, &module);
+        let store = &mut execution.store;
+        if let Err(error) = result {
+            if let RuntimeError::Execution(source) = &error
+                && let Some(exit) = source.downcast_ref::<GuestExit>()
+            {
+                store.data_mut().output.exit_code = exit.0;
+            } else {
+                return Err(error);
+            }
+        }
+        let context = store.data_mut();
+        Ok(ViewRun {
+            output: std::mem::take(&mut context.output),
+            snapshot: context.view.snapshot(),
+            commits: context.view.commits(),
+        })
+    }
+
+    /// `_start`, its exception check and the event loop, with typed errors.
+    fn main_turns(
+        execution: &mut execution::Execution,
+        module: &PreparedModule,
+    ) -> Result<(), RuntimeError> {
+        let result = (|| {
+            let instance = execution.instantiate_prepared(module)?;
+            let store = &mut execution.store;
+            if let Some(start) = instance.get_func(&mut *store, "_start") {
+                start.call(&mut *store, &[], &mut [])?;
+            }
+            exceptions::finish(&instance, store)?;
+            scheduler::checkpoint(&instance, store)?;
+            Ok::<(), RuntimeError>(())
+        })();
+        result.map_err(scheduler::typed)
     }
 
     fn execute(

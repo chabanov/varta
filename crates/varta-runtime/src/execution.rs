@@ -41,6 +41,7 @@ impl Execution {
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
                 net: crate::net::Net::default(),
+                view: crate::view::Session::default(),
                 deadline: Instant::now() + Duration::from_secs(abi::DEADLINE_SECONDS),
             },
         );

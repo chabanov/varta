@@ -155,6 +155,7 @@ fn admissible(program: &ir::Program, index: usize) -> Result<()> {
     } else if index == program.main
         || program.initializers.contains(&index)
         || program.tools.iter().any(|(tool, _)| *tool == index)
+        || program.view_event == Some(index)
         || program
             .http
             .as_ref()

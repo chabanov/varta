@@ -2267,9 +2267,20 @@ dependencies = [
  "varta-bigint",
  "varta-common",
  "varta-compiler",
+ "varta-view",
  "wasmparser 0.241.2",
  "wasmtime",
  "webpki-roots",
+]
+
+[[package]]
+name = "varta-view"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "varta-common",
 ]
 
 [[package]]

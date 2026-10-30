@@ -481,6 +481,10 @@ pub(crate) fn typed(error: RuntimeError) -> RuntimeError {
         Ok(error) => return RuntimeError::Net(error),
         Err(source) => source,
     };
+    let source = match crate::view::typed(source) {
+        Ok(error) => return error,
+        Err(source) => source,
+    };
     match source.downcast::<varta_common::exceptions::UncaughtException>() {
         Ok(error) => RuntimeError::Uncaught(error),
         Err(source) => RuntimeError::Execution(source),
@@ -743,6 +747,11 @@ pub(crate) fn checkpoint(
         if let Some(error) = store.data().scheduler.unhandled_rejection() {
             return Err(error.into());
         }
+        // V38 interim turn seam: view records and scripted inputs first.
+        if crate::view::step(instance, store)? {
+            continue;
+        }
+        store.data_mut().view.begin_turn(false);
         let busy = store.data().net.alive();
         let due = store.data().scheduler.next_due(busy);
         if busy {

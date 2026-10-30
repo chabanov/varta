@@ -11,6 +11,22 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 view protocol and TSX (`view_protocol`, `tsx`): the `view_commit` host
+  import (host ABI 34) validates each L0 draft-v0 batch as a whole against the
+  `varta_common::view` registry and applies it atomically (an invalid batch or
+  a second commit in a turn ends the instance); event records reach the guest
+  through the compiler-synthesized `varta.view_abi.event` export and the
+  engine view prelude (`View.*`, `ViewEvent`). The new `varta-view` crate is
+  the headless renderer: node tree, stylesheet cascade subset, bubbling, key
+  filters, edit counters, gestures, a deterministic tree and accessibility
+  snapshot (no layout yet). `ui.open_url` (with the any-HTTPS form
+  `https://*`, valid for that id only) and `clipboard.write` are registered
+  with exact grants; every outcome is a recoverable `command_result`. `.tsx`
+  modules compile JSX ahead of time into static L0 operations with getter
+  holes bound through an installable effect runner; `varta.d.ts` carries a
+  generated `JSX` namespace. `varta dev --view-script` runs a scripted
+  headless session and prints the snapshot.
+
 - Opt-in v38 (batch: program and data limits, turn budgets, linked
   intrinsics, view protocol and TSX, structural subtyping and code generation
   v2, in development) is registered. It inherits every v37 feature, shares

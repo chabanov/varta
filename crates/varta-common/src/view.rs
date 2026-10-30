@@ -1,22 +1,31 @@
-//! L0 view protocol, **unstable draft v0**: data only.
+//! L0 view protocol, **unstable draft v0**: the shared registry.
 //!
-//! These tables give the browser applier, the headless renderer and a future
-//! native renderer one source for every numeric code of the accepted L0 v1
-//! subset (development plan, "View layer"). Nothing here is a registered host
-//! operation: no compiler emits `view_commit`, no runtime links it and no
-//! profile admits it. Codes may change until the protocol is frozen by the
-//! freeze criterion; a frozen protocol gets its own version and host ABI.
+//! These tables give the browser applier, the headless renderer
+//! (`varta-view`) and a future native renderer one source for every numeric
+//! code of the accepted L0 v1 subset (development plan, "View layer").
+//! Profile `checked-f64-utf16-v38` (`view_protocol()`) registers the patch
+//! import `view_commit` (host ABI 34, [`crate::HostOperation::ViewCommit`]),
+//! the guest event export [`EVENT_EXPORT`] and the two view capabilities
+//! ([`ViewCapability`]); every other profile rejects them. Codes may change
+//! until the protocol is frozen by the freeze criterion; a frozen protocol
+//! gets its own version and host ABI.
 use crate::HostScalar;
+
+pub mod attributes;
+pub mod css;
 
 /// Draft protocol version carried in every batch and event record header.
 pub const DRAFT_VERSION: u16 = 0;
 
-/// The planned patch import: `view_commit(ptr, len) -> status`. Not registered.
+/// The patch import `view_commit(ptr, len) -> status` (v38, host ABI 34):
+/// `len` bytes of one batch at `ptr`; the status is 0 for an applied batch,
+/// and an invalid batch ends the instance instead of returning.
 pub const COMMIT_IMPORT: &str = "view_commit";
 pub const COMMIT_PARAMS: [HostScalar; 2] = [HostScalar::I32, HostScalar::I32];
 pub const COMMIT_RESULTS: [HostScalar; 1] = [HostScalar::I32];
-/// The planned guest export that receives one event record written at
-/// `abi::RESULT_BASE`: `(len: i32) -> ()`.
+/// The guest export that receives one event record of `len` bytes written at
+/// `abi::RESULT_BASE`: `(len: i32) -> ()`. The guest copies the record before
+/// any other host operation; each call is the task of one turn.
 pub const EVENT_EXPORT: &str = "varta.view_abi.event";
 pub const EVENT_EXPORT_PARAMS: [HostScalar; 1] = [HostScalar::I32];
 
@@ -1123,29 +1132,33 @@ impl ResultOperation {
     }
 }
 
-/// The capability an external link needs (draft v0, not registered).
+/// The capability an external link needs (registered, v38).
 pub const OPEN_URL_CAPABILITY: &str = "ui.open_url";
-/// The capability `copy_text` needs (draft v0, not registered).
+/// The capability `copy_text` needs (registered, v38).
 pub const CLIPBOARD_WRITE_CAPABILITY: &str = "clipboard.write";
+/// The `ui.open_url` grant form that matches any absolute `https:` URL with a
+/// host and without credentials; valid in no other capability. Every
+/// activation it alone authorizes prompts, and no decision is stored.
+pub const ANY_HTTPS_PATTERN: &str = "https://*";
 
-/// The grant shape of a draft view capability.
+/// The grant shape of a view capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DraftGrant {
+pub enum ViewGrant {
     /// `"enabled": true | false`.
     Boolean,
-    /// `"patterns": [...]` with the URL pattern rules, `https://` admitted.
+    /// `"patterns": [...]` with the URL pattern rules, `https://` admitted,
+    /// plus [`ANY_HTTPS_PATTERN`].
     Urls,
 }
 
-/// View capabilities of draft v0. None is in the capability registry: the
-/// runtime and every manifest validator reject these ids until a profile
-/// registers them.
+/// The view capabilities, registered in the capability registry (v38):
+/// exact grants, used only during a user gesture, every denial recoverable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DraftCapability {
+pub enum ViewCapability {
     OpenUrl,
     ClipboardWrite,
 }
-impl DraftCapability {
+impl ViewCapability {
     pub const ALL: &[Self] = &[Self::OpenUrl, Self::ClipboardWrite];
     #[must_use]
     pub fn id(self) -> &'static str {
@@ -1155,10 +1168,10 @@ impl DraftCapability {
         }
     }
     #[must_use]
-    pub fn grant(self) -> DraftGrant {
+    pub fn grant(self) -> ViewGrant {
         match self {
-            Self::OpenUrl => DraftGrant::Urls,
-            Self::ClipboardWrite => DraftGrant::Boolean,
+            Self::OpenUrl => ViewGrant::Urls,
+            Self::ClipboardWrite => ViewGrant::Boolean,
         }
     }
     /// What the capability authorizes, always only during a user gesture.
@@ -1316,410 +1329,30 @@ mod tests {
         let listen = Opcode::Listen.operands();
         assert!(listen.contains(&Operand::Key) && listen.contains(&Operand::ForbiddenModifiers));
         assert!(Opcode::Unlisten.operands().contains(&Operand::Handler));
-        unique_names(
-            DraftCapability::ALL
-                .iter()
-                .map(|capability| capability.id()),
-        );
-        for &capability in DraftCapability::ALL {
-            assert!(
-                crate::capability_kind(capability.id()).is_none(),
-                "draft ids stay unregistered"
+        unique_names(ViewCapability::ALL.iter().map(|capability| capability.id()));
+        for &capability in ViewCapability::ALL {
+            let kind = crate::capability_kind(capability.id());
+            assert_eq!(
+                kind,
+                Some(match capability.grant() {
+                    ViewGrant::Boolean => crate::GrantKind::Boolean,
+                    ViewGrant::Urls => crate::GrantKind::OpenUrls,
+                }),
+                "view capabilities are registered with their grant shape"
             );
         }
+        assert_eq!(crate::HostOperation::ViewCommit.name(), COMMIT_IMPORT);
+        assert_eq!(
+            crate::HostOperation::ViewCommit.minimum_abi(),
+            crate::abi::PROGRAM_LIMITS_VERSION
+        );
+        assert_eq!(crate::HostOperation::ViewCommit.capability(), None);
         assert_eq!(Attribute::Rows.tags(), Tags::Only(&[Tag::Textarea]));
     }
 
-    /// A small matcher for the value-definition syntax of [`CssProperty::grammar`],
-    /// so every grammar is checked against valid and invalid sample values.
+    /// The checked matcher of [`super::css`] decides every sample.
     mod grammar {
-        use super::super::CssValue;
-
-        #[derive(Debug, Clone, PartialEq)]
-        enum G {
-            Token(String),
-            Keyword(String),
-            Type(String),
-            Function(String, Box<G>),
-            Seq(Vec<G>),
-            Alt(Vec<G>),
-            AnyOrder(Vec<G>),
-            Repeat(Box<G>, usize, usize, bool),
-        }
-
-        fn lex_grammar(text: &str) -> Vec<String> {
-            let chars: Vec<char> = text.chars().collect();
-            let mut out = Vec::new();
-            let mut i = 0;
-            while i < chars.len() {
-                let c = chars[i];
-                if c.is_whitespace() {
-                    i += 1;
-                } else if c == '|' && chars.get(i + 1) == Some(&'|') {
-                    out.push("||".into());
-                    i += 2;
-                } else if "[](),/?+#|".contains(c) {
-                    out.push(c.to_string());
-                    i += 1;
-                } else if c == '{' || c == '<' {
-                    let close = if c == '{' { '}' } else { '>' };
-                    let end = i + chars[i..].iter().position(|&d| d == close).unwrap();
-                    out.push(chars[i..=end].iter().collect());
-                    i = end + 1;
-                } else {
-                    let start = i;
-                    while i < chars.len()
-                        && (chars[i].is_alphanumeric() || "-_.".contains(chars[i]))
-                    {
-                        i += 1;
-                    }
-                    assert!(i > start, "unexpected grammar character {c:?} in {text}");
-                    let word: String = chars[start..i].iter().collect();
-                    if chars.get(i) == Some(&'(') {
-                        out.push(format!("{word}("));
-                        i += 1;
-                    } else {
-                        out.push(word);
-                    }
-                }
-            }
-            out
-        }
-
-        struct Parser {
-            tokens: Vec<String>,
-            at: usize,
-        }
-        impl Parser {
-            fn peek(&self) -> Option<&str> {
-                self.tokens.get(self.at).map(String::as_str)
-            }
-            fn alt(&mut self) -> G {
-                let mut items = vec![self.any_order()];
-                while self.peek() == Some("|") {
-                    self.at += 1;
-                    items.push(self.any_order());
-                }
-                if items.len() == 1 {
-                    items.pop().unwrap()
-                } else {
-                    G::Alt(items)
-                }
-            }
-            fn any_order(&mut self) -> G {
-                let mut items = vec![self.seq()];
-                while self.peek() == Some("||") {
-                    self.at += 1;
-                    items.push(self.seq());
-                }
-                if items.len() == 1 {
-                    items.pop().unwrap()
-                } else {
-                    G::AnyOrder(items)
-                }
-            }
-            fn seq(&mut self) -> G {
-                let mut items = Vec::new();
-                while let Some(token) = self.peek() {
-                    if matches!(token, "|" | "||" | "]" | ")") {
-                        break;
-                    }
-                    let atom = self.atom();
-                    items.push(self.multiplier(atom));
-                }
-                assert!(!items.is_empty(), "empty grammar sequence");
-                if items.len() == 1 {
-                    items.pop().unwrap()
-                } else {
-                    G::Seq(items)
-                }
-            }
-            fn atom(&mut self) -> G {
-                let token = self.tokens[self.at].clone();
-                self.at += 1;
-                if token == "[" {
-                    let inner = self.alt();
-                    assert_eq!(self.peek(), Some("]"), "unclosed group");
-                    self.at += 1;
-                    inner
-                } else if let Some(name) = token.strip_suffix('(') {
-                    let inner = self.alt();
-                    assert_eq!(self.peek(), Some(")"), "unclosed function");
-                    self.at += 1;
-                    G::Function(name.to_owned(), Box::new(inner))
-                } else if token.starts_with('<') {
-                    G::Type(token)
-                } else if token == "," || token == "/" {
-                    G::Token(token)
-                } else {
-                    G::Keyword(token)
-                }
-            }
-            fn multiplier(&mut self, atom: G) -> G {
-                let (min, max, comma) = match self.peek() {
-                    Some("?") => (0, 1, false),
-                    Some("+") => (1, usize::MAX, false),
-                    Some("#") => (1, usize::MAX, true),
-                    Some(token) if token.starts_with('{') => {
-                        let inner = &token[1..token.len() - 1];
-                        let (low, high) = inner.split_once(',').unwrap();
-                        (low.parse().unwrap(), high.parse().unwrap(), false)
-                    }
-                    _ => return atom,
-                };
-                self.at += 1;
-                G::Repeat(Box::new(atom), min, max, comma)
-            }
-        }
-
-        fn parse(text: &str) -> G {
-            let mut parser = Parser {
-                tokens: lex_grammar(text),
-                at: 0,
-            };
-            let grammar = parser.alt();
-            assert_eq!(parser.at, parser.tokens.len(), "trailing grammar in {text}");
-            grammar
-        }
-
-        #[derive(Debug, Clone, PartialEq)]
-        enum V {
-            Word(String),
-            Function(String),
-            Close,
-            Comma,
-            Slash,
-            Hash(String),
-            Str,
-        }
-
-        fn lex_value(text: &str) -> Vec<V> {
-            let chars: Vec<char> = text.chars().collect();
-            let mut out = Vec::new();
-            let mut i = 0;
-            while i < chars.len() {
-                let c = chars[i];
-                if c.is_whitespace() {
-                    i += 1;
-                } else if c == ',' {
-                    out.push(V::Comma);
-                    i += 1;
-                } else if c == '/' {
-                    out.push(V::Slash);
-                    i += 1;
-                } else if c == ')' {
-                    out.push(V::Close);
-                    i += 1;
-                } else if c == '"' {
-                    let end = i + 1 + chars[i + 1..].iter().position(|&d| d == '"').unwrap();
-                    out.push(V::Str);
-                    i = end + 1;
-                } else if c == '#' {
-                    let start = i + 1;
-                    i = start;
-                    while i < chars.len() && chars[i].is_ascii_hexdigit() {
-                        i += 1;
-                    }
-                    out.push(V::Hash(chars[start..i].iter().collect()));
-                } else {
-                    let start = i;
-                    while i < chars.len()
-                        && (chars[i].is_alphanumeric() || "-_.%".contains(chars[i]))
-                    {
-                        i += 1;
-                    }
-                    assert!(i > start, "unexpected value character {c:?} in {text}");
-                    let word: String = chars[start..i].iter().collect();
-                    if chars.get(i) == Some(&'(') {
-                        out.push(V::Function(word));
-                        i += 1;
-                    } else {
-                        out.push(V::Word(word));
-                    }
-                }
-            }
-            out
-        }
-
-        fn number(word: &str) -> bool {
-            let digits = word.strip_prefix('-').unwrap_or(word);
-            let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
-            let all = |part: &str| part.chars().all(|c| c.is_ascii_digit());
-            !digits.is_empty()
-                && all(whole)
-                && all(fraction)
-                && (!whole.is_empty() || !fraction.is_empty())
-                && (!digits.contains('.') || !fraction.is_empty())
-        }
-        fn unit(word: &str, units: &[&str]) -> bool {
-            units
-                .iter()
-                .any(|unit| word.strip_suffix(unit).is_some_and(number))
-        }
-
-        /// Composite types are themselves grammars over the leaf types.
-        fn composite(name: &str) -> Option<&'static str> {
-            let value = CssValue::ALL.iter().find(|value| value.name() == name)?;
-            match value {
-                CssValue::LengthPercentage => Some("<length> | <percentage>"),
-                CssValue::Color => Some(
-                    "<hex> | transparent | currentcolor | rgb(<integer>, <integer>, <integer>) | rgba(<integer>, <integer>, <integer>, <number>)",
-                ),
-                CssValue::Track => Some(
-                    "<length-percentage> | <flex> | auto | minmax(<track>, <track>) | repeat(<integer>, <track>+)",
-                ),
-                CssValue::Line => Some("auto | <integer> | span <integer>"),
-                _ => None,
-            }
-        }
-
-        fn leaf(name: &str, token: &V) -> bool {
-            let V::Word(word) = token else {
-                return match (name, token) {
-                    ("<hex>", V::Hash(hex)) => matches!(hex.len(), 3 | 6 | 8),
-                    ("<string>", V::Str) => true,
-                    _ => false,
-                };
-            };
-            match name {
-                "<number>" => number(word),
-                "<integer>" => {
-                    let digits = word.strip_prefix('-').unwrap_or(word);
-                    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
-                }
-                "<length>" => word == "0" || unit(word, &["px", "rem"]),
-                "<percentage>" => unit(word, &["%"]),
-                "<flex>" => unit(word, &["fr"]),
-                "<time>" => unit(word, &["ms", "s"]),
-                "<ident>" => {
-                    word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
-                        && word
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
-                }
-                _ => false,
-            }
-        }
-
-        /// `var(--name)` or `var(--name, <one token>)` stands for any whole component.
-        fn var(tokens: &[V], at: usize) -> Vec<usize> {
-            if tokens.get(at) != Some(&V::Function("var".into())) {
-                return vec![];
-            }
-            let Some(V::Word(name)) = tokens.get(at + 1) else {
-                return vec![];
-            };
-            if !name.starts_with("--") {
-                return vec![];
-            }
-            match tokens.get(at + 2) {
-                Some(V::Close) => vec![at + 3],
-                Some(V::Comma) if tokens.get(at + 4) == Some(&V::Close) => vec![at + 5],
-                _ => vec![],
-            }
-        }
-
-        fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
-            let mut out = match grammar {
-                G::Token(text) => {
-                    let want = if text == "," { V::Comma } else { V::Slash };
-                    if tokens.get(at) == Some(&want) {
-                        vec![at + 1]
-                    } else {
-                        vec![]
-                    }
-                }
-                G::Keyword(word) => match tokens.get(at) {
-                    Some(V::Word(found)) if found.eq_ignore_ascii_case(word) => vec![at + 1],
-                    _ => vec![],
-                },
-                G::Type(name) => {
-                    let mut out = var(tokens, at);
-                    if let Some(definition) = composite(name) {
-                        out.extend(ends(&parse(definition), tokens, at));
-                    } else if tokens.get(at).is_some_and(|token| leaf(name, token)) {
-                        out.push(at + 1);
-                    }
-                    out
-                }
-                G::Function(name, inner) => {
-                    if tokens.get(at) != Some(&V::Function(name.clone())) {
-                        return vec![];
-                    }
-                    ends(inner, tokens, at + 1)
-                        .into_iter()
-                        .filter(|&end| tokens.get(end) == Some(&V::Close))
-                        .map(|end| end + 1)
-                        .collect()
-                }
-                G::Seq(items) => items.iter().fold(vec![at], |starts, item| {
-                    starts
-                        .into_iter()
-                        .flat_map(|start| ends(item, tokens, start))
-                        .collect()
-                }),
-                G::Alt(items) => items
-                    .iter()
-                    .flat_map(|item| ends(item, tokens, at))
-                    .collect(),
-                G::AnyOrder(items) => any_order(items, &mut vec![false; items.len()], tokens, at),
-                G::Repeat(inner, min, max, comma) => {
-                    let mut out = if *min == 0 { vec![at] } else { vec![] };
-                    let mut frontier = vec![at];
-                    let mut count = 0;
-                    while !frontier.is_empty() && count < *max {
-                        let mut next = Vec::new();
-                        for start in frontier {
-                            let start = if count > 0 && *comma {
-                                if tokens.get(start) != Some(&V::Comma) {
-                                    continue;
-                                }
-                                start + 1
-                            } else {
-                                start
-                            };
-                            next.extend(
-                                ends(inner, tokens, start)
-                                    .into_iter()
-                                    .filter(|&e| e > start),
-                            );
-                        }
-                        next.sort_unstable();
-                        next.dedup();
-                        count += 1;
-                        if count >= *min {
-                            out.extend(next.iter().copied());
-                        }
-                        frontier = next;
-                    }
-                    out
-                }
-            };
-            out.sort_unstable();
-            out.dedup();
-            out
-        }
-
-        fn any_order(items: &[G], used: &mut [bool], tokens: &[V], at: usize) -> Vec<usize> {
-            let mut out = Vec::new();
-            for index in 0..items.len() {
-                if used[index] {
-                    continue;
-                }
-                for end in ends(&items[index], tokens, at) {
-                    out.push(end);
-                    used[index] = true;
-                    out.extend(any_order(items, used, tokens, end));
-                    used[index] = false;
-                }
-            }
-            out
-        }
-
-        pub fn matches(grammar: &str, value: &str) -> bool {
-            let tokens = lex_value(value);
-            ends(&parse(grammar), &tokens, 0).contains(&tokens.len())
-        }
+        pub use super::super::css::matches;
     }
 
     /// Valid samples per property, including single-argument transform forms.
@@ -1800,6 +1433,11 @@ mod tests {
     #[test]
     fn every_css_grammar_accepts_its_samples() {
         for &property in CssProperty::ALL {
+            assert!(
+                css::grammar_parses(property.grammar()),
+                "{}",
+                property.name()
+            );
             for sample in valid_samples(property) {
                 assert!(
                     grammar::matches(property.grammar(), sample),

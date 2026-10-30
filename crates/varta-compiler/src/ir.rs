@@ -234,6 +234,9 @@ pub(crate) struct Program {
     pub main: usize,
     pub tools: Vec<(usize, varta_common::ToolContract)>,
     pub http: Option<(usize, varta_common::http::HttpContract)>,
+    /// V38 view protocol: the view prelude's event dispatcher, called by the
+    /// synthesized `varta.view_abi.event` export with the copied record.
+    pub view_event: Option<usize>,
     pub types: ValueTypes,
     /// Stored module constants (v32): permanent root slots, initialized by the
     /// `initializers` (dependency order) before `main` runs.
@@ -694,7 +697,13 @@ pub(crate) enum Intrinsic {
     /// `(reference) -> number`: the stable address of a managed reference
     /// (the nonmoving heap never relocates it), a collection key hash.
     Identity,
+    /// V38 view prelude: `(u0, …, uN) -> string`, a fresh string of 1 to
+    /// [`MAX_PACKED_UNITS`] code units given as integers in 0..=0xFFFF (the
+    /// fixed fields of one L0 operation), without an array.
+    Units,
 }
+/// The most code units one `Intrinsic::Units` call packs.
+pub(crate) const MAX_PACKED_UNITS: usize = 16;
 
 /// Engine-internal guest operations of the v37 RegExp prelude
 /// (`lower::regexp`); they make no host call and read no capability.

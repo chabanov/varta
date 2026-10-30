@@ -32,6 +32,12 @@ enum Commands {
     Dev {
         #[arg(long, default_value = "varta.config.json")]
         config: PathBuf,
+        /// Run a v38 view application headlessly: perform this JSON script's
+        /// platform inputs (clicks, typing, keys with modifiers, focus,
+        /// select, scroll, prompt answers) as trusted events, then print the
+        /// final view tree and accessibility snapshot as JSON.
+        #[arg(long, value_name = "PATH")]
+        view_script: Option<PathBuf>,
     },
     /// Build validated Wasm; --single embeds portable Wasm in a native launcher.
     Build {
@@ -105,7 +111,26 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
                 println!("varta check: ok ({})", config.display());
             }
         }
-        Some(Commands::Dev { config }) => {
+        Some(Commands::Dev {
+            config,
+            view_script: Some(script),
+        }) => {
+            let project = CheckedProject::load(&config)?;
+            let script = varta_project::read_view_script(&script)?;
+            let run = varta_project::run_view(&project.artifact, policy.as_ref(), &script)?;
+            let code = output(run.output);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&run.snapshot)
+                    .map_err(|e| ProjectError::Usage(e.to_string()))?
+            );
+            println!("varta dev: completed");
+            return Ok(code);
+        }
+        Some(Commands::Dev {
+            config,
+            view_script: None,
+        }) => {
             let project = CheckedProject::load(&config)?;
             let result = run(&project.artifact, policy.as_ref())?;
             let code = output(result);

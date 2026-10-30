@@ -17,7 +17,7 @@ use std::{
 };
 use varta_common::Manifest;
 use varta_runtime::VartaRuntime;
-pub use varta_runtime::{RunOutput, RuntimeEvent, RuntimeObserver};
+pub use varta_runtime::{RunOutput, RuntimeEvent, RuntimeObserver, ViewRun, ViewScript};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
@@ -31,6 +31,8 @@ pub enum ProjectError {
     Compile(#[from] varta_compiler::CompilerError),
     #[error(transparent)]
     Runtime(#[from] varta_runtime::RuntimeError),
+    #[error(transparent)]
+    ViewScript(#[from] varta_runtime::ViewScriptError),
     #[error("invalid artifact: {0}")]
     Artifact(String),
     #[error("{0}")]
@@ -138,6 +140,29 @@ pub fn run_observed(
         host.map(HostPolicy::grants),
         observer,
     )?)
+}
+
+/// Run a view application headlessly (v38) with a scripted session of
+/// platform inputs; returns the output and the final tree and accessibility
+/// snapshot. The view capabilities are decided from the artifact's grants
+/// and, when supplied, the host policy.
+pub fn run_view(
+    artifact: &Artifact,
+    host: Option<&HostPolicy>,
+    script: &ViewScript,
+) -> Result<ViewRun> {
+    Ok(VartaRuntime::new().run_view(
+        &artifact.wasm,
+        &artifact.grants()?,
+        host.map(HostPolicy::grants),
+        script,
+    )?)
+}
+
+/// Read and parse a bounded headless view script.
+pub fn read_view_script(path: &Path) -> Result<ViewScript> {
+    let bytes = artifact::read_bounded(path, ViewScript::MAX_BYTES)?;
+    Ok(ViewScript::parse(&bytes)?)
 }
 
 /// Policy review additionally requires a declaration for every privileged import.

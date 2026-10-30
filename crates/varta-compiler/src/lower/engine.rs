@@ -15,6 +15,13 @@ pub(crate) struct EngineModules {
     functions: BTreeMap<(&'static str, String), Signature>,
 }
 
+impl EngineModules {
+    /// The non-generic function `name` of a loaded `prelude`.
+    pub(super) fn function(&self, prelude: &Prelude, name: &str) -> Option<&Signature> {
+        self.functions.get(&(prelude.path, name.to_owned()))
+    }
+}
+
 /// Record a loaded prelude module and, once its declarations are known, its
 /// non-generic functions.
 pub(super) fn register(prelude: &'static Prelude, module: usize, types: &mut ir::ValueTypes) {

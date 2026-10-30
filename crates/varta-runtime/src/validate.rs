@@ -55,6 +55,21 @@ pub(crate) fn module(
             return Err(wasmtime::Error::msg("_start must have signature () -> ()").into());
         }
     }
+    // V38 view protocol: the event export exists only in a profile that
+    // admits it, with the registry's signature.
+    if let Some(export) = module.get_export(crate::view::EVENT_EXPORT) {
+        let wasmtime::ExternType::Func(ty) = export else {
+            return Err(error("the view event export must be a function"));
+        };
+        let params: Vec<_> = ty.params().collect();
+        if !language.profile.is_some_and(|p| p.view_protocol())
+            || params.len() != varta_common::view::EVENT_EXPORT_PARAMS.len()
+            || !params.iter().all(|p| matches!(p, wasmtime::ValType::I32))
+            || ty.results().len() != 0
+        {
+            return Err(error("invalid view event export"));
+        }
+    }
     crate::exceptions::validate(&module, language.profile.unwrap_or_default())?;
     check_exports(&module)?;
     let tools = crate::contracts::validate(&module, bytes)?;

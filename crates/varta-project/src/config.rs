@@ -90,7 +90,11 @@ impl VartaConfig {
                                     methods: Some(spec.methods.clone()),
                                 })
                             }
-                            CapabilitySpec::Patterns(patterns) if namespace == "net" => {
+                            CapabilitySpec::Patterns(patterns)
+                                if namespace == "net"
+                                    || format!("{namespace}.{operation}")
+                                        == varta_common::view::OPEN_URL_CAPABILITY =>
+                            {
                                 CapabilityValue::UrlGlobs(patterns.clone())
                             }
                             CapabilitySpec::Patterns(patterns) => {
@@ -195,6 +199,42 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn view_grants_take_link_patterns_and_a_clipboard_boolean() {
+        // V38 view capabilities: exact link patterns (the any-HTTPS form only
+        // here) and a boolean clipboard grant.
+        let view = config(serde_json::json!({
+            "ui": {"open_url": ["https://*", "https://docs.test/**"]},
+            "clipboard": {"write": true}}));
+        view.validate().unwrap();
+        assert_eq!(
+            view.normalized_capabilities(),
+            [
+                CapabilityGrant {
+                    id: "clipboard.write".into(),
+                    value: CapabilityValue::Boolean(true),
+                },
+                CapabilityGrant {
+                    id: "ui.open_url".into(),
+                    value: CapabilityValue::UrlGlobs(vec![
+                        "https://*".into(),
+                        "https://docs.test/**".into()
+                    ]),
+                },
+            ]
+        );
+        for grants in [
+            serde_json::json!({"ui":{"open_url":true}}),
+            serde_json::json!({"ui":{"open_url":["http://*"]}}),
+            serde_json::json!({"ui":{"open_url":["https://*.docs.test/**"]}}),
+            serde_json::json!({"net":{"request":["https://*"]}}),
+            serde_json::json!({"clipboard":{"write":["x"]}}),
+            serde_json::json!({"clipboard":{"read":true}}),
+        ] {
+            assert!(config(grants.clone()).validate().is_err(), "{grants}");
+        }
+    }
+
     #[test]
     fn unsupported_transport_and_profiles_cannot_silently_pass() {
         for pattern in [
