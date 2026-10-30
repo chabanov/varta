@@ -62,6 +62,7 @@ pub(crate) fn module(
         crate::PreparedModule {
             module,
             function_catalog,
+            data: language.profile.unwrap_or_default().data(),
         },
         tools,
     ))
@@ -336,6 +337,28 @@ fn check_exports(module: &Module) -> Result<(), RuntimeError> {
             _ => {
                 return Err(error(
                     "host pointer imports require an exported 32-bit memory",
+                ));
+            }
+        }
+    }
+    // V38 resource-failure globals select a diagnostic only; their type is fixed.
+    for name in [
+        varta_common::limits::RESOURCE_FAILURE,
+        varta_common::limits::RESOURCE_REQUEST,
+    ] {
+        match module.get_export(name) {
+            Some(ExternType::Global(global))
+                if !matches!(global.content(), ValType::I32)
+                    || global.mutability() != Mutability::Var =>
+            {
+                return Err(error(
+                    "resource globals must be exported mutable i32 values",
+                ));
+            }
+            Some(ExternType::Global(_)) | None => {}
+            Some(_) => {
+                return Err(error(
+                    "resource globals must be exported mutable i32 values",
                 ));
             }
         }

@@ -441,10 +441,14 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         },
         &wasm_encoder::ConstExpr::i32_const(0),
     );
-    let memory_globals = strings::Globals {
+    // V38 (`data_limits`) heap modules report exhausted resources through
+    // two exported globals (failure code, then request) before trapping.
+    let reports = needs_arena && program.types.profile.data().reports_resources;
+    let mut memory_globals = strings::Globals {
         heap: globals.len(),
         free: globals.len() + 1,
         roots: globals.len() + 2,
+        failure: None,
     };
     if needs_arena {
         for initial in [
@@ -459,6 +463,22 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                     shared: false,
                 },
                 &wasm_encoder::ConstExpr::i32_const(initial as i32),
+            );
+        }
+    }
+    if reports {
+        memory_globals.failure = Some(globals.len());
+        for _ in [
+            varta_common::limits::RESOURCE_FAILURE,
+            varta_common::limits::RESOURCE_REQUEST,
+        ] {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(0),
             );
         }
     }
@@ -570,6 +590,21 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             wasm_encoder::ExportKind::Global,
             globals.value,
         );
+    }
+    if let Some(failure) = memory_globals.failure {
+        for (offset, name) in [
+            varta_common::limits::RESOURCE_FAILURE,
+            varta_common::limits::RESOURCE_REQUEST,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            exports.export(
+                name,
+                wasm_encoder::ExportKind::Global,
+                failure + offset as u32,
+            );
+        }
     }
     exports.export(
         varta_common::abi::RESULT_LEN,

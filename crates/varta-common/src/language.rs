@@ -615,10 +615,19 @@ impl LanguageProfile {
     }
     /// Batch v38, data-limits stream: arrays, dictionaries, `Map`, `Set`,
     /// `Uint8Array`, strings and JSON bounded only by the memory budget, and
-    /// more than 64 live frames without a trap. Admits nothing yet.
+    /// more than 64 live frames without a trap. See [`Self::data`].
     #[must_use]
     pub fn data_limits(self) -> bool {
         self == Self::CheckedF64Utf16V38
+    }
+    /// The per-value data limits this profile compiles and runs with.
+    #[must_use]
+    pub fn data(self) -> crate::limits::DataLimits {
+        if self.data_limits() {
+            crate::limits::DataLimits::V38
+        } else {
+            crate::limits::DataLimits::LEGACY
+        }
     }
     /// Batch v38, turn-budgets stream: per-event-turn fuel and deadline
     /// configurable by the manifest within the host ceiling, a fuel profiler

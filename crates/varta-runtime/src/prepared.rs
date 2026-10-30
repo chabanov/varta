@@ -8,6 +8,8 @@ use varta_common::function::VerifiedFunctionCatalog;
 pub struct PreparedModule {
     pub(crate) module: wasmtime::Module,
     pub(crate) function_catalog: Option<Arc<VerifiedFunctionCatalog>>,
+    /// Per-value data limits of the module's declared profile.
+    pub(crate) data: varta_common::limits::DataLimits,
 }
 impl PreparedModule {
     pub fn module(&self) -> &wasmtime::Module {

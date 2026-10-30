@@ -41,6 +41,7 @@ impl Execution {
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
                 net: crate::net::Net::default(),
+                data: varta_common::limits::DataLimits::LEGACY,
                 deadline: Instant::now() + Duration::from_secs(abi::DEADLINE_SECONDS),
             },
         );
@@ -63,18 +64,19 @@ impl Execution {
     }
     #[cfg(test)]
     pub fn instantiate(&mut self, module: &Module) -> Result<Instance, wasmtime::Error> {
-        self.instantiate_owned(module, None)
+        self.instantiate_owned(module, None, varta_common::limits::DataLimits::LEGACY)
     }
     pub fn instantiate_prepared(
         &mut self,
         module: &crate::PreparedModule,
     ) -> Result<Instance, wasmtime::Error> {
-        self.instantiate_owned(&module.module, module.function_catalog.clone())
+        self.instantiate_owned(&module.module, module.function_catalog.clone(), module.data)
     }
     fn instantiate_owned(
         &mut self,
         module: &Module,
         catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+        data: varta_common::limits::DataLimits,
     ) -> Result<Instance, wasmtime::Error> {
         // One instance per execution, including failed attempts. Never replace
         // metadata while an existing instance can still call host operations.
@@ -85,6 +87,7 @@ impl Execution {
         }
         self.instantiation_started = true;
         self.store.data_mut().function_catalog = catalog;
+        self.store.data_mut().data = data;
         let result = (|| {
             let mut linker = wasmtime::Linker::new(self.store.engine());
             host::register(&mut linker)?;

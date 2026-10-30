@@ -57,6 +57,30 @@ pub(super) struct Globals {
     pub heap: u32,
     pub free: u32,
     pub roots: u32,
+    /// V38 (`data_limits`): the exported resource-failure global; the
+    /// request global follows it.
+    pub failure: Option<u32>,
+}
+impl Globals {
+    /// Trap, first recording `resource` and the amount in local `amount` when
+    /// this module reports resources (v38); a plain `unreachable` otherwise.
+    pub(super) fn fail(
+        self,
+        resource: varta_common::limits::Resource,
+        amount: u32,
+    ) -> Vec<I<'static>> {
+        let mut code = Vec::new();
+        if let Some(failure) = self.failure {
+            code.extend([
+                I::I32Const(resource as i32),
+                I::GlobalSet(failure),
+                I::LocalGet(amount),
+                I::GlobalSet(failure + 1),
+            ]);
+        }
+        code.push(I::Unreachable);
+        code
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -232,7 +256,7 @@ impl Helper {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
             Self::Concat => concat::function(helpers[&Self::Allocate]),
             Self::Compare => compare::function(profile.utf16()),
-            Self::Allocate => allocate::function(globals, helpers[&Self::Collect]),
+            Self::Allocate => allocate::function(globals, helpers[&Self::Collect], profile.data()),
             Self::Collect => collect::function(
                 globals,
                 trace_values,
@@ -240,7 +264,7 @@ impl Helper {
                 frames,
                 profile.wide_records(),
             ),
-            Self::RootPush => roots::function(globals.roots),
+            Self::RootPush => roots::function(globals),
             Self::ArraySearch => array_search::function(
                 helpers[&Self::Compare],
                 profile.sparse_arrays(),

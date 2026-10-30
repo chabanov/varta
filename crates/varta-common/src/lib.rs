@@ -10,6 +10,8 @@ mod invocation;
 pub mod json;
 pub mod language;
 pub mod launcher;
+/// Profile-dependent data limits (v38 `data_limits`).
+pub mod limits;
 mod manifest;
 mod module;
 /// Asynchronous network requests (v37 `net_request`).

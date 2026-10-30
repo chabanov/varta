@@ -28,6 +28,7 @@ mod http;
 mod http_abi_tests;
 mod http_contract;
 mod references;
+mod resources;
 mod server;
 #[cfg(test)]
 mod server_tests;
@@ -48,6 +49,8 @@ mod bitwise_compound_tests;
 mod bitwise_tests;
 #[cfg(test)]
 mod call_flow_tests;
+#[cfg(test)]
+mod data_limit_tests;
 #[cfg(test)]
 mod default_export_tests;
 #[cfg(test)]
@@ -198,6 +201,9 @@ pub enum RuntimeError {
     Scheduler(#[from] varta_common::scheduler::SchedulerError),
     #[error(transparent)]
     Net(#[from] varta_common::net::NetError),
+    /// A v38 (`data_limits`) guest exhausted a real resource.
+    #[error(transparent)]
+    Resource(#[from] varta_common::limits::ResourceExhausted),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
 }
@@ -221,6 +227,8 @@ pub(crate) struct RuntimeContext {
     /// V37 network requests: ids, completions and transfer tasks.
     net: net::Net,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+    /// Per-value data limits of the instantiated module's profile.
+    data: varta_common::limits::DataLimits,
 }
 
 impl RuntimeContext {
@@ -408,12 +416,15 @@ impl VartaRuntime {
         let result = (|| {
             let instance = execution.instantiate_prepared(&module)?;
             let store = &mut execution.store;
-            if let Some(start) = instance.get_func(&mut *store, "_start") {
-                start.call(&mut *store, &[], &mut [])?;
-            }
-            exceptions::finish(&instance, store)?;
-            scheduler::checkpoint(&instance, store)?;
-            Ok::<(), RuntimeError>(())
+            (|| {
+                if let Some(start) = instance.get_func(&mut *store, "_start") {
+                    start.call(&mut *store, &[], &mut [])?;
+                }
+                exceptions::finish(&instance, store)?;
+                scheduler::checkpoint(&instance, store)?;
+                Ok::<(), RuntimeError>(())
+            })()
+            .map_err(|error| resources::classify(&instance, store, error))
         })();
         let result = result.map_err(scheduler::typed);
         let store = &mut execution.store;

@@ -1,8 +1,9 @@
 use super::*;
 
-pub(super) fn function(roots: u32) -> Function {
+pub(super) fn function(globals: Globals) -> Function {
     const VALUE: u32 = 0;
     const TOP: u32 = 1;
+    let roots = globals.roots;
     let mut function = Function::new([(1, ValType::I32)]);
     instructions(
         &mut function,
@@ -22,7 +23,15 @@ pub(super) fn function(roots: u32) -> Function {
             I::I32Const(abi::STRING_ROOT_END as i32),
             I::I32GtU,
             I::If(BlockType::Empty),
-            I::Unreachable,
+        ],
+    );
+    instructions(
+        &mut function,
+        globals.fail(varta_common::limits::Resource::RootStack, TOP),
+    );
+    instructions(
+        &mut function,
+        [
             I::End,
             I::LocalGet(TOP),
             I::LocalGet(VALUE),
