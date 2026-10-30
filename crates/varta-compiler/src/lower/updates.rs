@@ -28,6 +28,9 @@ fn next(span: swc_common::Span, input: Expr, op: ast::UpdateOp) -> Expr {
 }
 impl Lower<'_> {
     pub(super) fn update_value(&mut self, update: &ast::UpdateExpr) -> Result<Expr> {
+        if let Some(value) = self.global_update(update)? {
+            return Ok(value);
+        }
         if !self.types.profile.closures() {
             return Err(unsupported(
                 "increment/decrement require checked-f64-utf16-v12",

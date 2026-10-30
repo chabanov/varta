@@ -79,6 +79,23 @@ impl LiteralTypes {
     }
 }
 
+/// Whether no value of the literal type `literal` is a value of `other`
+/// (v37 discriminants of record unions).
+pub(super) fn disjoint(literal: Type, other: Type, types: &ir::ValueTypes) -> bool {
+    let Type::Literal(base, id) = literal else {
+        return false;
+    };
+    let values = types.literals.set(id);
+    super::unions::members(other, types)
+        .into_iter()
+        .all(|member| match member {
+            Type::Literal(other_base, other_id) => {
+                other_base != base || values.is_disjoint(types.literals.set(other_id))
+            }
+            member => member != base.erased() && member.erased() != base.erased(),
+        })
+}
+
 /// Lower one literal type annotation (`'none'`, `42`, `-1`, `true`).
 pub(super) fn annotation(literal: &ast::TsLitType, types: &mut ir::ValueTypes) -> Result<Type> {
     let value = match &literal.lit {

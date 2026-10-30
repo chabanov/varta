@@ -33,6 +33,9 @@ fn scalar(span: swc_common::Span, slot: u32, ty: Type, member: Type) -> Expr {
 
 impl Lower<'_> {
     pub(super) fn compound_assignment_value(&mut self, assign: &ast::AssignExpr) -> Result<Expr> {
+        if let Some(value) = self.global_compound(assign)? {
+            return Ok(value);
+        }
         if matches!(
             assign.op,
             ast::AssignOp::AndAssign | ast::AssignOp::OrAssign | ast::AssignOp::NullishAssign

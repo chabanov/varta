@@ -2851,6 +2851,27 @@ Contract: [architecture.md](architecture.md#language-core-language_core).
   hidden binding; keep it to receiverless fixed-arity shapes, and keep
   diagnostics of earlier profiles on `Type`'s `Display` (`mismatch` renders
   signatures for v37 only).
+- Record unions (`lower::shared_unions`, `emit::shared_members`): a union
+  with several record-tag or array members must be told apart only by the
+  emitted payload test in `is_union_member` (descriptor offsets of every
+  layout of the member shape or class family, or the array element kind);
+  never read a field of such a union except through `dispatch`, and never
+  add a value tag for it. `unions::intern` must keep rejecting array members
+  with equal element kinds. Catalogs describe such unions as `Unknown`
+  (`function_catalog`); do not relax `varta-common` catalog validation.
+  Converting JSON graphs to them goes through `discriminated_build`, which
+  needs a literal discriminant per member.
+- `Type::Never` has width 0 and no value; it comes only from guards that
+  exclude every member and from `never` annotations. Keep `unions::members`
+  empty for it, `widen` converting it to any target, and the trap after a
+  `never` binding.
+- Module variables (`lower::globals`, `module_constants`): a `let`/`var` is
+  `Binding::global` (root slot index and storage type); reads and writes go
+  through `global_read`/`global_store` only, closures re-bind it with their
+  own slot for facts and never capture it, and every new write form must
+  route there or be rejected (`assignment_binding` rejects pattern targets).
+  A chunk whose initializers lift functions reserves its initializer index
+  first (`lifts`), or the lifted function would take it.
 - Return analysis for endless loops is the `loops` completion mode
   (`exits_function_through_loops`), used only by v37 `finish_body`; never fold
   it into `normal`, which flow reachability of every profile uses.

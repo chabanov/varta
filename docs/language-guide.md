@@ -4832,3 +4832,46 @@ that returns a value can be passed where a `void` callback is expected. Class
 fields typed `T | undefined` may be left uninitialized, a field initialized by
 `new C()` has type `C`, and an arrow created in a constructor may use
 `this.field` once the fields it reads are assigned.
+
+#### Unions of object types and module variables (opt-in v37)
+
+```ts
+type Event = { kind: "chunk"; text: string } | { kind: "done" };
+
+let text = "";            // module state: every function sees the current value
+let finished = 0;
+
+export const record = (e: Event): void => {
+  switch (e.kind) {       // narrows `e` by its discriminant
+    case "chunk":
+      text += e.text;
+      break;
+    case "done":
+      finished++;
+      break;
+    default: {
+      const unreachable: never = e;   // exhaustiveness check
+    }
+  }
+};
+
+export function main(): void {
+  record({ kind: "chunk", text: "ab" });
+  record({ kind: "done" });
+  console.log(text + " " + String(finished));          // ab 1
+  const parsed = JSON.parse('{"kind":"chunk","text":"c"}') as Event;
+  record(parsed);
+  console.log(text);                                    // abc
+}
+```
+
+A union may combine several object shapes, interfaces and classes, and
+arrays of different element kinds (`string[] | number[]`, `string | Item[]`,
+but not `A[] | B[]` of two object types). Narrow it with a literal field
+(`if (e.kind === "chunk")`, `switch`), `in`, `instanceof`,
+`Array.isArray` or `typeof`; fields that every member declares can be read,
+and methods every class member has can be called, without narrowing.
+`JSON.parse(text) as T` picks the member by its literal discriminant field and
+throws a `TypeError` when none matches. Module-level `let` (and `var`) hold
+state for the whole program run; other modules may import and read them but
+not assign them. Module constants may hold arrow and function expressions.

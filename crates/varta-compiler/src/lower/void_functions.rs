@@ -40,6 +40,15 @@ fn describe_depth(ty: Type, types: &ir::ValueTypes, depth: usize) -> String {
                 .collect::<Vec<_>>()
                 .join(" | ");
         }
+        // A record shape by its field names (v37 union diagnostics).
+        Type::Record(id) => {
+            let names: Vec<&str> = types.records[id as usize]
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect();
+            return format!("{{ {} }}", names.join(", "));
+        }
         _ => return ty.to_string(),
     };
     let signature = &types.functions[id as usize];

@@ -434,6 +434,13 @@ impl Lower<'_> {
             return Err(unsupported("assignment target"));
         };
         let binding = self.resolve_binding(name.id.sym.as_ref())?;
+        if binding.global.is_some() {
+            return Ok(S::Expr(self.global_assignment_value(
+                &binding,
+                &assign.right,
+                assign.span,
+            )?));
+        }
         // A store through a closure that captured the binding before its
         // initialization (v37 `tdz`) checks the flag after the right side.
         let early = binding.mutable

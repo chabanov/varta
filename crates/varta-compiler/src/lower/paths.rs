@@ -245,6 +245,43 @@ impl Lower<'_> {
         }
         Ok(true)
     }
+    /// Narrow the path `object` (a union of record shapes) by the
+    /// discriminant comparison `object.name === single`.
+    pub(super) fn discriminate_path(
+        &mut self,
+        object: &ast::Expr,
+        name: &str,
+        single: Type,
+        positive: bool,
+    ) -> Result<()> {
+        let Some((path, root)) = self.path(object) else {
+            return Ok(());
+        };
+        if self.core.impure_guard || self.guard_blocked.contains(&path.0) {
+            return Ok(());
+        }
+        let Some(fact) = self.path_types(&path, root) else {
+            return Ok(());
+        };
+        let Some(kept) = self.discriminated(fact.narrowed, name, single, positive) else {
+            return Ok(());
+        };
+        let narrowed = if kept.is_empty() {
+            Type::Never
+        } else {
+            unions::intern(kept, self.types)?
+        };
+        if narrowed != fact.declared {
+            self.core.paths.insert(
+                path,
+                Fact {
+                    declared: fact.declared,
+                    narrowed,
+                },
+            );
+        }
+        Ok(())
+    }
     /// Path guards of one test leaf (`a.b`, `typeof a.b === "t"`,
     /// `a.b === null|undefined|literal`, `a.b?.c`). Returns whether handled.
     pub(super) fn path_guard(&mut self, test: &ast::Expr, yes: bool) -> Result<bool> {
@@ -287,6 +324,12 @@ impl Lower<'_> {
             (&*binary.right, &*binary.left),
         ] {
             if let Some((guarded, matched)) = self.path_comparison(operand, other) {
+                // `x.kind === "lit"` also narrows `x` (a union of record shapes).
+                if let (Guard::Literal(single), ast::Expr::Member(member)) =
+                    (matched, stmt::unparen(guarded))
+                {
+                    self.discriminant_guard(member, single, positive)?;
+                }
                 return self.refine_path(guarded, matched, positive);
             }
         }

@@ -195,6 +195,32 @@ fn initializer_type(init: &ast::Expr, types: &mut ir::ValueTypes) -> Option<Type
 }
 
 impl Lower<'_> {
+    /// The type of an initializer known without lowering it: a timer handle
+    /// (`setTimeout(...)`/`setInterval(...)`, so that
+    /// `const id = setInterval(() => clearInterval(id), ms)` captures `id`) or
+    /// an instance `new C(...)` of a declared class without type arguments.
+    fn known_initializer(&self, init: &ast::Expr) -> Option<Type> {
+        match stmt::unparen(init) {
+            ast::Expr::Call(call) => {
+                let ast::Callee::Expr(callee) = &call.callee else {
+                    return None;
+                };
+                let ast::Expr::Ident(id) = stmt::unparen(callee) else {
+                    return None;
+                };
+                (matches!(id.sym.as_ref(), "setTimeout" | "setInterval")
+                    && self.timer_builtin(id.sym.as_ref()))
+                .then(|| self.types.number())
+            }
+            ast::Expr::New(new) if new.type_args.is_none() => {
+                let ast::Expr::Ident(id) = stmt::unparen(&new.callee) else {
+                    return None;
+                };
+                named::class(self.types, id.sym.as_ref()).map(Type::Class)
+            }
+            _ => None,
+        }
+    }
     /// A nested function declaration (v37) is a constant binding of its block.
     pub(super) fn predeclare_function(&mut self, function: &ast::FnDecl) -> Result<()> {
         if function.declare {
@@ -231,7 +257,8 @@ impl Lower<'_> {
                         }
                         let ty = match (&id.type_ann, &declarator.init) {
                             (None, Some(init)) => initializer_type(init, self.types)
-                                .or_else(|| parameters::literal(init, self.types)),
+                                .or_else(|| parameters::literal(init, self.types))
+                                .or_else(|| self.known_initializer(init)),
                             _ => None,
                         };
                         candidates.push((id.id.sym.to_string(), ty));
@@ -373,6 +400,7 @@ impl Lower<'_> {
             mutable: true,
             readonly: false,
             tdz: None,
+            global: None,
         };
         self.capture_binding(&flag_binding)?;
         if binding.identity.0 == self.index {

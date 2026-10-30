@@ -44,6 +44,9 @@ struct Binding {
     /// flag cell of a binding that a closure may capture before its
     /// initialization (`tdz`).
     tdz: Option<u32>,
+    /// V37 (`language_core`): a module `let`, stored in its permanent root
+    /// slot (index) with this storage type, read and written there directly.
+    global: Option<(u32, Type)>,
 }
 struct Lower<'a> {
     source: &'a Source,
@@ -251,6 +254,7 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
             Type::Undefined
         }
         ast::TsKeywordTypeKind::TsUnknownKeyword if types.profile.unknown_type() => Type::Unknown,
+        ast::TsKeywordTypeKind::TsNeverKeyword if types.profile.language_core() => Type::Never,
         _ => return Err(unsupported("type annotation")),
     })
 }
@@ -338,6 +342,7 @@ mod functions;
 mod generators;
 mod generic_calls;
 pub(crate) mod generics;
+mod globals;
 mod guest_logical;
 mod http;
 mod interfaces;
@@ -382,6 +387,7 @@ mod records;
 mod reduce_inference;
 mod references;
 mod results;
+mod shared_unions;
 mod signature;
 mod spread;
 mod stmt;
@@ -431,6 +437,7 @@ impl Lower<'_> {
                     mutable,
                     readonly: false,
                     tdz: None,
+                    global: None,
                 },
             )
             .is_some()

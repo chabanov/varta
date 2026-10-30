@@ -183,7 +183,7 @@ impl Classes {
         }
     }
     /// Record shapes of `ancestor` and all of its descendants.
-    pub(super) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
+    pub(crate) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
         (0..self.list.len() as u32)
             .filter(|id| self.descends(*id, ancestor))
             .map(|id| self.shape(id))

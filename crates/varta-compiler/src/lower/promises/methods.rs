@@ -82,6 +82,7 @@ impl Lower<'_> {
             mutable: false,
             readonly: false,
             tdz: None,
+            global: None,
         };
         let mut body = vec![
             S::Init(exec, executor),
@@ -194,6 +195,7 @@ impl Lower<'_> {
             mutable: false,
             readonly: false,
             tdz: None,
+            global: None,
         };
         let mut body = vec![S::Init(promise, self.promise_object(span, id, None)?)];
         let mut functions = Vec::new();

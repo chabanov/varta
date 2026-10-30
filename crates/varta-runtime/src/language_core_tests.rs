@@ -234,6 +234,78 @@ fn combined_reader_and_retry_programs_match_node() {
 }
 
 #[test]
+fn unions_of_record_shapes_classes_and_arrays_match_node() {
+    run_collecting(
+        include_str!("language_core_cases/unions.ts"),
+        &[
+            "user hi | user:hi",
+            "chunk 2 x | chunk:x",
+            "done | -",
+            "6 7",
+            "14 12 21",
+            "1z plain strings 1 numbers 2",
+            "142why",
+            r#"3parsed {"id":"3","event":{"kind":"b","y":"parsed"}}"#,
+            "chunk 9 t",
+            r#"[{"kind":"user","text":"hi"},{"kind":"chunk","index":2,"text":"x"},{"kind":"done"}]"#,
+        ],
+    );
+}
+
+#[test]
+fn union_guide_example_matches_node() {
+    run(
+        include_str!("language_core_cases/guide_unions.ts"),
+        &["ab 1", "abc"],
+    );
+}
+
+#[test]
+fn checked_union_conversions_deviate_from_node() {
+    // Node keeps any parsed object (TypeScript erases the assertion); Varta
+    // selects the member by its literal discriminant and throws TypeError
+    // when none matches.
+    run(
+        "type U={kind:'a';x:number}|{kind:'b';y:string};\
+         function show(u:U):string{return u.kind==='a'?String(u.x):u.y;}\
+         export function main():void{\
+         console.log(show(JSON.parse('{\"kind\":\"b\",\"y\":\"ok\"}') as U));\
+         try{show(JSON.parse('{\"kind\":\"c\"}') as U);console.log('kept');}\
+         catch(e){console.log(e instanceof TypeError?'TypeError':'other');}}",
+        &["ok", "TypeError"],
+    );
+}
+
+#[test]
+fn module_variables_and_function_constants_match_node() {
+    run_collecting(
+        include_str!("language_core_cases/module_variables.ts"),
+        &[
+            "3 6 8",
+            "anonymous",
+            "ada hi bob 8",
+            "start!100",
+            "start! ada",
+            "ticks 3",
+        ],
+    );
+}
+
+#[test]
+fn self_clearing_interval_captures_its_own_handle() {
+    // `const id = setInterval(() => clearInterval(id), ms)`: the callback
+    // reads `id` only after the initialization (Node 24 output).
+    run(
+        "function run(done:()=>void):void{let ticks=0;\
+         const id=setInterval(()=>{ticks++;console.log('tick '+String(ticks));\
+         if(ticks===3){clearInterval(id);done();}},10);}\
+         export function main():void{run(()=>console.log('done'));\
+         const once=setTimeout(()=>clearTimeout(once),5);}",
+        &["tick 1", "tick 2", "tick 3", "done"],
+    );
+}
+
+#[test]
 fn timer_handles_are_typed_by_return_type_queries() {
     // The pilot's `let timer: ReturnType<typeof setTimeout> | undefined;`.
     run_collecting(
@@ -414,6 +486,25 @@ fn language_core_diagnostics_name_the_rejected_construct() {
             "class K{a:number;constructor(){}}\nexport function main():void{new K();}".to_owned(),
             "class field a is not definitely assigned in the constructor",
         ),
+        (
+            "interface A{a:number}\ninterface B{b:number}\nexport function main():void{const x:A[]|B[]=[];}"
+                .to_owned(),
+            "array members of one union with the same element kind",
+        ),
+        (
+            "type U={kind:'a';x:number}|{kind:'b';y:number};\n\
+             export function main():void{const u:U={kind:'a',x:1};console.log(String(u.x));}"
+                .to_owned(),
+            "property x is not declared by every member of the union (not by { kind, y })",
+        ),
+        (
+            "let n:number;\nexport function main():void{n=1;}".to_owned(),
+            "module let without an initializer whose type does not admit undefined",
+        ),
+        (
+            "let n=0;\nexport function main():void{[n]=[1];}".to_owned(),
+            "module variable as a destructuring or loop-head target",
+        ),
     ] {
         let error = rejected(&source, V37);
         assert!(error.contains(expected), "{error}\n{source}");
@@ -470,6 +561,25 @@ fn v36_keeps_rejecting_the_language_core_constructs() {
         (
             "function f():number{for(;;){return 1;}}\nexport function main():void{f();}",
             "value-returning function must return on every path",
+        ),
+        (
+            "type U={kind:'a';x:number}|{kind:'b';y:string};\n\
+             export function main():void{const u:U={kind:'a',x:1};}",
+            "multiple record shapes, array element types, promise or function types in one union",
+        ),
+        (
+            "let n=0;\nexport function main():void{n=1;}",
+            "top-level let or var declaration",
+        ),
+        (
+            "const NOOP=():void=>{};\nexport function main():void{NOOP();}",
+            "function or class in a module constant initializer",
+        ),
+        (
+            "function f(x:number|string):string{if(typeof x==='number')return 'n';\
+             if(typeof x==='string')return 's';const n:never=x;return n;}\n\
+             export function main():void{f(1);}",
+            "type annotation",
         ),
     ] {
         let error = rejected(source, V36);

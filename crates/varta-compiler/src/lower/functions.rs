@@ -418,6 +418,7 @@ impl Lower<'_> {
                 initialized: true,
                 mutable: false,
                 tdz: None,
+                global: None,
                 readonly: false,
             };
             child
@@ -664,6 +665,20 @@ impl Lower<'_> {
             return Ok(binding);
         }
         if let Some(binding) = self.outer.get(name).cloned() {
+            // A module variable is reached through its root slot, never
+            // captured; this function keeps its own slot for guard facts.
+            if binding.global.is_some() {
+                let slot = self.hidden(binding.ty.ok_or_else(|| invalid("missing type"))?);
+                let local = Binding {
+                    identity: (self.index, slot),
+                    slot,
+                    ..binding
+                };
+                if let Some(scope) = self.scopes.first_mut() {
+                    scope.insert(name.to_owned(), local.clone());
+                }
+                return Ok(local);
+            }
             let slot = self.capture_binding(&binding)?;
             return Ok(Binding { slot, ..binding });
         }

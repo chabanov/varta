@@ -136,7 +136,12 @@ impl Lower<'_> {
             self.update(name, value.ty)?;
             self.mark_const_assertion(name, readonly)?;
             self.flow_known_binding(&old, &value);
+            let never = value.ty == Type::Never;
             output.extend(self.initialize(&old, value));
+            // A `never` binding (v37) is unreachable: fail safe if reached.
+            if never {
+                output.push(S::Trap);
+            }
         }
         Ok(output)
     }

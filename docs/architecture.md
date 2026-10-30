@@ -8013,9 +8013,8 @@ by digest in `varta-runtime` `language_core_tests`).
   construct, every `for...of`/`for...in` entry, and `catch`/`finally` entries.
   A write to the root binding drops the facts rooted at it. A guard whose
   test contains such a construct creates no path fact, and facts never enter
-  closures. Discriminated unions of several record shapes stay outside the
-  subset (their union type is rejected), so `switch (s.kind)` narrows the
-  path `s.kind`, not `s`.
+  closures. A literal comparison of `x.kind` also narrows `x` itself when
+  it is a union of record shapes (below).
 - **`switch` by strict equality.** A discriminant that is not a number or
   Boolean (strings, literal unions, `typeof x`, unions) is evaluated once
   into a hidden binding; each clause value is compared with `===` in source
@@ -8050,6 +8049,59 @@ by digest in `varta-runtime` `language_core_tests`).
   `super(...)` may read the fields assigned before it and write any field
   through `this.field`; `this` itself still never escapes, and methods are
   still not called on it.
+- **Unions of record shapes, classes and arrays.** A union may hold several
+  records, interfaces and classes (all share the record tag of a union
+  cell) and several arrays whose element kinds differ (`string[] |
+  number[]`, `string | Item[]`; `A[] | B[]` of two record types is rejected
+  because arrays are told apart by element kind). No value tag or layout
+  changes: the emitted member test of such a union adds, after the tag, the
+  payload's layout descriptor (any layout of the record shape, or of a class
+  and its subclasses) or the array's element kind. Lowering adds field reads
+  of a field every member declares (one read per member, with the union of
+  the field types), method calls on unions of classes, `"key" in x`
+  (`HasOwn` for records, declared members for classes), indexed reads of
+  unions of arrays, object and array literals typed by the member their
+  discriminant or first element selects, and narrowing: `x.kind === "lit"`
+  (and `!==`, `switch`) keeps the members whose `kind` can hold the literal
+  or drops those whose `kind` is exactly it, for bindings and property
+  paths; `in`, `instanceof`, `typeof`, `Array.isArray` and truthiness filter
+  members as before. Capture and frame catalogs describe such a union with
+  the shallow `unknown` cell node, as for recursive unions. Promise and
+  function members stay limited to one per union.
+- **`never`.** A guard that excludes every remaining member of a binding
+  (or a single record by its discriminant) leaves `never`; joins keep it
+  only when every path proved it. `never` annotates bindings and parameters;
+  a `never` value converts to any type, and a `never` binding's
+  initialization is followed by a trap (the code is unreachable), so
+  `default: { const unreachable: never = x; }` checks exhaustiveness.
+- **Checked conversion of record unions.** `JSON.parse(text) as T`,
+  `unknown` assertions and declared reads to a union with several record
+  members select the member by a literal discriminant: each record member
+  needs a required literal-typed field whose values no other member's same
+  field admits (otherwise the conversion is rejected at compile time); the
+  object's value of that field picks the member, which is then built, and an
+  object no discriminant selects throws `TypeError` (Node keeps any parsed
+  object). Host-schema checked parsing (`varta.json.parse<T>`) still rejects
+  literal types.
+- **Module variables.** Module-level `let` and `var` declarations (`var` is
+  treated as `let`: initializers run before any other code, so hoisting is
+  not observable) live in permanent root slots, a primitive boxed in a union
+  cell so the slot holds a handle. Functions, closures and importing modules
+  never copy them: every read loads the slot and every write stores it, so
+  exports are live bindings; importers may not assign them. Simple,
+  compound, logical and update assignments are admitted; destructuring and
+  loop-head targets are rejected. Guard facts on a module variable are
+  invalidated by any call, like those of mutable captured bindings. A `let`
+  without an initializer needs a type that admits `undefined`. Initializers
+  stay the checked pure subset of module constants, plus arrow and function
+  expressions (module constants and variables may hold functions; their
+  bodies run later). An initializer may not reference a later declaration;
+  class expressions stay unsupported.
+- **Self-referencing timers.** `const id = setInterval(() => clearInterval(id),
+  ms)` (and `setTimeout`) captures `id` before its initialization: the timer
+  handle's type is known from the call, so the capture uses the temporal
+  dead zone above; `new C(...)` initializers of declared classes are typed
+  the same way.
 - **Timer handles.** `ReturnType<typeof setTimeout>` and
   `ReturnType<typeof setInterval>` (the built-in timers, unless a type named
   `ReturnType` is declared) are `number`, the handle type of these timers;

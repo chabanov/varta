@@ -809,7 +809,19 @@ impl Lower<'_> {
             Ok(statements)
         };
         let arrays = member(self, array)?;
-        let objects = member(self, dictionary.or(record))?;
+        let records: Vec<Type> = members
+            .iter()
+            .copied()
+            .filter(|ty| matches!(ty, Type::Record(_)) && built(*ty, self.types))
+            .collect();
+        // V37 (`language_core`): several record members are selected by
+        // their literal discriminant fields.
+        let objects =
+            if self.types.profile.language_core() && records.len() > 1 && dictionary.is_none() {
+                self.discriminated_build(span, saved, target, output, message, &records)?
+            } else {
+                member(self, dictionary.or(record))?
+            };
         let otherwise = vec![self.conversion_error(span, message)?];
         let any_dictionary = dictionaries::intern(Type::Unknown, self.types)?;
         let any_array = arrays::intern(Type::Unknown, self.types)?;
@@ -824,6 +836,76 @@ impl Lower<'_> {
             arrays,
             vec![S::If(tag(any_dictionary), objects, otherwise)],
         )])
+    }
+    /// The JSON-object branch of a union with several record members: each
+    /// member needs a literal-typed field whose values no other member's same
+    /// field admits (a discriminant); the object's value of that field
+    /// selects the member, in member order, and is then built as that member.
+    /// An object no discriminant selects fails the conversion.
+    fn discriminated_build(
+        &mut self,
+        span: Span,
+        saved: u32,
+        target: Type,
+        output: u32,
+        message: u32,
+        records: &[Type],
+    ) -> Result<Vec<S>> {
+        let fields_of = |types: &ir::ValueTypes, ty: Type| match ty {
+            Type::Record(shape) => types.records[shape as usize].fields.clone(),
+            _ => Vec::new(),
+        };
+        let mut discriminants = Vec::new();
+        for record in records {
+            let fields = fields_of(self.types, *record);
+            let found = fields.iter().find(|field| {
+                !field.optional
+                    && matches!(field.ty, Type::Literal(..))
+                    && records
+                        .iter()
+                        .filter(|other| *other != record)
+                        .all(|other| {
+                            let others = fields_of(self.types, *other);
+                            match others.iter().find(|candidate| candidate.name == field.name) {
+                                None => true,
+                                Some(candidate) => {
+                                    literals::disjoint(field.ty, candidate.ty, self.types)
+                                }
+                            }
+                        })
+            });
+            let Some(field) = found else {
+                return Err(unsupported(&format!(
+                    "checked conversion to a union of record shapes whose member {} has no \
+                     literal discriminant field that tells it from the other members",
+                    void_functions::describe(*record, self.types)
+                )));
+            };
+            discriminants.push((*record, field.name.clone(), field.ty));
+        }
+        let graph = dictionaries::intern(Type::Unknown, self.types)?;
+        let check = self.cell_test(span, saved, Type::Unknown, graph, "a JSON object")?;
+        let wrong = self.conversion_error(span, message)?;
+        let mut chain = vec![self.conversion_error(span, message)?];
+        for (record, name, literal) in discriminants.into_iter().rev() {
+            let value = self.hidden(Type::Unknown);
+            let key = Expr {
+                span,
+                ty: Type::String,
+                kind: E::String(self.types.profile.string_bytes(&name)),
+            };
+            let lookup = self.dictionary_get(view(span, saved, graph), key)?;
+            let lookup = unions::widen(lookup, Some(Type::Unknown), self.types)?;
+            let selected = self.cell_test(span, value, Type::Unknown, literal, "a discriminant")?;
+            let built = self.hidden(record);
+            let mut store = self.build_statements(span, saved, record, built, message)?;
+            store.push(S::Init(
+                output,
+                unions::widen(local(span, built, record), Some(target), self.types)?,
+            ));
+            chain = vec![S::Init(value, lookup), S::If(selected, store, chain)];
+        }
+        Ok(vec![S::If(not(span, check), vec![wrong], chain)])
     }
     /// `(cell, message) -> T` of [`Converter::Build`].
     fn build_body(&mut self, span: Span, target: Type, args: Vec<Expr>) -> Result<Vec<S>> {

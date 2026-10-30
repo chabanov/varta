@@ -419,6 +419,14 @@ impl Lower<'_> {
                 .collect();
             members.sort();
             members.dedup();
+            // Every path proved the binding `never` (v37).
+            if members.is_empty()
+                && paths
+                    .iter()
+                    .all(|path| path.facts.get(&slot) == Some(&Type::Never))
+            {
+                self.refinements.insert(slot, Type::Never);
+            }
             if !members.is_empty() {
                 let ty = unions::intern(members, self.types)?;
                 self.flow_fact(slot, ty)?;
@@ -431,7 +439,7 @@ impl Lower<'_> {
             .iter()
             .flat_map(|s| s.values())
             .chain(self.captures.values())
-            .filter(|b| b.mutable && self.cells.contains(&b.slot))
+            .filter(|b| b.mutable && (self.cells.contains(&b.slot) || b.global.is_some()))
             .map(|b| b.slot)
             .collect()
     }

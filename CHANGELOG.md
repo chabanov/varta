@@ -27,6 +27,15 @@ in [conformance/README.md](conformance/README.md).
   value-returning functions, uninitialized `T | undefined` class fields start
   as `undefined`, `new C()` types a field, constructor arrows may use
   `this.field` and `ReturnType<typeof setTimeout>` is the timer handle type.
+  Unions may hold several record shapes, interfaces and classes and arrays
+  of different element kinds, told apart by layout descriptor and element
+  kind: discriminant, `in`, `instanceof`, `typeof` and `Array.isArray`
+  narrowing, field reads and method calls on the union, `never`
+  exhaustiveness, and checked JSON conversion that selects the member by its
+  literal discriminant. Module-level `let`/`var` hold mutable module state in
+  root slots (exports are live bindings), module constants may hold
+  functions, and `const id = setInterval(() => clearInterval(id), ms)`
+  compiles.
   No value tag, layout, host import or budget changes; v36 keeps its bytes
   and diagnostics.
 

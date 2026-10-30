@@ -57,6 +57,10 @@ pub(crate) enum Type {
     /// Promise object (v34 `promises`): a guest-heap record with private
     /// fields and no value tag; the id indexes `ValueTypes::promises`.
     Promise(u32),
+    /// TypeScript's `never` (v37 `language_core`): the type of a binding whose
+    /// narrowing excluded every member, or of a `never` annotation. No value
+    /// has it; code that would observe one is unreachable and traps.
+    Never,
 }
 
 /// Base primitive of a literal set; it fixes the erased physical representation.
@@ -156,7 +160,7 @@ impl Type {
         })
     }
     pub(crate) fn width(self) -> u32 {
-        if self == Self::Void {
+        if matches!(self, Self::Void | Self::Never) {
             0
         } else if self.result_value().is_some() {
             2
@@ -928,6 +932,7 @@ impl std::fmt::Display for Type {
             Self::Union(_) => "primitive union",
             Self::ReferenceUnion(_) => "reference union",
             Self::Unknown => "unknown",
+            Self::Never => "never",
             Self::Object(false) => "object",
             Self::Object(true) => "object | null",
             Self::Literal(LiteralBase::String, _) => "string literal type",
