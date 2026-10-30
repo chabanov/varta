@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. `v36-merge` with the declared-fields, function-fields, timers and async-generator streams: commit `765743e` (2026-10-29), 2196 tests, 0 failures, conformance 101 passed and 9 known gaps. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.13.0](#pilot-acceptance-package-uarp-sdk) (0.12.0 until the v38 integration); M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.13.1](#pilot-acceptance-package-uarp-sdk) (0.13.0 for the wave-2 streams, 0.12.0 until the v38 integration); wave-2 integration probe under v38: 7 of 65 files check unmodified, 65 of 65 with the one `typeof Blob` guard of `core/transport.ts` removed in a scratch copy ([probe](#pilot-acceptance-package-uarp-sdk)); earlier: M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 | Platform targets | Third-party embedding contract published in [embedding.md](embedding.md); browser, desktop and Raspberry Pi 5 targets, application lifecycle and view layer follow the [accepted design](#platform-targets-and-application-model) (2026-10-29), not implemented yet |
 
 Next work, in order:
@@ -267,13 +267,20 @@ The package is an external acceptance target, not an engine feature. No UARP
 types, routes or client logic enter engine crates, built-in profiles or the core
 CLI, and its sources are not vendored into this repository.
 
-Pinned baseline: version **0.13.0** (owner decision of 2026-10-30, the
-version the console uses and npm `latest`), tarball SHA-256
-`69d986d3002247fc347d5a39742f5a46246163d782dcb910e118c8bb4790395d`
-(npm integrity `sha512-frtICedMsIcJialN4oBVzsqn4sI6O7vWcAw++Ioc7ZuXu7dGM8lwXG+soKCnvtN5zsZmIDr7ztSVH25Wgm+Izg==`,
-verified against the registry), 65 source files. Later versions are adopted
-explicitly, with this section updated. History: every measurement up to and
-including the v38 integration probe used **0.12.0** (tarball SHA-256
+Pinned baseline: version **0.13.1** (adopted at the v38 wave-2 integration,
+2026-10-30), tarball SHA-256
+`2310e037455f3da99c672e7b70cb340c476be81921b76a2f7e8b2e65901043b5`
+(npm integrity `sha512-ccaWE8iqbR+NLnZqgcB2jNsoH3OXP1qJXVFFGAxGZ1UsgBOIhD7JCf/OAImYeBrhSG2WoBHyOBM65ZR0+hAsAQ==`,
+verified against the registry and recomputed from the tarball), 65 source
+files. 0.13.1 fixes `uploadPublicSessionImage`, which now sends its
+`BinaryInput` as `binary: body` with an image content type, through a new
+`binaryContentType` helper in `core/transport.ts`. Later versions are adopted
+explicitly, with this section updated. History: the wave-2 stream probes used
+**0.13.0** (owner decision of 2026-10-30, tarball SHA-256
+`69d986d3002247fc347d5a39742f5a46246163d782dcb910e118c8bb4790395d`, npm
+integrity `sha512-frtICedMsIcJialN4oBVzsqn4sI6O7vWcAw++Ioc7ZuXu7dGM8lwXG+soKCnvtN5zsZmIDr7ztSVH25Wgm+Izg==`,
+65 source files); every measurement up to and including the v38 integration
+probe used **0.12.0** (tarball SHA-256
 `2a0f2ce97132c90be61ca45c5ea65b77ba25d1706e50894543c5737a6d8bb56e`, npm
 integrity `sha512-zoKVCcSTIJXiLvyUKmXyNBH1xPDo7XRcikch+YUasnQPbvTZ8atvdgCci9e8FD+klG4/VyXcMpYGMlXngEPbEg==`,
 65 source files); 0.13.0 changes the transport's retryable statuses (no
@@ -856,24 +863,48 @@ the SDK owner fixes the generator). With that one line changed to `binary:
 body` in a scratch copy, **65 of 65** files check, including the merged
 `UarpClient` class. No file stops at a union member limit.
 
-**Wave 2 (open, owned after integration).**
+**Wave-2 integration pilot probe (`v38-wave2-merge`, uarp-sdk 0.13.1,
+2026-10-30).** Per-file `varta check` under v38 of a scratch copy of the
+pinned **0.13.1** sources (`npm pack uarp-sdk@0.13.1`, integrity verified),
+each file the only `export *` source of a probe entry (default-imported when
+it has a default export), production budgets, debug build, no live API call.
+Unmodified: **7 of 65** files check (`core/errors.ts`, `core/json.ts`,
+`core/pagination.ts`, `core/sse.ts`, `core/util.ts`, `generated/meta.ts`,
+`generated/models.ts`); the other 58 stop at one new line of 0.13.1,
+`core/transport.ts:476:22: unknown identifier: Blob`: the feature detection
+`typeof Blob !== 'undefined' && body instanceof Blob` in `binaryContentType`
+reads the prelude class `Blob` as a value, which v38 does not admit. With
+that guard reduced to `body instanceof Blob` in a scratch copy, **65 of 65**
+files check: the 0.13.0 generator bug (a `Uint8Array` held by `unknown`) is
+gone. Owner decision pending: admit `typeof` of an engine prelude class (a
+constant `"function"`) under v38, or keep it rejected and drop the guard in
+the SDK.
+
+**Wave 2 (integrated on `v38-wave2-merge`, 2026-10-30).**
 
 | Stream | Scope | State |
 | --- | --- | --- |
-| (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Implemented in part (branch `v38-intrinsics-region`): one memory with the relocated intrinsic region (`varta.intrinsics`: stack, packed data, reserved arena), the `no_std` core (`abi`, `memory`, `value` cells and error classes, `bigint` transport, `limits`, `text`) as the one owner of the cell layout, `varta-bigint` without `std`, and the 13 BigInt operations linked; the value conversions and comparisons run the same shared code as host imports. Linked code reads strings within the v38 data limit; results above the 1 MiB result buffer still trap. Open: a cheap number/string conversion path, JSON and the value18 readers ([next increment](#linked-intrinsics-measurement-v38)), owned string results |
-| (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Implemented on `v38-dictionary-hashing` (selector `dictionary_hashing()`, [contract](architecture.md#dictionary-hashing-dictionary_hashing)): value ABI/layout 18 for v38 with a four-slot dictionary storage record (`holes`, `keys`, `table`, `values`), an open-addressing `number[]` table probed from a seedless FNV-1a hash of the UTF-16 key units by allocation-free guest helpers, tombstones and holes for deletions, compaction before enumeration and amortized rebuilds at half load; twelve value18 readers (host ABI 34), JSON schema 18 and exception channel v9; every table validated against its entries at every reader. Measured below ([dictionary hashing measurement](#dictionary-hashing-measurement-v38)). Pending: array-index keys inserted below an existing key stay linear (an ordered rotation), and allocation-heavy loops at 20k+ entries are bound by the first-fit allocator (stream d) |
+| (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Implemented in part (branch `v38-intrinsics-region`): one memory with the relocated intrinsic region (`varta.intrinsics`: stack, packed data, reserved arena), the `no_std` core (`abi`, `memory`, `value` cells and error classes, `bigint` transport, `limits`, `text`) as the one owner of the cell layout, `varta-bigint` without `std`, and the 13 BigInt operations linked (under value layout 18 the linked conversion is `bigint_from_value_v5`, since primitive and BigInt cells keep their value17 layout); the value conversions and comparisons run the same shared code as host imports. Linked code reads strings within the v38 data limit; results above the 1 MiB result buffer still trap. Open: a cheap number/string conversion path, JSON and the value18 readers ([next increment](#linked-intrinsics-measurement-v38)), owned string results |
+| (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Implemented on `v38-dictionary-hashing` (selector `dictionary_hashing()`, [contract](architecture.md#dictionary-hashing-dictionary_hashing)): value ABI/layout 18 for v38 with a four-slot dictionary storage record (`holes`, `keys`, `table`, `values`), an open-addressing `number[]` table probed from a seedless FNV-1a hash of the UTF-16 key units by allocation-free guest helpers, tombstones and holes for deletions, compaction before enumeration and amortized rebuilds at half load; twelve value18 readers (host ABI 34), JSON schema 18 and exception channel v9; every table validated against its entries at every reader. Measured below ([dictionary hashing measurement](#dictionary-hashing-measurement-v38)). Pending: array-index keys inserted below an existing key stay linear (an ordered rotation). The 20k+ allocator bound of the stream alone is gone after integration with (d)'s exact-size free lists ([wave-2 integration measurement](#wave-2-integration-measurement-v38)) |
 | (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Implemented on `v38-web-bytes` under `web_bytes()` ([contract](architecture.md#web-bytes-web_bytes)): byte bodies (host ABI 34 `net_request_start_v2`, `net_body_read_bytes`), `ArrayBuffer`/`Blob`/`FormData` preludes with a deterministic multipart boundary, typed `globalThis` with `process.env` as an `env.get`-granted snapshot (`env_snapshot`), mixed `Promise.race`, strict record-union conversions (exactly one match, ambiguity a `TypeError`), union-to-union checked assertions, function adapters for `f as F`, `instanceof` narrowing of property paths in conditionals, records reaching a `Uint8Array` held by `unknown`, `process.env` by exact names with static-key reads, classes merged with an interface through `Object.assign(this, …)`. Pending: a `Uint8Array` (or a union that may hold one) held by `unknown` (a known gap, planned later), `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, spread key order through views; `File`, `Blob.stream()`, `formData()`, `FormData` iterators |
-| (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Implemented on `v38-codegen-hotspots` ([contract](architecture.md#code-generation-v2-codegen_v2), [measurements](#code-generation-v2-measurements)): appended `push`, checked element reads without union cells, word-stored literal and grown backings, concatenation chains, quiet function-value calls, exact-size free lists. `charAt` of non-ASCII units in constant time; `--profile-fuel` of programs with checked JSON fixed. Pending: the 100-row keyed diff under 1M fuel needs (b); closure entry checks stay as decided; incremental collection deferred (open) |
+| (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Implemented on `v38-codegen-hotspots` ([contract](architecture.md#code-generation-v2-codegen_v2), [measurements](#code-generation-v2-measurements)): appended `push`, checked element reads without union cells, word-stored literal and grown backings, concatenation chains, quiet function-value calls, exact-size free lists. `charAt` of non-ASCII units in constant time; `--profile-fuel` of programs with checked JSON fixed. With (b) integrated the 100-row keyed diff takes 492,170 fuel (under the 1M target; [wave-2 integration measurement](#wave-2-integration-measurement-v38)). Pending: closure entry checks stay as decided; collection work per turn is wave 3 (f) |
 | (e) Strict members and wide unions | Undeclared member access as a compile error (owner decision, TS2339), per-union member limits in the limits registry, discriminant dispatch for wide record unions (uarp-sdk 0.13.0 `RunEventV1`, 24 members), exhaustive discriminant switches | Implemented on `v38-strict-members` ([contract](architecture.md#strict-members-and-wide-unions-strict_members)); `if`/`else if` chains stay non-exhaustive, as in TypeScript |
-| (f) Virtual file roots | Portable `fs.*` paths: roots declared by the configuration, mapped by the host policy, grants on virtual paths, absolute host paths denied under v38 (`file_roots()`) | Implemented on `v38-virtual-roots` |
+| (f) Virtual file roots | Portable `fs.*` paths: roots declared by the configuration, mapped by the host policy, grants on virtual paths, absolute host paths denied under v38 (`file_roots()`) | Implemented on `v38-virtual-roots` ([contract](architecture.md#virtual-file-roots-file_roots)); the integration adds a CLI smoke test of a long-lived application instance reading through a root. V38 has no HTTP contract (binary64 profiles reject tool/HTTP adapters), so an HTTP service cannot read through a root yet |
+| (g) TSX fixes | Accessible names, `.js`/`.jsx` resolution, deterministic view scripts, text resources, closure narrowing | Implemented on `v38-tsx-fixes`: accname 1.2 names of the L0 subset, `./x.js` → `x.ts`/`x.tsx` (both is an error) and `./x.jsx` → `x.tsx`, `--view-script` on virtual time with `{"input":"wait","ms":N}`, text resources `with { type: "text" }` with the build-time stylesheet check (`varta_common::view::stylesheet`; ambient `*.css`/`*.txt`/`*.md` modules in `varta.d.ts` for editor typing only), narrowing kept inside closures created after the last assignment |
 
 **Wave 3 (recorded, owner decisions of the wave-2 linked-intrinsics review).**
 
 | Item | Scope | State |
 | --- | --- | --- |
-| (a) Inline conversions and comparisons | `primitive_to_string_v5`, `primitive_to_number_v5`, `primitive_compare` and `primitive_equal` get an inline codegen fast path for integers, ASCII strings and same-tag comparisons, with the linked general path (`varta_intrinsics::bigint`, already shared with the host imports) behind it, removing those host imports without a fuel regression. Measured when they were linked without it: the codegen v2 dictionary workload (50 inserts + 50 reads) rose from 456 K to 1.1 M fuel, and the v37 case `generator_cases/lifetime.ts` exhausted the production fuel budget under v38 | Open |
-| (b) Linked JSON | `json_parse_v18` and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | Open |
+| (a) Inline conversions and comparisons | `primitive_to_string_v5`, `primitive_to_number_v5` (under value 18: `primitive_to_string_v6`, `primitive_to_number_v6`), `primitive_compare` and `primitive_equal` get an inline codegen fast path for integers, ASCII strings and same-tag comparisons, with the linked general path (`varta_intrinsics::bigint`, already shared with the host imports) behind it, removing those host imports without a fuel regression. Measured when they were linked without it: the codegen v2 dictionary workload (50 inserts + 50 reads) rose from 456 K to 1.1 M fuel, and the v37 case `generator_cases/lifetime.ts` exhausted the production fuel budget under v38 | Open |
+| (b) Linked JSON | `json_parse_v18` (under value 18: `json_parse_v19`) and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | Open |
 | (c) Owned string results | Results larger than the 1 MiB result buffer (case mapping, `String(x)` of a longer string) are returned as owned guest strings | Open |
+| (d) ASCII case mapping inline | An inline ASCII fast path for `toUpperCase`/`toLowerCase` in front of the linked case mapping, which costs about 820 (upper) and 595 (lower) fuel per unit through the core Unicode tables | Open |
+| (e) Coalescing intrinsic arena | A merging (coalescing) arena for linked scratch, so linked BigInt work near a million bits fits the memory budget as the host import does (today its size-class free lists do not coalesce and such operands exhaust the 8 MiB budget) | Open |
+| (f) Collection work per turn | Owner decision: first idle collection between turns with a deterministic per-instance maintenance budget reported by `--budget-report`; then an incremental collector with bounded work per allocation (write barriers on every reference store, exact rooting kept provable). Motivated by a console turn costing about 910k fuel instead of about 430k when a collection fires inside it | Open |
+| (g) Network wait in scripted sessions | A bounded, explicit network-wait step for `--view-script` sessions, so scripted views that await responses stay deterministic on virtual time | Open |
+| (h) Linked value18 readers | Link the value18 readers (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12` as linked rendering plus the `log_string16` effect, `json_parse_v19`, `primitive_to_string_v6`/`primitive_to_number_v6` with (a)); `bigint_from_value_v5` is already linked at the integration, since it reads only primitive and BigInt cells | Open |
+| (i) L0 open choices | The L0 view protocol's open choices, including `role="separator"` and `role="group"` | Open |
 
 #### Code generation v2 measurements
 
@@ -935,7 +966,8 @@ uninstrumented and their fuel counts toward the caller.
 What remains: the 100-row keyed diff spends 1,052,379 of its 1,445,572 fuel
 (73%) in the dictionary's linear key search (`ArraySearch` and `StringEquals`,
 10,200 comparisons), which wave-2 stream (b) replaces with hashing; the rest
-of the workload is about 0.39M fuel, so the 1M target needs that stream. A
+of the workload is about 0.39M fuel, so the 1M target needs that stream
+(integrated: 492,170 fuel, [wave-2 integration measurement](#wave-2-integration-measurement-v38)). A
 closure call still validates the function cell at the call site and its
 environment and each captured binding cell at entry (about 70 fuel per object,
 the v12 entry-check contract and its malformed-environment tests). Decision
@@ -952,7 +984,8 @@ exhaust its fuel in a single collection. Bounding that per turn needs an
 incremental (or generational, remembered-set) collector, which needs a write
 barrier on every reference store (record and class fields, array elements,
 binding cells, environments, frames, promise and timer state) with exact
-rooting kept provable. Not scheduled.
+rooting kept provable. Scheduled as wave 3 (f) (owner decision): idle collection
+between turns first, then incremental collection.
 
 #### Dictionary hashing measurement (v38)
 
@@ -984,7 +1017,10 @@ not wall-clock.
   allocation over a free list fragmented by the key strings' garbage); the
   dictionary helpers themselves cost about 1,800 fuel per insertion there.
   Rebuilding tables of growing power-of-two sizes adds large garbage blocks
-  the linear layout does not have. The allocator belongs to wave-2 stream (d).
+  the linear layout does not have. The allocator belongs to wave-2 stream (d);
+  integrated with its exact-size free lists, 20,000 and 30,000 entries cost
+  about 1,000–2,300 fuel per operation
+  ([wave-2 integration measurement](#wave-2-integration-measurement-v38)).
 - **Memory.** The table adds two to four `number[]` slots (16–32 bytes) per
   entry, so 50,000 hashed entries with their keys exhaust the 8 MiB memory
   budget (typed `Memory`), where the linear layout still fits; the 100,000-key
@@ -994,6 +1030,59 @@ not wall-clock.
   `memory.copy` per vector and one pass over the table: linear, as before, but
   2,000 descending ids with 1,000 deletions and a 6,000-entry string-key
   workload together run in 185M fuel (`dictionary_hashing_cases/large.ts`).
+
+#### Wave-2 integration measurement (v38)
+
+The wave-2 streams together on `v38-wave2-merge` against the integrated v38
+tip (`cb6795d`), both under v38 with the same harness (the 13 codegen
+patterns, the keyed diffs and the Markdown fixture at their checked sizes
+under test-only budgets of 40 production fuel budgets and unbounded host
+calls; the keyed view row counts by bisection under one production budget,
+1,000,000 fuel and 1024 host calls; dictionaries as in the dictionary
+hashing measurement: marginal fuel of `n` inserts, lookups and deletes of
+distinct keys under test-only fuel and the production 8 MiB memory). Fuel
+is deterministic; the debug test build on the author's macOS arm64 host.
+
+| Workload | Size | Before (cb6795d) | After (wave 2) | Change |
+| --- | ---: | ---: | ---: | ---: |
+| `x = x + i` loop | 10,000 | 140,552 | 140,669 | +0.1% |
+| 3-char string `===` | 4,000 | 304,913 | 305,002 | +0.0% |
+| string `===` literal | 4,000 | 132,875 | 132,964 | +0.1% |
+| `s = s + "x"` | 800 | 50,471 | 50,392 | −0.2% |
+| dictionary 50 inserts + 50 reads | 50 | 446,490 | 162,075 | 2.75× |
+| record field reads | 1,000 | 22,698 | 22,787 | +0.4% |
+| direct function calls | 1,000 | 27,544 | 27,661 | +0.4% |
+| closure calls | 1,000 | 330,982 | 305,015 | 1.09× |
+| array `push` + index sum | 500 | 464,755 | 112,049 | 4.15× |
+| Markdown-like scan (lines) | 10 | 68,458 | 66,002 | 1.04× |
+| `JSON.parse` of ~2 KB (records) | 40 | 98,913 | 64,371 | 1.54× |
+| list render (rows) | 100 | 292,803 | 160,137 | 1.83× |
+| keyed-list diff (rows) | 100 | 1,785,586 | 492,170 | 3.63× |
+| keyed-list diff (rows) | 500 | 30,048,681 | 2,413,659 | 12.45× |
+| Markdown blocks fixture (chat replies) | 1 | 104,367 | 59,276 | 1.76× |
+| keyed view mount, rows in 1M fuel | — | 74 | 128 | 1.73× |
+| keyed view update, rows in 1M fuel | — | 35 | 65 | 1.86× |
+
+| Entries | Insert before → after (per op) | Lookup before → after (per op) | Delete before → after (per op) |
+| ---: | ---: | ---: | ---: |
+| 10,000 | 628,116 → 2,142 | 700,275 → 997 | 2,095,900 → 1,013 |
+| 20,000 | 1,187,358 → 1,907 | 950,645 → 1,677 | 4,190,900 → 1,022 |
+| 30,000 | 2,126,057 → 2,228 | 1,953,995 → 1,173 | 6,417,544 → 1,031 |
+
+- The keyed diff meets its 1M target with hashing and the hotspot work
+  together: the 100-row diff is 1.45M with the hotspots alone and 0.49M
+  integrated; the 500-row diff falls 12×.
+- Dictionaries cost about the same per operation from 10,000 to 30,000
+  entries once both streams are in: the dictionary stream alone measured
+  17,714/113,018/112,421 (20k) and 2,600/260,779/1,404 (30k) fuel per insert,
+  lookup and delete, bound by the first-fit allocator over fragmented key
+  garbage; the exact-size free lists take those small blocks off the first-fit
+  path. Tables are larger blocks and stay on the first-fit path.
+- The keyed view mounts 128 rows (the hotspot stream alone: 129) and updates
+  65 (alone: 51) in one production budget: hashing adds a little per mounted
+  row and saves on the keyed update.
+- The scalar loops change by at most 0.4% (value-layout and helper
+  differences in the static prologue); none regresses beyond that.
 
 #### Linked intrinsics measurement (v38)
 

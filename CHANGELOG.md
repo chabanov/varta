@@ -1134,6 +1134,14 @@ in [conformance/README.md](conformance/README.md).
 
 ### Fixed
 
+- V38 wave-2 integration: strict record-union matching (`web_bytes`) over
+  more than 16 members tests a member already held by the cell as a flat
+  guarded sequence, as strict members' discriminant dispatch does, instead of
+  a chain nesting with the member count; `bigint_from_value_v5`, the value18
+  BigInt conversion, is linked like the other BigInt operations (primitive and
+  BigInt cells keep their value17 layout), so a v38 host still implements no
+  BigInt import.
+
 - V38 `charAt` and string index reads of a non-ASCII unit copy the unit into a
   one-unit string in the guest instead of calling the linked
   `string_char_at16`, which copied the whole string per call (about 670 fuel
