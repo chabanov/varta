@@ -118,6 +118,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     crate::scheduler::register(linker)?;
     crate::net::register(linker)?;
     crate::events::register(linker)?;
+    crate::view::register(linker)?;
     crate::primitive_string::register(linker)?;
     crate::primitive_number::register(linker)?;
     crate::number_radix::register(linker)?;

@@ -26,6 +26,7 @@ use varta_common::permission::{
     MAX_DISMISSALS, MAX_OPEN_PROMPTS, PermissionError, PermissionPrompt, PermissionState,
     PromptAnswer, StoredDecision,
 };
+use varta_view::Access;
 
 /// The host prompt seam: a target's own prompt UI (outside the guest's
 /// control). The broker calls it between turns, never while guest code runs,
@@ -42,6 +43,15 @@ pub(crate) enum Decision<T> {
     Granted(T),
     /// The operation is refused; the guest receives a recoverable denial.
     Denied,
+}
+
+/// Where a view capability prompt may be answered (v38 `view_protocol`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ViewPrompts {
+    /// Between turns, through the instance's prompt seam.
+    pub seam: bool,
+    /// By the simulated platform of a scripted headless session.
+    pub simulated: bool,
 }
 
 /// The clock capability `Date.now()` (v37 `date_now`) and `varta.time.now`
@@ -276,6 +286,75 @@ impl Broker {
             &format!("{method} {url}"),
             decision,
         )
+    }
+
+    /// `ui.open_url` at an activation (v38 `view_protocol`): explicit
+    /// patterns of the request and the ceiling grant by policy; a URL matched
+    /// only by the any-HTTPS form prompts with the full URL on every
+    /// activation and is never stored. The prompt goes through the prompt
+    /// seam when `prompts` allows it (between turns); without a seam a
+    /// simulated platform (a scripted headless session) answers it and
+    /// reports through [`Self::prompted`]; any other host denies. Every
+    /// outcome is audited and reaches the guest as a `command_result`.
+    pub fn open_url(&mut self, policy: &Policy, url: &str, prompts: ViewPrompts) -> Access {
+        let id = varta_common::view::OPEN_URL_CAPABILITY;
+        match policy.open_url(url) {
+            Access::Granted => {
+                self.operation(id, url, Decision::Granted(()));
+                Access::Granted
+            }
+            Access::Denied => {
+                self.operation::<()>(id, url, Decision::Denied);
+                Access::Denied
+            }
+            Access::Prompt => {
+                if prompts.seam
+                    && let Some(prompter) = &mut self.prompter
+                {
+                    let prompt = PermissionPrompt {
+                        artifact: self.artifact.clone(),
+                        capability: id.to_owned(),
+                        scope: vec![url.to_owned()],
+                        purpose: self.consents.get(id).and_then(|c| c.purpose.clone()),
+                        required: false,
+                    };
+                    let allowed = prompter.prompt(&prompt) == PromptAnswer::Allow;
+                    self.prompted(id, url, allowed);
+                    return if allowed {
+                        Access::Granted
+                    } else {
+                        Access::Denied
+                    };
+                }
+                if prompts.simulated {
+                    return Access::Prompt;
+                }
+                self.operation::<()>(id, url, Decision::Denied);
+                Access::Denied
+            }
+        }
+    }
+
+    /// The answer to a view capability prompt: audited, never stored.
+    pub fn prompted(&mut self, id: &str, resource: &str, allowed: bool) {
+        let outcome = if allowed {
+            PermissionState::Granted
+        } else {
+            PermissionState::Denied
+        };
+        self.audit(DecisionSource::Prompt, id, resource, outcome);
+    }
+
+    /// One `copy_text` (v38 `clipboard.write`, an exact boolean grant).
+    pub fn clipboard_write(&mut self, policy: &Policy) -> Access {
+        let id = varta_common::view::CLIPBOARD_WRITE_CAPABILITY;
+        if policy.enabled(id) {
+            self.operation(id, "", Decision::Granted(()));
+            Access::Granted
+        } else {
+            self.operation::<()>(id, "", Decision::Denied);
+            Access::Denied
+        }
     }
 
     /// The state of a concrete descriptor; `None` for a malformed one.

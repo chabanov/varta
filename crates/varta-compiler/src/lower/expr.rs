@@ -1106,6 +1106,9 @@ impl Lower<'_> {
         if let Some(value) = self.prelude_net_watch(call, &name)? {
             return Ok(value);
         }
+        if let Some(value) = self.prelude_view(call, &name)? {
+            return Ok(value);
+        }
         if name == "Array.isArray" && self.types.profile.reference_unions() {
             return self.array_is_array(call);
         }

@@ -14,7 +14,13 @@
 //! restarted automatically, and only the embedder can start a new instance
 //! (from `main` again). Tool and HTTP entry points stay stateless,
 //! fresh-store invocations and are not served by an application instance.
-use crate::events::{Delivery, HostEvent, TaskKind};
+//!
+//! An instance hosts its view (v38 `view_protocol`): the embedder performs
+//! trusted platform inputs between turns ([`Application::view_input`]), and
+//! every record the renderer produces is a host task that runs as one turn
+//! ([`TurnKind::View`]); [`VartaRuntime::run_view`] drives a scripted
+//! headless session this way.
+use crate::events::{Delivery, HostEvent, Payload, TaskKind};
 use crate::execution::{Execution, Mode};
 use crate::turns::{self, BudgetReport, TurnKind, TurnUsage};
 use crate::{
@@ -37,6 +43,29 @@ pub struct ApplicationOptions {
     pub lifetime: Option<Duration>,
     /// An optional bound on the number of turns.
     pub max_turns: Option<u64>,
+    /// A simulated headless platform for the view (`varta dev
+    /// --view-script`); `None` hosts the view without one.
+    pub view: Option<ViewPlatform>,
+}
+
+/// The simulated headless platform of an instance's view (v38
+/// `view_protocol`): its viewport and how its prompts and platform effects
+/// answer.
+#[derive(Debug, Clone, Default)]
+pub struct ViewPlatform {
+    pub environment: varta_view::Environment,
+    pub platform: varta_view::Platform,
+}
+
+/// A scripted headless view session ([`VartaRuntime::run_view`]).
+pub struct ViewReport {
+    /// Everything the instance produced, as for [`VartaRuntime::run_with`].
+    pub report: RunReport,
+    /// The tree and accessibility snapshot after the last turn; `None` when
+    /// the instance could not start.
+    pub snapshot: Option<serde_json::Value>,
+    /// Batches applied.
+    pub commits: usize,
 }
 
 /// Typed application failures.
@@ -127,6 +156,10 @@ impl VartaRuntime {
             mut execution,
             ..
         } = prepared;
+        execution.store.data_mut().view = match options.view {
+            Some(view) => crate::view::Session::simulated(view.environment, view.platform),
+            None => crate::view::Session::hosted(),
+        };
         let instance = execution.instantiate_prepared(&module)?;
         let mut application = Application {
             execution,
@@ -180,6 +213,60 @@ impl VartaRuntime {
         application.report_into(&mut report);
         report
     }
+
+    /// Run a view application headlessly (v38 `view_protocol()`): an
+    /// application instance whose simulated platform performs `script`'s
+    /// inputs, as trusted platform inputs between turns, whenever no task is
+    /// ready; every record they produce runs as its own turn. After the
+    /// script it runs until nothing but host sources keeps it alive, and
+    /// reports the final tree and accessibility snapshot.
+    #[must_use]
+    pub fn run_view(
+        &self,
+        bytes: &[u8],
+        mut options: ApplicationOptions,
+        script: &varta_view::Script,
+    ) -> ViewReport {
+        let mut report = RunReport::new(crate::artifact_identity(bytes));
+        options.view = Some(ViewPlatform {
+            environment: script.environment(),
+            platform: script.platform.clone(),
+        });
+        let mut application = match self.start_application(bytes, options) {
+            Ok(application) => application,
+            Err(error) => {
+                report.failure = Some(error);
+                return ViewReport {
+                    report,
+                    snapshot: None,
+                    commits: 0,
+                };
+            }
+        };
+        let mut inputs = script.inputs.iter();
+        loop {
+            match application.step(Some(Duration::ZERO)) {
+                Step::Turn(_) => continue,
+                Step::Idle => {}
+                Step::Finished { .. } | Step::Failed => break,
+            }
+            let Some(input) = inputs.next() else {
+                application.run();
+                break;
+            };
+            if application.view_input(input).is_err() {
+                break;
+            }
+        }
+        let snapshot = Some(application.view_snapshot());
+        let commits = application.view_commits();
+        application.report_into(&mut report);
+        ViewReport {
+            report,
+            snapshot,
+            commits,
+        }
+    }
 }
 
 impl Application {
@@ -224,6 +311,33 @@ impl Application {
     pub fn revoke(&mut self, capability: &str) -> bool {
         let context = self.execution.store.data_mut();
         context.broker.revoke(capability, &mut context.policy)
+    }
+
+    /// Perform one trusted platform input on the instance's view between
+    /// turns (host work: no guest code, fuel or turn deadline). The records
+    /// it produces run in later turns. A failure (an input naming no
+    /// attached element, an overflowing record queue) terminates the
+    /// instance; [`Self::failure`] names it.
+    pub fn view_input(&mut self, input: &varta_view::Input) -> Result<(), ApplicationError> {
+        if self.state != InstanceState::Running {
+            return Err(ApplicationError::Terminated);
+        }
+        let result = crate::view::input(self.execution.store.data_mut(), input);
+        if let Err(error) = result {
+            self.fail(error);
+            return Err(ApplicationError::Terminated);
+        }
+        Ok(())
+    }
+    /// The view's tree and accessibility snapshot.
+    #[must_use]
+    pub fn view_snapshot(&self) -> serde_json::Value {
+        self.execution.store.data().view.snapshot()
+    }
+    /// View batches applied so far.
+    #[must_use]
+    pub fn view_commits(&self) -> usize {
+        self.execution.store.data().view.commits()
     }
 
     /// Queue a host event for its source. It runs in a later turn; nothing
@@ -351,6 +465,7 @@ impl Application {
             || context.events.listening()
             || context.events.queued() > 0
             || context.broker.prompts_pending()
+            || context.view.attached()
     }
 
     /// Wait for the next timer or network completion, never past `until`.
@@ -401,11 +516,19 @@ impl Application {
                     let kind = match task.kind {
                         TaskKind::HostEvent => TurnKind::HostEvent,
                         TaskKind::Permission => TurnKind::Permission,
+                        TaskKind::View => TurnKind::View,
                     };
                     turns::begin(store, kind)?;
                     let context = store.data_mut();
+                    // The task's gesture flag makes a user-gesture turn: the
+                    // broker's prompts and the view's `copy_text` read it.
                     context.broker.gesture = task.gesture;
-                    context.events.deliver(&mut context.scheduler, task)?;
+                    if let Payload::View(record) = &task.payload {
+                        crate::view::deliver(&self.instance, store, record)?;
+                        exceptions::finish(&self.instance, store)?;
+                    } else {
+                        context.events.deliver(&mut context.scheduler, task)?;
+                    }
                 }
                 Ready::Timer => {
                     turns::begin(store, kind)?;

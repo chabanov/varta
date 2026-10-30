@@ -90,6 +90,10 @@ impl Policy {
             varta_common::GrantKind::Urls => self.network_scope(id, resource).is_some(),
             varta_common::GrantKind::Requests => self.request_scope(resource, None).is_some(),
             varta_common::GrantKind::Listeners => self.listen_scope(resource),
+            // V38 `ui.open_url`: the link matches a pattern of the request
+            // and of the ceiling (the any-HTTPS form included).
+            varta_common::GrantKind::OpenUrls => parse_link(resource)
+                .is_some_and(|url| self.permits(|grants| link_match(grants, &url).is_some())),
         })
     }
 
@@ -164,6 +168,36 @@ impl Policy {
         .then_some(url)
     }
 
+    /// `ui.open_url` (v38), patch time: an external `href` must match a
+    /// pattern of the package request (the any-HTTPS form included).
+    pub(crate) fn link_requested(&self, input: &str) -> bool {
+        parse_link(input).is_some_and(|url| link_match(&self.requested, &url).is_some())
+    }
+
+    /// `ui.open_url` (v38), activation time: granted when an explicit
+    /// pattern of the request and of the ceiling matches; a prompt on every
+    /// activation when either side matches only through the any-HTTPS form;
+    /// denied otherwise.
+    pub(crate) fn open_url(&self, input: &str) -> varta_view::Access {
+        // A withheld grant (a v38 broker state) denies like a missing one.
+        if !self.open(varta_common::view::OPEN_URL_CAPABILITY) {
+            return varta_view::Access::Denied;
+        }
+        let Some(url) = parse_link(input) else {
+            return varta_view::Access::Denied;
+        };
+        let requested = link_match(&self.requested, &url);
+        let ceiling = match &self.ceiling {
+            Some(ceiling) => link_match(ceiling, &url),
+            None => requested,
+        };
+        match (requested, ceiling) {
+            (Some(LinkMatch::Explicit), Some(LinkMatch::Explicit)) => varta_view::Access::Granted,
+            (Some(_), Some(_)) => varta_view::Access::Prompt,
+            _ => varta_view::Access::Denied,
+        }
+    }
+
     pub(crate) fn listen(&self, endpoint: &str) -> bool {
         self.open("net.listen") && self.listen_scope(endpoint)
     }
@@ -218,6 +252,55 @@ fn parse_network_url(input: &str, schemes: &[&str]) -> Option<url::Url> {
         return None;
     }
     Some(url)
+}
+
+/// How a `ui.open_url` grant matched a link.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LinkMatch {
+    Explicit,
+    AnyHttps,
+}
+
+/// The best `ui.open_url` match among `grants`: an explicit pattern wins over
+/// the any-HTTPS form.
+fn link_match(grants: &[CapabilityGrant], url: &url::Url) -> Option<LinkMatch> {
+    let patterns = grants
+        .iter()
+        .filter(|g| g.id == varta_common::view::OPEN_URL_CAPABILITY)
+        .filter_map(|g| match &g.value {
+            CapabilityValue::UrlGlobs(patterns) => Some(patterns),
+            _ => None,
+        })
+        .flatten();
+    let mut found = None;
+    for pattern in patterns {
+        if pattern == varta_common::view::ANY_HTTPS_PATTERN {
+            if url.scheme() == HTTPS {
+                found = found.or(Some(LinkMatch::AnyHttps));
+            }
+        } else if url_matches(pattern, url) {
+            return Some(LinkMatch::Explicit);
+        }
+    }
+    found
+}
+
+/// Parse an external link: bounded, no control characters, whitespace or
+/// `\`, `https`/`http` with a host and no credentials; a fragment is allowed.
+fn parse_link(input: &str) -> Option<url::Url> {
+    if input.len() > varta_common::view::DRAFT_MAX_VALUE_BYTES
+        || input
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || c == '\\')
+    {
+        return None;
+    }
+    let url = url::Url::parse(input).ok()?;
+    (matches!(url.scheme(), HTTP | HTTPS)
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none())
+    .then_some(url)
 }
 
 /// Exact scheme, host and effective port; wildcards only after the authority.

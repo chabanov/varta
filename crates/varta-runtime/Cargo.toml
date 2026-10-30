@@ -9,6 +9,7 @@ varta-bigint = { path = "../varta-bigint" }
 varta-common = { path = "../varta-common" }
 # Shared pure intrinsics: host imports of earlier profiles, linked into v38 guests.
 varta-intrinsics = { path = "../varta-intrinsics" }
+varta-view = { path = "../varta-view" }
 thiserror.workspace = true
 wasmtime.workspace = true
 wasmparser.workspace = true

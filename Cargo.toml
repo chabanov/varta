@@ -12,6 +12,7 @@ members = [
   "crates/varta-bigint",
   "crates/varta-intrinsics",
   "crates/varta-intrinsics-wasm",
+  "crates/varta-view",
 ]
 default-members = ["crates/varta-cli", "crates/varta-launcher"]
 

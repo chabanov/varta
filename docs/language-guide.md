@@ -5432,3 +5432,52 @@ expected takes one more job. Not supported yet: byte bodies
 `Promise.race` over differently typed promises and `instanceof Map`.
 Constructor parameter properties (`constructor(private readonly client:
 Transport)`) declare and assign their fields.
+
+#### View protocol and TSX (opt-in v38)
+
+A `.tsx` module renders an L0 view: an intrinsic
+element creates nodes, `{expr}` holes are getters re-run by the reactive
+runner installed with `View.setEffect` (a typed L1 package; without one a
+hole runs once), `on<Event>` attributes register listeners and a key filter
+follows a colon. Components are functions returning a node id.
+
+```tsx
+import { NumberSignal, effect } from './signals.ts';
+
+function Counter(props: { start: number }): number {
+  const count = new NumberSignal(props.start);
+  return (
+    <section aria-label="Counter">
+      <p id="count">{count.get()}</p>
+      <button id="inc" onClick={() => count.set(count.get() + 1)}>+</button>
+      <textarea
+        id="box"
+        style="field-sizing: content"
+        onKeyDown:Enter-noShift-notComposing-preventDefault={() => console.log('send')}
+      />
+      <button onClick={() => View.copyText('hi', (status: number) => console.log(`${status}`))}>
+        Copy
+      </button>
+    </section>
+  );
+}
+
+export function main(): void {
+  View.setEffect(effect);
+  View.mount(<Counter start={0} />);
+}
+```
+
+`varta dev --view-script session.json` runs the view headlessly: the script
+lists trusted inputs (`{"input":"click","target":"#inc"}`, `type`, `key` with
+`shift`/`ctrl`/`alt`/`meta`/`composing`, `focus`, `select`, `scroll`,
+`prompts`) performed between turns of an application instance, every event
+record runs as its own turn, and the command prints the final tree and
+accessibility snapshot (`--budget-report` shows the turns).
+`View.copyText` needs `"clipboard": {"write": true}` and runs only in a
+click, key or submit turn; an external `<a href>` needs a matching
+`"ui": {"open_url": [...]}` pattern (`"https://*"` admits any HTTPS link and
+prompts on every activation). Denials arrive as statuses, never as failures.
+Unknown elements or attributes, invalid static values (`rows="0"`,
+`style="color: red"`), unknown filters, fragments, spreads and component
+children are compile errors.

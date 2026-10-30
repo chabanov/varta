@@ -535,6 +535,10 @@ pub(crate) fn typed(error: RuntimeError) -> RuntimeError {
         Ok(error) => return RuntimeError::Net(error),
         Err(source) => source,
     };
+    let source = match crate::view::typed(source) {
+        Ok(error) => return error,
+        Err(source) => source,
+    };
     match source.downcast::<varta_common::exceptions::UncaughtException>() {
         Ok(error) => RuntimeError::Uncaught(error),
         Err(source) => RuntimeError::Execution(source),

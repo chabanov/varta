@@ -53,6 +53,13 @@ enum Commands {
         /// With --profile-fuel, print the profile as one JSON object instead.
         #[arg(long, requires = "profile_fuel")]
         json: bool,
+        /// Run a v38 view application headlessly as an application instance:
+        /// perform this JSON script's platform inputs (clicks, typing, keys
+        /// with modifiers, focus, select, scroll, prompt answers) as trusted
+        /// events between turns, every record as its own turn, then print the
+        /// final view tree and accessibility snapshot as JSON.
+        #[arg(long, value_name = "PATH", conflicts_with = "profile_fuel")]
+        view_script: Option<PathBuf>,
     },
     /// Build validated Wasm; --single embeds portable Wasm in a native launcher.
     Build {
@@ -178,8 +185,45 @@ fn execute(
         Some(Commands::Dev {
             config,
             execution,
+            view_script: Some(script),
+            ..
+        }) => {
+            let project = CheckedProject::load(&config)?;
+            let script = varta_project::read_view_script(&script)?;
+            let varta_project::ViewReport {
+                mut report,
+                snapshot,
+                ..
+            } = varta_project::run_view(
+                &project.artifact,
+                policy.as_ref(),
+                settings(decisions, &execution),
+                &script,
+            )?;
+            // The output, the snapshot of a run that did not fail, then the
+            // budget report and the failure.
+            for line in std::mem::take(&mut report.output.lines) {
+                println!("{line}");
+            }
+            if report.failure.is_none()
+                && let Some(snapshot) = snapshot
+            {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&snapshot)
+                        .map_err(|e| ProjectError::Usage(e.to_string()))?
+                );
+            }
+            let code = finish(report, execution.budget_report)?;
+            println!("varta dev: completed");
+            return Ok(code);
+        }
+        Some(Commands::Dev {
+            config,
+            execution,
             profile_fuel: true,
             json,
+            ..
         }) => {
             let project = CheckedProject::load(&config)?;
             let mut report =

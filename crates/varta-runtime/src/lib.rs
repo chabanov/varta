@@ -17,7 +17,10 @@ mod bigint_values_tests;
 #[cfg(test)]
 mod contract_tests;
 mod contracts;
-pub use application::{Application, ApplicationError, ApplicationOptions, InstanceState, Step};
+pub use application::{
+    Application, ApplicationError, ApplicationOptions, InstanceState, Step, ViewPlatform,
+    ViewReport,
+};
 mod events;
 pub use events::{Delivery, HostEvent};
 mod exceptions;
@@ -189,6 +192,10 @@ mod update_coercion_tests;
 #[cfg(test)]
 mod update_tests;
 mod validate;
+mod view;
+#[cfg(test)]
+mod view_tests;
+pub use varta_view::{Script as ViewScript, ScriptError as ViewScriptError, ViewError};
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -233,6 +240,13 @@ pub enum RuntimeError {
     Event(#[from] varta_common::events::EventError),
     #[error(transparent)]
     Application(#[from] ApplicationError),
+    /// V38: an invalid view batch, a second commit in one turn or an
+    /// overflowing view event queue; fatal for the instance.
+    #[error(transparent)]
+    View(ViewError),
+    /// V38: a headless script input that names no attached element.
+    #[error(transparent)]
+    ViewInput(varta_view::InputError),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
 }
@@ -277,6 +291,9 @@ pub(crate) struct RuntimeContext {
     module: varta_common::value::ModuleBounds,
     /// Present only in a fuel-profiling execution (`fuel_profile`).
     profiler: Option<Box<fuel_profile::Profiler>>,
+    /// V38 view protocol: the renderer and its commit-per-turn rule; its
+    /// event records are host tasks of the instance (`events`).
+    view: view::Session,
 }
 
 /// A fuel-profiled execution ([`VartaRuntime::run_fuel_profile`]). A trap or

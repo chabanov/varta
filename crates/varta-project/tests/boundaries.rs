@@ -38,10 +38,18 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
         ),
         (
             "varta-runtime",
-            ["varta-common", "varta-bigint", "varta-intrinsics"].as_slice(),
+            [
+                "varta-common",
+                "varta-bigint",
+                "varta-intrinsics",
+                "varta-view",
+            ]
+            .as_slice(),
         ),
         ("varta-intrinsics", [].as_slice()),
         ("varta-intrinsics-wasm", ["varta-intrinsics"].as_slice()),
+        // The headless view renderer (v38) is engine code without a VM.
+        ("varta-view", ["varta-common"].as_slice()),
         (
             "varta-project",
             [
@@ -79,6 +87,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                         | "varta-bigint"
                         | "varta-intrinsics"
                         | "varta-intrinsics-wasm"
+                        | "varta-view"
                         | "varta-compiler"
                         | "varta-runtime"
                         | "varta-artifact"
@@ -90,6 +99,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                             "varta-common"
                                 | "varta-bigint"
                                 | "varta-intrinsics"
+                                | "varta-view"
                                 | "varta-compiler"
                                 | "varta-runtime"
                                 | "varta-artifact"
@@ -99,7 +109,12 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                     );
                 }
             }
-            if !dev && matches!(name, "varta-runtime" | "varta-launcher" | "varta-artifact") {
+            if !dev
+                && matches!(
+                    name,
+                    "varta-runtime" | "varta-launcher" | "varta-artifact" | "varta-view"
+                )
+            {
                 assert!(
                     !target.starts_with("swc_")
                         && !matches!(

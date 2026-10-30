@@ -181,6 +181,8 @@ fn runtime_error(error: RuntimeError) -> Error {
         RuntimeError::Event(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Permission(error) => Error::InvalidPolicy(error.to_string()),
         RuntimeError::Application(error) => Error::InvalidArtifact(error.to_string()),
+        RuntimeError::View(error) => Error::ExecutionFailed(error.to_string()),
+        RuntimeError::ViewInput(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Policy(error) => Error::InvalidPolicy(error.to_string()),
         RuntimeError::Execution(error) => execution_error(error),
         RuntimeError::ToolContract(error) => Error::InvalidArtifact(error.to_string()),

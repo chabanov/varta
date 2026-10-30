@@ -47,6 +47,7 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     let mut stack = vec![program.main];
     stack.extend(program.tools.iter().map(|(index, _)| *index));
     stack.extend(program.http.iter().map(|(index, _)| *index));
+    stack.extend(program.view_event);
     stack.extend(program.initializers.iter().copied());
     // V37 keeps every suspendable function; v38 (`program_limits`) keeps only
     // generator bodies unconditionally (their step functions dispatch over
@@ -138,6 +139,9 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     if let Some((index, _)) = &mut program.http {
         *index = remap(*index)?;
     }
+    if let Some(index) = &mut program.view_event {
+        *index = remap(*index)?;
+    }
     for index in &mut program.initializers {
         *index = remap(*index)?;
     }
@@ -175,9 +179,11 @@ fn unread_constants(program: &mut ir::Program) -> Result<()> {
         .collect();
     let mut live = vec![false; count];
     let mut read = BTreeSet::new();
+    // Every root of `prune` (the v38 view event dispatcher included) reads.
     let mut stack = vec![program.main];
     stack.extend(program.tools.iter().map(|(index, _)| *index));
     stack.extend(program.http.iter().map(|(index, _)| *index));
+    stack.extend(program.view_event);
     stack.extend(program.suspendable.keys().copied());
     let mut kept: BTreeMap<usize, Vec<bool>> = BTreeMap::new();
     loop {

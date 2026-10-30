@@ -210,7 +210,9 @@ impl Manifest {
                     (Some(GrantKind::Patterns), Some(p), None) => {
                         CapabilityValue::PathGlobs(p.clone())
                     }
-                    (Some(GrantKind::Urls), Some(p), None) => CapabilityValue::UrlGlobs(p.clone()),
+                    (Some(GrantKind::Urls | GrantKind::OpenUrls), Some(p), None) => {
+                        CapabilityValue::UrlGlobs(p.clone())
+                    }
                     (Some(GrantKind::Listeners), Some(p), None) => {
                         CapabilityValue::ListenEndpoints(p.clone())
                     }
@@ -259,6 +261,15 @@ mod tests {
             r#"{"capabilities":[{"id":"net.request","patterns":["ftp://a.test/**"]}]}"#,
             r#"{"capabilities":[{"id":"net.request","patterns":["https://*.a.test/**"]}]}"#,
             r#"{"capabilities":[{"id":"net.fetch","patterns":["https://a.test/**"]}]}"#,
+            r#"{"capabilities":[{"id":"net.request","patterns":["https://*"]}]}"#,
+            r#"{"capabilities":[{"id":"net.fetch","patterns":["https://*"]}]}"#,
+            r#"{"capabilities":[{"id":"ui.open_url","patterns":["http://*"]}]}"#,
+            r#"{"capabilities":[{"id":"ui.open_url","patterns":["https://*.a.test/**"]}]}"#,
+            r#"{"capabilities":[{"id":"ui.open_url","patterns":["ftp://a.test/**"]}]}"#,
+            r#"{"capabilities":[{"id":"ui.open_url","enabled":true}]}"#,
+            r#"{"capabilities":[{"id":"ui.open_url","patterns":["https://a.test/**"],"methods":["GET"]}]}"#,
+            r#"{"capabilities":[{"id":"clipboard.write","patterns":["x"]}]}"#,
+            r#"{"capabilities":[{"id":"clipboard.read","enabled":true}]}"#,
         ] {
             assert!(Manifest::parse(source.as_bytes()).is_err(), "{source}");
         }
@@ -336,6 +347,27 @@ mod tests {
         assert!(v38.validate_ceiling().is_err());
     }
 
+    #[test]
+    fn view_grants_are_exact() {
+        // V38 `view_protocol`: external links take URL patterns, including the
+        // any-HTTPS form only here; the clipboard takes a boolean.
+        let manifest = Manifest::parse(
+            br#"{"capabilities":[{"id":"ui.open_url","patterns":["https://*","https://docs.test/**","http://127.0.0.1:8080/x"]},{"id":"clipboard.write","enabled":true}]}"#,
+        )
+        .unwrap();
+        let grants = manifest.grants().unwrap();
+        assert_eq!(
+            grants[0].value,
+            CapabilityValue::UrlGlobs(vec![
+                crate::view::ANY_HTTPS_PATTERN.into(),
+                "https://docs.test/**".into(),
+                "http://127.0.0.1:8080/x".into()
+            ])
+        );
+        assert_eq!(grants[1].value, CapabilityValue::Boolean(true));
+        let again = Manifest::parse(&Manifest::new(&grants).to_bytes().unwrap()).unwrap();
+        assert_eq!(again.grants().unwrap(), grants);
+    }
     #[test]
     fn empty_patterns_are_explicit_denials() {
         let manifest =

@@ -18,7 +18,9 @@ use std::{
 pub use varta_common::permission::DecisionFile;
 pub use varta_common::profile::{FuelProfile, FunctionFuel};
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
-pub use varta_runtime::{RunOutput, RunReport, RuntimeEvent, RuntimeObserver};
+pub use varta_runtime::{
+    RunOutput, RunReport, RuntimeEvent, RuntimeObserver, ViewReport, ViewScript,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
@@ -34,6 +36,8 @@ pub enum ProjectError {
     Runtime(#[from] varta_runtime::RuntimeError),
     #[error(transparent)]
     Permission(#[from] varta_common::permission::PermissionError),
+    #[error(transparent)]
+    ViewScript(#[from] varta_runtime::ViewScriptError),
     #[error("invalid artifact: {0}")]
     Artifact(String),
     #[error("{0}")]
@@ -231,6 +235,37 @@ fn execute_report(
     } else {
         runtime.run_with(wasm, options)
     })
+}
+
+/// Run a view application headlessly (v38) as an application instance with
+/// a scripted session of platform inputs, exactly as [`run_report`] runs an
+/// artifact (grants, budget requests, the host policy, stored decisions);
+/// reports what the instance produced and the final tree and accessibility
+/// snapshot.
+pub fn run_view(
+    artifact: &Artifact,
+    host: Option<&HostPolicy>,
+    settings: RunSettings,
+    script: &ViewScript,
+) -> Result<ViewReport> {
+    let mut options =
+        RunOptions::from_manifests(&artifact.manifest, host.map(HostPolicy::manifest))?;
+    options.decisions = settings.decisions;
+    options.observer = settings.observer;
+    Ok(VartaRuntime::new().run_view(
+        &artifact.wasm,
+        ApplicationOptions {
+            run: options,
+            ..ApplicationOptions::default()
+        },
+        script,
+    ))
+}
+
+/// Read and parse a bounded headless view script.
+pub fn read_view_script(path: &Path) -> Result<ViewScript> {
+    let bytes = artifact::read_bounded(path, ViewScript::MAX_BYTES)?;
+    Ok(ViewScript::parse(&bytes)?)
 }
 
 /// Policy review additionally requires a declaration for every privileged import.

@@ -1,6 +1,12 @@
 //! Canonical operation names and Wasm signatures shared by compiler and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostOperation {
+    /// v38 (`view_protocol`): validate one L0 view batch (draft v0,
+    /// `crate::view`) in guest memory as a whole and apply it atomically to
+    /// the instance's view tree; at most one commit per turn. An invalid batch
+    /// is fatal for the instance. Capability-free; charged to the host-call
+    /// budget.
+    ViewCommit,
     /// v38 permission broker v1 (`crate::permission`): the state code of a
     /// permission descriptor; never prompts. No capability.
     PermissionQuery,
@@ -472,6 +478,7 @@ impl HostOperation {
             Self::PrimitiveNumberV5 => "primitive_to_number_v5",
             Self::BigIntFromValueV4 => "bigint_from_value_v4",
 
+            Self::ViewCommit => crate::view::COMMIT_IMPORT,
             Self::PermissionQuery => "permission_query",
             Self::PermissionRequest => "permission_request",
             Self::EventSourceOpen => "event_source_open",
@@ -798,7 +805,7 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
-        if self.instance_events() {
+        if self.instance_events() || self == Self::ViewCommit {
             return crate::abi::PROGRAM_LIMITS_VERSION;
         }
         if self.text_case()
@@ -1085,6 +1092,7 @@ impl HostOperation {
         use HostScalar::{F64, I32, I64};
         match self {
             Self::PrimitiveCompare => (&[I64, I64], &[F64]),
+            Self::ViewCommit => (&crate::view::COMMIT_PARAMS, &crate::view::COMMIT_RESULTS),
             Self::PermissionQuery => (&[I32, I32], &[I32]),
             Self::PermissionRequest | Self::EventSourceOpen => (&[I32, I32], &[F64]),
             Self::EventWatch => (&[F64, F64], &[]),
@@ -1322,6 +1330,7 @@ impl HostOperation {
             "primitive_to_number_v5" => Self::PrimitiveNumberV5,
             "bigint_from_value_v4" => Self::BigIntFromValueV4,
 
+            "view_commit" => Self::ViewCommit,
             "permission_query" => Self::PermissionQuery,
             "permission_request" => Self::PermissionRequest,
             "event_source_open" => Self::EventSourceOpen,
@@ -1537,7 +1546,8 @@ impl HostOperation {
     #[must_use]
     pub fn capability(self) -> Option<&'static str> {
         Some(match self {
-            Self::ValueLogV11
+            Self::ViewCommit
+            | Self::ValueLogV11
             | Self::ValueLogV10
             | Self::ValueTypeOfV10
             | Self::ValueTypeOfV9

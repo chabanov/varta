@@ -3,6 +3,7 @@
 mod emit;
 mod error;
 mod ir;
+mod jsx;
 mod link;
 mod lower;
 mod modules;
@@ -38,6 +39,8 @@ mod string_operation_tests;
 mod suspension_tests;
 #[cfg(test)]
 mod tool_tests;
+#[cfg(test)]
+mod tsx_tests;
 
 pub use error::CompilerError;
 
@@ -84,7 +87,7 @@ pub fn parse_typescript_with_path(
 ) -> Result<usize, CompilerError> {
     bounded_source(text).map_err(|e| source::limit_error(path, e))?;
     let source = source::Source::new(path, text);
-    Ok(parse::parse_module(&source)?.body.len())
+    Ok(parse::parse_module(&source, false)?.body.len())
 }
 
 pub fn compile_typescript(source: &str) -> Result<Vec<u8>, CompilerError> {

@@ -783,20 +783,31 @@ fn grant_kind(kind: GrantKind) -> (&'static str, &'static str) {
             "Request scopes (v37)",
             r#"`"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies)"#,
         ),
+        GrantKind::OpenUrls => (
+            "External-link patterns (v38)",
+            r#"`"patterns": [...]`, `https://` admitted, plus the exact `"https://*"` (any HTTPS link, prompting on every activation; valid for this id only)"#,
+        ),
     }
 }
 
 /// Every capability id a registered operation requires, grouped by grant kind.
 fn grant_kinds() -> String {
+    // The view capabilities (v38) are decided by the applier, not by an import.
     let ids: BTreeSet<&'static str> = registered_operations()
         .into_iter()
         .filter_map(HostOperation::capability)
+        .chain(
+            varta_common::view::ViewCapability::ALL
+                .iter()
+                .map(|capability| capability.id()),
+        )
         .collect();
     let kinds = [
         GrantKind::Boolean,
         GrantKind::Patterns,
         GrantKind::Urls,
         GrantKind::Requests,
+        GrantKind::OpenUrls,
         GrantKind::Listeners,
     ];
     table(

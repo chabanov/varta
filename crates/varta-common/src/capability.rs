@@ -43,6 +43,8 @@ pub fn capability_kind(id: &str) -> Option<GrantKind> {
         "net.fetch" | "net.get" => Some(GrantKind::Urls),
         crate::net::REQUEST_CAPABILITY => Some(GrantKind::Requests),
         "net.listen" => Some(GrantKind::Listeners),
+        crate::view::OPEN_URL_CAPABILITY => Some(GrantKind::OpenUrls),
+        crate::view::CLIPBOARD_WRITE_CAPABILITY => Some(GrantKind::Boolean),
         _ => None,
     }
 }
@@ -55,6 +57,10 @@ pub enum GrantKind {
     Listeners,
     /// URL patterns plus an optional method list (`net.request`).
     Requests,
+    /// External-link URL patterns (`ui.open_url`, v38): the network URL
+    /// rules over `https://` and `http://`, plus the exact any-HTTPS form
+    /// [`crate::view::ANY_HTTPS_PATTERN`], which no other capability admits.
+    OpenUrls,
 }
 
 impl CapabilityGrant {
@@ -102,6 +108,9 @@ impl CapabilityGrant {
                 Ok(())
             }
             (GrantKind::Requests, CapabilityValue::Requests(scope)) => scope.validate(&self.id),
+            (GrantKind::OpenUrls, CapabilityValue::UrlGlobs(patterns)) => {
+                validate_open_url_patterns(&self.id, patterns)
+            }
             (GrantKind::Listeners, CapabilityValue::ListenEndpoints(endpoints)) => {
                 if endpoints.len() > 64 {
                     return Err(VartaError::InvalidManifest(
@@ -200,6 +209,28 @@ impl RequestScope {
         }
         Ok(())
     }
+}
+
+/// `ui.open_url` (v38): at most 64 patterns, each the exact any-HTTPS form or
+/// an `https://`/`http://` URL pattern under the network URL rules.
+fn validate_open_url_patterns(id: &str, patterns: &[String]) -> Result<()> {
+    if patterns.len() > 64 {
+        return Err(VartaError::InvalidManifest(
+            "too many patterns in one grant".into(),
+        ));
+    }
+    for pattern in patterns {
+        if pattern == crate::view::ANY_HTTPS_PATTERN {
+            continue;
+        }
+        if pattern.len() > 512 || pattern.contains('\0') {
+            return Err(VartaError::InvalidManifest(format!(
+                "unsafe pattern for {id}: {pattern}"
+            )));
+        }
+        validate_url_pattern(pattern, &[HTTPS_SCHEME, HTTP_SCHEME])?;
+    }
+    Ok(())
 }
 
 fn validate_url_pattern(pattern: &str, schemes: &[&str]) -> Result<()> {

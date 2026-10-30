@@ -2,14 +2,25 @@ use crate::CompilerError;
 use swc_common::Spanned;
 use swc_ecma_parser::input::Tokens;
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
+/// The parser syntax: TypeScript, with JSX only for a `.tsx` module of a
+/// profile that admits TSX (v38 `tsx()`); every other module parses exactly
+/// as before.
+fn syntax(tsx: bool) -> Syntax {
+    Syntax::Typescript(swc_ecma_parser::TsSyntax {
+        tsx,
+        ..Default::default()
+    })
+}
+
 pub(crate) fn parse_module(
     source: &crate::source::Source,
+    tsx: bool,
 ) -> Result<swc_ecma_ast::Module, CompilerError> {
     let fm = &source.file;
-    check_complexity(source)?;
+    check_complexity(source, tsx)?;
 
     let lexer = Lexer::new(
-        Syntax::Typescript(Default::default()),
+        syntax(tsx),
         Default::default(),
         StringInput::from(&**fm),
         None,
@@ -54,10 +65,10 @@ enum Alias {
 /// Opens a template substitution; template head and middle tokens end with it.
 const SUBSTITUTION: &str = "${";
 
-fn check_complexity(source: &crate::source::Source) -> Result<(), CompilerError> {
+fn check_complexity(source: &crate::source::Source, tsx: bool) -> Result<(), CompilerError> {
     let fm = &source.file;
     let mut tokens = Lexer::new(
-        Syntax::Typescript(Default::default()),
+        syntax(tsx),
         Default::default(),
         StringInput::from(&**fm),
         None,

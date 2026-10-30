@@ -407,7 +407,188 @@ pub(crate) const EVENTS: Prelude = Prelude {
     loads: &[],
     lifted: None,
 };
-pub(crate) const PRELUDES: [&Prelude; 15] = [
+/// The L0 view protocol (v38 `view_protocol`): the batch encoder, the event
+/// dispatcher and the template bindings, reached through `View.*` members
+/// (also what TSX templates compile to) and the `ViewEvent` class.
+pub(crate) const VIEW: Prelude = Prelude {
+    path: VIEW_PATH,
+    source: include_str!("../prelude/view.ts"),
+    exports: &[(VIEW_EVENT_CLASS, Namespace::Class)],
+    members: &[
+        Member {
+            object: VIEW_OBJECT,
+            property: "node",
+            function: "allocateNode",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "handler",
+            function: "registerHandler",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "createElement",
+            function: "createElement",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "createText",
+            function: "createText",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "setText",
+            function: "setText",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "setAttribute",
+            function: "setAttribute",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "removeAttribute",
+            function: "removeAttribute",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "setClass",
+            function: "setClass",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "setStyle",
+            function: "setStyle",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "removeStyle",
+            function: "removeStyle",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "insert",
+            function: "insert",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "remove",
+            function: "remove",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "listen",
+            function: "listen",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "unlisten",
+            function: "unlisten",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "setValue",
+            function: "setValue",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "setChecked",
+            function: "setChecked",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "command",
+            function: "command",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "stylesheet",
+            function: "stylesheet",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "setTitle",
+            function: "setTitle",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "copyText",
+            function: "copyText",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "onLinkResult",
+            function: "onLinkResult",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "commit",
+            function: "commit",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "mount",
+            function: "mount",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "setEffect",
+            function: "setEffect",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "bindText",
+            function: "bindText",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "bindAttribute",
+            function: "bindAttribute",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "bindFlag",
+            function: "bindFlag",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "bindClass",
+            function: "bindClass",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "bindStyle",
+            function: "bindStyle",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "bindValue",
+            function: "bindValue",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "bindChecked",
+            function: "bindChecked",
+        },
+        Member {
+            object: VIEW_OBJECT,
+            property: "on",
+            function: "on",
+        },
+    ],
+    triggers: &[],
+    admitted: LanguageProfile::view_protocol,
+    extended: None,
+    loads: &[],
+    lifted: None,
+};
+pub(crate) const VIEW_PATH: &str = "<varta>/view/view.ts";
+/// The object of the `View.*` members.
+pub(crate) const VIEW_OBJECT: &str = "View";
+pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
+/// The view prelude function the synthesized event export calls.
+pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
+pub(crate) const PRELUDES: [&Prelude; 16] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -423,6 +604,7 @@ pub(crate) const PRELUDES: [&Prelude; 15] = [
     &PERMISSIONS,
     &EVENTS,
     &URI,
+    &VIEW,
 ];
 /// The `fetch` prelude's stream class and its engine-internal members, which
 /// only engine prelude modules may call.

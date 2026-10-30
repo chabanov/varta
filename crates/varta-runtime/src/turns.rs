@@ -26,6 +26,8 @@ pub enum TurnKind {
     HostEvent,
     /// The answer of a permission prompt.
     Permission,
+    /// A view event record (v38 `view_protocol`).
+    View,
     /// A whole execution of an earlier profile, whose budgets are not
     /// renewed per turn.
     Execution,
@@ -39,6 +41,7 @@ impl TurnKind {
             Self::Network => "network",
             Self::HostEvent => "event",
             Self::Permission => "permission",
+            Self::View => "view",
             Self::Execution => "execution",
         }
     }
@@ -322,6 +325,7 @@ pub(crate) fn begin(store: &mut Store<RuntimeContext>, kind: TurnKind) -> Result
     context.turns.open = true;
     context.host_calls = 0;
     context.scheduler.renew();
+    context.view.begin_turn();
     if context.turns.renew_deadline {
         let mut deadline = Instant::now() + context.budgets.deadline_per_turn;
         if let Some(lifetime) = context.lifetime {

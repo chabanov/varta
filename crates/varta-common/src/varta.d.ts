@@ -1,3 +1,188 @@
+// checked-f64-utf16-v38 (batch, in development) view protocol: `View.*` and
+// `ViewEvent` are the engine view prelude (typed guest code, loaded only when
+// a module names them or contains TSX). The prelude encodes one L0 batch
+// (draft v0) per turn and commits it through the internal import
+// view_commit (i32 ptr, i32 len)->i32 status [host ABI 34, no capability,
+// host-call budget]; the host validates the whole batch and applies it
+// atomically, and an invalid batch ends the instance. Event records arrive
+// through the compiler-synthesized export `varta.view_abi.event` (i32 len)
+// and run the handler registered for their listener; the turn's operations
+// are committed after it. Numbers below are the registry codes of
+// docs/embedding.md (tags, attributes, CSS properties, events, commands,
+// keys); TSX templates generate them. `View.copyText` needs `clipboard.write`
+// and a user-gesture turn; external `<a href>` links need `ui.open_url`.
+// Denials and refusals are reported, never fatal (`command_result` status:
+// 0 ok, 1 not_allowed, 2 refused_by_platform, 3 invalid_context).
+declare class ViewEvent {
+  readonly kind: number;
+  readonly handler: number;
+  readonly target: number;
+  readonly seq: number;
+  readonly flags: number;
+  readonly status: number;
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+  readonly key: string;
+  readonly value: string;
+  shiftKey(): boolean;
+  ctrlKey(): boolean;
+  altKey(): boolean;
+  metaKey(): boolean;
+  isComposing(): boolean;
+  checked(): boolean;
+}
+declare namespace View {
+  function node(): number;
+  function handler(callback: (event: ViewEvent) => void): number;
+  function createElement(node: number, tag: number): void;
+  function createText(node: number, text: string): void;
+  function setText(node: number, text: string): void;
+  function setAttribute(node: number, attribute: number, value: string): void;
+  function removeAttribute(node: number, attribute: number): void;
+  function setClass(node: number, classes: string): void;
+  function setStyle(node: number, property: number, value: string): void;
+  function removeStyle(node: number, property: number): void;
+  function insert(parent: number, node: number, before: number): void;
+  function remove(node: number): void;
+  function listen(node: number, event: number, handler: number, options: number, key: number, required: number, forbidden: number): void;
+  function unlisten(node: number, event: number, handler: number): void;
+  function on(node: number, event: number, callback: (event: ViewEvent) => void, options: number, key: number, required: number, forbidden: number): void;
+  function setValue(node: number, value: string): void;
+  function setChecked(node: number, checked: boolean): void;
+  function command(node: number, command: number, argument: number): void;
+  function stylesheet(sheet: number, text: string): void;
+  function setTitle(title: string): void;
+  function copyText(text: string, done: (status: number) => void): void;
+  function onLinkResult(callback: (event: ViewEvent) => void): void;
+  /** Commit the pending operations (at most once a turn). */
+  function commit(): void;
+  /** Insert a node into the view root and commit. */
+  function mount(root: number): void;
+  /** Install the reactive runner (L1) that template holes run through. */
+  function setEffect(effect: (run: () => void) => void): void;
+  function bindText(node: number, getter: () => string): void;
+  function bindAttribute(node: number, attribute: number, getter: () => string): void;
+  function bindFlag(node: number, attribute: number, getter: () => boolean): void;
+  function bindClass(node: number, getter: () => string): void;
+  function bindStyle(node: number, property: number, getter: () => string): void;
+  function bindValue(node: number, getter: () => string): void;
+  function bindChecked(node: number, getter: () => boolean): void;
+}
+// TSX (`.tsx` modules, v38): intrinsic elements and attributes of the L0
+// subset; `{expr}` holes are getters re-run by the installed runner;
+// `on<Event>:<Key>-<modifier>-…` declares a key filter (`shift`, `noShift`,
+// …, `notComposing`, `preventDefault`, `stopPropagation`); `style:<property>`
+// binds one CSS property; components are functions returning a node id.
+// generated:jsx-namespace:begin
+declare namespace JSX {
+  /** A TSX element evaluates to its L0 node id. */
+  type Element = number;
+  interface Attributes {
+    class?: string;
+    style?: string;
+    ref?: (node: number) => void;
+    id?: string;
+    tabindex?: string;
+    role?: string;
+    "aria-label"?: string;
+    "aria-labelledby"?: string;
+    "aria-describedby"?: string;
+    "aria-live"?: string;
+    "aria-expanded"?: string;
+    "aria-selected"?: string;
+    "aria-current"?: string;
+    "aria-busy"?: string;
+    "aria-invalid"?: string;
+    "aria-hidden"?: string;
+    onClick?: (event: ViewEvent) => void;
+    onInput?: (event: ViewEvent) => void;
+    onChange?: (event: ViewEvent) => void;
+    onSubmit?: (event: ViewEvent) => void;
+    onKeyDown?: (event: ViewEvent) => void;
+    onFocusIn?: (event: ViewEvent) => void;
+    onFocusOut?: (event: ViewEvent) => void;
+    onScroll?: (event: ViewEvent) => void;
+    onCancel?: (event: ViewEvent) => void;
+    onClose?: (event: ViewEvent) => void;
+  }
+  interface IntrinsicElements {
+    div: Attributes;
+    span: Attributes;
+    p: Attributes;
+    h1: Attributes;
+    h2: Attributes;
+    h3: Attributes;
+    ul: Attributes;
+    ol: Attributes;
+    li: Attributes;
+    header: Attributes;
+    nav: Attributes;
+    main: Attributes;
+    section: Attributes;
+    footer: Attributes;
+    strong: Attributes;
+    em: Attributes;
+    code: Attributes;
+    pre: Attributes;
+    br: Attributes;
+    button: Attributes & {
+      type?: string;
+      disabled?: boolean;
+      autofocus?: boolean;
+    };
+    a: Attributes & {
+      href?: string;
+    };
+    form: Attributes;
+    label: Attributes & {
+      for?: string;
+    };
+    input: Attributes & {
+      type?: string;
+      name?: string;
+      placeholder?: string;
+      disabled?: boolean;
+      readonly?: boolean;
+      maxlength?: string;
+      autofocus?: boolean;
+      value?: string;
+      checked?: boolean;
+    };
+    textarea: Attributes & {
+      name?: string;
+      placeholder?: string;
+      disabled?: boolean;
+      readonly?: boolean;
+      maxlength?: string;
+      autofocus?: boolean;
+      rows?: string;
+      value?: string;
+    };
+    select: Attributes & {
+      name?: string;
+      disabled?: boolean;
+      autofocus?: boolean;
+      value?: string;
+    };
+    option: Attributes & {
+      value?: string;
+      disabled?: boolean;
+      selected?: boolean;
+    };
+    dialog: Attributes;
+    progress: Attributes & {
+      value?: string;
+      max?: string;
+    };
+    img: Attributes & {
+      src?: string;
+      alt?: string;
+    };
+    aside: Attributes;
+  }
+}
+// generated:jsx-namespace:end
 // checked-f64-utf16-v38 (batch, unreleased) data limits: JSON.stringify uses the
 // internal import json_stringify_owned (i32 kind, i32 low, i32 high)->(i64
 // handle, i32 error class), host ABI34 minimum, pure, no capability. The host

@@ -127,6 +127,7 @@ impl Execution {
                 events: crate::events::HostEvents::default(),
                 rearm: Some(control.control.clone()),
                 profiler: None,
+                view: crate::view::Session::default(),
             },
         );
         store.limiter(|context| &mut context.limits);

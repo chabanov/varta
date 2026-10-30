@@ -151,7 +151,13 @@ impl Builder<'_> {
             return Err(module_error("module graph exceeds total source budget"));
         }
         let source = Source::new(&input.path, &input.text);
-        let mut ast = parse::parse_module(&source)?;
+        // A `.tsx` module parses JSX only where `tsx()` admits it; earlier
+        // profiles keep parsing every module as TypeScript.
+        let tsx = self.profile.tsx() && crate::jsx::is_tsx(&input.path);
+        let mut ast = parse::parse_module(&source, tsx)?;
+        if tsx {
+            crate::jsx::desugar(&mut ast, &source)?;
+        }
         let syntax::Scan {
             mut imports,
             exports,

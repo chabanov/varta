@@ -112,10 +112,11 @@ one grant kind:
 <!-- generated:embedding-grant-kinds:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Grant kind | Wire form | Ids |
 | --- | --- | --- |
-| Boolean | `"enabled": true \| false` | `process.exit`, `time.now`, `time.timer` |
+| Boolean | `"enabled": true \| false` | `clipboard.write`, `process.exit`, `time.now`, `time.timer` |
 | Name/path patterns | `"patterns": [...]` | `env.get`, `env.has`, `env.print`, `fs.print`, `fs.read` |
 | URL patterns | `"patterns": [...]` | `net.fetch`, `net.get` |
 | Request scopes (v37) | `"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) | `net.request` |
+| External-link patterns (v38) | `"patterns": [...]`, `https://` admitted, plus the exact `"https://*"` (any HTTPS link, prompting on every activation; valid for this id only) | `ui.open_url` |
 | Listen endpoints | `"patterns": ["127.0.0.1:8080"]` | `net.listen` |
 <!-- generated:embedding-grant-kinds:end -->
 
@@ -278,7 +279,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 66 |
+| `checked-f64-utf16-v38` | 34 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 67 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -780,6 +781,7 @@ import the operation, as contiguous runs in registry order.
 | `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `permission_query` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `permission_request` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `view_commit` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 <!-- generated:embedding-host-operations:end -->
 
 ## Status and control codes
@@ -1379,14 +1381,28 @@ source diagnostics and is empty for invocation errors. Each `logs` entry is the
 
 ## View protocol draft v0 (unstable)
 
-**Unstable draft v0, data only.** These tables are generated from
-`varta_common::view` so that a browser applier, the headless renderer and a
-native renderer can be written against one set of codes for the accepted L0 v1
-subset ([design](development-plan.md#view-layer-l0l3)). Nothing here is
-implemented: `view_commit` is not a registered host operation, no compiler emits
-it, no runtime links it and no profile admits it. Codes and layouts may change
+**Unstable draft v0.** These tables are generated from `varta_common::view`
+so that a browser applier, the headless renderer and a native renderer can be
+written against one set of codes for the accepted L0 v1 subset
+([design](development-plan.md#view-layer-l0l3)). Codes and layouts may change
 until the freeze criterion is met; the frozen protocol gets its own version and
 host ABI.
+
+**Implemented in profile `checked-f64-utf16-v38` (`view_protocol()`).** The
+parts below marked as implemented are normative for v38 hosts
+([architecture](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx));
+everything else in this section stays draft.
+
+| Part | State in v38 |
+| --- | --- |
+| `view_commit` import, batch encoding, whole-batch validation (all opcodes, codes, padding, strings, ids, element/attribute/command tables, CSS grammars, stylesheet grammar, key filters, budgets) | Implemented: registered host operation (host ABI 34, no capability, host-call budget); an invalid batch ends the instance and nothing of it is applied |
+| Event export `varta.view_abi.event` and the event record | Implemented: synthesized by the compiler; every record is a host task of the application instance and runs as its own turn (coalescing, overflow rule) |
+| Bubbling, `preventDefault`/`stopPropagation`, key filters, edit counters and stale `set_value`/`set_checked`, gestures | Implemented by the headless renderer (`varta-view`) and its scripted platform inputs |
+| `copy_text` / `clipboard.write`, external links / `ui.open_url` (with `https://*`), `command_result` statuses | Implemented: registered capabilities with exact grants; permission broker v1 decides from request ∩ ceiling and the grant's state, audits every outcome and prompts with the full URL for `https://*` matches through the prompt seam (never stored; scripted headless sessions answer from the script, other hosts deny); every outcome is a `command_result` record |
+| At most one commit per turn | Implemented: a second `view_commit` in one turn ends the instance |
+| Layout rectangles, fonts, `field-sizing` heights | Draft: the headless renderer serializes the tree, cascaded styles and the accessibility tree only (no Taffy/Parley dependency yet) |
+| Browser applier, native renderer, hydration, measurement queries | Draft |
+| Long-lived instance and per-turn budgets | Implemented: an application instance hosts the view; every record is one turn with fresh per-turn budgets; a bounded execution renders without event delivery |
 
 **Encoding.** Little-endian. A batch is the batch header (`version: u16`,
 `flags: u16` = 0, `op_count: u32`) followed by `op_count` operations. Each
@@ -1535,8 +1551,8 @@ values:
 | Item | Value |
 | --- | --- |
 | Draft version | 0 |
-| Patch import (not registered) | `varta.view_commit` (i32, i32) → (i32) |
-| Event export (not registered) | `varta.view_abi.event` (i32) → () |
+| Patch import (v38, host ABI 34) | `varta.view_commit` (i32, i32) → (i32) |
+| Event export (v38) | `varta.view_abi.event` (i32) → () |
 | Root node id | 1 |
 | "No node" id | 0 |
 | Batch header bytes | 8 |
@@ -1788,9 +1804,8 @@ Decided for the first application, the UARP console in its **Single Chat** form
 (one continuous conversation with the tenant's Head Agent, streamed run events,
 approval and question cards in the feed). Like the rest of the draft these are
 unstable v0 decisions; the two capabilities are **accepted by the owner** for L0
-v1 but are **not implemented**: they are not in the capability registry, so the
-runtime and every manifest validator reject their ids until a profile registers
-them.
+v1 and are **registered** in the capability registry since v38 (manifests of
+every profile may declare them; only a v38 view uses them).
 
 **Key filters (revises the round-2 listener rule).** `listen` carries a key
 filter after its options: a [key](#view-draft-v0-round-3-chat-requirements) code
@@ -1872,7 +1887,7 @@ natively the shell writes the system clipboard. `clipboard.read` stays out of v1
 <!-- generated:view-capabilities:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
 | Capability | Grant | Authorizes (user gesture only) |
 | --- | --- | --- |
-| `ui.open_url` | URL `patterns` (`https://` admitted) | activating an `a` whose `href` is an external URL |
+| `ui.open_url` | URL `patterns` (`https://` admitted, and `https://*`) | activating an `a` whose `href` is an external URL |
 | `clipboard.write` | boolean `enabled` | a `copy_text` operation in the batch of a user-gesture turn |
 <!-- generated:view-capabilities:end -->
 
@@ -2071,7 +2086,7 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
   and resizes with the window. Guest stylesheets may change the root's other
   properties but layouts that depend on the root height (a full-height chat
   layout) behave the same on every renderer.
-- **Arbitrary external links (accepted 2026-10-29, not implemented).** Agent answers
+- **Arbitrary external links (accepted 2026-10-29, implemented in v38).** Agent answers
   link to arbitrary sites, which a fixed pattern list cannot cover. `ui.open_url`
   therefore admits one more grant form, the exact pattern **`https://*`** ("any
   https URL"):

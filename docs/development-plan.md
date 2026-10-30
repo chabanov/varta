@@ -788,8 +788,8 @@ The selectors are registered; the table records what each stream admits.
 | `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Implemented ([contract](architecture.md#data-limits-data_limits)): `DataLimits` registry (2^27 elements, 2^30 string bytes, JSON depth host ceiling 10000), value17 sparse backings above 1024 slots with one bit per slot, typed `RuntimeError::Resource` failures through the `resource_failure`/`resource_request` globals, geometric heap growth and a worklist mark, a hashed growable live-frame table and memory-derived scheduler bounds, `json_stringify_owned` (host ABI 34) into owned guest strings, iterative JSON parsing, lifted `Map`/`Set`/`Uint8Array` preludes and an O(n log n) `join`. Pending: dictionary and mixed-record hashing (needs a value18 storage slot from the program-limits stream), per-element host calls (`String`, `%`) against the 1024 host-call budget, frozen limits in `console.log` diagnostics and primitive conversions |
 | `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Admits event turns with per-turn budgets, manifest budgets capped by the ceiling, long-lived application instances, host event sources and permission broker v1; logs before failure and `--budget-report` in `dev`/`run`/companion ([contract](architecture.md#turn-budgets-and-application-instances-turn_budgets)). Pending: per-function fuel attribution (codegen stream), per-turn UI values from measurements on the targets |
 | `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | First increment implemented ([contract](architecture.md#linked-intrinsics-linked_intrinsics)): 34 pure operations (Math, `**`/`%`, Number text and parsing, primitive-cell conversions, UTF-16 access and case mapping) are guest code from the shared `varta-intrinsics` crate, linked function by function with their data onto a private second memory; a v38 host implements 59 of 93 imports. Measured below ([linked intrinsics measurement](#linked-intrinsics-measurement-v38)). Pending: the value17 readers and conversions, JSON, `primitive_compare`/`primitive_equal` and BigInt, which need the value-layout readers in the shared crate |
-| `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Registered, admits nothing |
-| `tsx()` | TSX: TSX parsing and template compilation | Registered, admits nothing |
+| `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Implemented (P7): `view_commit` (host ABI 34), synthesized event export, `varta-view` headless renderer (tree, cascade, accessibility; no layout), `ui.open_url`/`clipboard.write` decided by permission broker v1 with `command_result`; every view record is a host task of an application instance and runs as its own turn |
+| `tsx()` | TSX: TSX parsing and template compilation | Implemented (start of P8): `.tsx` parsing, AOT templates with getter holes, typed `JSX` namespace; L1 stays a package outside the engine |
 | `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Implemented in part ([contract](architecture.md#structural-subtyping-structural_subtyping)): width subtyping of records, interfaces and class instances through views (one accessor call plus one descriptor test per source layout; direct slots for shapes without wider sources), identity-preserving comparisons and `instanceof`, diagnostics naming both types and the missing/mismatched/extra members, erased generic method signatures with checked results, `object` annotations, `Array.isArray` narrowing of `unknown`, record and optional spreads, `obj.m?.()` on class methods, property narrowing kept across calls and getters with checked reads, `JSON.stringify` typed `string` and of `never`, literal `??` fallbacks, record-to-dictionary assertions and records held by `unknown` read as JSON objects, `Promise<unknown>` arrow contexts, `as void`, string `for...of`, exhaustive literal `switch`, constructor parameter properties, `encodeURIComponent`/`encodeURI`. Pending: Web byte bodies (`ReadableStream<Uint8Array>`, `arrayBuffer()`, `Blob`, `FormData`), typed `globalThis`/`process.env`, `Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views. Pilot probe below |
 | `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionary call sites; fuel profiler | Implemented for codegen ([contract](architecture.md#code-generation-v2-codegen_v2)): quiet expressions without root traffic, call and frame fast paths, operand-cache collapse, plain updates, content-equality and inline literal comparisons, amortized string builders, guest `charAt`/`charCodeAt`/`%`, bounded first allocation scans and a collection threshold; `varta dev --profile-fuel` ([profile builds](architecture.md#fuel-profile-builds-varta-dev---profile-fuel)). Admits no syntax; v37 bytes frozen |
 
@@ -912,12 +912,16 @@ JSON schemas. Linking them needs, in this order:
 ### Platform targets and application model
 
 **Status: design accepted by the owner on 2026-10-29
-([accepted decisions](#accepted-decisions-2026-10-29)). The runtime half of P5
-(event turns with per-turn budgets, long-lived application instances, host
-event sources, permission broker v1 with `query`/`request`, stored decisions and
-a prompt seam) is implemented under profile v38 (`turn_budgets()`,
-[contract](architecture.md#turn-budgets-and-application-instances-turn_budgets));
-the rest of this section is not implemented yet.** The contract that exists today for third-party hosts is
+([accepted decisions](#accepted-decisions-2026-10-29)). Implemented so far in
+profile v38: the runtime half of P5 (event turns with per-turn budgets,
+long-lived application instances, host event sources, permission broker v1 with
+`query`/`request`, stored decisions and a prompt seam;
+[contract](architecture.md#turn-budgets-and-application-instances-turn_budgets)),
+P7 (the L0 view protocol and the headless renderer, its records as host tasks
+of application instances and its capabilities decided by broker v1) and the
+start of P8 (TSX templates;
+[contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)); the
+rest of this section is not implemented yet.** The contract that exists today for third-party hosts is
 [embedding.md](embedding.md). This section is the agreed design for the owner's
 stated goal:
 
@@ -1874,7 +1878,7 @@ Later the same day the owner chose the console's **Single Chat** UX and accepted
 two L0 v1 capabilities, user-gesture only with exact grants: `ui.open_url`
 (external links opened by the renderer) and `clipboard.write` (`copy_text`). Their
 contract is the [round 3 draft](embedding.md#view-draft-v0-round-3-chat-requirements);
-the runtime implements neither yet.
+v38 implements both in the headless renderer.
 
 ### Deferred external validation scenarios
 

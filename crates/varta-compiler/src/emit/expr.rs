@@ -196,6 +196,9 @@ impl Emitter<'_> {
                     ir::Intrinsic::FromUnits => self.string_helper(strings::Helper::FromUnits)?,
                     ir::Intrinsic::CharAt => self.string_helper(strings::Helper::CharAt)?,
                     ir::Intrinsic::CharCodeAt => self.string_helper(strings::Helper::CharCodeAt)?,
+                    ir::Intrinsic::Units => {
+                        self.string_helper(strings::Helper::Units(args.len() as u8))?;
+                    }
                     // The low word of every managed handle is its payload address.
                     ir::Intrinsic::Identity => self.code.extend([I::I32WrapI64, I::F64ConvertI32U]),
                 }

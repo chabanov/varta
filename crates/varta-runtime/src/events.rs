@@ -10,6 +10,12 @@
 //! costs one turn. Every task carries its source id, which is never reused,
 //! so a task for a closed source is discarded before it reaches the guest.
 //! The runtime keeps ids and serials, never a guest reference.
+//!
+//! The records of an attached view (v38 `view_protocol`) are host tasks of
+//! the same queue: each one runs as one turn through the synthesized
+//! `varta.view_abi.event` export with its binary L0 record, coalesces by the
+//! same rule (one pending record per listener for coalescible kinds) and is
+//! bounded by the view registry's pending-event limit as well.
 use crate::scheduler::Scheduler;
 use crate::{RuntimeContext, host};
 use std::collections::{BTreeMap, VecDeque};
@@ -43,15 +49,43 @@ struct Source {
 pub(crate) enum TaskKind {
     HostEvent,
     Permission,
+    /// A view event record (v38 `view_protocol`).
+    View,
+}
+
+/// What a host task delivers.
+pub(crate) enum Payload {
+    /// The UTF-8 record of an event source.
+    Text(String),
+    /// A binary L0 view event record for `varta.view_abi.event`, delivered
+    /// without a text detour.
+    View(varta_view::EventRecord),
 }
 
 pub(crate) struct Task {
+    /// The event source; view records have none ([`TaskKind::View`]).
     pub source: u64,
-    pub record: String,
+    pub payload: Payload,
     pub kind: TaskKind,
     pub gesture: bool,
     pub coalesce: bool,
     pub arrived: Instant,
+}
+impl Task {
+    /// Whether `self` is a pending task the coalescible `next` replaces: the
+    /// same source, or for view records the same listener and event kind.
+    fn replaced_by(&self, next: &Task) -> bool {
+        self.coalesce
+            && self.kind == next.kind
+            && self.source == next.source
+            && match (&self.payload, &next.payload) {
+                (Payload::View(old), Payload::View(new)) => {
+                    old.kind == new.kind && old.handler == new.handler
+                }
+                (Payload::Text(_), Payload::Text(_)) => true,
+                _ => false,
+            }
+    }
 }
 
 /// What became of a delivered host event.
@@ -203,32 +237,61 @@ impl HostEvents {
             .by_name
             .get(&event.source)
             .ok_or_else(|| EventError::NoListener(event.source.clone()))?;
-        if event.coalesce
-            && let Some(task) = self
-                .queue
-                .iter_mut()
-                .find(|task| task.source == id && task.coalesce)
-        {
-            task.record = event.record;
-            task.gesture |= event.gesture;
-            return Ok(Delivery::Coalesced);
-        }
-        if self.queue.len() >= MAX_PENDING_HOST_TASKS {
-            return if event.coalesce {
-                Ok(Delivery::Dropped)
-            } else {
-                Err(EventError::QueueFull)
-            };
-        }
-        self.queue.push_back(Task {
+        let task = Task {
             source: id,
-            record: event.record,
+            payload: Payload::Text(event.record),
             kind: TaskKind::HostEvent,
             gesture: event.gesture,
             coalesce: event.coalesce,
             arrived: Instant::now(),
-        });
-        Ok(Delivery::Queued)
+        };
+        let full = self.queue.len() >= MAX_PENDING_HOST_TASKS;
+        self.enqueue(task, full).ok_or(EventError::QueueFull)
+    }
+    /// Queue `task`, first coalescing it into a pending task it replaces;
+    /// `full` drops a coalescible task and refuses (`None`) any other.
+    fn enqueue(&mut self, task: Task, full: bool) -> Option<Delivery> {
+        if task.coalesce
+            && let Some(pending) = self
+                .queue
+                .iter_mut()
+                .find(|pending| pending.replaced_by(&task))
+        {
+            pending.payload = task.payload;
+            pending.gesture |= task.gesture;
+            return Some(Delivery::Coalesced);
+        }
+        if full {
+            return task.coalesce.then_some(Delivery::Dropped);
+        }
+        self.queue.push_back(task);
+        Some(Delivery::Queued)
+    }
+    /// Queue a view event record (v38 `view_protocol`) as a host task: a
+    /// user-gesture record makes a gesture turn, and coalescible kinds
+    /// (`input`, `scroll`) keep one pending record per listener. A full queue
+    /// drops a coalescible record and is fatal for any other.
+    pub fn push_view(
+        &mut self,
+        delivery: varta_view::Delivery,
+    ) -> Result<Delivery, varta_view::ViewError> {
+        let views = self
+            .queue
+            .iter()
+            .filter(|task| task.kind == TaskKind::View)
+            .count();
+        let full = views >= varta_common::view::DRAFT_MAX_PENDING_EVENTS
+            || self.queue.len() >= MAX_PENDING_HOST_TASKS;
+        let task = Task {
+            source: 0,
+            coalesce: delivery.record.kind.coalescible(),
+            payload: Payload::View(delivery.record),
+            kind: TaskKind::View,
+            gesture: delivery.gesture,
+            arrived: Instant::now(),
+        };
+        self.enqueue(task, full)
+            .ok_or(varta_view::ViewError::QueueOverflow)
     }
     /// Queue the answer of a prompt on its one-shot source.
     pub fn complete(&mut self, source: u64, state: PermissionState) -> Result<(), EventError> {
@@ -237,7 +300,7 @@ impl HostEvents {
         }
         self.queue.push_back(Task {
             source,
-            record: state.name().to_owned(),
+            payload: Payload::Text(state.name().to_owned()),
             kind: TaskKind::Permission,
             gesture: false,
             coalesce: false,
@@ -248,7 +311,7 @@ impl HostEvents {
     /// The arrival time of the next task whose source is still open.
     pub fn next_arrival(&mut self) -> Option<Instant> {
         while let Some(task) = self.queue.front() {
-            if self.sources.contains_key(&task.source) {
+            if task.kind == TaskKind::View || self.sources.contains_key(&task.source) {
                 return Some(task.arrived);
             }
             self.queue.pop_front();
@@ -265,13 +328,16 @@ impl HostEvents {
         scheduler: &mut Scheduler,
         task: Task,
     ) -> Result<(), wasmtime::Error> {
+        let Payload::Text(record) = task.payload else {
+            return Err(wasmtime::Error::new(EventError::State));
+        };
         let Some(source) = self.sources.get_mut(&task.source) else {
             return Ok(());
         };
         if !matches!(source.phase, Phase::Armed) {
             return Err(wasmtime::Error::new(EventError::State));
         }
-        source.phase = Phase::Ready(Some(task.record));
+        source.phase = Phase::Ready(Some(record));
         if let Some(serial) = source.watcher.take() {
             scheduler.wake(serial).map_err(wasmtime::Error::new)?;
         }
@@ -423,7 +489,13 @@ mod tests {
             Ok(Delivery::Coalesced)
         );
         assert_eq!(events.push(event("ui", "b", false)), Ok(Delivery::Queued));
-        let records: Vec<String> = std::iter::from_fn(|| events.pop().map(|t| t.record)).collect();
+        let records: Vec<String> = std::iter::from_fn(|| {
+            events.pop().map(|t| match t.payload {
+                Payload::Text(record) => record,
+                Payload::View(_) => unreachable!("no view task queued"),
+            })
+        })
+        .collect();
         assert_eq!(records, ["a", "2", "b"]);
         assert_eq!(
             events.push(event("ui", &"x".repeat(MAX_EVENT_RECORD_BYTES + 1), false)),

@@ -8969,8 +8969,8 @@ stream adds a subsection below:
 - linked-intrinsics stream: `linked_intrinsics()` (Rust pure intrinsics linked
   into the guest Wasm so third-party hosts stay thin);
 - view-protocol stream: `view_protocol()` (the L0 `view_commit` protocol,
-  event delivery and a headless renderer);
-- TSX stream: `tsx()` (TSX parsing and template compilation);
+  event delivery and a headless renderer; implemented);
+- TSX stream: `tsx()` (TSX parsing and template compilation; implemented);
 - structural-subtyping stream: `structural_subtyping()` (width and structural
   subtyping of records, interfaces and classes, plus the remaining pilot
   language items);
@@ -8978,7 +8978,9 @@ stream adds a subsection below:
   comparison and concatenation, and dictionary call sites; it changes code, not
   the admitted language).
 
-Until a stream adds its subsection here, a v38 module compiles and runs exactly
+The view-protocol and TSX streams add
+[their subsection](#v38-view-protocol-and-tsx-view_protocol-tsx). Until a
+stream adds its subsection here, a v38 module compiles and runs exactly
 like a v37 module apart from its declared profile and host ABI, and production
 budgets of every profile are unchanged. The streams below have added their
 subsections; the code-generation subsection changes only the emitted code and
@@ -9868,6 +9870,142 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   string intrinsics still read and return strings within the frozen 1 MiB
   string and result-buffer limits (open with the move of the library into a
   reserved region of memory 0).
+
+### V38 view protocol and TSX (`view_protocol()`, `tsx()`)
+
+The view-protocol and TSX streams implement increment P7 and the start of P8
+of the [platform design](development-plan.md#view-layer-l0l3) under v38. The
+wire format, codes and rules are the L0 protocol draft v0 of the
+[embedding contract](embedding.md#view-protocol-draft-v0-unstable), whose
+table there states which parts are implemented; codes stay unstable until the
+freeze criterion. Earlier profiles are unchanged: they neither import
+`view_commit`, export the event function, load the view prelude nor parse
+JSX, and their Wasm bytes do not change.
+
+**Host operation.** `view_commit(ptr: i32, len: i32) -> i32`
+(`HostOperation::ViewCommit`, minimum host ABI 34, no capability, charged to
+the host-call budget). The runtime copies `len` bytes of guest memory after
+a bounds check and the batch byte limit, decodes the whole batch and applies
+it to a copy of the instance's view; only a batch whose every operation and
+final invariant (unique `id` values) holds replaces the view. Any violation
+ends the instance with `RuntimeError::View` (`ViewError::Invalid` with the
+operation index and the violated rule) before any effect of the batch. A
+turn commits at most one batch; a second `view_commit` in the same turn is
+`ViewError::SecondCommit`. The status result is 0.
+
+**Event delivery.** A module that loads the view prelude exports
+`varta.view_abi.event(len: i32) -> ()`, synthesized by the compiler: it
+copies the record the host wrote at `abi::RESULT_BASE` into an owned string
+(the snapshot helper, before any host operation) and calls the prelude's
+dispatcher, which decodes the record, runs the handler of its listener (or a
+`copy_text` callback, or the link-result handlers for `command_result`) and
+then commits the turn's pending operations. A pending exception stays in the
+exception channel and is finished by the host like one escaping `main`. The
+export is valid only in a profile that admits `view_protocol()` and only
+with the registry signature; validation rejects it elsewhere.
+
+**Records as host tasks.** A [long-lived application
+instance](#turn-budgets-and-application-instances-turn_budgets) hosts the
+view. Every record the renderer produces, from a committed batch or from a
+trusted platform input, leaves it at once and becomes a host task of the
+instance's one task queue (`TaskKind::View`), ordered with host events,
+timers and network completions by arrival; it is delivered in its binary
+form through the event export, never as text. One record is one turn
+(`TurnKind::View`) with a fresh per-turn fuel, host-call, microtask and
+deadline allowance. The task's gesture flag, true exactly for a trusted
+`click`, `keydown` or `submit` record, makes the turn a user-gesture turn of
+the permission broker, which gates `copy_text` and permission prompts. A
+coalescible record (`input`, `scroll`) replaces the pending record of the
+same listener under the queue's coalescing rule; at most
+`DRAFT_MAX_PENDING_EVENTS` view records (and the queue's host-task bound) may
+be pending, a full queue drops a coalescible record, and any other overflow is
+`ViewError::QueueOverflow`. Platform inputs are host work between turns
+(`Application::view_input`; `VartaRuntime::run_view` and `varta dev
+--view-script` perform a script's inputs whenever no task is ready) and run
+no guest code. A committed view keeps the instance alive like an open event
+source. A bounded execution (`run`, `dev` without `--app` or a script)
+renders but has no event delivery: its records are discarded. `Session` in
+`varta-runtime/src/view.rs` owns the renderer and the one-commit rule;
+`turns::begin` renews the commit allowance.
+
+**Capabilities.** `ui.open_url` (`GrantKind::OpenUrls`: URL patterns under
+the network URL rules over `https://` and `http://`, plus the exact
+`view::ANY_HTTPS_PATTERN` `https://*`, which no other capability admits) and
+`clipboard.write` (boolean). At patch time an external `href` must match a
+pattern of the package request, or the batch is invalid. On activation the
+decision is permission broker v1's ([permission broker v1](#turn-budgets-and-application-instances-turn_budgets)):
+the request within the host ceiling, the grant's broker state (a revoked or
+withheld grant denies) and an audit entry with the URL for every outcome. A
+URL matched by explicit patterns of the request and the host ceiling is
+granted by policy; a URL matched on either side only through `https://*`
+prompts with the full URL on every activation and the answer is never
+stored; anything else is denied. The prompt goes through the instance's
+prompt seam (`PermissionPrompter`, between turns); a scripted headless
+session has no seam and its simulated platform answers instead
+(`platform.prompt`; unanswered = `not_allowed`), reported to the broker's
+audit; any other host never prompts and denies. `copy_text` is attempted
+only in a user-gesture turn (`invalid_context` otherwise) and needs
+`clipboard.write` in both the request and the ceiling and an open broker
+state (`not_allowed` otherwise). Every outcome is one `command_result`
+record (`ok`, `not_allowed`, `refused_by_platform`, `invalid_context`); a
+denial never traps.
+
+**Headless renderer (`varta-view`).** An engine crate depending only on
+`varta-common` (no Wasm, file, network or clock access); the runtime is its
+only production dependent. It holds the node tree, stylesheets, focus and
+field state; checks every operation against the registry (element, attribute
+and command tables, attribute value grammars of `view::attributes`, the CSS
+value grammars of `view::css` with at most `css::MAX_VALUE_TOKENS` tokens per
+value, the stylesheet grammar and forbidden tokens, listener filters,
+content model: void elements and text nodes take no children, `select` only
+`option`, `option` only text); simulates trusted platform inputs (click with
+activation behaviour, typing, keys with modifiers and IME composition, focus,
+select, scroll, Esc in a modal dialog, Tab) with bubbling, `preventDefault`
+and `stopPropagation`; and serializes a deterministic JSON snapshot: the
+tree (tags, attributes, classes, computed styles, field values and edit
+counters, listeners), the accessibility tree (roles, names, states), title,
+focus, stylesheets and the simulated clipboard, opened URLs and prompt count.
+The cascade orders sheets by id, then specificity, then source order; inline
+styles win; custom properties inherit and `var()` is substituted; other
+properties report their cascaded value. Layout rectangles are not computed:
+Taffy and Parley are not dependencies yet.
+
+**View prelude.** `<varta>/view/view.ts`, loaded when a module names a
+`View.*` member or `ViewEvent` (TSX compiles to `View.*` calls). It encodes
+operations into a string whose UTF-16 code units are the batch bytes, packing
+each operation's fixed operands with the prelude-only intrinsic
+`varta.view.units(…)` (`ir::Intrinsic::Units`, one allocation, no host call)
+and appending string operands as themselves; `varta.view.commit(batch)` is the
+only path to the host import. Node and handler ids are allocated in
+increasing order and never reused.
+
+**TSX.** Under `tsx()`, modules whose path ends in `.tsx` parse with SWC's
+TSX syntax (other modules, and every module of earlier profiles, parse as
+before). Before scanning, each outermost intrinsic JSX element becomes a
+generated module function `__vartaJsxN` (a static template of L0 operations:
+create, attributes, classes, styles, listeners, children, insert) whose
+parameters are the template's dynamic holes, and the JSX expression becomes
+its call with the holes as arguments in source order. Holes are getters
+`() => T` bound through `View.bindText`/`bindAttribute`/`bindFlag`/
+`bindClass`/`bindStyle`/`bindValue`/`bindChecked`, which run the getter
+through the effect runner installed by `View.setEffect` (the hook of a
+reactive L1 package; without one a getter runs once). Event attributes
+`on<Event>[:filter]` register listeners with a static key filter
+(`Enter-noShift-notComposing-preventDefault`); `ref` receives the node id; a
+component `<Name a={x} />` is the call `Name({ a: x })` returning a node id.
+Element names, attributes per element, static attribute values, static CSS
+declarations and filters are checked against the registry at compile time
+with `TypeError` diagnostics at the JSX attribute; hole types are checked by
+the ordinary checker against the generated parameter types. Fragments,
+spread attributes and children, and component children are rejected; names
+starting with `__vartaJsx` are reserved. `varta.d.ts` carries the typed
+`JSX` namespace generated from the same tables.
+
+**Limits.** The `view::DRAFT_*` placeholders bound batch bytes and
+operations, live nodes and listeners, value and stylesheet bytes, pending
+events and pending `copy_text` requests; `view::css::MAX_VALUE_TOKENS` bounds
+one CSS value; a headless script is at most `Script::MAX_BYTES` bytes and
+`Script::MAX_INPUTS` inputs.
 
 ## Local modules
 
