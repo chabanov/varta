@@ -175,7 +175,7 @@ fn compile_graph(
     } else {
         emit::emit(&program)
     }
-    .and_then(|bytes| link::link(bytes, profile))
+    .and_then(|emitted| link::link(emitted.bytes, profile, emitted.heap))
     .map_err(|e| root.source.locate(e, root.ast.span()))?;
     wasmparser::Validator::new()
         .validate_all(&bytes)

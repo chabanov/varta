@@ -29,11 +29,12 @@ OUTPUT = ROOT / "crates/varta-compiler/src/link/intrinsics.wasm"
 METADATA = ROOT / "crates/varta-compiler/src/link/intrinsics.json"
 PACKAGE = "varta-intrinsics-wasm"
 PROFILE = "intrinsics"
-# Private shadow stack of the library (below its static data).
-STACK_BYTES = 128 * 1024
-# Maximum of the private intrinsic memory: `abi::MAX_INTRINSIC_MEMORY_BYTES`
-# (checked by the compiler test `intrinsic_library_declares_its_memory_bound`).
-MAX_MEMORY_BYTES = 8 * 1024 * 1024
+# The library's own memory layout is a placeholder: the compiler's linker
+# relocates the reached data segments into a module's intrinsic region of
+# memory 0 through the relocations kept here (`--emit-relocs`, one segment
+# per input section), and places the shadow stack there itself
+# (`abi::INTRINSIC_STACK_BYTES`). The placeholder stack is one page.
+STACK_BYTES = 64 * 1024
 FNV_OFFSET = 0xCBF29CE484222325
 FNV_PRIME = 0x100000001B3
 
@@ -67,8 +68,7 @@ def installed_targets():
 
 def build():
     targets = installed_targets()
-    link = [f"-zstack-size={STACK_BYTES}", f"--max-memory={MAX_MEMORY_BYTES}",
-            "--emit-relocs", "--no-merge-data-segments"]
+    link = [f"-zstack-size={STACK_BYTES}", "--emit-relocs", "--no-merge-data-segments"]
     if "wasm32-unknown-unknown" in targets:
         target = "wasm32-unknown-unknown"
     elif "wasm32-wasip2" in targets:

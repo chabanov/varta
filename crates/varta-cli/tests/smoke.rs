@@ -16190,11 +16190,19 @@ console.log(s.toUpperCase()+" "+s.charAt(4)+" "+s.charCodeAt(4).toString());
     assert_eq!(logs(&dev), expected);
     let build = project.command(&["build", "--single"]);
     assert!(build.status.success(), "{}", combined(&build));
+    let wasm = fs::read(project.0.join("dist/app.wasm")).unwrap();
+    let section = varta_common::abi::INTRINSIC_SECTION.as_bytes();
+    assert!(
+        wasm.windows(section.len()).any(|window| window == section),
+        "a linked module declares its intrinsic region"
+    );
     for artifact in ["dist/app.wasm", "dist/app"] {
         let inspect = project.command(&["inspect", artifact, "--json"]);
         assert!(inspect.status.success(), "{}", combined(&inspect));
         let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
         assert_eq!(info["language"]["profile"], PROFILE);
+        // One memory: the library lives in the intrinsic region of memory 0.
+        assert_eq!(info["memories"], 1, "{info}");
         let imports: Vec<&str> = info["imports"]
             .as_array()
             .unwrap()

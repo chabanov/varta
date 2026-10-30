@@ -98,7 +98,7 @@ pub fn supported(version: u32) -> bool {
 }
 mod static_region;
 pub use static_region::{
-    MAX_STATIC_EXTENSION_PAGES, STATIC_SECTION, StaticRegion, StaticRegionError,
+    INTRINSIC_SECTION, MAX_STATIC_EXTENSION_PAGES, STATIC_SECTION, StaticRegion, StaticRegionError,
     WASM_MEMORY32_PAGES,
 };
 pub const SECTION: &str = "varta.abi";
@@ -143,9 +143,8 @@ pub enum HostStatus {
 }
 
 pub const MAX_WASM_FUNCTION_BODY_BYTES: usize = 65_536;
-/// V38 (`linked_intrinsics`): maximum of the private intrinsic memory, the
-/// module's second memory, which holds only the linked library's stack,
-/// static data and per-call arena. It is never exported, starts empty of
-/// guest values and is bounded by its declared maximum; guest memory 0 keeps
-/// [`MAX_MEMORY_BYTES`] and its layout.
-pub const MAX_INTRINSIC_MEMORY_BYTES: usize = 8 * 1024 * 1024;
+/// V38 (`linked_intrinsics`): the shadow stack of the linked intrinsic
+/// library, the first bytes of the intrinsic region of memory 0
+/// ([`StaticRegion::intrinsic_base`]). Linked code traps instead of moving its
+/// stack pointer below the region.
+pub const INTRINSIC_STACK_BYTES: usize = 64 * 1024;

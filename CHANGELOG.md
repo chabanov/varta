@@ -11,6 +11,16 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 linked intrinsics run in memory 0: a linked module has exactly one
+  memory (no multi-memory, so Safari and embedded engines run it). Emission
+  reserves an intrinsic region after the static extension (`varta.intrinsics`,
+  `abi::StaticRegion::intrinsic_base`) holding the library's 64 KiB shadow
+  stack and the data segments its linked operations reach; the compiler
+  relocates those segments through the library's kept wasm-ld relocations,
+  checks every stack-pointer write against the region, and starts the
+  per-call arena at the guest heap's end. Validation admits one memory for
+  every profile and the library's data only inside the declared region.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of

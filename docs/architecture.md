@@ -9300,13 +9300,23 @@ metadata changes). Every earlier profile keeps static data in the single page
 `[0, 65536)`. A v38 module may extend its static region
 (`abi::StaticRegion`):
 
-| Region | Addresses (v38 with `n` extension pages) |
+| Region | Addresses (v38 with `n` extension pages and `m` intrinsic pages) |
 | --- | --- |
 | Static page | `[0, 65536)` |
 | Host results | `[65536, 1114112)` (unchanged) |
 | Reference roots | `[1114112, 1179648)` (unchanged) |
 | Static extension | `[1179648, 1179648 + n·65536)` |
-| Managed heap | from `heap_base = 1179648 + n·65536` |
+| Intrinsic region ([linked intrinsics](#linked-intrinsics-linked_intrinsics)) | `[1179648 + n·65536, 1179648 + (n + m)·65536)` |
+| Managed heap | from `heap_base = 1179648 + (n + m)·65536` |
+
+`m` is 0 unless the module links intrinsics; the custom section
+`varta.intrinsics` (`abi::INTRINSIC_SECTION`) declares it like `n`, with
+`1 ≤ m` and `n + m ≤ abi::MAX_STATIC_EXTENSION_PAGES`, at most once and only
+for a `linked_intrinsics()` profile. The intrinsic region is neither static
+data (`StaticRegion::contains` excludes it, so no descriptor, key or schema
+may lie there) nor heap; validation admits a data segment there
+(`StaticRegion::intrinsic_contains`) and requires the initial memory to cover
+`heap_base`.
 
 - The custom section `varta.static` (`abi::STATIC_SECTION`) declares `n` as
   one little-endian u32, `1 ≤ n ≤ abi::MAX_STATIC_EXTENSION_PAGES` (the
@@ -9826,46 +9836,78 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   signature must equal `HostOperation::scalar_signature`, and appends exactly
   the library functions, globals and data segments reachable from those exports
   (wasm-ld relocations, kept with `--emit-relocs`, attribute data to
-  functions). Kept imports keep their order; guest-defined functions keep their
-  relative order and indices after the imports, so `varta.functions` codes are
-  unchanged; linked functions and the synthesized accessors follow them; library
-  types are deduplicated against the guest's. A library function that uses a
-  table, an indirect call, a passive segment or a start function is not
-  linkable. Linking is deterministic, and a program without a linked import is
-  emitted byte for byte as before.
-- **Memory.** The library runs on a second, private memory: its shadow stack,
-  static data and a per-call bump arena, bounded by its declared maximum
-  `abi::MAX_INTRINSIC_MEMORY_BYTES` and never exported. Guest memory 0 and its
-  layout are unchanged. The library reaches memory 0 and the result globals
-  only through five synthesized accessors (`memory.size`/`memory.grow` of
-  memory 0, bounds-checked `memory.copy` in each direction, and setting the
-  exported `env_result_len`); string results are written at
+  functions and to the data that points at other data). Kept imports keep
+  their order; guest-defined functions keep their relative order and indices
+  after the imports, so `varta.functions` codes are unchanged; linked
+  functions, the synthesized accessors and the stack-pointer check follow
+  them; library types are deduplicated against the guest's. A library function
+  that uses a table, an indirect call, a passive segment, a start function, a
+  global other than its stack pointer and the zero memory/table bases of
+  position-independent code, an absolute linker symbol (such as
+  `__heap_base`) or a 64-bit, TLS or location-relative memory relocation is
+  not linkable. Linking is deterministic, and a program without a linked
+  import is emitted byte for byte as before.
+- **Memory: the intrinsic region of memory 0.** A linked module has exactly
+  one memory (owner decision: no multi-memory, so Safari and embedded engines
+  run it). Emission sizes the module's intrinsic region
+  ([static region](#multi-page-static-region-program_limits), `m` pages after
+  the static extension, declared by `varta.intrinsics`) from the operations
+  it links, before code is emitted, so the heap base, the allocator, the
+  collector and the memory minimum already account for it. The region holds:
+  - `[base, base + abi::INTRINSIC_STACK_BYTES)`: the library's shadow stack.
+    Its stack pointer starts at the top, and every `global.set` of it in
+    linked code is replaced by a call of one synthesized check that traps
+    when the new value is below `base`, so a deep linked call can never
+    overwrite the static extension or the root stack below the region;
+  - from `base + abi::INTRINSIC_STACK_BYTES`: the data segments the linked
+    functions reach, in library order, each at the next offset of its own
+    `WASM_SEGMENT_INFO` alignment (zero-initialized `.bss` segments
+    included). Nothing else is placed there.
+- **Relocation.** The library is linked once, at its own placeholder
+  addresses, with relocations kept (`--emit-relocs`, one data segment per
+  input section). Linking moves each reached segment to its region address
+  and rewrites every memory address that names it: the padded LEB/SLEB
+  immediates of `R_WASM_MEMORY_ADDR_LEB`/`SLEB` and of
+  `R_WASM_MEMORY_ADDR_REL_SLEB` (position-independent code from the
+  `wasm32-wasip2` standard library adds them to `__memory_base`, which the
+  library links as 0, so they are absolute and the base stays 0) in code, and
+  the `R_WASM_MEMORY_ADDR_I32` words in data. Each new value is the placed
+  segment address plus the symbol offset and addend from the `linking`
+  symbol table; the old value in the bytes must equal the library address the
+  relocation names, or linking fails. No absolute address is assumed.
+- **Arena and accessors.** The per-call arena of an allocating export starts
+  at the guest heap's end (the allocator's bump pointer, read by the
+  synthesized `arena_base` accessor; the heap base for a module without a
+  managed heap) and grows memory 0 within its maximum and the memory budget.
+  Linked code never calls the guest allocator or collector, so nothing else
+  writes above the heap end during the call; afterwards the guest allocator
+  uses those bytes as fresh heap space (it initializes every block it hands
+  out, as it does for reused blocks). The library reaches guest values and
+  the result globals only through synthesized accessors: bounds-checked
+  `memory.copy` within memory 0 in each direction, setting the exported
+  `env_result_len`, and `arena_base`; string results are written at
   `abi::RESULT_BASE` exactly as a host writes them. Each allocating export
-  resets the arena on entry and traps on a nested entry, so no pointer or state
-  survives a call; linked code never allocates in, roots or retains guest heap
-  values, and guest values it reads are copied first. A v38 module that links
-  an intrinsic therefore needs an engine with multi-memory (Wasmtime, V8,
-  SpiderMonkey); the single-memory alternative, a reserved library region in
-  memory 0, is a layout change for the program-limits stream.
+  resets the arena on entry and traps on a nested entry, so no pointer or
+  state survives a call; linked code never allocates in, roots or retains
+  guest heap values, and guest values it reads are copied first.
 - **Validation.** A v38 module that imports a linked operation is rejected
-  before instantiation ("pure intrinsic must be linked"). V38 admits a second
-  memory only as the private intrinsic memory (32-bit, unshared, declared
-  maximum within `abi::MAX_INTRINSIC_MEMORY_BYTES`, not exported); linked
-  functions and signatures count against v38's own structural limits (the Wasm
-  limits of [program limits](#program-limits-program_limits)), and the
-  library's data segments are the only ones a v38 module may place outside its
-  static region (in the private memory). The runtime raises the store's memory
-  count to two only for such a module, and the v38 instantiation allowance
-  covers the private memory's image as well. Earlier profiles keep one memory
-  and their limits.
+  before instantiation ("pure intrinsic must be linked"). Every module has at
+  most one memory. The library's data segments are the only ones a v38 module
+  may place outside its static region, and only inside its declared
+  intrinsic region; linked functions and signatures count against v38's own
+  structural limits (the Wasm limits of
+  [program limits](#program-limits-program_limits)). The region is part of
+  memory 0, so the store limits and the v38 instantiation allowance (the
+  memory budget) cover it with no extra memory or fuel.
 - **Semantics and budgets.** Results equal the host implementation's on the
   same inputs, with two documented differences: Math and `**` use the portable
   `libm` backend (bit-identical on every host, faithful but not always
   correctly rounded; earlier profiles keep the platform library), and a fatal
-  failure (a noncanonical argument, an exhausted private memory) is a trap
-  instead of a host error message. Linked calls consume fuel and no host-call
-  budget; their data segments are covered by the v38 instantiation allowance
-  like every v38 data segment. Integral `Number.prototype.toString(radix)`
+  failure (a noncanonical argument, an exhausted memory budget, a linked
+  stack overflow) is a trap instead of a host error message. Linked calls
+  consume fuel and no host-call budget; their data segments are covered by
+  the v38 instantiation allowance like every v38 data segment, and the region
+  takes `m` pages of the memory budget. Integral `Number.prototype.toString(radix)`
   arguments below 2^53 take an exact integer-digit path instead of the
   big-integer interval search. Production budgets are unchanged. Linked
   string intrinsics still read and return strings within the frozen 1 MiB
@@ -10666,7 +10708,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Resource | Limit | Source constant |
 | --- | --- | --- |
 | Guest linear memory | 8 MiB | `abi::MAX_MEMORY_BYTES` |
-| Private intrinsic memory (v38 `linked_intrinsics`) | 8 MiB | `abi::MAX_INTRINSIC_MEMORY_BYTES` |
+| Linked intrinsic stack in memory 0 (v38 `linked_intrinsics`) | 64 KiB | `abi::INTRINSIC_STACK_BYTES` |
 | Guest instructions (fuel) | 1000000 | `abi::FUEL` |
 | Execution/HTTP deadline | 5 s | `abi::DEADLINE_SECONDS` |
 | Host calls per execution | 1024 | `abi::MAX_HOST_CALLS` |

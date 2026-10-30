@@ -1,22 +1,27 @@
-//! A per-call arena on the private intrinsic memory.
+//! A per-call arena in the free memory above the guest heap.
 //!
-//! Every allocating export runs inside [`entry`], which resets the arena to
-//! `__heap_base` and refuses a nested entry, so no allocation, pointer or
-//! state survives a call. Growth uses `memory.grow` on the private memory
-//! (bounded by its declared maximum); exhaustion fails the allocation, which
-//! traps.
+//! Every allocating export runs inside [`entry`], which starts the arena at
+//! the guest heap's current end (`varta_link.arena_base`) and refuses a
+//! nested entry, so no allocation, pointer or state survives a call. Linked
+//! code never calls the guest allocator, so nothing else writes above the
+//! heap end while an entry runs; afterwards the guest allocator reuses those
+//! bytes as unused heap space (it initializes every block it hands out).
+//! Growth uses `memory.grow` on memory 0 within the memory budget;
+//! exhaustion fails the allocation, which traps.
 use core::{
     alloc::{GlobalAlloc, Layout},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
 };
+use varta_intrinsics::layout::WASM_PAGE_BYTES;
 
-const PAGE_BYTES: usize = 65_536;
-/// The private memory, as `memory.grow`/`memory.size` name it before linking.
+/// Guest memory 0, the only memory of a linked module.
 const MEMORY: u32 = 0;
 
+#[link(wasm_import_module = "varta_link")]
 unsafe extern "C" {
-    /// First byte after the library's static data and stack (wasm-ld symbol).
-    static __heap_base: u8;
+    /// The guest heap's end: its allocator's next fresh byte, or the heap
+    /// base of a module without a managed heap.
+    fn arena_base() -> usize;
 }
 
 /// The next free byte; 0 outside an entry, where allocation fails.
@@ -28,27 +33,27 @@ pub fn entry<T>(body: impl FnOnce() -> T) -> T {
     if ACTIVE.swap(true, Relaxed) {
         core::arch::wasm32::unreachable();
     }
-    // Only the address of the linker symbol is taken, never its value.
-    TOP.store(&raw const __heap_base as usize, Relaxed);
+    // SAFETY: the accessor only reads the guest heap's end.
+    TOP.store(unsafe { arena_base() }, Relaxed);
     let result = body();
     TOP.store(0, Relaxed);
     ACTIVE.store(false, Relaxed);
     result
 }
 
-/// Make `[0, end)` addressable in the private memory.
+/// Make `[0, end)` addressable in memory 0.
 fn reserve(end: usize) -> bool {
-    let available = core::arch::wasm32::memory_size(MEMORY) * PAGE_BYTES;
+    let available = core::arch::wasm32::memory_size(MEMORY) * WASM_PAGE_BYTES;
     if end <= available {
         return true;
     }
-    let pages = (end - available).div_ceil(PAGE_BYTES);
+    let pages = (end - available).div_ceil(WASM_PAGE_BYTES);
     core::arch::wasm32::memory_grow(MEMORY, pages) != usize::MAX
 }
 
 struct Arena;
 
-// SAFETY: allocations are disjoint bump ranges inside the private memory,
+// SAFETY: allocations are disjoint bump ranges above the guest heap's end,
 // aligned as requested and valid until the entry that made them returns.
 unsafe impl GlobalAlloc for Arena {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {

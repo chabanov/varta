@@ -165,11 +165,8 @@ Passing validation is not proof of provenance or authorization.
    function types, each with at most `abi::MAX_WASM_PARAMETERS` parameters and 2
    results; at most 64 imports; at most one memory, 32-bit and not shared, with
    an initial size of at most `abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES`
-   pages, except that a profile that [links intrinsics](#linked-intrinsics-v38)
-   admits a second, private intrinsic memory (32-bit, not shared, with a
-   declared maximum of at most `abi::MAX_INTRINSIC_MEMORY_BYTES /
-   abi::WASM_PAGE_BYTES` pages and an initial size within it, never exported);
-   at most one table with at most 1024 initial elements; at most 128 globals;
+   pages (a profile that [links intrinsics](#linked-intrinsics-v38) keeps that
+   one memory); at most one table with at most 1024 initial elements; at most 128 globals;
    every function body at most `function_body_bytes`; at most the profile's
    **Max defined functions** from the [acceptance table](#profiles): for v1–v37
    `abi::MAX_USER_FUNCTIONS` plus its helper allowance plus
@@ -179,11 +176,15 @@ Passing validation is not proof of provenance or authorization.
    A v38 module may also declare its static extension in one `varta.static`
    section (a little-endian `u32` page count from 1 to
    `abi::MAX_STATIC_EXTENSION_PAGES`; any other profile, a duplicate, zero or
+   another length is rejected). A v38 module that links intrinsics declares its
+   intrinsic region in one `varta.intrinsics` section (a little-endian `u32`
+   page count of at least 1, with the extension's pages at most
+   `abi::MAX_STATIC_EXTENSION_PAGES`; any other profile, a duplicate, zero or
    another length is rejected). Every data segment of a v38 module is active in
-   memory 0 at an `i32.const` offset and lies wholly in the first page or wholly
-   in the declared extension, except the linked intrinsic library's own static
-   data, which is active in the private intrinsic memory (memory 1); a declared
-   extension lies within the initial memory
+   memory 0 at an `i32.const` offset and lies wholly in the first page, wholly
+   in the declared extension or, for the linked intrinsic library's own data,
+   wholly in the declared intrinsic region; a declared extension or intrinsic
+   region lies within the initial memory
    ([memory layout](#memory-layout-and-encodings)).
 4. **Memory maximum (third-party hosts).** The reference host caps growth with a
    store limiter. Hosts without one, including every JavaScript host, MUST parse
@@ -347,25 +348,29 @@ network and exit operations, timers, the scheduler and the operations listed
 under [Linked intrinsics pending](#linked-intrinsics-pending).
 
 <!-- generated:embedding-linked-intrinsics:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
-| Profile | Linked, never imported | Private memory maximum |
+| Profile | Linked, never imported | Linked stack |
 | --- | --- | --- |
-| `checked-f64-utf16-v38` | `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 128 pages (`abi::MAX_INTRINSIC_MEMORY_BYTES`) |
+| `checked-f64-utf16-v38` | `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 65536 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 <!-- generated:embedding-linked-intrinsics:end -->
 
-- **Private memory.** Linked code runs on the module's second memory, which
-  holds only its shadow stack, static tables and a per-call arena. It is never
-  exported, a host never reads or writes it, and the module's own declared
-  maximum bounds it (a host without a store limiter MUST still check that
-  maximum, as for memory 0). Memory 0 keeps its layout; linked code reaches it
-  only through compiler-generated `memory.copy` accessors and writes results
+- **One memory.** A linked module has exactly one memory, so every engine
+  that runs Varta modules runs it, multi-memory or not (Safari and embedded
+  engines included). Linked code keeps its shadow stack and static tables in
+  the module's intrinsic region of memory 0 (`varta.intrinsics`, after the
+  static extension and before the heap; see the
+  [memory layout](#memory-layout-and-encodings)), traps instead of moving its
+  stack below the region, and uses the free memory above the guest heap's
+  end as a per-call arena, growing memory 0 within its maximum like the
+  guest allocator. A host never reads or writes the intrinsic region and
+  needs no extra memory check: the region is part of memory 0, under its
+  maximum and the memory budget. Linked code reaches guest values only
+  through compiler-generated `memory.copy` accessors and writes results
   exactly where a host would (string results at `abi::RESULT_BASE`, with
-  `env_result_len`). Nothing survives a call: the arena is reset on entry and a
-  nested entry traps. The engine MUST support multi-memory (Wasmtime, Node and
-  Chromium/V8, Firefox); an engine without it, such as some Safari releases,
-  cannot run a module that links an intrinsic.
+  `env_result_len`). Nothing survives a call: the arena is reset on entry and
+  a nested entry traps.
 - **Budgets.** Linked operations are guest code: they consume fuel instead of a
-  host call, and their failures (a noncanonical argument, an exhausted private
-  memory) are traps, where the reference host reports a fatal error for the
+  host call, and their failures (a noncanonical argument, an exhausted memory
+  budget) are traps, where the reference host reports a fatal error for the
   same calls. Their data segments are part of the module and are charged like
   any other data segment at instantiation.
 - **Determinism.** Every host computes the same bits, including the finite
@@ -397,6 +402,7 @@ stream ([development plan](development-plan.md#batch-v38-in-development)).
 | Exception root slot (start of the root stack) | [1114112, 1114120) | `exceptions::ROOT`, `exceptions::RESERVED_ROOT_BYTES` |
 | Managed string/record/array heap | [1179648, 8388608) | `abi::OWNED_STRING_BASE`, `abi::MAX_MEMORY_BYTES` |
 | V38 static extension of `n` pages (`varta.static`), heap after it | [1179648, 1179648 + n·65536), n ≤ 65518 | `abi::StaticRegion`, `abi::MAX_STATIC_EXTENSION_PAGES` |
+| V38 intrinsic region of `m` pages (`varta.intrinsics`) after the extension: linked stack, then linked data; heap after it | [1179648 + n·65536, 1179648 + (n + m)·65536), stack 65536 bytes, n + m ≤ 65518 | `abi::StaticRegion::intrinsic_base`, `abi::INTRINSIC_STACK_BYTES` |
 | Wasm page | 65536 | `abi::WASM_PAGE_BYTES` |
 | Root slot | 8 | `abi::STRING_ROOT_SLOT_BYTES` |
 | Heap block header / alignment | 16 / 8 | `abi::STRING_HEADER_BYTES`, `value::HEAP_ALIGNMENT` |

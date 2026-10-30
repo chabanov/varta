@@ -9,11 +9,14 @@
 //! allocator and the panic handler. All semantics live in the safe
 //! `varta-intrinsics` crate.
 //!
-//! Memory model: this code runs on its own private linear memory (merged as
-//! the guest module's second memory, never exported). It reaches guest
-//! memory 0 only through the `varta_link` accessors, which bound every copy,
-//! and it keeps no state between calls: the allocator is an arena reset on
-//! every entry, and a nested entry traps.
+//! Memory model: a linked module has one memory. The compiler's linker
+//! relocates this library's shadow stack and static data into the module's
+//! intrinsic region of memory 0 (`abi::StaticRegion::intrinsic_base`) and
+//! traps when the stack pointer would leave it; the per-call arena lives in
+//! the free memory above the guest heap. Guest values are reached only
+//! through the `varta_link` accessors, which bound every copy, and nothing
+//! survives a call: the arena is reset on every entry, and a nested entry
+//! traps.
 #[cfg(target_arch = "wasm32")]
 mod arena;
 #[cfg(target_arch = "wasm32")]

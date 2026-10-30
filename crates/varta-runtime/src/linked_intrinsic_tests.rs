@@ -355,7 +355,7 @@ export function main(): void {
 }
 
 #[test]
-fn v38_validation_rejects_imported_pure_intrinsics_and_exposed_intrinsic_memory() {
+fn v38_validation_rejects_imported_pure_intrinsics_and_a_misplaced_library() {
     let runtime = VartaRuntime::new();
     // A v37 module relabelled as v38 still imports host intrinsics.
     let v37 = compile(
@@ -394,60 +394,101 @@ fn v38_validation_rejects_imported_pure_intrinsics_and_exposed_intrinsic_memory(
         error.contains("pure intrinsic must be linked into the module, not imported: number_sin"),
         "{error}"
     );
-    // A second memory is v38's alone, bounded and private.
+    // Linked code needs no second memory, and no module may declare one.
     let v38 = compile(
         "export function main(): void { console.log(Math.sin(0.5)); }",
         V38,
     );
     runtime.validate_module(&v38).unwrap();
-    let mut two_memories = v37.clone();
-    two_memories = rewrite(&two_memories, |id, data| {
+    let rejected = |bytes: &[u8]| runtime.validate_module(bytes).err().unwrap().to_string();
+    let two_memories = rewrite(&v38, |id, data| {
         let mut data = data.to_vec();
-        if id == 5 {
+        if id == MEMORY_SECTION {
             data[0] += 1;
             data.extend_from_slice(&[0x01, 0x00, 0x01]);
         }
         vec![data]
     });
-    let error = runtime
-        .validate_module(&two_memories)
-        .err()
-        .unwrap()
-        .to_string();
+    let error = rejected(&two_memories);
     assert!(error.contains("only one memory is supported"), "{error}");
-    let oversized = rewrite(&v38, |id, data| {
-        let mut data = data.to_vec();
-        if id == 5 {
-            // The private memory's maximum is the last LEB of the section.
-            let maximum = (abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u8;
-            let at = data.iter().rposition(|&b| b == maximum).unwrap();
-            data[at] = maximum + 1;
+    // Without its intrinsic region the library's data lies outside the
+    // static region.
+    let undeclared = rewrite(&v38, |id, data| {
+        if id == CUSTOM_SECTION && custom(data, abi::INTRINSIC_SECTION) {
+            return vec![];
         }
-        vec![data]
+        vec![data.to_vec()]
     });
-    let error = runtime
-        .validate_module(&oversized)
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(error.contains("oversized intrinsic memory"), "{error}");
-    let exported = rewrite(&v38, |id, data| {
-        let mut data = data.to_vec();
-        if id == 7 {
-            data[0] += 1;
-            data.extend_from_slice(&[1, b'm', 2, 1]);
-        }
-        vec![data]
-    });
-    let error = runtime
-        .validate_module(&exported)
-        .err()
-        .unwrap()
-        .to_string();
+    let error = rejected(&undeclared);
     assert!(
-        error.contains("intrinsic memory must not be exported"),
+        error.contains("data segment outside the static region"),
         "{error}"
     );
+    // The region is declared once, by a linking profile, within the
+    // initial memory.
+    let duplicated = rewrite(&v38, |id, data| {
+        if id == CUSTOM_SECTION && custom(data, abi::INTRINSIC_SECTION) {
+            return vec![data.to_vec(), data.to_vec()];
+        }
+        vec![data.to_vec()]
+    });
+    let error = rejected(&duplicated);
+    assert!(error.contains("duplicate intrinsic region"), "{error}");
+    let enlarged = rewrite(&v38, |id, data| {
+        let mut data = data.to_vec();
+        if id == CUSTOM_SECTION && custom(&data, abi::INTRINSIC_SECTION) {
+            let at = data.len() - size_of::<u32>();
+            data[at] += 1;
+        }
+        vec![data]
+    });
+    let error = rejected(&enlarged);
+    assert!(error.contains("exceeds the initial memory"), "{error}");
+    let foreign = rewrite(&v37, |id, data| {
+        let mut sections = vec![data.to_vec()];
+        if id == CUSTOM_SECTION && custom(data, abi::SECTION) {
+            let mut section = vec![abi::INTRINSIC_SECTION.len() as u8];
+            section.extend_from_slice(abi::INTRINSIC_SECTION.as_bytes());
+            section.extend_from_slice(&1u32.to_le_bytes());
+            sections.push(section);
+        }
+        sections
+    });
+    let error = rejected(&foreign);
+    assert!(error.contains("intrinsic region"), "{error}");
+}
+
+const CUSTOM_SECTION: u8 = 0;
+const MEMORY_SECTION: u8 = 5;
+/// Whether a custom section payload carries `name`.
+fn custom(data: &[u8], name: &str) -> bool {
+    data.first() == Some(&(name.len() as u8))
+        && data.get(1..1 + name.len()) == Some(name.as_bytes())
+}
+
+#[test]
+fn linked_stack_and_arena_stay_inside_memory_0_regions() {
+    // A deep recursion of linked calls in guest code (each linked call has
+    // its own short stack use) and long arena inputs: the region's stack
+    // never overflows, and arena memory above the heap is reused by the
+    // guest allocator afterwards.
+    let source = r#"
+function fmt(n: number): string {
+  if (n <= 0) { return ""; }
+  return (n * 1.5).toFixed(2) + fmt(n - 1);
+}
+export function main(): void {
+  let text = "Straße ";
+  for (let i = 0; i < 14; i++) { text = text + text; }
+  const upper = text.toUpperCase();
+  console.log(upper.length + " " + upper.charAt(5) + " " + fmt(40).length);
+  let kept = "";
+  for (let i = 0; i < 200; i++) { kept = kept + (i / 7).toPrecision(6).charAt(2); }
+  console.log(kept.length);
+}
+"#;
+    let host = execute(&compile(source, V37), 1000).0;
+    assert_eq!(execute(&compile(source, V38), 1000).0, host);
 }
 
 #[test]

@@ -123,20 +123,32 @@ struct Emitter<'a> {
     builders: BTreeMap<u32, (u32, u32)>,
 }
 
-pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
+/// An emitted module and what linking its intrinsics needs.
+pub(crate) struct Emitted {
+    pub bytes: Vec<u8>,
+    /// The allocator's heap-end global, when the module has a managed heap
+    /// (v38 linked code starts its per-call arena there).
+    pub heap: Option<u32>,
+}
+
+pub(crate) fn emit(program: &ir::Program) -> Result<Emitted> {
     emit_named(program, None)
 }
 
 /// A fuel-profile build: the emitted module with probes and function names
-/// (`fuel_profile`).
-pub(crate) fn emit_profiled(program: &ir::Program) -> Result<Vec<u8>> {
+/// (`fuel_profile`). Instrumentation adds functions only, so global indices
+/// are unchanged.
+pub(crate) fn emit_profiled(program: &ir::Program) -> Result<Emitted> {
     let mut names = Vec::new();
-    let module = emit_named(program, Some(&mut names))?;
-    fuel_profile::instrument(&module, &names)
+    let emitted = emit_named(program, Some(&mut names))?;
+    Ok(Emitted {
+        bytes: fuel_profile::instrument(&emitted.bytes, &names)?,
+        heap: emitted.heap,
+    })
 }
 
 /// `names`, when present, receives one label per code-section body.
-fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Result<Vec<u8>> {
+fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Result<Emitted> {
     let mut name = |label: &dyn Fn() -> String| {
         if let Some(names) = names.as_deref_mut() {
             names.push(label());
@@ -352,6 +364,22 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         None
     };
     let static_region = placement.region()?;
+    // V38 (`linked_intrinsics`): the intrinsic region the linked operations
+    // need follows the extension; the heap starts after it.
+    let intrinsic_pages =
+        crate::link::region_pages(program.types.profile, hosts.iter().copied(), static_region)?;
+    let static_region = if intrinsic_pages == 0 {
+        static_region
+    } else {
+        static_region
+            .with_intrinsic_pages(intrinsic_pages)
+            .filter(|region| {
+                region.minimum_pages()
+                    <= (varta_common::abi::MAX_MEMORY_BYTES / varta_common::abi::WASM_PAGE_BYTES)
+                        as u64
+            })
+            .ok_or_else(|| CompilerError::Invalid("static data exceeds the memory budget".into()))?
+    };
     let hosts: BTreeMap<_, _> = hosts
         .into_iter()
         .enumerate()
@@ -476,9 +504,12 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     module.section(&functions);
     let mut memory = wasm_encoder::MemorySection::new();
     memory.memory(wasm_encoder::MemoryType {
-        // A static extension (v38) lies after the root stack, so its pages
-        // are committed even without a managed heap.
-        minimum: if needs_arena || static_region.extension_pages() > 0 {
+        // A static extension or an intrinsic region (v38) lies after the
+        // root stack, so its pages are committed even without a managed heap.
+        minimum: if needs_arena
+            || static_region.extension_pages() > 0
+            || static_region.intrinsic_pages() > 0
+        {
             static_region.minimum_pages()
         } else {
             1
@@ -1018,6 +1049,12 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             data: static_region.section_bytes().to_vec().into(),
         });
     }
+    if static_region.intrinsic_pages() > 0 {
+        module.section(&wasm_encoder::CustomSection {
+            name: varta_common::abi::INTRINSIC_SECTION.into(),
+            data: static_region.intrinsic_section_bytes().to_vec().into(),
+        });
+    }
     module.section(&wasm_encoder::CustomSection {
         name: varta_common::abi::SECTION.into(),
         data: program
@@ -1113,7 +1150,10 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             limits.wasm_bytes
         )));
     }
-    Ok(bytes)
+    Ok(Emitted {
+        bytes,
+        heap: needs_arena.then_some(memory_globals.heap),
+    })
 }
 
 fn wasm_types(ty: Type) -> Vec<ValType> {

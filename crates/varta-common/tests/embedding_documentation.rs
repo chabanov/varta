@@ -298,11 +298,7 @@ fn profile_acceptance() -> String {
 fn linked_intrinsics() -> String {
     let operations = registered_operations();
     table(
-        &[
-            "Profile",
-            "Linked, never imported",
-            "Private memory maximum",
-        ],
+        &["Profile", "Linked, never imported", "Linked stack"],
         language::SUPPORTED_PROFILES
             .iter()
             .filter(|profile| profile.linked_intrinsics())
@@ -316,8 +312,8 @@ fn linked_intrinsics() -> String {
                     format!("`{}`", profile_name(profile)),
                     linked.join(", "),
                     format!(
-                        "{} pages (`abi::MAX_INTRINSIC_MEMORY_BYTES`)",
-                        abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES
+                        "{} bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`)",
+                        abi::INTRINSIC_STACK_BYTES
                     ),
                 ]
             }),
@@ -367,6 +363,19 @@ fn layout() -> String {
                     abi::MAX_STATIC_EXTENSION_PAGES
                 ),
                 "`abi::StaticRegion`, `abi::MAX_STATIC_EXTENSION_PAGES`",
+            ),
+            (
+                "V38 intrinsic region of `m` pages (`varta.intrinsics`) after the extension: linked stack, then linked data; heap after it",
+                format!(
+                    "[{} + n·{}, {} + (n + m)·{}), stack {} bytes, n + m ≤ {}",
+                    abi::OWNED_STRING_BASE,
+                    abi::WASM_PAGE_BYTES,
+                    abi::OWNED_STRING_BASE,
+                    abi::WASM_PAGE_BYTES,
+                    abi::INTRINSIC_STACK_BYTES,
+                    abi::MAX_STATIC_EXTENSION_PAGES
+                ),
+                "`abi::StaticRegion::intrinsic_base`, `abi::INTRINSIC_STACK_BYTES`",
             ),
             (
                 "Wasm page",
