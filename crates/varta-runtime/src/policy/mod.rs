@@ -57,11 +57,31 @@ impl Policy {
         self.permits(|grants| grants.iter().any(|g| g.id == id && grant_open(&g.value)))
     }
 
-    /// Whether some resource of `id` can be granted: the operation is not
-    /// withheld and the package (and the ceiling, when there is one) request
-    /// it with a non-denying filter.
-    pub(crate) fn admits_any(&self, id: &str) -> bool {
-        self.open(id) && self.requested_open(id)
+    /// The names that pattern grants of `id` list exactly (no `*` or `?`),
+    /// in the request and, when there is one, also in the ceiling; empty
+    /// while the broker withholds `id`. Wildcard patterns name nothing, so
+    /// no name is ever enumerated from the resource behind them.
+    pub(crate) fn exact_names(&self, id: &str) -> Vec<String> {
+        fn exact(grants: &[CapabilityGrant], id: &str) -> std::collections::BTreeSet<String> {
+            grants
+                .iter()
+                .filter(|grant| grant.id == id)
+                .flat_map(|grant| match &grant.value {
+                    CapabilityValue::PathGlobs(patterns) => patterns.clone(),
+                    _ => Vec::new(),
+                })
+                .filter(|pattern| !pattern.contains(['*', '?']))
+                .collect()
+        }
+        if !self.open(id) {
+            return Vec::new();
+        }
+        let mut names = exact(&self.requested, id);
+        if let Some(ceiling) = &self.ceiling {
+            let allowed = exact(ceiling, id);
+            names.retain(|name| allowed.contains(name));
+        }
+        names.into_iter().collect()
     }
 
     /// The exact requested patterns of `id` (what a prompt shows).
@@ -439,6 +459,23 @@ mod request_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_names_never_come_from_wildcards() {
+        let env = |patterns: &[&str]| CapabilityGrant {
+            id: "env.get".into(),
+            value: CapabilityValue::PathGlobs(patterns.iter().map(|p| (*p).into()).collect()),
+        };
+        let policy = Policy::new(&[env(&["APP_KEY", "APP_*", "B?", "BASE"])]);
+        assert_eq!(policy.exact_names("env.get"), ["APP_KEY", "BASE"]);
+        assert!(policy.exact_names("env.has").is_empty());
+        // The ceiling must list a name exactly too; its wildcard adds none.
+        let ceiling = [env(&["APP_*", "BASE"])];
+        let policy = Policy::with_ceiling(&[env(&["APP_KEY", "BASE"])], Some(&ceiling));
+        assert_eq!(policy.exact_names("env.get"), ["BASE"]);
+        let mut policy = Policy::new(&[env(&["APP_KEY"])]);
+        policy.withhold("env.get", true);
+        assert!(policy.exact_names("env.get").is_empty());
+    }
     #[test]
     fn glob_respects_directory_components() {
         assert!(glob("**", "sub/a.txt", true));

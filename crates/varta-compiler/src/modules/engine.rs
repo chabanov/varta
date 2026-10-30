@@ -350,6 +350,10 @@ pub(crate) const GLOBAL: Prelude = Prelude {
 /// The identifier of the global object and the prelude function it lowers to.
 pub(crate) const GLOBAL_THIS: &str = "globalThis";
 pub(crate) const GLOBAL_OBJECT: &str = "globalObject";
+/// The `Process` class of the global prelude and the function a static
+/// `process.env.NAME` read lowers to.
+pub(crate) const PROCESS_CLASS: &str = "Process";
+pub(crate) const ENVIRONMENT_VALUE: &str = "environmentValue";
 /// `URL` and `URLSearchParams` (v37 `net_request`), a WHATWG subset in
 /// guest code with no host import.
 pub(crate) const URL: Prelude = Prelude {

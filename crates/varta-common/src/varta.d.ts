@@ -322,14 +322,18 @@ declare function fetch(input: string | URL | Request, init?: RequestInit): Promi
 // counter that occurs in no part). `globalThis` is typed: `crypto`,
 // `process.env`, `globalThis`, and the functions `fetch`,
 // `encodeURIComponent` and `encodeURI`; any other member is a compile error.
-// `process.env` is a snapshot of the variables the exact `env.get` grants
-// (package and host ceiling) admit; without a grant the environment is never
-// read. Internal imports, host ABI34 minimum: net_request_start_v2 (i32 ptr,
+// `process.env` is a snapshot of the variables the `env.get` grants (package
+// and host ceiling) name exactly; wildcards list nothing and the environment
+// is never enumerated; `process.env.NAME` with a static key reads that name
+// through the env.get check when it runs. Internal imports, host ABI34 minimum: net_request_start_v2 (i32 ptr,
 // i32 len)->f64 id [net.request, host-call budget; descriptor version 2 with
 // text or byte bodies; v38 never imports net_request_start],
 // net_body_read_bytes (f64 id)->() [bookkeeping: the next chunk as bytes,
-// one code unit per byte], env_snapshot ()->i32 ptr [env.get, host-call
-// budget; JSON object in the host result buffer].
+// one code unit per byte], env_snapshot (i32 ptr, i32 len)->i32 ptr
+// [env.get, host-call budget; a UTF-16 name: empty for the snapshot of
+// the exactly granted names, else that one variable; JSON object in the host
+// result buffer]. A class merged with a same-named interface takes the
+// interface's members from one `Object.assign(this, …)` in its constructor.
 type BlobPart = string | Blob | ArrayBuffer | Uint8Array;
 interface BlobPropertyBag {
   type?: string;

@@ -80,6 +80,7 @@ pub(in crate::lower) fn root(
         template: None,
         frame: generics::Frame::new(),
         unallocated: Vec::new(),
+        merged: None,
         opaque: false,
     });
     types.classes.error_roots.insert(family, id);

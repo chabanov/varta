@@ -5481,8 +5481,28 @@ const env = (globalThis as { process?: { env?: Record<string, string | undefined
 const key = env?.['APP_KEY']; // set only with "env": {"get": ["APP_KEY"]}
 ```
 
-`process.env` holds exactly the variables your `env.get` grant names (and the
-host allows); every other variable reads as `undefined`.
+`process.env` lists only the variables your `env.get` grant names exactly
+(and the host allows); `process.env.APP_KEY` with a fixed name also works
+with a wildcard grant such as `"APP_*"`, reading that one variable when it
+runs. Every other variable reads as `undefined`.
+
+A class may be merged with a same-named interface whose members the
+constructor provides with one `Object.assign(this, …)`:
+
+```ts
+interface Client extends Resources {}
+class Client {
+  readonly transport: Transport;
+  constructor(options: Options) {
+    this.transport = new Transport(options);
+    Object.assign(this, createResources(this.transport));
+  }
+}
+```
+
+Every member of `Resources` must come from the assigned value with a
+compatible type; otherwise the compiler names the missing or mismatched
+members.
 
 `Promise.race` accepts promises of different types:
 

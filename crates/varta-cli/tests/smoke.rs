@@ -16428,6 +16428,9 @@ fn web_bytes_project(capabilities: serde_json::Value) -> PathBuf {
 export async function main(): Promise<void> {
   const env = readEnv();
   console.log(`allowed=${env('VARTA_WEB_ALLOWED')} secret=${env('VARTA_WEB_SECRET')}`);
+  const listed = Object.keys((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
+  console.log(`listed=${listed.join(',')}`);
+  console.log(`static=${globalThis.process.env.VARTA_WEB_ALLOWED} ${globalThis.process.env['VARTA_WEB_SECRET']}`);
   const form = new FormData();
   form.append('file', new Blob([new Uint8Array([1, 2, 3])], { type: 'application/x-test' }), 'a.bin');
   try {
@@ -16472,6 +16475,14 @@ fn web_bytes_env_snapshots_and_byte_bodies_follow_exact_grants() {
             output.contains("varta log: allowed=yes secret=undefined"),
             "{output}"
         );
+        assert!(
+            output.contains("varta log: listed=VARTA_WEB_ALLOWED\n"),
+            "{output}"
+        );
+        assert!(
+            output.contains("varta log: static=yes undefined"),
+            "{output}"
+        );
         assert!(output.contains(denied), "{output}");
         assert!(output.contains("varta log: NotAllowedError"), "{output}");
         assert!(!output.contains("hidden"), "{output}");
@@ -16499,5 +16510,26 @@ fn web_bytes_env_snapshots_and_byte_bodies_follow_exact_grants() {
         output.contains("varta log: allowed=undefined secret=undefined"),
         "{output}"
     );
+    assert!(output.contains("varta log: listed=\n"), "{output}");
+    assert!(
+        output.contains("varta log: static=undefined undefined"),
+        "{output}"
+    );
+    let _ = fs::remove_dir_all(&project);
+    // A wildcard grant lists no name (the environment is never enumerated),
+    // yet a static key it matches reads its variable by name; a name outside
+    // it stays undefined.
+    let project = web_bytes_project(serde_json::json!({"env": {"get": ["VARTA_WEB_ALLOW*"]}}));
+    let output = web_bytes_command(&project, varta().arg("dev"));
+    assert!(
+        output.contains("varta log: allowed=undefined secret=undefined"),
+        "{output}"
+    );
+    assert!(output.contains("varta log: listed=\n"), "{output}");
+    assert!(
+        output.contains("varta log: static=yes undefined"),
+        "{output}"
+    );
+    assert!(!output.contains("hidden"), "{output}");
     let _ = fs::remove_dir_all(&project);
 }

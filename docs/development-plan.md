@@ -841,16 +841,15 @@ union of record shapes without a literal discriminant (4).
 
 **Web-bytes pilot probe (`v38-web-bytes`, 2026-10-30).** Per-file `varta
 check` under v38 of scratch copies of the pinned **0.13.0** sources
-(`npm pack uarp-sdk@0.13.0`, integrity verified), unmodified, production
-budgets, no live API call: **62 of 65** files check (the integration probe of
-0.12.0: 5). First blockers: a `Uint8Array` held by `unknown` (2:
-`generated/resources/public.ts`, whose `uploadPublicSessionImage` passes its
-`BinaryInput` body as the JSON `body: unknown`, and
-`generated/resources/index.ts`, which imports it) and declaration merging of
-`interface UarpClient extends Resources` with the class `UarpClient`, filled
-by `Object.assign(this, createResources(...))` (1, `index.ts`). No file stops
-at a union member limit. The unmodified 0.12.0 sources give the same 62 of
-65 with the same three blockers.
+(`npm pack uarp-sdk@0.13.0`, integrity verified), production budgets, no
+live API call. Unmodified: **62 of 65** files check (the integration probe of
+0.12.0: 5); the 3 others (`generated/resources/public.ts`,
+`generated/resources/index.ts` and `index.ts`, which import it) stop at one
+SDK generator bug: `uploadPublicSessionImage` passes its `BinaryInput` as the
+JSON `body: unknown`, a `Uint8Array` held by `unknown` (a known subset gap;
+the SDK owner fixes the generator). With that one line changed to `binary:
+body` in a scratch copy, **65 of 65** files check, including the merged
+`UarpClient` class. No file stops at a union member limit.
 
 **Wave 2 (open, owned after integration).**
 
@@ -858,7 +857,7 @@ at a union member limit. The unmodified 0.12.0 sources give the same 62 of
 | --- | --- | --- |
 | (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Open |
 | (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Open |
-| (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Implemented on `v38-web-bytes` under `web_bytes()` ([contract](architecture.md#web-bytes-web_bytes)): byte bodies (host ABI 34 `net_request_start_v2`, `net_body_read_bytes`), `ArrayBuffer`/`Blob`/`FormData` preludes with a deterministic multipart boundary, typed `globalThis` with `process.env` as an `env.get`-granted snapshot (`env_snapshot`), mixed `Promise.race`, strict record-union conversions (exactly one match, ambiguity a `TypeError`), union-to-union checked assertions, function adapters for `f as F`, `instanceof` narrowing of property paths in conditionals, records reaching a `Uint8Array` held by `unknown`. Pending: a `Uint8Array` (or a union that may hold one) held by `unknown`, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, spread key order through views; `File`, `Blob.stream()`, `formData()`, `FormData` iterators |
+| (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Implemented on `v38-web-bytes` under `web_bytes()` ([contract](architecture.md#web-bytes-web_bytes)): byte bodies (host ABI 34 `net_request_start_v2`, `net_body_read_bytes`), `ArrayBuffer`/`Blob`/`FormData` preludes with a deterministic multipart boundary, typed `globalThis` with `process.env` as an `env.get`-granted snapshot (`env_snapshot`), mixed `Promise.race`, strict record-union conversions (exactly one match, ambiguity a `TypeError`), union-to-union checked assertions, function adapters for `f as F`, `instanceof` narrowing of property paths in conditionals, records reaching a `Uint8Array` held by `unknown`, `process.env` by exact names with static-key reads, classes merged with an interface through `Object.assign(this, …)`. Pending: a `Uint8Array` (or a union that may hold one) held by `unknown` (a known gap, planned later), `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, spread key order through views; `File`, `Blob.stream()`, `formData()`, `FormData` iterators |
 | (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Open |
 
 #### Code generation v2 measurements

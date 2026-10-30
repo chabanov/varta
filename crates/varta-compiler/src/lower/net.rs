@@ -114,13 +114,17 @@ impl Lower<'_> {
             && self.types.profile.web_bytes()
             && crate::modules::engine::is_prelude_source(self.source)
         {
-            if !call.args.is_empty() || call.type_args.is_some() {
-                return Err(invalid(format!("{name} expects no arguments")));
+            let [argument] = call.args.as_slice() else {
+                return Err(invalid(format!("{name} expects one name")));
+            };
+            let value = self.expr(&argument.expr)?;
+            if argument.spread.is_some() || call.type_args.is_some() || value.ty != Type::String {
+                return Err(invalid(format!("{name} expects one name")));
             }
             return Ok(Some(Expr {
                 span: call.span,
                 ty: Type::String,
-                kind: E::Host(Host::EnvSnapshot, vec![]),
+                kind: E::Host(Host::EnvSnapshot, vec![value]),
             }));
         }
         let Some((_, host, argument_type, result)) = net.or(instance).or(bytes) else {

@@ -196,6 +196,18 @@ fn declare_interface(
 ) -> Result<()> {
     let source = interface.source().clone();
     let span = interface.span();
+    // V38 (`web_bytes`): a class of the same name takes the interface's
+    // members as constructor-provided fields.
+    if types.profile.web_bytes()
+        && let Some(Declaration::Class(id)) = types.named.declarations.get(&(module, name.clone()))
+    {
+        let id = *id;
+        types.named.declarations.insert(
+            (module, classes::merged_type_name(&name)),
+            Declaration::Interface(Box::new(interface.clone())),
+        );
+        return types.classes.merge_interface(id, interface);
+    }
     let declaration = match interface.plain() {
         Some(ty) => Declaration::Local {
             ty: Box::new(ty),
@@ -257,6 +269,9 @@ impl exports::Namespace for Types<'_> {
             return Err(missing_type(target, &export.local));
         }
         Ok(())
+    }
+    fn merges(&self) -> bool {
+        self.types.profile.web_bytes()
     }
     fn identity(&self, key: &Key) -> Key {
         let mut key = key;

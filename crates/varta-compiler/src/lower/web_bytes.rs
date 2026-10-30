@@ -5,7 +5,8 @@
 use super::*;
 use crate::lower::expr::callee_name;
 use crate::modules::engine::{
-    ARRAY_BUFFER_CLASS, BLOB, BLOB_VIEW, GLOBAL, GLOBAL_OBJECT, GLOBAL_THIS,
+    ARRAY_BUFFER_CLASS, BLOB, BLOB_VIEW, ENVIRONMENT_VALUE, GLOBAL, GLOBAL_OBJECT, GLOBAL_THIS,
+    PROCESS_CLASS,
 };
 
 impl Lower<'_> {
@@ -437,5 +438,55 @@ impl Lower<'_> {
         };
         let reference = self.function_reference(&signature, span)?;
         unions::widen(reference, Some(target), self.types).map(Ok)
+    }
+    /// `p.env.NAME` or `p.env['NAME']` of a `Process` (v38 `web_bytes`): one
+    /// `env.get` of the static key when it runs, so a wildcard `env.get`
+    /// grant reads the variable by name without enumerating the environment.
+    /// The receiver path has no calls (lowered here and again otherwise).
+    pub(super) fn environment_read(&mut self, member: &ast::MemberExpr) -> Result<Option<Expr>> {
+        if !self.types.profile.web_bytes() {
+            return Ok(None);
+        }
+        let Some(name) = mixed_records::static_key(member) else {
+            return Ok(None);
+        };
+        let ast::Expr::Member(env) = stmt::unparen(&member.obj) else {
+            return Ok(None);
+        };
+        if !matches!(&env.prop, ast::MemberProp::Ident(id) if id.sym == "env") {
+            return Ok(None);
+        }
+        let mut root = stmt::unparen(&env.obj);
+        while let ast::Expr::Member(inner) = root {
+            if mixed_records::static_key(inner).is_none() {
+                return Ok(None);
+            }
+            root = stmt::unparen(&inner.obj);
+        }
+        if !matches!(root, ast::Expr::Ident(_) | ast::Expr::This(_))
+            || !self.class_late_receiver(env)
+        {
+            return Ok(None);
+        }
+        let receiver = self.expr(&env.obj)?;
+        let Type::Class(class) = receiver.ty else {
+            return Ok(None);
+        };
+        let info = self.types.classes.get(class);
+        if !info.prelude || info.name != PROCESS_CLASS {
+            return Ok(None);
+        }
+        let span = member.span;
+        let key = Expr {
+            span,
+            ty: Type::String,
+            kind: E::String(self.types.profile.string_bytes(&name)),
+        };
+        let read = self.engine_apply((&GLOBAL, ENVIRONMENT_VALUE, &[]), vec![key], span)?;
+        Ok(Some(Expr {
+            span,
+            ty: read.ty,
+            kind: E::Sequence(Box::new(receiver), Box::new(read)),
+        }))
     }
 }

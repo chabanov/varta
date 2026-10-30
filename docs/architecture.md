@@ -9920,7 +9920,7 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   capability, no host-call charge, the deadline observed). Chunks keep
   `net::MAX_CHUNK_BYTES` and the body keeps `net::MAX_RESPONSE_BODY_BYTES`;
   a byte request body is at most half of `net::MAX_REQUEST_BYTES`.
-  `env_snapshot () -> i32` is below.
+  `env_snapshot (ptr:i32, len:i32) -> i32` is below.
 - **`ArrayBuffer`, `Blob`, `FormData`** (`<varta>/web/blob.ts`, guest code,
   no host import, loaded when a module names one of them). `ArrayBuffer`
   (`new ArrayBuffer(n)`, `byteLength`, `slice`, `ArrayBuffer.isView`) owns
@@ -9954,16 +9954,27 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   view an assignment makes, and `f as F` (or `F | undefined`) of a named
   function whose parameters accept `F`'s is a fresh adapter function of `F`'s
   signature (not `===` to `f`).
-- **`process.env`** is a snapshot `Record<string, string | undefined>` built
-  per read from `env_snapshot`: a JSON object, in name order, of the
-  environment variables whose names satisfy the `env.get` grants of the
-  package and of the host ceiling, each checked exactly as `env_get` checks a
-  name (capability `env.get`, one host call). Without an `env.get` grant (or
-  with a ceiling that withholds it) the environment is not read at all and
-  the snapshot is `{}`; a variable outside the grants reads as `undefined`,
-  like an unset one, without a log line. Names or values that are not Unicode
-  are skipped; a snapshot beyond the host result buffer fails recoverably and
-  reads as `{}`. Writes change only the snapshot.
+- **`process.env`** names variables exactly; the environment is never
+  enumerated. `env_snapshot (ptr:i32, len:i32) -> i32` (capability `env.get`,
+  one host call) takes a UTF-16 name:
+  - With the empty name it returns, in the host result buffer, a JSON object
+    (in name order) of the set variables whose names appear *exactly* (no
+    `*` or `?`) in the package's `env.get` patterns and, when there is a host
+    ceiling, also exactly in the ceiling's, each passing the check `env_get`
+    makes. `process.env` read as a value is this snapshot, a fresh
+    `Record<string, string | undefined>` per read, so a dynamic key,
+    `Object.keys(process.env)` and spreads see only exactly granted names. A
+    wildcard pattern lists nothing.
+  - With a name it returns `{"NAME": value}`, or `{}` when the variable is
+    unset, after the same check as `env_get` (any matching pattern, package
+    and ceiling); a denial is the recoverable `env.get` denial (failed status,
+    logged), checked before any read. `process.env.NAME` and
+    `process.env['NAME']` with a static key compile to this read
+    (`environmentValue`), so a wildcard grant reads a variable by name when
+    the read runs. A denied or unset variable is `undefined`.
+  Values that are not Unicode are skipped; a result beyond the host result
+  buffer fails recoverably and reads as `{}`. Writes change only the
+  snapshot.
 - **`Promise.race` over differently typed promises.** An array literal of
   promises of different value types races into `Promise<T0 | T1 | …>` (one
   job per element, in index order, as for one type); `await
@@ -10000,7 +10011,29 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   (`JSON.stringify` or logging of such an `unknown`) sees the field's storage
   and prints a number array where JavaScript prints `{"0":…}`. A
   `Uint8Array`, or a union that may hold one, still cannot itself be
-  converted to `unknown` (compile error).
+  converted to `unknown`: the compile error names the conversion. This is a
+  known subset gap planned for a later increment (owner decision of
+  2026-10-30: no boxing now). The pilot hits it only in a generator bug of
+  uarp-sdk 0.13.0 (`uploadPublicSessionImage` passes its `BinaryInput` as the
+  JSON `body`, so a `Blob` would be sent as `{}`; every other upload uses
+  `binary:`), which the SDK owner fixes.
+- **Classes merged with an interface.** `interface C extends A, B { … }` and
+  `class C` in one module merge: the interface's members (own and inherited,
+  optional ones as `T | undefined`) become ordinary public instance fields of
+  `C`; a method member is a function field whose value comes from the
+  assigned object. The constructor must contain exactly one top-level
+  `Object.assign(this, X)`; it is rewritten into `const t: interface C = X`
+  followed by `this.m = t.m` for every merged member, so the ordinary checks
+  prove every member provided with a compatible type (a mismatch names both
+  types and each missing or mismatched member) and the constructor
+  discipline proves that no use of `this` before it can observe a merged
+  member (only already assigned declared fields may be read; no method call,
+  no escape). Without the call, with a second one, or with a merged member
+  the class also declares, compilation fails naming the members. Members of
+  `X` that the interface does not declare are not copied (they are not
+  visible through `C`'s type). Both `export interface C` and `export class C`
+  export the one class. Generic merged classes and interfaces are rejected;
+  v37 keeps rejecting every class and interface merging.
 - **Cost.** A byte read converts its chunk with one guest loop
   (`varta.text.units`), and `TextDecoder`/`TextEncoder` and multipart
   serialization run per byte in guest code; network `text()` keeps the host

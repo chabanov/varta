@@ -773,7 +773,7 @@ import the operation, as contiguous runs in registry order.
 | `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
 | `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
 | `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
-| `env_snapshot` | () → (i32) | 34 | `env.get` | yes | yes | `checked-f64-utf16-v38` |
+| `env_snapshot` | (i32, i32) → (i32) | 34 | `env.get` | yes | yes | `checked-f64-utf16-v38` |
 | `event_source_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_source_open` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_take` | (f64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |

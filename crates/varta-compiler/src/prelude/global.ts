@@ -4,11 +4,13 @@
 // never `any`. The compiler loads the prelude when a module names
 // `globalThis`; see docs/architecture.md (Web bytes).
 //
-// `process.env` is a snapshot dictionary of the environment variables the
-// `env.get` grants admit (`varta.env.snapshot`, capability `env.get`): a
-// variable outside the grants reads as `undefined`, exactly like an unset
-// one, and without a grant the environment is never read. Writes change only
-// the snapshot.
+// `process.env` is a snapshot dictionary of the set environment variables
+// whose names the `env.get` grants list exactly (`varta.env.snapshot`,
+// capability `env.get`); a wildcard grant lists nothing, so the environment
+// is never enumerated. `process.env.NAME` with a static key reads that one
+// variable through `env.get` when it runs (`environmentValue`), so wildcard
+// grants are usable by name. A variable outside the grants reads as
+// `undefined`, exactly like an unset one. Writes change only the snapshot.
 
 // The `crypto` global (Web Crypto's random functions).
 export class Crypto {
@@ -24,7 +26,7 @@ export class Crypto {
 // The `process` global: its environment only.
 export class Process {
   get env(): Record<string, string | undefined> {
-    const text = varta.env.snapshot();
+    const text = varta.env.snapshot('');
     const env: Record<string, string | undefined> = {};
     if (text === '') {
       return env;
@@ -55,4 +57,15 @@ export class GlobalObject {
 
 export function globalObject(): GlobalObject {
   return new GlobalObject();
+}
+
+// `process.env.NAME` (a compiler hook): one `env.get` of `name`, checked
+// before the read; a denied or unset variable is `undefined`.
+export function environmentValue(name: string): string | undefined {
+  const text = name === '' ? '' : varta.env.snapshot(name);
+  if (text === '') {
+    return undefined;
+  }
+  const found = varta.json.parse<Record<string, string>>(text);
+  return found[name];
 }

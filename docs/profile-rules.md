@@ -3408,9 +3408,18 @@ Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
   `Blob.adopt`, `Blob.encode`, `ArrayBuffer.storageOf`, `ArrayBuffer.adopt`,
   `FormData.multipart`, `Request.bodySource`) are instance methods listed in
   `INTERNAL_MEMBERS`, so program modules cannot forge a byte string.
-- `process.env` reads only through `env_snapshot`; it checks every name with
-  `Policy::env` (package and ceiling) and reads nothing without a requested,
-  non-withheld `env.get`. Never add an ambient environment path.
+- `process.env` reads only through `env_snapshot`. The snapshot lists only
+  `Policy::exact_names` (patterns without `*`/`?`, in the request and in the
+  ceiling) that also pass `Policy::env`; never enumerate `std::env::vars`.
+  A static key (`environmentValue`) reads one name with the `env_get`
+  check. Never add an ambient environment path.
+- A merged class/interface (`classes::merged_interfaces`) is an AST rewrite
+  before the constructor discipline: the `Object.assign(this, X)` temporary
+  is typed with the merged interface (declared under the unspellable
+  `merged_type_name`), so missing or incompatible members fail the ordinary
+  structural check. Keep the discipline unchanged; one call only.
+- A `Uint8Array` held by `unknown` stays a compile error (owner decision);
+  do not box it until the planned increment.
 - `globalThis` lowers to the global prelude's `GlobalObject`; function
   globals reach through it only by the scanner rewrite
   (`modules::global_members::FUNCTION_GLOBALS`). Add a member as a getter of

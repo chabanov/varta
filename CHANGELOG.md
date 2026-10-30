@@ -16,7 +16,9 @@ in [conformance/README.md](conformance/README.md).
   `ArrayBuffer`, `Blob` and `FormData` with a deterministic multipart
   boundary), the `ArrayBuffer`/`Blob`/`FormData` preludes, a typed
   `globalThis` (`crypto`, `process.env`, function globals) with
-  `process.env` as a snapshot behind the exact `env.get` grants,
+  `process.env` listing only exactly granted names (a static key reads one
+  name through `env.get`), classes merged with a same-named interface whose
+  members one `Object.assign(this, …)` provides,
   `Promise.race` over differently typed promises, and strict checked
   conversions to unions of record shapes without a literal discriminant
   (exactly one member must match; ambiguity is a `TypeError`). Three host ABI

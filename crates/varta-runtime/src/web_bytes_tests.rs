@@ -176,3 +176,135 @@ fn bytes_inside_unknown_records_are_checked() {
     .unwrap_err();
     assert!(error.to_string().contains("Uint8Array"), "{error}");
 }
+
+/// `process.env` lists only exactly granted names and never enumerates the
+/// environment for a wildcard grant; a static key reads
+/// through `env.get`. The names are unset in every test environment; the CLI
+/// smoke test covers set variables.
+#[test]
+fn process_env_lists_exact_grants_only() {
+    let source = "export function main(): void {
+       const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
+       console.log(`${Object.keys(env).length} ${globalThis.process.env.VARTA_TEST_UNSET_A}`);
+     }";
+    let env = |patterns: &[&str]| CapabilityGrant {
+        id: "env.get".into(),
+        value: CapabilityValue::PathGlobs(patterns.iter().map(|p| (*p).into()).collect()),
+    };
+    for grants in [
+        vec![env(&["VARTA_TEST_*"])],
+        vec![env(&["VARTA_TEST_UNSET_A"])],
+        vec![env(&["VARTA_TEST_UNSET_?"])],
+    ] {
+        run(source, &grants, &["0 undefined"]);
+    }
+    // Without a grant the static read is the ordinary recoverable `env.get`
+    // denial (logged), checked before any effect.
+    let output = VartaRuntime::new()
+        .run_wasm_bytes(&compile(source), &[env(&["OTHER_NAME"])])
+        .unwrap();
+    assert_eq!(
+        output.lines,
+        [
+            "varta log: <capability denied: env> (VARTA_TEST_UNSET_A)",
+            "varta log: 0 undefined",
+        ]
+    );
+}
+
+#[test]
+fn merged_classes_take_their_members_from_object_assign() {
+    run(
+        include_str!("web_bytes_cases/merged_class.ts"),
+        &[],
+        &[
+            "GET https://api.test/agents",
+            "GET https://api.test/runs/r1",
+            "client of https://api.test 2 https://api.test",
+            "true",
+        ],
+    );
+}
+
+/// A merged member that the constructor cannot prove provided, with a
+/// compatible type, before any other use of `this` is a compile error that
+/// names it; v37 keeps rejecting class and interface merging.
+#[test]
+fn merged_class_diagnostics_name_the_members() {
+    let program = |class: &str| {
+        format!(
+            "interface R {{ a: number; b: string }} interface C extends R {{}} {class}
+             export function main(): void {{ const c = new C(); console.log(String(c.a)); }}"
+        )
+    };
+    for (class, expected) in [
+        (
+            "class C { constructor() { Object.assign(this, { a: 1 }); } }",
+            "(missing field b)",
+        ),
+        (
+            "class C { constructor() { Object.assign(this, { a: 'x', b: 'y' }); } }",
+            "(field a: expected number, found string)",
+        ),
+        (
+            "class C { constructor() { } }",
+            "must provide its members a, b with one top-level Object.assign(this, …)",
+        ),
+        (
+            "class C { constructor() { Object.assign(this, { a: 1, b: 'y' }); Object.assign(this, { a: 2, b: 'z' }); } }",
+            "more than one Object.assign(this, …)",
+        ),
+        (
+            "class C { m(): number { return 1; } constructor() { this.m(); Object.assign(this, { a: 1, b: 'y' }); } }",
+            "this may only access declared fields",
+        ),
+        (
+            "class C { constructor() { const x = this.a; Object.assign(this, { a: 1, b: 'y' }); } }",
+            "",
+        ),
+        (
+            "class C { a = 1; constructor() { Object.assign(this, { a: 1, b: 'y' }); } }",
+            "merged interface member a also declared by class C",
+        ),
+    ] {
+        let source = program(class);
+        let error = varta_compiler::compile_typescript_with_profile(&source, V38)
+            .expect_err(class)
+            .to_string();
+        assert!(error.contains(expected), "{class}: {error}");
+        let error = varta_compiler::compile_typescript_with_profile(
+            &source,
+            LanguageProfile::CheckedF64Utf16V37,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("declaration merging"), "{class}: {error}");
+    }
+}
+
+/// Member order never decides a strict record-union conversion: both orders
+/// select the same single match and throw the same catchable ambiguity.
+#[test]
+fn strict_union_conversions_ignore_member_order() {
+    for union in ["Left | Right", "Right | Left"] {
+        let source = format!(
+            "interface Left {{ x?: number; shared?: string }}
+             interface Right {{ y?: number; shared?: string }}
+             function convert(text: string): string {{
+               try {{
+                 const value = JSON.parse(text) as {union};
+                 return 'x' in value ? 'left' : 'y' in value ? 'right' : 'neither';
+               }} catch (error) {{
+                 return error instanceof TypeError ? 'TypeError' : 'other';
+               }}
+             }}
+             export function main(): void {{
+               console.log(convert('{{\"x\":1}}'));
+               console.log(convert('{{\"y\":2,\"shared\":\"s\"}}'));
+               console.log(convert('{{\"shared\":\"s\"}}'));
+               console.log(convert('{{\"x\":1,\"y\":2}}'));
+             }}"
+        );
+        run(&source, &[], &["left", "right", "TypeError", "TypeError"]);
+    }
+}

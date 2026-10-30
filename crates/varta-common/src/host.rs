@@ -50,10 +50,12 @@ pub enum HostOperation {
     /// v38 (`web_bytes`): arm the next body chunk as bytes: its completion
     /// text carries each received byte as one code unit, undecoded.
     NetBodyReadBytes,
-    /// v38 (`web_bytes`): the environment variables the `env.get` grants
-    /// (package and host ceiling) admit by exact name check, as a JSON
-    /// object in the host result buffer; `process.env` is this snapshot.
-    /// Capability `env.get`.
+    /// v38 (`web_bytes`): with an empty UTF-16 name, the set environment
+    /// variables whose names the `env.get` grants (package and host ceiling)
+    /// list exactly, as a JSON object in the host result buffer (the
+    /// `process.env` snapshot; wildcards list nothing); with a name, that one
+    /// variable checked like `env_get` (absent when unset, a recoverable
+    /// denial otherwise). Capability `env.get`.
     EnvSnapshot,
     /// v37: `timer_start` with a recoverable denial: without the grant it
     /// arms nothing, releases the timer frame and returns 0, and the guest
@@ -1127,7 +1129,7 @@ impl HostOperation {
             Self::EventTake | Self::EventText => (&[F64], &[I32]),
             Self::EventSourceClose => (&[F64], &[]),
             Self::NetRequestStart | Self::NetRequestStartV2 => (&[I32, I32], &[F64]),
-            Self::EnvSnapshot => (&[], &[I32]),
+            Self::EnvSnapshot => (&[I32, I32], &[I32]),
             Self::NetRequestWatch => (&[F64, F64], &[]),
             Self::NetRequestTake => (&[F64], &[I32]),
             Self::NetRequestText => (&[F64], &[I32]),

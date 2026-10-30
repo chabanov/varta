@@ -735,7 +735,12 @@ impl Lower<'_> {
                 return self.conditional(branch, None, None);
             }
             ast::Expr::Call(call) => return self.call(call, None, None),
-            ast::Expr::Member(member) => return self.member_read(member),
+            ast::Expr::Member(member) => {
+                if let Some(value) = self.environment_read(member)? {
+                    return Ok(value);
+                }
+                return self.member_read(member);
+            }
             ast::Expr::Tpl(template) if self.types.profile.template_literals() => {
                 return self.template_literal(template);
             }
