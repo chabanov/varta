@@ -8,8 +8,10 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const CHUNK_PAUSE = 20;
 
 const server = http.createServer(async (req, res) => {
-  let body = '';
-  for await (const chunk of req) body += chunk;
+  const parts = [];
+  for await (const chunk of req) parts.push(chunk);
+  const raw = Buffer.concat(parts);
+  const body = raw.toString('utf8');
   const [path, query] = req.url.split('?');
   const fixed = (status, reason, headers, data) => {
     res.writeHead(status, reason, { ...headers, 'content-length': Buffer.byteLength(data), connection: 'close' });
@@ -42,6 +44,10 @@ const server = http.createServer(async (req, res) => {
       const bytes = Buffer.from('é€😀', 'utf8');
       return chunked('text/plain; charset=utf-8', [bytes.subarray(0, 1), bytes.subarray(1, 4), bytes.subarray(4)]);
     }
+    case '/bytes':
+      return fixed(200, 'OK', { 'content-type': 'application/octet-stream' }, Buffer.from([0x00, 0xff, 0x80, 0x41]));
+    case '/mirror':
+      return fixed(200, 'OK', req.headers['content-type'] ? { 'content-type': req.headers['content-type'] } : {}, raw);
     case '/redirect':
       return fixed(302, 'Found', { location: '/hello' }, '');
     case '/missing':

@@ -677,6 +677,16 @@ impl LanguageProfile {
     pub fn codegen_v2(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, wave-2 web-bytes stream: byte bodies (`ReadableStream` of
+    /// `Uint8Array`, `arrayBuffer()`, `bytes()`, `blob()`, byte request
+    /// bodies), `ArrayBuffer`, `Blob`, `FormData`, typed `globalThis` and
+    /// `process.env`, `Promise.race` over differently typed promises and
+    /// strict checked conversions to unions of record shapes without a
+    /// literal discriminant.
+    #[must_use]
+    pub fn web_bytes(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Named interface/alias annotations and type-only module bindings (v31).
     #[must_use]
     pub fn named_types(self) -> bool {
@@ -1772,6 +1782,8 @@ impl LanguageProfile {
         if self.data_limits() {
             return match LanguageProfile::CheckedF64Utf16V37.host_operation(operation) {
                 JsonStringifyV17 => JsonStringifyOwned,
+                // V38 (`web_bytes`) starts requests with descriptor version 2.
+                NetRequestStart if self.web_bytes() => NetRequestStartV2,
                 other => other,
             };
         }
@@ -3045,6 +3057,7 @@ mod tests {
                 profile.tsx(),
                 profile.structural_subtyping(),
                 profile.codegen_v2(),
+                profile.web_bytes(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }
@@ -3122,7 +3135,6 @@ mod tests {
             H::TimerClear,
             H::TimerTake,
             H::TimerUncaught,
-            H::NetRequestStart,
             H::NetRequestWatch,
         ] {
             assert_eq!(
@@ -3133,6 +3145,14 @@ mod tests {
             assert!(new.host_operation(operation).minimum_abi() <= old.host_abi());
         }
         assert_eq!(new.host_operation(H::TimerStart), H::TimerStartV2);
+        // The web-bytes stream starts requests with descriptor version 2; its
+        // operations need host ABI 34.
+        assert_eq!(new.host_operation(H::NetRequestStart), H::NetRequestStartV2);
+        assert_eq!(old.host_operation(H::NetRequestStart), H::NetRequestStart);
+        for operation in [H::NetRequestStartV2, H::NetBodyReadBytes, H::EnvSnapshot] {
+            assert_eq!(operation.minimum_abi(), crate::abi::PROGRAM_LIMITS_VERSION);
+            assert!(operation.web_bytes());
+        }
         assert_eq!(
             serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v38\"").unwrap(),
             new

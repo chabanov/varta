@@ -11,6 +11,19 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 `web_bytes` (wave 2): byte bodies for `fetch` (`ReadableStream<Uint8Array>`
+  readers, `arrayBuffer()`, `bytes()`, `blob()`, request bodies from bytes,
+  `ArrayBuffer`, `Blob` and `FormData` with a deterministic multipart
+  boundary), the `ArrayBuffer`/`Blob`/`FormData` preludes, a typed
+  `globalThis` (`crypto`, `process.env`, function globals) with
+  `process.env` as a snapshot behind the exact `env.get` grants,
+  `Promise.race` over differently typed promises, and strict checked
+  conversions to unions of record shapes without a literal discriminant
+  (exactly one member must match; ambiguity is a `TypeError`). Three host ABI
+  34 imports: `net_request_start_v2` (descriptor version 2),
+  `net_body_read_bytes` and `env_snapshot`. The pilot pin moves to uarp-sdk
+  0.13.0.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of

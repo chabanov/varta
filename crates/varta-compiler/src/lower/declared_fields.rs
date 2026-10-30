@@ -242,7 +242,7 @@ pub(super) fn applies(source: Type, target: Type, types: &ir::ValueTypes) -> boo
 
 /// Whether two expressions name the same property path: an identifier or
 /// `this`, then static member keys (`a.b`, `a["b"]`).
-fn same_path(a: &ast::Expr, b: &ast::Expr) -> bool {
+pub(super) fn same_path(a: &ast::Expr, b: &ast::Expr) -> bool {
     match (stmt::unparen(a), stmt::unparen(b)) {
         (ast::Expr::Ident(a), ast::Expr::Ident(b)) => a.sym == b.sym,
         (ast::Expr::This(_), ast::Expr::This(_)) => true,
@@ -834,7 +834,11 @@ impl Lower<'_> {
         // their literal discriminant fields.
         let objects =
             if self.types.profile.language_core() && records.len() > 1 && dictionary.is_none() {
-                self.discriminated_build(span, saved, target, output, message, &records)?
+                if self.types.profile.web_bytes() && !self.has_discriminants(&records) {
+                    self.matched_build(span, saved, target, output, message, &records)?
+                } else {
+                    self.discriminated_build(span, saved, target, output, message, &records)?
+                }
             } else {
                 member(self, dictionary.or(record))?
             };
@@ -859,6 +863,176 @@ impl Lower<'_> {
             arrays,
             vec![S::If(object_tag, objects, otherwise)],
         )])
+    }
+    /// The literal discriminant field of each record member, when every
+    /// member has one that no other member's same field admits.
+    fn discriminants(&self, records: &[Type]) -> Option<Vec<(Type, String, Type)>> {
+        let fields_of = |ty: Type| match ty {
+            Type::Record(shape) => self.types.records[shape as usize].fields.clone(),
+            _ => Vec::new(),
+        };
+        let mut discriminants = Vec::new();
+        for record in records {
+            let fields = fields_of(*record);
+            let field = fields.iter().find(|field| {
+                !field.optional
+                    && matches!(field.ty, Type::Literal(..))
+                    && records
+                        .iter()
+                        .filter(|other| *other != record)
+                        .all(|other| {
+                            let others = fields_of(*other);
+                            match others.iter().find(|candidate| candidate.name == field.name) {
+                                None => true,
+                                Some(candidate) => {
+                                    literals::disjoint(field.ty, candidate.ty, self.types)
+                                }
+                            }
+                        })
+            })?;
+            discriminants.push((*record, field.name.clone(), field.ty));
+        }
+        Some(discriminants)
+    }
+    /// Whether `ty` reaches a union of several record shapes without literal
+    /// discriminants (v38 `web_bytes`): the host's schema parser cannot
+    /// select such a member, so `JSON.parse(text) as T` parses to `unknown`
+    /// and converts by strict matching instead.
+    pub(super) fn undiscriminated_unions(&self, ty: Type) -> bool {
+        fn visit(lower: &Lower<'_>, ty: Type, seen: &mut BTreeSet<Type>) -> bool {
+            if !seen.insert(ty) {
+                return false;
+            }
+            let types = &*lower.types;
+            match ty {
+                Type::Union(id) | Type::ReferenceUnion(id) => {
+                    let members = types.unions[id as usize].clone();
+                    let records: Vec<Type> = members
+                        .iter()
+                        .copied()
+                        .filter(|member| matches!(member, Type::Record(_)))
+                        .collect();
+                    (records.len() > 1 && !lower.has_discriminants(&records))
+                        || members.into_iter().any(|member| visit(lower, member, seen))
+                }
+                Type::Record(shape) => types.records[shape as usize]
+                    .fields
+                    .clone()
+                    .into_iter()
+                    .any(|field| visit(lower, field.ty, seen)),
+                Type::Array(id) => visit(lower, types.arrays[id as usize], seen),
+                Type::Dictionary(id) => visit(lower, types.dictionaries[id as usize].value, seen),
+                _ => false,
+            }
+        }
+        self.types.profile.web_bytes() && visit(self, ty, &mut BTreeSet::new())
+    }
+    fn has_discriminants(&self, records: &[Type]) -> bool {
+        self.discriminants(records).is_some()
+    }
+    /// The JSON-object branch of a union with several record members of
+    /// which some has no literal discriminant (v38 `web_bytes`), by strict
+    /// matching: a cell that already holds one member (exact) is that member;
+    /// otherwise every member is built from the object in member order (each
+    /// build is strict: unknown keys, missing required fields and mistyped
+    /// values fail it, and builds have no effect). Exactly one successful
+    /// build is the result; none fails the conversion with its message, and
+    /// more than one throws a `TypeError` naming the ambiguity. The order of
+    /// the members never decides.
+    fn matched_build(
+        &mut self,
+        span: Span,
+        saved: u32,
+        target: Type,
+        output: u32,
+        message: u32,
+        records: &[Type],
+    ) -> Result<Vec<S>> {
+        let count = self.hidden(Type::Float64);
+        let chosen = self.hidden(target);
+        let mut scoped = vec![chosen];
+        let mut body = vec![
+            S::Init(count, number(span, 0.0)),
+            S::Init(
+                chosen,
+                Expr {
+                    span,
+                    ty: target,
+                    kind: E::Zero,
+                },
+            ),
+        ];
+        let reason = self.exception_type()?;
+        for record in records {
+            let built = self.hidden(*record);
+            let caught = self.hidden(reason);
+            let marker = self.hidden(Type::Number);
+            scoped.extend([built, caught]);
+            let candidate =
+                self.convert_part(span, local(span, saved, Type::Unknown), *record, message)?;
+            body.push(S::TryCatch {
+                body: vec![
+                    S::Init(built, candidate),
+                    S::Set(
+                        count,
+                        binary(
+                            ast::BinaryOp::Add,
+                            local(span, count, Type::Float64),
+                            number(span, 1.0),
+                        ),
+                    ),
+                    S::Set(
+                        chosen,
+                        unions::widen(local(span, built, *record), Some(target), self.types)?,
+                    ),
+                ],
+                binding: Some(caught),
+                handler: vec![],
+                marker,
+            });
+        }
+        let ambiguous = self.hidden(Type::String);
+        let text = format!(
+            "checked conversion to {} is ambiguous: the value matches more than one member",
+            subtyping::describe(target, self.types)
+        );
+        body.push(S::If(
+            binary(
+                ast::BinaryOp::EqEqEq,
+                local(span, count, Type::Float64),
+                number(span, 0.0),
+            ),
+            vec![self.conversion_error(span, message)?],
+            vec![],
+        ));
+        body.push(S::If(
+            binary(
+                ast::BinaryOp::Gt,
+                local(span, count, Type::Float64),
+                number(span, 1.0),
+            ),
+            vec![
+                S::Init(
+                    ambiguous,
+                    Expr {
+                        span,
+                        ty: Type::String,
+                        kind: E::String(self.types.profile.string_bytes(&text)),
+                    },
+                ),
+                self.conversion_error(span, ambiguous)?,
+            ],
+            vec![],
+        ));
+        body.push(S::Init(output, local(span, chosen, target)));
+        // A cell that already holds a member is that member.
+        let mut exact = vec![S::Scope(scoped, body)];
+        for record in records.iter().rev() {
+            let test = self.exact_test(span, saved, *record)?;
+            let value = unions::widen(view(span, saved, *record), Some(target), self.types)?;
+            exact = vec![S::If(test, vec![S::Init(output, value)], exact)];
+        }
+        Ok(exact)
     }
     /// The JSON-object branch of a union with several record members: each
     /// member needs a literal-typed field whose values no other member's same

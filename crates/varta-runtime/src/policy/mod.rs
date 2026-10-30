@@ -57,6 +57,13 @@ impl Policy {
         self.permits(|grants| grants.iter().any(|g| g.id == id && grant_open(&g.value)))
     }
 
+    /// Whether some resource of `id` can be granted: the operation is not
+    /// withheld and the package (and the ceiling, when there is one) request
+    /// it with a non-denying filter.
+    pub(crate) fn admits_any(&self, id: &str) -> bool {
+        self.open(id) && self.requested_open(id)
+    }
+
     /// The exact requested patterns of `id` (what a prompt shows).
     pub(crate) fn requested_scope(&self, id: &str) -> Vec<String> {
         self.requested

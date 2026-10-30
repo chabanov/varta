@@ -148,6 +148,9 @@ impl Lower<'_> {
         if let Some(narrowed) = self.narrowed_path_conditional(branch, expected)? {
             return Ok(narrowed);
         }
+        if let Some(narrowed) = self.instanceof_path_conditional(branch, expected)? {
+            return Ok(narrowed);
+        }
         let test = self.condition(&branch.test)?;
         let saved = self.flow_snapshot();
         self.guard(&branch.test, true)?;

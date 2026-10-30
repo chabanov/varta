@@ -125,7 +125,10 @@ impl Lower<'_> {
                 }
             }
             ast::Expr::Await(expression) if self.types.profile.async_functions() => {
-                self.await_expression(expression)
+                match self.awaited_race(expression, expected)? {
+                    Some(value) => self.await_value(expression.span, value),
+                    None => self.await_expression(expression),
+                }
             }
             ast::Expr::OptChain(chain) if self.types.profile.function_fields() => {
                 self.optional_chain(chain)
@@ -236,6 +239,9 @@ impl Lower<'_> {
                 {
                     return self.function_reference(&signature, expression.span());
                 }
+                if let Some(global) = self.global_object(name.sym.as_ref(), expression.span())? {
+                    return Ok(global);
+                }
                 if self.generic_name(name.sym.as_ref()).is_some() {
                     return Err(unsupported(
                         "generic function as a value (call it so its type arguments are known)",
@@ -307,6 +313,9 @@ impl Lower<'_> {
             ast::Expr::Unary(unary) => {
                 if unary.op == ast::UnaryOp::Delete {
                     return self.array_delete(&unary.arg, unary.span);
+                }
+                if let Some(value) = self.method_typeof(unary)? {
+                    return Ok(value);
                 }
                 let value = self.expr(&unary.arg)?;
                 if self.types.profile.bigint_values()

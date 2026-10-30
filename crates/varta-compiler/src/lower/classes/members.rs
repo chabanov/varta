@@ -173,7 +173,12 @@ impl Lower<'_> {
         }
         match stmt::unparen(root) {
             ast::Expr::Ident(id) => {
-                self.binding(id.sym.as_ref()).is_ok() || self.outer.contains_key(id.sym.as_ref())
+                self.binding(id.sym.as_ref()).is_ok()
+                    || self.outer.contains_key(id.sym.as_ref())
+                    // V38 (`web_bytes`): the typed global object.
+                    || self.types.profile.web_bytes()
+                        && id.sym == crate::modules::engine::GLOBAL_THIS
+                        && !self.functions.contains_key(id.sym.as_ref())
             }
             _ => true,
         }

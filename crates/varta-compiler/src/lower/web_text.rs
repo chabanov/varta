@@ -145,6 +145,9 @@ impl Lower<'_> {
         if let Some(value) = self.collection_intrinsic(call, name)? {
             return Ok(Some(value));
         }
+        if name == "varta.text.units" && self.types.profile.web_bytes() {
+            return self.text_units_array(call, name).map(Some);
+        }
         let Some((_, op)) = ENGINE_INTRINSICS
             .iter()
             .find(|(intrinsic, _)| *intrinsic == name)
@@ -191,6 +194,128 @@ impl Lower<'_> {
 }
 
 impl Lower<'_> {
+    /// `varta.text.units(text)` (v38 `web_bytes`): a fresh dense `number[]`
+    /// of the string's UTF-16 code units, the inverse of
+    /// `varta.text.fromUnits`. The array is reserved at its final length and
+    /// filled slot by slot, without a per-element allocation; the byte
+    /// bodies of the `fetch` prelude carry one byte per code unit.
+    fn text_units_array(&mut self, call: &ast::CallExpr, name: &str) -> Result<Expr> {
+        let [argument] = call.args.as_slice() else {
+            return Err(invalid(format!("{name} expects one string argument")));
+        };
+        if argument.spread.is_some() || call.type_args.is_some() {
+            return Err(invalid(format!("{name} expects one string argument")));
+        }
+        let value = self.expr(&argument.expr)?;
+        if value.ty != Type::String {
+            return Err(type_error(format!("{name} requires a string")));
+        }
+        let span = call.span;
+        let number = self.types.number();
+        let array = arrays::intern(number, self.types)?;
+        let text = self.hidden(Type::String);
+        let count = self.hidden(Type::Float64);
+        let index = self.hidden(Type::Float64);
+        let output = self.hidden(array);
+        let marker = self.hidden(Type::Number);
+        let local = |slot: u32, ty: Type| Expr {
+            span,
+            ty,
+            kind: E::Local(slot),
+        };
+        let unit = Expr {
+            span,
+            ty: number,
+            kind: E::Intrinsic(
+                ir::Intrinsic::CodeUnit,
+                vec![local(text, Type::String), local(index, Type::Float64)],
+            ),
+        };
+        let slots = Some((
+            self.hidden(array),
+            self.hidden(if self.types.profile.array_mutations() {
+                Type::Float64
+            } else {
+                Type::Number
+            }),
+        ));
+        let body = vec![
+            S::Init(text, value),
+            S::Init(
+                count,
+                Expr {
+                    span,
+                    ty: Type::Float64,
+                    kind: E::Length(Box::new(local(text, Type::String))),
+                },
+            ),
+            S::Init(
+                output,
+                Expr {
+                    span,
+                    ty: array,
+                    kind: E::ArrayReserve {
+                        length: Box::new(local(count, Type::Float64)),
+                        count: self.hidden(Type::Number),
+                        bytes: self.hidden(Type::Number),
+                    },
+                },
+            ),
+            S::Init(
+                index,
+                Expr {
+                    span,
+                    ty: Type::Float64,
+                    kind: E::Float64(0.0),
+                },
+            ),
+            S::While(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::Binary(
+                        ast::BinaryOp::Lt,
+                        Box::new(local(index, Type::Float64)),
+                        Box::new(local(count, Type::Float64)),
+                    ),
+                },
+                vec![
+                    S::SetIndex {
+                        array: local(output, array),
+                        index: local(index, Type::Float64),
+                        value: unit,
+                        slots,
+                    },
+                    S::Set(
+                        index,
+                        Expr {
+                            span,
+                            ty: Type::Float64,
+                            kind: E::Binary(
+                                ast::BinaryOp::Add,
+                                Box::new(local(index, Type::Float64)),
+                                Box::new(Expr {
+                                    span,
+                                    ty: Type::Float64,
+                                    kind: E::Float64(1.0),
+                                }),
+                            ),
+                        },
+                    ),
+                ],
+            ),
+        ];
+        Ok(Expr {
+            span,
+            ty: array,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![text, output],
+                body,
+            },
+        })
+    }
     /// `varta.collections.hash(key)` and `varta.collections.key(key)` select
     /// the hash and SameValueZero key normalization of the key's type;
     /// `varta.bytes.view`/`adopt` reinterpret a `Uint8Array` and its storage.

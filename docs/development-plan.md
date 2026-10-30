@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. `v36-merge` with the declared-fields, function-fields, timers and async-generator streams: commit `765743e` (2026-10-29), 2196 tests, 0 failures, conformance 101 passed and 9 known gaps. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.13.0](#pilot-acceptance-package-uarp-sdk) (0.12.0 until the v38 integration); M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 | Platform targets | Third-party embedding contract published in [embedding.md](embedding.md); browser, desktop and Raspberry Pi 5 targets, application lifecycle and view layer follow the [accepted design](#platform-targets-and-application-model) (2026-10-29), not implemented yet |
 
 Next work, in order:
@@ -267,10 +267,17 @@ The package is an external acceptance target, not an engine feature. No UARP
 types, routes or client logic enter engine crates, built-in profiles or the core
 CLI, and its sources are not vendored into this repository.
 
-Pinned baseline: version **0.12.0**, tarball SHA-256
-`2a0f2ce97132c90be61ca45c5ea65b77ba25d1706e50894543c5737a6d8bb56e`
-(npm integrity `sha512-zoKVCcSTIJXiLvyUKmXyNBH1xPDo7XRcikch+YUasnQPbvTZ8atvdgCci9e8FD+klG4/VyXcMpYGMlXngEPbEg==`).
-Later versions are adopted explicitly, with this section updated.
+Pinned baseline: version **0.13.0** (owner decision of 2026-10-30, the
+version the console uses and npm `latest`), tarball SHA-256
+`69d986d3002247fc347d5a39742f5a46246163d782dcb910e118c8bb4790395d`
+(npm integrity `sha512-frtICedMsIcJialN4oBVzsqn4sI6O7vWcAw++Ioc7ZuXu7dGM8lwXG+soKCnvtN5zsZmIDr7ztSVH25Wgm+Izg==`,
+verified against the registry), 65 source files. Later versions are adopted
+explicitly, with this section updated. History: every measurement up to and
+including the v38 integration probe used **0.12.0** (tarball SHA-256
+`2a0f2ce97132c90be61ca45c5ea65b77ba25d1706e50894543c5737a6d8bb56e`, npm
+integrity `sha512-zoKVCcSTIJXiLvyUKmXyNBH1xPDo7XRcikch+YUasnQPbvTZ8atvdgCci9e8FD+klG4/VyXcMpYGMlXngEPbEg==`,
+65 source files); 0.13.0 changes the transport's retryable statuses (no
+409), `generated/meta.ts`, the generated models and 15 resource modules.
 
 | Part | Size | Content |
 | --- | --- | --- |
@@ -832,13 +839,26 @@ structural-subtyping stream's text equivalents for byte bodies, Web types and
 integration); the rest stop at `Blob` (10) and at checked conversions to a
 union of record shapes without a literal discriminant (4).
 
+**Web-bytes pilot probe (`v38-web-bytes`, 2026-10-30).** Per-file `varta
+check` under v38 of scratch copies of the pinned **0.13.0** sources
+(`npm pack uarp-sdk@0.13.0`, integrity verified), unmodified, production
+budgets, no live API call: **62 of 65** files check (the integration probe of
+0.12.0: 5). First blockers: a `Uint8Array` held by `unknown` (2:
+`generated/resources/public.ts`, whose `uploadPublicSessionImage` passes its
+`BinaryInput` body as the JSON `body: unknown`, and
+`generated/resources/index.ts`, which imports it) and declaration merging of
+`interface UarpClient extends Resources` with the class `UarpClient`, filled
+by `Object.assign(this, createResources(...))` (1, `index.ts`). No file stops
+at a union member limit. The unmodified 0.12.0 sources give the same 62 of
+65 with the same three blockers.
+
 **Wave 2 (open, owned after integration).**
 
 | Stream | Scope | State |
 | --- | --- | --- |
 | (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Open |
 | (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Open |
-| (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Open; first pilot blockers |
+| (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Implemented on `v38-web-bytes` under `web_bytes()` ([contract](architecture.md#web-bytes-web_bytes)): byte bodies (host ABI 34 `net_request_start_v2`, `net_body_read_bytes`), `ArrayBuffer`/`Blob`/`FormData` preludes with a deterministic multipart boundary, typed `globalThis` with `process.env` as an `env.get`-granted snapshot (`env_snapshot`), mixed `Promise.race`, strict record-union conversions (exactly one match, ambiguity a `TypeError`), union-to-union checked assertions, function adapters for `f as F`, `instanceof` narrowing of property paths in conditionals, records reaching a `Uint8Array` held by `unknown`. Pending: a `Uint8Array` (or a union that may hold one) held by `unknown`, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, spread key order through views; `File`, `Blob.stream()`, `formData()`, `FormData` iterators |
 | (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Open |
 
 #### Code generation v2 measurements

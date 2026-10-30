@@ -5433,6 +5433,76 @@ expected takes one more job. Not supported yet: byte bodies
 Constructor parameter properties (`constructor(private readonly client:
 Transport)`) declare and assign their fields.
 
+#### Web bytes (opt-in v38)
+
+Response bodies are bytes, as in browsers and Node: a reader yields
+`Uint8Array` chunks, and `arrayBuffer()`, `bytes()` and `blob()` read the
+whole body. Requests take strings, `URLSearchParams`, `Blob`, `ArrayBuffer`,
+`Uint8Array` or `FormData` bodies; every request still needs the exact
+`net.request` grant.
+
+```ts
+async function events(url: string): Promise<void> {
+  const response = await fetch(url);
+  const body = response.body;
+  if (body === null) return;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    console.log(decoder.decode(value, { stream: true }));
+  }
+}
+
+async function upload(url: string, photo: Blob): Promise<void> {
+  const form = new FormData();
+  form.append('photo', photo, 'photo.jpg');
+  form.append('caption', 'hello');
+  await fetch(url, { method: 'POST', body: form });
+}
+```
+
+The multipart boundary is deterministic (`----formdata-varta-00000000000`,
+counting up only when a part contains it). `FormData` has no iterators:
+`keys()`, `values()` and `entries()` return arrays. There is no `File`; a
+file entry is its `Blob` plus a name.
+
+`globalThis` is typed. Feature detection and the environment work through
+it; anything it does not declare is a compile error:
+
+```ts
+function randomId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return 'none';
+}
+const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+const key = env?.['APP_KEY']; // set only with "env": {"get": ["APP_KEY"]}
+```
+
+`process.env` holds exactly the variables your `env.get` grant names (and the
+host allows); every other variable reads as `undefined`.
+
+`Promise.race` accepts promises of different types:
+
+```ts
+const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1000));
+const result: ReadableStreamReadResult<Uint8Array> | 'timeout' =
+  await Promise.race([reader.read(), timeout]);
+```
+
+A checked conversion to a union of object types without a literal `type`
+field picks the one member the JSON object matches exactly (no unknown keys,
+every required field). If it matches none, or more than one, it throws
+`TypeError`:
+
+```ts
+interface List { items: string[] }
+interface One { item: string | null; note?: string }
+const answer = JSON.parse(text) as List | One; // {"item":null} is a One
+```
+
 #### View protocol and TSX (opt-in v38)
 
 A `.tsx` module renders an L0 view: an intrinsic

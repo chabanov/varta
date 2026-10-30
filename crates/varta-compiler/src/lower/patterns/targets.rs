@@ -153,6 +153,9 @@ impl Lower<'_> {
             Some(ty)
         } else if matches!(expression, ast::Expr::Object(_) | ast::Expr::Array(_)) {
             self.context(expression, Some(ty))
+        } else if self.awaits_race(expression) {
+            // V38 (`web_bytes`): a race takes the union target as context.
+            Some(ty)
         } else {
             None
         };

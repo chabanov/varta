@@ -299,10 +299,57 @@ pub(crate) const FETCH: Prelude = Prelude {
     members: &[],
     triggers: &[],
     admitted: LanguageProfile::net_request,
+    // V38 (`web_bytes`): byte bodies, `ReadableStream<Uint8Array>` and the
+    // `Blob`/`ArrayBuffer`/`FormData` bodies of the blob prelude.
+    extended: Some((
+        LanguageProfile::web_bytes,
+        include_str!("../prelude/fetch_bytes.ts"),
+    )),
+    loads: &[],
+    lifted: None,
+};
+/// `ArrayBuffer`, `Blob` and `FormData` (v38 `web_bytes`) in guest code with
+/// no host import; `new Uint8Array(buffer)` views a buffer through
+/// [`BLOB_VIEW`].
+pub(crate) const BLOB: Prelude = Prelude {
+    path: "<varta>/web/blob.ts",
+    source: include_str!("../prelude/blob.ts"),
+    exports: &[
+        (ARRAY_BUFFER_CLASS, Namespace::Class),
+        ("Blob", Namespace::Class),
+        ("FormData", Namespace::Class),
+        ("ArrayBufferView", Namespace::Type),
+        ("BlobPart", Namespace::Type),
+        ("BlobPropertyBag", Namespace::Type),
+        ("FormDataEntryValue", Namespace::Type),
+    ],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::web_bytes,
     extended: None,
     loads: &[],
     lifted: None,
 };
+pub(crate) const ARRAY_BUFFER_CLASS: &str = "ArrayBuffer";
+/// The blob prelude function behind `new Uint8Array(buffer)`.
+pub(crate) const BLOB_VIEW: &str = "viewOf";
+/// The typed global object (v38 `web_bytes`): `globalThis` evaluates to
+/// [`GLOBAL_OBJECT`]'s result, with the `crypto` and `process` members
+/// (`process.env` behind the `env.get` grants).
+pub(crate) const GLOBAL: Prelude = Prelude {
+    path: "<varta>/web/global.ts",
+    source: include_str!("../prelude/global.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::web_bytes,
+    extended: None,
+    loads: &[GLOBAL_THIS],
+    lifted: None,
+};
+/// The identifier of the global object and the prelude function it lowers to.
+pub(crate) const GLOBAL_THIS: &str = "globalThis";
+pub(crate) const GLOBAL_OBJECT: &str = "globalObject";
 /// `URL` and `URLSearchParams` (v37 `net_request`), a WHATWG subset in
 /// guest code with no host import.
 pub(crate) const URL: Prelude = Prelude {
@@ -588,7 +635,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 16] = [
+pub(crate) const PRELUDES: [&Prelude; 18] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -598,7 +645,9 @@ pub(crate) const PRELUDES: [&Prelude; 16] = [
     &BASE64,
     &DATE,
     &REGEXP,
+    &BLOB,
     &FETCH,
+    &GLOBAL,
     &PERMISSION,
     &URL,
     &PERMISSIONS,
@@ -612,7 +661,14 @@ pub(crate) const READABLE_STREAM_CLASS: &str = "ReadableStream";
 pub(crate) const INTERNAL_MEMBERS: &[(&str, &str)] = &[
     (READABLE_STREAM_CLASS, "stateOf"),
     ("Request", "bodyText"),
+    ("Request", "bodySource"),
     ("Request", "signalOf"),
+    (ARRAY_BUFFER_CLASS, "storageOf"),
+    (ARRAY_BUFFER_CLASS, "adopt"),
+    ("Blob", "byteString"),
+    ("Blob", "adopt"),
+    ("Blob", "encode"),
+    ("FormData", "multipart"),
     ("URLSearchParams", "parse"),
     ("URLSearchParams", "attach"),
     ("URL", "adoptQuery"),

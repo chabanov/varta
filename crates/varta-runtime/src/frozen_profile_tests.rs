@@ -42,8 +42,17 @@ const CASE_DIRECTORIES: [&str; 20] = [
 /// documented v38 contract: `JSON.stringify` is typed `string` under
 /// `structural_subtyping()` and throws `TypeError` for a value without a
 /// JSON form (`unknown_cases/flow.ts` and `v35_cases/unknown_json.ts`
-/// serialize `undefined` held by `unknown`).
-pub(crate) const V38_DEVIATIONS: [&str; 2] = ["unknown_cases/flow.ts", "v35_cases/unknown_json.ts"];
+/// serialize `undefined` held by `unknown`). Under `web_bytes()` response
+/// bodies are `ReadableStream<Uint8Array>`, so v37 programs that read body
+/// chunks as strings are v37-only (`net_cases/streams.ts`,
+/// `v37_integration_cases/sse_lines.ts`; `web_bytes_cases/net_bytes.ts` is
+/// their v38 form).
+pub(crate) const V38_DEVIATIONS: [&str; 4] = [
+    "unknown_cases/flow.ts",
+    "v35_cases/unknown_json.ts",
+    "net_cases/streams.ts",
+    "v37_integration_cases/sse_lines.ts",
+];
 
 /// Whether `path` is one of [`V38_DEVIATIONS`].
 pub(crate) fn deviates_under_v38(path: &std::path::Path) -> bool {

@@ -11,15 +11,16 @@ mod client;
 
 use crate::scheduler::{self, Scheduler};
 use crate::{RuntimeContext, host};
+use client::ReadMode;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
 use varta_common::HostOperation;
 use varta_common::net::{
-    CompletionKind, DESCRIPTOR_BODY, DESCRIPTOR_NO_BODY, DESCRIPTOR_SEPARATOR, DESCRIPTOR_VERSION,
-    MAX_PENDING_REQUESTS, MAX_REQUEST_BYTES, MAX_REQUEST_HEADER_BYTES, MAX_REQUEST_HEADERS,
-    NetError, REQUEST_CAPABILITY, RUNTIME_HEADERS,
+    CompletionKind, DESCRIPTOR_BODY, DESCRIPTOR_BYTES, DESCRIPTOR_NO_BODY, DESCRIPTOR_SEPARATOR,
+    DESCRIPTOR_VERSION, DESCRIPTOR_VERSION_BYTES, MAX_PENDING_REQUESTS, MAX_REQUEST_BYTES,
+    MAX_REQUEST_HEADER_BYTES, MAX_REQUEST_HEADERS, NetError, REQUEST_CAPABILITY, RUNTIME_HEADERS,
 };
 use wasmtime::{Caller, Extern, Linker};
 
@@ -50,10 +51,11 @@ struct Request {
     transfer: Option<Transfer>,
 }
 
-/// A running transfer: its task and the channel that asks for the next chunk.
+/// A running transfer: its task and the channel that asks for the next chunk
+/// (as text or as bytes).
 struct Transfer {
     task: tokio::task::JoinHandle<()>,
-    pull: mpsc::Sender<()>,
+    pull: mpsc::Sender<ReadMode>,
 }
 impl Drop for Transfer {
     fn drop(&mut self) {
@@ -222,7 +224,7 @@ impl Net {
             _ => Err(NetError::State),
         }
     }
-    fn read(&mut self, id: f64) -> Result<(), NetError> {
+    fn read(&mut self, id: f64, mode: ReadMode) -> Result<(), NetError> {
         let (_, request) = self.request(id)?;
         if !matches!(request.phase, Phase::Idle) || request.watcher.is_some() {
             return Err(NetError::State);
@@ -231,7 +233,7 @@ impl Net {
             return Err(NetError::State);
         };
         // The capacity-1 channel is empty: every earlier pull was answered.
-        transfer.pull.try_send(()).map_err(|_| NetError::State)?;
+        transfer.pull.try_send(mode).map_err(|_| NetError::State)?;
         request.phase = Phase::Armed;
         Ok(())
     }
@@ -297,15 +299,31 @@ struct Descriptor<'a> {
     method: &'a str,
     url: &'a str,
     headers: Vec<(&'a str, &'a str)>,
-    body: Option<&'a str>,
+    body: Option<Vec<u8>>,
+}
+
+/// The descriptor form an import accepts: version 1 (`net_request_start`,
+/// text bodies) or version 2 (`net_request_start_v2`, v38, text or bytes).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Text,
+    Bytes,
+}
+impl Form {
+    fn version(self) -> &'static str {
+        match self {
+            Self::Text => DESCRIPTOR_VERSION,
+            Self::Bytes => DESCRIPTOR_VERSION_BYTES,
+        }
+    }
 }
 
 /// Split a descriptor. A malformed structure is fatal: only a tampered or
 /// miscompiled module can produce one.
-fn descriptor(text: &str) -> Result<Descriptor<'_>, NetError> {
+fn descriptor(text: &str, form: Form) -> Result<Descriptor<'_>, NetError> {
     let mut fields = text.splitn(4, DESCRIPTOR_SEPARATOR);
     let mut field = || fields.next().ok_or(NetError::Descriptor);
-    if field()? != DESCRIPTOR_VERSION {
+    if field()? != form.version() {
         return Err(NetError::Descriptor);
     }
     let method = field()?;
@@ -325,7 +343,14 @@ fn descriptor(text: &str) -> Result<Descriptor<'_>, NetError> {
     }
     let body = match rest.split_once(DESCRIPTOR_SEPARATOR) {
         Some((DESCRIPTOR_NO_BODY, "")) => None,
-        Some((DESCRIPTOR_BODY, body)) => Some(body),
+        Some((DESCRIPTOR_BODY, body)) => Some(body.as_bytes().to_vec()),
+        // Version 2 bytes: each code unit is one byte.
+        Some((DESCRIPTOR_BYTES, body)) if form == Form::Bytes => Some(
+            body.chars()
+                .map(|unit| u8::try_from(u32::from(unit)).ok())
+                .collect::<Option<Vec<u8>>>()
+                .ok_or(NetError::Descriptor)?,
+        ),
         _ => return Err(NetError::Descriptor),
     };
     Ok(Descriptor {
@@ -414,9 +439,7 @@ fn plan(
         url,
         method,
         headers,
-        body: request
-            .body
-            .map(|body| hyper::body::Bytes::copy_from_slice(body.as_bytes())),
+        body: request.body.clone().map(hyper::body::Bytes::from),
         deadline: crate::turns::operation_deadline(context),
         tls,
     })
@@ -462,17 +485,35 @@ fn deadline(context: &RuntimeContext) -> Result<(), wasmtime::Error> {
     context.check_deadline()
 }
 
+/// `net_request_start` and `net_request_start_v2`: one host call, the
+/// descriptor read and split, then the grant check before any effect.
+fn start(
+    caller: &mut Caller<'_, RuntimeContext>,
+    ptr: i32,
+    len: i32,
+    form: Form,
+) -> Result<f64, wasmtime::Error> {
+    caller.data_mut().tick()?;
+    let text = read_descriptor(caller, ptr, len).map_err(fatal)?;
+    let request = descriptor(&text, form).map_err(fatal)?;
+    let context = caller.data_mut();
+    let outcome = plan(context, &request);
+    context.net.start(outcome)
+}
+
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
         "varta",
         HostOperation::NetRequestStart.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
-            caller.data_mut().tick()?;
-            let text = read_descriptor(&mut caller, ptr, len).map_err(fatal)?;
-            let request = descriptor(&text).map_err(fatal)?;
-            let context = caller.data_mut();
-            let outcome = plan(context, &request);
-            context.net.start(outcome)
+            start(&mut caller, ptr, len, Form::Text)
+        },
+    )?;
+    linker.func_wrap(
+        "varta",
+        HostOperation::NetRequestStartV2.name(),
+        |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
+            start(&mut caller, ptr, len, Form::Bytes)
         },
     )?;
     linker.func_wrap(
@@ -507,7 +548,23 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         HostOperation::NetBodyRead.name(),
         |mut caller: Caller<'_, RuntimeContext>, id: f64| {
             deadline(caller.data())?;
-            caller.data_mut().net.read(id).map_err(fatal)
+            caller
+                .data_mut()
+                .net
+                .read(id, ReadMode::Text)
+                .map_err(fatal)
+        },
+    )?;
+    linker.func_wrap(
+        "varta",
+        HostOperation::NetBodyReadBytes.name(),
+        |mut caller: Caller<'_, RuntimeContext>, id: f64| {
+            deadline(caller.data())?;
+            caller
+                .data_mut()
+                .net
+                .read(id, ReadMode::Bytes)
+                .map_err(fatal)
         },
     )?;
     linker.func_wrap(
@@ -542,13 +599,24 @@ mod tests {
         let text = format!(
             "{DESCRIPTOR_VERSION}\nPOST\nhttp://127.0.0.1:1/x\n2\naccept\n*/*\nx-a\nb\n1\nline1\nline2"
         );
-        let parsed = descriptor(&text).unwrap();
+        let parsed = descriptor(&text, Form::Text).unwrap();
         assert_eq!(parsed.method, "POST");
         assert_eq!(parsed.url, "http://127.0.0.1:1/x");
         assert_eq!(parsed.headers, [("accept", "*/*"), ("x-a", "b")]);
-        assert_eq!(parsed.body, Some("line1\nline2"));
+        assert_eq!(parsed.body.as_deref(), Some(&b"line1\nline2"[..]));
         let get = format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n0\n0\n");
-        assert_eq!(descriptor(&get).unwrap().body, None);
+        assert_eq!(descriptor(&get, Form::Text).unwrap().body, None);
+        // Version 1 never carries bytes, and each import accepts only its
+        // own version.
+        let bytes = format!("{DESCRIPTOR_VERSION}\nPOST\nhttp://a.test/\n0\n2\nab");
+        assert_eq!(
+            descriptor(&bytes, Form::Text).err(),
+            Some(NetError::Descriptor)
+        );
+        assert_eq!(
+            descriptor(&text, Form::Bytes).err(),
+            Some(NetError::Descriptor)
+        );
         for bad in [
             String::new(),
             "varta-net-request-0\nGET\nhttp://a.test/\n0\n0\n".into(),
@@ -559,11 +627,34 @@ mod tests {
             format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n65\n0\n"),
         ] {
             assert_eq!(
-                descriptor(&bad).err(),
+                descriptor(&bad, Form::Text).err(),
                 Some(NetError::Descriptor),
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn version_two_descriptors_carry_text_or_bytes() {
+        let head = format!("{DESCRIPTOR_VERSION_BYTES}\nPOST\nhttp://a.test/\n0\n");
+        let text = format!("{head}1\n\u{e9}");
+        assert_eq!(
+            descriptor(&text, Form::Bytes).unwrap().body.as_deref(),
+            Some("\u{e9}".as_bytes())
+        );
+        let bytes = format!("{head}2\n\u{0}\u{e9}\u{ff}");
+        assert_eq!(
+            descriptor(&bytes, Form::Bytes).unwrap().body.as_deref(),
+            Some(&[0x00, 0xE9, 0xFF][..])
+        );
+        // A code unit above 0xFF is no byte.
+        let wide = format!("{head}2\n\u{100}");
+        assert_eq!(
+            descriptor(&wide, Form::Bytes).err(),
+            Some(NetError::Descriptor)
+        );
+        let none = format!("{DESCRIPTOR_VERSION_BYTES}\nGET\nhttp://a.test/\n0\n0\n");
+        assert_eq!(descriptor(&none, Form::Bytes).unwrap().body, None);
     }
 
     #[test]

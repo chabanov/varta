@@ -41,6 +41,18 @@ const INTRINSICS: [(&str, Host, Type, Type); 5] = [
     ),
 ];
 
+/// The v38 (`web_bytes`) byte-body intrinsic of the `fetch` prelude, in the
+/// same shape; under `web_bytes`, `varta.net.start` starts with descriptor
+/// version 2 (`net_request_start_v2`).
+const BYTE_INTRINSICS: [(&str, Host, Type, Type); 1] = [(
+    "varta.net.readBytes",
+    Host::NetBodyReadBytes,
+    Type::Float64,
+    Type::Void,
+)];
+/// The v38 (`web_bytes`) `process.env` snapshot of the global prelude.
+const ENV_SNAPSHOT: &str = "varta.env.snapshot";
+
 /// The v38 (`turn_budgets`) intrinsics of the permission and host event
 /// preludes, in the same shape.
 const INSTANCE_INTRINSICS: [(&str, Host, Type, Type); 6] = [
@@ -94,12 +106,35 @@ impl Lower<'_> {
             .iter()
             .find(|(intrinsic, ..)| *intrinsic == name)
             .filter(|_| self.types.profile.turn_budgets());
-        let Some((_, host, argument_type, result)) = net.or(instance) else {
+        let bytes = BYTE_INTRINSICS
+            .iter()
+            .find(|(intrinsic, ..)| *intrinsic == name)
+            .filter(|_| self.types.profile.web_bytes());
+        if name == ENV_SNAPSHOT
+            && self.types.profile.web_bytes()
+            && crate::modules::engine::is_prelude_source(self.source)
+        {
+            if !call.args.is_empty() || call.type_args.is_some() {
+                return Err(invalid(format!("{name} expects no arguments")));
+            }
+            return Ok(Some(Expr {
+                span: call.span,
+                ty: Type::String,
+                kind: E::Host(Host::EnvSnapshot, vec![]),
+            }));
+        }
+        let Some((_, host, argument_type, result)) = net.or(instance).or(bytes) else {
             return Ok(None);
         };
         if !crate::modules::engine::is_prelude_source(self.source) {
             return Ok(None);
         }
+        // V38 (`web_bytes`) requests carry descriptor version 2.
+        let host = if *host == Host::NetRequestStart && self.types.profile.web_bytes() {
+            &Host::NetRequestStartV2
+        } else {
+            host
+        };
         let [argument] = call.args.as_slice() else {
             return Err(invalid(format!("{name} expects one argument")));
         };
@@ -163,6 +198,37 @@ mod tests {
         event("INVALID_SOURCE", &format!("{}", INVALID_SOURCE as i32));
         event("KIND_EVENT", &(TakeKind::Event as i32).to_string());
         event("KIND_CLOSED", &(TakeKind::Closed as i32).to_string());
+    }
+
+    /// The v38 byte-body prelude mirrors descriptor version 2 and the same
+    /// completion codes.
+    #[test]
+    fn the_byte_fetch_prelude_mirrors_the_net_contract() {
+        use varta_common::net::{DESCRIPTOR_BYTES, DESCRIPTOR_VERSION_BYTES};
+        const BYTES: &str = include_str!("../prelude/fetch_bytes.ts");
+        let constant = |name: &str, value: &str| {
+            let line = format!("const {name} = {value};");
+            assert!(BYTES.contains(&line), "fetch_bytes.ts lacks `{line}`");
+        };
+        constant(
+            "DESCRIPTOR_VERSION",
+            &format!("'{DESCRIPTOR_VERSION_BYTES}'"),
+        );
+        constant("SEPARATOR", "'\\n'");
+        constant("NO_BODY", &format!("'{DESCRIPTOR_NO_BODY}'"));
+        constant("WITH_BODY", &format!("'{DESCRIPTOR_BODY}'"));
+        constant("WITH_BYTES", &format!("'{DESCRIPTOR_BYTES}'"));
+        for kind in CompletionKind::ALL {
+            let name = match kind {
+                CompletionKind::Head => "KIND_HEAD",
+                CompletionKind::Chunk => "KIND_CHUNK",
+                CompletionKind::End => "KIND_END",
+                CompletionKind::Failed => "KIND_FAILED",
+                CompletionKind::Aborted => "KIND_ABORTED",
+                CompletionKind::Denied => "KIND_DENIED",
+            };
+            constant(name, &(kind as i32).to_string());
+        }
     }
 
     /// The prelude's mirrored constants match the shared contract.

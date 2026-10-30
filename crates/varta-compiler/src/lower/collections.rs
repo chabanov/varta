@@ -200,6 +200,44 @@ pub(super) fn reaches(ty: Type, types: &ir::ValueTypes) -> bool {
     }
     types.profile.collections() && visit(ty, types, &mut BTreeSet::new())
 }
+/// Whether a value of `ty` may reach collection storage other than a
+/// `Uint8Array`'s (Map and Set storage, opaque builtin classes).
+pub(super) fn reaches_private(ty: Type, types: &ir::ValueTypes) -> bool {
+    fn visit(ty: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match ty {
+            Type::Collection(K::Uint8Array, _) => false,
+            Type::Collection(..) => true,
+            Type::Class(id) if types.classes.get(id).opaque => true,
+            Type::Class(id) => visit(Type::Record(types.classes.shape(id)), types, seen),
+            Type::Record(id) => types.records[id as usize]
+                .fields
+                .iter()
+                .any(|f| visit(f.ty, types, seen)),
+            Type::Array(id) => visit(types.arrays[id as usize], types, seen),
+            Type::Tuple(id) => types.tuples[id as usize]
+                .elements
+                .iter()
+                .any(|ty| visit(*ty, types, seen)),
+            Type::Dictionary(id) => visit(types.dictionaries[id as usize].value, types, seen),
+            Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
+                .iter()
+                .any(|t| visit(*t, types, seen)),
+            Type::Promise(id) => visit(types.promises[id as usize].value, types, seen),
+            _ => false,
+        }
+    }
+    visit(ty, types, &mut BTreeSet::new())
+}
+/// Whether `ty` is a `Uint8Array` or a union with a `Uint8Array` member: a
+/// value whose own cell would hold the byte storage.
+pub(super) fn holds_bytes(ty: Type, types: &ir::ValueTypes) -> bool {
+    unions::members(ty, types)
+        .into_iter()
+        .any(|member| matches!(member, Type::Collection(K::Uint8Array, _)))
+}
 /// The diagnostic for a collection reaching a host value reader.
 pub(super) fn opaque(what: &str) -> CompilerError {
     unsupported(&format!(

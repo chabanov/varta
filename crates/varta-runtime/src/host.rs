@@ -1,4 +1,5 @@
 use crate::{GuestExit, HostFailure, RuntimeContext};
+use varta_common::HostOperation;
 use varta_common::abi::{self, HostStatus};
 use wasmtime::{Caller, Extern, Linker, Val};
 
@@ -108,6 +109,28 @@ pub(super) fn result_bytes(
         .set(caller, Val::I32(bytes.len() as i32))
         .map_err(HostFailure::io)?;
     Ok(abi::RESULT_BASE as i32)
+}
+
+/// The `process.env` snapshot of v38 (`env_snapshot`): a JSON object of the
+/// variables whose names the `env.get` grants admit (package and host
+/// ceiling, each name checked exactly as `env_get` checks it), in name
+/// order. Without an `env.get` grant the environment is not read at all.
+/// Names or values that are not Unicode are skipped.
+fn env_snapshot(policy: &crate::policy::Policy) -> String {
+    const ENV_GET: &str = "env.get";
+    let mut variables = serde_json::Map::new();
+    if policy.admits_any(ENV_GET) {
+        let mut granted: Vec<(String, String)> = std::env::vars_os()
+            .filter_map(|(name, value)| Some((name.into_string().ok()?, value)))
+            .filter(|(name, _)| policy.env(ENV_GET, name))
+            .filter_map(|(name, value)| Some((name, value.into_string().ok()?)))
+            .collect();
+        granted.sort();
+        for (name, value) in granted {
+            variables.insert(name, serde_json::Value::String(value));
+        }
+    }
+    serde_json::Value::Object(variables).to_string()
 }
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
@@ -247,6 +270,21 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
+    linker.func_wrap(
+        "varta",
+        HostOperation::EnvSnapshot.name(),
+        |mut caller: Caller<'_, RuntimeContext>| -> Result<i32, wasmtime::Error> {
+            reset(&mut caller)?;
+            let text = env_snapshot(&caller.data().policy);
+            match result16(&mut caller, text.as_bytes()) {
+                Ok(value) => Ok(value),
+                Err(error) => {
+                    failure(&mut caller, error)?;
+                    Ok(0)
+                }
+            }
+        },
+    )?;
     for (name, utf16) in [("env_print", false), ("env_print16", true)] {
         linker.func_wrap(
             "varta",

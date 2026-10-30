@@ -195,6 +195,8 @@ mod validate;
 mod view;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod web_bytes_tests;
 pub use varta_view::{Script as ViewScript, ScriptError as ViewScriptError, ViewError};
 
 use std::collections::BTreeMap;

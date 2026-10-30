@@ -3385,6 +3385,56 @@ Contract: [architecture.md](architecture.md#structural-subtyping-structural_subt
   diagnostics and v37 rejections; the public API cross-module test and the
   CLI smoke test through both binaries.
 
+### Web bytes (`web_bytes`)
+
+Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
+
+- Gate every admission on `web_bytes()`; v37 keeps its text-body prelude
+  (`fetch.ts`) and v1–v37 digests stay frozen. The v38 `fetch` source is the
+  `extended` text of the same module (`prelude/fetch_bytes.ts`); keep the two
+  preludes' shared behaviour (redirects, aborts, denials) in step.
+- Bytes cross the host boundary as byte strings (one code unit 0..=0xFF per
+  byte), never per-byte host calls: `net_body_read_bytes` for chunks,
+  descriptor flag `2` of `net_request_start_v2` for request bodies. Turn a
+  byte string into a `Uint8Array` only where a reader asks for one
+  (`varta.text.units` + `varta.bytes.adopt`); `blob()` and blob bodies keep
+  the string.
+- `net_request_start` maps to `net_request_start_v2` under v38
+  (`LanguageProfile::host_operation`); each import parses only its own
+  descriptor version, and a unit above 0xFF in a byte body is a fatal
+  `NetError::Descriptor`. Mirror the descriptor constants in the prelude
+  (`the_byte_fetch_prelude_mirrors_the_net_contract`).
+- Engine-internal members of the blob and fetch preludes (`Blob.byteString`,
+  `Blob.adopt`, `Blob.encode`, `ArrayBuffer.storageOf`, `ArrayBuffer.adopt`,
+  `FormData.multipart`, `Request.bodySource`) are instance methods listed in
+  `INTERNAL_MEMBERS`, so program modules cannot forge a byte string.
+- `process.env` reads only through `env_snapshot`; it checks every name with
+  `Policy::env` (package and ceiling) and reads nothing without a requested,
+  non-withheld `env.get`. Never add an ambient environment path.
+- `globalThis` lowers to the global prelude's `GlobalObject`; function
+  globals reach through it only by the scanner rewrite
+  (`modules::global_members::FUNCTION_GLOBALS`). Add a member as a getter of
+  `GlobalObject` or a name of that list, never as an untyped fallback.
+- Record unions without discriminants convert by strict matching
+  (`matched_build`): exact members first, then every member built under
+  `try`, exactly one success. Never pick a member by order;
+  `undiscriminated_unions` routes `JSON.parse(text) as T` through `unknown`
+  when the schema parser cannot select.
+- A mixed `Promise.race` is lowered element by element (`race_items`); the
+  homogeneous literal keeps one array. A literal-erased element value fulfills
+  through `assert_value`, never a retag.
+- `unknown` never holds a `Uint8Array`: `collections::holds_bytes` values stay
+  rejected by `unknown::widen`; records reaching bytes are admitted only
+  without other private builtins (`reaches_private`) and their JSON-object
+  view throws for the bytes (`Views::bytes_error`).
+- Tests: `varta-runtime` `web_bytes_tests` (Node 24 logs of
+  `web_bytes_cases`), `net_tests` byte bodies against the loopback server and
+  `net_cases/server.mjs` (`node_runner.mjs --bytes`), ABI 34 import and
+  relabelling tests, the denial test, the runtime descriptor unit tests, and
+  the CLI smoke test of `process.env` grants and byte-body denials through
+  `dev` and `build --single`. V37 cases that read text chunks are listed in
+  `V38_DEVIATIONS`.
+
 ### V38 linked intrinsics
 
 Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
