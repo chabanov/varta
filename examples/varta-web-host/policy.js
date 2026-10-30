@@ -13,7 +13,20 @@ const SCHEMA_VERSION = 1;
 const DEFAULT_ABI_VERSION = 1;
 const STRICT_POLICY = "strict";
 const TARGETS = ["wasm", "native"];
-const MANIFEST_FIELDS = ["schemaVersion", "abiVersion", "policy", "entry", "target"];
+const MANIFEST_FIELDS = ["schemaVersion", "abiVersion", "policy", "entry", "target", "budgets", "fsRoots"];
+// Manifest members of host ABI 34 (embedding.md "Manifest"): `budgets`, `fsRoots`
+// and the grant members `required` and `purpose` (package only).
+const TURN_BUDGETS_ABI = 34;
+const GRANT_V34_FIELDS = ["required", "purpose"];
+const REQUEST_SCOPE_FIELDS = ["methods"];
+// The contract names maxima for these members without publishing their values;
+// until it does, this host refuses them rather than guess (fail closed).
+const UNPUBLISHED_MAXIMA = {
+  budgets: "budget::MAX_*",
+  fsRoots: "files::MAX_FILE_ROOTS / MAX_ROOT_NAME_BYTES / MAX_PATH_BYTES",
+  purpose: "permission::MAX_PURPOSE_BYTES",
+  methods: "net::MAX_GRANT_METHODS",
+};
 
 const utf8Length = (text) => new TextEncoder().encode(text).length;
 
@@ -32,7 +45,11 @@ function integer(value, where) {
  * Grant kinds come from the generated grant-kind table of embedding.md "Manifest".
  * @param {{where?: string, hostAbis: Set<number>, grantKinds: Record<string, string>}} options
  */
-export function parseManifest(text, { where = "manifest", hostAbis, grantKinds }) {
+function unpublished(where, member) {
+  return new PolicyError(`${where}: contract publishes no maximum for ${member} (${UNPUBLISHED_MAXIMA[member]}); refused`);
+}
+
+export function parseManifest(text, { where = "manifest", hostAbis, grantKinds, ceiling = false }) {
   const grants = new Map();
   if (text === null) return Object.assign(grants, { abiVersion: undefined });
   let doc;
@@ -48,6 +65,12 @@ export function parseManifest(text, { where = "manifest", hostAbis, grantKinds }
   if ("policy" in doc && doc.policy !== STRICT_POLICY) throw new PolicyError(`${where}: policy must be "${STRICT_POLICY}"`);
   if ("entry" in doc && typeof doc.entry !== "string") throw new PolicyError(`${where}: entry must be a string`);
   if ("target" in doc && !TARGETS.includes(doc.target)) throw new PolicyError(`${where}: target must be "wasm" or "native"`);
+  const v34 = abiVersion >= TURN_BUDGETS_ABI;
+  for (const member of ["budgets", "fsRoots"]) {
+    if (!(member in doc)) continue;
+    if (!v34) throw new PolicyError(`${where}: ${member} needs abiVersion ${TURN_BUDGETS_ABI}`);
+    throw unpublished(where, member);
+  }
   if (!Array.isArray(doc.capabilities)) throw new PolicyError(`${where}: capabilities must be an array`);
   if (doc.capabilities.length > MAX_GRANTS) throw new PolicyError(`${where}: too many grants`);
   let patternCount = 0;
@@ -56,14 +79,20 @@ export function parseManifest(text, { where = "manifest", hostAbis, grantKinds }
     const kind = grantKinds[grant.id];
     if (!kind) throw new PolicyError(`${where}: unknown capability id ${grant.id}`);
     if (grants.has(grant.id)) throw new PolicyError(`${where}: duplicate capability id ${grant.id}`);
+    const optional = [...(v34 && !ceiling ? GRANT_V34_FIELDS : []), ...(kind === "requests" ? REQUEST_SCOPE_FIELDS : [])];
     try {
-      exactKeys(grant, kind === "boolean" ? ["id", "enabled"] : ["id", "patterns"], [], `${where} grant ${grant.id}`);
+      exactKeys(grant, kind === "boolean" ? ["id", "enabled"] : ["id", "patterns"], optional, `${where} grant ${grant.id}`);
     } catch (error) {
+      if (!v34 && GRANT_V34_FIELDS.some((f) => f in grant)) throw new PolicyError(`${where}: ${grant.id}.required/purpose need abiVersion ${TURN_BUDGETS_ABI}`);
+      if (ceiling && GRANT_V34_FIELDS.some((f) => f in grant)) throw new PolicyError(`${where}: a host ceiling may not carry required or purpose`);
       throw new PolicyError(error.message);
     }
+    if ("required" in grant && typeof grant.required !== "boolean") throw new PolicyError(`${where}: ${grant.id}.required must be a boolean`);
+    if ("purpose" in grant) throw unpublished(where, "purpose");
+    if ("methods" in grant) throw unpublished(where, "methods");
     if (kind === "boolean") {
       if (typeof grant.enabled !== "boolean") throw new PolicyError(`${where}: ${grant.id}.enabled must be a boolean`);
-      grants.set(grant.id, { kind, enabled: grant.enabled });
+      grants.set(grant.id, { kind, enabled: grant.enabled, required: grant.required !== false });
       continue;
     }
     if (!Array.isArray(grant.patterns) || grant.patterns.some((p) => typeof p !== "string")) {
@@ -76,7 +105,7 @@ export function parseManifest(text, { where = "manifest", hostAbis, grantKinds }
       const reason = unsafeReason(pattern, kind);
       if (reason) throw new PolicyError(`${where}: unsafe ${grant.id} pattern ${JSON.stringify(pattern)}: ${reason}`);
     }
-    grants.set(grant.id, { kind, patterns: grant.patterns });
+    grants.set(grant.id, { kind, patterns: grant.patterns, required: grant.required !== false });
   }
   return Object.assign(grants, { abiVersion });
 }

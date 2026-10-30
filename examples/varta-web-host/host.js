@@ -33,7 +33,7 @@ export function createHost(contract) {
       return {
         package: parseManifest(options.manifest ?? null, { where: "manifest", hostAbis, grantKinds: contract.grantKinds }),
         // Same schema; its abiVersion is not compared with the module's.
-        ceiling: options.ceiling == null ? null : parseManifest(options.ceiling, { where: "host ceiling", hostAbis, grantKinds: contract.grantKinds }),
+        ceiling: options.ceiling == null ? null : parseManifest(options.ceiling, { where: "host ceiling", hostAbis, grantKinds: contract.grantKinds, ceiling: true }),
       };
     } catch (error) {
       if (error instanceof PolicyError) throw new ValidationError(error.message);

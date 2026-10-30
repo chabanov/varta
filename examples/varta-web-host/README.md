@@ -11,7 +11,8 @@ will be generated from the `HostOperation` registry (platform increments P1 and 
 | T1 tool host | Implemented: catalog validation, strict argument parsing, string transfer, envelopes like `varta invoke --json` |
 | R1 run host | Implemented: logging, clock, environment (embedder map), exit, Math and UTF-16 character intrinsics |
 | R2 scheduled run host | Implemented with reduced catalog validation: catalog rules 1–4 (exact index fields and bounds) and frame admission rules 1–5; guest memory is never read through the catalog. Includes the v36 timer event loop and, for `checked-f64-utf16-v38`, event turns (host calls and microtasks renewed per fired timer, one deadline per bounded run), the recoverable `timer_start_v2` and the v38 structure rules (functions counted with imports, `varta.static`/`varta.intrinsics` regions, data segment placement) |
-| v38 effects still missing | Manifest `budgets`/`required`/`purpose`/`fsRoots`, `view_commit` and view event delivery, long-lived application instances, `net.request`, `env_snapshot`, host events and permission prompts |
+| v38 manifest | `required` is checked; `budgets`, `fsRoots`, `purpose` and request `methods` are refused (fail closed) until the contract publishes their maxima; `required`/`purpose` in a host ceiling or below `abiVersion` 34 are rejected |
+| v38 effects still missing | Effective budgets, file roots, `view_commit` and view event delivery, long-lived application instances, `net.request`, `env_snapshot`, host events and permission prompts |
 | H1 HTTP host | Not implemented; HTTP modules are refused |
 
 Modules that import layout-bound intrinsics (`json_*`, `value_*`, `union_*`,
