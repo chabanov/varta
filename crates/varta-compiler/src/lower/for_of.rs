@@ -101,6 +101,11 @@ impl Lower<'_> {
         // remain in TDZ; assignment heads do not introduce bindings.
         let value = self.expr(&statement.right)?;
         let value = self.headers_iteration(value)?;
+        // V37: a Map/Set iterates its live entries through a prelude
+        // generator; a Uint8Array and a tuple iterate their dense storage.
+        let (value, dense) = self.collection_iteration(value)?;
+        let dense = dense || matches!(value.ty, Type::Tuple(_));
+        let value = self.physical_array(value)?;
         if self.types.profile.refinement_writes() {
             self.flow_for_of_effects(statement);
         }
@@ -117,7 +122,8 @@ impl Lower<'_> {
             return Err(invalid("missing for-of array type"));
         };
         let element = self.types.arrays[id as usize];
-        let item = if self.types.profile.sparse_arrays() {
+        let sparse = self.types.profile.sparse_arrays() && !dense;
+        let item = if sparse {
             unions::intern(vec![element, Type::Undefined], self.types)?
         } else {
             element
@@ -129,7 +135,7 @@ impl Lower<'_> {
         let read = Expr {
             span: statement.right.span(),
             ty: item,
-            kind: if self.types.profile.sparse_arrays() {
+            kind: if sparse {
                 E::MaybeIndex(
                     Box::new(local(statement.span, source, array)),
                     Box::new(local(statement.span, index, Type::Float64)),

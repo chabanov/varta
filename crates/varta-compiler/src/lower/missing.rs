@@ -235,6 +235,8 @@ impl Lower<'_> {
                 ))
             && !(self.types.profile.promise_values() && matches!(element, Type::Promise(_)))
             && !(self.types.profile.function_fields() && matches!(element, Type::Function(_)))
+            && !(self.types.profile.collections()
+                && matches!(element, Type::Tuple(_) | Type::Collection(..)))
         {
             return Err(unsupported(
                 "nullable reads of object/array elements require reference unions",

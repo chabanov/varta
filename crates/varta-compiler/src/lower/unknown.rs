@@ -78,6 +78,18 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     if value.ty == Type::Unknown {
         return Ok(value);
     }
+    if collections::reaches(value.ty, types) {
+        return Err(collections::opaque("conversion to unknown"));
+    }
+    // A tuple (v37) is an ordinary array to every dynamic reader.
+    let value = match value.ty {
+        Type::Tuple(id) => Expr {
+            span: value.span,
+            ty: types.tuples[id as usize].array,
+            kind: E::Reinterpret(Box::new(value)),
+        },
+        _ => value,
+    };
     if matches!(value.ty, Type::Promise(_)) && !types.profile.promise_values() {
         return Err(type_error(
             "promise value is not assignable to unknown; promises carry no value tag, \

@@ -379,6 +379,15 @@ impl Lower<'_> {
                     &assign.right,
                 )?));
             }
+            if matches!(base.ty, Type::Collection(ir::CollectionKind::Uint8Array, _)) {
+                return Ok(S::Expr(self.bytes_write(member, base, &assign.right)?));
+            }
+            if let Type::Tuple(_) | Type::Collection(..) = base.ty {
+                return Err(unsupported(&format!(
+                    "assignment to a {} element or property",
+                    base.ty
+                )));
+            }
             if self.types.profile.closures()
                 && let Type::Record(shape) = base.ty
                 && let ast::MemberProp::Computed(key) = &member.prop

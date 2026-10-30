@@ -342,6 +342,20 @@ impl<'a> Collected<'a> {
                     self.expression(arg, source);
                 }
             }
+            E::Intrinsic(op, args) => {
+                match op {
+                    ir::Intrinsic::CodeUnit => {
+                        self.helpers.insert(strings::Helper::CodeUnit);
+                    }
+                    ir::Intrinsic::FromUnits => {
+                        self.helpers.insert(strings::Helper::FromUnits);
+                    }
+                    ir::Intrinsic::Identity => {}
+                }
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
             E::Call(_, args) | E::NumberPredicate(_, args) => {
                 for arg in args {
                     self.expression(arg, source);

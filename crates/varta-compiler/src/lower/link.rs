@@ -23,6 +23,10 @@ pub(crate) fn lower(
     let mut type_exports: BTreeMap<PathBuf, named::Exports> = BTreeMap::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
+        let prelude = crate::modules::engine::prelude(path);
+        if let Some(prelude) = prelude {
+            engine::register(prelude, module, &mut types);
+        }
         if profile.named_types() {
             named::enter(&mut types, module);
             let exports = named::link_module(graph, path, module, &type_exports, &mut types)?;
@@ -96,6 +100,9 @@ pub(crate) fn lower(
         }
         if profile.classes() {
             classes::layout_module(module, &symbols, &mut types, &mut next)?;
+        }
+        if let Some(prelude) = prelude {
+            engine::register_functions(prelude, &symbols, &mut types);
         }
         definitions.insert(path.clone(), symbols);
     }

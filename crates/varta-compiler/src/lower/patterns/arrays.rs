@@ -39,6 +39,10 @@ impl Lower<'_> {
     ) -> Result<Vec<S>> {
         let span = pattern.span;
         let (source, ty, mut roots, mut body) = self.pattern_source(value, true)?;
+        if let Type::Tuple(_) = ty {
+            body.extend(self.tuple_binding_pattern(pattern, local(span, source, ty), mode)?);
+            return Ok(vec![S::Scope(roots, body)]);
+        }
         let Type::Array(id) = ty else {
             return Err(invalid("missing array pattern type"));
         };
@@ -256,5 +260,61 @@ impl Lower<'_> {
             vec![append],
         ));
         Ok((local(span, output, output_ty), body, vec![output]))
+    }
+    /// `[a, b] = tuple` (v37): each position binds its own element type; a
+    /// rest element binds the remaining elements as the physical array.
+    fn tuple_binding_pattern(
+        &mut self,
+        pattern: &ast::ArrayPat,
+        tuple: Expr,
+        mode: Mode,
+    ) -> Result<Vec<S>> {
+        let Type::Tuple(id) = tuple.ty else {
+            return Err(invalid("missing tuple pattern type"));
+        };
+        let length = self.types.tuples[id as usize].elements.len();
+        let mut body = Vec::new();
+        for (index, entry) in pattern.elems.iter().enumerate() {
+            let Some(entry) = entry else {
+                continue;
+            };
+            if let ast::Pat::Rest(_) = entry {
+                return Err(self
+                    .source
+                    .locate(unsupported("rest element in a tuple pattern"), pattern.span));
+            }
+            if index >= length {
+                return Err(self.source.locate(
+                    type_error(format!(
+                        "tuple pattern position {index} is out of range for a tuple of length {length}"
+                    )),
+                    entry.span(),
+                ));
+            }
+            let value = self.tuple_element(
+                Expr {
+                    span: tuple.span,
+                    ty: tuple.ty,
+                    kind: match tuple.kind {
+                        E::Local(slot) => E::Local(slot),
+                        _ => return Err(invalid("tuple pattern source must be a local")),
+                    },
+                },
+                index,
+            )?;
+            if mode == Mode::Assign
+                && let Some(target) = self.prepare_pattern_target(entry)?
+            {
+                let default = if let ast::Pat::Assign(assign) = entry {
+                    Some(&*assign.right)
+                } else {
+                    None
+                };
+                body.extend(self.finish_pattern_target(target, value, default, vec![])?);
+            } else {
+                body.extend(self.binding_pattern(entry, value, None, None, mode)?);
+            }
+        }
+        Ok(body)
     }
 }

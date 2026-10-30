@@ -644,16 +644,17 @@ network request capability. V37 inherits every v36 feature with value
 ABI/layout 17 and declares its own host ABI 33 (`abi::NET_REQUEST_VERSION`),
 under which every host import of the batch is added; a v37 module relabelled
 as v36 fails at its host ABI section, and runtimes that do not list v37 reject
-its declared profile name. The collections stream owns any value-layout bump
-(value 18) and lands it as an early foundation commit
+its declared profile name. The collections stream owned any value-layout bump
+and needed none, so v37 keeps value layout 17
 ([contract](architecture.md#checked-f64-utf16-v37--pilot-batch-language-core-class-generics-collections-and-binary-text-regexp-and-netrequest)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; `collections()` admits its stream and the others
+admit nothing yet.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `language_core()` | Language core: TDZ-safe closure capture before declaration, deferred `let x: T;` initialization, dense `for…of` typing, property-path narrowing, `switch` on strings, function assignability fixes | M3, M4 | Registered, admits nothing |
 | `class_generics()` | Classes: generic methods and classes, interface method signatures, `implements`, `#private` | M4, M5 | Registered, admits nothing |
-| `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owns any value18 bump) | M4, M6 | Registered, admits nothing |
+| `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owned the value-layout bump; needed none) | M4, M6 | Implemented ([contract](architecture.md#collections-and-binary-text-collections)): `Map`/`Set` with hashed lookup and live iteration, tuples (and `Object.entries` pairs), `padStart`/`padEnd`/`split`/case mapping/`join`/`fromCharCode`/`fromCodePoint`, `Uint8Array`, UTF-8 `TextEncoder`/`TextDecoder` with streaming, `btoa`/`atob`, `crypto.getRandomValues`/`randomUUID`, UTC `Date` with ISO/IMF parsing and the `time.now`-gated clock (host ABI 33 imports `string_to_upper_case16`, `string_to_lower_case16`, `date_now`). Private storage (no value tag): logging, JSON and `unknown` reject these values; `subarray`, `ArrayBuffer`, union keys and `globalThis.crypto` open |
 | `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Registered, admits nothing |
 | `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Registered, admits nothing |
 

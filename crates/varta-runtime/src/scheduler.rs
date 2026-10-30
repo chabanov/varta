@@ -415,6 +415,11 @@ pub(crate) fn typed(error: RuntimeError) -> RuntimeError {
         Ok(error) => return RuntimeError::Scheduler(error),
         Err(source) => source,
     };
+    let source = match source.downcast::<varta_common::VartaError>() {
+        // A fatal capability denial (v37 `date_now`).
+        Ok(error) => return RuntimeError::Policy(error),
+        Err(source) => source,
+    };
     match source.downcast::<varta_common::exceptions::UncaughtException>() {
         Ok(error) => RuntimeError::Uncaught(error),
         Err(source) => RuntimeError::Execution(source),

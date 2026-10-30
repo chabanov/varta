@@ -183,6 +183,14 @@ pub enum HostOperation {
     JsonParseV5,
     StringCharAt16,
     StringCharCodeAt16,
+    /// V37 (`collections`) default Unicode case conversion of a UTF-16
+    /// string (`String.prototype.toUpperCase`/`toLowerCase`), lone
+    /// surrogates kept; pure and capability-free.
+    StringToUpperCase16,
+    StringToLowerCase16,
+    /// V37 (`collections`) `Date.now()`: milliseconds since the Unix epoch as
+    /// binary64, under the exact `time.now` grant (a denial is fatal).
+    DateNow,
     LogFloatV2,
     LogFloat,
     FloatRemainder,
@@ -334,6 +342,8 @@ impl HostOperation {
                 | Self::NetGet16
                 | Self::JsonStringifyV5
                 | Self::StringCharAt16
+                | Self::StringToUpperCase16
+                | Self::StringToLowerCase16
                 | Self::EnvGet
                 | Self::FsRead
                 | Self::NetGet
@@ -550,6 +560,9 @@ impl HostOperation {
             Self::JsonParseV5 => "json_parse_v5",
             Self::StringCharAt16 => "string_char_at16",
             Self::StringCharCodeAt16 => "string_char_code_at16",
+            Self::DateNow => "date_now",
+            Self::StringToUpperCase16 => "string_to_upper_case16",
+            Self::StringToLowerCase16 => "string_to_lower_case16",
             Self::LogFloatV2 => "log_f64_v2",
             Self::LogFloat => "log_f64",
             Self::FloatRemainder => "number_remainder",
@@ -612,6 +625,11 @@ impl HostOperation {
                 | Self::PromiseHandled
         )
     }
+    /// The v37 (`collections`) Unicode case conversions.
+    #[must_use]
+    pub fn text_case(self) -> bool {
+        matches!(self, Self::StringToUpperCase16 | Self::StringToLowerCase16)
+    }
     /// The v36 timer operations. Only `timer_start` takes a capability
     /// (`time.timer`) and is charged to the host-call budget; the others are
     /// scheduler bookkeeping like [`Self::scheduler`].
@@ -628,6 +646,9 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if self.text_case() || self == Self::DateNow {
+            return crate::abi::NET_REQUEST_VERSION;
+        }
         if self.value16_counterpart().is_some() || self.timer() {
             return crate::abi::TIMERS_VERSION;
         }
@@ -1084,6 +1105,8 @@ impl HostOperation {
             Self::HttpStop | Self::HttpService => (&[], &[]),
             Self::StringCharAt16 => (&[I32, I32, F64], &[I32]),
             Self::StringCharCodeAt16 => (&[I32, I32, F64], &[F64]),
+            Self::StringToUpperCase16 | Self::StringToLowerCase16 => (&[I32, I32], &[I32]),
+            Self::DateNow => (&[], &[F64]),
             Self::EnvHas16
             | Self::EnvGet16
             | Self::FsRead16
@@ -1266,6 +1289,9 @@ impl HostOperation {
             "json_parse_v5" => Self::JsonParseV5,
             "string_char_at16" => Self::StringCharAt16,
             "string_char_code_at16" => Self::StringCharCodeAt16,
+            "date_now" => Self::DateNow,
+            "string_to_upper_case16" => Self::StringToUpperCase16,
+            "string_to_lower_case16" => Self::StringToLowerCase16,
             "log_f64_v2" => Self::LogFloatV2,
             "log_f64" => Self::LogFloat,
             "number_remainder" => Self::FloatRemainder,
@@ -1467,6 +1493,8 @@ impl HostOperation {
             | Self::JsonParseV5
             | Self::StringCharAt16
             | Self::StringCharCodeAt16
+            | Self::StringToUpperCase16
+            | Self::StringToLowerCase16
             | Self::LogInt
             | Self::LogFloatV2
             | Self::LogFloat
@@ -1502,7 +1530,7 @@ impl HostOperation {
             | Self::JsonParseV4
             | Self::LogUndefined
             | Self::HttpService => return None,
-            Self::Time => "time.now",
+            Self::Time | Self::DateNow => "time.now",
             Self::TimerStart => "time.timer",
             Self::EnvHas | Self::EnvHas16 => "env.has",
             Self::EnvGet | Self::EnvGet16 => "env.get",

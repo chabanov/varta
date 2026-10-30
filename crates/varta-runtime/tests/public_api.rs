@@ -4851,3 +4851,81 @@ fn public_engine_runs_v36_timers_across_modules_with_an_exact_grant() {
         "{frozen}"
     );
 }
+
+#[test]
+fn public_engine_shares_v37_collections_across_modules_without_naming_them() {
+    // The pilot's pagination and SSE shapes: one module owns a typed option
+    // record with a `Set<string>` and a `[string, number]` tuple; the entry
+    // module never names `Set`, `Map` or a tuple type, yet calls the set's
+    // methods, iterates it, destructures the tuple and joins lines. The
+    // engine preludes are not listed as program modules.
+    use varta_common::language::LanguageProfile;
+    struct CollectionSources;
+    impl ModuleLoader for CollectionSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./options.ts" => Ok("options.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("options.ts") => Ok(
+                    "export interface StreamOptions{terminal:Set<string>;retry:[string,number];}\
+                     export function options():StreamOptions{\
+                     return{terminal:new Set(['done','error']),retry:['backoff',250]};}"
+                        .into(),
+                ),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {options} from './options.ts';\
+                       export function main():void{\
+                       const o=options();\
+                       const seen:string[]=[];\
+                       for(const name of o.terminal)seen.push(name.toUpperCase());\
+                       const [label,delay]=o.retry;\
+                       const bytes=new TextEncoder().encode('é');\
+                       console.log(`${o.terminal.has('done')} ${o.terminal.has('x')} ${o.terminal.size}`);\
+                       console.log(`${seen.join('|')} ${label.padEnd(8,'.')}${delay} ${bytes.length}`);}"
+                    .into(),
+            },
+            &CollectionSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    let modules: Vec<_> = compiled
+        .modules
+        .iter()
+        .map(|module| (module.path.clone(), module.imports.clone()))
+        .collect();
+    assert_eq!(
+        modules,
+        [
+            (PathBuf::from("options.ts"), vec![]),
+            (PathBuf::from("entry.ts"), vec![PathBuf::from("options.ts")]),
+        ]
+    );
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: true false 2",
+            "varta log: DONE|ERROR backoff.250 2"
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("Set"), "{frozen}");
+}

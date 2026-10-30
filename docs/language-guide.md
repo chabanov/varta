@@ -4742,3 +4742,66 @@ generator's values (and its `return()` and `throw()`). Not supported yet:
 `yield*` over arrays or synchronous generators, async generator function
 expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
 `await` inside an intrinsic call or template (bind it to a `const` first). `for await` costs a few microtasks per value, like Node.
+
+### `checked-f64-utf16-v37`
+
+Profile v37 (in development) runs every v36 program unchanged. Its streams
+are listed in the [development plan](development-plan.md#pilot-batch-v37-in-development);
+the collections stream below is the first to admit features.
+
+#### Collections and binary text (opt-in v37)
+
+`Map`, `Set`, tuples, `Uint8Array`, the UTF-8 text codecs, `btoa`/`atob`,
+`crypto.getRandomValues`/`crypto.randomUUID`, a UTC `Date` subset and the
+string built-ins below work like in Node:
+
+```ts
+interface StreamOptions {
+  terminalEvents?: Set<string>;
+}
+const RETRYABLE = new Set([408, 429, 503]);
+
+function split(line: string): [string, string] {
+  const at = line.indexOf(":");
+  return [line.slice(0, at), line.slice(at + 1).trim()];
+}
+
+export function main(): void {
+  const options: StreamOptions = {};
+  const terminal = options.terminalEvents ?? new Set();   // Set<string>
+  terminal.add("done").add("error");
+  console.log(`${terminal.has("done")} ${terminal.size} ${RETRYABLE.has(429)}`); // true 2 true
+
+  const counts = new Map<string, number>();
+  "a b a".split(" ").forEach((word) => counts.set(word, (counts.get(word) ?? 0) + 1));
+  for (const [word, count] of counts) console.log(`${word}=${count}`);          // a=2, b=1
+
+  const [field, value] = split("event: done");
+  console.log(`${field.toUpperCase()} ${value.padStart(6, ".")}`);              // EVENT ..done
+
+  const bytes = new TextEncoder().encode("é");
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  console.log(`${hex} ${new TextDecoder().decode(bytes)} ${btoa("hi")}`);      // c3a9 é aGk=
+  console.log(crypto.randomUUID().length);                                      // 36
+  console.log(new Date(Date.parse("2024-03-05T06:07:08Z")).toISOString());      // 2024-03-05T06:07:08.000Z
+}
+```
+
+Maps and sets keep insertion order and iterate live (entries added during a
+loop are visited, deleted ones are skipped). Keys are strings, numbers,
+booleans, bigints or objects (by identity); a union key type is not supported
+yet. A tuple such as `[string, number]` needs an annotation or a declared
+return type; `Object.entries` returns tuples, so
+`for (const [key, value] of Object.entries(record))` types both names. The
+string built-ins are `padStart`, `padEnd`, `toUpperCase`, `toLowerCase`,
+`split` with a string separator, `concat`, `codePointAt`,
+`String.fromCharCode`, `String.fromCodePoint` and `Array.prototype.join`.
+
+A map, a set, a `Uint8Array`, a `TextEncoder`/`TextDecoder` or a `Date` cannot
+be logged, passed to `JSON.stringify` or stored in `unknown` yet (log
+`[...set]` or `date.toISOString()` instead). A collection holds at most 1024
+entries and a `Uint8Array` at most 1024 bytes. `Date.now()` and `new Date()`
+read the clock and need the `time.now` capability; `Date.parse` accepts ISO
+8601 and HTTP dates (other text gives `NaN`), and only the UTC accessors
+exist. `subarray`, `ArrayBuffer`, `globalThis.crypto` and the RegExp forms of
+`split` are not supported yet.

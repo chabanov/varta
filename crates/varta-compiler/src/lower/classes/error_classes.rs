@@ -74,6 +74,7 @@ pub(in crate::lower) fn root(
         initializers: Vec::new(),
         state: State::Ready,
         prelude: false,
+        opaque: false,
     });
     types.classes.error_roots.insert(family, id);
     let (fields, mut init) = match parent {

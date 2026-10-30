@@ -101,9 +101,28 @@ pub(super) fn link_module(
     let (generated, next, call_effects) = synthesized;
     let source = &unit.source;
     let declared = declarations(&unit.ast);
-    check(source, functions, &scope, &declared)?;
+    check(
+        source,
+        functions,
+        &scope,
+        &declared,
+        types.profile.collections(),
+    )?;
     for chunk in chunks(&declared) {
         let index = *next;
+        // A collection constructor (v37) calls prelude functions whose
+        // instantiations take function slots while the chunk is lowered, so
+        // the initializer reserves its own slot first.
+        let reserved = types.profile.collections() && constructs_collection(chunk);
+        if reserved {
+            if index >= varta_common::abi::MAX_USER_FUNCTIONS {
+                return Err(source.locate(
+                    invalid("too many functions including module initializers"),
+                    chunk[0].span,
+                ));
+            }
+            *next += 1;
+        }
         let mut lower = Lower {
             source,
             types,
@@ -173,7 +192,11 @@ pub(super) fn link_module(
                 .collect(),
             body,
         };
-        if stored {
+        if reserved {
+            // Every collection is a stored reference constant.
+            generated.insert(index, function);
+            linked.initializers.push(index);
+        } else if stored {
             if index >= varta_common::abi::MAX_USER_FUNCTIONS {
                 return Err(source.locate(
                     invalid("too many functions including module initializers"),
@@ -188,6 +211,24 @@ pub(super) fn link_module(
     }
     linked.scopes.insert(path.clone(), scope);
     Ok(())
+}
+
+/// Whether a chunk's initializers construct a `Map` or `Set` (v37).
+fn constructs_collection(chunk: &[Declared<'_>]) -> bool {
+    use swc_ecma_visit::{Visit, VisitWith};
+    #[derive(Default)]
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_new_expr(&mut self, new: &ast::NewExpr) {
+            self.0 |= matches!(stmt::unparen(&new.callee), ast::Expr::Ident(id) if matches!(id.sym.as_ref(), "Set" | "Map"));
+            new.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder::default();
+    for var in chunk {
+        var.visit_with(&mut finder);
+    }
+    finder.0
 }
 
 /// Conservative upper estimate of emitted code per initializer weight unit
@@ -235,6 +276,7 @@ fn check(
     functions: &BTreeMap<String, Signature>,
     imported: &Scope,
     declared: &[Declared<'_>],
+    collections: bool,
 ) -> Result<()> {
     let mut names: BTreeSet<String> = imported.keys().cloned().collect();
     for var in declared {
@@ -273,7 +315,8 @@ fn check(
                 ast::Expr::TsConstAssertion(assertion) => &assertion.expr,
                 _ => init,
             };
-            initializer_form(value, &names).map_err(|e| source.locate(e, value.span()))?;
+            initializer_form(value, &names, collections)
+                .map_err(|e| source.locate(e, value.span()))?;
             if let Some(early) = referenced(value)
                 .into_iter()
                 .find(|name| names.contains(name) && !ready.contains(name))
@@ -290,8 +333,23 @@ fn check(
 }
 
 /// Why an initializer leaves the admitted pure subset, naming the construct.
-fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
+fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>, collections: bool) -> Result<()> {
     let form = match expr {
+        // `new Set([...])`/`new Map([...])` of admitted values (v37): the
+        // constructor only builds the new collection.
+        ast::Expr::New(new)
+            if collections
+                && matches!(stmt::unparen(&new.callee), ast::Expr::Ident(id)
+                    if matches!(id.sym.as_ref(), "Set" | "Map") && !names.contains(id.sym.as_ref())) =>
+        {
+            for argument in new.args.iter().flatten() {
+                if argument.spread.is_some() {
+                    return Err(unsupported("spread in a module constant initializer"));
+                }
+                initializer_form(&argument.expr, names, collections)?;
+            }
+            return Ok(());
+        }
         ast::Expr::Lit(
             ast::Lit::Str(_)
             | ast::Lit::Num(_)
@@ -308,7 +366,7 @@ fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
                 "reference to {name} in a module constant initializer; only module constants are admitted"
             )));
         }
-        ast::Expr::Paren(paren) => return initializer_form(&paren.expr, names),
+        ast::Expr::Paren(paren) => return initializer_form(&paren.expr, names, collections),
         ast::Expr::Unary(unary)
             if matches!(unary.op, ast::UnaryOp::Minus | ast::UnaryOp::Plus)
                 && matches!(
@@ -319,14 +377,14 @@ fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
             return Ok(());
         }
         ast::Expr::Bin(binary) if binary.op == ast::BinaryOp::Add => {
-            initializer_form(&binary.left, names)?;
-            return initializer_form(&binary.right, names);
+            initializer_form(&binary.left, names, collections)?;
+            return initializer_form(&binary.right, names, collections);
         }
         ast::Expr::Array(array) => {
             for element in &array.elems {
                 match element {
                     Some(ast::ExprOrSpread { spread: None, expr }) => {
-                        initializer_form(expr, names)?
+                        initializer_form(expr, names, collections)?
                     }
                     Some(_) => return Err(unsupported("spread in a module constant initializer")),
                     None => return Err(unsupported("array hole in a module constant initializer")),
@@ -344,10 +402,10 @@ fn initializer_form(expr: &ast::Expr, names: &BTreeSet<String>) -> Result<()> {
                                 ast::PropName::Ident(_) | ast::PropName::Str(_)
                             ) =>
                         {
-                            initializer_form(&pair.value, names)?
+                            initializer_form(&pair.value, names, collections)?
                         }
                         ast::Prop::Shorthand(id) => {
-                            initializer_form(&ast::Expr::Ident(id.clone()), names)?
+                            initializer_form(&ast::Expr::Ident(id.clone()), names, collections)?
                         }
                         _ => {
                             return Err(unsupported(

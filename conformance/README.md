@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 62 feature rows and 110 cases:
-101 pass, 9 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 64 feature rows and 113 cases:
+101 pass, 12 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -262,3 +262,11 @@ their pinned hashes and expected output, which matches Node.js v24.20.0 type
 stripping, and were promoted. The timer case was observed as a denied runtime
 failure without a grant, and passes with its reviewed grant. Earlier-profile
 rejections stay covered by the compiler/runtime/CLI regression tests.
+
+The v37 collections review added tuple, string built-in and UTF-8 text gap cases
+(`tuple-destructuring.ts`, `string-split-pad-join.ts`, `text-encoder-roundtrip.ts`)
+with the `tuples` and `string-builtins` feature rows. They and the earlier Map, Set,
+Uint8Array and Date gap cases run with exactly their pinned output under
+checked-f64-utf16-v37 (checked against local Node.js v24.20.0), but stay known
+gaps while the inventory is pinned to checked-f64-utf16-v36; moving the pin
+promotes them after the usual unexpected-support review.

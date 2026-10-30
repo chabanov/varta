@@ -668,3 +668,57 @@ export function main():void{
         assert!(runtime.run_wasm_bytes(&changed, &grants).is_err());
     }
 }
+
+/// The v37 `collections` host imports (Unicode case conversion and the
+/// `time.now` clock) have minimum host ABI 33: a module that imports one is
+/// rejected under any older host ABI before instantiation, and a v37 module
+/// relabelled as v36 fails before any guest effect.
+#[test]
+fn collection_host_imports_require_host_abi_33() {
+    use varta_common::HostOperation;
+    use varta_common::language::{LanguageContract, SCHEMA_VERSION};
+    let source = r#"
+export function main(): void {
+  console.log("é".toUpperCase() + "Ä".toLowerCase());
+  console.log(String(Date.now() > 0));
+}
+"#;
+    let v37 = LanguageProfile::CheckedF64Utf16V37;
+    let bytes = varta_compiler::compile_typescript_with_profile(source, v37).unwrap();
+    let module = wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    let imports: Vec<&str> = module.imports().map(|import| import.name()).collect();
+    for operation in [
+        HostOperation::StringToUpperCase16,
+        HostOperation::StringToLowerCase16,
+        HostOperation::DateNow,
+    ] {
+        assert!(imports.contains(&operation.name()), "{imports:?}");
+        assert_eq!(operation.minimum_abi(), abi::NET_REQUEST_VERSION);
+        assert_eq!(v37.host_operation(operation), operation);
+    }
+    assert_eq!(HostOperation::DateNow.capability(), Some("time.now"));
+    assert_eq!(HostOperation::StringToUpperCase16.capability(), None);
+    let runtime = VartaRuntime::new();
+    let grants = [varta_common::CapabilityGrant {
+        id: "time.now".into(),
+        value: varta_common::CapabilityValue::Boolean(true),
+    }];
+    assert_eq!(
+        runtime.run_wasm_bytes(&bytes, &grants).unwrap().lines,
+        ["varta log: Éä", "varta log: true"]
+    );
+    let v36 = LanguageContract {
+        schema_version: SCHEMA_VERSION,
+        profile: LanguageProfile::CheckedF64Utf16V36,
+    }
+    .to_bytes()
+    .unwrap();
+    for changed in [
+        replace(&bytes, &v36),
+        host_abi(&replace(&bytes, &v36), Some(abi::TIMERS_VERSION)),
+        host_abi(&bytes, Some(abi::TIMERS_VERSION)),
+    ] {
+        assert!(runtime.validate_module(&changed).is_err());
+        assert!(runtime.run_wasm_bytes(&changed, &grants).is_err());
+    }
+}

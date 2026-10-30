@@ -99,6 +99,9 @@ pub(super) struct Class {
     state: State,
     /// Declared by an engine prelude module (v35 Web types).
     pub prelude: bool,
+    /// Declared by a v37 builtin prelude (`collections`): its instances never
+    /// enter `unknown`, so they never reach a host value reader through it.
+    pub opaque: bool,
 }
 
 /// The class whose member bodies are being lowered; `init` is the function
@@ -148,9 +151,10 @@ impl Classes {
             .position(|class| class.prelude && class.name == name)
             .map(|id| id as u32)
     }
-    /// Whether the program loaded any engine prelude class.
+    /// Whether the program loaded any engine prelude class that may enter
+    /// `unknown` (v37 builtin classes never do).
     pub(super) fn has_prelude(&self) -> bool {
-        self.list.iter().any(|class| class.prelude)
+        self.list.iter().any(|class| class.prelude && !class.opaque)
     }
     /// The explanation for a member of an engine prelude class (or of a
     /// subclass) that the profile names but does not implement.
@@ -409,6 +413,7 @@ pub(super) fn register(
         initializers: Vec::new(),
         state: State::Pending,
         prelude: crate::modules::engine::is_prelude_source(source),
+        opaque: crate::modules::engine::is_builtin_source(source),
     });
     Ok(Some((name, id)))
 }
