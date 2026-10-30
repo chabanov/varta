@@ -18,7 +18,11 @@
 //! survives a call: the arena is reset on every entry, and a nested entry
 //! traps.
 #[cfg(target_arch = "wasm32")]
+extern crate alloc;
+#[cfg(target_arch = "wasm32")]
 mod arena;
+#[cfg(target_arch = "wasm32")]
+mod bigint;
 #[cfg(target_arch = "wasm32")]
 mod exports;
 #[cfg(target_arch = "wasm32")]

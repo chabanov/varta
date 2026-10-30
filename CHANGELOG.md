@@ -11,6 +11,17 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 links every BigInt operation: a v38 host implements 54 imports instead
+  of 67. `varta-bigint` builds without `std`, and the BigInt operations, the
+  value13+ primitive conversions and the abstract comparisons are
+  `varta_intrinsics::bigint`, which the v28–v37 host imports now call too.
+  Operations with two i32 results are exported packed in one i64 and
+  unpacked by a linker-synthesized adapter. The value17 conversions and
+  comparisons stay host imports (linked, they cost far more fuel on string
+  concatenation and union comparisons), as do JSON and the value17 readers.
+  The intrinsic region gains a 32 KiB reserved arena, so small linked calls
+  need no memory growth when the guest heap fills the memory budget.
+
 - `varta-common` is the one owner of the value layout: a default `std`
   feature, and without it a `no_std` + `alloc` core (`abi`, `memory`, the
   `value` constants and primitive-cell reader, the `limits` constants,

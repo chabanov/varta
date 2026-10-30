@@ -69,9 +69,7 @@ pub const ERROR_CLASS_SHIFT: u32 = 1;
 pub const ERROR_OWN_MESSAGE: u32 = 1;
 pub const HEAP_ERROR_FLAG: i32 = 64;
 pub const ERROR_BYTES: usize = 16;
-#[cfg(feature = "std")]
 mod error;
-#[cfg(feature = "std")]
 pub use error::{ErrorClass, ErrorObject};
 /// Value15 dictionaries (v34 `index_signatures`): a dynamic-key record is a
 /// two-slot record block whose canonical slots hold its key vector (`keys`,

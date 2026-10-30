@@ -14,5 +14,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 varta-intrinsics = { path = "../varta-intrinsics" }
+varta-bigint = { path = "../varta-bigint" }
 # The value-layout core (result buffer, page size, v38 data limits).
 varta-common = { path = "../varta-common", default-features = false }

@@ -14,6 +14,7 @@
 //! `varta-common`, whose `no_std` core this crate builds against.
 extern crate alloc;
 
+pub mod bigint;
 pub mod error;
 pub mod format;
 pub mod math;

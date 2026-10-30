@@ -135,16 +135,23 @@ enum Accessor {
     MemoryWrite,
     /// `(len)`: set the guest's exported `env_result_len`.
     ResultLen,
-    /// `() -> i32`: the guest heap's end, where the per-call arena starts.
+    /// `() -> i32`: the guest heap's end, where the per-call arena continues
+    /// once the reserved arena is full.
     ArenaBase,
+    /// `() -> i32`: start of the reserved arena in the intrinsic region.
+    ArenaReserved,
+    /// `() -> i32`: end of the reserved arena.
+    ArenaReservedEnd,
 }
-/// What the accessors read from the guest module.
+/// What the accessors read from the guest module and its placement.
 #[derive(Debug, Clone, Copy)]
 struct AccessorTargets {
     result_len: Option<u32>,
     /// The guest allocator's heap-end global, when the module has a heap.
     heap: Option<u32>,
     heap_base: usize,
+    arena: usize,
+    arena_end: usize,
 }
 impl Accessor {
     fn from_name(name: &str) -> Option<Self> {
@@ -153,6 +160,8 @@ impl Accessor {
             "memory_write" => Self::MemoryWrite,
             "result_len" => Self::ResultLen,
             "arena_base" => Self::ArenaBase,
+            "arena_reserved" => Self::ArenaReserved,
+            "arena_reserved_end" => Self::ArenaReservedEnd,
             _ => return None,
         })
     }
@@ -161,7 +170,7 @@ impl Accessor {
         match self {
             Self::MemoryRead | Self::MemoryWrite => (&[I32, I32, I32], &[]),
             Self::ResultLen => (&[I32], &[]),
-            Self::ArenaBase => (&[], &[I32]),
+            Self::ArenaBase | Self::ArenaReserved | Self::ArenaReservedEnd => (&[], &[I32]),
         }
     }
     fn body(self, targets: AccessorTargets) -> Result<encoder::Function, String> {
@@ -192,6 +201,16 @@ impl Accessor {
                         i32::try_from(targets.heap_base).map_err(|e| e.to_string())?,
                     )),
                 };
+            }
+            Self::ArenaReserved | Self::ArenaReservedEnd => {
+                let address = if matches!(self, Self::ArenaReserved) {
+                    targets.arena
+                } else {
+                    targets.arena_end
+                };
+                function.instruction(&I::I32Const(
+                    i32::try_from(address).map_err(|e| e.to_string())?,
+                ));
             }
         }
         function.instruction(&I::End);
@@ -451,13 +470,14 @@ fn roots(
                 operation.name()
             )
         })?;
-        let (params, results) = operation.scalar_signature();
-        let expected = FuncType::new(params.iter().map(scalar), results.iter().map(scalar));
+        let expected = registry_signature(operation);
         let declared = match guest.imports[import as usize].ty {
             TypeRef::Func(ty) => guest.types.get(ty as usize),
             _ => None,
         };
-        if library.signature(export) != Some(&expected) || declared != Some(&expected) {
+        if library.signature(export) != Some(&export_signature(operation))
+            || declared != Some(&expected)
+        {
             return Err(format!(
                 "linked operation {} has a mismatched signature",
                 operation.name()
@@ -466,6 +486,63 @@ fn roots(
         roots.insert(import, export);
     }
     Ok(roots)
+}
+
+/// The registry signature of `operation`, as the guest imports it.
+fn registry_signature(operation: HostOperation) -> FuncType {
+    let (params, results) = operation.scalar_signature();
+    FuncType::new(params.iter().map(scalar), results.iter().map(scalar))
+}
+/// Whether `operation` returns two i32 values, which its library export
+/// packs into one i64 (stable Rust has no multi-value C ABI).
+pub(super) fn packed_pair(operation: HostOperation) -> bool {
+    operation.scalar_signature().1 == [HostScalar::I32, HostScalar::I32]
+}
+/// The signature of `operation`'s library export: the registry signature,
+/// with a packed i64 for a pair of i32 results.
+pub(super) fn export_signature(operation: HostOperation) -> FuncType {
+    let (params, _) = operation.scalar_signature();
+    if packed_pair(operation) {
+        FuncType::new(params.iter().map(scalar), [ValType::I64])
+    } else {
+        registry_signature(operation)
+    }
+}
+
+/// A synthesized function of an operation's registry signature that calls
+/// its library export, which returns the two i32 results packed in one i64
+/// (low word first), and unpacks them.
+struct Adapter {
+    /// The guest function import it replaces.
+    import: u32,
+    /// Its merged function index.
+    index: u32,
+    operation: HostOperation,
+}
+impl Adapter {
+    fn body(&self, export: u32) -> encoder::Function {
+        use encoder::Instruction as I;
+        let params = self.operation.scalar_signature().0.len() as u32;
+        // One i64 local after the parameters holds the packed pair.
+        let packed = params;
+        let mut function = encoder::Function::new([(1, encoder::ValType::I64)]);
+        for local in 0..params {
+            function.instruction(&I::LocalGet(local));
+        }
+        for instruction in [
+            I::Call(export),
+            I::LocalTee(packed),
+            I::I32WrapI64,
+            I::LocalGet(packed),
+            I::I64Const(i64::from(u32::BITS)),
+            I::I64ShrU,
+            I::I32WrapI64,
+            I::End,
+        ] {
+            function.instruction(&instruction);
+        }
+        function
+    }
 }
 
 /// Everything the merged module is written from (see the module index plan).
@@ -477,6 +554,7 @@ struct Plan<'a> {
     roots: BTreeMap<u32, u32>,
     closure: Closure,
     placement: Placement,
+    adapters: Vec<Adapter>,
     targets: AccessorTargets,
     /// Linked library functions and accessors, in output order.
     defined: Vec<u32>,
@@ -532,33 +610,52 @@ impl<'a> Plan<'a> {
             .enumerate()
             .map(|(offset, &index)| (index, base + offset as u32))
             .collect();
-        // The checked stack-pointer setter follows the accessors.
+        // The checked stack-pointer setter follows the accessors, and the
+        // pair adapters follow it.
         let check = base + functions.len() as u32;
+        let linked_stack = closure.globals.contains(&library.stack_pointer);
+        let adapters: Vec<Adapter> = linked
+            .iter()
+            .filter(|(_, operation)| packed_pair(*operation))
+            .enumerate()
+            .map(|(offset, &(import, operation))| Adapter {
+                import,
+                index: check + u32::from(linked_stack) + offset as u32,
+                operation,
+            })
+            .collect();
         let mut next = 0;
         let imports = guest
             .function_imports()
-            .map(|(index, _)| match roots.get(&index) {
-                Some(export) => functions[export],
-                None => {
-                    next += 1;
-                    next - 1
+            .map(|(index, _)| {
+                match (
+                    roots.get(&index),
+                    adapters.iter().find(|a| a.import == index),
+                ) {
+                    (_, Some(adapter)) => adapter.index,
+                    (Some(export), None) => functions[export],
+                    (None, None) => {
+                        next += 1;
+                        next - 1
+                    }
                 }
             })
             .collect();
-        // Only the stack pointer is linked (`Library::closure`).
+        // Only the stack pointer and the zero bases are linked
+        // (`Library::closure`).
         let globals: BTreeMap<u32, u32> = closure
             .globals
             .iter()
             .enumerate()
             .map(|(offset, &index)| (index, guest.globals + offset as u32))
             .collect();
-        let stack = globals
-            .contains_key(&library.stack_pointer)
-            .then_some((library.stack_pointer, check));
+        let stack = linked_stack.then_some((library.stack_pointer, check));
         let targets = AccessorTargets {
             result_len: guest.result_len,
             heap,
             heap_base: guest.region.heap_base(),
+            arena: placement.arena,
+            arena_end: placement.arena_end(),
         };
         let mut plan = Self {
             guest,
@@ -567,6 +664,7 @@ impl<'a> Plan<'a> {
             roots,
             closure,
             placement,
+            adapters,
             targets,
             defined,
             accessors,
@@ -635,6 +733,15 @@ impl<'a> Plan<'a> {
         if self.library_indices.stack.is_some() {
             let setter = self.intern(FuncType::new([ValType::I32], []));
             self.function_types.push(setter);
+        }
+        for operation in self
+            .adapters
+            .iter()
+            .map(|a| a.operation)
+            .collect::<Vec<_>>()
+        {
+            let adapter = self.intern(registry_signature(operation));
+            self.function_types.push(adapter);
         }
         for index in self.defined.clone() {
             let body = &self.body(index)?;
@@ -846,6 +953,14 @@ impl<'a> Plan<'a> {
         if let Some((stack_pointer, _)) = self.library_indices.stack {
             let merged = self.library_indices.globals[&stack_pointer];
             section.function(&stack_check(self.placement.base, merged)?);
+        }
+        for adapter in &self.adapters {
+            let export = self
+                .roots
+                .get(&adapter.import)
+                .and_then(|export| self.library_indices.functions.get(export))
+                .ok_or("intrinsic library: unmapped pair adapter")?;
+            section.function(&adapter.body(*export));
         }
         module.section(&section);
         Ok(())

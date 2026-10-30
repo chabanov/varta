@@ -2225,6 +2225,7 @@ dependencies = [
  "num-bigint",
  "ryu-js",
  "thiserror",
+ "varta-bigint",
  "varta-common",
 ]
 
@@ -2232,6 +2233,7 @@ dependencies = [
 name = "varta-intrinsics-wasm"
 version = "0.1.0"
 dependencies = [
+ "varta-bigint",
  "varta-common",
  "varta-intrinsics",
 ]

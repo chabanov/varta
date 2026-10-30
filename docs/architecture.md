@@ -9836,11 +9836,28 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `number_remainder`, Number text (`number_to_string`, `number_to_fixed`,
   `number_to_exponential`, `number_to_precision`), `number_parse_int`,
   `number_parse_float`, the primitive-cell conversions `primitive_to_string`
-  and `primitive_to_number`, and the UTF-16 operations `string_char_at16`,
+  and `primitive_to_number`, the UTF-16 operations `string_char_at16`,
   `string_char_code_at16`, `string_to_upper_case16` and
-  `string_to_lower_case16`. The value-layout-bound operations (JSON, value17
-  readers and conversions, `primitive_compare`/`primitive_equal`, BigInt) stay
-  host imports until the value readers move into the shared library.
+  `string_to_lower_case16`, every BigInt operation (`bigint_binary`,
+  `bigint_unary`, `bigint_width`/`_v2`, `bigint_from_number`,
+  `bigint_from_string`, `bigint_from_value_v4`, `bigint_to_string`/`_v2`,
+  `bigint_to_number`, `bigint_compare`, `bigint_compare_number`,
+  `bigint_compare_string`). The BigInt family is `varta_intrinsics::bigint`
+  over `varta-bigint` (both `no_std`); the host imports of v28–v37 call the
+  same functions with a fuel-derived work budget and the frozen string
+  limits, linked code with fuel as its only work bound (the bit capacity
+  still applies). An operation whose registry signature returns two i32
+  values is exported returning one i64 (low word first) and the linker
+  synthesizes an adapter of the registry signature that unpacks it. Still
+  host imports (see [pending](embedding.md#linked-intrinsics-pending)): the
+  value17 primitive conversions `primitive_to_string_v5`/
+  `primitive_to_number_v5` and the comparisons `primitive_compare`/
+  `primitive_equal` (implemented by the same shared code, but on the string
+  concatenation and union comparison paths a linked call costs far more fuel
+  than the host call; linking them was measured and reverted), and
+  `json_parse_v18`, `json_stringify_owned` and the value17 readers
+  (`value_*_v10`, `value_is_error_class_v6`, `value_log_v11`), which read
+  layouts the `no_std` core does not hold yet.
 - **Linking.** After emission the compiler replaces each `varta.<name>` import
   of a linked operation by the library export of the same name, whose
   signature must equal `HostOperation::scalar_signature`, and appends exactly
@@ -9872,7 +9889,9 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   - from `base + abi::INTRINSIC_STACK_BYTES`: the data segments the linked
     functions reach, in library order, each at the next offset of its own
     `WASM_SEGMENT_INFO` alignment (zero-initialized `.bss` segments
-    included). Nothing else is placed there.
+    included);
+  - then, 16-byte aligned, the reserved arena of `abi::INTRINSIC_ARENA_BYTES`
+    that ends the region. Nothing else is placed there.
 - **Relocation.** The library is linked once, at its own placeholder
   addresses, with relocations kept (`--emit-relocs`, one data segment per
   input section). Linking moves each reached segment to its region address
@@ -9886,16 +9905,21 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   symbol table; the old value in the bytes must equal the library address the
   relocation names, or linking fails. No absolute address is assumed.
 - **Arena and accessors.** The per-call arena of an allocating export starts
-  at the guest heap's end (the allocator's bump pointer, read by the
-  synthesized `arena_base` accessor; the heap base for a module without a
-  managed heap) and grows memory 0 within its maximum and the memory budget.
+  in the region's reserved arena (committed with the region, so a call with
+  small scratch needs no memory growth, even when the guest heap fills the
+  memory budget). An allocation that no longer fits continues at the guest
+  heap's end (the allocator's bump pointer, read by the synthesized
+  `arena_base` accessor; the heap base for a module without a managed heap)
+  and grows memory 0 within its maximum and the memory budget, so a call with
+  large scratch near the budget traps where the host import would not.
   Linked code never calls the guest allocator or collector, so nothing else
   writes above the heap end during the call; afterwards the guest allocator
   uses those bytes as fresh heap space (it initializes every block it hands
   out, as it does for reused blocks). The library reaches guest values and
   the result globals only through synthesized accessors: bounds-checked
   `memory.copy` within memory 0 in each direction, setting the exported
-  `env_result_len`, and `arena_base`; string results are written at
+  `env_result_len`, `arena_base` and the reserved arena's bounds
+  (`arena_reserved`, `arena_reserved_end`); string results are written at
   `abi::RESULT_BASE` exactly as a host writes them. Each allocating export
   resets the arena on entry and traps on a nested entry, so no pointer or
   state survives a call; linked code never allocates in, roots or retains

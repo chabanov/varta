@@ -81,10 +81,12 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/lib.rs",
     "crates/varta-common/src/abi.rs",
     "crates/varta-common/src/abi/static_region.rs",
+    "crates/varta-common/src/bigint.rs",
     "crates/varta-common/src/limits.rs",
     "crates/varta-common/src/memory.rs",
     "crates/varta-common/src/text.rs",
     "crates/varta-common/src/value.rs",
+    "crates/varta-common/src/value/error.rs",
     "crates/varta-common/src/value/primitive.rs",
 ];
 
@@ -138,7 +140,11 @@ fn source_fingerprint() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let root = root.canonicalize().unwrap();
     let mut files = Vec::new();
-    for crate_dir in ["crates/varta-intrinsics", "crates/varta-intrinsics-wasm"] {
+    for crate_dir in [
+        "crates/varta-bigint",
+        "crates/varta-intrinsics",
+        "crates/varta-intrinsics-wasm",
+    ] {
         walk(&root.join(crate_dir), &root, &mut files);
     }
     // The `no_std` value-layout core of varta-common the library compiles
@@ -183,8 +189,18 @@ fn intrinsic_library_exports_every_linked_operation_with_its_signature() {
         };
         assert!(operation.linked(), "{name} is exported but not linked");
         let (params, results) = operation.scalar_signature();
-        let expected = FuncType::new(params.iter().map(scalar), results.iter().map(scalar));
+        // A pair of i32 results is exported packed into one i64.
+        let expected = if results == [HostScalar::I32, HostScalar::I32] {
+            FuncType::new(params.iter().map(scalar), [ValType::I64])
+        } else {
+            FuncType::new(params.iter().map(scalar), results.iter().map(scalar))
+        };
         assert_eq!(library.signature(index), Some(&expected), "{name}");
+        assert_eq!(
+            super::merge::export_signature(operation),
+            expected,
+            "{name}"
+        );
         assert!(operation.capability().is_none(), "{name} is privileged");
         count += 1;
     }

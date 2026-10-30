@@ -4,8 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# `no_std` + `alloc`: the host's BigInt imports and the v38 linked intrinsic
+# library (wasm32) share this arithmetic. Default features stay off; in a
+# workspace build the runtime's `std` features unify as before.
 [dependencies]
-varta-common = { path = "../varta-common" }
-num-bigint.workspace = true
-num-traits = "=0.2.19"
-thiserror.workspace = true
+varta-common = { path = "../varta-common", default-features = false }
+num-bigint = { version = "=0.4.8", default-features = false }
+num-traits = { version = "=0.2.19", default-features = false }
+thiserror = { version = "2.0", default-features = false }

@@ -159,13 +159,23 @@ pub(super) struct Placement {
     pub base: usize,
     /// Library segment -> its address in memory 0.
     pub addresses: BTreeMap<u32, usize>,
-    /// Bytes of the region the stack and data use.
+    /// Start of the reserved arena of `abi::INTRINSIC_ARENA_BYTES`.
+    pub arena: usize,
+    /// Bytes of the region the stack, data and reserved arena use.
     pub bytes: usize,
 }
+/// Alignment of the reserved arena's start: the largest a Rust allocation on
+/// wasm32 requests from the bump arena in practice; the arena aligns each
+/// allocation itself as well.
+const ARENA_ALIGNMENT: usize = 16;
 impl Placement {
     /// The initial (highest) stack pointer.
     pub(super) fn stack_top(&self) -> usize {
         self.base + abi::INTRINSIC_STACK_BYTES
+    }
+    /// The end of the reserved arena.
+    pub(super) fn arena_end(&self) -> usize {
+        self.arena + abi::INTRINSIC_ARENA_BYTES
     }
     /// Whole Wasm pages of the region.
     pub(super) fn pages(&self) -> Result<u32, String> {
@@ -516,10 +526,15 @@ impl Library {
                 })
                 .ok_or_else(|| invalid("intrinsic region exceeds the address space"))?;
         }
+        // The reserved arena follows the data, aligned for any allocation.
+        let arena = cursor
+            .checked_next_multiple_of(ARENA_ALIGNMENT)
+            .ok_or_else(|| invalid("intrinsic region exceeds the address space"))?;
         Ok(Placement {
             base,
             addresses,
-            bytes: cursor,
+            arena: base + arena,
+            bytes: arena + abi::INTRINSIC_ARENA_BYTES,
         })
     }
 
@@ -870,7 +885,9 @@ mod tests {
             assert!(address.is_multiple_of(segment.alignment));
             end = address + segment.data.len();
         }
-        assert_eq!(end, base + placement.bytes);
+        // The reserved arena follows the data and ends the region.
+        assert!(placement.arena >= end && placement.arena.is_multiple_of(ARENA_ALIGNMENT));
+        assert_eq!(placement.arena_end(), base + placement.bytes);
         // Every relocated body still parses, and its addresses moved.
         for &index in &closure.functions {
             if let Some(function) = library.defined(index) {

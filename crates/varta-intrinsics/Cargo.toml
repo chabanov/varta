@@ -12,6 +12,8 @@ license.workspace = true
 [dependencies]
 # The one owner of the value layout, as its `no_std` core (no `std` feature).
 varta-common = { path = "../varta-common", default-features = false }
+# Exact BigInt arithmetic (`no_std`), shared with the host imports.
+varta-bigint = { path = "../varta-bigint" }
 # Portable binary64 Math (already locked through Cranelift): bit-identical
 # results on every host, unlike the platform `f64` library.
 libm = "=0.2.16"

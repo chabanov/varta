@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SOURCES = ("crates/varta-intrinsics", "crates/varta-intrinsics-wasm")
+SOURCES = ("crates/varta-bigint", "crates/varta-intrinsics", "crates/varta-intrinsics-wasm")
 # The `varta-common` files of its `no_std` value-layout core, which the
 # library compiles (the compiler test `intrinsic_library_matches_its_sources`
 # lists the same files).
@@ -33,10 +33,12 @@ COMMON_CORE = (
     "crates/varta-common/src/lib.rs",
     "crates/varta-common/src/abi.rs",
     "crates/varta-common/src/abi/static_region.rs",
+    "crates/varta-common/src/bigint.rs",
     "crates/varta-common/src/limits.rs",
     "crates/varta-common/src/memory.rs",
     "crates/varta-common/src/text.rs",
     "crates/varta-common/src/value.rs",
+    "crates/varta-common/src/value/error.rs",
     "crates/varta-common/src/value/primitive.rs",
 )
 OUTPUT = ROOT / "crates/varta-compiler/src/link/intrinsics.wasm"

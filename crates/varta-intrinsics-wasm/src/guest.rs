@@ -47,6 +47,12 @@ pub fn fatal(_error: IntrinsicError) -> ! {
     core::arch::wasm32::unreachable()
 }
 
+/// End the execution on a fatal BigInt failure (an error without a
+/// recoverable class), as the host does.
+pub fn fatal_bigint(_error: varta_bigint::Error) -> ! {
+    core::arch::wasm32::unreachable()
+}
+
 /// Unwrap a result or end the execution.
 pub fn checked<T>(result: Result<T, IntrinsicError>) -> T {
     result.unwrap_or_else(|error| fatal(error))

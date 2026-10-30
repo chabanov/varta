@@ -3414,6 +3414,20 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   publishes string results only through `guest::result`. It never calls the
   guest allocator or collector: its arena lives above the guest heap's end
   only while no guest allocation can run.
+- An operation that returns two i32 values (`HostOperation::scalar_signature`)
+  is exported returning one i64, first value in the low word; the linker's
+  synthesized adapter of the registry signature unpacks it
+  (`merge::export_signature`). Recoverable BigInt errors keep the host's
+  `(0, class)` result; every other error traps. Host imports and linked
+  exports of the BigInt family both call `varta_intrinsics::bigint`: the host
+  with a fuel-derived `Budget` and the frozen string limits, linked code with
+  `Budget::new(MAX_BITS, u64::MAX)` (fuel bounds the work) and the v38 limits.
+- Before linking an operation, measure its fuel on the hot paths it serves
+  (`codegen_v2_fuel_ceilings_hold`, `every_v37_case_runs_identically_under_v38`):
+  linked code costs its instructions, a host call only its charged work.
+  `primitive_to_string_v5`, `primitive_to_number_v5`, `primitive_compare`
+  and `primitive_equal` stay host imports for this reason until a cheap
+  number and string path exists.
 - Linked code runs in memory 0. The linker places its stack and reached data
   in the module's intrinsic region (`varta.intrinsics`, sized at emission by
   `link::region_pages` before any code that depends on the heap base is

@@ -48,10 +48,13 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
         ),
         // The linked intrinsics read the value layout from common's `no_std`
         // core (checked below: default features off).
-        ("varta-intrinsics", ["varta-common"].as_slice()),
+        (
+            "varta-intrinsics",
+            ["varta-common", "varta-bigint"].as_slice(),
+        ),
         (
             "varta-intrinsics-wasm",
-            ["varta-intrinsics", "varta-common"].as_slice(),
+            ["varta-intrinsics", "varta-common", "varta-bigint"].as_slice(),
         ),
         // The headless view renderer (v38) is engine code without a VM.
         ("varta-view", ["varta-common"].as_slice()),
@@ -88,8 +91,10 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 }
                 // The wasm32 intrinsic library never needs `std`: it reaches
                 // common only through its `no_std` value-layout core.
-                if matches!(name, "varta-intrinsics" | "varta-intrinsics-wasm")
-                    && target == "varta-common"
+                if matches!(
+                    name,
+                    "varta-bigint" | "varta-intrinsics" | "varta-intrinsics-wasm"
+                ) && target == "varta-common"
                 {
                     assert_eq!(
                         dependency["uses_default_features"], false,

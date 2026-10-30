@@ -163,6 +163,126 @@ fn linked_number_parsing_matches_the_host() {
 fn linked_primitive_conversions_match_the_host() {
     same_as_host(PRIMITIVES);
 }
+
+/// BigInt operators, conversions, widths and radix text, including the
+/// recoverable errors, and the abstract comparisons and value17 conversions
+/// across every primitive kind (host imports in both profiles, over the same
+/// shared `varta_intrinsics::bigint` code).
+const BIGINT: &[&str] = &[
+    r#"
+function arithmetic(a: bigint, b: bigint): void {
+  console.log(String(a + b) + " " + String(a - b) + " " + String(a * b));
+  console.log(String(a / b) + " " + String(a % b) + " " + String(a ** 3n));
+  console.log(String(-a) + " " + String(~b) + " " + String(a & b));
+  console.log(String(a | b) + " " + String(a ^ b) + " " + String(a << 5n));
+  console.log(String(a >> 7n) + " " + String(b >> 3n));
+}
+function text(a: bigint, b: bigint): void {
+  console.log(BigInt.asIntN(64, a).toString() + " " + BigInt.asUintN(32, b).toString(16));
+  console.log(a.toString(36) + " " + (-255n).toString(2));
+  console.log(String(BigInt(12345)) + " " + String(BigInt("0x1f")) + " " + String(BigInt("  -42  ")));
+  console.log(Number(a) + " " + Number(b));
+}
+function order(a: bigint, b: bigint): void {
+  console.log(String(a > b) + " " + String(b < 5) + " " + String(a >= 1e29));
+  console.log(String(a == b) + " " + String(a === a));
+}
+function failures(a: bigint): void {
+  try { console.log(String(a / 0n)); } catch (e) { console.log(e instanceof RangeError); }
+  try { console.log(String(a ** -1n)); } catch (e) { console.log(e instanceof RangeError); }
+  try { console.log(String(BigInt(1.5))); } catch (e) { console.log(e instanceof RangeError); }
+  try { console.log(String(BigInt("12x"))); } catch (e) { console.log(e instanceof SyntaxError); }
+}
+export function main(): void {
+  const a = 123456789012345678901234567890n;
+  const b = -987654321n;
+  arithmetic(a, b);
+  text(a, b);
+  order(a, b);
+  failures(a);
+}
+"#,
+    r#"
+function pick(i: number): bigint | number | string | boolean | null | undefined {
+  if (i === 0) { return 10n; }
+  if (i === 1) { return 10; }
+  if (i === 2) { return "10"; }
+  if (i === 3) { return " 0x0A "; }
+  if (i === 4) { return true; }
+  if (i === 5) { return null; }
+  if (i === 6) { return undefined; }
+  if (i === 7) { return "abc"; }
+  if (i === 8) { return -0; }
+  return 9007199254740993n;
+}
+export function main(): void {
+  console.log(String(10n * 2n));
+  for (let i = 0; i < 10; i++) {
+    const a = pick(i);
+    console.log(String(a) + " " + Number(a));
+    let line = "";
+    for (let j = 0; j < 10; j++) {
+      const b = pick(j);
+      line = line + (a < b ? "<" : "") + (a > b ? ">" : "") + (a == b ? "=" : "") + (a === b ? "!" : "") + "|";
+    }
+    console.log(line);
+  }
+}
+"#,
+    "export function main():void{console.log(BigInt.asIntN('8','255'));console.log(BigInt.asUintN(true,true));console.log(BigInt.asUintN(false,'999'));console.log(BigInt.asIntN(undefined,'9'));console.log(BigInt.asUintN(null,'9'));console.log(BigInt.asIntN('bad','9'));console.log(BigInt.asIntN(-0.5,1n));console.log(BigInt.asIntN(8.9,'0xff'));console.log(BigInt.asUintN('0x8',-1n));}",
+    "export function main():void{try{BigInt.asIntN(-1,'bad');}catch(e){console.log(e instanceof RangeError);}try{BigInt.asUintN(Infinity,1);}catch(e){console.log(e instanceof RangeError);}try{BigInt.asIntN(1n,'bad');}catch(e){console.log(e instanceof TypeError);}try{BigInt.asIntN(8,'bad');}catch(e){console.log(e instanceof SyntaxError);}try{BigInt.asIntN(0,1);}catch(e){console.log(e instanceof TypeError);}console.log(BigInt(1));}",
+    "function width(n:bigint|number|string|boolean|null|undefined):bigint{return BigInt.asIntN(n,'255');}function text(n:bigint|number|string|boolean|null|undefined):string{return (255n).toString(n);}export function main():void{console.log(width('8'));console.log(width(true));console.log(width(undefined));console.log(text('16'));console.log(text(undefined));try{console.log(width(1n));}catch(e){console.log(e instanceof TypeError);}try{console.log(text(1n));}catch(e){console.log(e instanceof TypeError);}}",
+];
+
+#[test]
+fn linked_bigint_matches_the_host_and_shared_comparisons_agree() {
+    for source in BIGINT {
+        let lines = same_as_host(source);
+        assert!(!lines.is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn linked_bigint_failures_trap_where_the_host_fails() {
+    // A noncanonical BigInt payload is fatal in both: the host reports the
+    // error, linked code traps.
+    let source = "export function main(): void { const a = 7n; console.log(String(a * 6n)); }";
+    for profile in [V37, V38] {
+        let bytes = compile(source, profile);
+        let runtime = VartaRuntime::new();
+        let module = runtime.prepare_module(&bytes).unwrap();
+        let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+        let instance = execution.instantiate_prepared(&module).unwrap();
+        let store = &mut execution.store;
+        // Corrupt every BigInt heap block's sign word before main runs: the
+        // literals are module data copied into the heap on first use, so
+        // corrupt the static payloads instead.
+        let memory = instance.get_memory(&mut *store, "memory").unwrap();
+        let data = memory.data_mut(&mut *store);
+        let sign = 1u32.to_le_bytes();
+        let digits = 1u32.to_le_bytes();
+        let seven = 7u32.to_le_bytes();
+        let pattern: Vec<u8> = [sign, digits, seven].concat();
+        let mut corrupted = 0;
+        let mut at = 0;
+        while let Some(offset) = data[at..]
+            .windows(pattern.len())
+            .position(|window| window == pattern.as_slice())
+        {
+            let start = at + offset;
+            // An invalid sign word makes the payload noncanonical.
+            data[start..start + 4].copy_from_slice(&9u32.to_le_bytes());
+            corrupted += 1;
+            at = start + pattern.len();
+        }
+        assert!(corrupted > 0, "{profile:?}: the literal 7n is in memory");
+        let start = instance.get_func(&mut *store, "_start").unwrap();
+        assert!(
+            start.call(&mut *store, &[], &mut []).is_err(),
+            "{profile:?} must fail on a noncanonical BigInt"
+        );
+    }
+}
 #[test]
 fn linked_string_access_and_case_mapping_match_the_host() {
     same_as_host(STRINGS);
@@ -467,6 +587,46 @@ fn custom(data: &[u8], name: &str) -> bool {
 }
 
 #[test]
+fn linked_calls_with_small_scratch_run_when_memory_cannot_grow() {
+    // A memory budget of exactly the initial memory: the guest cannot grow
+    // memory 0, and a linked call's scratch fits the region's reserved arena
+    // instead of growing above the heap end.
+    let source = r#"
+export function main(): void {
+  const s = "Straße";
+  console.log(s.charCodeAt(4));
+  console.log(Math.sin(0.5));
+}
+"#;
+    let bytes = compile(source, V38);
+    let mut initial = None;
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        if let wasmparser::Payload::MemorySection(reader) = payload.unwrap() {
+            initial = reader
+                .into_iter()
+                .next()
+                .map(|memory| memory.unwrap().initial);
+        }
+    }
+    let initial = initial.unwrap() as usize * abi::WASM_PAGE_BYTES;
+    let runtime = VartaRuntime::new();
+    let module = runtime.prepare_module(&bytes).unwrap();
+    let mut setup = crate::execution::Setup::production(&[], None);
+    setup.budgets.memory_bytes = initial;
+    let mut execution = crate::execution::Execution::with_setup(&runtime.engine, setup).unwrap();
+    let instance = execution.instantiate_prepared(&module).unwrap();
+    let store = &mut execution.store;
+    let start = instance.get_func(&mut *store, "_start").unwrap();
+    start.call(&mut *store, &[], &mut []).unwrap();
+    let memory = instance.get_memory(&mut *store, "memory").unwrap();
+    assert_eq!(memory.data_size(&*store), initial, "memory never grew");
+    assert_eq!(
+        store.data().output.lines,
+        ["varta log: 223", "varta log: 0.479425538604203"]
+    );
+}
+
+#[test]
 fn linked_stack_and_arena_stay_inside_memory_0_regions() {
     // A deep recursion of linked calls in guest code (each linked call has
     // its own short stack use) and long arena inputs: the region's stack
@@ -529,6 +689,14 @@ fn linked_intrinsic_measurements() {
         (
             "charAt/charCodeAt",
             "export function main(): void { const s = \"abc\"; console.log(s.charAt(1) + s.charCodeAt(2)); }",
+        ),
+        (
+            "BigInt * and String(bigint)",
+            "export function main(): void { console.log(String(12345678901234567890n * 3n)); }",
+        ),
+        (
+            "number in string concatenation",
+            "export function main(): void { const n = 2.5; console.log(\"n=\" + n); }",
         ),
         (
             "toUpperCase/toLowerCase",

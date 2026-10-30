@@ -365,17 +365,18 @@ fn layout() -> String {
                 "`abi::StaticRegion`, `abi::MAX_STATIC_EXTENSION_PAGES`",
             ),
             (
-                "V38 intrinsic region of `m` pages (`varta.intrinsics`) after the extension: linked stack, then linked data; heap after it",
+                "V38 intrinsic region of `m` pages (`varta.intrinsics`) after the extension: linked stack, linked data, then the reserved arena; heap after it",
                 format!(
-                    "[{} + n·{}, {} + (n + m)·{}), stack {} bytes, n + m ≤ {}",
+                    "[{} + n·{}, {} + (n + m)·{}), stack {} bytes, arena {} bytes, n + m ≤ {}",
                     abi::OWNED_STRING_BASE,
                     abi::WASM_PAGE_BYTES,
                     abi::OWNED_STRING_BASE,
                     abi::WASM_PAGE_BYTES,
                     abi::INTRINSIC_STACK_BYTES,
+                    abi::INTRINSIC_ARENA_BYTES,
                     abi::MAX_STATIC_EXTENSION_PAGES
                 ),
-                "`abi::StaticRegion::intrinsic_base`, `abi::INTRINSIC_STACK_BYTES`",
+                "`abi::StaticRegion::intrinsic_base`, `abi::INTRINSIC_STACK_BYTES`, `abi::INTRINSIC_ARENA_BYTES`",
             ),
             (
                 "Wasm page",

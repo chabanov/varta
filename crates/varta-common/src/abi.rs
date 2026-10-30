@@ -148,3 +148,9 @@ pub const MAX_WASM_FUNCTION_BODY_BYTES: usize = 65_536;
 /// ([`StaticRegion::intrinsic_base`]). Linked code traps instead of moving its
 /// stack pointer below the region.
 pub const INTRINSIC_STACK_BYTES: usize = 64 * 1024;
+/// V38 (`linked_intrinsics`): the arena reserved at the end of the intrinsic
+/// region, after the linked data. A linked call allocates there first, so a
+/// call with small scratch needs no memory above the guest heap and works
+/// even when the heap fills the memory budget; larger scratch continues
+/// above the guest heap's end.
+pub const INTRINSIC_ARENA_BYTES: usize = 32 * 1024;

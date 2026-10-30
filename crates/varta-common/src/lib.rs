@@ -4,15 +4,15 @@
 //! Default feature `std` builds the whole crate. Without it the crate is a
 //! `no_std` + `alloc` core holding the value layout: the ABI constants and
 //! static region ([`abi`]), bounded guest-memory reads ([`memory`]), the
-//! value tags, layout constants and primitive-cell reader ([`value`]), the
-//! data limits ([`limits`]) and the UTF-16 helpers ([`text`]). The linked
+//! value tags, layout constants, primitive-cell reader and error classes
+//! ([`value`]), the BigInt transport ([`bigint`]), the data limits
+//! ([`limits`]) and the UTF-16 helpers ([`text`]). The linked
 //! intrinsic library (`varta-intrinsics`, compiled to wasm32) reads guest
 //! memory through that core, so the layout has one owner.
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
 
 pub mod abi;
-#[cfg(feature = "std")]
 pub mod bigint;
 /// Per-turn and per-instance budgets (v38 `turn_budgets`).
 #[cfg(feature = "std")]
