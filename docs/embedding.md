@@ -1111,17 +1111,20 @@ draft.
 - **Node operations.** `create_text` creates a text node; `set_text` applies
   **only to text nodes** (an element target invalidates the batch). Attributes,
   classes, styles, listeners and commands apply only to elements.
-- **Listeners.** A second `listen` for the same node and event, and an `unlisten`
-  without a listener, invalidate the batch; to change a handler, `unlisten` and then
-  `listen` again, in the same batch if wanted.
+- **Listeners.** Superseded in round 3 by
+  [key filters](#view-draft-v0-round-3-chat-requirements): several listeners per
+  node and event with distinct filters; `unlisten` names the handler; a duplicate
+  filter or an `unlisten` without that listener invalidates the batch.
 - **Bubbling.** A DOM event travels from its target through each ancestor up to
   the root. **Every** node on that path with a listener for the event kind gets
   its own event record, in path order (target first), until a listener whose
   options include `stopPropagation` has been delivered; that one is the last. The
   host performs `preventDefault` if any delivered listener asked for it. The
   records of one DOM event are queued consecutively, and each is one turn.
-- **Navigation.** An `a` element never navigates: the applier always prevents
-  activation and only delivers `click`. `submit` is always prevented as well.
+- **Navigation.** An `a` element never navigates the page: the applier always
+  prevents activation and delivers `click`; an external link is opened by the
+  applier itself under `ui.open_url` (round 3). `submit` is always prevented as
+  well.
 - **Edit counter (`seq`).** Each `input`, `textarea`, `select` and checkable `input`
   has an edit counter that starts at **0** when the element is created. Only local
   user edits increment it, by one per edit (each IME composition step, each toggle
@@ -1145,7 +1148,8 @@ draft.
   from the `net.request` grant patterns (scheme, host and port of each pattern) and
   intersected with the host ceiling. In v0, `src` is a bundled resource path
   (`[A-Za-z0-9._-]` segments separated by `/`, no `..`, no leading `/`) resolved
-  against the asset base, and `href` is an internal route: `#` + fragment, or `/` +
+  against the asset base, and `href` is an internal route (or, from round 3, an
+  external URL under `ui.open_url`): `#` + fragment, or `/` +
   path with optional `?query` and `#fragment`, where the path does not start with a
   second `/`, every character is an unreserved or sub-delimiter URL character, `:`,
   `@`, `/` or a `%` followed by two hex digits, and nothing is whitespace, a control
@@ -1233,8 +1237,11 @@ values:
 | Placeholder: batch bytes / operations | 262144 / 16384 |
 | Placeholder: live nodes / listeners | 65536 / 8192 |
 | Placeholder: value bytes / stylesheet bytes / pending events | 65536 / 262144 / 64 |
+| Key filter: any key | key code 0 |
+| Key filter: modifier mask | 15 (shift, ctrl, alt, meta event flags) |
 | `listen` option `preventDefault` | bit value 1 |
 | `listen` option `stopPropagation` | bit value 2 |
+| `listen` option `notComposing` | bit value 4 |
 | Event flag `shiftKey` | bit value 1 |
 | Event flag `ctrlKey` | bit value 2 |
 | Event flag `altKey` | bit value 4 |
@@ -1268,13 +1275,14 @@ values:
 | 8 | `remove_style` | node (u32 id), property (u16 code + 2 pad) |
 | 9 | `insert` | parent (u32 id), node (u32 id), before (u32 id) |
 | 10 | `remove` | node (u32 id) |
-| 11 | `listen` | node (u32 id), event (u16 code + 2 pad), handler (u32 id), options (u32) |
-| 12 | `unlisten` | node (u32 id), event (u16 code + 2 pad) |
+| 11 | `listen` | node (u32 id), event (u16 code + 2 pad), handler (u32 id), options (u32), key (u16 code + 2 pad), required_modifiers (u32), forbidden_modifiers (u32) |
+| 12 | `unlisten` | node (u32 id), event (u16 code + 2 pad), handler (u32 id) |
 | 13 | `set_value` | node (u32 id), text (string), base_seq (u32) |
 | 14 | `set_checked` | node (u32 id), checked (u32), base_seq (u32) |
 | 15 | `command` | node (u32 id), command (u16 code + 2 pad), argument (f64) |
 | 16 | `stylesheet` | sheet (u32 id), text (string) |
 | 17 | `set_title` | text (string) |
+| 18 | `copy_text` | text (string) |
 <!-- generated:view-opcodes:end -->
 
 **Elements.**
@@ -1330,7 +1338,7 @@ values:
 | 9 | `autofocus` | `button`, `input`, `select`, `textarea` | boolean: present with an empty value; remove to make false |
 | 10 | `selected` | `option` | boolean: present with an empty value; remove to make false |
 | 11 | `for` | `label` | ident: `[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters |
-| 12 | `href` | `a` | internal route: `#fragment` or `/path[?query][#fragment]`, never `//` |
+| 12 | `href` | `a` | internal route: `#fragment` or `/path[?query][#fragment]`, never `//`; or an absolute `https://`/`http://` URL matching a `ui.open_url` grant |
 | 13 | `src` | `img` | bundled resource path |
 | 14 | `alt` | `img` | text |
 | 15 | `tabindex` | all | `0` \| `-1` |
@@ -1346,6 +1354,7 @@ values:
 | 25 | `aria-busy` | all | `true` \| `false` |
 | 26 | `aria-invalid` | all | `true` \| `false` |
 | 27 | `aria-hidden` | all | `true` \| `false` |
+| 28 | `rows` | `textarea` | positive integer without sign or leading zeros |
 <!-- generated:view-attributes:end -->
 
 **CSS properties.**
@@ -1421,6 +1430,7 @@ values:
 | 66 | `transition-duration` | `<time>#` |
 | 67 | `transition-timing-function` | `[linear \| ease \| ease-in \| ease-out \| ease-in-out]#` |
 | 68 | `transition-delay` | `<time>#` |
+| 69 | `field-sizing` | `fixed \| content (textarea only)` |
 <!-- generated:view-css-properties:end -->
 
 **Events.**
@@ -1453,6 +1463,119 @@ values:
 | 6 | `show_modal` | `dialog` | must be 0 |
 | 7 | `close` | `dialog` | must be 0 |
 <!-- generated:view-commands:end -->
+
+### View draft v0 round 3: chat requirements
+
+Decided for the first application, the UARP console in its **Single Chat** form
+(one continuous conversation with the tenant's Head Agent, streamed run events,
+approval and question cards in the feed). Like the rest of the draft these are
+unstable v0 decisions; the two capabilities are **accepted by the owner** for L0
+v1 but are **not implemented**: they are not in the capability registry, so the
+runtime and every manifest validator reject their ids until a profile registers
+them.
+
+**Key filters (revises the round-2 listener rule).** `listen` carries a key
+filter after its options: a [key](#view-draft-v0-round-3-chat-requirements) code
+(or the any-key code), a required modifier mask and a forbidden modifier mask
+(both within the modifier mask of the layout table), plus the `notComposing`
+option bit. The host evaluates the filter synchronously when the DOM or native
+event occurs:
+
+- A `keydown` matches when its key equals the filter key (or the filter key is
+  any), every required modifier is held, no forbidden modifier is held, and, with
+  `notComposing`, no IME composition is active. Composition is active while
+  `isComposing` is true or the browser reports key code 229; natively, while the
+  renderer has a preedit.
+- A **non-matching** listener is neither delivered nor allowed to prevent the
+  default action; only matching listeners take part in delivery,
+  `preventDefault` and `stopPropagation`.
+- For every event kind other than `keydown` the filter MUST be the any-key code
+  with both masks 0 and without `notComposing`; anything else invalidates the
+  batch.
+- One node may hold several listeners for the same event kind when their filters
+  differ (key, masks and `notComposing` together); an identical filter twice
+  invalidates the batch. Handler ids are unique among live listeners, and
+  `unlisten` names the handler (`unlisten(node, event, handler)`); an `unlisten` of
+  a handler that is not listening there invalidates the batch. Matching listeners
+  of one node are delivered in `listen` order.
+
+Example, a message box: `listen(box, keydown, send, preventDefault |
+notComposing, Enter, required 0, forbidden shift)` sends on Enter;
+Shift+Enter matches nothing and inserts a newline by default; during IME
+composition nothing matches, so Enter confirms the composition.
+
+<!-- generated:view-keys:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Code | Key | DOM `KeyboardEvent.key` |
+| --- | --- | --- |
+| 1 | `Enter` | `Enter` |
+| 2 | `Escape` | `Escape` |
+| 3 | `Tab` | `Tab` |
+| 4 | `Space` | ` ` |
+| 5 | `Backspace` | `Backspace` |
+| 6 | `Delete` | `Delete` |
+| 7 | `ArrowUp` | `ArrowUp` |
+| 8 | `ArrowDown` | `ArrowDown` |
+| 9 | `ArrowLeft` | `ArrowLeft` |
+| 10 | `ArrowRight` | `ArrowRight` |
+| 11 | `Home` | `Home` |
+| 12 | `End` | `End` |
+| 13 | `PageUp` | `PageUp` |
+| 14 | `PageDown` | `PageDown` |
+<!-- generated:view-keys:end -->
+
+**External links (`ui.open_url`, accepted).** An `a` element may carry an
+absolute `https://` or `http://` `href` only when the URL matches a `ui.open_url`
+grant: URL patterns with the URL-grant rules of the manifest, `https://` admitted,
+exact authority and wildcards only after it, checked against the package request
+**and** the host ceiling. A non-matching external `href` invalidates the batch. The
+applier learns the granted patterns from the embedder at start, never from the
+guest. Opening happens **only** inside the applier's handling of a trusted
+activation of that `a` (a click on it or within it, or Enter while it is focused),
+never from a patch, command, timer or guest turn; the guest's `click` listeners
+are still delivered. The browser applier opens the URL with
+`window.open(url, "_blank", "noopener,noreferrer")`; the native shell hands it to
+the system browser. The page itself never navigates. Internal routes keep the
+round-2 grammar.
+
+**Clipboard (`clipboard.write`, accepted, moved into v1).** A boolean grant
+authorizes `copy_text(text)` (an operation, since it carries a string): plain text
+only, at most the value-byte limit, and only in the batch committed by a turn whose
+task was a trusted `click` or `keydown` record (a user gesture). In any other turn
+`copy_text` invalidates the batch. Without the grant, or when the platform refuses
+the write, the copy is skipped with a host diagnostic and no event (draft: no
+result is reported to the guest yet). The browser applier uses
+`navigator.clipboard.writeText` within the platform's user-activation window;
+natively the shell writes the system clipboard. `clipboard.read` stays out of v1.
+
+<!-- generated:view-capabilities:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Capability | Grant | Authorizes (user gesture only) |
+| --- | --- | --- |
+| `ui.open_url` | URL `patterns` (`https://` admitted) | activating an `a` whose `href` is an external URL |
+| `clipboard.write` | boolean `enabled` | a `copy_text` operation in the batch of a user-gesture turn |
+<!-- generated:view-capabilities:end -->
+
+**Auto-growing textarea.** `textarea` takes `rows` (a positive integer, default 2)
+and the CSS property `field-sizing` (`fixed`, the default, or `content`; textarea
+only). With `fixed`, the content-box height is `rows` × the used line height.
+With `content`, the height follows the text: the number of wrapped lines at the
+current content width × the used line height, at least one line, then clamped by
+`min-height` and `max-height` (which always win); `rows` does not apply. Beyond
+`max-height` the textarea scrolls. The native renderer computes it from the
+Parley layout of the field's text at its content width, re-run on every edit
+before the frame; the browser applier uses CSS `field-sizing: content` where the
+engine supports it and otherwise sets the height from `scrollHeight` (clamped) on
+each `input`, so both renderers produce the same rectangles.
+
+**Markdown.** Rendering chat Markdown needs nothing beyond the v1 subset:
+paragraphs, `h1`–`h3`, `strong`, `em`, `code`, `pre`, `br`, `ul`/`ol`/`li`,
+internal and (with `ui.open_url`) external links. Parsing Markdown is application
+code in the guest. Block quotes, rules, tables and `h4`–`h6` are not in v1 (tables
+use grid with roles).
+
+**Pending owner confirmation** (product-visible draft choices of this round): the
+key table's coverage (named keys only, no letter shortcuts such as Ctrl+K in v1);
+that a denied or refused `copy_text` is silent to the guest; the `rows` default of
+2; and that Markdown block quotes and rules stay out of v1.
 
 ## Entry-point limits
 

@@ -885,7 +885,7 @@ web-developer peer.
 | --- | --- | --- |
 | Structure | `div`, `span`, `p`, `h1`–`h3`, `ul`/`ol`/`li`, `header`/`nav`/`main`/`section`/`footer` (landmarks for AccessKit) | Table elements (Taffy has no table layout: use grid with `role=table/row/cell/columnheader`) |
 | Text | `strong`, `em`, `code`, `pre`, `br` | Raw HTML, `contenteditable` |
-| Controls | `button`; `a` for internal routing only (external URLs through a capability); `form` only as a submit boundary (no `action`/`method`); `label` (`for` focuses the field); `input` types text, password, number, search, checkbox, radio; `textarea`; `select`/`option` with a native popup; `progress` | `input` types date, color, range, file; `details`/`summary` |
+| Controls | `button`; `a` for internal routing, and external links opened by the renderer under the accepted `ui.open_url` capability; `form` only as a submit boundary (no `action`/`method`); `label` (`for` focuses the field); `input` types text, password, number, search, checkbox, radio; `textarea`; `select`/`option` with a native popup; `progress` | `input` types date, color, range, file; `details`/`summary` |
 | Overlays | `dialog` with the `showModal` command, top layer, focus trap, Esc = cancel | — |
 | Media | `img` from artifact resources only (PNG; SVG through resvg) | Remote images (v1.1, need the network capability: exfiltration channel); `iframe`, `video`/`audio`, `canvas`, `script`/`style` elements |
 | Selectors, cascade | `.a`, `.a.b`, `:hover`, `:active`, `:focus-visible`, `:disabled`, `:checked`, inline style; specificity by class count, then source order; stylesheets sent through the protocol; custom properties and `var()`; `@media` with `prefers-color-scheme` and `min-width`/`max-width` | Combinators, `::before`/`::after`, `:nth-child` |
@@ -915,8 +915,11 @@ web-developer peer.
   string; no built-in validation (validation lives in the application, for example
   with valibot). Enter in a form submits, Esc in a dialog cancels, Tab follows
   document order, `tabindex` is 0 or -1 only. Guest commands: focus, blur, select,
-  scrollIntoView, scrollTo(id, top), showModal, close. v1.1: `clipboard.write` as a
-  capability on a user gesture, and selecting arbitrary text outside fields.
+  scrollIntoView, scrollTo(id, top), showModal, close. In v1 (accepted in round 3):
+  `clipboard.write` as a user-gesture capability with `copy_text`, key filters on
+  `keydown` listeners and auto-growing textareas
+  ([draft v0](embedding.md#view-draft-v0-round-3-chat-requirements)). v1.1:
+  selecting arbitrary text outside fields.
 - **Accessibility (AccessKit).** Roles table, row, cell, columnheader, dialog,
   alert, status, navigation, list, listitem, tab, tablist, tabpanel; attributes
   `aria-label`, `aria-labelledby`, `aria-describedby`, `aria-live`,
@@ -1313,7 +1316,21 @@ Later increments, each its own capability or capability-free contract:
   capability-free entropy source like `Math.random` (accepted);
   `crypto.subtle.digest` as guest code or a capability-free host provider.
 - `Date` and `Intl`: a capability-free host provider with explicitly versioned data,
-  or a guest library; a large gap for formatting libraries.
+  or a guest library; a large gap for formatting libraries. **Concrete consumer:**
+  the UARP console's Single Chat feed needs relative times ("2 minutes ago") and
+  date separators. Required subsets: `Intl.RelativeTimeFormat` (`format` for the
+  units second to year, `numeric` `always`/`auto`, `style` `long`/`short`) and
+  `Intl.DateTimeFormat` (`dateStyle`/`timeStyle` and the `weekday`, `day`,
+  `month`, `year`, `hour`, `minute` components, plus `formatToParts` for
+  separators), `Date` construction from epoch milliseconds and its UTC/local
+  getters. Proposed delivery, capability-free: CLDR data for exactly the locales a
+  manifest lists (for example `"locales": ["en", "uk"]`) compiled into the
+  artifact's static data, so formatting is guest code and identical on every host;
+  the current locale and time-zone offset are read-only embedder configuration
+  (not a capability, no page or environment access); reading the clock stays
+  behind `time.now`. Time-zone rules beyond one current offset (historic or
+  future transitions) would need a versioned tz data subset and are out of the
+  first increment.
 
 #### Increments and acceptance
 
@@ -1416,6 +1433,12 @@ The owner accepted all thirteen recommendations of this design:
 12. **Startup.** A shell-generated cache through Wasmtime's own cache feature;
     Winch for fast development starts.
 13. **No webview fallback** for now.
+
+Later the same day the owner chose the console's **Single Chat** UX and accepted
+two L0 v1 capabilities, user-gesture only with exact grants: `ui.open_url`
+(external links opened by the renderer) and `clipboard.write` (`copy_text`). Their
+contract is the [round 3 draft](embedding.md#view-draft-v0-round-3-chat-requirements);
+the runtime implements neither yet.
 
 ### Deferred external validation scenarios
 
