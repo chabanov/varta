@@ -259,7 +259,7 @@ fn profile_acceptance() -> String {
         ],
         language::SUPPORTED_PROFILES.iter().map(|&profile| {
             let values: Vec<String> = (value::LEGACY_VALUE_VERSION
-                ..=value::FUNCTION_FIELD_VALUE_VERSION)
+                ..=value::HASHED_DICTIONARY_VALUE_VERSION)
                 .filter(|&version| value::compatible_version(version, profile.value_abi()))
                 .map(|version| version.to_string())
                 .collect();
@@ -541,6 +541,10 @@ fn names() -> String {
         (
             exceptions::FUNCTION_FIELD_VERSION,
             "`exceptions::FUNCTION_FIELD_VERSION`",
+        ),
+        (
+            exceptions::HASHED_DICTIONARY_VERSION,
+            "`exceptions::HASHED_DICTIONARY_VERSION`",
         ),
     ] {
         rows.push((

@@ -650,7 +650,7 @@ impl Lower<'_> {
                 let values = Expr {
                     span,
                     ty: dictionary.values,
-                    kind: E::Field(Box::new(unboxed(target)), dictionaries::VALUES),
+                    kind: E::Field(Box::new(unboxed(target)), dictionary.values_slot()),
                 };
                 and(
                     span,

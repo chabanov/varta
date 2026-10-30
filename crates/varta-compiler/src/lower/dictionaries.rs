@@ -5,11 +5,11 @@
 //! ECMAScript own-key order (canonical array indices ascending, then insertion).
 use super::*;
 use ir::{DictionaryHelper, DictionaryType, RecordField};
-use varta_common::value::{DICTIONARY_KEYS_FIELD, DICTIONARY_VALUES_FIELD, ErrorClass};
+use varta_common::value::{
+    DICTIONARY_HOLES_FIELD, DICTIONARY_KEYS_FIELD, DICTIONARY_TABLE_FIELD, DICTIONARY_VALUES_FIELD,
+    ErrorClass,
+};
 
-/// Canonical storage slots (fields sorted by name: `keys` < `values`).
-pub(super) const KEYS: u32 = 0;
-pub(super) const VALUES: u32 = 1;
 const PROTO: &str = "__proto__";
 
 pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
@@ -34,22 +34,40 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     }
     let keys = arrays::intern(Type::String, types)?;
     let values = arrays::intern(value, types)?;
-    let Type::Record(storage) = records::intern(
-        vec![
+    let mut fields = vec![
+        RecordField {
+            name: DICTIONARY_KEYS_FIELD.into(),
+            ty: keys,
+            optional: false,
+        },
+        RecordField {
+            name: DICTIONARY_VALUES_FIELD.into(),
+            ty: values,
+            optional: false,
+        },
+    ];
+    // Value18 (`dictionary_hashing`): the hole count and the hash table, a
+    // required array slot holding the zero handle while unindexed.
+    let table = if types.profile.dictionary_hashing() {
+        let number = types.number();
+        let table = arrays::intern(number, types)?;
+        fields.extend([
             RecordField {
-                name: DICTIONARY_KEYS_FIELD.into(),
-                ty: keys,
+                name: DICTIONARY_HOLES_FIELD.into(),
+                ty: number,
                 optional: false,
             },
             RecordField {
-                name: DICTIONARY_VALUES_FIELD.into(),
-                ty: values,
+                name: DICTIONARY_TABLE_FIELD.into(),
+                ty: table,
                 optional: false,
             },
-        ],
-        types,
-    )?
-    else {
+        ]);
+        Some(table)
+    } else {
+        None
+    };
+    let Type::Record(storage) = records::intern(fields, types)? else {
         return Err(invalid("missing dictionary storage shape"));
     };
     let id = types.dictionaries.len() as u32;
@@ -57,6 +75,7 @@ pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
         value,
         keys,
         values,
+        table,
         storage,
         declared: None,
     });
@@ -221,8 +240,8 @@ fn index_key(key: Expr) -> Expr {
 
 /// Hidden locals of one dictionary operation and its rooted value block.
 pub(super) struct Block {
-    span: swc_common::Span,
-    dictionary: DictionaryType,
+    pub(super) span: swc_common::Span,
+    pub(super) dictionary: DictionaryType,
     ty: Type,
     source: u32,
     key: u32,
@@ -252,14 +271,14 @@ impl Block {
         Expr {
             span: self.span,
             ty: self.dictionary.keys,
-            kind: E::Field(Box::new(self.source()), KEYS),
+            kind: E::Field(Box::new(self.source()), self.dictionary.keys_slot()),
         }
     }
     fn values(&self) -> Expr {
         Expr {
             span: self.span,
             ty: self.dictionary.values,
-            kind: E::Field(Box::new(self.source()), VALUES),
+            kind: E::Field(Box::new(self.source()), self.dictionary.values_slot()),
         }
     }
     /// The key (`true`) or value vector with its element type.
@@ -278,7 +297,7 @@ impl Block {
         }
     }
     /// `keys.indexOf(key)`: content equality over the dense key vector.
-    fn search(&self) -> Expr {
+    pub(super) fn search(&self) -> Expr {
         Expr {
             span: self.span,
             ty: Type::Float64,
@@ -357,7 +376,8 @@ impl Lower<'_> {
         let mut block = self.dictionary_block(value, key)?;
         let span = block.span;
         let index = self.hidden(Type::Float64);
-        block.body.push(S::Init(index, block.search()));
+        let search = self.dictionary_search(&mut block, false)?;
+        block.body.push(S::Init(index, search));
         let found = block.element(
             block.values(),
             block.dictionary.value,
@@ -445,8 +465,9 @@ impl Lower<'_> {
             self.types,
         )?;
         let miss = self.inherited_miss(&block)?;
+        let search = self.dictionary_search(&mut block, false)?;
         block.body.extend([
-            S::Init(index, block.search()),
+            S::Init(index, search),
             S::Init(output, undefined),
             S::If(
                 binary(
@@ -593,16 +614,16 @@ impl Lower<'_> {
                 ),
             })
         };
-        let mut insert = vec![
-            S::If(
-                binary(
-                    ast::BinaryOp::GtEq,
-                    length(block.keys()),
-                    number(span, self.types.profile.data().array_elements as f64),
-                ),
-                vec![S::Throw(full)],
-                vec![],
+        let limit = S::If(
+            binary(
+                ast::BinaryOp::GtEq,
+                length(block.keys()),
+                number(span, self.types.profile.data().array_elements as f64),
             ),
+            vec![S::Throw(full)],
+            vec![],
+        );
+        let mut insert = vec![
             S::Init(rank, index_key(block.key())),
             S::Init(position, length(block.keys())),
             S::If(
@@ -636,7 +657,7 @@ impl Lower<'_> {
         insert.push(self.set_index(block.keys(), at(position), block.key()));
         insert.push(self.set_index(block.values(), at(position), local(span, output, element)));
         // An absent `__proto__` key would invoke the prototype setter.
-        let mut absent = vec![S::If(
+        let proto = S::If(
             binary(
                 ast::BinaryOp::EqEqEq,
                 block.key(),
@@ -648,12 +669,20 @@ impl Lower<'_> {
             ),
             vec![S::Throw(proto)],
             vec![],
-        )];
-        absent.extend(insert);
+        );
+        let absent = match dictionary_hashing::Hashed::of(block.dictionary) {
+            Some(hashed) => self.hashed_insert(&block, output, hashed, proto)?,
+            None => {
+                let mut absent = vec![proto, limit];
+                absent.extend(insert);
+                absent
+            }
+        };
         let replace = self.set_index(block.values(), at(index), local(span, output, element));
+        block.body.push(S::Init(output, value));
+        let search = self.dictionary_search(&mut block, false)?;
         block.body.extend([
-            S::Init(output, value),
-            S::Init(index, block.search()),
+            S::Init(index, search),
             S::If(
                 binary(ast::BinaryOp::GtEq, at(index), number(span, 0.0)),
                 vec![replace],
@@ -662,7 +691,7 @@ impl Lower<'_> {
         ]);
         Ok(self.finish_dictionary(block, output, element))
     }
-    fn set_index(&mut self, array: Expr, index: Expr, value: Expr) -> S {
+    pub(super) fn set_index(&mut self, array: Expr, index: Expr, value: Expr) -> S {
         let slots = self
             .types
             .profile
@@ -735,9 +764,16 @@ impl Lower<'_> {
                 error,
             });
         }
+        let (remove, search) = match dictionary_hashing::Hashed::of(block.dictionary) {
+            Some(hashed) => (
+                self.hashed_remove(&block, index, hashed, remove),
+                self.dictionary_search(&mut block, true)?,
+            ),
+            None => (remove, block.search()),
+        };
         block.body.extend([
             S::Init(output, boolean(span, true)),
-            S::Init(index, block.search()),
+            S::Init(index, search),
             S::If(
                 binary(ast::BinaryOp::GtEq, at(index), number(span, 0.0)),
                 remove,
@@ -772,10 +808,11 @@ impl Lower<'_> {
                 .collect();
             miss = own_keys::lookup(span, block.key, &mut entries);
         }
+        let search = self.dictionary_search(&mut block, false)?;
         block.body.extend([
             S::Init(
                 output,
-                binary(ast::BinaryOp::GtEq, block.search(), number(span, 0.0)),
+                binary(ast::BinaryOp::GtEq, search, number(span, 0.0)),
             ),
             S::If(local(span, output, Type::Boolean), vec![], miss),
         ]);
@@ -791,9 +828,9 @@ impl Lower<'_> {
         let ty = value.ty;
         let source = self.hidden(ty);
         let (slot, array) = if keys {
-            (KEYS, dictionary.keys)
+            (dictionary.keys_slot(), dictionary.keys)
         } else {
-            (VALUES, dictionary.values)
+            (dictionary.values_slot(), dictionary.values)
         };
         let field = || Expr {
             span,
@@ -802,6 +839,20 @@ impl Lower<'_> {
         };
         let output = self.hidden(array);
         let marker = self.hidden(Type::Number);
+        let mut body = vec![S::Init(source, value)];
+        body.extend(self.dictionary_compact(local(span, source, ty))?);
+        body.push(S::Init(
+            output,
+            Expr {
+                span,
+                ty: array,
+                kind: E::ArraySlice(
+                    Box::new(field()),
+                    Box::new(number(span, 0.0)),
+                    Box::new(length(field())),
+                ),
+            },
+        ));
         Ok(Expr {
             span,
             ty: array,
@@ -809,21 +860,7 @@ impl Lower<'_> {
                 output,
                 marker,
                 roots: vec![source, output],
-                body: vec![
-                    S::Init(source, value),
-                    S::Init(
-                        output,
-                        Expr {
-                            span,
-                            ty: array,
-                            kind: E::ArraySlice(
-                                Box::new(field()),
-                                Box::new(number(span, 0.0)),
-                                Box::new(length(field())),
-                            ),
-                        },
-                    ),
-                ],
+                body,
             },
         })
     }
@@ -931,28 +968,20 @@ impl Lower<'_> {
             .iter()
             .map(|(_, slot)| Some(local(span, *slot, dictionary.value)))
             .collect();
-        let literal = Expr {
+        let literal = self.dictionary_storage(
             span,
-            ty: Type::Dictionary(id),
-            kind: E::Record(vec![
-                (
-                    KEYS,
-                    Expr {
-                        span,
-                        ty: dictionary.keys,
-                        kind: E::Array(keys),
-                    },
-                ),
-                (
-                    VALUES,
-                    Expr {
-                        span,
-                        ty: dictionary.values,
-                        kind: E::Array(values),
-                    },
-                ),
-            ]),
-        };
+            Type::Dictionary(id),
+            Expr {
+                span,
+                ty: dictionary.keys,
+                kind: E::Array(keys),
+            },
+            Expr {
+                span,
+                ty: dictionary.values,
+                kind: E::Array(values),
+            },
+        )?;
         if body.is_empty() {
             return Ok(literal);
         }

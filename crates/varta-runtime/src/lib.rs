@@ -976,6 +976,8 @@ mod collection_tests;
 #[cfg(test)]
 mod declared_field_tests;
 #[cfg(test)]
+mod dictionary_hashing_tests;
+#[cfg(test)]
 mod dictionary_tests;
 #[cfg(test)]
 mod error_subclass_tests;
@@ -1017,6 +1019,8 @@ mod value15_tests;
 mod value16_tests;
 #[cfg(test)]
 mod value17_tests;
+#[cfg(test)]
+mod value18_tests;
 #[cfg(test)]
 mod web_headers_tests;
 #[cfg(test)]

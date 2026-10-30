@@ -363,7 +363,7 @@ fn v38_validation_rejects_imported_pure_intrinsics_and_exposed_intrinsic_memory(
         V37,
     );
     let relabelled = rewrite(&v37, |id, data| {
-        let mut data = data.to_vec();
+        let data = data.to_vec();
         let name = |section: &str| {
             data.get(1..1 + section.len()) == Some(section.as_bytes())
                 && data[0] as usize == section.len()
@@ -378,10 +378,17 @@ fn v38_validation_rejects_imported_pure_intrinsics_and_exposed_intrinsic_memory(
             section.extend_from_slice(&contract.to_bytes().unwrap());
             return vec![section];
         }
-        if id == 0 && name(abi::SECTION) {
-            let prefix = 1 + abi::SECTION.len();
-            data.truncate(prefix);
-            data.extend_from_slice(&V38.host_abi().to_le_bytes());
+        // V38 declares host ABI 34 and value layout 18 (`dictionary_hashing`).
+        for (section, version) in [
+            (abi::SECTION, V38.host_abi()),
+            (varta_common::value::VALUE_SECTION, V38.value_abi()),
+        ] {
+            if id == 0 && name(section) {
+                let prefix = 1 + section.len();
+                let mut rewritten = data[..prefix].to_vec();
+                rewritten.extend_from_slice(&version.to_le_bytes());
+                return vec![rewritten];
+            }
         }
         vec![data]
     });

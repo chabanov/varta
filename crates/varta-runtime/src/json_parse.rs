@@ -44,35 +44,28 @@ fn words<const N: usize>(data: &[u8], ptr: usize) -> Result<[u32; N], wasmtime::
     }
     Ok(words)
 }
-/// A dictionary's storage descriptor: the schema's value layout (value15 or
-/// value16), required canonical `keys` and `values` vector slots in that order.
+/// A dictionary's storage descriptor: the schema's value layout (value15 to
+/// value18) with exactly its canonical slots (`value::dictionary_storage`):
+/// required `keys` and `values` vectors, and under value18 the `holes` count
+/// and the `table` slot.
 fn dictionary_descriptor(
     data: &[u8],
     region: abi::StaticRegion,
     descriptor: usize,
     version: u32,
 ) -> Result<(), wasmtime::Error> {
-    static_bytes(
-        data,
-        region,
-        descriptor,
-        descriptor_bytes(DICTIONARY_FIELDS),
-    )?;
-    if !dynamic_layout(version)
-        || words::<2>(data, descriptor)? != [version, DICTIONARY_FIELDS as u32]
-    {
+    let fields = dictionary_fields(version);
+    static_bytes(data, region, descriptor, descriptor_bytes(fields))?;
+    if !dynamic_layout(version) || words::<2>(data, descriptor)? != [version, fields as u32] {
         return Err(error("dictionary descriptor version or count"));
     }
-    for (slot, name) in [DICTIONARY_KEYS_FIELD, DICTIONARY_VALUES_FIELD]
-        .into_iter()
-        .enumerate()
-    {
+    for (slot, (name, expected)) in dictionary_storage(version).iter().enumerate() {
         let [key, len, raw, kind] = words::<4>(
             data,
             descriptor + RECORD_DESCRIPTOR_HEADER + slot * RECORD_DESCRIPTOR_ENTRY,
         )?;
         if raw as usize != slot
-            || kind != ValueKind::Array as u32
+            || kind != *expected as u32
             || static_bytes(data, region, key as usize, len as usize)? != name.as_bytes()
         {
             return Err(error("dictionary descriptor disagrees with its layout"));
@@ -136,6 +129,7 @@ fn descriptors(
                         | varta_common::json::DYNAMIC_SCHEMA_VERSION
                         | varta_common::json::PROMISE_SCHEMA_VERSION
                         | varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION
+                        | varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION
                 ) && slot & OPTIONAL_FIELD_FLAG != 0;
                 let slot = if matches!(
                     schema.version,
@@ -149,6 +143,7 @@ fn descriptors(
                         | varta_common::json::DYNAMIC_SCHEMA_VERSION
                         | varta_common::json::PROMISE_SCHEMA_VERSION
                         | varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION
+                        | varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION
                 ) {
                     slot & !OPTIONAL_FIELD_FLAG
                 } else {
@@ -269,6 +264,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (
             HostOperation::JsonParseV18,
             varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION,
+        ),
+        (
+            HostOperation::JsonParseV19,
+            varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION,
         ),
         (
             HostOperation::JsonParseV14,

@@ -29,13 +29,19 @@ pub const PROMISE_SCHEMA_VERSION: u32 = 16;
 /// Value17 layouts (profile v36): the schema-15 grammar materializing value17
 /// records, arrays and cells. JSON cannot fabricate functions or promises.
 pub const FUNCTION_FIELD_SCHEMA_VERSION: u32 = 17;
+/// Schema 18 (v38 `dictionary_hashing`): schema 17 types decoded into value18
+/// layouts, whose dictionaries carry the hash-table slot (built unindexed).
+pub const HASHED_DICTIONARY_SCHEMA_VERSION: u32 = 18;
 /// Whether a schema version uses the schema-15 grammar (forward references,
 /// dictionaries and wide records).
 #[must_use]
 pub fn dynamic_schema(version: u32) -> bool {
     matches!(
         version,
-        DYNAMIC_SCHEMA_VERSION | PROMISE_SCHEMA_VERSION | FUNCTION_FIELD_SCHEMA_VERSION
+        DYNAMIC_SCHEMA_VERSION
+            | PROMISE_SCHEMA_VERSION
+            | FUNCTION_FIELD_SCHEMA_VERSION
+            | HASHED_DICTIONARY_SCHEMA_VERSION
     )
 }
 pub const MAX_SCHEMA_BYTES: usize = crate::abi::RESULT_BASE;

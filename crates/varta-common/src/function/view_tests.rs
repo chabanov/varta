@@ -176,6 +176,6 @@ fn closure_envelope_preserves_legacy_cells_and_old_version_tag_admission() {
     assert!(value::ValueKind::Function.supported_by(value::FUNCTION_VALUE_VERSION));
     assert!(value::supported_version(value::BIGINT_VALUE_VERSION));
     assert!(!value::supported_version(
-        value::FUNCTION_FIELD_VALUE_VERSION + 1
+        value::HASHED_DICTIONARY_VALUE_VERSION + 1
     ));
 }

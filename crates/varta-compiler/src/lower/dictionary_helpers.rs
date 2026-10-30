@@ -47,6 +47,10 @@ impl Lower<'_> {
             ),
             DictionaryHelper::Set => (vec![plain, Type::String, value], value),
             DictionaryHelper::Delete => (vec![plain, Type::String], Type::Boolean),
+            DictionaryHelper::Compact => (vec![plain], Type::Boolean),
+            DictionaryHelper::Index => {
+                return Err(invalid("shared dictionary helper called per type"));
+            }
         };
         let index = match self.types.dictionary_helpers.get(&(helper, plain_id)) {
             Some(index) => *index,
@@ -93,6 +97,19 @@ impl Lower<'_> {
                 DictionaryHelper::Delete => {
                     let (receiver, key) = (argument()?, argument()?);
                     child.dictionary_delete_inline(receiver, key)?
+                }
+                DictionaryHelper::Compact => {
+                    let receiver = argument()?;
+                    let Type::Dictionary(id) = receiver.ty else {
+                        return Err(invalid("missing dictionary type"));
+                    };
+                    let hashed =
+                        dictionary_hashing::Hashed::of(child.types.dictionaries[id as usize])
+                            .ok_or_else(|| invalid("value18 dictionary helper without a table"))?;
+                    child.compact_body(receiver, hashed)?
+                }
+                DictionaryHelper::Index => {
+                    return Err(invalid("shared dictionary helper called per type"));
                 }
             };
             Ok(vec![S::Return(Some(value))])

@@ -82,6 +82,7 @@ impl ReferenceBox {
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
                 | FUNCTION_FIELD_VALUE_VERSION
+                | HASHED_DICTIONARY_VALUE_VERSION
         ) {
             return Err(invalid());
         }
@@ -94,6 +95,7 @@ impl ReferenceBox {
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
                     | FUNCTION_FIELD_VALUE_VERSION
+                    | HASHED_DICTIONARY_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
@@ -109,6 +111,7 @@ impl ReferenceBox {
                     | DYNAMIC_VALUE_VERSION
                     | PROMISE_VALUE_VERSION
                     | FUNCTION_FIELD_VALUE_VERSION
+                    | HASHED_DICTIONARY_VALUE_VERSION
             ) {
                 return Err(invalid());
             }
@@ -122,7 +125,7 @@ impl ReferenceBox {
                 return Err(invalid());
             }
             validate_aggregate_in(data, ValueKind::Record, cell.payload, version, module)?;
-        } else if cell.kind == ValueKind::Function && version == FUNCTION_FIELD_VALUE_VERSION {
+        } else if cell.kind == ValueKind::Function && function_field_layout(version) {
             // Value17 function fields: the payload is a v12+ closure whose
             // envelope (block, signature/reserved words, environment edge and
             // binding cells) is checked; captured payloads stay opaque, and
@@ -191,6 +194,7 @@ fn aggregate(
                 | DYNAMIC_VALUE_VERSION
                 | PROMISE_VALUE_VERSION
                 | FUNCTION_FIELD_VALUE_VERSION
+                | HASHED_DICTIONARY_VALUE_VERSION
         )
     {
         Vector::read_in(data, cell.payload, version, module)?;

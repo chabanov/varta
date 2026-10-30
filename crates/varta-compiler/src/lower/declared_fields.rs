@@ -1148,10 +1148,14 @@ impl Lower<'_> {
                 S::Init(source, view(span, saved, graph)),
             ])
         };
+        state.body.push(read);
+        // Value18: read dense, own-key-ordered entries.
+        state
+            .body
+            .extend(self.dictionary_compact(local(span, source, graph))?);
         state.body.extend([
-            read,
-            S::Init(keys, field(dictionaries::KEYS, dictionary.keys)),
-            S::Init(values, field(dictionaries::VALUES, dictionary.values)),
+            S::Init(keys, field(dictionary.keys_slot(), dictionary.keys)),
+            S::Init(values, field(dictionary.values_slot(), dictionary.values)),
         ]);
         Ok(GraphObject {
             keys,
@@ -1329,17 +1333,12 @@ impl Lower<'_> {
             ),
             S::Init(
                 output,
-                Expr {
+                self.dictionary_storage(
                     span,
-                    ty: target,
-                    kind: E::Record(vec![
-                        (dictionaries::KEYS, local(span, new_keys, dictionary.keys)),
-                        (
-                            dictionaries::VALUES,
-                            local(span, new_values, dictionary.values),
-                        ),
-                    ]),
-                },
+                    target,
+                    local(span, new_keys, dictionary.keys),
+                    local(span, new_values, dictionary.values),
+                )?,
             ),
         ]);
         Ok(())

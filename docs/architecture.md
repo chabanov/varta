@@ -161,11 +161,11 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 | `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
 | `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
-| `checked-f64-utf16-v38` | 34 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_owned` | `json_parse_v18` |
+| `checked-f64-utf16-v38` | 34 | 18 | `varta.exception.version_v9` = 9 | `json_stringify_owned` | `json_parse_v19` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **34**, value ABI **17**, HTTP contract **1** and **41** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **34**, value ABI **18**, HTTP contract **1** and **41** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -8912,16 +8912,15 @@ seam and an audit log ([broker v1](#permission-broker-v1-turn_budgets)).
 
 ### `checked-f64-utf16-v38` — Batch: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping and codegen v2
 
-V38 is registered and inherits every v37 feature and selector, including value
-layout 17 (`function_fields()`) with the value17 host readers, exception
-channel v8, JSON schema 17 (`json_stringify_v17`, `json_parse_v18`), the
-microtask scheduler, frame catalog version 3 (`frame_liveness()`), async
+V38 is registered and inherits every v37 feature and selector, including the
+value17 tags and layouts (`function_fields()`, here as value layout 18 below),
+the microtask scheduler, frame catalog version 3 (`frame_liveness()`), async
 generators, the timer operations with the recoverable `timer_start_v2`, the
 `net.request` operations and the [permission broker](#permission-broker-v37)
 with its recoverable denials. Wherever a v37 subsection above admits a
 feature, layout, binding or diagnostic for v37 only, it applies to v37 and
-v38; v36 and earlier profiles stay frozen. V38 declares one version identity
-of its own (see the [version matrix](#version-matrix)):
+v38; v36 and earlier profiles stay frozen. V38 declares two version
+identities of its own (see the [version matrix](#version-matrix)):
 
 - **Host ABI** `abi::PROGRAM_LIMITS_VERSION` (34), for v38 alone. Every
   other v37 operation, including the value17 readers and the timer and
@@ -8929,27 +8928,39 @@ of its own (see the [version matrix](#version-matrix)):
   data-limits stream binds `json_stringify_owned` (minimum host ABI 34) in
   place of `json_stringify_v17` ([data limits](#data-limits-data_limits)).
   Host imports added in this batch use host ABI 34 as their minimum.
-- **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17),
-  shared with v36 and v37. V38 adds no value tag or layout yet;
+- **Value ABI and layout** `value::HASHED_DICTIONARY_VALUE_VERSION`
+  (value18, [dictionary hashing](#dictionary-hashing-dictionary_hashing)),
+  for v38 alone: every value17 tag and layout with its value17 meaning except
+  the dictionary storage record, which gains a hole count and a hash table.
   `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
-  catalogs, frames and exception cells are stamped and read exactly as under
-  v37.
+  catalogs, frames and exception cells are stamped value18. V38 binds the
+  twelve value18 readers (`HostOperation::value17_counterpart`: `value_log_v12`,
+  `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`,
+  `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`,
+  `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`,
+  `primitive_to_number_v6`, `bigint_from_value_v5`), each with its value17
+  counterpart's signature, capability and contract and minimum host ABI 34;
+  `json_stringify_owned` reads value18. Exception channel v9
+  (`exceptions::HASHED_DICTIONARY_VERSION`) and JSON schema 18
+  (`json::HASHED_DICTIONARY_SCHEMA_VERSION`) carry the value17 contents in
+  value18 layouts. The launcher advertises value ABI 18.
 
 An older runtime that does not list v38 rejects the unknown profile name in
 `varta.language` validation, before compilation or any guest effect. A v38
-module relabelled as v37 declares host ABI 34 against v37's 33 and fails at its
-host ABI section before instantiation; as for every profile, a v38 declaration
-with a downgraded or missing host ABI section, a value ABI other than value17
-or a missing value section fails validation before any guest effect.
+module relabelled as v37 declares host ABI 34 against v37's 33 and value ABI
+18 against v37's 17 and fails at those sections before instantiation; as for
+every profile, a v38 declaration with a downgraded or missing host ABI section,
+a value ABI other than value18 or a missing value section fails validation
+before any guest effect. Value17 readers reject value18 descriptors and
+value18 readers reject value17 ones; v37 modules cannot import the value18
+readers.
 
-Each ABI is bumped at most once per batch. The host ABI bump is already made at
-registration and every stream adds its imports under it. The program-limits
-stream owns the batch's memory-layout and value-layout foundation: any value 18
-(a new `value` constant, `value_abi`, `value_layout`, value18 variants of every
-layout-bound reader with their minimum host ABI 34, and the launcher maximum)
-or any change to the static-region ABI lands as an early, separate foundation
-commit, and the other streams rebase onto it. V37 and earlier profiles keep
-their host ABI, value ABI, static region and layouts.
+Each ABI is bumped at most once per batch. The host ABI bump was made at
+registration and every stream adds its imports under it; the value ABI bump
+to 18 was made by the wave-2 dictionary-hashing stream (the program-limits
+foundation needed none). Any further v38 layout change extends value18 rather
+than adding value 19. V37 and earlier profiles keep their host ABI, value ABI,
+static region and layouts.
 
 Eight selectors gate the batch's work streams; each admits nothing until its
 stream adds a subsection below:
@@ -8976,7 +8987,10 @@ stream adds a subsection below:
   language items);
 - codegen-v2 stream: `codegen_v2()` (cheaper code generation for loops, string
   comparison and concatenation, and dictionary call sites; it changes code, not
-  the admitted language).
+  the admitted language);
+- wave-2 dictionary-hashing stream: `dictionary_hashing()` (value layout 18
+  with hashed dictionaries and mixed records;
+  [implemented](#dictionary-hashing-dictionary_hashing); it admits no syntax).
 
 The view-protocol and TSX streams add
 [their subsection](#v38-view-protocol-and-tsx-view_protocol-tsx). Until a
@@ -9368,7 +9382,8 @@ earlier compile byte-identically (pinned by FNV digests of 14 v37 modules in
 
 | Bound | v37 and earlier | v38 | What bounds v38 in practice |
 | --- | --- | --- | --- |
-| Elements of one array (dense, resizable, sparse), entries of one dictionary, `Map`, `Set`, `Uint8Array`, flattened spread/rest arguments | 1024 | `V38_MAX_ARRAY_ELEMENTS` = 2^27 | Memory budget |
+| Elements of one array (dense, resizable, sparse), entries of one `Map`, `Set`, `Uint8Array`, flattened spread/rest arguments | 1024 | `V38_MAX_ARRAY_ELEMENTS` = 2^27 | Memory budget |
+| Entries of one dictionary or mixed record | 1024 | 2^26 (`value::dictionary_entry_limit`: half the element limit, [dictionary hashing](#dictionary-hashing-dictionary_hashing)) | Memory budget |
 | Bytes of one string value | 1 MiB | `V38_MAX_STRING_BYTES` = 2^30 (2^29 UTF-16 units) | Memory budget |
 | One guest heap allocation | 1 MiB | `V38_MAX_ALLOCATION_BYTES` = 2^31 − 64 KiB | Memory budget |
 | JSON nesting depth | 64 | `V38_MAX_JSON_DEPTH` = 10000 (host ceiling) | Host JSON stack |
@@ -9385,7 +9400,8 @@ Sizes are computed with checked or bounded arithmetic before allocation; an
 index at or beyond the element limit traps as before (a deliberate deviation
 from ECMAScript, where such a read is `undefined`).
 
-**Sparse backings.** V38 keeps value ABI/layout 17. A sparse backing of up to
+**Sparse backings.** V38 keeps the value17 vector layouts (in value layout 18).
+A sparse backing of up to
 1024 slots keeps the value12 layout exactly (fixed 128-byte presence bitmap);
 a backing above 1024 slots, which only a v38 module can build, carries one
 presence bit per slot (`DataLimits::sparse_bitmap_bytes`), and
@@ -9395,9 +9411,8 @@ readers take the module's limits (`Vector::read_limited`,
 `PrimitiveBox::read_limited`, `ErrorObject::read_limited`,
 `validate_aggregate_limited`); the existing readers keep the frozen limits,
 so a v37 module that crafts a larger backing is still rejected. Runtimes
-before v38 reject the v38 profile name, so they never see such a backing. A
-future value18 (owned by the program-limits stream) must keep this bitmap
-formula.
+before v38 reject the v38 profile name, so they never see such a backing.
+Value18 keeps this bitmap formula.
 
 **Typed resource failures.** A v38 module with a managed heap exports two
 mutable i32 globals, `resource_failure` and `resource_request`
@@ -9524,12 +9539,8 @@ Production fuel (1M) and the 1024 host calls still bound one execution to
 roughly a thousand elements of such work; the turn-budgets stream makes the
 budgets configurable.
 
-**Pending.** Dictionary and mixed-record lookup is a linear key search and
-insertion or deletion shifts the ordered vectors (a 1000-entry dictionary
-with 500 deletions costs 251M fuel). Hashing them needs an index next to
-the key vector, a value-layout change for the program-limits stream's
-value18 (a third storage slot, for example an open-addressing `number[]` of
-entry positions with tombstones and compaction, as in the `Map` prelude).
+**Pending.** Dictionaries and mixed records are hashed under value layout 18
+([dictionary hashing](#dictionary-hashing-dictionary_hashing)).
 Value conversions such as `String(x)` of a union and number templates may
 still be host calls counted against the per-turn host-call budget (`x % y` is
 guest code with a linked fallback under v38). `console.log` diagnostics and
@@ -9537,6 +9548,126 @@ the primitive `String`/`Number`/BigInt conversions still read with the frozen
 string and depth limits. Output captured before a failure is reported with it
 ([turn budgets](#turn-budgets-and-application-instances-turn_budgets)).
 
+
+#### Dictionary hashing (`dictionary_hashing()`)
+
+Selector `dictionary_hashing()` (wave 2 of the batch) gives v38 value ABI and
+layout 18 (`value::HASHED_DICTIONARY_VALUE_VERSION`): dictionaries
+(`Record<string, T>`, index signatures, `object` views) and mixed records
+find their keys through an open-addressing hash table instead of a linear key
+search, and deleting an entry no longer shifts the entries behind it. It
+admits no syntax and changes no observable behaviour: every key order,
+value, error and JSON text is the value17 one (pinned against Node 24 in
+`varta-runtime` `dictionary_hashing_tests`, and v37/v38 parity over the
+value15–v35 dictionary corpus in `value18_tests`). V37 and earlier keep their
+layouts and bytes.
+
+**Layout (value18).** The storage record of a dictionary has four required
+canonical slots, sorted by name (`value::dictionary_storage`):
+
+| Slot | Field | Kind | Content |
+| --- | --- | --- | --- |
+| 0 | `holes` (`value::DICTIONARY_HOLES_FIELD`) | Number | Count of deleted entries still in the vectors |
+| 1 | `keys` | Array of String | Entry keys by position |
+| 2 | `table` (`value::DICTIONARY_TABLE_FIELD`) | Array of Number | Zero handle (unindexed) or the hash table |
+| 3 | `values` | Array of `T` | Entry values by position |
+
+- **Entries.** Both vectors have the same length (the entry positions). A
+  position is live when both vectors hold it and a hole in both otherwise; the
+  live keys are distinct and in ECMAScript own-key order (canonical array
+  indices ascending, then insertion order), exactly as in value15. `holes`
+  counts the holes. A dictionary holds at most
+  `value::dictionary_entry_limit` positions: half the element limit (2^26
+  under v38), so the table never passes half load at its largest capacity.
+- **Unindexed.** With the zero `table` handle (the collector skips zero
+  handles) the vectors are dense and `holes` is 0. Literals, spreads,
+  conversions, compaction and checked parsing produce unindexed dictionaries,
+  so small objects carry no table.
+- **Table.** Otherwise `table` is a `number[]` whose capacity equals its
+  power-of-two length `C`, with `value::DICTIONARY_TABLE_MIN` (16) ≤ `C` ≤ the
+  element limit and `2 · length ≤ C`. A hole of the table is an empty slot, a
+  present `+0` a tombstone, and a present `p + 1` references position `p`.
+  Every live position is referenced exactly once, no hole is referenced, and
+  tombstones plus references number exactly the vectors' length. The home
+  slot of a key is `value::dictionary_hash(units) & (C - 1)`, the 32-bit
+  FNV-1a hash of its UTF-16 code units (`value::DICTIONARY_HASH_OFFSET`,
+  `DICTIONARY_HASH_PRIME`; no seed, identical on every host); a live entry's
+  slot is reached by stepping linearly from its home without crossing an
+  empty slot.
+
+**Operations.** Every v38 dictionary operation keeps the value17 helper
+structure of [mixed index records](#mixed-index-records-mixed_index_records)
+and evaluation order (receiver, key, value):
+
+- **Lookup** (`d[k]`, `k in d`, `Object.hasOwn`, declared reads, updates): a
+  dictionary with more than `value::DICTIONARY_LINEAR_ENTRIES` (8) entries and
+  no table is indexed first (its table sized for three slots per entry, at
+  least 16); then the table is probed (guest helper `DictionaryFind`,
+  allocation-free, at most one pass), or the dense keys of a small unindexed
+  dictionary are searched linearly.
+- **Insertion** of an absent key: when one more entry would pass half load,
+  the holes are dropped and the table rebuilt for three slots per entry
+  (capacity at least the old one, at most the element limit), so rebuilds are
+  amortized constant per insertion; then the entry limit is checked
+  (`RangeError: Dictionary entry limit exceeded`). A named key, or an array
+  index above the last key, is appended and placed in one slot
+  (`DictionaryPlace`). An array index below an existing key first drops the
+  holes, finds its own-key position by binary search over the sorted
+  array-index prefix and is rotated there (`DictionaryInsertAt`, one
+  `memory.copy` per vector plus one pass that shifts the table references
+  behind it); this ordered insertion stays linear, as in value15.
+- **Deletion** (`delete d[k]`): an indexed dictionary tombstones the slot
+  (`DictionaryUnlink`), makes the position a hole of both vectors (the value is
+  released to the collector) and increments `holes`; an unindexed one shifts
+  its few entries as before.
+- **Enumeration and copies** (`Object.keys`/`values`/`entries`, `for...in`,
+  spreads, checked conversions to records, the `unknown` JSON graph): when
+  `holes` is nonzero, `DictionaryHelper::Compact` first replaces the vectors by
+  dense copies of the live entries and drops the table (the next keyed access
+  re-indexes), so every reader of the vectors sees dense, ordered entries.
+
+The probe helpers read and write the table and key vectors in place and never
+allocate, so no handle moves or dies while they run. The collector traces the
+table as an ordinary reference slot of the storage record (a `number[]` with no
+reference elements); every helper roots its receiver, key, vectors and fresh
+tables across nested allocation like the value17 helpers.
+
+**Readers and boundaries.** `value::Dictionary::read_in` validates, on every
+read by a value18 reader (logging, `typeof` and the other value readers, JSON
+serialization, the exception channel, primitive and BigInt conversions,
+capture and frame validation): the four-slot descriptor; equal vector lengths
+within the entry limit; holes at the same positions of both vectors, only
+with a table and exactly `holes` of them; distinct ordered live keys; and the
+whole table (dense capacity, slot contents, single references, tombstone and
+reference count, and the probe reachability of every live entry from its
+recomputed hash, in one pass with one flag per entry of host memory). A table
+that fails any check is rejected (`noncanonical dictionary table`), never
+trusted or repaired, and no reader skips it; readers skip holes and emit the
+live entries in order. Checked parsing (JSON schema 18, `json_parse_v19`)
+builds unindexed four-slot storage records within the value18 entry limit.
+Value17 readers reject value18 storage descriptors and value18 readers reject
+value17 ones.
+
+**Measured costs.** Fuel per operation of `n` distinct keys (`"k" + i`, built
+into an array first) under v38 with test-only fuel and the production 8 MiB
+memory, before (the integrated v38 at cb6795d: linear search and shifting)
+and after (`dictionary_fuel_measurements`, `--ignored --nocapture`):
+
+| Entries | Insert before → after | Lookup before → after | Delete before → after |
+| --- | --- | --- | --- |
+| 1,000 | 54,385 → 1,874 | 54,114 → 1,250 | 201,200 → 1,161 |
+| 10,000 | 628,116 → 2,499 | 700,275 → 1,949 | 2,095,900 → 1,385 |
+| 20,000 | 1,187,358 → 17,714 | 950,645 → 113,018 | 4,190,900 → 112,421 |
+
+At 20,000 entries the fuel profile attributes most of the hashed run to the
+first-fit allocator (about 4,100 fuel per allocation scanning a free list
+fragmented by the key strings' garbage; a lookup allocates its `T |
+undefined` cell): the dictionary helpers themselves cost about 1,800 fuel per
+insertion there. 50,000 hashed entries exhaust the memory budget (typed
+`Memory`; the table adds two to four `number[]` slots per entry), and the
+100,000-key array alone exhausts it before and after. The shape the
+data-limits stream measured at 251M fuel (1,000 insertions with 500 of the
+keys deleted again) takes 2.7M.
 
 #### Code generation v2 (`codegen_v2`)
 

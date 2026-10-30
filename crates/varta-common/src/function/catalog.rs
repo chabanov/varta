@@ -253,6 +253,7 @@ impl FunctionCatalog {
                     | value::DYNAMIC_VALUE_VERSION
                     | value::PROMISE_VALUE_VERSION
                     | value::FUNCTION_FIELD_VALUE_VERSION
+                    | value::HASHED_DICTIONARY_VALUE_VERSION
             )
             || self.types.len() > limits.capture_types()
             || self.bindings.len() > limits.capture_types()

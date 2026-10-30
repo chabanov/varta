@@ -68,7 +68,7 @@ pub(crate) fn stringify(
 ) -> Result<Option<Vec<u8>>, wasmtime::Error> {
     let limits = module.limits.data;
     let encode = |limits: DataLimits| {
-        let mut encoder = Encoder::with_version(data, FUNCTION_FIELD_VALUE_VERSION);
+        let mut encoder = Encoder::with_version(data, HASHED_DICTIONARY_VALUE_VERSION);
         encoder.hide_private = true;
         encoder.module = ModuleBounds {
             limits: varta_common::limits::ProgramLimits {

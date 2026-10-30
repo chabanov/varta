@@ -26,6 +26,9 @@ pub(super) fn erase_program(program: &mut ir::Program) {
         ] {
             *ty = eraser.ty(*ty);
         }
+        if let Some(table) = &mut dictionary.table {
+            *table = eraser.ty(*table);
+        }
     }
     for promise in &mut types.promises {
         promise.value = eraser.ty(promise.value);

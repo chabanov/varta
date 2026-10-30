@@ -196,6 +196,21 @@ impl Emitter<'_> {
                     ir::Intrinsic::FromUnits => self.string_helper(strings::Helper::FromUnits)?,
                     ir::Intrinsic::CharAt => self.string_helper(strings::Helper::CharAt)?,
                     ir::Intrinsic::CharCodeAt => self.string_helper(strings::Helper::CharCodeAt)?,
+                    ir::Intrinsic::DictionaryFind => {
+                        self.string_helper(strings::Helper::DictionaryFind)?;
+                    }
+                    ir::Intrinsic::DictionaryUnlink => {
+                        self.string_helper(strings::Helper::DictionaryUnlink)?;
+                    }
+                    ir::Intrinsic::DictionaryPlace => {
+                        self.string_helper(strings::Helper::DictionaryPlace)?;
+                    }
+                    ir::Intrinsic::DictionaryIndex => {
+                        self.string_helper(strings::Helper::DictionaryIndex)?;
+                    }
+                    ir::Intrinsic::DictionaryInsertAt => {
+                        self.string_helper(strings::Helper::DictionaryInsertAt)?;
+                    }
                     ir::Intrinsic::Units => {
                         self.string_helper(strings::Helper::Units(args.len() as u8))?;
                     }

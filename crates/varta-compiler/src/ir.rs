@@ -324,18 +324,51 @@ pub(crate) struct ValueTypes {
     pub unknown_array: Option<usize>,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
-/// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1).
+/// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value
+/// layout 18 (v38 `dictionary_hashing`) `{ holes: number; keys: string[];
+/// table: number[]; values: T[] }` (slots 0 to 3; see
+/// `lower::dictionary_hashing`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DictionaryType {
     pub value: Type,
     pub keys: Type,
     pub values: Type,
+    /// The value18 hash-table vector type (`number[]`), if hashed.
+    pub table: Option<Type>,
     pub storage: u32,
     /// Declared members of a mixed index record or an `object` view (v35),
     /// an index into `ValueTypes::mixed`; `None` for a plain dictionary. The
     /// storage is always the plain dictionary's: declared members are a
     /// static view whose reads are checked, never a layout.
     pub declared: Option<u32>,
+}
+impl DictionaryType {
+    /// Canonical storage slot of the key vector.
+    pub(crate) fn keys_slot(&self) -> u32 {
+        if self.table.is_some() {
+            varta_common::value::HASHED_DICTIONARY_KEYS_SLOT as u32
+        } else {
+            0
+        }
+    }
+    /// Canonical storage slot of the value vector.
+    pub(crate) fn values_slot(&self) -> u32 {
+        if self.table.is_some() {
+            varta_common::value::HASHED_DICTIONARY_VALUES_SLOT as u32
+        } else {
+            1
+        }
+    }
+    /// Canonical storage slot of the value18 hash table.
+    pub(crate) fn table_slot(&self) -> Option<u32> {
+        self.table
+            .map(|_| varta_common::value::HASHED_DICTIONARY_TABLE_SLOT as u32)
+    }
+    /// Canonical storage slot of the value18 hole count.
+    pub(crate) fn holes_slot(&self) -> Option<u32> {
+        self.table
+            .map(|_| varta_common::value::HASHED_DICTIONARY_HOLES_SLOT as u32)
+    }
 }
 /// A dictionary operation lowered once per dictionary type into a shared
 /// function (v35) instead of inline at every use.
@@ -347,6 +380,18 @@ pub(crate) enum DictionaryHelper {
     Set,
     /// `(d, key) -> boolean`.
     Delete,
+    /// Value18 (`dictionary_hashing`), per dictionary type: `(d) -> boolean`;
+    /// drops the holes of an indexed dictionary, leaving dense vectors and no
+    /// table.
+    Compact,
+    /// Value18, shared: `(keys, capacity) -> number[]`, a fresh table of
+    /// `capacity` slots referencing every present entry position.
+    Index,
+}
+impl DictionaryHelper {
+    /// The type id under which the shared (type-independent) value18
+    /// helpers are registered.
+    pub(crate) const SHARED: u32 = u32::MAX;
 }
 /// A conversion of an `unknown` cell to a declared type lowered once per
 /// target type into a shared function (v36 `checked_declared_fields`).
@@ -607,7 +652,7 @@ impl Type {
             Self::Promise(_) if varta_common::value::promise_layout(version) => {
                 Some(varta_common::value::ValueKind::Promise)
             }
-            Self::Function(_) if version == varta_common::value::FUNCTION_FIELD_VALUE_VERSION => {
+            Self::Function(_) if varta_common::value::function_field_layout(version) => {
                 Some(varta_common::value::ValueKind::Function)
             }
             _ => self.value_kind(),
@@ -757,6 +802,26 @@ pub(crate) enum Intrinsic {
     /// [`MAX_PACKED_UNITS`] code units given as integers in 0..=0xFFFF (the
     /// fixed fields of one L0 operation), without an array.
     Units,
+    /// V38 (`dictionary_hashing`): `(keys, table, key) -> number`, the entry
+    /// position of `key` by probing an indexed dictionary's table from the
+    /// 32-bit FNV-1a hash of its UTF-16 code units (`value::dictionary_hash`),
+    /// or -1.
+    /// Allocation-free; reads only.
+    DictionaryFind,
+    /// V38: as [`Self::DictionaryFind`], and the found slot becomes a
+    /// tombstone (the entry is being deleted).
+    DictionaryUnlink,
+    /// V38: `(table, key, position) -> 0`, reference `position` from the
+    /// first empty slot of `key`'s probe. Allocation-free.
+    DictionaryPlace,
+    /// V38: `(keys, table) -> 0`, reference every entry of a dense key vector
+    /// from a fresh table of empty slots. Allocation-free.
+    DictionaryIndex,
+    /// V38: `(keys, values, table, position) -> 0`, move the entry just
+    /// appended to dense vectors to own-key `position`, shifting the tail up
+    /// and every table reference to it (the zero table handle: none).
+    /// Allocation-free.
+    DictionaryInsertAt,
 }
 /// The most code units one `Intrinsic::Units` call packs.
 pub(crate) const MAX_PACKED_UNITS: usize = 16;

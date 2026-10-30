@@ -3091,18 +3091,21 @@ See the [contract](architecture.md#network-requests-net_request).
 
 ## Profile v38 (in development)
 
-Inherit v37 under checked-f64-utf16-v38 with every v37 selector, value layout
-17 and the value17 host operations, exception channel v8, JSON schema 17
-(`json_stringify_v17`, `json_parse_v18`), the scheduler, frame catalog version
-3, the timer and `net.request` operations and the permission broker's
-recoverable denials. V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION`
-(34) and shares value ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`)
-with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams; each
+Inherit v37 under checked-f64-utf16-v38 with every v37 selector and the
+value17 tags and layouts, the scheduler, frame catalog version 3, the timer
+and `net.request` operations and the permission broker's recoverable denials.
+V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION` (34) and its own value
+ABI/layout 18 (`value::HASHED_DICTIONARY_VALUE_VERSION`, [dictionary
+hashing](#dictionary-hashing-dictionary_hashing)) with the value18 readers,
+exception channel v9, JSON schema 18 (`json_stringify_owned`,
+`json_parse_v19`); v37 keeps host ABI 33 and value layout 17. Eight selectors gate the streams; each
 admits nothing until its stream adds its rules below: program limits (`program_limits`), data limits
 (`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
 (`linked_intrinsics`, [rules below](#v38-linked-intrinsics)), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
-(`codegen_v2`); the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
+(`codegen_v2`), plus the wave-2 dictionary hashing selector
+(`dictionary_hashing`, [rules below](#dictionary-hashing-dictionary_hashing));
+the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
 - A v37 rule or binding stated "for v37 only" (prelude pruning, private JSON
@@ -3113,13 +3116,11 @@ profiles frozen, and add each stream's rules under its own heading here.
   minimum ABI in the `HostOperation` registry; do not add another host ABI
   constant in this batch. Add its `.d.ts`, linker, validation and denial tests
   in the same change.
-- The program-limits stream owns the batch's memory-layout and value-layout
-  foundation and lands it first as a separate foundation commit: any value 18
-  (a new `value` constant, `value_abi`/`value_layout` for v38, value18 variants
-  of every layout-bound reader with minimum ABI 34 and the launcher value
-  maximum) or any static-region ABI change. Value17 readers and the
-  single-page static region stay frozen for v37 and earlier. The other streams
-  rebase onto it.
+- Value 18 exists (wave-2 dictionary hashing): v38 stamps and reads value18
+  only. Any further v38 layout change extends value18 in place (v38 is
+  unreleased) together with every value18 reader, `value::dictionary_storage`
+  and the drift tables; never add value 19 in this batch. Value17 readers and
+  the single-page static region stay frozen for v37 and earlier.
 - Limits that grow stay profile-dependent: v38 may admit larger structural or
   data limits up to the Wasm limits and the memory budget, but production
   budgets and the limits of earlier profiles never change. Turn budgets set by
@@ -3278,6 +3279,38 @@ Normative contract: [architecture](architecture.md#turn-budgets-and-application-
   failure in `RunReport`; the earlier `Result` entry points still return only
   the error. The CLI and the companion print the lines, then the
   `--budget-report` lines, then the diagnostic.
+
+### Dictionary hashing (`dictionary_hashing`)
+
+- Gate the value18 layout on `dictionary_hashing()` through
+  `DictionaryType::table` (set by `dictionaries::intern`), never on the profile
+  name: v37 and earlier keep the two-slot storage record, their helper bodies
+  and their bytes (frozen digests).
+- Name storage slots through `DictionaryType::keys_slot`/`values_slot`/
+  `table_slot`/`holes_slot` and build fresh storage with
+  `Lower::dictionary_storage` (or `dictionary_hashing::storage_fields`); never
+  write slot literals or a two-field `E::Record` for a dictionary.
+- Before any code reads a dictionary's vectors directly (enumeration, spreads,
+  record and JSON-graph conversions), emit `Lower::dictionary_compact` on a
+  rooted local: under value18 the vectors may hold holes. Keyed operations go
+  through `Lower::dictionary_search`, which indexes past
+  `value::DICTIONARY_LINEAR_ENTRIES` and probes.
+- The probe intrinsics (`DictionaryFind`, `DictionaryUnlink`,
+  `DictionaryPlace`, `DictionaryIndex`, `DictionaryInsertAt`) must stay
+  allocation-free and assume the layout invariants; `DictionaryIndex` runs only
+  on dense keys (unindexed or just compacted). Keep load at most one half
+  before any placement, and rebuild through `Compact` plus `Index`.
+- Hash with `value::dictionary_hash` (FNV-1a over UTF-16 units, no seed) in
+  both the guest helpers and the host validator; a change is a layout change.
+- Every reader validates the whole table through
+  `value::Dictionary::read_in` and iterates live entries with
+  `Dictionary::entry` (`None` for holes); never trust the table, the hole
+  count or the order, and keep the readers `core`+`alloc` friendly (no
+  std-only float or collection APIs) for the `no_std` value core.
+- The value18 entry limit is `value::dictionary_entry_limit` (half the element
+  limit); compile-time limits, checked parsing and validation use it.
+- Behaviour tests compare v37 and v38 against Node 24 output; corrupt-table
+  tests tamper with a real guest image and expect every boundary to reject it.
 
 ### Code generation v2 (`codegen_v2`)
 

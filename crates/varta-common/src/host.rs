@@ -58,7 +58,9 @@ pub enum HostOperation {
     /// through the module's host-free `varta.value_abi.allocate` helper,
     /// retains it through `varta.value_abi.retain` and returns its packed
     /// handle (zero for an `undefined` result) with the error class word of
-    /// `json_stringify_v17`. Capability-free.
+    /// `json_stringify_v17`. Capability-free. It reads value18 layouts
+    /// (`dictionary_hashing`), the only layouts of the only profile that
+    /// binds it.
     JsonStringifyOwned,
     /// Value17 (profile v36) readers: each mirrors its value16 counterpart's
     /// signature and contract, reading value17 layouts (which add function
@@ -76,6 +78,21 @@ pub enum HostOperation {
     PrimitiveStringV5,
     PrimitiveNumberV5,
     BigIntFromValueV4,
+    /// Value18 (profile v38, `dictionary_hashing`) readers: each mirrors its
+    /// value17 counterpart's signature and contract, reading value18 layouts
+    /// (which add the dictionary hash table and entry holes) and nothing else.
+    ValueLogV12,
+    ValueTypeOfV11,
+    ValueTruthyV11,
+    ValueNullishV11,
+    ValueStrictEqualV11,
+    ValueNullishEqualV11,
+    ValueIsArrayV11,
+    ValueIsErrorClassV7,
+    JsonParseV19,
+    PrimitiveStringV6,
+    PrimitiveNumberV6,
+    BigIntFromValueV5,
 
     /// v36 timers (`crate::scheduler`): arm a timer for the one reaction of
     /// an engine-internal pending promise; capability `time.timer`.
@@ -299,6 +316,26 @@ pub enum HostOperation {
     HttpService,
 }
 impl HostOperation {
+    /// The value17 operation whose signature, capability and observable
+    /// contract a value18 (profile v38) operation keeps; `None` otherwise.
+    #[must_use]
+    pub fn value17_counterpart(self) -> Option<Self> {
+        Some(match self {
+            Self::ValueLogV12 => Self::ValueLogV11,
+            Self::ValueTypeOfV11 => Self::ValueTypeOfV10,
+            Self::ValueTruthyV11 => Self::ValueTruthyV10,
+            Self::ValueNullishV11 => Self::ValueNullishV10,
+            Self::ValueStrictEqualV11 => Self::ValueStrictEqualV10,
+            Self::ValueNullishEqualV11 => Self::ValueNullishEqualV10,
+            Self::ValueIsArrayV11 => Self::ValueIsArrayV10,
+            Self::ValueIsErrorClassV7 => Self::ValueIsErrorClassV6,
+            Self::JsonParseV19 => Self::JsonParseV18,
+            Self::PrimitiveStringV6 => Self::PrimitiveStringV5,
+            Self::PrimitiveNumberV6 => Self::PrimitiveNumberV5,
+            Self::BigIntFromValueV5 => Self::BigIntFromValueV4,
+            _ => return None,
+        })
+    }
     /// The value16 operation whose signature, capability and observable
     /// contract a value17 (profile v36) operation keeps; `None` otherwise.
     #[must_use]
@@ -364,6 +401,9 @@ impl HostOperation {
     }
     #[must_use]
     pub fn returns_string(self) -> bool {
+        if let Some(value17) = self.value17_counterpart() {
+            return value17.returns_string();
+        }
         if let Some(value16) = self.value16_counterpart() {
             return value16.returns_string();
         }
@@ -415,6 +455,9 @@ impl HostOperation {
     }
     #[must_use]
     pub fn needs_result_globals(self) -> bool {
+        if let Some(value17) = self.value17_counterpart() {
+            return value17.needs_result_globals();
+        }
         if let Some(value16) = self.value16_counterpart() {
             return value16.needs_result_globals();
         }
@@ -477,6 +520,18 @@ impl HostOperation {
             Self::PrimitiveStringV5 => "primitive_to_string_v5",
             Self::PrimitiveNumberV5 => "primitive_to_number_v5",
             Self::BigIntFromValueV4 => "bigint_from_value_v4",
+            Self::ValueLogV12 => "value_log_v12",
+            Self::ValueTypeOfV11 => "value_typeof_v11",
+            Self::ValueTruthyV11 => "value_truthy_v11",
+            Self::ValueNullishV11 => "value_nullish_v11",
+            Self::ValueStrictEqualV11 => "value_strict_equal_v11",
+            Self::ValueNullishEqualV11 => "value_nullish_equal_v11",
+            Self::ValueIsArrayV11 => "value_is_array_v11",
+            Self::ValueIsErrorClassV7 => "value_is_error_class_v7",
+            Self::JsonParseV19 => "json_parse_v19",
+            Self::PrimitiveStringV6 => "primitive_to_string_v6",
+            Self::PrimitiveNumberV6 => "primitive_to_number_v6",
+            Self::BigIntFromValueV5 => "bigint_from_value_v5",
 
             Self::ViewCommit => crate::view::COMMIT_IMPORT,
             Self::PermissionQuery => "permission_query",
@@ -817,7 +872,7 @@ impl HostOperation {
         {
             return crate::abi::NET_REQUEST_VERSION;
         }
-        if self == Self::JsonStringifyOwned {
+        if self == Self::JsonStringifyOwned || self.value17_counterpart().is_some() {
             return crate::abi::PROGRAM_LIMITS_VERSION;
         }
         if self.value16_counterpart().is_some() || self.timer() {
@@ -1115,7 +1170,8 @@ impl HostOperation {
             Self::PrimitiveEqual => (&[I32, I64, I64], &[I32]),
             Self::BigIntWidthV2 => (&[I32, I64, I64], &[I32, I32]),
             Self::BigIntToStringV2 => (&[I64, I64], &[I32, I32]),
-            Self::BigIntFromValueV4
+            Self::BigIntFromValueV5
+            | Self::BigIntFromValueV4
             | Self::BigIntFromValueV3
             | Self::BigIntFromValueV2
             | Self::BigIntFromValue => (&[I64], &[I32, I32]),
@@ -1125,13 +1181,15 @@ impl HostOperation {
             | Self::JsonStringifyV14
             | Self::JsonStringifyV13 => (&[I32, I32, I32], &[I32, I32]),
             Self::JsonStringifyOwned => (&[I32, I32, I32], &[I64, I32]),
-            Self::ValueIsErrorClassV6
+            Self::ValueIsErrorClassV7
+            | Self::ValueIsErrorClassV6
             | Self::ValueIsErrorClassV5
             | Self::ValueIsErrorClassV4
             | Self::ValueIsErrorClassV3
             | Self::ValueIsErrorClassV2
             | Self::ValueIsErrorClass => (&[I64, I32], &[I32]),
-            Self::ValueLogV11
+            Self::ValueLogV12
+            | Self::ValueLogV11
             | Self::ValueLogV10
             | Self::ValueLogV9
             | Self::ValueLogV8
@@ -1142,18 +1200,23 @@ impl HostOperation {
             | Self::ValueLogV3
             | Self::ValueLog
             | Self::UnionLog => (&[I64], &[]),
-            Self::PrimitiveStringV5
+            Self::PrimitiveStringV6
+            | Self::PrimitiveStringV5
             | Self::PrimitiveStringV4
             | Self::PrimitiveStringV3
             | Self::PrimitiveStringV2
             | Self::PrimitiveString
             | Self::ValueTypeOfV10
+            | Self::ValueTypeOfV11
             | Self::ValueTypeOfV9
             | Self::ValueTruthyV10
+            | Self::ValueTruthyV11
             | Self::ValueTruthyV9
             | Self::ValueNullishV10
+            | Self::ValueNullishV11
             | Self::ValueNullishV9
             | Self::ValueIsArrayV10
+            | Self::ValueIsArrayV11
             | Self::ValueIsArrayV9
             | Self::ValueTypeOfV8
             | Self::ValueTypeOfV7
@@ -1187,9 +1250,11 @@ impl HostOperation {
             | Self::UnionTypeOf
             | Self::UnionTruthy
             | Self::UnionNullish => (&[I64], &[I32]),
-            Self::ValueStrictEqualV10
+            Self::ValueStrictEqualV11
+            | Self::ValueStrictEqualV10
             | Self::ValueStrictEqualV9
             | Self::ValueNullishEqualV10
+            | Self::ValueNullishEqualV11
             | Self::ValueNullishEqualV9
             | Self::ValueStrictEqualV8
             | Self::ValueStrictEqualV7
@@ -1226,6 +1291,7 @@ impl HostOperation {
             Self::NumberParseInt => (&[I64, I64], &[F64]),
             Self::NumberParseFloat
             | Self::PrimitiveNumberV5
+            | Self::PrimitiveNumberV6
             | Self::PrimitiveNumberV4
             | Self::PrimitiveNumberV3
             | Self::PrimitiveNumberV2
@@ -1277,6 +1343,7 @@ impl HostOperation {
             | Self::JsonParseV7
             | Self::JsonParseV8
             | Self::JsonParseV18
+            | Self::JsonParseV19
             | Self::JsonParseV17
             | Self::JsonParseV16
             | Self::JsonParseV15
@@ -1329,6 +1396,18 @@ impl HostOperation {
             "primitive_to_string_v5" => Self::PrimitiveStringV5,
             "primitive_to_number_v5" => Self::PrimitiveNumberV5,
             "bigint_from_value_v4" => Self::BigIntFromValueV4,
+            "value_log_v12" => Self::ValueLogV12,
+            "value_typeof_v11" => Self::ValueTypeOfV11,
+            "value_truthy_v11" => Self::ValueTruthyV11,
+            "value_nullish_v11" => Self::ValueNullishV11,
+            "value_strict_equal_v11" => Self::ValueStrictEqualV11,
+            "value_nullish_equal_v11" => Self::ValueNullishEqualV11,
+            "value_is_array_v11" => Self::ValueIsArrayV11,
+            "value_is_error_class_v7" => Self::ValueIsErrorClassV7,
+            "json_parse_v19" => Self::JsonParseV19,
+            "primitive_to_string_v6" => Self::PrimitiveStringV6,
+            "primitive_to_number_v6" => Self::PrimitiveNumberV6,
+            "bigint_from_value_v5" => Self::BigIntFromValueV5,
 
             "view_commit" => Self::ViewCommit,
             "permission_query" => Self::PermissionQuery,
@@ -1548,32 +1627,44 @@ impl HostOperation {
         Some(match self {
             Self::ViewCommit
             | Self::ValueLogV11
+            | Self::ValueLogV12
             | Self::ValueLogV10
             | Self::ValueTypeOfV10
+            | Self::ValueTypeOfV11
             | Self::ValueTypeOfV9
             | Self::ValueTruthyV10
+            | Self::ValueTruthyV11
             | Self::ValueTruthyV9
             | Self::ValueNullishV10
+            | Self::ValueNullishV11
             | Self::ValueNullishV9
             | Self::ValueStrictEqualV10
+            | Self::ValueStrictEqualV11
             | Self::ValueStrictEqualV9
             | Self::ValueNullishEqualV10
+            | Self::ValueNullishEqualV11
             | Self::ValueNullishEqualV9
             | Self::ValueIsArrayV10
+            | Self::ValueIsArrayV11
             | Self::ValueIsArrayV9
             | Self::ValueIsErrorClassV6
+            | Self::ValueIsErrorClassV7
             | Self::ValueIsErrorClassV5
             | Self::JsonParseV18
+            | Self::JsonParseV19
             | Self::JsonParseV17
             | Self::JsonStringifyOwned
             | Self::JsonStringifyV17
             | Self::JsonStringifyV16
             | Self::JsonStringifyV15
             | Self::PrimitiveStringV5
+            | Self::PrimitiveStringV6
             | Self::PrimitiveStringV4
             | Self::PrimitiveNumberV5
+            | Self::PrimitiveNumberV6
             | Self::PrimitiveNumberV4
             | Self::BigIntFromValueV4
+            | Self::BigIntFromValueV5
             | Self::BigIntFromValueV3
             | Self::ValueLogV9
             | Self::ValueTypeOfV8
