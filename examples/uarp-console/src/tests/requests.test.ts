@@ -14,7 +14,6 @@ import type {
   SendSessionMessageResponse,
 } from "../../node_modules/uarp-sdk/src/generated/models.js";
 import { NotFoundError, type ProblemDocument } from "../../node_modules/uarp-sdk/src/core/errors.js";
-import type { RequestOptions } from "../../node_modules/uarp-sdk/src/core/transport.js";
 import { Runtime } from "../l1/reactive.js";
 import { onAwaitingApproval, onAwaitingInput } from "../chat/timeline.js";
 import { ChatStore } from "../chat/store.js";
@@ -41,24 +40,24 @@ class RecordedApi implements ChatApi {
     const calls = this.calls;
     const fails = (): boolean => this.failing;
     this.sessions = {
-      sendSessionMessage: async (sessionId: string, body: SendSessionMessageRequest, options?: RequestOptions): Promise<SendSessionMessageResponse> => {
+      sendSessionMessage: async (sessionId: string, body: SendSessionMessageRequest): Promise<SendSessionMessageResponse> => {
         calls.push("sendSessionMessage " + sessionId + " " + JSON.stringify(body.content));
         if (fails()) throw notFound();
         return JSON.parse(SEND_ACCEPTED) as SendSessionMessageResponse;
       },
     };
     this.runs = {
-      approveRun: async (runId: string, body?: RunApproveRequest, options?: RequestOptions): Promise<ApproveRunResponse> => {
+      approveRun: async (runId: string, body?: RunApproveRequest): Promise<ApproveRunResponse> => {
         calls.push("approveRun " + runId);
         if (fails()) throw notFound();
         return JSON.parse(APPROVED) as ApproveRunResponse;
       },
-      rejectRun: async (runId: string, body?: RejectRunRequest, options?: RequestOptions): Promise<RejectRunResponse> => {
+      rejectRun: async (runId: string, body?: RejectRunRequest): Promise<RejectRunResponse> => {
         calls.push("rejectRun " + runId);
         if (fails()) throw notFound();
         return JSON.parse(REJECTED) as RejectRunResponse;
       },
-      respondToRun: async (runId: string, body: RespondToRunRequest, options?: RequestOptions): Promise<RespondToRunResponse> => {
+      respondToRun: async (runId: string, body: RespondToRunRequest): Promise<RespondToRunResponse> => {
         calls.push("respondToRun " + runId + " " + JSON.stringify(body.response));
         if (fails()) throw notFound();
         return JSON.parse(RESPONDED) as RespondToRunResponse;

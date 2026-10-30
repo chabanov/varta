@@ -17,20 +17,18 @@ import type {
   SendSessionMessageResponse,
 } from "../../node_modules/uarp-sdk/src/generated/models.js";
 import { APIError } from "../../node_modules/uarp-sdk/src/core/errors.js";
-import type { RequestOptions } from "../../node_modules/uarp-sdk/src/core/transport.js";
 import { untracked } from "../l1/reactive.js";
 import { askSent, askFailed, decideFailed, answerFailed, addNote } from "./timeline.js";
 import { ChatStore, type Intent } from "./store.js";
 
-// The SDK's own signatures, options included, so its resources satisfy them.
 export interface SessionsApi {
-  sendSessionMessage(sessionId: string, body: SendSessionMessageRequest, options?: RequestOptions): Promise<SendSessionMessageResponse>;
+  sendSessionMessage(sessionId: string, body: SendSessionMessageRequest): Promise<SendSessionMessageResponse>;
 }
 
 export interface RunsApi {
-  approveRun(runId: string, body?: RunApproveRequest, options?: RequestOptions): Promise<ApproveRunResponse>;
-  rejectRun(runId: string, body?: RejectRunRequest, options?: RequestOptions): Promise<RejectRunResponse>;
-  respondToRun(runId: string, body: RespondToRunRequest, options?: RequestOptions): Promise<RespondToRunResponse>;
+  approveRun(runId: string, body?: RunApproveRequest): Promise<ApproveRunResponse>;
+  rejectRun(runId: string, body?: RejectRunRequest): Promise<RejectRunResponse>;
+  respondToRun(runId: string, body: RespondToRunRequest): Promise<RespondToRunResponse>;
 }
 
 export interface ChatApi {
