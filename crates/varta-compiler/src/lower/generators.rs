@@ -6,7 +6,7 @@
 //! `IteratorResult` record or a throw.
 use super::*;
 use ir::{GeneratorOutcome as Outcome, GeneratorType};
-use varta_common::function::frame::{self, Completion};
+use varta_common::function::frame::Completion;
 use varta_common::value::ErrorClass;
 
 /// ECMAScript's message for re-entering an executing generator.
@@ -186,7 +186,7 @@ fn intern(yielded: Type, returned: Type, next: Type, types: &mut ir::ValueTypes)
     }) {
         return Ok(Type::Generator(id as u32));
     }
-    if types.generators.len() >= frame::MAX_GENERATOR_TYPES {
+    if types.generators.len() >= types.profile.limits().generator_types {
         return Err(invalid("generator type count exceeds limit"));
     }
     let result = result_record(yielded, returned, types)?;

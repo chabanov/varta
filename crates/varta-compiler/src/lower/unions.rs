@@ -203,7 +203,7 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
             Type::Union(id as u32)
         });
     }
-    if types.unions.len() >= varta_common::value::MAX_UNION_TYPES {
+    if types.unions.len() >= types.profile.limits().union_types {
         return Err(invalid("union type count exceeds limit"));
     }
     let id = types.unions.len() as u32;

@@ -14,6 +14,10 @@ const MAGIC: &[u8; 8] = b"VARTA3\0\0";
 const FORMAT_VERSION: u32 = 1;
 const FOOTER_BYTES: usize = 32;
 pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
+/// Payloads are read within the largest module limit of any profile (v38:
+/// the Wasm module-size limit); validation then applies the declared
+/// profile's own limit.
+const MAX_WASM_BYTES: usize = varta_common::limits::MAXIMUM.wasm_bytes;
 
 pub struct Artifact {
     pub wasm: Vec<u8>,
@@ -41,9 +45,9 @@ impl Artifact {
             file.seek(SeekFrom::Start(0))?;
             let mut wasm = Vec::new();
             (&mut file)
-                .take(abi::MAX_WASM_BYTES as u64 + 1)
+                .take(MAX_WASM_BYTES as u64 + 1)
                 .read_to_end(&mut wasm)?;
-            if wasm.len() > abi::MAX_WASM_BYTES {
+            if wasm.len() > MAX_WASM_BYTES {
                 return Err(invalid("file exceeds size limit"));
             }
             let manifest_path = path.with_extension("manifest.json");
@@ -101,7 +105,7 @@ impl Artifact {
         let wasm_len = read_u64(&footer[..8])?;
         let manifest_len = read_u64(&footer[8..16])?;
         if wasm_len == 0
-            || wasm_len > abi::MAX_WASM_BYTES as u64
+            || wasm_len > MAX_WASM_BYTES as u64
             || manifest_len == 0
             || manifest_len > MAX_MANIFEST_BYTES as u64
         {
@@ -129,7 +133,7 @@ impl Artifact {
     }
 
     fn validate_payload(&self) -> Result<()> {
-        if self.wasm.len() > abi::MAX_WASM_BYTES || !self.wasm.starts_with(b"\0asm\x01\0\0\0") {
+        if self.wasm.len() > MAX_WASM_BYTES || !self.wasm.starts_with(b"\0asm\x01\0\0\0") {
             return Err(invalid("artifact must contain bounded portable Wasm"));
         }
         if self.manifest.to_bytes()?.len() > MAX_MANIFEST_BYTES {

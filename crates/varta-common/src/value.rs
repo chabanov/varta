@@ -225,6 +225,39 @@ mod primitive;
 pub use primitive::PrimitiveBox;
 mod reference;
 pub use reference::{ReferenceBox, validate_aggregate, validate_aggregate_in};
+
+/// What a module's layout-bound readers may accept (v38 `program_limits`
+/// foundation): the static region holding its descriptors, keys and schemas,
+/// and its profile's structural limits (closure codes and signatures). Every
+/// module before v38 reads with [`ModuleBounds::LEGACY`]. Comes from validated
+/// module metadata, never from guest memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModuleBounds {
+    pub static_region: crate::abi::StaticRegion,
+    pub limits: crate::limits::ProgramLimits,
+}
+impl ModuleBounds {
+    pub const LEGACY: Self = Self {
+        static_region: crate::abi::StaticRegion::SINGLE_PAGE,
+        limits: crate::limits::FROZEN,
+    };
+    /// The bounds of a validated module of `profile` with `static_region`.
+    #[must_use]
+    pub fn new(
+        profile: crate::language::LanguageProfile,
+        static_region: crate::abi::StaticRegion,
+    ) -> Self {
+        Self {
+            static_region,
+            limits: profile.limits(),
+        }
+    }
+}
+impl Default for ModuleBounds {
+    fn default() -> Self {
+        Self::LEGACY
+    }
+}
 pub const LEGACY_VALUE_VERSION: u32 = 1;
 /// Version 2 adds dense arrays; existing scalar/record layouts retain their meaning.
 #[must_use]

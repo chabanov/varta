@@ -3132,6 +3132,25 @@ profiles frozen, and add each stream's rules under its own heading here.
 
 ### Program limits (`program_limits`)
 
+- Read every structural limit through `LanguageProfile::limits()`
+  (`varta_common::limits`): `limits::FROZEN` for v1–v37 (the historical
+  constants), `limits::WASM` for v38 (the Wasm implementation limits). Never
+  compare a v38 count with `abi::MAX_USER_FUNCTIONS`, `value::MAX_RECORD_SHAPES`,
+  `MAX_UNION_TYPES`, `MAX_ARRAY_TYPES`, `function::MAX_TYPES`,
+  `frame::MAX_GENERATOR_TYPES`, `abi::MAX_WASM_SIGNATURES`,
+  `abi::MAX_WASM_BYTES` or `abi::MAX_WASM_FUNCTION_BODY_BYTES` directly; those
+  constants remain only as the frozen values. Readers that bound input before
+  they know its profile use `limits::MAXIMUM`, then the profile's limit.
+- Catalogs and schemas validate within the profile's limits
+  (`FunctionCatalog::read_within`/`validate_within`/`to_bytes_within`,
+  `into_verified_within`, `JsonSchema::from_bytes_within`/`to_bytes_within`,
+  `ClosureView::read_envelope_within`). The plain forms are the frozen ones.
+- Runtime readers take `value::ModuleBounds` (static region and limits) from
+  the validated module, never from guest memory; legacy and test callers use
+  `ModuleBounds::LEGACY`.
+- A new structural limit in this batch gets a `ProgramLimits` field, a row in
+  the generated program-limits table and a v38 test over the frozen value
+  that also shows the v37 diagnostic.
 - The memory-layout foundation is the multi-page static region
   (`abi::StaticRegion`, host ABI 34, value layout 17, no value 18). Place
   static items only through the compiler's `static_data::Placement`

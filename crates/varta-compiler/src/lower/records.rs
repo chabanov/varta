@@ -1,6 +1,6 @@
 use super::*;
 use ir::{RecordField, RecordShape};
-use varta_common::value::{MAX_RECORD_KEY_BYTES, MAX_RECORD_SHAPES};
+use varta_common::value::MAX_RECORD_KEY_BYTES;
 
 pub(super) fn key(name: String) -> Result<String> {
     if name.len() > MAX_RECORD_KEY_BYTES {
@@ -103,7 +103,7 @@ pub(super) fn intern(mut fields: Vec<RecordField>, types: &mut ir::ValueTypes) -
     if let Some(index) = types.records.iter().position(|record| record == &shape) {
         return Ok(Type::Record(index as u32));
     }
-    if types.records.len() >= MAX_RECORD_SHAPES {
+    if types.records.len() >= types.profile.limits().record_shapes {
         return Err(invalid("object shape count exceeds limit"));
     }
     let index = types.records.len() as u32;

@@ -60,7 +60,7 @@ pub(in crate::lower) fn instantiate_class(
     if let Some(id) = types.classes.instances.get(&(template, key.clone())) {
         return Ok(*id);
     }
-    if types.classes.list.len() >= MAX_RECORD_SHAPES {
+    if types.classes.list.len() >= types.profile.limits().record_shapes {
         return Err(invalid("class count exceeds limit"));
     }
     let template_class = &types.classes.list[template as usize];

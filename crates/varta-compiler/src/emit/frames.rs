@@ -1312,7 +1312,7 @@ pub(super) fn resume_body<'a>(
         body.instruction(instruction);
     }
     body.instruction(&I::End);
-    if body.byte_len() > abi::MAX_WASM_FUNCTION_BODY_BYTES {
+    if body.byte_len() > emitter.profile.limits().function_body_bytes {
         return Err(function.source.locate(
             CompilerError::Invalid("resume body exceeds compilation budget".into()),
             function.span,

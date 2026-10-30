@@ -69,10 +69,10 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
             kept += 1;
         }
     }
-    if kept > varta_common::abi::MAX_USER_FUNCTIONS {
+    let limit = program.types.profile.limits().user_functions;
+    if kept > limit {
         return Err(invalid(format!(
-            "too many functions across modules: {kept} reachable functions exceed the limit of {}",
-            varta_common::abi::MAX_USER_FUNCTIONS
+            "too many functions across modules: {kept} reachable functions exceed the limit of {limit}"
         )));
     }
     let remap = |index: usize| -> Result<usize> {

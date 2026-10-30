@@ -38,7 +38,7 @@ impl Execution {
                 host_calls: 0,
                 http_control: None,
                 function_catalog: None,
-                static_region: abi::StaticRegion::SINGLE_PAGE,
+                module: varta_common::value::ModuleBounds::LEGACY,
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
                 net: crate::net::Net::default(),
@@ -64,7 +64,11 @@ impl Execution {
     }
     #[cfg(test)]
     pub fn instantiate(&mut self, module: &Module) -> Result<Instance, wasmtime::Error> {
-        self.instantiate_owned(module, None, (abi::StaticRegion::SINGLE_PAGE, false))
+        self.instantiate_owned(
+            module,
+            None,
+            (varta_common::value::ModuleBounds::LEGACY, false),
+        )
     }
     pub fn instantiate_prepared(
         &mut self,
@@ -73,14 +77,14 @@ impl Execution {
         self.instantiate_owned(
             &module.module,
             module.function_catalog.clone(),
-            (module.static_region, module.uncharged_initialization),
+            (module.bounds(), module.profile.program_limits()),
         )
     }
     fn instantiate_owned(
         &mut self,
         module: &Module,
         catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
-        (static_region, uncharged_initialization): (abi::StaticRegion, bool),
+        (bounds, uncharged_initialization): (varta_common::value::ModuleBounds, bool),
     ) -> Result<Instance, wasmtime::Error> {
         // One instance per execution, including failed attempts. Never replace
         // metadata while an existing instance can still call host operations.
@@ -91,7 +95,7 @@ impl Execution {
         }
         self.instantiation_started = true;
         self.store.data_mut().function_catalog = catalog;
-        self.store.data_mut().static_region = static_region;
+        self.store.data_mut().module = bounds;
         let result = (|| {
             let mut linker = wasmtime::Linker::new(self.store.engine());
             host::register(&mut linker)?;

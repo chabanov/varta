@@ -8,7 +8,9 @@ pub(crate) fn module(
 ) -> Result<(crate::PreparedModule, Option<varta_common::ToolCatalog>), RuntimeError> {
     let (language, function_catalog, static_region) = preflight(bytes)?;
     let version = language.profile.map_or(abi::VERSION, |p| p.host_abi());
-    if bytes.len() > abi::MAX_WASM_BYTES || !bytes.starts_with(b"\0asm\x01\0\0\0") {
+    if bytes.len() > language.profile.unwrap_or_default().limits().wasm_bytes
+        || !bytes.starts_with(b"\0asm\x01\0\0\0")
+    {
         return Err(wasmtime::Error::msg("expected a bounded portable Wasm module").into());
     }
     let module = Module::new(engine, bytes)?;
@@ -63,7 +65,7 @@ pub(crate) fn module(
             module,
             function_catalog,
             static_region,
-            uncharged_initialization: language.profile.is_some_and(|p| p.program_limits()),
+            profile: language.profile.unwrap_or_default(),
         },
         tools,
     ))
@@ -100,10 +102,17 @@ fn preflight(
     RuntimeError,
 > {
     use wasmparser::{Parser, Payload};
-    if bytes.len() > abi::MAX_WASM_BYTES {
+    // Bounded by the largest profile limit before the profile is known, then
+    // by the declared profile's own (v38: the Wasm module-size limit).
+    if bytes.len() > varta_common::limits::MAXIMUM.wasm_bytes {
         return Err(error("Wasm exceeds size limit"));
     }
     let language = crate::language::inspect(bytes)?;
+    let limits = language.profile.unwrap_or_default().limits();
+    if bytes.len() > limits.wasm_bytes {
+        return Err(error("Wasm exceeds size limit"));
+    }
+    let mut imports = 0usize;
     let mut values = 0;
     let mut function_catalog = None;
     let mut union_imports = false;
@@ -122,7 +131,7 @@ fn preflight(
             Payload::TypeSection(reader) => {
                 for (count, ty) in reader.into_iter_err_on_gc_types().enumerate() {
                     let ty = ty.map_err(|e| error(&e.to_string()))?;
-                    if count >= abi::MAX_WASM_SIGNATURES
+                    if count >= limits.wasm_signatures
                         || ty.params().len() > abi::MAX_WASM_PARAMETERS
                         || ty.results().len() > 2
                     {
@@ -134,6 +143,7 @@ fn preflight(
                 return Err(error("too many imports"));
             }
             Payload::ImportSection(reader) => {
+                imports = reader.count() as usize;
                 for import in reader {
                     let import = import.map_err(|e| error(&e.to_string()))?;
                     union_imports |= import.module == "varta"
@@ -192,17 +202,26 @@ fn preflight(
                     }
                 }
             }
+            // V38: the function index space within the Wasm limit.
             Payload::FunctionSection(reader)
-                if reader.count() as usize
-                    > abi::MAX_USER_FUNCTIONS
-                        + if language.profile.is_some_and(|p| p.array_mutations()) {
-                            abi::MAX_INTERNAL_FUNCTIONS
-                        } else if language.profile.is_some_and(|p| p.sparse_arrays()) {
-                            abi::SPARSE_INTERNAL_FUNCTIONS
-                        } else {
-                            abi::LEGACY_INTERNAL_FUNCTIONS
-                        }
-                        + abi::MAX_HTTP_HANDLERS =>
+                if language.profile.is_some_and(|p| p.program_limits())
+                    && (reader.count() as usize).saturating_add(imports)
+                        > limits.wasm_functions =>
+            {
+                return Err(error("too many functions"));
+            }
+            Payload::FunctionSection(reader)
+                if language.profile.is_none_or(|p| !p.program_limits())
+                    && reader.count() as usize
+                        > abi::MAX_USER_FUNCTIONS
+                            + if language.profile.is_some_and(|p| p.array_mutations()) {
+                                abi::MAX_INTERNAL_FUNCTIONS
+                            } else if language.profile.is_some_and(|p| p.sparse_arrays()) {
+                                abi::SPARSE_INTERNAL_FUNCTIONS
+                            } else {
+                                abi::LEGACY_INTERNAL_FUNCTIONS
+                            }
+                            + abi::MAX_HTTP_HANDLERS =>
             {
                 return Err(error("too many functions"));
             }
@@ -253,7 +272,7 @@ fn preflight(
                 return Err(error("too many globals"));
             }
             Payload::CodeSectionEntry(body) => {
-                if body.range().len() > abi::MAX_WASM_FUNCTION_BODY_BYTES {
+                if body.range().len() > limits.function_body_bytes {
                     return Err(error("function body exceeds compilation budget"));
                 }
             }
@@ -272,7 +291,7 @@ fn preflight(
                     section.data(),
                     language.profile.unwrap_or_default(),
                 )?
-                .into_verified()?;
+                .into_verified_within(&limits)?;
                 if Some(catalog.as_catalog().value_version)
                     != language.profile.map(|profile| profile.value_layout())
                 {
@@ -334,8 +353,12 @@ fn preflight(
         profile,
         function_catalog.as_ref().map(|c| c.as_catalog()),
     )?;
-    let function_catalog = function_catalog
-        .map(|catalog| std::sync::Arc::new(catalog.with_static_region(static_region)));
+    let function_catalog = function_catalog.map(|catalog| {
+        std::sync::Arc::new(catalog.with_module(varta_common::value::ModuleBounds::new(
+            profile,
+            static_region,
+        )))
+    });
     Ok((language, function_catalog, static_region))
 }
 

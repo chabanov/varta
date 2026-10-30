@@ -313,14 +313,13 @@ fn decode(
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(error("missing memory"));
     };
-    let region = caller.data().static_region;
+    let module = caller.data().module;
+    let region = module.static_region;
     let data = memory.data(&caller);
-    let schema = JsonSchema::from_bytes(static_bytes(
-        data,
-        region,
-        schema_ptr as usize,
-        schema_len as usize,
-    )?)
+    let schema = JsonSchema::from_bytes_within(
+        static_bytes(data, region, schema_ptr as usize, schema_len as usize)?,
+        &module.limits,
+    )
     .map_err(error)?;
     if schema.version != expected_schema {
         return Err(error("schema version does not match JSON import"));
@@ -369,7 +368,11 @@ fn decode(
         exceptions::ready(&mut caller)?;
         exceptions::deadline(&caller)?;
     }
-    descriptors(&schema, memory.data(&caller), caller.data().static_region)?;
+    descriptors(
+        &schema,
+        memory.data(&caller),
+        caller.data().module.static_region,
+    )?;
     let Some(Extern::Global(length)) = caller.get_export(abi::RESULT_LEN) else {
         return Err(error("missing result length"));
     };

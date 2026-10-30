@@ -68,24 +68,46 @@ impl JsonType {
 }
 impl JsonSchema {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, CheckedJsonError> {
-        if bytes.len() > MAX_SCHEMA_BYTES {
+        Self::from_bytes_within(bytes, &crate::limits::FROZEN)
+    }
+    /// Read a schema within a profile's structural limits
+    /// (`LanguageProfile::limits`): v38 schemas may be larger and have more
+    /// types than the frozen schema-17 limits of v36 and v37.
+    pub fn from_bytes_within(
+        bytes: &[u8],
+        limits: &crate::limits::ProgramLimits,
+    ) -> Result<Self, CheckedJsonError> {
+        if bytes.len() > limits.schema_bytes {
             return Err(CheckedJsonError::Schema("byte limit".into()));
         }
         let schema: Self =
             serde_json::from_slice(bytes).map_err(|e| CheckedJsonError::Schema(e.to_string()))?;
-        schema.validate()?;
+        schema.validate_within(limits)?;
         Ok(schema)
     }
     pub fn to_bytes(&self) -> Result<Vec<u8>, CheckedJsonError> {
-        self.validate()?;
+        self.to_bytes_within(&crate::limits::FROZEN)
+    }
+    pub fn to_bytes_within(
+        &self,
+        limits: &crate::limits::ProgramLimits,
+    ) -> Result<Vec<u8>, CheckedJsonError> {
+        self.validate_within(limits)?;
         let bytes =
             serde_json::to_vec(self).map_err(|e| CheckedJsonError::Schema(e.to_string()))?;
-        if bytes.len() > MAX_SCHEMA_BYTES {
+        if bytes.len() > limits.schema_bytes {
             return Err(CheckedJsonError::Schema("byte limit".into()));
         }
         Ok(bytes)
     }
+    /// Validate within the frozen limits of every profile before v38.
     pub fn validate(&self) -> Result<(), CheckedJsonError> {
+        self.validate_within(&crate::limits::FROZEN)
+    }
+    pub fn validate_within(
+        &self,
+        limits: &crate::limits::ProgramLimits,
+    ) -> Result<(), CheckedJsonError> {
         fn bad(message: &str) -> CheckedJsonError {
             CheckedJsonError::Schema(message.into())
         }
@@ -123,9 +145,9 @@ impl JsonSchema {
                         | PROMISE_SCHEMA_VERSION
                         | FUNCTION_FIELD_SCHEMA_VERSION
                 ) {
-                    MAX_SCHEMA_TYPES
+                    limits.schema_types(true)
                 } else {
-                    LEGACY_MAX_SCHEMA_TYPES
+                    limits.schema_types(false)
                 }
             || self.root as usize >= self.types.len()
         {

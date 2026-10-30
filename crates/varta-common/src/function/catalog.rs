@@ -1,7 +1,7 @@
 //! Immutable compiler metadata for typed inspection of private lexical captures.
 use super::*;
 use crate::{
-    abi,
+    limits::{self, ProgramLimits},
     value::{self, ValueAbiError, ValueKind},
 };
 use serde::{Deserialize, Serialize};
@@ -187,6 +187,23 @@ impl CaptureType {
     }
 }
 impl FunctionCatalog {
+    /// Read a catalog of one of the `accepted` versions within a profile's
+    /// structural limits (`LanguageProfile::limits`).
+    pub fn read_within(
+        bytes: &[u8],
+        accepted: &[u32],
+        limits: &ProgramLimits,
+    ) -> Result<Self, ValueAbiError> {
+        if bytes.len() > limits.wasm_bytes {
+            return Err(invalid_catalog());
+        }
+        let value: Self = serde_json::from_slice(bytes).map_err(|_| invalid_catalog())?;
+        if !accepted.contains(&value.version) {
+            return Err(invalid_catalog());
+        }
+        value.validate_within(limits)?;
+        Ok(value)
+    }
     /// Read a version 1 catalog. Frame catalogs (versions 2 and 3) are rejected
     /// here, so existing artifacts and runtimes keep exactly their earlier contract.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ValueAbiError> {
@@ -205,25 +222,24 @@ impl FunctionCatalog {
         )
     }
     fn read(bytes: &[u8], accepted: &[u32]) -> Result<Self, ValueAbiError> {
-        if bytes.len() > abi::MAX_WASM_BYTES {
-            return Err(invalid_catalog());
-        }
-        let value: Self = serde_json::from_slice(bytes).map_err(|_| invalid_catalog())?;
-        if !accepted.contains(&value.version) {
-            return Err(invalid_catalog());
-        }
-        value.validate()?;
-        Ok(value)
+        Self::read_within(bytes, accepted, &limits::FROZEN)
     }
     pub fn to_bytes(&self) -> Result<Vec<u8>, ValueAbiError> {
-        self.validate()?;
+        self.to_bytes_within(&limits::FROZEN)
+    }
+    pub fn to_bytes_within(&self, limits: &ProgramLimits) -> Result<Vec<u8>, ValueAbiError> {
+        self.validate_within(limits)?;
         let bytes = serde_json::to_vec(self).map_err(|_| invalid_catalog())?;
-        if bytes.len() > abi::MAX_WASM_BYTES {
+        if bytes.len() > limits.wasm_bytes {
             return Err(invalid_catalog());
         }
         Ok(bytes)
     }
+    /// Validate within the frozen limits of every profile before v38.
     pub fn validate(&self) -> Result<(), ValueAbiError> {
+        self.validate_within(&limits::FROZEN)
+    }
+    pub fn validate_within(&self, limits: &ProgramLimits) -> Result<(), ValueAbiError> {
         let frames = matches!(
             self.version,
             frame::FRAME_CATALOG_VERSION | frame::FRAME_LIVENESS_CATALOG_VERSION
@@ -238,9 +254,9 @@ impl FunctionCatalog {
                     | value::PROMISE_VALUE_VERSION
                     | value::FUNCTION_FIELD_VALUE_VERSION
             )
-            || self.types.len() > MAX_CAPTURE_TYPES
-            || self.bindings.len() > MAX_CAPTURE_TYPES
-            || self.functions.len() > abi::MAX_USER_FUNCTIONS
+            || self.types.len() > limits.capture_types()
+            || self.bindings.len() > limits.capture_types()
+            || self.functions.len() > limits.user_functions
         {
             return Err(invalid_catalog());
         }
@@ -264,8 +280,8 @@ impl FunctionCatalog {
         }
         let mut codes = BTreeSet::new();
         for function in &self.functions {
-            if function.code as usize >= abi::MAX_USER_FUNCTIONS
-                || function.signature as usize >= MAX_TYPES
+            if function.code as usize >= limits.user_functions
+                || function.signature as usize >= limits.function_types
                 || !codes.insert(function.code)
                 || function.captures.len() > MAX_CAPTURES
                 || function
@@ -285,7 +301,9 @@ impl FunctionCatalog {
                 return Err(invalid_catalog());
             }
             match ty {
-                CaptureType::Function { signature } if *signature as usize >= MAX_TYPES => {
+                CaptureType::Function { signature }
+                    if *signature as usize >= limits.function_types =>
+                {
                     return Err(invalid_catalog());
                 }
                 CaptureType::Dictionary { .. }
@@ -336,7 +354,7 @@ impl FunctionCatalog {
                     let mut ids = BTreeSet::new();
                     let mut records = 0;
                     let mut arrays = 0;
-                    if members.len() < 2 || members.len() > MAX_CAPTURE_TYPES {
+                    if members.len() < 2 || members.len() > limits.capture_types() {
                         return Err(invalid_catalog());
                     }
                     for id in members {
@@ -393,7 +411,7 @@ impl FunctionCatalog {
                 _ => {}
             }
         }
-        self.validate_frames()?;
+        self.validate_frames(limits)?;
         let mut state = vec![0u8; self.types.len()];
         let mut heights = vec![0usize; self.types.len()];
         for id in 0..self.types.len() {
@@ -401,14 +419,14 @@ impl FunctionCatalog {
         }
         Ok(())
     }
-    fn validate_frames(&self) -> Result<(), ValueAbiError> {
+    fn validate_frames(&self, limits: &ProgramLimits) -> Result<(), ValueAbiError> {
         let binding = |id: u32| self.bindings.get(id as usize).ok_or_else(invalid_catalog);
         let mut codes = BTreeSet::new();
-        if self.frames.len() > abi::MAX_USER_FUNCTIONS {
+        if self.frames.len() > limits.user_functions {
             return Err(invalid_catalog());
         }
         for layout in &self.frames {
-            if layout.code as usize >= abi::MAX_USER_FUNCTIONS
+            if layout.code as usize >= limits.user_functions
                 || !codes.insert(layout.code)
                 || layout.slots.len() > frame::MAX_FRAME_BINDINGS
                 || layout.states.len() > frame::MAX_SUSPENSION_STATES

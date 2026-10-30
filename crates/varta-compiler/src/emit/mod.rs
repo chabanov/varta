@@ -116,6 +116,7 @@ struct Emitter<'a> {
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
+    let limits = program.types.profile.limits();
     let collected = collect::Collected::gather(program);
     let reserved_roots = if program.types.profile.exceptions() {
         varta_common::exceptions::RESERVED_ROOT_BYTES
@@ -366,7 +367,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         .iter()
         .map(|helper| (*helper, intern(helper.signature())))
         .collect();
-    if types.len() as usize > varta_common::abi::MAX_WASM_SIGNATURES {
+    if types.len() as usize > limits.wasm_signatures {
         return Err(CompilerError::Invalid(
             "Wasm signature complexity exceeds limits".into(),
         ));
@@ -400,6 +401,16 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         for _ in 0..generator_types {
             functions.function(dispatcher);
         }
+    }
+    // V38: the function index space (imports included) within the Wasm
+    // implementation limit.
+    if program.types.profile.program_limits()
+        && hosts.len() + functions.len() as usize > limits.wasm_functions
+    {
+        return Err(CompilerError::Invalid(format!(
+            "Wasm function count exceeds the limit of {}",
+            limits.wasm_functions
+        )));
     }
     module.section(&functions);
     let mut memory = wasm_encoder::MemorySection::new();
@@ -755,7 +766,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             body.instruction(&I::Unreachable);
         }
         body.instruction(&I::End);
-        if body.byte_len() > varta_common::abi::MAX_WASM_FUNCTION_BODY_BYTES {
+        if body.byte_len() > limits.function_body_bytes {
             return Err(function.source.locate(
                 CompilerError::Invalid("function body exceeds compilation budget".into()),
                 function.span,
@@ -924,7 +935,17 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                 .into(),
         });
     }
-    Ok(module.finish())
+    let bytes = module.finish();
+    // V38: the whole module within the Wasm module-size limit (earlier
+    // profiles keep their runtime-side size check and diagnostics).
+    if program.types.profile.program_limits() && bytes.len() > limits.wasm_bytes {
+        return Err(CompilerError::Invalid(format!(
+            "Wasm module of {} bytes exceeds the module limit of {} bytes",
+            bytes.len(),
+            limits.wasm_bytes
+        )));
+    }
+    Ok(bytes)
 }
 
 fn wasm_types(ty: Type) -> Vec<ValType> {

@@ -8979,6 +8979,52 @@ Until a stream adds its subsection here, a v38 module compiles and runs exactly
 like a v37 module apart from its declared profile and host ABI, and production
 budgets of every profile are unchanged.
 
+#### Program limits (`program_limits`)
+
+V38 removes Varta's own structural program-size ceilings, like a JavaScript
+engine: only the WebAssembly implementation limits remain. Every structural
+limit is read from one registry, `LanguageProfile::limits()`
+(`varta_common::limits`), by the compiler, the runtime's module preflight,
+function-catalog and JSON-schema readers, the value readers' closure checks,
+the artifact and launcher payload readers and the generated tables
+([program limits](#resource-limits),
+[embedding acceptance](embedding.md#profiles)). Every earlier profile reads
+`limits::FROZEN`, the historical constants, so v1–v37 modules, diagnostics and
+artifacts keep their meaning.
+
+The v38 values (`limits::WASM`) and why:
+
+- **Functions** 1,000,000 (defined and imported together) and **types**
+  1,000,000: the WebAssembly JS API limits, which Wasmtime enforces through
+  `wasmparser` (`MAX_WASM_FUNCTIONS`, `MAX_WASM_TYPES`). The compiler checks
+  the function index space after emission; the runtime checks the function
+  section plus imports. Unreachable functions are still removed first.
+- **Function body** 7,654,321 bytes: the JS API and `wasmparser` limit
+  (`MAX_WASM_FUNCTION_SIZE`), for user functions, resume bodies and helpers.
+- **Module** 1 GiB: the JS API module-size limit shared by V8 and
+  SpiderMonkey (`wasmparser` has none). Readers that bound input before its
+  profile is known use `limits::MAXIMUM` and then the declared profile's
+  limit; a `build --single` artifact is in addition bounded by the launcher's
+  `launcher::MAX_LAUNCHER_BYTES`.
+- **Record shapes and classes, unions, array element types, `Promise<T>`
+  types, generator types and function types** 1,000,000 each, and the
+  derived JSON schema and capture type counts: these Varta tables have no Wasm
+  counterpart, so they take the same uniform entity bound as the index spaces
+  they lower to (ids stay `u32`, below the `i32` range of Wasm constants).
+  Module size, static memory and compile time bound them much earlier.
+- **JSON schema bytes**: the memory budget (schemas live in the static
+  region, see below); **static extension**: up to
+  `abi::MAX_STATIC_EXTENSION_PAGES`, the memory32 address space, and in
+  practice the module's memory maximum.
+
+Unchanged for every profile: physical parameters (`abi::MAX_WASM_PARAMETERS`),
+record fields, record key bytes, JSON union members, suspension states per
+function, live frames and the other data limits (owned by the data-limits
+stream), imports, globals and tables, and all production runtime budgets
+(fuel, memory, deadline, host calls, output). A v38 module over a frozen
+limit relabelled as v37 fails at its host ABI section, and with a downgraded
+host ABI at the frozen structural checks, before any guest effect.
+
 #### Multi-page static region (`program_limits`)
 
 The batch's memory-layout foundation, under host ABI 34 and value layout 17
@@ -9718,6 +9764,36 @@ a denied exit returns a failed `VartaResult<void>`.
 | Unhandled-rejection reasons kept / units per field / bytes each | 16 / 256 / 2048 | `scheduler::MAX_*REJECTION_REASON*` |
 | Pending timers (v36) | 32 | `scheduler::MAX_PENDING_TIMERS` |
 <!-- generated:limits:end -->
+
+The structural rows above (Wasm file, function body, signatures, user
+functions, record shapes, array and union types, JSON schema types) are the
+frozen limits of v1–v37. Each profile reads its structural limits from one
+registry, `LanguageProfile::limits` in `varta_common::limits`: the compiler,
+the runtime's module, catalog and schema readers, the value readers'
+function-index bounds and the artifact and launcher payload readers all use
+it. V38 (`program_limits()`) admits the WebAssembly implementation limits
+([program limits](#program-limits-program_limits)); production runtime
+budgets are the same for every profile.
+
+<!-- generated:program-limits:begin (checked by crates/varta-common/tests/documentation.rs) -->
+| Limit | v1–v37 (`limits::FROZEN`) | v38 (`limits::WASM`) | Field |
+| --- | --- | --- | --- |
+| User functions | 256 | 1000000 | `user_functions` |
+| Wasm functions (defined and imported; frozen: defined, maximum helper allowance) | 270 | 1000000 | `wasm_functions` |
+| Distinct Wasm signatures | 256 | 1000000 | `wasm_signatures` |
+| Wasm module | 4194304 bytes | 1073741824 bytes | `wasm_bytes` |
+| Wasm function body | 65536 bytes | 7654321 bytes | `function_body_bytes` |
+| Record shapes / classes | 128 | 1000000 | `record_shapes` |
+| Union types | 128 | 1000000 | `union_types` |
+| Array element types | 128 | 1000000 | `array_types` |
+| `Promise<T>` types | 64 | 1000000 | `promise_types` |
+| Generator types | 64 | 1000000 | `generator_types` |
+| Function types | 128 | 1000000 | `function_types` |
+| JSON schema types (legacy / current schemas) | 260 / 389 | 2000004 / 3000005 | `schema_types()` |
+| JSON schema | 65536 bytes | 8388608 bytes | `schema_bytes` |
+| Function capture types | 672 | 5000032 | `capture_types()` |
+| Static extension pages | 0 | 65518 | `static_extension_pages` |
+<!-- generated:program-limits:end -->
 
 Limits that are derived from several constants or enforced outside `abi`:
 

@@ -11,6 +11,15 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 `program_limits`: structural limits come from one registry,
+  `LanguageProfile::limits()` (`varta_common::limits`), read by the compiler,
+  runtime preflight, catalog, schema and closure readers, artifact and
+  launcher readers and the generated tables. V38 admits the WebAssembly
+  implementation limits: 1,000,000 functions and types, 7,654,321-byte
+  function bodies, a 1 GiB module, and 1,000,000 record shapes, classes,
+  unions, array, promise, generator and function types. V1–v37 keep their
+  frozen limits, bytes and diagnostics.
+
 - V38 `program_limits` foundation: a multi-page static region under host ABI
   34 with value layout 17 (no value 18). Static data that no longer fits the
   first page goes into an extension after the root stack, declared by the

@@ -89,9 +89,13 @@ pub(super) fn publish(
     // host-free. Validate their final product and all metadata before publication.
     ready(caller)?;
     deadline(caller)?;
-    descriptors(schema, memory.data(&*caller), caller.data().static_region)?;
-    let region = caller.data().static_region;
-    let value = ReferenceBox::read_in(memory.data(&*caller), cell, schema.value_version(), region)
+    descriptors(
+        schema,
+        memory.data(&*caller),
+        caller.data().module.static_region,
+    )?;
+    let module = caller.data().module;
+    let value = ReferenceBox::read_in(memory.data(&*caller), cell, schema.value_version(), module)
         .map_err(wasmtime::Error::new)?;
     if value.kind != ValueKind::Error || value.payload != object {
         return Err(invalid());

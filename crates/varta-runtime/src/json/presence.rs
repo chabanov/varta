@@ -18,7 +18,7 @@ impl Encoder<'_, '_> {
             return Err(error("cyclic object"));
         }
         let descriptor = descriptor as usize;
-        if !self.region.contains(
+        if !self.module.static_region.contains(
             descriptor,
             RECORD_DESCRIPTOR_HEADER + count * RECORD_DESCRIPTOR_ENTRY,
         ) {
@@ -67,7 +67,10 @@ impl Encoder<'_, '_> {
             if slot >= count
                 || fields[slot].is_some()
                 || len as usize > MAX_RECORD_KEY_BYTES
-                || !self.region.contains(key as usize, len as usize)
+                || !self
+                    .module
+                    .static_region
+                    .contains(key as usize, len as usize)
             {
                 return Err(error("invalid presence field metadata"));
             }

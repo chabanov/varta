@@ -126,9 +126,12 @@ A host MUST perform every check below **before instantiation**, in any order, an
 reject the module on the first failure. None of these checks executes guest code.
 Passing validation is not proof of provenance or authorization.
 
-1. **Size and format.** At most the `abi::MAX_WASM_BYTES` Wasm file limit of the
-   [limits table](architecture.md#resource-limits), the standard binary magic and
-   version 1.
+1. **Size and format.** At most the declared profile's Wasm module limit
+   (`LanguageProfile::limits().wasm_bytes`: the frozen `abi::MAX_WASM_BYTES` for
+   v1–v37 and generic Wasm, the 1 GiB Wasm module limit for v38; see the
+   [program limits table](architecture.md#resource-limits)), the standard binary
+   magic and version 1. A host that bounds input before it reads the profile uses
+   `limits::MAXIMUM.wasm_bytes` first.
 2. **Version sections.** At most one `varta.abi` section holding exactly four
    bytes, a little-endian `u32` host ABI version listed in the
    [profile table](#profiles); at most one `varta.language` section holding strict
@@ -144,16 +147,26 @@ Passing validation is not proof of provenance or authorization.
    | Present | Missing or different | Reject |
    | Absent | Any other version | Reject |
 
-3. **Structure limits.** At most `abi::MAX_WASM_SIGNATURES` function types, each
-   with at most `abi::MAX_WASM_PARAMETERS` parameters and 2 results; at most 64 imports; at most one memory, 32-bit and not
-   shared, with an initial size of at most `abi::MAX_MEMORY_BYTES /
-   abi::WASM_PAGE_BYTES` pages; at most one table with at most 1024 initial
-   elements; at most 128 globals; every function body at most
-   `abi::MAX_WASM_FUNCTION_BODY_BYTES`; at most the profile's **Max defined
-   functions** (`abi::MAX_USER_FUNCTIONS` plus its helper allowance plus
-   `abi::MAX_HTTP_HANDLERS`) defined functions, from the
-   [acceptance table](#profiles). Unspecified generic Wasm uses the
+3. **Structure limits.** Structural limits come from the profile's registry
+   entry `LanguageProfile::limits()` (`limits::FROZEN` for v1–v37, the Wasm
+   implementation limits `limits::WASM` for v38): at most `wasm_signatures`
+   function types, each with at most `abi::MAX_WASM_PARAMETERS` parameters and 2
+   results; at most 64 imports; at most one memory, 32-bit and not shared, with
+   an initial size of at most `abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES`
+   pages; at most one table with at most 1024 initial elements; at most 128
+   globals; every function body at most `function_body_bytes`; at most the
+   profile's **Max defined functions** from the [acceptance table](#profiles):
+   for v1–v37 `abi::MAX_USER_FUNCTIONS` plus its helper allowance plus
+   `abi::MAX_HTTP_HANDLERS` defined functions, for v38 `wasm_functions` defined
+   and imported functions together. Unspecified generic Wasm uses the
    `checked-i32-utf8-v1` row.
+   A v38 module may also declare its static extension in one `varta.static`
+   section (a little-endian `u32` page count from 1 to
+   `abi::MAX_STATIC_EXTENSION_PAGES`; any other profile, a duplicate, zero or
+   another length is rejected). Every data segment of a v38 module is active in
+   memory 0 at an `i32.const` offset and lies wholly in the first page or wholly
+   in the declared extension, and a declared extension lies within the initial
+   memory ([memory layout](#memory-layout-and-encodings)).
 4. **Memory maximum (third-party hosts).** The reference host caps growth with a
    store limiter. Hosts without one, including every JavaScript host, MUST parse
    the memory section and reject a memory whose maximum is absent or above
@@ -292,7 +305,7 @@ Acceptance details per profile (used by validation steps 3, 7 and 9):
 | `checked-f64-utf16-v35` | 16 | 1 (no frames), 3 (frames) | 13 | 270 |
 | `checked-f64-utf16-v36` | 17 | 1 (no frames), 3 (frames) | 13 | 270 |
 | `checked-f64-utf16-v37` | 17 | 1 (no frames), 3 (frames) | 13 | 270 |
-| `checked-f64-utf16-v38` | 17 | 1 (no frames), 3 (frames) | 13 | 270 |
+| `checked-f64-utf16-v38` | 17 | 1 (no frames), 3 (frames) | 13 | 1000000 with imports |
 <!-- generated:embedding-profile-acceptance:end -->
 
 Numbers are signed i32 in `checked-i32-utf8-v1` (wrapping arithmetic, truncating
@@ -308,6 +321,7 @@ division) and IEEE 754 binary64 in every other profile. Booleans are i32 `0`/`1`
 | Exact reference root stack | [1114112, 1179648) | `abi::STRING_ROOT_BASE`, `abi::STRING_ROOT_END` |
 | Exception root slot (start of the root stack) | [1114112, 1114120) | `exceptions::ROOT`, `exceptions::RESERVED_ROOT_BYTES` |
 | Managed string/record/array heap | [1179648, 8388608) | `abi::OWNED_STRING_BASE`, `abi::MAX_MEMORY_BYTES` |
+| V38 static extension of `n` pages (`varta.static`), heap after it | [1179648, 1179648 + n·65536), n ≤ 65518 | `abi::StaticRegion`, `abi::MAX_STATIC_EXTENSION_PAGES` |
 | Wasm page | 65536 | `abi::WASM_PAGE_BYTES` |
 | Root slot | 8 | `abi::STRING_ROOT_SLOT_BYTES` |
 | Heap block header / alignment | 16 / 8 | `abi::STRING_HEADER_BYTES`, `value::HEAP_ALIGNMENT` |
@@ -999,7 +1013,7 @@ but tokens the guest itself handed over.
 
 **Catalog section (normative minimum).**
 
-1. At most one section, at most `abi::MAX_WASM_BYTES`, strict JSON (unknown or
+1. At most one section, at most the profile's `wasm_bytes`, strict JSON (unknown or
    duplicate fields rejected) with fields `version`, `value_version`, `types`,
    `bindings`, `functions` and, only in frame versions, `frames`.
 2. `version` is one the profile lists: `function::CATALOG_VERSION` with no
@@ -1007,10 +1021,11 @@ but tokens the guest itself handed over.
    v33/v34, 3 with liveness layouts in v35 to v37) with a non-empty `frames` array.
    Version 1 never carries frames.
 3. `value_version` equals the profile's value ABI.
-4. Array lengths stay within the bounds of the
-   [entry-point limits](#entry-point-limits) (`types` and `bindings` at most
-   `function::MAX_CAPTURE_TYPES`, `functions` and `frames` at most
-   `abi::MAX_USER_FUNCTIONS`), and exactly these fields are indices that MUST be in
+4. Array lengths stay within the profile's limits (`limits::FROZEN` gives the
+   [entry-point limits](#entry-point-limits) of v1–v37: `types` and `bindings`
+   at most `function::MAX_CAPTURE_TYPES`, `functions` and `frames` at most
+   `abi::MAX_USER_FUNCTIONS`; v38 uses `limits::WASM`'s `capture_types()` and
+   `user_functions`), and exactly these fields are indices that MUST be in
    range:
 
    | Field | Indexes |
@@ -1021,9 +1036,10 @@ but tokens the guest itself handed over.
    | `frames[].slots[].binding`, `frames[].states[].saved[].binding`, `frames[].states[].yielded`, `frames[].result` (when not `null`), `frames[].exception` | `bindings` |
 
    Other numeric fields are **not** catalog indices: `functions[].code` and
-   `frames[].code` are user-function indices below `abi::MAX_USER_FUNCTIONS` (each
-   unique within its array), `functions[].signature` and `types[].signature`
-   (`function`) are signature numbers below `function::MAX_TYPES`, `types[].class`
+   `frames[].code` are user-function indices below the profile's
+   `user_functions` (each unique within its array), `functions[].signature` and
+   `types[].signature` (`function`) are signature numbers below its
+   `function_types`, `types[].class`
    (`error`) is a native error class tag or `null`, and `frames[].capacity` is a
    liveness entry count at most `frame::MAX_FRAME_BINDINGS`.
 

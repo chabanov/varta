@@ -10,7 +10,6 @@ use super::*;
 use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 use swc_common::Span;
-use varta_common::value::MAX_RECORD_SHAPES;
 
 /// Synthesized parameter prefix of an implicit derived constructor.
 const IMPLICIT_PARAMETER: &str = "$super";
@@ -485,7 +484,7 @@ pub(super) fn register(
             declaration.ident.span,
         ));
     }
-    if types.classes.list.len() >= MAX_RECORD_SHAPES {
+    if types.classes.list.len() >= types.profile.limits().record_shapes {
         return Err(source.locate(invalid("class count exceeds limit"), declaration.ident.span));
     }
     let params = match &declaration.class.type_params {

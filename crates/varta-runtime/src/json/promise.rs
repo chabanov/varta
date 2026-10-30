@@ -25,7 +25,7 @@ impl Encoder<'_, '_> {
             ValueKind::Record,
             packed,
             self.version,
-            self.region,
+            self.module,
         )
         .map_err(wasmtime::Error::new)?;
         self.visit(depth + 1)?;
@@ -79,7 +79,10 @@ impl Encoder<'_, '_> {
         let [descriptor, count] = self.words::<2>(ptr)?;
         let (descriptor, count) = (descriptor as usize, count as usize);
         if count > MAX_RECORD_FIELDS
-            || !self.region.contains(descriptor, descriptor_bytes(count))
+            || !self
+                .module
+                .static_region
+                .contains(descriptor, descriptor_bytes(count))
             || self.words::<2>(descriptor)? != [self.version, count as u32]
         {
             return Err(error("invalid promise descriptor"));
