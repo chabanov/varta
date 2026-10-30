@@ -15,11 +15,15 @@ pub fn invoke_tool_with_policy(
     arguments: &[u8],
     host: &HostPolicy,
 ) -> Result<ToolInvocationOutput> {
-    Ok(VartaRuntime::new().invoke_tool_with_policy(
+    // The package's declared file roots that the host policy maps.
+    let roots =
+        varta_runtime::FileRoots::from_manifests(&artifact.manifest, Some(host.manifest()))?;
+    Ok(VartaRuntime::new().invoke_tool_with_roots(
         &artifact.wasm,
         name,
         arguments,
         &artifact.grants()?,
-        host.grants(),
+        Some(host.grants()),
+        &roots,
     )?)
 }

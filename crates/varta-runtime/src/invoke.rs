@@ -1,5 +1,7 @@
 //! Validated JSON dispatch. Every call owns and drops a fresh bounded instance.
-use crate::{GuestExit, RuntimeContext, RuntimeError, VartaRuntime, execution::Execution};
+use crate::{
+    FileRoots, GuestExit, RuntimeContext, RuntimeError, VartaRuntime, execution::Execution,
+};
 use varta_common::{
     CapabilityGrant, ToolInvocationError as Error, ToolInvocationOutput, ToolResult, ToolType,
     ToolValue, abi,
@@ -14,7 +16,7 @@ impl VartaRuntime {
         arguments: &[u8],
         requested: &[CapabilityGrant],
     ) -> Result<ToolInvocationOutput, Error> {
-        self.invoke(bytes, name, arguments, requested, None)
+        self.invoke(bytes, name, arguments, requested, None, &FileRoots::new())
     }
     /// Both package requests and the explicit host ceiling constrain every host effect.
     pub fn invoke_tool_with_policy(
@@ -25,7 +27,28 @@ impl VartaRuntime {
         requested: &[CapabilityGrant],
         ceiling: &[CapabilityGrant],
     ) -> Result<ToolInvocationOutput, Error> {
-        self.invoke(bytes, name, arguments, requested, Some(ceiling))
+        self.invoke(
+            bytes,
+            name,
+            arguments,
+            requested,
+            Some(ceiling),
+            &FileRoots::new(),
+        )
+    }
+    /// Invoke a tool with an optional host ceiling and the host-pinned
+    /// virtual file roots a v38 module reads under (`file_roots`; earlier
+    /// profiles ignore them and keep absolute host paths).
+    pub fn invoke_tool_with_roots(
+        &self,
+        bytes: &[u8],
+        name: &str,
+        arguments: &[u8],
+        requested: &[CapabilityGrant],
+        ceiling: Option<&[CapabilityGrant]>,
+        roots: &FileRoots,
+    ) -> Result<ToolInvocationOutput, Error> {
+        self.invoke(bytes, name, arguments, requested, ceiling, roots)
     }
     fn invoke(
         &self,
@@ -34,6 +57,7 @@ impl VartaRuntime {
         arguments: &[u8],
         requested: &[CapabilityGrant],
         ceiling: Option<&[CapabilityGrant]>,
+        roots: &FileRoots,
     ) -> Result<ToolInvocationOutput, Error> {
         if !varta_common::valid_tool_name(name) {
             return Err(Error::InvalidArguments("invalid tool name".into()));
@@ -58,8 +82,9 @@ impl VartaRuntime {
             .ok_or_else(|| Error::UnknownTool(name.into()))?;
         let arguments = tool.parse_arguments(arguments)?;
         // No instantiation or guest allocation occurs until every argument is valid.
-        let mut execution =
-            Execution::new(&self.engine, requested, ceiling).map_err(runtime_error)?;
+        let files = crate::policy::FileMode::of(module.profile, roots);
+        let mut execution = Execution::with_files(&self.engine, requested, ceiling, files)
+            .map_err(runtime_error)?;
         let instance = execution
             .instantiate_prepared(&module)
             .map_err(execution_error)?;
@@ -184,6 +209,7 @@ fn runtime_error(error: RuntimeError) -> Error {
         RuntimeError::View(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::ViewInput(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Policy(error) => Error::InvalidPolicy(error.to_string()),
+        RuntimeError::FileRoot(error) => Error::InvalidPolicy(error.to_string()),
         RuntimeError::Execution(error) => execution_error(error),
         RuntimeError::ToolContract(error) => Error::InvalidArtifact(error.to_string()),
         RuntimeError::Http(error) => Error::InvalidArtifact(error.to_string()),

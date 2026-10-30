@@ -42,6 +42,11 @@ enum Commands {
     /// exhausted budget still prints the profile up to that point; with
     /// --budget-report the per-turn report follows it. Profile builds are
     /// never written or packaged.
+    ///
+    /// A checked-f64-utf16-v38 program reads files at virtual paths
+    /// /<root>/... under the roots of the configuration's "fs": {"roots"}
+    /// (directories inside the configuration directory, pinned at startup);
+    /// a --policy that maps "fsRoots" replaces them.
     Dev {
         #[arg(long, default_value = "varta.config.json")]
         config: PathBuf,
@@ -73,6 +78,10 @@ enum Commands {
     },
     /// Execute portable Wasm or a Varta container (native AOT is rejected).
     /// Output captured before a failure is printed before the diagnostic.
+    ///
+    /// A checked-f64-utf16-v38 artifact reads files only under the roots a
+    /// --policy maps ("fsRoots": {"<root>": "/absolute/host/dir"}); an
+    /// unmapped root is denied.
     Run {
         path: PathBuf,
         #[command(flatten)]
@@ -197,7 +206,7 @@ fn execute(
             } = varta_project::run_view(
                 &project.artifact,
                 policy.as_ref(),
-                settings(decisions, &execution),
+                project.dev_settings(settings(decisions, &execution)),
                 &script,
             )?;
             // The output, the snapshot of a run that did not fail, then the
@@ -226,8 +235,11 @@ fn execute(
             ..
         }) => {
             let project = CheckedProject::load(&config)?;
-            let mut report =
-                project.profile_fuel(&config, policy.as_ref(), settings(decisions, &execution))?;
+            let mut report = project.profile_fuel(
+                &config,
+                policy.as_ref(),
+                project.dev_settings(settings(decisions, &execution)),
+            )?;
             if let Some(profile) = report.fuel_profile.take() {
                 report_profile(&profile, json)?;
             }
@@ -239,7 +251,11 @@ fn execute(
             config, execution, ..
         }) => {
             let project = CheckedProject::load(&config)?;
-            let report = run_report(&project.artifact, policy.as_ref(), decisions, &execution)?;
+            let report = varta_project::run_report(
+                &project.artifact,
+                policy.as_ref(),
+                project.dev_settings(settings(decisions, &execution)),
+            )?;
             let code = finish(report, execution.budget_report)?;
             println!("varta dev: completed");
             return Ok(code);
@@ -411,6 +427,7 @@ fn settings(
         application: flags.app,
         decisions,
         observer: Some(observer()),
+        file_roots: None,
     }
 }
 

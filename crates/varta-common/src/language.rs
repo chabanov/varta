@@ -707,6 +707,14 @@ impl LanguageProfile {
     pub fn web_bytes(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, virtual-roots stream: `fs.*` paths and grants are virtual
+    /// paths `/<root>/...` under named roots that the host maps to pinned
+    /// directories ([`crate::files`]); an absolute host path is denied.
+    /// Earlier profiles keep absolute host paths.
+    #[must_use]
+    pub fn file_roots(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Named interface/alias annotations and type-only module bindings (v31).
     #[must_use]
     pub fn named_types(self) -> bool {
@@ -3110,6 +3118,7 @@ mod tests {
                 profile.dictionary_hashing(),
                 profile.strict_members(),
                 profile.web_bytes(),
+                profile.file_roots(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }

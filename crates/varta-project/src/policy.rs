@@ -31,13 +31,15 @@ impl HostPolicy {
     }
 }
 
-/// Authorize each concrete resource against both the artifact and the host.
+/// Authorize each concrete resource against both the artifact and the host,
+/// with the file roots the host policy maps.
 pub fn run_with_policy(artifact: &Artifact, host: &HostPolicy) -> Result<RunOutput> {
-    Ok(VartaRuntime::new().run_wasm_bytes_with_policy(
-        &artifact.wasm,
-        &artifact.grants()?,
-        &host.grants,
-    )?)
+    artifact.grants()?;
+    let options =
+        varta_runtime::RunOptions::from_manifests(&artifact.manifest, Some(&host.manifest))?;
+    Ok(VartaRuntime::new()
+        .run_with(&artifact.wasm, options)
+        .into_result()?)
 }
 
 /// Review the exact filters without approximating wildcard-language intersection.
@@ -58,12 +60,35 @@ pub fn authorization(requested: &Manifest, host: Option<&HostPolicy>) -> Result<
             serde_json::json!({"id":grant.id, "decision":decision})
         })
         .collect();
+    // V38 file roots: a declared root is `mapped` when the host policy maps
+    // it, `denied` when a host policy does not, `declared` without one.
+    let roots: Vec<_> = requested
+        .root_names()
+        .iter()
+        .map(|name| {
+            let decision = match host {
+                None => "declared",
+                Some(host)
+                    if host
+                        .manifest
+                        .root_directories()
+                        .iter()
+                        .any(|mapping| &mapping.name == name) =>
+                {
+                    "mapped"
+                }
+                Some(_) => "denied",
+            };
+            serde_json::json!({"name":name, "decision":decision})
+        })
+        .collect();
     Ok(serde_json::json!({
         "mode": if host.is_some() { "host_policy" } else { "declared" },
         "combination": "allOf",
         "requested": requested.capabilities,
         "hostCeiling": host.map(|h| &h.manifest.capabilities),
         "operations": operations,
+        "fsRoots": roots,
     }))
 }
 
@@ -98,6 +123,34 @@ mod tests {
         assert_eq!(normal["operations"][0]["decision"], "granted");
         assert_eq!(limited["hostCeiling"], serde_json::json!([]));
         assert_eq!(limited["operations"][0]["decision"], "denied");
+    }
+
+    #[test]
+    fn review_reports_whether_the_host_maps_each_declared_root() {
+        let requested = manifest(
+            r#"{"abiVersion":34,"fsRoots":["project","data"],
+            "capabilities":[{"id":"fs.read","patterns":["/project/**","/data/**"]}]}"#,
+        );
+        let host = HostPolicy::from_manifest(manifest(
+            r#"{"abiVersion":34,"fsRoots":{"project":"/srv/app","other":"/srv/other"},
+            "capabilities":[{"id":"fs.read","patterns":["/project/**"]}]}"#,
+        ))
+        .unwrap();
+        let review = authorization(&requested, Some(&host)).unwrap();
+        assert_eq!(
+            review["fsRoots"],
+            serde_json::json!([{"name":"project","decision":"mapped"},
+                {"name":"data","decision":"denied"}])
+        );
+        let declared = authorization(&requested, None).unwrap();
+        assert_eq!(declared["fsRoots"][0]["decision"], "declared");
+        // A host policy that lists names instead of mapping them is invalid.
+        assert!(
+            HostPolicy::from_manifest(manifest(
+                r#"{"abiVersion":34,"fsRoots":["project"],"capabilities":[]}"#
+            ))
+            .is_err()
+        );
     }
 
     #[test]

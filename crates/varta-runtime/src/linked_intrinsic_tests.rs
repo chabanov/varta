@@ -695,7 +695,9 @@ export function main(): void {
     let initial = initial.unwrap() as usize * abi::WASM_PAGE_BYTES;
     let runtime = VartaRuntime::new();
     let module = runtime.prepare_module(&bytes).unwrap();
-    let mut setup = crate::execution::Setup::production(&[], None);
+    // A v38 module without roots: every `fs.*` path is denied (`file_roots`).
+    let files = crate::policy::FileMode::of(V38, &crate::policy::FileRoots::default());
+    let mut setup = crate::execution::Setup::production(&[], None, files);
     setup.budgets.memory_bytes = initial;
     let mut execution = crate::execution::Execution::with_setup(&runtime.engine, setup).unwrap();
     let instance = execution.instantiate_prepared(&module).unwrap();

@@ -86,6 +86,7 @@ struct Shared {
     contract: HttpContract,
     requested: Vec<CapabilityGrant>,
     ceiling: Option<Vec<CapabilityGrant>>,
+    files: policy::FileMode,
     stop: HttpShutdown,
     workers: Arc<tokio::sync::Semaphore>,
     sink: Arc<Sink>,
@@ -97,6 +98,8 @@ pub(super) struct Start<'a> {
     pub contract: HttpContract,
     pub requested: &'a [CapabilityGrant],
     pub ceiling: Option<&'a [CapabilityGrant]>,
+    /// The `fs.*` mode of every request's fresh store.
+    pub files: policy::FileMode,
     pub output: RunOutput,
     pub observer: Option<RuntimeObserver>,
 }
@@ -107,6 +110,7 @@ pub(super) fn run(start: Start<'_>) -> Result<RunOutput, RuntimeError> {
         contract,
         requested,
         ceiling,
+        files,
         output,
         observer,
     } = start;
@@ -133,6 +137,7 @@ pub(super) fn run(start: Start<'_>) -> Result<RunOutput, RuntimeError> {
         contract,
         requested: requested.to_vec(),
         ceiling: ceiling.map(ToOwned::to_owned),
+        files,
         stop,
         workers: Arc::new(tokio::sync::Semaphore::new(1)),
         sink: sink.clone(),

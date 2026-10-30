@@ -2792,6 +2792,435 @@ fn package_root_symlink_cannot_escape_a_host_directory_ceiling() {
     assert!(text.contains("varta log: 3"));
 }
 
+/// V38 virtual file roots (`file_roots`): a project whose configuration
+/// declares root `project` (the configuration directory) and grants
+/// `fs.read` on `/project/fixtures/**`. `main` reads each path of
+/// `ROOT_PATHS` and logs `R<index> <status> <value>`.
+struct RootsProject {
+    project: RegressionProject,
+    /// A sibling of the project directory, outside every root.
+    outside: PathBuf,
+}
+const ROOT_PATHS: [&str; 7] = [
+    "/project/fixtures/x.json",
+    "/project-x/fixtures/x.json",
+    "/project/fixtures/../secret.txt",
+    "/project/secret.txt",
+    // Index 4 is the absolute host path of fixtures/x.json.
+    "",
+    "/project/fixtures/link/secret.txt",
+    "/project/fixtures/escape.txt",
+];
+impl RootsProject {
+    fn new() -> Self {
+        let project =
+            RegressionProject::new("export function main(): void {}", serde_json::json!({}));
+        let outside = PathBuf::from(format!("{}-outside", project.0.display()));
+        fs::create_dir_all(project.0.join("fixtures")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(project.0.join("fixtures/x.json"), "VIRTUAL_FIXTURE").unwrap();
+        fs::write(project.0.join("secret.txt"), "PROJECT_SECRET").unwrap();
+        fs::write(outside.join("secret.txt"), "OUTSIDE_SECRET").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(&outside, project.0.join("fixtures/link")).unwrap();
+            symlink(
+                outside.join("secret.txt"),
+                project.0.join("fixtures/escape.txt"),
+            )
+            .unwrap();
+        }
+        let host = project.0.join("fixtures/x.json").display().to_string();
+        let mut source = String::from("export function main(): void {\n");
+        for (index, path) in ROOT_PATHS.iter().enumerate() {
+            let path = if path.is_empty() { host.as_str() } else { path };
+            source.push_str(&format!(
+                "  {{ const r = varta.result.capture(varta.fs.read({}));\n    console.log(`R{index} ${{r.status}} ${{r.value}}`); }}\n",
+                serde_json::to_string(path).unwrap()
+            ));
+        }
+        source.push('}');
+        fs::write(project.0.join("src/main.ts"), source).unwrap();
+        let roots = Self { project, outside };
+        roots.configure(
+            "checked-f64-utf16-v38",
+            serde_json::json!({"roots":{"project":"."}}),
+            serde_json::json!({"fs":{"read":["/project/fixtures/**"]}}),
+        );
+        roots
+    }
+    fn configure(&self, profile: &str, fs: serde_json::Value, capabilities: serde_json::Value) {
+        let mut config = serde_json::json!({"languageProfile":profile,"entry":"src/main.ts",
+            "target":"native","out":"dist/app","capabilities":capabilities});
+        if !fs.is_null() {
+            config["fs"] = fs;
+        }
+        fs::write(
+            self.project.0.join("varta.config.json"),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+    }
+    /// A host policy mapping `roots` with an `fs.read` ceiling of `patterns`.
+    fn host_policy(&self, roots: serde_json::Value, patterns: &[&str]) {
+        fs::write(
+            self.project.0.join("host-policy.json"),
+            serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"abiVersion":34,
+                "fsRoots":roots,"capabilities":[{"id":"fs.read","patterns":patterns}]}))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    fn mapping(&self) -> serde_json::Value {
+        serde_json::json!({"project": self.project.0})
+    }
+    fn command(&self, args: &[&str]) -> std::process::Output {
+        self.project.command(args)
+    }
+    /// The packaged executable and the companion running the portable
+    /// artifact, each with `args`.
+    fn packaged(&self, args: &[&str]) -> Vec<std::process::Output> {
+        let mut packaged = Command::new(self.project.0.join("dist/app"));
+        packaged.args(args);
+        let mut companion = Command::new(runtime_path());
+        companion.args(["run", "dist/app.wasm"]).args(args);
+        [packaged, companion]
+            .into_iter()
+            .map(|mut command| command.current_dir(&self.project.0).output().unwrap())
+            .collect()
+    }
+}
+impl Drop for RootsProject {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.outside);
+    }
+}
+
+/// The status each `ROOT_PATHS` read logged, by index.
+fn root_statuses(output: &std::process::Output) -> Vec<String> {
+    let text = combined(output);
+    assert!(output.status.success(), "{text}");
+    assert!(!text.contains("PROJECT_SECRET"), "{text}");
+    assert!(!text.contains("OUTSIDE_SECRET"), "{text}");
+    (0..ROOT_PATHS.len())
+        .map(|index| {
+            let prefix = format!("varta log: R{index} ");
+            let line = text
+                .lines()
+                .find_map(|line| line.strip_prefix(prefix.as_str()))
+                .unwrap_or_else(|| panic!("R{index} missing: {text}"));
+            line.split(' ').next().unwrap().to_owned()
+        })
+        .collect()
+}
+
+/// Granted, then denied: the sibling root, traversal, outside the request,
+/// the absolute host path, and (I/O status 3) both symlinks below the root.
+const GRANTED_ROOTS: [&str; 7] = ["0", "1", "1", "1", "1", "3", "3"];
+
+#[test]
+#[cfg(unix)]
+fn v38_virtual_roots_read_project_fixtures_in_dev_run_and_packaged_apps() {
+    let roots = RootsProject::new();
+    let dev = roots.command(&["dev"]);
+    assert_eq!(root_statuses(&dev), GRANTED_ROOTS);
+    assert!(combined(&dev).contains("R0 0 VIRTUAL_FIXTURE"));
+    // The build names the root; no host path enters the package.
+    let build = roots.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let manifest = fs::read_to_string(roots.project.0.join("dist/app.manifest.json")).unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(manifest["fsRoots"], serde_json::json!(["project"]));
+    assert!(
+        !manifest
+            .to_string()
+            .contains(&roots.project.0.display().to_string())
+    );
+    // Run and packaged apps read only under roots the host policy maps.
+    roots.host_policy(roots.mapping(), &["/project/**"]);
+    let policy = ["--policy", "host-policy.json"];
+    let run = roots.command(&["run", "dist/app.wasm", "--policy", "host-policy.json"]);
+    assert_eq!(root_statuses(&run), GRANTED_ROOTS);
+    for output in roots.packaged(&policy) {
+        assert_eq!(root_statuses(&output), GRANTED_ROOTS);
+        assert!(combined(&output).contains("R0 0 VIRTUAL_FIXTURE"));
+    }
+    let review = roots.command(&[
+        "inspect",
+        "dist/app.wasm",
+        "--policy",
+        "host-policy.json",
+        "--json",
+    ]);
+    let review: serde_json::Value = serde_json::from_slice(&review.stdout).unwrap();
+    assert_eq!(
+        review["authorization"]["fsRoots"],
+        serde_json::json!([{"name":"project","decision":"mapped"}])
+    );
+    // Without a policy, or with one mapping only another root, the root is
+    // unmapped and every read is denied.
+    let denied = ["1", "1", "1", "1", "1", "1", "1"];
+    let run = roots.command(&["run", "dist/app.wasm"]);
+    assert_eq!(root_statuses(&run), denied);
+    for output in roots.packaged(&[]) {
+        assert_eq!(root_statuses(&output), denied);
+    }
+    roots.host_policy(
+        serde_json::json!({"other": roots.project.0}),
+        &["/project/**"],
+    );
+    let run = roots.command(&["run", "dist/app.wasm", "--policy", "host-policy.json"]);
+    assert_eq!(root_statuses(&run), denied);
+    for output in roots.packaged(&policy) {
+        assert_eq!(root_statuses(&output), denied);
+    }
+    // A host ceiling narrower than the request denies the fixture in every
+    // entry point, `varta dev` included.
+    roots.host_policy(roots.mapping(), &["/project/fixtures/other.json"]);
+    let dev = roots.command(&["dev", "--policy", "host-policy.json"]);
+    assert_eq!(root_statuses(&dev), denied);
+    let run = roots.command(&["run", "dist/app.wasm", "--policy", "host-policy.json"]);
+    assert_eq!(root_statuses(&run), denied);
+    for output in roots.packaged(&policy) {
+        assert_eq!(root_statuses(&output), denied);
+    }
+    // A host policy listing names instead of mapping them is rejected.
+    fs::write(
+        roots.project.0.join("host-policy.json"),
+        r#"{"abiVersion":34,"fsRoots":["project"],"capabilities":[]}"#,
+    )
+    .unwrap();
+    let invalid = roots.command(&["run", "dist/app.wasm", "--policy", "host-policy.json"]);
+    assert!(!invalid.status.success());
+    assert!(
+        combined(&invalid).contains("fsRoots"),
+        "{}",
+        combined(&invalid)
+    );
+    // A package manifest that maps its own root to a host directory is
+    // rejected before execution, by the CLI and by the companion.
+    let sidecar = roots.project.0.join("dist/app.manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&sidecar).unwrap()).unwrap();
+    manifest["fsRoots"] = serde_json::json!({"project": "/"});
+    fs::write(&sidecar, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let forged = roots.command(&["run", "dist/app.wasm"]);
+    let companion = Command::new(runtime_path())
+        .args(["run", "dist/app.wasm"])
+        .current_dir(&roots.project.0)
+        .output()
+        .unwrap();
+    for output in [forged, companion] {
+        let text = combined(&output);
+        assert!(!output.status.success(), "{text}");
+        assert!(text.contains("a package names its fsRoots"), "{text}");
+        assert!(!text.contains("R0"), "{text}");
+    }
+}
+
+#[test]
+fn v38_virtual_roots_deny_without_a_grant_and_reject_host_paths_in_configuration() {
+    let roots = RootsProject::new();
+    // Declared root, no grant: every read is denied.
+    roots.configure(
+        "checked-f64-utf16-v38",
+        serde_json::json!({"roots":{"project":"."}}),
+        serde_json::json!({}),
+    );
+    let dev = roots.command(&["dev"]);
+    let text = combined(&dev);
+    assert!(dev.status.success(), "{text}");
+    assert!(text.contains("varta log: R0 1"), "{text}");
+    assert!(!text.contains("VIRTUAL_FIXTURE"), "{text}");
+    // A grant on an absolute host path, or on a root the configuration does
+    // not declare, is rejected before compilation output.
+    let host = format!("{}/fixtures/**", roots.project.0.display());
+    for (fs_section, grants) in [
+        (
+            serde_json::json!({"roots":{"project":"."}}),
+            serde_json::json!([host]),
+        ),
+        (
+            serde_json::Value::Null,
+            serde_json::json!(["/project/fixtures/**"]),
+        ),
+        (
+            serde_json::json!({"roots":{"project":"."}}),
+            serde_json::json!(["/project-x/**"]),
+        ),
+    ] {
+        roots.configure(
+            "checked-f64-utf16-v38",
+            fs_section,
+            serde_json::json!({"fs":{"read":grants}}),
+        );
+        let check = roots.command(&["check"]);
+        assert!(!check.status.success(), "{}", combined(&check));
+        assert!(
+            combined(&check).contains("virtual path"),
+            "{}",
+            combined(&check)
+        );
+    }
+    // Root directories stay inside the configuration directory: no
+    // traversal, no absolute path, no symlink.
+    let mut directories = vec![serde_json::json!(".."), serde_json::json!("/tmp")];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&roots.outside, roots.project.0.join("alias")).unwrap();
+        directories.push(serde_json::json!("alias"));
+    }
+    for directory in directories {
+        roots.configure(
+            "checked-f64-utf16-v38",
+            serde_json::json!({"roots":{"project":directory}}),
+            serde_json::json!({"fs":{"read":["/project/**"]}}),
+        );
+        let check = roots.command(&["check"]);
+        assert!(!check.status.success(), "{directory}: {}", combined(&check));
+    }
+    // Roots need v38.
+    roots.configure(
+        "checked-f64-utf16-v37",
+        serde_json::json!({"roots":{"project":"."}}),
+        serde_json::json!({}),
+    );
+    let check = roots.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check).contains("fs.roots requires languageProfile checked-f64-utf16-v38"),
+        "{}",
+        combined(&check)
+    );
+}
+
+/// A long-lived v38 application instance reads a project fixture through a
+/// virtual root (`file_roots`) in its first and in a later timer turn: in
+/// `dev --app` with the configuration's root, and in the packaged executable
+/// and the companion with `--app` when the host policy maps the root. An
+/// unmapped root, a missing grant and an absolute host path are denied
+/// before any file is opened, without ending the instance. (V38 declares no
+/// HTTP contract: binary64 profiles have no tool/HTTP adapters, so the
+/// application instance is v38's long-lived service entry point.)
+#[test]
+fn v38_application_instances_read_files_through_virtual_roots() {
+    let project = RegressionProject::new("export function main(): void {}", serde_json::json!({}));
+    fs::create_dir_all(project.0.join("fixtures")).unwrap();
+    fs::write(project.0.join("fixtures/x.json"), "VIRTUAL_FIXTURE").unwrap();
+    let host = project.0.join("fixtures/x.json").display().to_string();
+    let source = r#"
+function read(label: string, path: string): void {
+  const r = varta.result.capture(varta.fs.read(path));
+  console.log(`${label} ${r.status} ${r.value}`);
+}
+export function main(): void {
+  read("main", "/project/fixtures/x.json");
+  setTimeout(() => {
+    read("turn", "/project/fixtures/x.json");
+    read("host", HOST_PATH);
+  }, 10);
+}
+"#
+    .replace("HOST_PATH", &serde_json::to_string(&host).unwrap());
+    fs::write(project.0.join("src/main.ts"), source).unwrap();
+    let configure = |capabilities: serde_json::Value| {
+        let config = serde_json::json!({"languageProfile":V38_PROFILE,"entry":"src/main.ts",
+            "target":"native","out":"dist/app","fs":{"roots":{"project":"."}},
+            "capabilities":capabilities});
+        fs::write(
+            project.0.join("varta.config.json"),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+    };
+    // The status of each labelled read; no output ever shows a denied file.
+    let statuses = |output: &std::process::Output| {
+        let text = combined(output);
+        assert!(output.status.success(), "{text}");
+        ["main", "turn", "host"]
+            .iter()
+            .map(|label| {
+                let prefix = format!("varta log: {label} ");
+                let line = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix(prefix.as_str()))
+                    .unwrap_or_else(|| panic!("{label} missing: {text}"));
+                if !line.starts_with("0 ") {
+                    assert!(!line.contains("VIRTUAL_FIXTURE"), "{text}");
+                }
+                line.split(' ').next().unwrap().to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+    let granted = ["0", "0", "1"];
+    let denied = ["1", "1", "1"];
+    configure(serde_json::json!({"time":{"timer":true},"fs":{"read":["/project/fixtures/**"]}}));
+    let dev = project.command(&["dev", "--app"]);
+    assert_eq!(statuses(&dev), granted);
+    assert!(combined(&dev).contains("varta log: turn 0 VIRTUAL_FIXTURE"));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::write(
+        project.0.join("host-policy.json"),
+        serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"abiVersion":34,
+            "fsRoots":{"project":project.0},
+            "capabilities":[{"id":"fs.read","patterns":["/project/**"]},
+                {"id":"time.timer","enabled":true}]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let packaged = |policy: bool| {
+        let mut args = vec!["--app"];
+        if policy {
+            args.extend(["--policy", "host-policy.json"]);
+        }
+        let mut companion_args = vec!["run", "dist/app.wasm"];
+        companion_args.extend(&args);
+        [
+            project.run_in(Command::new(project.0.join("dist/app")), &args),
+            project.run_in(Command::new(runtime_path()), &companion_args),
+        ]
+    };
+    // Packaged instances read only under a root the host policy maps.
+    for output in packaged(true) {
+        assert_eq!(statuses(&output), granted);
+    }
+    for output in packaged(false) {
+        assert_eq!(statuses(&output), denied);
+    }
+    // A declared root without an `fs.read` grant denies every read.
+    configure(serde_json::json!({"time":{"timer":true}}));
+    let dev = project.command(&["dev", "--app"]);
+    assert_eq!(statuses(&dev), denied);
+}
+
+#[test]
+fn v37_projects_keep_absolute_host_paths_in_every_entry_point() {
+    let roots = RootsProject::new();
+    let host = format!("{}/fixtures/**", roots.project.0.display());
+    roots.configure(
+        "checked-f64-utf16-v37",
+        serde_json::Value::Null,
+        serde_json::json!({"fs":{"read":[host]}}),
+    );
+    // The absolute host path (index 4) is granted; every virtual path is an
+    // ordinary absolute path outside the grant.
+    let expected = ["1", "1", "1", "1", "0", "1", "1"];
+    let dev = roots.command(&["dev"]);
+    assert_eq!(root_statuses(&dev), expected);
+    assert!(combined(&dev).contains("R4 0 VIRTUAL_FIXTURE"));
+    let build = roots.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let manifest = fs::read_to_string(roots.project.0.join("dist/app.manifest.json")).unwrap();
+    assert!(!manifest.contains("fsRoots"), "{manifest}");
+    let run = roots.command(&["run", "dist/app.wasm"]);
+    assert_eq!(root_statuses(&run), expected);
+    for output in roots.packaged(&[]) {
+        assert_eq!(root_statuses(&output), expected);
+    }
+}
+
 #[test]
 fn bad_host_policies_never_fall_back_to_package_grants() {
     let project = RegressionProject::new(

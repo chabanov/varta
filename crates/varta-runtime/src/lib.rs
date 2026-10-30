@@ -34,6 +34,7 @@ pub use turns::{BUDGET_REPORT_PREFIX, BudgetExhausted, BudgetReport, TurnKind, T
 mod prepared;
 #[cfg(test)]
 mod prepared_tests;
+pub use policy::FileRoots;
 pub use prepared::PreparedModule;
 mod host;
 mod http;
@@ -226,6 +227,9 @@ pub enum RuntimeError {
     ToolContract(#[from] varta_common::ToolContractError),
     #[error(transparent)]
     Policy(#[from] varta_common::VartaError),
+    /// A v38 file root the host maps could not be pinned.
+    #[error(transparent)]
+    FileRoot(#[from] varta_common::files::FileRootError),
     #[error(transparent)]
     Scheduler(#[from] varta_common::scheduler::SchedulerError),
     #[error(transparent)]
@@ -633,12 +637,14 @@ impl VartaRuntime {
         match http_contract::read(bytes) {
             Ok(Some(contract)) => {
                 let output = std::mem::take(&mut report.output);
+                let files = policy::FileMode::of(module.profile, &options.file_roots);
                 match server::run(server::Start {
                     engine: self.engine.clone(),
                     module,
                     contract,
                     requested: &options.requested,
                     ceiling: options.ceiling.as_deref(),
+                    files,
                     output,
                     observer: options.observer.clone(),
                 }) {
@@ -701,6 +707,7 @@ impl VartaRuntime {
         let setup = execution::Setup {
             requested: &options.requested,
             ceiling: options.ceiling.as_deref(),
+            files: policy::FileMode::of(module.profile, &options.file_roots),
             budgets: resolved.budgets,
             capped: resolved.capped,
             renew: v38,
@@ -761,6 +768,11 @@ pub struct RunOptions {
     /// policy file); decisions for other identities are ignored.
     pub decisions: Option<DecisionFile>,
     pub observer: Option<RuntimeObserver>,
+    /// V38 virtual filesystem roots (`file_roots`), pinned by the host: a
+    /// v38 module reads only `/<root>/...` paths under these directories
+    /// (empty: every `fs.*` path is denied). Earlier profiles ignore them
+    /// and keep absolute host paths.
+    pub file_roots: FileRoots,
     /// Development only: `bytes` is a fuel-profile build
     /// ([`varta_common::profile`]); link its probes and report the fuel of
     /// every guest function across all turns in [`RunReport::fuel_profile`].
@@ -769,6 +781,8 @@ pub struct RunOptions {
 impl RunOptions {
     /// The options of a package manifest and an optional host ceiling
     /// manifest, both validated; a ceiling never carries consent metadata.
+    /// The package's declared file roots that the host policy maps are
+    /// pinned here ([`FileRoots::from_manifests`]).
     pub fn from_manifests(
         package: &Manifest,
         host: Option<&Manifest>,
@@ -776,7 +790,9 @@ impl RunOptions {
         if let Some(host) = host {
             host.validate_ceiling()?;
         }
+        package.validate_package()?;
         Ok(Self {
+            file_roots: FileRoots::from_manifests(package, host)?,
             requested: package.grants()?,
             ceiling: host.map(Manifest::grants).transpose()?,
             budgets: package.budget_request(),

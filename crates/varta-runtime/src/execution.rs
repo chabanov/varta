@@ -23,6 +23,8 @@ pub(crate) enum Mode {
 pub(crate) struct Setup<'a> {
     pub requested: &'a [CapabilityGrant],
     pub ceiling: Option<&'a [CapabilityGrant]>,
+    /// How guest `fs.*` paths are read: the module profile's mode.
+    pub files: policy::FileMode,
     pub budgets: Budgets,
     pub capped: Vec<CappedBudget>,
     /// Renew fuel, host calls and microtasks per turn (v38).
@@ -35,10 +37,12 @@ impl<'a> Setup<'a> {
     pub fn production(
         requested: &'a [CapabilityGrant],
         ceiling: Option<&'a [CapabilityGrant]>,
+        files: policy::FileMode,
     ) -> Self {
         Self {
             requested,
             ceiling,
+            files,
             budgets: Budgets::PRODUCTION,
             capped: Vec::new(),
             renew: false,
@@ -68,12 +72,25 @@ pub(crate) struct Execution {
     instantiation_started: bool,
 }
 impl Execution {
+    /// A test execution with host-path filesystem rules.
+    #[cfg(test)]
     pub fn new(
         engine: &Engine,
         requested: &[CapabilityGrant],
         ceiling: Option<&[CapabilityGrant]>,
     ) -> Result<Self, RuntimeError> {
-        Self::with_setup(engine, Setup::production(requested, ceiling))
+        Self::with_files(engine, requested, ceiling, policy::FileMode::HostPaths)
+    }
+
+    /// A production execution whose `fs.*` paths follow `files`, the mode
+    /// of the module it instantiates ([`policy::FileMode::of`]).
+    pub fn with_files(
+        engine: &Engine,
+        requested: &[CapabilityGrant],
+        ceiling: Option<&[CapabilityGrant]>,
+        files: policy::FileMode,
+    ) -> Result<Self, RuntimeError> {
+        Self::with_setup(engine, Setup::production(requested, ceiling, files))
     }
 
     pub fn with_setup(engine: &Engine, setup: Setup<'_>) -> Result<Self, RuntimeError> {
@@ -81,10 +98,7 @@ impl Execution {
         if let Some(ceiling) = setup.ceiling {
             varta_common::validate_grants(ceiling)?;
         }
-        let mut policy = match setup.ceiling {
-            Some(ceiling) => policy::Policy::with_ceiling(setup.requested, Some(ceiling)),
-            None => policy::Policy::new(setup.requested),
-        };
+        let mut policy = policy::Policy::with_files(setup.requested, setup.ceiling, &setup.files);
         let started = Instant::now();
         // Required grants are decided before any guest code runs.
         let broker = crate::permission::Broker::new(setup.broker, &mut policy, started)?;
@@ -229,7 +243,7 @@ impl Execution {
             engine,
             Setup {
                 budgets,
-                ..Setup::production(&[], None)
+                ..Setup::production(&[], None, policy::FileMode::HostPaths)
             },
         )
     }

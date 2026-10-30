@@ -12,7 +12,7 @@ use varta_common::{
     Manifest,
     launcher::{INFO_ARGUMENT, LauncherInfo},
 };
-use varta_runtime::{ApplicationOptions, RunOptions, RuntimeEvent, VartaRuntime};
+use varta_runtime::{ApplicationOptions, FileRoots, RunOptions, RuntimeEvent, VartaRuntime};
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -42,7 +42,7 @@ impl Error {
         }
     }
 }
-const HELP: &str = "Varta execution runtime\n\nPackaged application:\n  app [--policy PATH] [--decisions PATH] [--budget-report] [--app]\n  app --invoke NAME [--params JSON] [--json] [--policy PATH]\n  app --inspect [--json] [--policy PATH]\n\nStandalone runtime:\n  varta-runtime run ARTIFACT [--policy PATH] [--decisions PATH] [--budget-report] [--app]\n  varta-runtime invoke ARTIFACT NAME [--params JSON] [--json] [--policy PATH]\n  varta-runtime inspect ARTIFACT [--json] [--policy PATH]\n  varta-runtime --validate ARTIFACT\n  varta-runtime --runtime-info\n\nRun options:\n  --decisions PATH  stored permission decisions keyed by artifact hash (checked-f64-utf16-v38)\n  --budget-report   print each turn's fuel, host calls, wall time and memory to stderr\n  --app             run a checked-f64-utf16-v38 program as a long-lived application instance\n\nOutput captured before a failure is printed before the diagnostic.\nThis runtime executes portable Wasm; source compilation uses varta.\n";
+const HELP: &str = "Varta execution runtime\n\nPackaged application:\n  app [--policy PATH] [--decisions PATH] [--budget-report] [--app]\n  app --invoke NAME [--params JSON] [--json] [--policy PATH]\n  app --inspect [--json] [--policy PATH]\n\nStandalone runtime:\n  varta-runtime run ARTIFACT [--policy PATH] [--decisions PATH] [--budget-report] [--app]\n  varta-runtime invoke ARTIFACT NAME [--params JSON] [--json] [--policy PATH]\n  varta-runtime inspect ARTIFACT [--json] [--policy PATH]\n  varta-runtime --validate ARTIFACT\n  varta-runtime --runtime-info\n\nA checked-f64-utf16-v38 program reads files only under the roots that the\n--policy file maps (\"fsRoots\": {\"<root>\": \"/absolute/host/dir\"}).\n\nRun options:\n  --decisions PATH  stored permission decisions keyed by artifact hash (checked-f64-utf16-v38)\n  --budget-report   print each turn's fuel, host calls, wall time and memory to stderr\n  --app             run a checked-f64-utf16-v38 program as a long-lived application instance\n\nOutput captured before a failure is printed before the diagnostic.\nThis runtime executes portable Wasm; source compilation uses varta.\n";
 fn artifact(path: Option<PathBuf>) -> Result<(Artifact, PathBuf), Error> {
     if let Some(path) = path {
         return Ok((Artifact::read(&path)?, path));
@@ -111,16 +111,17 @@ fn execute(args: Args) -> Result<i32, Error> {
         Mode::Invoke { path, name, params } => {
             let (artifact, _) = artifact(path)?;
             let grants = artifact.grants()?;
-            let output = match ceiling.as_deref() {
-                Some(ceiling) => runtime.invoke_tool_with_policy(
-                    &artifact.wasm,
-                    &name,
-                    params.as_bytes(),
-                    &grants,
-                    ceiling,
-                )?,
-                None => runtime.invoke_tool(&artifact.wasm, &name, params.as_bytes(), &grants)?,
-            };
+            // The package's declared file roots that the host policy maps.
+            let roots = FileRoots::from_manifests(&artifact.manifest, host.as_ref())
+                .map_err(varta_runtime::RuntimeError::from)?;
+            let output = runtime.invoke_tool_with_roots(
+                &artifact.wasm,
+                &name,
+                params.as_bytes(),
+                &grants,
+                ceiling.as_deref(),
+                &roots,
+            )?;
             if args.json {
                 println!(
                     "{}",

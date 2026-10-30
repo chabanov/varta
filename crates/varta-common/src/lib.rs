@@ -26,6 +26,9 @@ mod diagnostic;
 pub mod events;
 #[cfg(feature = "std")]
 pub mod exceptions;
+/// Virtual file roots (v38 `file_roots`).
+#[cfg(feature = "std")]
+pub mod files;
 #[cfg(feature = "std")]
 mod host;
 #[cfg(feature = "std")]

@@ -3104,8 +3104,10 @@ admits nothing until its stream adds its rules below: program limits (`program_l
 (`linked_intrinsics`, [rules below](#v38-linked-intrinsics)), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
 (`codegen_v2`), plus the wave-2 selectors dictionary hashing
-(`dictionary_hashing`, [rules below](#dictionary-hashing-dictionary_hashing)) and strict members
-(`strict_members`, [rules below](#strict-members-and-wide-unions-strict_members));
+(`dictionary_hashing`, [rules below](#dictionary-hashing-dictionary_hashing)), strict members
+(`strict_members`, [rules below](#strict-members-and-wide-unions-strict_members)), web bytes
+(`web_bytes`, [rules below](#web-bytes-web_bytes)) and virtual roots (`file_roots`,
+[rules below](#virtual-file-roots-file_roots));
 the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
@@ -3312,6 +3314,37 @@ Normative contract: [architecture](architecture.md#turn-budgets-and-application-
   limit); compile-time limits, checked parsing and validation use it.
 - Behaviour tests compare v37 and v38 against Node 24 output; corrupt-table
   tests tamper with a real guest image and expect every boundary to reject it.
+
+### Virtual file roots (`file_roots`)
+
+Normative contract: [architecture](architecture.md#virtual-file-roots-file_roots).
+
+- The `fs.*` mode comes only from the module's declared profile
+  (`policy::FileMode::of`): v1–v37 keep the frozen host-path rules of
+  `FilePolicy` byte for byte, v38 reads virtual paths. Never decide the mode
+  from the manifest, a ceiling or the presence of roots, and never let a v38
+  module fall back to host paths: an execution without roots denies every
+  `fs.*` path. Production executions are built with `Execution::with_files`;
+  `Execution::new` (host paths) is test-only.
+- Root authority is pinned once, before guest code: from the project
+  configuration through `roots::pin` (pinned no-follow from the configuration
+  directory, the source loader's discipline), or from a host mapping through
+  `FileRoots::open`/`FileRoots::from_manifests`. Never open a root lazily,
+  per call, or from a package-supplied directory.
+- Only the package names roots and only the host maps them: keep
+  `Manifest::validate_package` (rejects a mapping and v38 patterns outside a
+  declared literal root) on every package path (artifact read, configuration,
+  `RunOptions::from_manifests`) and `validate_ceiling` (rejects a name list) on
+  every host-policy path. A mapping for an undeclared root is ignored.
+- Parse guest paths with `files::parse_virtual_path` and match patterns with
+  the whole-component prefix plus the shared glob; check the request, the
+  ceiling and the mapped root before opening anything, then walk with
+  `read_below` (no-follow at every component). Do not add a second parser or
+  matcher, and do not normalize (`.`/`..`/`//`) a guest path instead of
+  denying it.
+- Every new entry point that runs or invokes a module threads `FileRoots`
+  (run, application, view, HTTP request stores, tool invocation); the
+  grant-only APIs stay as they are and run v38 modules with no roots.
 
 ### Code generation v2 (`codegen_v2`)
 
