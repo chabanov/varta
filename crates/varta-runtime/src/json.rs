@@ -1,10 +1,15 @@
 //! Pure bounded serialization of the versioned guest value ABI. No OS access,
 //! native pointers, eval, arbitrary object hooks or host authority are involved.
+mod owned;
 mod presence;
 mod promise;
 use crate::{RuntimeContext, host};
-use std::{collections::BTreeSet, io::Write};
-use varta_common::{abi, value::*};
+pub(crate) use owned::deep;
+use std::{
+    collections::{BTreeSet, HashSet},
+    io::Write,
+};
+use varta_common::{abi, limits::DataLimits, value::*};
 use wasmtime::{Caller, Extern, Linker};
 
 fn error(message: &str) -> wasmtime::Error {
@@ -14,6 +19,23 @@ fn error(message: &str) -> wasmtime::Error {
 #[derive(Debug, thiserror::Error)]
 #[error("JSON cannot serialize BigInt")]
 struct BigIntSerialization;
+
+/// A traversal that went deeper than the encoder's depth limit, or visited
+/// more values than its node limit. The message is the frozen one of every
+/// profile before v38; v38 (`data_limits`) retries a too-deep value on the
+/// JSON host stack before it reports [`DepthCeiling`].
+#[derive(Debug, thiserror::Error)]
+#[error("JSON serialization: depth or node limit")]
+struct TraversalLimit {
+    depth: bool,
+}
+
+/// V38: nesting beyond the host's JSON depth ceiling, the bound that the
+/// host stack places on any recursive JSON traversal (as a JavaScript
+/// engine's stack bounds its `JSON.stringify`).
+#[derive(Debug, thiserror::Error)]
+#[error("JSON serialization: nesting exceeds the host depth ceiling of {0}")]
+struct DepthCeiling(usize);
 
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     for (operation, version) in [
@@ -99,6 +121,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
+    owned::register(linker)?;
     // The bool hides private state (v37 `json_stringify_v17`).
     for (operation, version, private) in [
         (
@@ -222,10 +245,12 @@ pub(super) fn render_diagnostic(
     encoder.encode(kind, payload)
 }
 
-struct Output(Vec<u8>);
+/// Encoded UTF-8 output, capped at `limit` bytes: the 1 MiB host result
+/// buffer before v38, the memory budget for the owned v38 serializer.
+struct Output(Vec<u8>, usize);
 impl Write for Output {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > abi::MAX_RESULT_BYTES - self.0.len() {
+        if bytes.len() > self.1 - self.0.len() {
             return Err(std::io::Error::other("JSON byte limit"));
         }
         self.0.extend_from_slice(bytes);
@@ -246,13 +271,39 @@ struct Encoder<'a, 'b> {
     /// (v37 `json_stringify_v17`): ES private names and engine prelude state
     /// are not properties.
     hide_private: bool,
-    /// Where record descriptors and keys may lie and the profile's function
-    /// limits (v38 `program_limits`).
+    /// Where record descriptors and keys may lie, the profile's function
+    /// limits (v38 `program_limits`) and its size, depth and node limits
+    /// (v38 `data_limits`).
     module: ModuleBounds,
     data: &'a [u8],
     output: Output,
-    path: Vec<usize>,
+    path: Path,
     nodes: usize,
+    /// V38: the execution deadline, checked every [`DEADLINE_STRIDE`] values.
+    deadline: Option<std::time::Instant>,
+}
+/// Values visited between two deadline checks of a v38 serialization.
+const DEADLINE_STRIDE: usize = 1024;
+/// The aggregates on the current traversal path: a stack for unwinding and a
+/// set, so a cycle check costs the same at any depth.
+#[derive(Default)]
+struct Path {
+    stack: Vec<usize>,
+    set: HashSet<usize>,
+}
+impl Path {
+    fn contains(&self, ptr: &usize) -> bool {
+        self.set.contains(ptr)
+    }
+    fn push(&mut self, ptr: usize) {
+        self.stack.push(ptr);
+        self.set.insert(ptr);
+    }
+    fn pop(&mut self) {
+        if let Some(ptr) = self.stack.pop() {
+            self.set.remove(&ptr);
+        }
+    }
 }
 impl<'a, 'b> Encoder<'a, 'b> {
     fn new(data: &'a [u8]) -> Self {
@@ -269,9 +320,10 @@ impl<'a, 'b> Encoder<'a, 'b> {
             hide_private: false,
             module: ModuleBounds::LEGACY,
             data,
-            output: Output(Vec::new()),
-            path: Vec::new(),
+            output: Output(Vec::new(), abi::MAX_RESULT_BYTES),
+            path: Path::default(),
             nodes: 0,
+            deadline: None,
         }
     }
     fn encode(mut self, kind: u32, value: u64) -> Result<Vec<u8>, wasmtime::Error> {
@@ -353,7 +405,8 @@ impl<'a, 'b> Encoder<'a, 'b> {
         ) {
             return Err(error("incompatible primitive union"));
         }
-        let cell = PrimitiveBox::read(self.data, value).map_err(wasmtime::Error::new)?;
+        let cell =
+            PrimitiveBox::read_in(self.data, value, self.module).map_err(wasmtime::Error::new)?;
         Ok((cell.kind as u32, cell.payload))
     }
     fn function(&mut self, handle: u64) -> Result<(), wasmtime::Error> {
@@ -394,8 +447,19 @@ impl<'a, 'b> Encoder<'a, 'b> {
     }
     fn visit(&mut self, depth: usize) -> Result<(), wasmtime::Error> {
         self.nodes += 1;
-        if depth > MAX_JSON_DEPTH || self.nodes > MAX_JSON_NODES {
-            return Err(error("depth or node limit"));
+        if self.nodes.is_multiple_of(DEADLINE_STRIDE)
+            && self
+                .deadline
+                .is_some_and(|at| std::time::Instant::now() >= at)
+        {
+            return Err(error("execution deadline"));
+        }
+        if depth > self.module.limits.data.json_depth
+            || self.nodes > self.module.limits.data.json_nodes
+        {
+            return Err(wasmtime::Error::new(TraversalLimit {
+                depth: depth > self.module.limits.data.json_depth,
+            }));
         }
         Ok(())
     }
@@ -420,7 +484,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
     }
     fn text(&self, packed: u64) -> Result<&'a str, wasmtime::Error> {
         let length = (packed >> i32::BITS) as usize;
-        if length > abi::MAX_STRING_BYTES {
+        if length > self.module.limits.data.string_bytes {
             return Err(error("string byte limit"));
         }
         std::str::from_utf8(self.bytes(packed as u32 as usize, length)?)
@@ -483,7 +547,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             }
             ValueKind::String if self.version >= UTF16_VALUE_VERSION => {
                 let length = (packed >> i32::BITS) as usize;
-                if length > abi::MAX_STRING_BYTES {
+                if length > self.module.limits.data.string_bytes {
                     return Err(error("string byte limit"));
                 }
                 let units = varta_common::text::units(self.bytes(packed as u32 as usize, length)?)
@@ -493,7 +557,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             }
             ValueKind::String => self.quoted(self.text(packed)?),
             ValueKind::Error => {
-                ErrorObject::read_with_version(self.data, packed, self.version)
+                ErrorObject::read_in(self.data, packed, self.version, self.module)
                     .map_err(wasmtime::Error::new)?;
                 self.visit(depth + 1)?;
                 self.write(b"{}")
@@ -692,7 +756,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
         Ok(())
     }
     fn vector(&mut self, packed: u64, depth: usize) -> Result<(), wasmtime::Error> {
-        let vector = Vector::read_with_version(self.data, packed, self.version)
+        let vector = Vector::read_in(self.data, packed, self.version, self.module)
             .map_err(wasmtime::Error::new)?;
         if self.path.contains(&vector.ptr) {
             return Err(error("cyclic object"));

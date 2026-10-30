@@ -5,9 +5,7 @@
 //! ECMAScript own-key order (canonical array indices ascending, then insertion).
 use super::*;
 use ir::{DictionaryHelper, DictionaryType, RecordField};
-use varta_common::value::{
-    DICTIONARY_KEYS_FIELD, DICTIONARY_VALUES_FIELD, ErrorClass, MAX_DICTIONARY_ENTRIES,
-};
+use varta_common::value::{DICTIONARY_KEYS_FIELD, DICTIONARY_VALUES_FIELD, ErrorClass};
 
 /// Canonical storage slots (fields sorted by name: `keys` < `values`).
 pub(super) const KEYS: u32 = 0;
@@ -600,7 +598,7 @@ impl Lower<'_> {
                 binary(
                     ast::BinaryOp::GtEq,
                     length(block.keys()),
-                    number(span, MAX_DICTIONARY_ENTRIES as f64),
+                    number(span, self.types.profile.data().array_elements as f64),
                 ),
                 vec![S::Throw(full)],
                 vec![],
@@ -842,7 +840,7 @@ impl Lower<'_> {
         }
         let dictionary = self.types.dictionaries[id as usize];
         let span = object.span;
-        if object.props.len() > MAX_DICTIONARY_ENTRIES {
+        if object.props.len() > self.types.profile.data().array_elements {
             return Err(invalid("dictionary literal entry count exceeds limit"));
         }
         let declared = self

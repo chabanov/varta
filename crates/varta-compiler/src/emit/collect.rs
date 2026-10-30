@@ -300,8 +300,14 @@ impl<'a> Collected<'a> {
                 }
             }
             E::Json(value, _) => {
-                self.hosts.insert(self.types.profile.json_stringify());
-                if matches!(
+                let host = self.types.profile.json_stringify();
+                self.hosts.insert(host);
+                // V38 (`data_limits`): the host allocates and retains the owned
+                // result through the exported value ABI helpers.
+                if host == Host::JsonStringifyOwned {
+                    self.helpers
+                        .extend([strings::Helper::Allocate, strings::Helper::RootPush]);
+                } else if matches!(
                     expr.ty,
                     Type::String | Type::Union(_) | Type::ReferenceUnion(_) | Type::Unknown
                 ) {

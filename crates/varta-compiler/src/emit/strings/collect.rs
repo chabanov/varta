@@ -12,6 +12,12 @@ const IS_ARRAY: u32 = 14;
 /// block's edges are its 32-bit link-word mask.
 const EDGE_WORDS: u32 = 15;
 const EDGE_SLOT: u32 = 16;
+/// V38 (`data_limits`) mark worklist pointer: header addresses of marked
+/// blocks whose edges are still to be traced, stacked upwards in the unused
+/// tail of the root region above the live roots.
+const STACK: u32 = 17;
+/// V38 scan cursor saved while the worklist drains inside a fallback scan.
+const SCAN: u32 = 18;
 
 pub(super) fn function(
     globals: Globals,
@@ -19,7 +25,10 @@ pub(super) fn function(
     closures: bool,
     frames: bool,
     wide: bool,
+    limits: varta_common::limits::DataLimits,
 ) -> Function {
+    let array_elements = limits.array_elements;
+    let worklist = trace_values && wide && limits.amortized_growth;
     const ROOT_CURSOR: u32 = 0;
     const CURRENT: u32 = 1;
     const SIZE: u32 = 2;
@@ -31,7 +40,9 @@ pub(super) fn function(
     const AGAIN: u32 = 0;
     const DONE: u32 = 1;
     let mut function = Function::new([(
-        if trace_values && wide {
+        if worklist {
+            SCAN + 1
+        } else if trace_values && wide {
             EDGE_SLOT + 1
         } else if trace_values {
             IS_ARRAY + 1
@@ -92,8 +103,27 @@ pub(super) fn function(
             I::End,
         ],
     );
+    if worklist {
+        worklist_trace(&mut function, globals, closures, frames, array_elements);
+        // Only a worklist overflow leaves marked blocks with untraced edges;
+        // the scans below then complete the mark exactly, draining the
+        // worklist after every scanned block.
+        instructions(
+            &mut function,
+            [I::LocalGet(CHANGED), I::If(BlockType::Empty)],
+        );
+    }
     if trace_values {
-        trace(&mut function, globals, closures, frames, wide);
+        trace(
+            &mut function,
+            globals,
+            (closures, frames, wide),
+            array_elements,
+            worklist,
+        );
+    }
+    if worklist {
+        function.instruction(&I::End);
     }
     instructions(
         &mut function,
@@ -189,16 +219,16 @@ pub(super) fn function(
 
 // Fixed-point tracing is iterative: no native/Wasm recursion or allocation during
 // collection. Every newly reached block is marked once; scans consume guest fuel.
-fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool, wide: bool) {
-    use varta_common::value as values;
+fn trace(
+    function: &mut Function,
+    globals: Globals,
+    (closures, frames, wide): (bool, bool, bool),
+    array_elements: usize,
+    worklist: bool,
+) {
     const CURRENT: u32 = 1;
     const AGAIN: u32 = 0;
     const DONE: u32 = 1;
-    let record_limit = if wide {
-        values::MAX_WIDE_RECORD_FIELDS
-    } else {
-        values::MAX_RECORD_FIELDS
-    };
     let mut head = vec![
         I::Loop(BlockType::Empty),
         I::I32Const(0),
@@ -211,6 +241,153 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
         I::GlobalGet(globals.heap),
         I::I32GeU,
         I::BrIf(DONE),
+    ];
+    head.extend(guard(closures, frames));
+    head.push(I::If(BlockType::Empty));
+    if worklist {
+        // Newly marked children are pushed and drained at once; only another
+        // overflow requires one more scan.
+        head.extend(edges(globals, wide, array_elements, &push()));
+        head.extend([I::LocalGet(CURRENT), I::LocalSet(SCAN)]);
+        head.extend(drain(globals, closures, frames, array_elements));
+        head.extend([I::LocalGet(SCAN), I::LocalSet(CURRENT)]);
+    } else {
+        head.extend(edges(
+            globals,
+            wide,
+            array_elements,
+            &[I::I32Const(1), I::LocalSet(CHANGED)],
+        ));
+    }
+    head.extend([
+        I::End,
+        I::LocalGet(CURRENT),
+        I::LocalGet(CURRENT),
+        I::I32Load(WORD),
+        I::I32Add,
+        I::LocalSet(CURRENT),
+        I::Br(AGAIN),
+        I::End,
+        I::End,
+        I::LocalGet(CHANGED),
+        I::BrIf(AGAIN),
+        I::End,
+    ]);
+    instructions(function, head);
+}
+
+/// V38 (`data_limits`) marking: push every rooted heap block, then pop and
+/// trace blocks, pushing each newly marked child, until the worklist is
+/// empty. Marking work is linear in the live edges instead of one heap scan
+/// per level of depth. A full worklist sets `CHANGED`, and the caller then
+/// finishes with the fixed-point scans, so overflow never loses a mark. The
+/// worklist allocates nothing and stays below the root region's end.
+fn worklist_trace(
+    function: &mut Function,
+    globals: Globals,
+    closures: bool,
+    frames: bool,
+    array_elements: usize,
+) {
+    const ROOT_CURSOR: u32 = 0;
+    const PTR: u32 = 7;
+    const AGAIN: u32 = 0;
+    const DONE: u32 = 1;
+    let push = push();
+    let mut code = vec![
+        I::I32Const(0),
+        I::LocalSet(CHANGED),
+        I::GlobalGet(globals.roots),
+        I::LocalSet(STACK),
+        I::I32Const(abi::STRING_ROOT_BASE as i32),
+        I::LocalSet(ROOT_CURSOR),
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(ROOT_CURSOR),
+        I::GlobalGet(globals.roots),
+        I::I32GeU,
+        I::BrIf(DONE),
+        I::LocalGet(ROOT_CURSOR),
+        I::I64Load(ROOT),
+        I::I32WrapI64,
+        I::LocalTee(PTR),
+        I::I32Const((globals.base as usize + abi::STRING_HEADER_BYTES) as i32),
+        I::I32GeU,
+        I::If(BlockType::Empty),
+        I::LocalGet(PTR),
+        I::I32Const(HEADER as i32),
+        I::I32Sub,
+        I::LocalSet(BLOCK),
+    ];
+    code.extend(push.clone());
+    code.extend([
+        I::End,
+        I::LocalGet(ROOT_CURSOR),
+        I::I32Const(abi::STRING_ROOT_SLOT_BYTES as i32),
+        I::I32Add,
+        I::LocalSet(ROOT_CURSOR),
+        I::Br(AGAIN),
+        I::End,
+        I::End,
+    ]);
+    code.extend(drain(globals, closures, frames, array_elements));
+    instructions(function, code);
+}
+
+/// Bytes of one worklist entry (a block header address).
+const ENTRY: i32 = size_of::<u32>() as i32;
+/// Push the header in `BLOCK` onto the worklist; a full worklist records the
+/// overflow in `CHANGED` instead.
+fn push() -> Vec<I<'static>> {
+    vec![
+        I::LocalGet(STACK),
+        I::I32Const(abi::STRING_ROOT_END as i32 - ENTRY),
+        I::I32LeU,
+        I::If(BlockType::Empty),
+        I::LocalGet(STACK),
+        I::LocalGet(BLOCK),
+        I::I32Store(WORD),
+        I::LocalGet(STACK),
+        I::I32Const(ENTRY),
+        I::I32Add,
+        I::LocalSet(STACK),
+        I::Else,
+        I::I32Const(1),
+        I::LocalSet(CHANGED),
+        I::End,
+    ]
+}
+/// Pop and trace worklist entries (in `CURRENT`) until the worklist is empty.
+fn drain(globals: Globals, closures: bool, frames: bool, array_elements: usize) -> Vec<I<'static>> {
+    const CURRENT: u32 = 1;
+    const AGAIN: u32 = 0;
+    const DONE: u32 = 1;
+    let mut code = vec![
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(STACK),
+        I::GlobalGet(globals.roots),
+        I::I32LeU,
+        I::BrIf(DONE),
+        I::LocalGet(STACK),
+        I::I32Const(ENTRY),
+        I::I32Sub,
+        I::LocalTee(STACK),
+        I::I32Load(WORD),
+        I::LocalSet(CURRENT),
+    ];
+    code.extend(guard(closures, frames));
+    code.push(I::If(BlockType::Empty));
+    code.extend(edges(globals, true, array_elements, &push()));
+    code.extend([I::End, I::Br(AGAIN), I::End, I::End]);
+    code
+}
+
+/// `[] -> [i32]`: whether the block at `CURRENT` is marked and has edges.
+fn guard(closures: bool, frames: bool) -> Vec<I<'static>> {
+    use varta_common::value as values;
+    const CURRENT: u32 = 1;
+    vec![
         I::LocalGet(CURRENT),
         I::I32Load(FLAG),
         I::I32Const(ALLOCATED | MARKED),
@@ -244,7 +421,28 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
         I::I32Eqz,
         I::I32Eqz,
         I::I32And,
-        I::If(BlockType::Empty),
+    ]
+}
+
+/// The edges of the marked block at `CURRENT` (inside its guard): every
+/// unmarked child is marked, then `on_mark` runs with the child's header in
+/// `BLOCK`.
+fn edges(
+    globals: Globals,
+    wide: bool,
+    array_elements: usize,
+    on_mark: &[I<'static>],
+) -> Vec<I<'static>> {
+    use varta_common::value as values;
+    const CURRENT: u32 = 1;
+    const AGAIN: u32 = 0;
+    const DONE: u32 = 1;
+    let record_limit = if wide {
+        values::MAX_WIDE_RECORD_FIELDS
+    } else {
+        values::MAX_RECORD_FIELDS
+    };
+    let mut code = vec![
         I::LocalGet(CURRENT),
         I::I32Load(FLAG),
         I::I32Const(values::HEAP_ARRAY_FLAG),
@@ -272,7 +470,8 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
         I::LocalTee(FIELD_COUNT),
         I::LocalGet(IS_ARRAY),
         I::If(BlockType::Result(ValType::I32)),
-        I::I32Const(values::MAX_ARRAY_ELEMENTS as i32),
+        // The profile's element limit (v38 `data_limits` lifts the 1024 one).
+        I::I32Const(array_elements as i32),
         I::Else,
         I::LocalGet(CURRENT),
         I::I32Load(FLAG),
@@ -292,7 +491,7 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
     if wide {
         // A record wider than 32 fields reads its edges from the bitmap that
         // trails its static descriptor (payload word 0), one word per 32 slots.
-        head.extend([
+        code.extend([
             I::I32Const(0),
             I::LocalSet(EDGE_WORDS),
             I::I32Const(0),
@@ -321,7 +520,7 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
             I::End,
         ]);
     }
-    head.extend([
+    code.extend([
         I::Block(BlockType::Empty),
         I::Loop(BlockType::Empty),
         I::LocalGet(FIELD_COUNT),
@@ -368,8 +567,9 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
         I::I32Const(MARKED),
         I::I32Or,
         I::I32Store(FLAG),
-        I::I32Const(1),
-        I::LocalSet(CHANGED),
+    ]);
+    code.extend_from_slice(on_mark);
+    code.extend([
         I::End,
         I::End,
         I::End,
@@ -387,7 +587,7 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
         I::End,
     ]);
     if wide {
-        head.extend([
+        code.extend([
             I::LocalGet(EDGE_WORDS),
             I::If(BlockType::Empty),
             I::LocalGet(EDGE_SLOT),
@@ -412,7 +612,7 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
             I::End,
         ]);
     }
-    head.extend([
+    code.extend([
         I::LocalGet(FIELD_COUNT),
         I::I32Const(1),
         I::I32Sub,
@@ -420,18 +620,6 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
         I::Br(AGAIN),
         I::End,
         I::End,
-        I::End,
-        I::LocalGet(CURRENT),
-        I::LocalGet(CURRENT),
-        I::I32Load(WORD),
-        I::I32Add,
-        I::LocalSet(CURRENT),
-        I::Br(AGAIN),
-        I::End,
-        I::End,
-        I::LocalGet(CHANGED),
-        I::BrIf(AGAIN),
-        I::End,
     ]);
-    instructions(function, head);
+    code
 }

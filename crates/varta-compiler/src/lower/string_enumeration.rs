@@ -171,7 +171,10 @@ impl Lower<'_> {
                 kind: E::Binary(
                     ast::BinaryOp::Gt,
                     Box::new(local(span, length, Type::Float64)),
-                    Box::new(number(span, varta_common::value::MAX_ARRAY_ELEMENTS as f64)),
+                    Box::new(number(
+                        span,
+                        self.types.profile.data().array_elements as f64,
+                    )),
                 ),
             },
             vec![S::Throw(error)],

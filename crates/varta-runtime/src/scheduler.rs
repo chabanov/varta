@@ -102,8 +102,50 @@ fn virtual_clock() -> bool {
     }
 }
 
+/// The profile's host tracking bounds (v38 `data_limits` derives them from
+/// the memory budget); earlier profiles keep 64 tokens and 32 timers with
+/// their frozen errors.
+#[derive(Clone, Copy)]
+pub(crate) struct Bounds {
+    continuations: usize,
+    timers: usize,
+}
+impl Default for Bounds {
+    fn default() -> Self {
+        Self::from(varta_common::limits::DataLimits::LEGACY)
+    }
+}
+impl From<varta_common::limits::DataLimits> for Bounds {
+    fn from(limits: varta_common::limits::DataLimits) -> Self {
+        Self {
+            continuations: limits.pending_continuations,
+            timers: limits.pending_timers,
+        }
+    }
+}
+impl Bounds {
+    fn queue_full(self) -> SchedulerError {
+        if self.continuations == MAX_PENDING_CONTINUATIONS {
+            SchedulerError::QueueFull
+        } else {
+            SchedulerError::ContinuationLimit {
+                limit: self.continuations,
+            }
+        }
+    }
+    fn timers_full(self) -> SchedulerError {
+        if self.timers == MAX_PENDING_TIMERS {
+            SchedulerError::TimerBudget
+        } else {
+            SchedulerError::TimerLimit { limit: self.timers }
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Scheduler {
+    /// Host tracking bounds of the instantiated module's profile.
+    bounds: Bounds,
     /// Ready microtasks in FIFO order.
     queue: VecDeque<i64>,
     /// Reactions of pending promises by serial, each in registration order.
@@ -139,9 +181,13 @@ fn serial(value: f64, issued: u64) -> Result<u64, SchedulerError> {
 }
 
 impl Scheduler {
+    /// Adopt the instantiated module's profile bounds (before any guest code).
+    pub(crate) fn set_bounds(&mut self, limits: varta_common::limits::DataLimits) {
+        self.bounds = limits.into();
+    }
     fn hold(&mut self, token: i64) -> Result<(), SchedulerError> {
-        if self.held.len() >= MAX_PENDING_CONTINUATIONS {
-            return Err(SchedulerError::QueueFull);
+        if self.held.len() >= self.bounds.continuations {
+            return Err(self.bounds.queue_full());
         }
         if !self.held.insert(token) {
             return Err(SchedulerError::DuplicateToken);
@@ -269,8 +315,8 @@ impl Scheduler {
         {
             return Err(SchedulerError::TimerState);
         }
-        if self.timers.entries.len() >= MAX_PENDING_TIMERS {
-            return Err(SchedulerError::TimerBudget);
+        if self.timers.entries.len() >= self.bounds.timers {
+            return Err(self.bounds.timers_full());
         }
         if self.timers.next_id >= MAX_PROMISE_SERIALS {
             return Err(SchedulerError::SerialBudget);
@@ -306,8 +352,8 @@ impl Scheduler {
         {
             return Err(SchedulerError::TimerState);
         }
-        if self.timers.entries.len() >= MAX_PENDING_TIMERS {
-            return Err(SchedulerError::TimerBudget);
+        if self.timers.entries.len() >= self.bounds.timers {
+            return Err(self.bounds.timers_full());
         }
         // Released entries live under ids above every issued one and are
         // forgotten when taken, so they never collide with a timer id.
@@ -850,6 +896,45 @@ mod tests {
         // A dispatched token may be scheduled again (its frame suspended anew).
         assert_eq!(full.next().unwrap(), Some(0));
         full.enqueue(0).unwrap();
+    }
+
+    /// V38 bounds come from the memory budget; earlier profiles keep 64/32
+    /// and their frozen errors.
+    #[test]
+    fn v38_bounds_track_the_memory_budget_with_their_own_errors() {
+        use varta_common::limits::{
+            DataLimits, V38_MAX_PENDING_CONTINUATIONS, V38_MAX_PENDING_TIMERS,
+        };
+        let mut wide = Scheduler::default();
+        wide.set_bounds(DataLimits::V38);
+        for token in 0..V38_MAX_PENDING_CONTINUATIONS as i64 {
+            wide.enqueue(token).unwrap();
+        }
+        assert_eq!(
+            wide.enqueue(V38_MAX_PENDING_CONTINUATIONS as i64),
+            Err(SchedulerError::ContinuationLimit {
+                limit: V38_MAX_PENDING_CONTINUATIONS
+            })
+        );
+        assert_eq!(
+            SchedulerError::ContinuationLimit { limit: 131_072 }.to_string(),
+            "microtask queue exceeds 131072 pending continuations"
+        );
+        let bounds = Bounds::from(DataLimits::V38);
+        assert_eq!(bounds.timers, V38_MAX_PENDING_TIMERS);
+        assert_eq!(
+            bounds.timers_full(),
+            SchedulerError::TimerLimit {
+                limit: V38_MAX_PENDING_TIMERS
+            }
+        );
+        let legacy = Bounds::default();
+        assert_eq!(legacy.queue_full(), SchedulerError::QueueFull);
+        assert_eq!(legacy.timers_full(), SchedulerError::TimerBudget);
+        assert_eq!(
+            SchedulerError::QueueFull.to_string(),
+            "microtask queue exceeds 64 pending continuations"
+        );
     }
 
     /// The deadline error reports the next due time rounded up to a whole

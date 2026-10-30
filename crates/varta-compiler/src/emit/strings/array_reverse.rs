@@ -26,7 +26,7 @@ const BACKING: MemArg = MemArg {
     ..ROOT
 };
 
-pub(super) fn function(sparse: bool) -> Function {
+pub(super) fn function(sparse: bool, sizes: sparse::Sizes) -> Function {
     let mut f = Function::new([(9, ValType::I32), (1, ValType::I64)]);
     instructions(
         &mut f,
@@ -43,7 +43,7 @@ pub(super) fn function(sparse: bool) -> Function {
         ],
     );
     if sparse {
-        sparse::bitmap(&mut f, INPUT);
+        sparse::bitmap_of(&mut f, INPUT, sizes);
         f.instruction(&I::LocalSet(BITMAP));
     }
     instructions(

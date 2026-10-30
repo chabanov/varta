@@ -18,7 +18,13 @@ const BITMAP: u32 = 12;
 const AGAIN: u32 = 0;
 const DONE: u32 = 1;
 const NOT_FOUND: i32 = -1;
-pub(super) fn function(compare: u32, sparse: bool, last: bool, bigint: bool) -> Function {
+pub(super) fn function(
+    compare: u32,
+    sparse: bool,
+    last: bool,
+    bigint: bool,
+    sizes: sparse::Sizes,
+) -> Function {
     let mut f = Function::new([
         (6, ValType::I32),
         (1, ValType::I64),
@@ -59,7 +65,7 @@ pub(super) fn function(compare: u32, sparse: bool, last: bool, bigint: bool) -> 
         ],
     );
     if sparse {
-        sparse::bitmap(&mut f, ARRAY);
+        sparse::bitmap_of(&mut f, ARRAY, sizes);
         f.instruction(&I::LocalSet(BITMAP));
     }
     resolve(&mut f, KIND, NEEDLE);

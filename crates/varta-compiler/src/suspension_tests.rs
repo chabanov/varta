@@ -901,7 +901,7 @@ fn v32_suspension_points_in_new_forms_are_rejected_by_construct() {
 /// `frame_liveness_tests`.
 #[test]
 fn behaviour_holds_with_liveness_frames() {
-    let tests: [fn(); 18] = [
+    let tests: [fn(); 17] = [
         suspension_round_trips_values_and_completes,
         normalization_preserves_operand_order_and_already_evaluated_values,
         normalization_preserves_an_already_evaluated_callee,
@@ -918,7 +918,6 @@ fn behaviour_holds_with_liveness_frames() {
         dispatcher_rejects_inadmissible_completions_and_inputs_before_effects,
         dispatcher_requires_an_empty_exception_channel,
         running_frames_reject_reentrant_resumption,
-        live_frames_have_their_own_budget,
         completed_frames_release_their_root_table_slot,
     ];
     for test in tests {
@@ -927,4 +926,11 @@ fn behaviour_holds_with_liveness_frames() {
         // the same checks, before any effect, from its static dispatch table.
         with_profile(LanguageProfile::CheckedF64Utf16V38, test);
     }
+    // The fixed live-frame budget is a pre-v38 rule: v38 (`data_limits`)
+    // grows its live-frame table within the memory budget
+    // (`varta-runtime` `frame_limit_tests`).
+    with_profile(
+        LanguageProfile::CheckedF64Utf16V35,
+        live_frames_have_their_own_budget,
+    );
 }

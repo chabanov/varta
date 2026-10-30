@@ -10,7 +10,7 @@ mod invocation;
 pub mod json;
 pub mod language;
 pub mod launcher;
-/// Structural program limits by profile (v38 `program_limits`).
+/// Program and data limits by profile (v38 `program_limits`, `data_limits`).
 pub mod limits;
 mod manifest;
 mod module;

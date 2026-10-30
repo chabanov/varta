@@ -1,6 +1,6 @@
 //! Exact UTF-16 own keys over bounded sparse arrays, without coercion or allocation.
 use super::*;
-pub(super) fn function(present: u32) -> Function {
+pub(super) fn function(present: u32, limits: varta_common::limits::DataLimits) -> Function {
     const ARRAY: u32 = 0;
     const KEY: u32 = 1;
     const PTR: u32 = 2;
@@ -8,10 +8,7 @@ pub(super) fn function(present: u32) -> Function {
     const OFFSET: u32 = 4;
     const DIGIT: u32 = 5;
     const INDEX: u32 = 6;
-    let max_key_bytes = ((varta_common::value::MAX_ARRAY_ELEMENTS - 1)
-        .to_string()
-        .len()
-        * 2) as i32;
+    let max_key_bytes = ((limits.array_elements - 1).to_string().len() * 2) as i32;
     let mut f = Function::new([(5, ValType::I32)]);
     length(&mut f, KEY, LEN);
     instructions(

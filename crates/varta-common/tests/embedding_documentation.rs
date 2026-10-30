@@ -415,6 +415,18 @@ fn names() -> String {
             "`abi::RESULT_STATUS`",
         ),
         (
+            varta_common::limits::RESOURCE_FAILURE.into(),
+            "export, mutable i32 global",
+            "V38 heap modules: the exhausted resource code before a trap, else 0",
+            "`limits::RESOURCE_FAILURE`",
+        ),
+        (
+            varta_common::limits::RESOURCE_REQUEST.into(),
+            "export, mutable i32 global",
+            "V38 heap modules: the requested amount of a resource failure",
+            "`limits::RESOURCE_REQUEST`",
+        ),
+        (
             frame::RESUME_EXPORT.into(),
             "export, function",
             "Closed resume dispatcher of frame profiles",
@@ -821,6 +833,8 @@ fn scheduler_error_name(error: &scheduler::SchedulerError) -> &'static str {
         E::UnknownSerial => "UnknownSerial",
         E::Outcome => "Outcome",
         E::TimerBudget => "TimerBudget",
+        E::ContinuationLimit { .. } => "ContinuationLimit",
+        E::TimerLimit { .. } => "TimerLimit",
         E::TimerDenied => "TimerDenied",
         E::TimerState => "TimerState",
         E::TimerDeadline { .. } => "TimerDeadline",
@@ -1039,6 +1053,13 @@ fn scheduler_errors() -> String {
         E::UnknownSerial,
         E::Outcome,
         E::TimerBudget,
+        // V38 (`data_limits`): the memory-derived host bounds.
+        E::ContinuationLimit {
+            limit: varta_common::limits::V38_MAX_PENDING_CONTINUATIONS,
+        },
+        E::TimerLimit {
+            limit: varta_common::limits::V38_MAX_PENDING_TIMERS,
+        },
         E::TimerDenied,
         E::TimerState,
         E::TimerDeadline {

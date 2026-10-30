@@ -145,6 +145,14 @@ pub enum SchedulerError {
     Outcome,
     #[error("execution exceeds {MAX_PENDING_TIMERS} pending timers")]
     TimerBudget,
+    /// V38 (`data_limits`): the memory-derived continuation bound
+    /// (`limits::V38_MAX_PENDING_CONTINUATIONS`) instead of [`Self::QueueFull`].
+    #[error("microtask queue exceeds {limit} pending continuations")]
+    ContinuationLimit { limit: usize },
+    /// V38 (`data_limits`): the memory-derived timer bound instead of
+    /// [`Self::TimerBudget`].
+    #[error("execution exceeds {limit} pending timers")]
+    TimerLimit { limit: usize },
     #[error(
         "<capability denied: {TIMER_CAPABILITY}> (setTimeout and setInterval require an exact {TIMER_CAPABILITY} grant)"
     )]

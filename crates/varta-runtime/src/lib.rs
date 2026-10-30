@@ -28,6 +28,7 @@ mod http;
 mod http_abi_tests;
 mod http_contract;
 mod references;
+mod resources;
 mod server;
 #[cfg(test)]
 mod server_tests;
@@ -49,11 +50,15 @@ mod bitwise_tests;
 #[cfg(test)]
 mod call_flow_tests;
 #[cfg(test)]
+mod data_limit_tests;
+#[cfg(test)]
 mod default_export_tests;
 #[cfg(test)]
 mod exit_flow_tests;
 #[cfg(test)]
 mod frame_admission_tests;
+#[cfg(test)]
+mod frame_limit_tests;
 #[cfg(test)]
 mod frame_liveness_tests;
 mod frames;
@@ -67,6 +72,8 @@ mod interface_extends_tests;
 mod invocation_tests;
 mod invoke;
 mod json;
+#[cfg(test)]
+mod json_limit_tests;
 mod json_parse;
 #[cfg(test)]
 mod json_parse_abi_tests;
@@ -198,6 +205,9 @@ pub enum RuntimeError {
     Scheduler(#[from] varta_common::scheduler::SchedulerError),
     #[error(transparent)]
     Net(#[from] varta_common::net::NetError),
+    /// A v38 (`data_limits`) guest exhausted a real resource.
+    #[error(transparent)]
+    Resource(#[from] varta_common::limits::ResourceExhausted),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
 }
@@ -214,6 +224,9 @@ pub(crate) struct RuntimeContext {
     output: RunOutput,
     output_bytes: usize,
     host_calls: u32,
+    /// The host-call budget: the production `abi::MAX_HOST_CALLS`; only
+    /// tests declare a larger one (`Execution::allow_test_host_calls`).
+    host_call_limit: u32,
     deadline: Instant,
     http_control: Option<(String, HttpShutdown)>,
     random: random::RandomSource,
@@ -234,7 +247,7 @@ impl RuntimeContext {
     }
 
     fn check_budget(&self) -> Result<(), wasmtime::Error> {
-        if self.host_calls > abi::MAX_HOST_CALLS || Instant::now() >= self.deadline {
+        if self.host_calls > self.host_call_limit || Instant::now() >= self.deadline {
             return Err(wasmtime::Error::msg("host operation budget exhausted"));
         }
         Ok(())
@@ -412,12 +425,15 @@ impl VartaRuntime {
         let result = (|| {
             let instance = execution.instantiate_prepared(&module)?;
             let store = &mut execution.store;
-            if let Some(start) = instance.get_func(&mut *store, "_start") {
-                start.call(&mut *store, &[], &mut [])?;
-            }
-            exceptions::finish(&instance, store)?;
-            scheduler::checkpoint(&instance, store)?;
-            Ok::<(), RuntimeError>(())
+            (|| {
+                if let Some(start) = instance.get_func(&mut *store, "_start") {
+                    start.call(&mut *store, &[], &mut [])?;
+                }
+                exceptions::finish(&instance, store)?;
+                scheduler::checkpoint(&instance, store)?;
+                Ok::<(), RuntimeError>(())
+            })()
+            .map_err(|error| resources::classify(&instance, store, error))
         })();
         let result = result.map_err(scheduler::typed);
         let store = &mut execution.store;

@@ -42,7 +42,10 @@ impl Emitter<'_> {
             I::I32Const(abi::STRING_ROOT_END as i32),
             I::I32GtU,
             I::If(BlockType::Empty),
-            I::Unreachable,
+        ]);
+        self.code
+            .extend(memory.fail(varta_common::limits::Resource::RootStack, self.frame_end));
+        self.code.extend([
             I::End,
             I::LocalGet(self.frame_base),
             I::I32Const(0),

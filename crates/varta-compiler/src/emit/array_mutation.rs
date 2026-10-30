@@ -79,7 +79,7 @@ impl Emitter<'_> {
         self.code.extend([
             I::End,
             I::LocalGet(self.float_temporary),
-            I::F64Const((values::MAX_ARRAY_ELEMENTS as f64).into()),
+            I::F64Const((self.profile.data().array_elements as f64).into()),
             I::F64Gt,
         ]);
         self.trap_if();
@@ -121,7 +121,7 @@ impl Emitter<'_> {
             I::F64Lt,
             I::I32Or,
             I::LocalGet(self.float_temporary),
-            I::F64Const((values::MAX_ARRAY_ELEMENTS as f64).into()),
+            I::F64Const((self.profile.data().array_elements as f64).into()),
             I::F64Ge,
             I::I32Or,
             I::I32Eqz,

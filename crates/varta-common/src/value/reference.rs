@@ -33,12 +33,22 @@ impl ReferenceBox {
         catalog: &crate::function::FunctionCatalog,
         work_budget: u64,
     ) -> Result<Self, ValueAbiError> {
+        Self::read_with_catalog_in(data, handle, catalog, work_budget, ModuleBounds::LEGACY)
+    }
+    /// [`Self::read_with_catalog`] within a module's bounds.
+    pub fn read_with_catalog_in(
+        data: &[u8],
+        handle: u64,
+        catalog: &crate::function::FunctionCatalog,
+        work_budget: u64,
+        module: ModuleBounds,
+    ) -> Result<Self, ValueAbiError> {
         let cell = Self::read_envelope(data, handle, catalog.value_version)?;
         if cell.kind == ValueKind::Function {
             catalog.validate_closure(data, cell.payload, work_budget)?;
             return Ok(cell);
         }
-        Self::read_in(data, handle, catalog.value_version, ModuleBounds::LEGACY)
+        Self::read_in(data, handle, catalog.value_version, module)
     }
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
         Self::read_with_version(data, handle, REFERENCE_VALUE_VERSION)
@@ -52,7 +62,8 @@ impl ReferenceBox {
     }
     /// [`Self::read_with_version`] for a module whose static metadata lies in
     /// `module`'s bounds (v38 `program_limits`: record descriptors and keys may
-    /// live in the static extension, closures follow its function limits).
+    /// live in the static extension, closures follow its function limits;
+    /// v38 `data_limits`: strings and arrays follow its data limits).
     pub fn read_in(
         data: &[u8],
         handle: u64,
@@ -101,7 +112,7 @@ impl ReferenceBox {
             ) {
                 return Err(invalid());
             }
-            ErrorObject::read_with_version(data, cell.payload, version)?;
+            ErrorObject::read_in(data, cell.payload, version, module)?;
         } else if cell.kind == ValueKind::Dictionary {
             Dictionary::read_in(data, cell.payload, version, module)?;
         } else if cell.kind == ValueKind::Promise {
@@ -121,7 +132,7 @@ impl ReferenceBox {
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
             aggregate(data, cell, version, module)?;
         } else {
-            PrimitiveBox::read(data, handle)?;
+            PrimitiveBox::read_in(data, handle, module)?;
         }
         Ok(Self {
             kind: cell.kind,
@@ -182,7 +193,7 @@ fn aggregate(
                 | FUNCTION_FIELD_VALUE_VERSION
         )
     {
-        Vector::read_with_version(data, cell.payload, version)?;
+        Vector::read_in(data, cell.payload, version, module)?;
         return Ok(());
     }
     let ptr = cell.payload as u32 as usize;
@@ -212,7 +223,9 @@ fn aggregate(
     let meta = word(data, ptr)?;
     let count = word(data, ptr + 4)? as usize;
     if is_array {
-        if count > MAX_ARRAY_ELEMENTS || length != ARRAY_META_BYTES + count * ARRAY_SLOT_BYTES {
+        if count > module.limits.data.array_elements
+            || length != ARRAY_META_BYTES + count * ARRAY_SLOT_BYTES
+        {
             return Err(invalid());
         }
         let kind = ValueKind::from_tag(meta)

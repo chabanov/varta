@@ -57,7 +57,7 @@ impl Emitter<'_> {
             I::LocalGet(self.float_temporary),
             I::F64Mul,
             I::LocalTee(self.float_temporary),
-            I::F64Const((varta_common::abi::MAX_STRING_BYTES as f64).into()),
+            I::F64Const((self.profile.data().string_bytes as f64).into()),
             I::F64Gt,
             I::If(BlockType::Empty),
             I::Unreachable,

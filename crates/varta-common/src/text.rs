@@ -43,7 +43,12 @@ pub enum JsonTextError {
 }
 /// Separate transport/resource violations from invalid JSON source text.
 pub fn json_input_classified(bytes: &[u8]) -> Result<Vec<u8>, JsonTextError> {
-    if bytes.len() > crate::abi::MAX_INPUT_BYTES {
+    json_input_limited(bytes, crate::abi::MAX_INPUT_BYTES)
+}
+/// [`json_input_classified`] with the profile's JSON input limit
+/// (`DataLimits::json_input_bytes`) on the UTF-16 input and UTF-8 output.
+pub fn json_input_limited(bytes: &[u8], limit: usize) -> Result<Vec<u8>, JsonTextError> {
+    if bytes.len() > limit {
         return Err(JsonTextError::Limit);
     }
     let units = units(bytes).map_err(|_| JsonTextError::Encoding)?;
@@ -75,7 +80,7 @@ pub fn json_input_classified(bytes: &[u8]) -> Result<Vec<u8>, JsonTextError> {
                 output.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             }
         }
-        if output.len() > crate::abi::MAX_INPUT_BYTES {
+        if output.len() > limit {
             return Err(JsonTextError::Limit);
         }
     }

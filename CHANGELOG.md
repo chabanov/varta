@@ -47,6 +47,29 @@ in [conformance/README.md](conformance/README.md).
   Wasmtime's per-byte data-segment copy to the guest's fuel. V37 and earlier
   keep the single 64 KiB page, their bytes and diagnostics.
 
+- V38 data limits (`data_limits`, in development): arrays (dense, resizable
+  and sparse), dictionaries, `Map`, `Set`, `Uint8Array`, spread arguments,
+  strings and JSON are no longer capped at 1024 elements, 1 MiB, depth 64 or
+  4096 values; the Wasm-derived limits (2^27 elements, 2^30 string bytes,
+  a JSON host depth ceiling of 10000) and in practice the unchanged 8 MiB
+  memory budget, fuel and deadline bound them. Sparse backings above 1024
+  slots keep value layout 17 with one presence bit per slot. More than 64
+  continuation frames may be live (a hashed growable table) and the host
+  scheduler tracks up to one pending token per 64-byte frame block of the
+  memory budget. `JSON.stringify` binds the new `json_stringify_owned` (host
+  ABI 34) and writes results larger than 1 MiB into owned guest strings
+  through a host buffer bounded by the memory budget; checked parsing accepts
+  large and deep inputs and builds them iteratively. Exhausted resources are
+  reported as `RuntimeError::Resource` (`resource limit: memory budget
+  exhausted (requested …)`) through the new `resource_failure` and
+  `resource_request` exports instead of an anonymous trap. The v38 heap grows
+  geometrically and marks through a worklist (1000 concurrent awaits: 83.7M
+  to 7.7M fuel), and `Array.prototype.join` is O(n log n). V37 and earlier
+  keep their bytes, limits and diagnostics. The data limits are the `data`
+  field of the program-limits registry, and runtime readers take both through
+  one `value::ModuleBounds` parameter. Dictionary hashing is pending a
+  value18 storage slot.
+
 - Opt-in v38 (batch: program and data limits, turn budgets, linked
   intrinsics, view protocol and TSX, structural subtyping and code generation
   v2, in development) is registered. It inherits every v37 feature, shares

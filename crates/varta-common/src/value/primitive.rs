@@ -47,6 +47,10 @@ impl PrimitiveBox {
         Ok(Self { kind, payload })
     }
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
+        Self::read_in(data, handle, ModuleBounds::LEGACY)
+    }
+    /// Read within a module's bounds, under its profile's data limits (v38 admits longer strings).
+    pub fn read_in(data: &[u8], handle: u64, module: ModuleBounds) -> Result<Self, ValueAbiError> {
         let invalid = || ValueAbiError("noncanonical primitive union".into());
         let cell = Self::raw(data, handle)?;
         let Self { kind, payload } = cell;
@@ -57,7 +61,7 @@ impl PrimitiveBox {
             ValueKind::String => {
                 let len = (payload >> i32::BITS) as usize;
                 let ptr = payload as u32 as usize;
-                len <= abi::MAX_STRING_BYTES
+                len <= module.limits.data.string_bytes
                     && len.is_multiple_of(2)
                     && ptr.checked_add(len).is_some_and(|end| end <= data.len())
             }

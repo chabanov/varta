@@ -161,7 +161,7 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 | `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
 | `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
-| `checked-f64-utf16-v38` | 34 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
+| `checked-f64-utf16-v38` | 34 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_owned` | `json_parse_v18` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
@@ -8922,12 +8922,12 @@ feature, layout, binding or diagnostic for v37 only, it applies to v37 and
 v38; v36 and earlier profiles stay frozen. V38 declares one version identity
 of its own (see the [version matrix](#version-matrix)):
 
-- **Host ABI** `abi::PROGRAM_LIMITS_VERSION` (34), for v38 alone. It adds no
-  host import yet: every v37 operation, including the value17 readers, the
-  timer and `net.request` operations and `json_stringify_v17`, keeps its
-  signature, binding and minimum ABI, and no registered operation requires
-  host ABI 34. Host imports added in this batch use host ABI 34 as their
-  minimum.
+- **Host ABI** `abi::PROGRAM_LIMITS_VERSION` (34), for v38 alone. Every
+  other v37 operation, including the value17 readers and the timer and
+  `net.request` operations, keeps its signature, binding and minimum ABI; the
+  data-limits stream binds `json_stringify_owned` (minimum host ABI 34) in
+  place of `json_stringify_v17` ([data limits](#data-limits-data_limits)).
+  Host imports added in this batch use host ABI 34 as their minimum.
 - **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17),
   shared with v36 and v37. V38 adds no value tag or layout yet;
   `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
@@ -8960,7 +8960,7 @@ others admit nothing yet:
   elimination);
 - data-limits stream: `data_limits()` (arrays, dictionaries, `Map`, `Set`,
   `Uint8Array`, strings and JSON bounded only by the memory budget, and more
-  than 64 live frames without a trap);
+  than 64 live frames without a trap; [implemented](#data-limits-data_limits));
 - turn-budgets stream: `turn_budgets()` (per-event-turn fuel and deadline
   configurable by the manifest within the host ceiling, a fuel profiler and
   logs before failure in `varta dev`);
@@ -9137,6 +9137,192 @@ metadata changes). Every earlier profile keeps static data in the single page
 A v38 module relabelled as v37 still fails at its host ABI section; with the
 host ABI downgraded as well, its `varta.static` section or its extension data
 segment fails validation, before any guest effect.
+
+#### Data limits (`data_limits()`)
+
+Selector `data_limits()` lifts the fixed per-value ceilings of v37 and
+earlier profiles, so the memory budget, fuel and the deadline bound data in
+v38, as in a JavaScript engine. Every bound is read from the one limits
+registry of [program limits](#program-limits-program_limits): the `data` field
+(a `varta_common::limits::DataLimits`) of `LanguageProfile::limits()`
+(shorthand `LanguageProfile::data()`), `DataLimits::LEGACY` in `limits::FROZEN`
+for every profile before v38 (its values are exactly the frozen constants) and
+`DataLimits::V38` in `limits::WASM`. Runtime value readers take a module's
+limits with its static region through the one `value::ModuleBounds`
+parameter. Production budgets are unchanged:
+8 MiB memory, 1M fuel, 1024 host calls, 5 s deadline. Modules of v37 and
+earlier compile byte-identically (pinned by FNV digests of 14 v37 modules in
+`varta-runtime` `data_limit_tests`, and by the earlier frozen-digest tests).
+
+| Bound | v37 and earlier | v38 | What bounds v38 in practice |
+| --- | --- | --- | --- |
+| Elements of one array (dense, resizable, sparse), entries of one dictionary, `Map`, `Set`, `Uint8Array`, flattened spread/rest arguments | 1024 | `V38_MAX_ARRAY_ELEMENTS` = 2^27 | Memory budget |
+| Bytes of one string value | 1 MiB | `V38_MAX_STRING_BYTES` = 2^30 (2^29 UTF-16 units) | Memory budget |
+| One guest heap allocation | 1 MiB | `V38_MAX_ALLOCATION_BYTES` = 2^31 − 64 KiB | Memory budget |
+| JSON nesting depth | 64 | `V38_MAX_JSON_DEPTH` = 10000 (host ceiling) | Host JSON stack |
+| JSON values visited | 4096 | unbounded | Encoded size, so the memory budget |
+| JSON parse input | 64 KiB | `json_input_bytes` = 2^30 | The guest string, so the memory budget |
+| JSON output | 1 MiB result buffer | Memory budget (`json_stringify_owned`) | Memory budget |
+| Live continuation frames | 64 (fixed root table) | Hashed table up to 2^27 entries | Memory budget |
+| Pending resume tokens / timers (host) | 64 / 32 | 131072 / 65536 | Memory budget per 64-byte frame block |
+
+The v38 element and string limits are Wasm-derived: the largest sparse
+backing (`8 + 8·2^27 + 2^27/8` bytes) and string, with their heap header,
+fit a signed i32, so every size the guest computes stays in i32 arithmetic.
+Sizes are computed with checked or bounded arithmetic before allocation; an
+index at or beyond the element limit traps as before (a deliberate deviation
+from ECMAScript, where such a read is `undefined`).
+
+**Sparse backings.** V38 keeps value ABI/layout 17. A sparse backing of up to
+1024 slots keeps the value12 layout exactly (fixed 128-byte presence bitmap);
+a backing above 1024 slots, which only a v38 module can build, carries one
+presence bit per slot (`DataLimits::sparse_bitmap_bytes`), and
+`DataLimits::sparse_capacity` inverts its packed byte length. The value
+readers take the module's limits (`Vector::read_limited`,
+`Dictionary::read_limited`, `ReferenceBox::read_limited`,
+`PrimitiveBox::read_limited`, `ErrorObject::read_limited`,
+`validate_aggregate_limited`); the existing readers keep the frozen limits,
+so a v37 module that crafts a larger backing is still rejected. Runtimes
+before v38 reject the v38 profile name, so they never see such a backing. A
+future value18 (owned by the program-limits stream) must keep this bitmap
+formula.
+
+**Typed resource failures.** A v38 module with a managed heap exports two
+mutable i32 globals, `resource_failure` and `resource_request`
+(`limits::RESOURCE_FAILURE`, `RESOURCE_REQUEST`), validated as mutable i32
+exports. Immediately before an `unreachable` trap the allocator (an oversized
+request, the memory budget or failed `memory.grow`), the root stack (helper
+pushes and function frames) and the live-frame table store the exhausted
+`limits::Resource` (`Memory`, `ValueSize`, `RootStack`, `LiveFrames`) and the
+requested amount. The runtime reports such a trap, and only such a trap, as
+`RuntimeError::Resource(ResourceExhausted)`, for example `resource limit:
+memory budget exhausted (requested 34078744)`. The globals select a
+diagnostic and carry no authority. Resource failures are fatal: they end the
+execution like any trap and are never delivered to the guest. Recoverable
+v38 errors keep their v37 forms: `RangeError` for `Map maximum size
+exceeded`, an invalid array or typed-array length, and the dictionary entry
+limit, which v38 raises at the element limit. The host scheduler's
+`ContinuationLimit` and `TimerLimit`, and the JSON depth and deadline errors,
+are fatal, typed and reported.
+
+**Heap growth and marking.** The v38 allocator grows linear memory by at
+least half its committed pages when the budget allows, and by the exact need
+otherwise, so collections run once per geometric growth step instead of on
+every 64 KiB page. Marking uses a worklist of block headers in the unused
+tail of the root region, above the live roots: rooted blocks are pushed, and
+popping a block marks and pushes its unmarked children. Marking work is then
+linear in the live edges instead of one heap scan per level of depth. A full
+worklist records the overflow, and the collector finishes with the exact
+fixed-point heap scans, draining the worklist after every scanned block, so
+no reachable value is ever lost or truncated. The collector still allocates
+nothing and stays nonmoving. Near the memory budget, where geometric growth
+is no longer possible, collections again run on every page.
+
+**Live frames and pending continuations.** A v38 module retains live
+continuation frames in a growable hashed table instead of the fixed 64-slot
+permanent table: one permanent root slot holds a private array backing (heap
+flag 8, reference elements, no value tag; no value reader reaches it) used as
+an open-addressing set keyed by the frame pointer (Fibonacci hashing, linear
+probing, backward-shift deletion), doubling at half load through the
+allocator, through one helper (`FrameTable`: register, find, release).
+Registration roots the new frame on the root stack and keeps the old table
+rooted while the table grows; the dispatcher finds a frame by hashing, and a
+completed frame is looked up again before it is removed, because its body may
+have grown the table. The collector traces the table like any reference
+array. A table beyond the element limit is reported as `Resource::LiveFrames`
+and failed growth as `Resource::Memory`. The host scheduler bounds pending
+resume tokens by the memory budget per minimal frame block
+(`limits::FRAME_BLOCK_BYTES`, 64 bytes): `V38_MAX_PENDING_CONTINUATIONS`
+(131072) and `V38_MAX_PENDING_TIMERS` (65536) under the production budget.
+Exceeding them is fatal (`SchedulerError::ContinuationLimit`, `TimerLimit`); a
+correct module exhausts its memory budget first. Earlier profiles keep the
+fixed 64-slot table, 64 tokens and 32 timers with `QueueFull` and
+`TimerBudget`. Scheduler operations are not host calls.
+
+**JSON.** V38 binds `json_stringify_owned` (host ABI 34, `(i32 kind, i32 low,
+i32 high) -> (i64 handle, i32 error class)`, capability-free) in place of
+`json_stringify_v17`. The host serializes under the module's data limits into
+a buffer bounded by the memory budget, allocates the owned UTF-16 result
+through the module's host-free `varta.value_abi.allocate`, writes it in 64 KiB
+chunks, retains it through `varta.value_abi.retain` and returns its packed
+handle (zero for `undefined`; the error class word is as for
+`json_stringify_v17`); the 1 MiB result buffer is not used. Visited values are
+bounded by the encoded size. Nesting is bounded by the host JSON depth ceiling
+`limits::V38_MAX_JSON_DEPTH` (10000; Node 24 overflows its stack at 6182
+nested arrays): values nested deeper than 64 are traversed on a dedicated
+256 MiB JSON host stack (committed as touched), and deeper values fail with a
+reported JSON depth error (stringify: "nesting exceeds the host depth
+ceiling"; parse: `JsonInputLimit::Depth`). Checked parsing accepts input up to
+`DataLimits::json_input_bytes`, arrays and dictionaries up to the element
+limit, and stops at the execution deadline (`JsonInputLimit::Deadline`,
+fatal); serde_json's `unbounded_depth` feature is enabled only for depths
+above 64. V38 parse results are built top-down and iteratively: each container
+is published into its reachable parent slot before its children, so one
+retained root covers the whole value, the root stack never overflows and no
+host recursion occurs. V37 and earlier keep `json_stringify_v17`, the 1 MiB
+output, 64 KiB input, depth 64, 4096 values, the child-first builder and every
+message.
+
+**Collections and text built-ins.** The `Map`/`Set` and `Uint8Array`
+preludes compile under v38 with the v38 element limit
+(`Prelude::lifted`; v37 compiles the unchanged sources), and the v38
+`Array.prototype.join` concatenates balanced halves, so joining n elements
+copies O(n log n) code units instead of O(n²). `Map`/`Set` lookup stays
+hashed; dictionaries and mixed records keep their linear key search and
+ordered insertion (see the pending items below).
+
+**Bounded host copies.** Value readers (logging, `typeof`, equality, unions,
+JSON) read guest memory in place and allocate host memory bounded by the
+module's memory. `json_stringify_owned` buffers at most the memory budget of
+UTF-8 output and writes it into the guest in 64 KiB chunks (see the JSON
+subsection); checked parsing copies its input, which is a guest string and
+so bounded by the memory budget. The host scheduler keeps at most one entry
+per 64-byte frame block of the memory budget. No v38 host path allocates
+more than a constant multiple of the memory budget.
+
+**Measured costs.** Guest fuel and final memory pages (64 KiB each; the
+budget is 128) under the production 8 MiB memory budget and test-only fuel
+and host-call budgets (`varta-runtime` `data_limit_tests`,
+`frame_limit_tests`, `json_limit_tests`; deterministic, not wall-clock):
+
+| Workload | 10k elements | 100k elements |
+| --- | --- | --- |
+| `number[]` built with `push` | 8.2M fuel, 27 pages | 103.6M fuel, 60 pages |
+| `number[]` built by indexed writes | 2.5M fuel, 27 pages | 25.0M fuel, 40 pages |
+| `string[]` joined (one host call per element for `String`) | 21.4M fuel, 27 pages | 374.9M fuel, 60 pages |
+| `Map<number, number>` with `set` | 63.4M fuel, 40 pages | memory budget exhausted (typed `Memory`) at 415.5M fuel |
+| `Set<number>` with `add` | 59.2M fuel, 40 pages | 578.4M fuel, 110 pages |
+| String of n code units by doubling | 0.11M fuel, 27 pages | 0.75M fuel, 27 pages |
+| JSON round trip of a `number[]` (guest work only; building the input) | 494 fuel (0.26M), 27 pages | 1474 fuel (2.4M), 69 pages |
+
+| Frames workload | Fuel | Host calls | Pages |
+| --- | --- | --- | --- |
+| 100 concurrent awaits | 0.64M | 2 | 27 |
+| 1000 concurrent awaits | 7.7M | 2 | 27 |
+| 1000 pending `then` reactions | 2.2M | 1 | 27 |
+| 1000 async frames suspended in a generator loop | 25.0M | 2 | 40 |
+| 1000 live frames with forced collections | 43.3M | 1002 | 60 |
+| Live frames until the memory budget (typed `Memory`) | 44.5M | 0 | 128 |
+
+The geometric growth and the worklist cut the earlier costs several times:
+1000 concurrent awaits took 83.7M fuel with the v37 collector, a 5000-node
+linked list now marks in 5.9M fuel where 3000 nodes did not finish in 5000
+production budgets, and a 4000-element `join` fell from 177.9M to 9.8M fuel.
+Production fuel (1M) and the 1024 host calls still bound one execution to
+roughly a thousand elements of such work; the turn-budgets stream makes the
+budgets configurable.
+
+**Pending.** Dictionary and mixed-record lookup is a linear key search and
+insertion or deletion shifts the ordered vectors (a 1000-entry dictionary
+with 500 deletions costs 251M fuel). Hashing them needs an index next to
+the key vector, a value-layout change for the program-limits stream's
+value18 (a third storage slot, for example an open-addressing `number[]` of
+entry positions with tombstones and compaction, as in the `Map` prelude).
+`String(x)`, `x % y` and number templates are host calls, so loops over more
+than about 1000 elements exhaust the production host-call budget. `console.log`
+diagnostics and the primitive `String`/`Number`/BigInt conversions still read
+with the frozen string and depth limits, and the logs of a failed execution
+are not shown.
 
 ## Local modules
 
@@ -9861,6 +10047,13 @@ Limits that are derived from several constants or enforced outside `abi`:
 | HTTP response headers | 64 KiB |
 | Manifest/config | 256 KiB |
 | Function parameters | Each captured `VartaResult` uses two physical parameters |
+
+The per-value rows above (array elements and spread arguments, string
+values, JSON depth, visited values, input and output, live frames, pending
+continuations and timers) are the frozen limits of every profile before v38.
+Profile v38 takes them from `limits::DataLimits::V38`
+([data limits](#data-limits-data_limits)); its memory, fuel, deadline,
+host-call and output budgets are the production budgets above.
 
 Preflight limits also bound signatures, function count/body size, memories,
 tables and globals before native compilation. Store budgets apply before Wasm

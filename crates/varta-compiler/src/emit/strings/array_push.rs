@@ -28,7 +28,12 @@ const BACKING: MemArg = MemArg {
     offset: values::VECTOR_STORAGE_OFFSET,
     ..ROOT
 };
-pub(super) fn function(allocate: u32, sparse: bool) -> Function {
+pub(super) fn function(
+    allocate: u32,
+    sparse: bool,
+    limits: varta_common::limits::DataLimits,
+) -> Function {
+    let sizes = sparse::Sizes::new(limits);
     let mut f = Function::new([(if sparse { 14 } else { 10 }, ValType::I32)]);
     instructions(
         &mut f,
@@ -52,7 +57,7 @@ pub(super) fn function(allocate: u32, sparse: bool) -> Function {
             I::LocalGet(ADDED),
             I::I32Add,
             I::LocalTee(TOTAL),
-            I::I32Const(values::MAX_ARRAY_ELEMENTS as i32),
+            I::I32Const(limits.array_elements as i32),
             I::I32GtU,
             I::If(BlockType::Empty),
             I::Unreachable,
@@ -65,22 +70,36 @@ pub(super) fn function(allocate: u32, sparse: bool) -> Function {
             I::I64Load(BACKING),
             I::I32WrapI64,
             I::LocalSet(STORAGE),
-            I::LocalGet(CELL),
-            I::I64Load(BACKING),
-            I::I64Const(LENGTH_SHIFT as i64),
-            I::I64ShrU,
-            I::I32WrapI64,
-            I::I32Const(
-                (values::ARRAY_META_BYTES
-                    + if sparse {
-                        values::SPARSE_BITMAP_BYTES
-                    } else {
-                        0
-                    }) as i32,
-            ),
-            I::I32Sub,
-            I::I32Const(values::ARRAY_SLOT_BYTES as i32),
-            I::I32DivU,
+        ],
+    );
+    if sizes.large {
+        instructions(&mut f, sizes.capacity(&sparse::backing_length(TARGET)));
+    } else {
+        instructions(
+            &mut f,
+            [
+                I::LocalGet(CELL),
+                I::I64Load(BACKING),
+                I::I64Const(LENGTH_SHIFT as i64),
+                I::I64ShrU,
+                I::I32WrapI64,
+                I::I32Const(
+                    (values::ARRAY_META_BYTES
+                        + if sparse {
+                            values::SPARSE_BITMAP_BYTES
+                        } else {
+                            0
+                        }) as i32,
+                ),
+                I::I32Sub,
+                I::I32Const(values::ARRAY_SLOT_BYTES as i32),
+                I::I32DivU,
+            ],
+        );
+    }
+    instructions(
+        &mut f,
+        [
             I::LocalSet(CAPACITY),
             I::LocalGet(TOTAL),
             I::LocalGet(CAPACITY),
@@ -105,18 +124,32 @@ pub(super) fn function(allocate: u32, sparse: bool) -> Function {
             I::Br(AGAIN),
             I::End,
             I::End,
-            I::LocalGet(CAPACITY),
-            I::I32Const(values::ARRAY_SLOT_BYTES as i32),
-            I::I32Mul,
-            I::I32Const(
-                (values::ARRAY_META_BYTES
-                    + if sparse {
-                        values::SPARSE_BITMAP_BYTES
-                    } else {
-                        0
-                    }) as i32,
-            ),
-            I::I32Add,
+        ],
+    );
+    if sizes.large {
+        instructions(&mut f, sizes.backing_bytes(&[I::LocalGet(CAPACITY)]));
+    } else {
+        instructions(
+            &mut f,
+            [
+                I::LocalGet(CAPACITY),
+                I::I32Const(values::ARRAY_SLOT_BYTES as i32),
+                I::I32Mul,
+                I::I32Const(
+                    (values::ARRAY_META_BYTES
+                        + if sparse {
+                            values::SPARSE_BITMAP_BYTES
+                        } else {
+                            0
+                        }) as i32,
+                ),
+                I::I32Add,
+            ],
+        );
+    }
+    instructions(
+        &mut f,
+        [
             I::LocalTee(BYTES),
             I::Call(allocate),
             I::LocalSet(DEST),
@@ -163,7 +196,28 @@ pub(super) fn function(allocate: u32, sparse: bool) -> Function {
             },
         ],
     );
-    if sparse {
+    if sizes.large {
+        // The new bitmap follows the new slots; the old bitmap (no longer
+        // than the new one, which is zero) is copied to its start.
+        instructions(
+            &mut f,
+            [
+                I::LocalGet(DEST),
+                I::I32Const(values::ARRAY_META_BYTES as i32),
+                I::I32Add,
+                I::LocalGet(CAPACITY),
+                I::I32Const(values::ARRAY_SLOT_BYTES as i32),
+                I::I32Mul,
+                I::I32Add,
+            ],
+        );
+        sparse::bitmap_of(&mut f, TARGET, sizes);
+        instructions(&mut f, sizes.bitmap_bytes(&sparse::backing_length(TARGET)));
+        f.instruction(&I::MemoryCopy {
+            src_mem: MEMORY,
+            dst_mem: MEMORY,
+        });
+    } else if sparse {
         instructions(
             &mut f,
             [
@@ -215,9 +269,9 @@ pub(super) fn function(allocate: u32, sparse: bool) -> Function {
         ],
     );
     if sparse {
-        sparse::bitmap(&mut f, ITEMS);
+        sparse::bitmap_of(&mut f, ITEMS, sizes);
         f.instruction(&I::LocalSet(BIT_SOURCE));
-        sparse::bitmap(&mut f, TARGET);
+        sparse::bitmap_of(&mut f, TARGET, sizes);
         f.instruction(&I::LocalSet(BIT_DEST));
         instructions(
             &mut f,

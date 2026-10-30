@@ -782,12 +782,14 @@ separate foundation commit
 ([contract](architecture.md#checked-f64-utf16-v38--batch-program-and-data-limits-turn-budgets-linked-intrinsics-view-protocol-and-tsx-structural-subtyping-and-codegen-v2)).
 All selectors are registered. `program_limits()` admits the
 [multi-page static region](architecture.md#multi-page-static-region-program_limits)
-(the batch's layout foundation); the others admit nothing yet.
+(the batch's layout foundation) and the profile limits registry; `data_limits()`
+admits the [data limits](architecture.md#data-limits-data_limits); the others
+admit nothing yet.
 
 | Selector | Work stream | State |
 | --- | --- | --- |
 | `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Implemented ([contract](architecture.md#program-limits-program_limits)): multi-page static region (host ABI 34, no value 18; the foundation), profile limits registry with the Wasm limits, table-driven `varta_resume`, unreachable async frames and unread constants removed, startup fuel independent of static size. Pending: per-type `request<T>` code (async frame and promise helpers, about 11 functions per response type) |
-| `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Registered, admits nothing |
+| `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Implemented ([contract](architecture.md#data-limits-data_limits)): `DataLimits` registry (2^27 elements, 2^30 string bytes, JSON depth host ceiling 10000), value17 sparse backings above 1024 slots with one bit per slot, typed `RuntimeError::Resource` failures through the `resource_failure`/`resource_request` globals, geometric heap growth and a worklist mark, a hashed growable live-frame table and memory-derived scheduler bounds, `json_stringify_owned` (host ABI 34) into owned guest strings, iterative JSON parsing, lifted `Map`/`Set`/`Uint8Array` preludes and an O(n log n) `join`. Pending: dictionary and mixed-record hashing (needs a value18 storage slot from the program-limits stream), per-element host calls (`String`, `%`) against the 1024 host-call budget, frozen limits in `console.log` diagnostics and primitive conversions |
 | `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Registered, admits nothing |
 | `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Registered, admits nothing |
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Registered, admits nothing |

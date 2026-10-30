@@ -391,9 +391,11 @@ fn unreachable_async_functions_and_their_frames_are_removed() {
     };
     assert_eq!(run(&v37), [log("4f73")]);
     assert_eq!(run(&v38), run(&v37));
-    // Each async function or method takes a creator and a resume body.
+    // Each async function or method takes a creator and a resume body; v38
+    // adds one helper, the growable live-frame table (`data_limits`).
+    const FRAME_TABLE_HELPER: u32 = 1;
     assert!(
-        functions(&v38) + 4 * (COUNT as u32 - 1) <= functions(&v37),
+        functions(&v38) + 4 * (COUNT as u32 - 1) <= functions(&v37) + FRAME_TABLE_HELPER,
         "{} vs {}",
         functions(&v38),
         functions(&v37)

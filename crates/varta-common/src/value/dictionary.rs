@@ -3,7 +3,6 @@
 //! values (consumers that traverse them validate each child) and complete for
 //! keys: distinct, and in own-key order (array indices ascending, then the rest).
 use super::*;
-use crate::abi;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy)]
@@ -89,11 +88,11 @@ impl Dictionary {
             }
         }
         let field = |slot: usize| wide(data, ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES);
-        let keys = Vector::read_with_version(data, field(0)?, version)?;
-        let values = Vector::read_with_version(data, field(1)?, version)?;
+        let keys = Vector::read_in(data, field(0)?, version, module)?;
+        let values = Vector::read_in(data, field(1)?, version, module)?;
         if keys.kind != ValueKind::String
             || keys.length != values.length
-            || keys.length > MAX_DICTIONARY_ENTRIES
+            || keys.length > module.limits.data.array_elements
         {
             return Err(invalid());
         }
@@ -110,7 +109,7 @@ impl Dictionary {
             )?;
             let start = key as u32 as usize;
             let len = (key >> i32::BITS) as usize;
-            if len > abi::MAX_STRING_BYTES || !len.is_multiple_of(2) {
+            if len > module.limits.data.string_bytes || !len.is_multiple_of(2) {
                 return Err(invalid());
             }
             let bytes = start

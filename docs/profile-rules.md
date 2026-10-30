@@ -3184,3 +3184,41 @@ profiles frozen, and add each stream's rules under its own heading here.
   (at most the memory budget) and the guest's budget is restored before any
   guest code; never charge the data-segment copy to the guest, and never
   extend this to earlier profiles.
+
+### Data limits (`data_limits`)
+
+- Read every per-value bound from the `data` field of the one limits
+  registry (`LanguageProfile::limits().data`, shorthand `data()`, a
+  `varta_common::limits::DataLimits`); there is no second limits table. Never compare against
+  `value::MAX_ARRAY_ELEMENTS`, `abi::MAX_STRING_BYTES`, the JSON constants or
+  the scheduler constants directly in code that v38 reaches. `LEGACY` must
+  equal the frozen constants exactly, and v37 modules stay byte-identical
+  (`data_limit_tests::v37_modules_keep_their_bytes` and the earlier digest
+  pins).
+- Emission helpers branch on `sparse::Sizes::large` (v38) and emit the
+  previous instructions unchanged otherwise. Sparse backings above 1024
+  slots use `DataLimits::sparse_bitmap_bytes` and `sparse_capacity`; never
+  locate a v38 bitmap with the fixed 128 bytes.
+- Value readers in host operations take one parameter, the module's
+  `ModuleBounds` from `RuntimeContext.module` (`*::read_in`), whose
+  `limits.data` are the data limits; the legacy readers stay for frozen
+  profiles and tests.
+- A resource the guest can exhaust (memory, one value's size, the root
+  stack, the live-frame table) is reported through
+  `strings::Globals::fail(Resource, amount)` before trapping; do not add an
+  anonymous `unreachable` for a resource in v38 code. Resource failures stay
+  fatal; language errors (`RangeError` for invalid lengths, `Map maximum size
+  exceeded`) stay recoverable as in v37.
+- Keep per-operation work bounded and amortized: geometric growth for
+  backings and the heap, the mark worklist with exact fallback scans, and
+  no host recursion deeper than the JSON depth ceiling. Every new host buffer
+  is bounded by the memory budget or a stated host ceiling.
+- Preludes whose ceilings differ under v38 provide `Prelude::lifted` text
+  derived from the unchanged v37 source (`modules::engine::lift`), so v37
+  keeps its prelude bytes.
+- Tests that need more than one production fuel or host-call budget declare
+  test-only budgets (`Execution::set_fuel`, `allow_test_host_calls`,
+  `allow_test_wall_clock`); production budgets never change.
+- Dictionary hashing and any layout change (a third dictionary storage
+  slot, a value18 sparse layout) belong to the program-limits stream's
+  value18 foundation; until it lands, dictionaries keep their linear search.

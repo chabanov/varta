@@ -38,12 +38,20 @@ pub(crate) struct Prelude {
     /// hooks (`lower::engine`, regular expression lowering), never through a
     /// source binding.
     pub loads: &'static [&'static str],
+    /// The module text under v38 (`data_limits`), when its per-value
+    /// ceilings differ there; earlier profiles keep `source` or `extended`.
+    pub lifted: Option<fn() -> &'static str>,
 }
 /// A profile selector and the prelude source it selects.
 pub(crate) type Extension = (fn(LanguageProfile) -> bool, &'static str);
 impl Prelude {
     /// The module text this profile compiles.
     pub(crate) fn text(&self, profile: LanguageProfile) -> &'static str {
+        if let Some(lifted) = self.lifted
+            && profile.data_limits()
+        {
+            return lifted();
+        }
         match self.extended {
             Some((admitted, source)) if admitted(profile) => source,
             _ => self.source,
@@ -89,6 +97,7 @@ pub(crate) const HEADERS: Prelude = Prelude {
     admitted: LanguageProfile::web_headers,
     extended: None,
     loads: &[],
+    lifted: None,
 };
 /// `AbortController`, `AbortSignal` and the `DOMException` abort reasons;
 /// v36 (`function_fields`) adds abort listeners in its own source.
@@ -108,6 +117,7 @@ pub(crate) const ABORT: Prelude = Prelude {
         include_str!("../prelude/abort_listeners.ts"),
     )),
     loads: &[],
+    lifted: None,
 };
 /// `AbortSignal.timeout` (v36 `timers`): an `AbortController` aborted by an
 /// unreferenced timer; it imports the abort prelude implicitly.
@@ -124,6 +134,7 @@ pub(crate) const ABORT_TIMEOUT: Prelude = Prelude {
     admitted: LanguageProfile::timers,
     extended: None,
     loads: &[],
+    lifted: None,
 };
 /// String and array methods of the v37 `collections` stream, called by
 /// `lower::engine` for receivers of the matching type.
@@ -147,6 +158,7 @@ pub(crate) const TEXT: Prelude = Prelude {
     admitted: LanguageProfile::collections,
     extended: None,
     loads: TEXT_METHODS,
+    lifted: Some(text_v38),
 };
 /// The member property names that load [`TEXT`].
 pub(crate) const TEXT_METHODS: &[&str] = &[
@@ -170,6 +182,7 @@ pub(crate) const COLLECTIONS: Prelude = Prelude {
     admitted: LanguageProfile::collections,
     extended: None,
     loads: &["Map", "Set", "ReadonlyMap", "ReadonlySet"],
+    lifted: Some(collections_v38),
 };
 /// `Uint8Array` operations, `TextEncoder`/`TextDecoder`, base64 and the
 /// `crypto` random functions (v37 `collections`).
@@ -198,6 +211,7 @@ pub(crate) const BINARY: Prelude = Prelude {
     admitted: LanguageProfile::collections,
     extended: None,
     loads: &["Uint8Array"],
+    lifted: Some(binary_v38),
 };
 /// `btoa` and `atob` (v37 `collections`), separate from [`BINARY`] because
 /// their `InvalidCharacterError` is a `DOMException` of the abort prelude.
@@ -210,6 +224,7 @@ pub(crate) const BASE64: Prelude = Prelude {
     admitted: LanguageProfile::collections,
     extended: None,
     loads: &[],
+    lifted: None,
 };
 /// The `Date` subset (v37 `collections`): UTC time values, ISO-8601 and
 /// IMF-fixdate parsing, and the `time.now`-gated clock.
@@ -233,6 +248,7 @@ pub(crate) const DATE: Prelude = Prelude {
     admitted: LanguageProfile::collections,
     extended: None,
     loads: &[],
+    lifted: None,
 };
 pub(crate) const DATE_CLASS: &str = "Date";
 /// `RegExp`, `RegExpExecArray` and `RegExpMatchArray` (v37 `regexp`), also
@@ -258,6 +274,7 @@ pub(crate) const REGEXP: Prelude = Prelude {
         ".search",
         ".split",
     ],
+    lifted: None,
 };
 /// `fetch`, `Request`, `Response` and the `ReadableStream` subset (v37
 /// `net_request`) over the `net.request` host operations; it imports the
@@ -284,6 +301,7 @@ pub(crate) const FETCH: Prelude = Prelude {
     admitted: LanguageProfile::net_request,
     extended: None,
     loads: &[],
+    lifted: None,
 };
 /// `URL` and `URLSearchParams` (v37 `net_request`), a WHATWG subset in
 /// guest code with no host import.
@@ -299,6 +317,7 @@ pub(crate) const URL: Prelude = Prelude {
     admitted: LanguageProfile::net_request,
     extended: None,
     loads: &[],
+    lifted: None,
 };
 /// The recoverable denial of v37 timer starts (`permissionDenied`, a
 /// `NotAllowedError` `DOMException`); it imports the abort prelude.
@@ -315,6 +334,7 @@ pub(crate) const PERMISSION: Prelude = Prelude {
     admitted: LanguageProfile::net_request,
     extended: None,
     loads: &[],
+    lifted: None,
 };
 /// The dotted name the timer lowering calls for a denied timer start.
 pub(crate) const PERMISSION_DENIED: &str = "varta.permission.denied";
@@ -708,3 +728,82 @@ pub(crate) fn pending(class: &str, name: &str, profile: LanguageProfile) -> Opti
     }
     find(PENDING).or_else(|| find(PENDING_MATCH_ARRAYS))
 }
+
+/// Replace the one declaration `from` of a prelude source with `to`.
+fn lift(source: &str, from: &str, to: &str) -> String {
+    debug_assert_eq!(source.matches(from).count(), 1, "{from}");
+    source.replacen(from, to, 1)
+}
+/// The v38 collections prelude: entries up to the v38 array element limit.
+fn collections_v38() -> &'static str {
+    static LIFTED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        lift(
+            COLLECTIONS.source,
+            COLLECTION_CEILING,
+            &format!(
+                "const MAX_ENTRIES = {};",
+                varta_common::limits::V38_MAX_ARRAY_ELEMENTS
+            ),
+        )
+    });
+    &LIFTED
+}
+/// The v38 binary prelude: `Uint8Array` lengths up to the v38 array element
+/// limit.
+fn binary_v38() -> &'static str {
+    static LIFTED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        lift(
+            BINARY.source,
+            BINARY_CEILING,
+            &format!(
+                "const MAX_LENGTH = {};",
+                varta_common::limits::V38_MAX_ARRAY_ELEMENTS
+            ),
+        )
+    });
+    &LIFTED
+}
+/// The v38 text prelude: `Array.prototype.join` concatenates balanced
+/// halves, so joining n elements copies O(n log n) code units instead of the
+/// O(n^2) of appending to an immutable string once per element.
+fn text_v38() -> &'static str {
+    static LIFTED: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| lift(TEXT.source, LINEAR_JOIN, BALANCED_JOIN));
+    &LIFTED
+}
+const LINEAR_JOIN: &str = "export function arrayJoin<T>(array: T[], separator?: string): string {
+  const between = separator === undefined ? ',' : separator;
+  let result = '';
+  for (let index = 0; index < array.length; index++) {
+    if (index > 0) {
+      result += between;
+    }
+    result += joined(array[index]);
+  }
+  return result;
+}";
+const BALANCED_JOIN: &str = "// Elements below which a run is appended directly.
+const JOIN_RUN = 32;
+
+function joinRange<T>(array: T[], between: string, start: number, end: number): string {
+  if (end - start <= JOIN_RUN) {
+    let result = '';
+    for (let index = start; index < end; index++) {
+      if (index > start) {
+        result += between;
+      }
+      result += joined(array[index]);
+    }
+    return result;
+  }
+  const middle = start + Math.floor((end - start) / 2);
+  return joinRange(array, between, start, middle) + between + joinRange(array, between, middle, end);
+}
+
+export function arrayJoin<T>(array: T[], separator?: string): string {
+  const between = separator === undefined ? ',' : separator;
+  return joinRange(array, between, 0, array.length);
+}";
+/// The frozen per-value ceilings of the v37 collection preludes.
+const COLLECTION_CEILING: &str = "const MAX_ENTRIES = 1024;";
+const BINARY_CEILING: &str = "const MAX_LENGTH = 1024;";

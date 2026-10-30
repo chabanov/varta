@@ -240,6 +240,9 @@ impl Emitter<'_> {
             I::I32WrapI64,
             I::Call(self.hosts[&self.profile.json_stringify()]),
         ]);
+        if self.profile.json_stringify() == varta_common::HostOperation::JsonStringifyOwned {
+            return self.json_owned(result, status);
+        }
         if let Some(status) = status {
             self.code.extend([
                 I::LocalSet(self.local_slots[status as usize]),
@@ -265,6 +268,60 @@ impl Emitter<'_> {
         } else {
             self.json_result(result)
         }
+    }
+    /// V38 (`data_limits`): `(handle:i64, error:i32)` of `json_stringify_owned`.
+    /// The handle is an owned string the host already retained, or zero for
+    /// an `undefined` result; no host result buffer is involved.
+    fn json_owned(&mut self, result: Type, status: Option<u32>) -> Result<()> {
+        let Some(status) = status else {
+            self.code.push(I::Drop);
+            return self.json_owned_result(result);
+        };
+        self.code.extend([
+            I::LocalSet(self.local_slots[status as usize]),
+            I::LocalSet(self.string_temporary),
+            I::LocalGet(self.local_slots[status as usize]),
+            I::I32Eqz,
+            I::If(BlockType::Result(if result == Type::Undefined {
+                ValType::I32
+            } else {
+                ValType::I64
+            })),
+            I::LocalGet(self.string_temporary),
+        ]);
+        if result == Type::Undefined {
+            self.code.extend([I::Drop, I::I32Const(0)]);
+        } else {
+            self.json_owned_result(result)?;
+        }
+        self.code.push(I::Else);
+        self.code.push(if result == Type::Undefined {
+            I::I32Const(0)
+        } else {
+            I::I64Const(0)
+        });
+        self.code.push(I::End);
+        Ok(())
+    }
+    fn json_owned_result(&mut self, result: Type) -> Result<()> {
+        if result.is_cell() {
+            self.code.extend([
+                I::LocalTee(self.string_temporary),
+                I::I64Eqz,
+                I::If(BlockType::Result(ValType::I64)),
+                I::I32Const(0),
+            ]);
+            self.box_union(Type::Undefined)?;
+            self.code
+                .extend([I::Else, I::LocalGet(self.string_temporary)]);
+            self.box_union(Type::String)?;
+            self.code.push(I::End);
+            return Ok(());
+        }
+        if result == Type::Undefined {
+            self.code.push(I::Drop);
+        }
+        Ok(())
     }
     fn json_result(&mut self, result: Type) -> Result<()> {
         if result.is_cell() {

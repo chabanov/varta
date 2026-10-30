@@ -5210,3 +5210,34 @@ count against the 256-function limit. Not supported yet: unions that mix a
 `Map`, `Set` or `Uint8Array` with other objects (and `instanceof Map`), byte
 bodies (`ReadableStream<Uint8Array>`, `Blob`, `FormData`), `globalThis`, and
 `Array.isArray` narrowing of `unknown`.
+
+### `checked-f64-utf16-v38`
+
+Batch in development. The data-limits stream lifts the per-value ceilings of
+v37: arrays, dictionaries, `Map`, `Set` and `Uint8Array` may hold more than
+1024 entries, strings may exceed 1 MiB, `JSON.stringify` and checked
+`JSON.parse` handle values larger than 1 MiB, deeper than 64 levels and with
+more than 4096 values, and more than 64 async frames may be suspended at
+once. The memory budget, fuel and the deadline bound what a program can
+build, as in a JavaScript engine:
+
+```typescript
+export function main(): void {
+  const counts = new Map<number, number>();
+  const xs: number[] = [];
+  xs.length = 5000;
+  for (let i = 0; i < xs.length; i++) {
+    xs[i] = i;
+    counts.set(i, i * 2);
+  }
+  console.log(`${xs.length} ${counts.size} ${xs.slice(4998).join(',')}`);
+}
+```
+
+prints `5000 5000 4998,4999`. This needs more than the production fuel
+budget, which allows about a thousand such iterations per execution; the
+turn-budgets stream makes the budgets configurable. A program that exhausts
+the memory budget fails with a reported resource error, for example
+`resource limit: memory budget exhausted (requested 34078744)`, instead of an
+anonymous trap. Indices at or beyond 2^27 still trap, and the same program
+under v37 still fails at its 1024-element ceiling.

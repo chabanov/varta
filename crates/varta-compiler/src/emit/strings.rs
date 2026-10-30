@@ -16,6 +16,7 @@ mod index_key;
 mod regexp;
 mod roots;
 mod sparse;
+pub(super) use sparse::Sizes;
 mod string_index;
 mod string_range;
 mod string_search;
@@ -61,6 +62,30 @@ pub(super) struct Globals {
     /// static extension of a v38 module (`abi::StaticRegion::heap_base`).
     /// Handles below it are static and never marked.
     pub base: u32,
+    /// V38 (`data_limits`): the exported resource-failure global; the
+    /// request global follows it.
+    pub failure: Option<u32>,
+}
+impl Globals {
+    /// Trap, first recording `resource` and the amount in local `amount` when
+    /// this module reports resources (v38); a plain `unreachable` otherwise.
+    pub(super) fn fail(
+        self,
+        resource: varta_common::limits::Resource,
+        amount: u32,
+    ) -> Vec<I<'static>> {
+        let mut code = Vec::new();
+        if let Some(failure) = self.failure {
+            code.extend([
+                I::I32Const(resource as i32),
+                I::GlobalSet(failure),
+                I::LocalGet(amount),
+                I::GlobalSet(failure + 1),
+            ]);
+        }
+        code.push(I::Unreachable);
+        code
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -114,6 +139,9 @@ pub(super) enum Helper {
     RegExpSlot,
     /// V37 RegExp prelude: one code unit without a host call, or -1.
     RegExpUnit,
+    /// V38 (`data_limits`): register, find or release a live continuation
+    /// frame in the growable hashed live-frame table.
+    FrameTable,
 }
 impl Helper {
     pub(super) fn string_search(mode: crate::ir::StringSearch) -> Self {
@@ -164,6 +192,7 @@ impl Helper {
             Self::CodeUnit => (vec![ValType::I64, ValType::F64], vec![ValType::F64]),
             Self::FromUnits => (vec![ValType::I64], vec![ValType::I64]),
             Self::Collect => (vec![], vec![]),
+            Self::FrameTable => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArraySearch | Self::ArrayLastIndex => (
                 vec![
@@ -229,20 +258,28 @@ impl Helper {
         helpers: &BTreeMap<Self, u32>,
         trace_values: bool,
         profile: varta_common::language::LanguageProfile,
-        frames: bool,
+        frames: Option<super::frames::Resources>,
     ) -> Function {
         // Emission adds the complete allocator dependency set before indexing.
         match self {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
             Self::Concat => concat::function(helpers[&Self::Allocate]),
             Self::Compare => compare::function(profile.utf16()),
-            Self::Allocate => allocate::function(globals, helpers[&Self::Collect]),
+            Self::Allocate => allocate::function(globals, helpers[&Self::Collect], profile.data()),
             Self::Collect => collect::function(
                 globals,
                 trace_values,
                 profile.closures(),
-                frames,
+                frames.is_some(),
                 profile.wide_records(),
+                profile.data(),
+            ),
+            Self::FrameTable => super::frames::table_helper(
+                globals,
+                frames,
+                helpers[&Self::Allocate],
+                helpers[&Self::RootPush],
+                profile.data(),
             ),
             Self::RootPush => roots::function(globals),
             Self::ArraySearch => array_search::function(
@@ -250,12 +287,14 @@ impl Helper {
                 profile.sparse_arrays(),
                 false,
                 profile.bigint_values(),
+                sparse::Sizes::new(profile.data()),
             ),
             Self::ArrayLastIndex => array_search::function(
                 helpers[&Self::Compare],
                 profile.sparse_arrays(),
                 true,
                 profile.bigint_values(),
+                sparse::Sizes::new(profile.data()),
             ),
             Self::StringIncludes => string_search::function(crate::ir::StringSearch::Includes),
             Self::StringStartsWith => string_search::function(crate::ir::StringSearch::StartsWith),
@@ -291,23 +330,33 @@ impl Helper {
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
                 profile.sparse_arrays(),
+                sparse::Sizes::new(profile.data()),
             ),
-            Self::ArrayReverse => array_reverse::function(profile.sparse_arrays()),
-            Self::ArrayFill => array_fill::function(profile.sparse_arrays()),
+            Self::ArrayReverse => {
+                array_reverse::function(profile.sparse_arrays(), sparse::Sizes::new(profile.data()))
+            }
+            Self::ArrayFill => {
+                array_fill::function(profile.sparse_arrays(), sparse::Sizes::new(profile.data()))
+            }
             Self::ArrayKeys | Self::ArrayValues => array_enumeration::function(
                 globals,
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
                 self == Self::ArrayKeys,
                 profile.sparse_arrays(),
+                profile.data(),
             ),
-            Self::ArrayPush => {
-                array_push::function(helpers[&Self::Allocate], profile.sparse_arrays())
+            Self::ArrayPush => array_push::function(
+                helpers[&Self::Allocate],
+                profile.sparse_arrays(),
+                profile.data(),
+            ),
+            Self::ArrayResize => array_resize::function(helpers[&Self::Allocate], profile.data()),
+            Self::ArrayPresent => sparse::function(false, profile.data()),
+            Self::ArrayStringHasOwn => {
+                array_own_key::function(helpers[&Self::ArrayPresent], profile.data())
             }
-            Self::ArrayResize => array_resize::function(helpers[&Self::Allocate]),
-            Self::ArrayPresent => sparse::function(false),
-            Self::ArrayStringHasOwn => array_own_key::function(helpers[&Self::ArrayPresent]),
-            Self::ArraySetPresent => sparse::function(true),
+            Self::ArraySetPresent => sparse::function(true, profile.data()),
             Self::ArrayIndex => array_index::function(profile.resizable_arrays()),
             Self::ArrayIndexKey => index_key::function(),
         }

@@ -16,7 +16,8 @@ fn read(
     caller: &mut Caller<'_, RuntimeContext>,
     value: i64,
 ) -> Result<PrimitiveBox, wasmtime::Error> {
-    PrimitiveBox::read(data(caller)?, value as u64).map_err(wasmtime::Error::new)
+    let module = caller.data().module;
+    PrimitiveBox::read_in(data(caller)?, value as u64, module).map_err(wasmtime::Error::new)
 }
 fn nullish(cell: PrimitiveBox) -> bool {
     matches!(cell.kind, Kind::Null | Kind::Undefined)

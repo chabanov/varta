@@ -155,3 +155,38 @@ fn classified_json_counts_synthetic_optional_values_as_fatal_nodes() {
             .contains("node limit")
     );
 }
+
+#[test]
+fn v38_limits_lift_the_input_ceilings_and_bound_host_work_by_the_deadline() {
+    use crate::limits::DataLimits;
+    let numbers = JsonSchema {
+        version: FUNCTION_FIELD_SCHEMA_VERSION,
+        root: 1,
+        types: vec![JsonType::Float64, JsonType::Array { element: 0 }],
+    };
+    let wide = format!("[{}0]", "1,".repeat(MAX_ARRAY_ELEMENTS * 40));
+    assert!(wide.len() > abi::MAX_INPUT_BYTES);
+    // Earlier profiles keep their input byte ceiling.
+    assert!(matches!(
+        numbers.parse_json_classified(wide.as_bytes()),
+        Err(JsonDecodeError::Limit(JsonInputLimit::Bytes))
+    ));
+    let JsonValue::Array { values, .. } = numbers
+        .parse_json_classified_limited(wide.as_bytes(), DataLimits::V38)
+        .unwrap()
+    else {
+        panic!("expected an array");
+    };
+    assert_eq!(values.len(), MAX_ARRAY_ELEMENTS * 40 + 1);
+    // A passed deadline stops the host work at its next check.
+    let past = std::time::Instant::now();
+    assert!(matches!(
+        numbers.parse_json_classified_until(wide.as_bytes(), DataLimits::V38, past),
+        Err(JsonDecodeError::Limit(JsonInputLimit::Deadline))
+    ));
+    assert!(
+        numbers
+            .parse_json_until(wide.as_bytes(), DataLimits::V38, past)
+            .is_err()
+    );
+}

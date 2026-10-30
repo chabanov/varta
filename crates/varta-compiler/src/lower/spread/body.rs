@@ -63,7 +63,7 @@ impl Lower<'_> {
                 span,
                 ast::BinaryOp::Gt,
                 local(span, count, Type::Float64),
-                number(span, varta_common::abi::MAX_SPREAD_ARGUMENTS),
+                number(span, self.types.profile.data().array_elements),
                 Type::Boolean,
             ),
             vec![S::Trap],

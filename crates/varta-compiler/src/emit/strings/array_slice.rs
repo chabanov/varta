@@ -31,7 +31,7 @@ const STORAGE: MemArg = MemArg {
     ..ROOT
 };
 
-pub(super) fn function(allocate: u32, retain: u32, sparse: bool) -> Function {
+pub(super) fn function(allocate: u32, retain: u32, sparse: bool, sizes: sparse::Sizes) -> Function {
     let mut f = Function::new([
         (10, ValType::I32),
         (1, ValType::I64),
@@ -89,18 +89,27 @@ pub(super) fn function(allocate: u32, retain: u32, sparse: bool) -> Function {
             I::End,
             I::End,
             I::End,
-            I::LocalGet(CAPACITY),
-            I::I32Const(values::ARRAY_SLOT_BYTES as i32),
-            I::I32Mul,
-            I::I32Const(
-                (values::ARRAY_META_BYTES
-                    + if sparse {
-                        values::SPARSE_BITMAP_BYTES
-                    } else {
-                        0
-                    }) as i32,
-            ),
-            I::I32Add,
+        ]
+        .into_iter()
+        .chain(if sizes.large {
+            sizes.backing_bytes(&[I::LocalGet(CAPACITY)])
+        } else {
+            vec![
+                I::LocalGet(CAPACITY),
+                I::I32Const(values::ARRAY_SLOT_BYTES as i32),
+                I::I32Mul,
+                I::I32Const(
+                    (values::ARRAY_META_BYTES
+                        + if sparse {
+                            values::SPARSE_BITMAP_BYTES
+                        } else {
+                            0
+                        }) as i32,
+                ),
+                I::I32Add,
+            ]
+        })
+        .chain([
             I::LocalTee(BYTES),
             I::Call(allocate),
             I::LocalSet(DEST),
@@ -149,18 +158,20 @@ pub(super) fn function(allocate: u32, retain: u32, sparse: bool) -> Function {
                 src_mem: MEMORY,
                 dst_mem: MEMORY,
             },
-        ],
+        ]),
     );
     if sparse {
-        sparse::bitmap(&mut f, INPUT);
+        sparse::bitmap_of(&mut f, INPUT, sizes);
         f.instruction(&I::LocalSet(BIT_SOURCE));
         instructions(
             &mut f,
+            [I::LocalGet(DEST), I::LocalGet(BYTES), I::I32Add]
+                .into_iter()
+                .chain(sizes.bitmap_bytes(&[I::LocalGet(BYTES)])),
+        );
+        instructions(
+            &mut f,
             [
-                I::LocalGet(DEST),
-                I::LocalGet(BYTES),
-                I::I32Add,
-                I::I32Const(values::SPARSE_BITMAP_BYTES as i32),
                 I::I32Sub,
                 I::LocalSet(BIT_DEST),
                 I::I32Const(0),

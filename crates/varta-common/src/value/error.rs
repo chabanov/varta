@@ -16,6 +16,15 @@ impl ErrorObject {
         handle: u64,
         version: u32,
     ) -> Result<Self, ValueAbiError> {
+        Self::read_in(data, handle, version, ModuleBounds::LEGACY)
+    }
+    /// Read within a module's bounds, under its profile's data limits (v38 admits longer messages).
+    pub fn read_in(
+        data: &[u8],
+        handle: u64,
+        version: u32,
+        module: ModuleBounds,
+    ) -> Result<Self, ValueAbiError> {
         let invalid = || ValueAbiError("noncanonical Error object".into());
         let ptr = handle as u32 as usize;
         if (handle >> i32::BITS) as usize != ERROR_BYTES
@@ -65,7 +74,7 @@ impl ErrorObject {
             .ok_or_else(invalid)?;
         let start = message as u32 as usize;
         let len = (message >> i32::BITS) as usize;
-        if len > abi::MAX_STRING_BYTES
+        if len > module.limits.data.string_bytes
             || !len.is_multiple_of(2)
             || start.checked_add(len).is_none_or(|end| end > data.len())
             || (own == 0 && message != 0)
