@@ -7915,7 +7915,8 @@ their minimum host ABI 33, and the launcher maximum) and lands it as an early
 foundation commit; the other streams rebase onto it. V36 and earlier profiles
 keep their host ABI, value ABI and layouts.
 
-Five selectors gate the batch's work streams, and all admit nothing yet:
+Five selectors gate the batch's work streams; `regexp()` is implemented and
+the others admit nothing yet:
 
 - language-core stream: `language_core()` (TDZ-safe closure capture before
   declaration, deferred `let x: T;` initialization, dense `for…of` typing,
@@ -7926,7 +7927,8 @@ Five selectors gate the batch's work streams, and all admit nothing yet:
 - collections stream: `collections()` (`Map`/`Set`, tuples, `Array.join`,
   `String.fromCharCode`, a `Date` subset, `Uint8Array`,
   `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` and base64);
-- RegExp stream: `regexp()` (`RegExp` and the regex string methods);
+- RegExp stream: `regexp()` (`RegExp` and the regex string methods;
+  [implemented](#regexp-regexp));
 - net-request stream: `net_request()` (asynchronous `fetch`, `Request`,
   `Response`, `Headers`, `URL` and `ReadableStream` over the exact
   `net.request` capability, and `Symbol.asyncIterator` for async iterables).
@@ -7934,6 +7936,173 @@ Five selectors gate the batch's work streams, and all admit nothing yet:
 Until a stream adds its subsection here, a v37 module compiles and runs exactly
 like a v36 module apart from its declared profile and host ABI, and production
 budgets of every profile are unchanged.
+
+#### RegExp (`regexp()`)
+
+Selector `regexp()`. V37 admits regular expression literals, `new RegExp`
+with constant arguments, `RegExp.prototype.exec`/`test`, `lastIndex`, match
+arrays and the regex string methods `search`, `match`, `matchAll`, `replace`,
+`replaceAll` and `split` (with RegExp and string patterns). It adds no value
+tag, layout, host import, capability or budget: patterns are compiled ahead
+of time into matcher programs, and a guest matcher runs them in time linear
+in the input. V36 and earlier keep rejecting regex literals and these
+methods with their existing diagnostics and bytes.
+
+- **Design: ahead of time, guest only.** The compiler parses every pattern
+  (`varta-compiler` `regexp`) and compiles it to a *matcher program*, a static
+  string of UTF-16 code units in the data section (deduplicated like other
+  literals). One guest helper, `RegExpExec`, runs any program: a Pike VM that
+  steps all threads of a Thompson NFA in lockstep over the input and drops a
+  thread that reaches an instruction another thread already reached at the
+  same position. A run therefore executes at most `O(program × input)`
+  instructions, all metered as ordinary guest fuel, and no pattern can
+  backtrack catastrophically (ReDoS). Under the [thin-host decision](development-plan.md#thin-host-guest-intrinsics)
+  the matcher is pure guest code: hosts implement nothing and every host
+  (Wasmtime, a browser applier, Raspberry Pi 5) runs the same semantics. The
+  alternatives were rejected: a host regex import would be reimplemented per
+  host and drift from ECMAScript (and the host engines backtrack); a
+  per-pattern Wasm matcher would multiply code size; a matcher written in TS
+  prelude code costs about 100 fuel per guest loop step and would exhaust the
+  production fuel on a few hundred characters.
+- **Run-time patterns are rejected.** `new RegExp(pattern, flags)` is admitted
+  only when both arguments are string literals (or templates without
+  substitutions); it is compiled at compile time like a literal, with
+  `source` escaped as V8's EscapeRegExpPattern (`/` and line terminators,
+  `(?:)` for the empty pattern). A non-constant pattern, `new RegExp(regexp)`,
+  `RegExp(...)` without `new`, `RegExp.escape` and Annex B `compile` are
+  compile-time errors. Admitting them would need a guest pattern compiler run
+  under its own budget, so that untrusted text could choose the program; the
+  compile-time path keeps every program's size, scratch memory and step bound
+  known and reviewed before deployment. This is a deliberate v37 decision, not
+  a permanent limit.
+- **Syntax.** The ECMAScript 2025 Pattern grammar (§22.2.1); without `u` the
+  web-compatibility grammar of Annex B.1.2 (literal `]`, `{`, `}`, identity
+  escapes, legacy octal escapes, `\c` forms, `\8`/`\9`, class ranges with class
+  escapes). Early errors are compile-time `invalid` diagnostics with V8's text
+  (`Invalid regular expression: /(/: Unterminated group`, `Invalid flags
+  supplied to RegExp constructor 'gg'`); SWC itself reports duplicated literal
+  flags. Flags `g i m s u y` are admitted.
+- **Admitted subset.** Characters, `.`, classes and negated classes with
+  ranges, `\d \D \s \S \w \W`, control/hex/Unicode escapes (`\u{…}` and
+  surrogate pairs under `u`), `^ $` (with `m`), `\b \B`, greedy and lazy
+  `* + ? {n} {n,} {n,m}`, alternation, capturing, non-capturing and named
+  groups. Under `u` the matcher reads code points: a surrogate pair is one
+  character for `.`, classes and literals, a lone surrogate matches itself,
+  and a `lastIndex` inside a pair backs up to the pair as V8 does.
+- **Rejected constructs** fail with `unsupported RegExp …: outside the
+  checked-f64-utf16-v37 linear-time RegExp subset`, naming the construct:
+  backreferences `\1` and `\k<name>` (they need backtracking), lookahead and
+  lookbehind assertions, Unicode property escapes `\p{…}`/`\P{…}` (no property
+  tables), pattern modifiers `(?ims-ims:…)`, duplicate named groups, escapes in
+  group names, the `d` (`hasIndices`) and `v` (`unicodeSets`) flags, and
+  programs larger than 16384 code units (counted repetitions are expanded, so
+  `a{100000}` is rejected) or whose matcher scratch exceeds 256 KiB.
+- **Matching semantics.** Leftmost-first priority equals ECMAScript's
+  backtracking order: alternatives and greedy quantifiers prefer their first
+  branch, lazy quantifiers the exit. Every iteration of a quantified group
+  clears its captures first (RepeatMatcher step 4). An iteration that
+  consumes nothing is rejected: an unbounded quantifier's thread returns to
+  its loop instruction at the same position and is dropped, and an optional
+  iteration (`?`, `{n,m}` beyond `n`) of a nullable body with captures records
+  its start in a register and fails an empty iteration, so `/(a?)?/.exec('')`
+  is `['', undefined]` as in Node. Case-insensitive matching is resolved at
+  compile time: a character or class widens to every character with the same
+  Canonicalize value (toUppercase per code unit without `u`, simple case
+  folding with `u`, from the Rust standard library's Unicode tables; the
+  Turkic dotted and dotless I fold to themselves), and `\w`/`\b` add U+017F and
+  U+212A under `u`+`i`. The matcher compares characters exactly.
+- **Programs.** A program is a header (flags, capture and register slots,
+  instruction, thread and stack bounds, an ASCII first-unit bitmap, up to two
+  direct first units, the closure index), three-unit instructions (`MATCH`,
+  `CHAR`, `ANY`, `CLASS`, `JUMP`, `SPLIT`, `SAVE`, `RESET`, `CHECK`, `ASSERT`),
+  sorted class range tables and precomputed epsilon closures: for each
+  instruction after a character, the compiler stores the threads it adds with
+  their slot writes, so the matcher follows only closures that contain an
+  assertion or empty check at run time. Each pattern has a second, *lean*
+  program without group captures, empty checks or resets that yields the same
+  match bounds; `test`, `search`, global `match`, `split` without groups and
+  `replace` with a template that cannot reference a group use it. A pattern
+  that cannot match empty skips input positions whose first code unit cannot
+  start a match; a pattern that starts with `^` (without `m`) matches only at
+  position 0.
+- **Resources.** One run allocates one managed scratch block whose size the
+  header fixes (at most 256 KiB, checked at compile time) and returns the
+  capture slots as a string; the block is garbage afterwards and no
+  allocation happens during matching. Inputs, results and replacements are
+  ordinary strings under the existing per-value and memory limits. Measured
+  with the production budgets (`regexp_tests`): a run costs about 3 000 fuel
+  of fixed work (including the RegExp object of a literal), a search for one
+  or two possible first units about 23 fuel per skipped unit and a class-led
+  search about 35, while nested quantifiers such as `/^(a+)+$/` cost about
+  1 100 fuel per unit (every live thread steps per unit). Doubling an
+  adversarial input at most doubles its fuel; a 100 000-unit adversarial
+  input exhausts the production fuel and fails the execution instead of
+  hanging. Production budgets are unchanged.
+- **Engine prelude.** `RegExp`, `RegExpExecArray` and `RegExpMatchArray` are
+  classes of the engine prelude `<varta>/text/regexp.ts`, loaded like the
+  [Web types](#engine-web-types-web_headers-abort_signals) when a module names
+  one of them, contains a regex literal or has a member named `match`,
+  `matchAll`, `replace`, `replaceAll`, `search` or `split` (a program's own
+  methods of those names then load it too, without changing their meaning).
+  A program that does none of these is byte-identical to one compiled without
+  preludes. The prelude adds about 28 functions and three classes to the user
+  function and record-shape budgets. Prelude modules (only) may call the guest
+  operations `varta.regexp.exec(program, input, start, sticky)`,
+  `varta.regexp.slot(captures, slot)` and `varta.regexp.unit(text, index)`
+  (`ir::RegExpIntrinsic`); in program modules they are unknown calls. Every
+  evaluation of a literal constructs a new RegExp through the private static
+  `RegExp.compiled`, like ECMAScript.
+- **RegExp objects.** `source`, `flags` (canonical order), `global`,
+  `ignoreCase`, `multiline`, `dotAll`, `unicode`, `sticky`, `hasIndices` and
+  `unicodeSets` are read-only fields; `lastIndex` is a writable number read
+  with ToLength by global and sticky operations. `exec` follows
+  RegExpBuiltinExec: global and sticky runs start at `lastIndex`, set it to the
+  match end and reset it to 0 on failure; sticky runs match only at the start.
+  `test` is `exec` without building the array. RegExps are nominal values in
+  fields, unions, closures and `instanceof`.
+- **Match arrays.** `exec` and `matchAll` produce `RegExpExecArray` (`index:
+  number`, `input: string`), `match` produces `RegExpMatchArray` (`index` and
+  `input` are `undefined` for a global match, which lists every match), and
+  both have `length` and `groups` (a `Record<string, string | undefined>` in
+  group order when the pattern has named groups, otherwise `undefined`).
+  `m[0]` is a `string`; other elements are `string | undefined` (a group that
+  did not take part, or an index past the end). Array destructuring and
+  `for…of` read the elements. Match arrays are read-only and have no array
+  methods (`slice`, `map`, … are rejected with a named diagnostic);
+  `JSON.stringify` rejects them like every prelude instance.
+- **String methods.** `search` runs from 0 and leaves `lastIndex` alone;
+  `match` without `g` is `exec`, with `g` it collects every match string or
+  returns `null`; `matchAll` requires `g` (`TypeError` as in Node), copies the
+  RegExp with its `lastIndex` and returns the `RegExpExecArray`s as a fresh
+  array; `replace`/`replaceAll` (which requires `g`) follow
+  RegExp.prototype[@@replace] including empty-match advancement by code point
+  under `u`, GetSubstitution for `$$ $& $\` $' $n $nn $<name>`, and replacer
+  functions; `split` follows @@split (a sticky splitter resumed at every
+  position, captures spliced in, the limit as ToUint32). A string, a pattern
+  string or no separator selects the string forms of `split`, `replace` and
+  `replaceAll`; `search`, `match` and `matchAll` compile a string literal
+  argument as `new RegExp(text)` (`'g'` for `matchAll`). Arguments are
+  evaluated once, receiver first.
+- **Replacer functions.** A replacer (a function literal or a binding of a
+  function type) is adapted at compile time to the prelude's
+  `(match: RegExpExecArray) => string`: its parameters become constants read
+  in the order ECMAScript passes them — the match, each capture, the
+  position, the input and, with named groups, the groups object. A capture
+  parameter is `string | undefined`, or `string` when annotated so, which
+  asserts that the group took part (`TypeError` otherwise). The group count
+  is known only for a pattern compiled in place (a literal or constant `new
+  RegExp`); a RegExp value from elsewhere admits a replacer of the match
+  alone. String-pattern replacers receive `(match, offset, input)`.
+- **Deviations.** Besides the rejected constructs: case folding uses Rust's
+  Unicode tables, not ICU; `matchAll` returns an array, not an iterator;
+  match arrays are read-only without array methods; `split` throws
+  `TypeError` for a capture that did not take part, because its result is
+  typed `string[]` (JavaScript inserts `undefined`); `RegExp.prototype.toString`
+  is not provided (it cannot be declared beside the inherited `toString`);
+  `Symbol.match`/`replace`/`split` protocols, RegExp subclassing semantics,
+  legacy static properties (`RegExp.$1`) and `exec` on objects other than
+  strings are not modelled. Behaviour tests pin Node 24 output
+  (`varta-runtime` `regexp_cases`, `regexp_tests`).
 
 ## Local modules
 

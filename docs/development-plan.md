@@ -647,14 +647,20 @@ as v36 fails at its host ABI section, and runtimes that do not list v37 reject
 its declared profile name. The collections stream owns any value-layout bump
 (value 18) and lands it as an early foundation commit
 ([contract](architecture.md#checked-f64-utf16-v37--pilot-batch-language-core-class-generics-collections-and-binary-text-regexp-and-netrequest)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; `regexp()` is implemented and the others admit
+nothing yet. The pilot's RegExp call sites (`util.ts` `encodeQueryComponent`
+and `joinUrl`, `transport.ts` `baseURL`, `sse.ts` line splitting) all
+compile under v37 in scratch excerpts; what remains at those sites belongs to
+other streams: `TextEncoder`/`String.fromCharCode`/`padStart` (collections),
+`let newline: number;` assigned in a loop condition (language core) and
+`String.prototype.toLowerCase`/`toUpperCase` (unowned).
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
 | `language_core()` | Language core: TDZ-safe closure capture before declaration, deferred `let x: T;` initialization, dense `for…of` typing, property-path narrowing, `switch` on strings, function assignability fixes | M3, M4 | Registered, admits nothing |
 | `class_generics()` | Classes: generic methods and classes, interface method signatures, `implements`, `#private` | M4, M5 | Registered, admits nothing |
 | `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owns any value18 bump) | M4, M6 | Registered, admits nothing |
-| `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Registered, admits nothing |
+| `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Implemented ([contract](architecture.md#regexp-regexp)): literals and constant `new RegExp` compiled ahead of time to a linear-time guest Pike VM (no host import), `exec`/`test`/`lastIndex`, match arrays, `search`/`match`/`matchAll`/`replace`/`replaceAll`/`split` with templates, replacer functions and string patterns; backreferences, lookaround, `\p{…}`, run-time patterns and the `d`/`v` flags open |
 | `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Registered, admits nothing |
 
 ### Platform targets and application model

@@ -4742,3 +4742,60 @@ generator's values (and its `return()` and `throw()`). Not supported yet:
 `yield*` over arrays or synchronous generators, async generator function
 expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
 `await` inside an intrinsic call or template (bind it to a `const` first). `for await` costs a few microtasks per value, like Node.
+
+### `checked-f64-utf16-v37`
+
+Profile v37 (in development) runs every v36 program unchanged. Its first
+implemented stream is RegExp.
+
+#### Regular expressions (opt-in v37)
+
+Regular expression literals work like in JavaScript, and so do `exec`,
+`test`, `lastIndex` and the string methods `search`, `match`, `matchAll`,
+`replace`, `replaceAll` and `split`. Nothing needs importing:
+
+```ts
+function joinUrl(base: string, path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  return base.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
+}
+
+export function main(): void {
+  console.log(joinUrl('https://api.example.com/', '/v1/models'));
+  const m = /(?<key>\w+)=(?<value>\w*)/.exec('a k=v');
+  if (m !== null) {
+    console.log(`${m.index} ${m[0]} ${m[1] ?? '-'}`);   // 2 k=v k
+    const groups = m.groups;
+    console.log(groups === undefined ? '' : groups['value'] ?? ''); // v
+  }
+  console.log('John Smith'.replace(/(\w+)\s(\w+)/, '$2, $1')); // Smith, John
+  console.log('a-b_c'.replace(/[-_](\w)/g, (_, c: string) => c + c)); // abbcc
+  console.log(JSON.stringify('a, b ,c'.split(/\s*,\s*/))); // ["a","b","c"]
+  let found = '';
+  for (const hit of 'x1y22'.matchAll(/\d+/g)) {
+    found += hit![0] + ';';                             // 1;22;
+  }
+  console.log(found);
+}
+```
+
+Patterns are compiled when the program is compiled, so a bad pattern is a
+compile error, and matching takes time proportional to the input: patterns
+such as `/^(a+)+$/` that hang backtracking engines on long inputs cannot hang
+a Varta program (a very long input runs out of fuel instead). `new RegExp`
+works when its pattern and flags are string literals; a pattern built at run
+time is rejected — write a literal instead.
+
+`m[0]` is a `string`; other elements are `string | undefined` because a group
+may not take part. Read them by index, by destructuring
+(`const [all, key] = m`) or with `for…of`; match arrays have no array methods.
+A replacer function receives the match, the captures, the position and the
+input, as in JavaScript; annotate a capture as `string` when the group always
+takes part.
+
+Not supported: backreferences (`\1`, `\k<name>`), lookahead and lookbehind,
+`\p{…}`, `(?i:…)` modifiers, the `d` and `v` flags, `RegExp.prototype.toString`
+and replacers with more than the match for a RegExp that is not written in
+place (the compiler cannot know its groups). `split` with a regex throws
+`TypeError` if a capture group does not take part, because its result is
+`string[]`.

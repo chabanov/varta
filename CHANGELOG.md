@@ -11,6 +11,20 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- RegExp under opt-in v37 (selector `regexp`). Regular expression literals
+  and `new RegExp` with string literal arguments are compiled ahead of time
+  (ECMAScript 2025 pattern syntax, Annex B without `u`, flags `gimsuy`) into
+  matcher programs that one guest Pike VM runs in time linear in the input,
+  metered as ordinary fuel, so no pattern can backtrack catastrophically. The
+  engine prelude provides `RegExp` (`exec`, `test`, `lastIndex`, `source`,
+  `flags` and the flag getters), `RegExpExecArray` and `RegExpMatchArray`,
+  and the string methods `search`, `match`, `matchAll`, `replace`,
+  `replaceAll` and `split`, with replacement templates, replacer functions
+  and string patterns. Case-insensitive matching is resolved at compile time.
+  Backreferences, lookaround, `\p{…}`, modifiers, run-time patterns and the
+  `d`/`v` flags are rejected by name. No value tag, layout, host import,
+  capability or budget changes; v36 and earlier keep their diagnostics.
+
 - Opt-in v37 (pilot batch: language core, class generics, collections and
   binary text, RegExp and `net.request`, in development) is registered. It
   inherits every v36 feature, shares value ABI/layout 17 with v36 and declares
@@ -18,7 +32,8 @@ in [conformance/README.md](conformance/README.md).
   launcher advertises host ABI 33. A v37 module relabelled as v36 fails at its
   host ABI section, and runtimes that do not list v37 reject its declared
   profile name before any guest effect. Its `language_core`, `class_generics`,
-  `collections`, `regexp` and `net_request` selectors admit nothing yet.
+  `collections`, `regexp` and `net_request` selectors admitted nothing at
+  registration.
 
 - Checked declared fields under opt-in v36 (selector
   `checked_declared_fields`). A mixed record indexed by `unknown` may declare

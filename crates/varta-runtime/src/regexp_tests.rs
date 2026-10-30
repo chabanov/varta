@@ -521,6 +521,14 @@ fn unsupported_regexp_forms_fail_with_explicit_diagnostics() {
             "const n=(1 as number).toFixed(0).replace(/a/, 1);",
             "replacement must be a string or a replacer function",
         ),
+        (
+            "const m=/a/.exec('a');if(m!==null){const r=m.slice(1);}",
+            "unsupported array methods of a RegExp match array",
+        ),
+        (
+            "const r=/a/;const t=r.toString();",
+            "unsupported RegExp.prototype.toString",
+        ),
     ] {
         let program = format!("export function main():void{{{source}}}");
         let error = rejected(&program, V37);

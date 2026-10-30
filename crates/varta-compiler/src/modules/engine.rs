@@ -361,9 +361,45 @@ const PENDING: &[(&str, &[&str], &str)] = &[
     ),
     (
         REGEXP_CLASS,
+        &["toString"],
+        "RegExp.prototype.toString (class members cannot override the inherited toString; build '/' + source + '/' + flags)",
+    ),
+    (
+        REGEXP_CLASS,
         &["escape"],
         "RegExp.escape (its result could only be compiled at run time; v37 compiles every pattern ahead of time)",
     ),
+];
+
+/// Array methods a match array does not have: its elements are read by
+/// index, destructuring or `for…of` (v37 `regexp`).
+const MATCH_ARRAY_METHODS: &[&str] = &[
+    "at",
+    "concat",
+    "entries",
+    "every",
+    "filter",
+    "find",
+    "findIndex",
+    "forEach",
+    "includes",
+    "indexOf",
+    "join",
+    "keys",
+    "lastIndexOf",
+    "map",
+    "pop",
+    "push",
+    "reduce",
+    "slice",
+    "some",
+    "values",
+];
+const MATCH_ARRAY_REASON: &str =
+    "array methods of a RegExp match array (read its elements by index, destructuring or for…of)";
+const PENDING_MATCH_ARRAYS: &[(&str, &[&str], &str)] = &[
+    (EXEC_ARRAY_CLASS, MATCH_ARRAY_METHODS, MATCH_ARRAY_REASON),
+    (MATCH_ARRAY_CLASS, MATCH_ARRAY_METHODS, MATCH_ARRAY_REASON),
 ];
 
 /// The diagnostic detail of a pending member of prelude class `class`.
@@ -397,5 +433,5 @@ pub(crate) fn pending(class: &str, name: &str, profile: LanguageProfile) -> Opti
     {
         return Some(reason);
     }
-    find(PENDING)
+    find(PENDING).or_else(|| find(PENDING_MATCH_ARRAYS))
 }
