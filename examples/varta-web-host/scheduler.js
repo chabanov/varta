@@ -1,9 +1,14 @@
 // Level R2: the scheduler and timer imports, the microtask checkpoint and the event
 // loop of embedding.md "Timers". Misuse raises the reference scheduler errors.
 import { authorize } from "./policy.js";
-import { ExecutionFailure } from "./errors.js";
+import { ExecutionFailure, Recoverable } from "./errors.js";
 import { MS_PER_SECOND, now } from "./context.js";
 import { checkException } from "./exception.js";
+
+// Profiles whose runs are event turns: host calls and microtasks renew per turn
+// (embedding.md "Run lifecycle", step 2, v38 `turn_budgets`).
+const TURN_PROFILES = new Set(["checked-f64-utf16-v38"]);
+const TIMER_DENIED_TEXT = "<capability denied: time.timer> (timer)";
 
 /** Scheduler fields of one execution; loop time is in ms from the execution start. */
 export function schedulerState(deadlineMs) {
@@ -40,6 +45,37 @@ export function schedulerImports(ctx, exec, policies) {
     if (exec.held.size >= C.maxHeldTokens) throw schedulerError("QueueFull");
     if (exec.held.has(token)) throw schedulerError("DuplicateToken");
     exec.held.add(token);
+  }
+
+  /** Releases a timer frame's reactions as a clear does: they run as microtasks. */
+  function release(serial) {
+    const reactions = exec.reactions.get(serial) ?? [];
+    if (reactions.length === 0) exec.wakeOnReact.add(serial);
+    exec.queue.push(...reactions);
+    exec.reactions.delete(serial);
+  }
+
+  function startTimer(serial, delay, flags) {
+    if (flags & ~(C.timer.interval | C.timer.unref)) throw schedulerError("TimerState");
+    requireIssued(serial);
+    if (serial === 0 || (exec.reactions.get(serial) ?? []).length !== 1 || exec.timerBySerial.has(serial)) throw schedulerError("TimerState");
+    if (exec.timers.size >= C.timer.maxPending) throw schedulerError("TimerBudget");
+    if (exec.nextTimerId > C.maxSerials) throw schedulerError("SerialBudget");
+    const normalized = delay >= C.timer.minDelay && delay <= C.timer.maxDelay ? delay : C.timer.minDelay;
+    const id = exec.nextTimerId++;
+    exec.timers.set(id, {
+      serial,
+      delay: normalized,
+      interval: Boolean(flags & C.timer.interval),
+      unref: Boolean(flags & C.timer.unref),
+      due: exec.loopTime + normalized,
+      seq: exec.nextTimerSeq++,
+      armed: true,
+      fired: false,
+      cleared: false,
+    });
+    exec.timerBySerial.set(serial, id);
+    return id;
   }
 
   return {
@@ -82,38 +118,31 @@ export function schedulerImports(ctx, exec, policies) {
       if (!exec.unhandled.delete(id)) throw schedulerError("UnknownSerial");
     },
     timer_start: (serial, delay, flags) => {
-      // A denial is fatal, not a status (embedding.md "Timers").
+      // v36: a denial is fatal, not a status (embedding.md "Timers").
       if (!authorize(policies.package, policies.ceiling, C.timer.capability)) throw schedulerError("TimerDenied");
-      if (flags & ~(C.timer.interval | C.timer.unref)) throw schedulerError("TimerState");
-      requireIssued(serial);
-      if (serial === 0 || (exec.reactions.get(serial) ?? []).length !== 1 || exec.timerBySerial.has(serial)) throw schedulerError("TimerState");
-      if (exec.timers.size >= C.timer.maxPending) throw schedulerError("TimerBudget");
-      if (exec.nextTimerId > C.maxSerials) throw schedulerError("SerialBudget");
-      const normalized = delay >= C.timer.minDelay && delay <= C.timer.maxDelay ? delay : C.timer.minDelay;
-      const id = exec.nextTimerId++;
-      exec.timers.set(id, {
-        serial,
-        delay: normalized,
-        interval: Boolean(flags & C.timer.interval),
-        unref: Boolean(flags & C.timer.unref),
-        due: exec.loopTime + normalized,
-        seq: exec.nextTimerSeq++,
-        armed: true,
-        fired: false,
-        cleared: false,
-      });
-      exec.timerBySerial.set(serial, id);
-      return id;
+      return startTimer(serial, delay, flags);
+    },
+    timer_start_v2: (serial, delay, flags) => {
+      // v37+: a denial arms nothing, releases the frame as if cleared, logs and returns 0
+      // (architecture.md "Permission states", denied timer start).
+      if (!authorize(policies.package, policies.ceiling, C.timer.capability)) {
+        // The frame takes it like a cleared timer: `timer_take` answers 0 and forgets it.
+        // Its key is outside the issued ids, which start at 1, so no guest id names it.
+        requireIssued(serial);
+        const key = -serial;
+        exec.timers.set(key, { serial, armed: false, cleared: true, fired: false });
+        exec.timerBySerial.set(serial, key);
+        release(serial);
+        throw new Recoverable(C.status.Denied, "time.timer denied", TIMER_DENIED_TEXT);
+      }
+      return startTimer(serial, delay, flags);
     },
     timer_clear: (id) => {
       const timer = Number.isInteger(id) ? exec.timers.get(id) : undefined;
       if (!timer || !timer.armed) return;
       timer.armed = false;
       timer.cleared = true;
-      const reactions = exec.reactions.get(timer.serial) ?? [];
-      if (reactions.length === 0) exec.wakeOnReact.add(timer.serial);
-      exec.queue.push(...reactions);
-      exec.reactions.delete(timer.serial);
+      release(timer.serial);
     },
     timer_take: (serial) => {
       requireIssued(serial);
@@ -176,6 +205,12 @@ export async function eventLoop(ctx, exec, info) {
     const wait = exec.startedAt + next.due - now();
     if (wait > 0) await sleep(wait);
     if (now() > exec.deadline) throw new ExecutionFailure("execution deadline exceeded");
+    // A fired timer starts a new turn: v38 renews host calls and microtasks; a
+    // bounded run keeps its one deadline and its memory and output budgets.
+    if (TURN_PROFILES.has(info.profile.name)) {
+      exec.hostCalls = 0;
+      exec.jobs = 0;
+    }
     exec.loopTime = Math.max(exec.loopTime, next.due);
     // A fired timer whose serial has no reaction list at all is fatal; an empty list
     // (an interval whose frame has not registered again) coalesces the firing:

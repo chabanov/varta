@@ -10,7 +10,8 @@ will be generated from the `HostOperation` registry (platform increments P1 and 
 | --- | --- |
 | T1 tool host | Implemented: catalog validation, strict argument parsing, string transfer, envelopes like `varta invoke --json` |
 | R1 run host | Implemented: logging, clock, environment (embedder map), exit, Math and UTF-16 character intrinsics |
-| R2 scheduled run host | Implemented with reduced catalog validation: catalog rules 1–4 (exact index fields and bounds) and frame admission rules 1–5; guest memory is never read through the catalog. Includes the v36 timer event loop |
+| R2 scheduled run host | Implemented with reduced catalog validation: catalog rules 1–4 (exact index fields and bounds) and frame admission rules 1–5; guest memory is never read through the catalog. Includes the v36 timer event loop and, for `checked-f64-utf16-v38`, event turns (host calls and microtasks renewed per fired timer, one deadline per bounded run), the recoverable `timer_start_v2` and the v38 structure rules (functions counted with imports, `varta.static`/`varta.intrinsics` regions, data segment placement) |
+| v38 effects still missing | Manifest `budgets`/`required`/`purpose`/`fsRoots`, `view_commit` and view event delivery, long-lived application instances, `net.request`, `env_snapshot`, host events and permission prompts |
 | H1 HTTP host | Not implemented; HTTP modules are refused |
 
 Modules that import layout-bound intrinsics (`json_*`, `value_*`, `union_*`,
@@ -58,8 +59,10 @@ delegated events encoded as event records, and the seq rule for controlled field
 No compiler emits `view_commit` yet, so its tests encode batches themselves.
 
 **Budgets.** Memory: the module's declared maximum, checked before instantiation.
-Host calls and output: counted. Deadline: checked at host calls only; the page
-terminates the Worker for runaway loops. **Fuel is not enforced.**
+Host calls and output: counted (v38: host calls and microtasks per turn). Deadline:
+checked at host calls only; the page terminates the Worker for runaway loops.
+**Fuel is not enforced**, neither guest fuel nor the v38 fair host fuel, so this
+host claims no fuel conformance.
 
 ## Files
 

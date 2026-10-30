@@ -6,6 +6,7 @@ import { ValidationError, ExecutionFailure } from "./errors.js";
 export const SECTION = {
   abi: "varta.abi", language: "varta.language", values: "varta.values",
   tools: "varta.tools", http: "varta.http", functions: "varta.functions",
+  staticExtension: "varta.static", intrinsics: "varta.intrinsics",
 };
 export const LEGACY_PROFILE = "checked-i32-utf8-v1";
 export const LEGACY_HOST_ABI = 1;

@@ -20,12 +20,18 @@ const MAX_TABLE_ELEMENTS = 1024;
 const MAX_GLOBALS = 128;
 const MAX_RESULTS = 2;
 const VERSION_SECTION_BYTES = 4;
+const PAGE_COUNT_BYTES = 4;
+// Profiles whose modules may declare `varta.static` / `varta.intrinsics` (embedding.md step 3).
+const STATIC_REGION_PROFILES = new Set(["checked-f64-utf16-v38"]);
+const STATIC_DATA_REGION = "Static data (literals, descriptors, schemas)";
 const PARAMETER_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const PHYSICAL_TYPE = { integer: "i32", boolean: "i32", string: "i64" };
 
 /** Returns `validate(bytes)` for one host context. */
 export function createValidator(ctx) {
   const { C, profiles, hostAbis, operations, capabilityIds, acceptanceOf } = ctx;
+  const layout = ctx.contract.layout;
+  const firstPageEnd = layout[STATIC_DATA_REGION].end;
 
   function readU32Section(module, name) {
     const sections = customSections(module, name);
@@ -76,7 +82,54 @@ export function createValidator(ctx) {
     if (module.tables.some((t) => t.limits.min > MAX_TABLE_ELEMENTS)) throw new ValidationError("table too large");
     if (module.globals.length > MAX_GLOBALS) throw new ValidationError("too many globals");
     if (module.bodySizes.some((size) => size > C.maxBodyBytes)) throw new ValidationError("function body too large");
-    if (module.functionTypes.length > acceptanceOf(profile).maxDefinedFunctions) throw new ValidationError("too many defined functions");
+    const acceptance = acceptanceOf(profile);
+    const imported = module.imports.filter((i) => i.kind === "function").length;
+    const counted = module.functionTypes.length + (acceptance.functionLimitCountsImports ? imported : 0);
+    if (counted > acceptance.maxDefinedFunctions) throw new ValidationError("too many defined functions");
+    checkStaticRegions(module, profile);
+  }
+
+  /** One page count section (`varta.static`, `varta.intrinsics`): a little-endian u32 of at least 1. */
+  function pageCount(module, name) {
+    const sections = customSections(module, name);
+    if (sections.length === 0) return 0;
+    if (sections.length > 1) throw new ValidationError(`duplicate ${name} section`);
+    const data = sections[0].data;
+    if (data.length !== PAGE_COUNT_BYTES) throw new ValidationError(`${name} must be a u32 page count`);
+    const pages = new DataView(data.buffer, data.byteOffset, data.length).getUint32(0, true);
+    if (pages === 0) throw new ValidationError(`${name} declares zero pages`);
+    return pages;
+  }
+
+  /**
+   * v38 static regions (embedding.md "Module validation", step 3): the static
+   * extension and the intrinsic region after it, both within the initial memory,
+   * and every data segment active in memory 0 at an i32.const offset, wholly in
+   * the first page, the extension or the intrinsic region.
+   */
+  function checkStaticRegions(module, profile) {
+    const extensionPages = pageCount(module, SECTION.staticExtension);
+    const intrinsicPages = pageCount(module, SECTION.intrinsics);
+    if (profile === null || !STATIC_REGION_PROFILES.has(profile.name)) {
+      if (extensionPages || intrinsicPages) throw new ValidationError("static regions need checked-f64-utf16-v38");
+      return;
+    }
+    const { base, pageBytes, maxPages } = layout.staticExtension;
+    if (extensionPages > maxPages || extensionPages + intrinsicPages > layout.intrinsicRegion.maxTotalPages) throw new ValidationError("static regions exceed their page limit");
+    const regionsEnd = base + (extensionPages + intrinsicPages) * pageBytes;
+    const initial = module.memories[0]?.min ?? 0;
+    if (regionsEnd > base && regionsEnd > initial * pageBytes) throw new ValidationError("static regions lie outside the initial memory");
+    const regions = [
+      [0, firstPageEnd],
+      [base, base + extensionPages * pageBytes],
+      [base + extensionPages * pageBytes, regionsEnd],
+    ];
+    for (const segment of module.data) {
+      if (!segment.active || segment.memory !== 0 || segment.offset === null) throw new ValidationError("v38 data segments must be active in memory 0 at an i32.const offset");
+      const start = segment.offset >>> 0;
+      const end = start + segment.size;
+      if (!regions.some(([from, to]) => start >= from && end <= to)) throw new ValidationError("data segment outside the first page and the declared static regions");
+    }
   }
 
   function checkImports(module, profile, hostAbi) {

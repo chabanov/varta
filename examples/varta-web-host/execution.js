@@ -20,7 +20,7 @@ export const IMPLEMENTED = new Set([
   "process_exit", "process_exit_f64", "number_remainder", "number_power", "number_random",
   "string_char_at16", "string_char_code_at16",
   "promise_handled", "promise_react", "promise_settle", "promise_unhandled", "scheduler_enqueue",
-  "timer_start", "timer_clear", "timer_take", "timer_uncaught",
+  "timer_start", "timer_start_v2", "timer_clear", "timer_take", "timer_uncaught",
   ...MATH_FUNCTIONS.map((name) => `number_${name}`),
 ]);
 // Timer bookkeeping imports observe the deadline but are not counted host calls

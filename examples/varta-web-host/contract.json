@@ -636,7 +636,7 @@
         "catalog": 3
       },
       "scheduler": true,
-      "admittedImports": 56
+      "admittedImports": 53
     }
   ],
   "acceptance": {
@@ -647,7 +647,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf8-v1": {
       "values": [
@@ -655,7 +656,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf8-v2": {
       "values": [
@@ -663,7 +665,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v1": {
       "values": [
@@ -671,7 +674,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v2": {
       "values": [
@@ -679,7 +683,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v3": {
       "values": [
@@ -687,7 +692,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v4": {
       "values": [
@@ -695,7 +701,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v5": {
       "values": [
@@ -703,7 +710,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v6": {
       "values": [
@@ -711,7 +719,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v7": {
       "values": [
@@ -719,7 +728,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v8": {
       "values": [
@@ -727,7 +737,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v9": {
       "values": [
@@ -735,7 +746,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v10": {
       "values": [
@@ -743,7 +755,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v11": {
       "values": [
@@ -751,7 +764,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v12": {
       "values": [
@@ -759,7 +773,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 10,
-      "maxDefinedFunctions": 267
+      "maxDefinedFunctions": 267,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v13": {
       "values": [
@@ -767,7 +782,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 12,
-      "maxDefinedFunctions": 269
+      "maxDefinedFunctions": 269,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v14": {
       "values": [
@@ -775,7 +791,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v15": {
       "values": [
@@ -783,7 +800,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v16": {
       "values": [
@@ -791,7 +809,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v17": {
       "values": [
@@ -799,7 +818,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v18": {
       "values": [
@@ -807,7 +827,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v19": {
       "values": [
@@ -815,7 +836,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v20": {
       "values": [
@@ -823,7 +845,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v21": {
       "values": [
@@ -831,7 +854,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v22": {
       "values": [
@@ -839,7 +863,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v23": {
       "values": [
@@ -847,7 +872,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v24": {
       "values": [
@@ -855,7 +881,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v25": {
       "values": [
@@ -863,7 +890,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v26": {
       "values": [
@@ -871,7 +899,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v27": {
       "values": [
@@ -879,7 +908,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v28": {
       "values": [
@@ -887,7 +917,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v29": {
       "values": [
@@ -895,7 +926,8 @@
       ],
       "catalogs": [],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v30": {
       "values": [
@@ -908,7 +940,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v31": {
       "values": [
@@ -921,7 +954,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v32": {
       "values": [
@@ -934,7 +968,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v33": {
       "values": [
@@ -951,7 +986,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v34": {
       "values": [
@@ -968,7 +1004,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v35": {
       "values": [
@@ -985,7 +1022,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v36": {
       "values": [
@@ -1002,7 +1040,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v37": {
       "values": [
@@ -1019,7 +1058,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": 270
+      "maxDefinedFunctions": 270,
+      "functionLimitCountsImports": false
     },
     "checked-f64-utf16-v38": {
       "values": [
@@ -1036,7 +1076,8 @@
         }
       ],
       "helperAllowance": 13,
-      "maxDefinedFunctions": null
+      "maxDefinedFunctions": 1000000,
+      "functionLimitCountsImports": true
     }
   },
   "operations": [
@@ -5162,8 +5203,7 @@
         "checked-f64-utf16-v34",
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
-        "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v37"
       ]
     },
     {
@@ -5190,8 +5230,7 @@
         "checked-f64-utf16-v34",
         "checked-f64-utf16-v35",
         "checked-f64-utf16-v36",
-        "checked-f64-utf16-v37",
-        "checked-f64-utf16-v38"
+        "checked-f64-utf16-v37"
       ]
     },
     {
@@ -6604,9 +6643,7 @@
       "scheduler": false,
       "resultGlobals": true,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "json_stringify_owned",
@@ -6623,6 +6660,166 @@
       "capability": null,
       "scheduler": false,
       "resultGlobals": false,
+      "stringResult": false,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_close",
+      "params": [
+        "f64"
+      ],
+      "results": [],
+      "minHostAbi": 34,
+      "capability": null,
+      "scheduler": false,
+      "resultGlobals": false,
+      "stringResult": false,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_commit",
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "f64"
+      ],
+      "minHostAbi": 34,
+      "capability": "kv.write",
+      "scheduler": false,
+      "resultGlobals": false,
+      "stringResult": false,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_entry",
+      "params": [
+        "f64",
+        "f64"
+      ],
+      "results": [
+        "i32"
+      ],
+      "minHostAbi": 34,
+      "capability": null,
+      "scheduler": false,
+      "resultGlobals": true,
+      "stringResult": true,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_key",
+      "params": [
+        "f64",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i64"
+      ],
+      "minHostAbi": 34,
+      "capability": null,
+      "scheduler": false,
+      "resultGlobals": true,
+      "stringResult": false,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_open",
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "f64"
+      ],
+      "minHostAbi": 34,
+      "capability": "kv.read",
+      "scheduler": false,
+      "resultGlobals": false,
+      "stringResult": false,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_read",
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "f64"
+      ],
+      "minHostAbi": 34,
+      "capability": "kv.read",
+      "scheduler": false,
+      "resultGlobals": false,
+      "stringResult": false,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_stage",
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "f64"
+      ],
+      "minHostAbi": 34,
+      "capability": null,
+      "scheduler": false,
+      "resultGlobals": false,
+      "stringResult": false,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_text",
+      "params": [],
+      "results": [
+        "i32"
+      ],
+      "minHostAbi": 34,
+      "capability": null,
+      "scheduler": false,
+      "resultGlobals": true,
+      "stringResult": true,
+      "admittedUnder": [
+        "checked-f64-utf16-v38"
+      ]
+    },
+    {
+      "name": "kv_value",
+      "params": [
+        "f64",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i64"
+      ],
+      "minHostAbi": 34,
+      "capability": null,
+      "scheduler": false,
+      "resultGlobals": true,
       "stringResult": false,
       "admittedUnder": [
         "checked-f64-utf16-v38"
@@ -6710,9 +6907,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "primitive_to_string_v6",
@@ -6727,9 +6922,7 @@
       "scheduler": false,
       "resultGlobals": true,
       "stringResult": true,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "value_is_array_v11",
@@ -6744,9 +6937,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "value_is_error_class_v7",
@@ -6762,9 +6953,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "value_log_v12",
@@ -6795,9 +6984,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "value_nullish_v11",
@@ -6812,9 +6999,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "value_strict_equal_v11",
@@ -6830,9 +7015,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "value_truthy_v11",
@@ -6847,9 +7030,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "value_typeof_v11",
@@ -6864,9 +7045,7 @@
       "scheduler": false,
       "resultGlobals": true,
       "stringResult": true,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "view_commit",
@@ -6908,11 +7087,15 @@
       "start": 1179648,
       "end": 8388608
     },
-    "V38 static extension of `n` pages (`varta.static`), heap after it": {
-      "bytes": null
+    "staticExtension": {
+      "base": 1179648,
+      "pageBytes": 65536,
+      "maxPages": 65518
     },
-    "V38 intrinsic region of `m` pages (`varta.intrinsics`) after the extension: linked stack, linked data, then the reserved arena; heap after it": {
-      "bytes": null
+    "intrinsicRegion": {
+      "stackBytes": 16384,
+      "arenaBytes": 16384,
+      "maxTotalPages": 65518
     },
     "Wasm page": {
       "bytes": 65536
@@ -7147,11 +7330,17 @@
       ],
       "source": "`abi::INTRINSIC_STACK_BYTES`"
     },
-    "Guest instructions (fuel)": {
+    "Guest instructions (fuel), v1–v37 per execution": {
       "values": [
         1000000
       ],
       "source": "`abi::FUEL`"
+    },
+    "Guest instructions (fuel), v38 per turn (`turn_budgets`)": {
+      "values": [
+        8000000
+      ],
+      "source": "`budget::TURN_FUEL`"
     },
     "Execution/HTTP deadline": {
       "values": [
@@ -7438,6 +7627,8 @@
     "env.print": "names",
     "fs.print": "paths",
     "fs.read": "paths",
+    "kv.read": "names",
+    "kv.write": "names",
     "net.fetch": "urls",
     "net.get": "urls",
     "net.request": "requests",

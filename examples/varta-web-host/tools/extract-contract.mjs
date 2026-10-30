@@ -90,7 +90,14 @@ const operations = rows(block(embedding, "embedding-host-operations")).map((r) =
 const layout = {};
 for (const r of rows(block(embedding, "embedding-layout"))) {
   const range = /^\[(\d+), (\d+)\)$/.exec(r[1]);
-  layout[r[0]] = range ? { start: Number(range[1]), end: Number(range[2]) } : { bytes: Number(r[1].split(" ")[0]) };
+  // v38: the static extension `[base, base + n·page), n ≤ max` and the intrinsic
+  // region after it, with its stack and arena sizes.
+  const extension = /^\[(\d+), \d+ \+ n·(\d+)\), n ≤ (\d+)$/.exec(r[1]);
+  const intrinsics = /, stack (\d+) bytes, arena (\d+) bytes, n \+ m ≤ (\d+)$/.exec(r[1]);
+  if (range) layout[r[0]] = { start: Number(range[1]), end: Number(range[2]) };
+  else if (extension) layout.staticExtension = { base: Number(extension[1]), pageBytes: Number(extension[2]), maxPages: Number(extension[3]) };
+  else if (intrinsics) layout.intrinsicRegion = { stackBytes: Number(intrinsics[1]), arenaBytes: Number(intrinsics[2]), maxTotalPages: Number(intrinsics[3]) };
+  else layout[r[0]] = { bytes: Number(r[1].split(" ")[0]) };
 }
 
 const codes = rows(block(embedding, "embedding-codes")).map((r) => ({
@@ -192,7 +199,9 @@ for (const r of rows(block(embedding, "embedding-profile-acceptance"))) {
     values: r[1].split(", ").map(Number),
     catalogs,
     helperAllowance: Number(r[3]),
-    maxDefinedFunctions: Number(r[4]),
+    // v38 counts defined and imported functions together ("N with imports").
+    maxDefinedFunctions: Number(r[4].split(" ")[0]),
+    functionLimitCountsImports: r[4].endsWith(" with imports"),
   };
 }
 

@@ -42,6 +42,9 @@ export const runCases = [
   { label: "R2 v36 timer due beyond the deadline (TimerDeadline text)", fixture: "timer-deadline-v36", env: {}, errorText: true },
   { label: "R2 v36 33 pending timers (TimerBudget text)", fixture: "timer-budget-v36", env: {}, errorText: true },
   { label: "R2 v36 unhandled rejection (UnhandledRejection text, reason normalized)", fixture: "unhandled-v36", env: {}, errorText: true },
+  { label: "R2 v38 timers through timer_start_v2", fixture: "timers-v38", env: {} },
+  { label: "R2 v38 denied timer is recoverable (NotAllowedError)", fixture: "timers-denied-v38", env: {} },
+  { label: "R2 v38 host calls renew per turn", fixture: "turn-budget-v38", env: {} },
 ];
 
 // `expect` defaults to "refused". Catalog cases are contract checks of the JS host

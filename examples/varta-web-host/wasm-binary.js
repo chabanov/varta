@@ -14,6 +14,12 @@ const MEMORY_FLAG_SHARED = 0x02;
 const MEMORY_FLAG_64 = 0x04;
 const FUNCTION_TYPE_FORM = 0x60;
 const OPCODE_END = 0x0b;
+const OPCODE_I32_CONST = 0x41;
+const OPCODE_GLOBAL_GET = 0x23;
+// Data segment modes (the segment's leading flags).
+const DATA_ACTIVE = 0;
+const DATA_PASSIVE = 1;
+const DATA_ACTIVE_MEMORY = 2;
 
 export class Reader {
   /** @param {Uint8Array} bytes */
@@ -119,6 +125,7 @@ export function readModule(bytes) {
     start: null,
     bodySizes: [],
     bodies: [],
+    data: [],
     custom: [],
     bytes,
   };
@@ -207,9 +214,33 @@ function readSection(id, r, module) {
         r.skip(size);
       }
       return;
+    case SECTION.data:
+      for (let n = r.u32(); n > 0; n -= 1) module.data.push(dataSegment(r));
+      return;
     default:
       r.skip(r.end - r.at);
   }
+}
+
+/** One data segment: its mode, memory and, for an `i32.const` offset, the offset. */
+function dataSegment(r) {
+  const flags = r.u32();
+  if (flags === DATA_PASSIVE) {
+    const size = r.u32();
+    r.skip(size);
+    return { active: false, memory: null, offset: null, size };
+  }
+  if (flags !== DATA_ACTIVE && flags !== DATA_ACTIVE_MEMORY) throw new WasmFormatError(`unknown data segment flags ${flags}`);
+  const memory = flags === DATA_ACTIVE_MEMORY ? r.u32() : 0;
+  const opcode = r.byte();
+  let offset = null;
+  if (opcode === OPCODE_I32_CONST) offset = r.s32();
+  else if (opcode === OPCODE_GLOBAL_GET) r.u32();
+  else throw new WasmFormatError(`unsupported data offset expression 0x${opcode.toString(16)}`);
+  if (r.byte() !== OPCODE_END) throw new WasmFormatError("data offset is not a single instruction");
+  const size = r.u32();
+  r.skip(size);
+  return { active: true, memory, offset, size };
 }
 
 /** Resolves the type of a function index across imports and definitions. */
