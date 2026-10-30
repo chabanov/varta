@@ -339,17 +339,52 @@ fn case_conversion_calls_the_host_only_for_non_ascii_text() {
     run(unicode, &["ÄRGERécole"]);
 }
 
+/// `varta.time.now` without the `time.now` grant is the recoverable failed
+/// status of every profile under v37 too: the broker denies before the clock
+/// is read, the captured result fails and the run continues.
+#[test]
+fn varta_time_now_denial_is_a_failed_result_in_v37() {
+    let source = "export function main():void{\
+        const denied=varta.result.capture(varta.time.now());\
+        console.log(String(denied.ok)+' '+String(denied.value));console.log('after');}";
+    let bytes = module(source);
+    let runtime = VartaRuntime::new();
+    let output = runtime.run_wasm_bytes(&bytes, &[]).unwrap();
+    assert_eq!(output.lines.len(), 3, "{:?}", output.lines);
+    assert!(output.lines[0].contains("time.now"), "{:?}", output.lines);
+    assert_eq!(output.lines[1..], lines(&["false 0", "after"]));
+    let granted = runtime
+        .run_wasm_bytes(&bytes, &[grant("time.now")])
+        .unwrap();
+    assert_eq!(granted.lines.len(), 2, "{:?}", granted.lines);
+    assert!(
+        granted.lines[0].starts_with("varta log: true "),
+        "{:?}",
+        granted.lines
+    );
+}
+
 /// `Date.now()` and `new Date()` read the clock only under the exact
-/// `time.now` grant; a denial ends the execution at the call, before any
-/// later guest effect. Parsing and formatting need no grant.
+/// `time.now` grant. The permission broker decides before the clock is read;
+/// a denial is logged and thrown as a catchable `NotAllowedError`
+/// `DOMException`, and the run continues. Parsing and formatting need no
+/// grant.
 #[test]
 fn the_clock_requires_the_time_now_grant_before_any_effect() {
     let source = r#"
+function attempt(label: string, f: () => number): void {
+  try {
+    console.log(`${label} ${f() > 1.7e12}`);
+  } catch (e) {
+    console.log(`${label} ${e instanceof DOMException ? e.name : "other"}`);
+  }
+}
 export function main(): void {
   console.log(new Date(0).toISOString());
   console.log("before");
-  const now = Date.now();
-  console.log(`${now > 1.7e12} ${new Date().getTime() >= now}`);
+  attempt("now", () => Date.now());
+  attempt("date", () => new Date().getTime());
+  console.log("after");
 }
 "#;
     let bytes = module(source);
@@ -359,24 +394,33 @@ export function main(): void {
         .unwrap();
     assert_eq!(
         output.lines,
-        lines(&["1970-01-01T00:00:00.000Z", "before", "true true"])
+        lines(&[
+            "1970-01-01T00:00:00.000Z",
+            "before",
+            "now true",
+            "date true",
+            "after"
+        ])
     );
+    let denial = "<capability denied: time.now> (Date.now)";
+    let denied = lines(&[
+        "1970-01-01T00:00:00.000Z",
+        "before",
+        denial,
+        "now NotAllowedError",
+        denial,
+        "date NotAllowedError",
+        "after",
+    ]);
     for grants in [vec![], vec![grant("time.timer")]] {
-        let error = runtime.run_wasm_bytes(&bytes, &grants).unwrap_err();
-        assert!(
-            matches!(
-                &error,
-                RuntimeError::Policy(varta_common::VartaError::CapabilityDenied { capability, .. })
-                    if capability == "time.now"
-            ),
-            "{error:?}"
-        );
+        let output = runtime.run_wasm_bytes(&bytes, &grants).unwrap();
+        assert_eq!(output.lines, denied);
     }
     // A host ceiling without the grant denies what the package requested.
-    let error = runtime
+    let output = runtime
         .run_wasm_bytes_with_policy(&bytes, &[grant("time.now")], &[])
-        .unwrap_err();
-    assert!(matches!(error, RuntimeError::Policy(_)), "{error:?}");
+        .unwrap();
+    assert_eq!(output.lines, denied);
 }
 
 /// Collections, `Uint8Array` and the v37 builtin classes have private state:

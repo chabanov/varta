@@ -97,6 +97,15 @@ impl Execution {
         }
         result
     }
+    /// Test-only wall-clock allowance (CLAUDE.md §11) for a run that also
+    /// declares a test-only fuel ceiling: under parallel test load such a run
+    /// can outlast the production deadline. The deadline thread still wakes
+    /// at the production deadline; the epoch callback then lets the run
+    /// continue, bounded by its fuel. Production executions never call this.
+    #[cfg(test)]
+    pub fn allow_test_wall_clock(&mut self, allowance: Duration) {
+        self.store.data_mut().deadline = Instant::now() + allowance;
+    }
     pub fn check_deadline(&self) -> Result<(), wasmtime::Error> {
         if Instant::now() >= self.store.data().deadline {
             return Err(wasmtime::Error::msg("execution deadline exceeded"));

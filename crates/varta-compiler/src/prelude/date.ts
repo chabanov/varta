@@ -5,8 +5,10 @@
 // time string format (a date-time without an offset as UTC) and the RFC 9110
 // IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`), and returns NaN for every
 // other form; only the UTC accessors exist. Reading the clock (`Date.now()`,
-// `new Date()`) is the pure host operation `varta.date.now`, which requires
-// the exact `time.now` grant.
+// `new Date()`) is the host operation `varta.date.now`, which requires the
+// exact `time.now` grant; the runtime's permission broker answers a denial
+// with NaN (never a clock reading), and the clock throws the recoverable
+// `NotAllowedError` `DOMException` the other v37 denials use.
 
 const MS_PER_SECOND = 1000;
 const MS_PER_MINUTE = 60000;
@@ -268,8 +270,20 @@ export function dateParse(text: string): number {
   return Number.isNaN(iso) ? parseImf(text) : iso;
 }
 
+const NOT_ALLOWED = 'NotAllowedError';
+
+// The wall clock in whole milliseconds, or a `NotAllowedError` when the
+// `time.now` grant is missing.
+function clockNow(): number {
+  const time = varta.date.now();
+  if (Number.isNaN(time)) {
+    throw new DOMException('<capability denied: time.now> (Date.now)', NOT_ALLOWED);
+  }
+  return time;
+}
+
 export function dateNow(): number {
-  return varta.date.now();
+  return clockNow();
 }
 
 function pad(value: number, width: number): string {
@@ -282,7 +296,7 @@ export class Date {
   constructor(value?: number | string) {
     let time = NaN;
     if (value === undefined) {
-      time = varta.date.now();
+      time = clockNow();
     } else if (typeof value === 'string') {
       time = dateParse(value);
     } else {

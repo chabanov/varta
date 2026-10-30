@@ -6,7 +6,8 @@
 // guest code. Internal imports, host ABI33 minimum: string_to_upper_case16 and
 // string_to_lower_case16 (i32 ptr, i32 len)->i32 result length [pure, no
 // capability] convert non-ASCII text, and date_now ()->f64 ms [time.now; a denial
-// ends the execution before any later effect] backs Date.now() and new Date().
+// is recoverable: NaN, and the prelude throws NotAllowedError] backs Date.now()
+// and new Date().
 // checked-f64-utf16-v34 (pilot batch, unreleased) promises and async functions use
 // TypeScript's own `Promise<T>`; no source-level host declaration is added. The
 // compiler emits five internal scheduler imports, never callable from source,

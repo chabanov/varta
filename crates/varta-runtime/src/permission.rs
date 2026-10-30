@@ -1,9 +1,11 @@
 //! The permission broker of v37: the one decision point for the capability
-//! checks of operations that complete asynchronously (`net.request` behind
-//! `fetch`, `time.timer` behind the timers). Every decision is taken before
-//! the operation has any effect (no name resolution, socket or armed timer
-//! precedes it), and a denial is delivered to the guest as a recoverable
-//! `NotAllowedError` instead of ending the execution.
+//! checks of the operations v37 adds or rebinds (`net.request` behind
+//! `fetch`, `time.timer` behind the timers, `time.now` behind `Date.now()`
+//! and the `varta.time.now` clock). Every decision is taken before the
+//! operation has any effect (no name resolution, socket, armed timer or
+//! clock read precedes it), and a denial is delivered to the guest as a
+//! recoverable `NotAllowedError` (or a failed host status for
+//! `varta.time.now`) instead of ending the execution.
 //!
 //! Today the broker answers synchronously from the package's requests
 //! intersected with the host ceiling. It is the seam for a later consent
@@ -32,6 +34,19 @@ pub(crate) fn timer(policy: &Policy) -> Decision<()> {
         Decision::Denied
     }
 }
+
+/// Reading the wall clock (`time.now`, an exact boolean grant).
+pub(crate) fn clock(policy: &Policy) -> Decision<()> {
+    if policy.enabled(CLOCK_CAPABILITY) {
+        Decision::Granted(())
+    } else {
+        Decision::Denied
+    }
+}
+
+/// The clock capability `Date.now()` (v37 `date_now`) and `varta.time.now`
+/// require.
+pub(crate) const CLOCK_CAPABILITY: &str = "time.now";
 
 /// One network request (`net.request`: URL scopes and an optional method
 /// list); a granted request carries the URL the transport must use.

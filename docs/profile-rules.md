@@ -2975,7 +2975,8 @@ Contract: [collections and binary text](architecture.md#collections-and-binary-t
   initializer slot before lowering (`constructs_collection`), because the
   constructor instantiates prelude functions.
 - Host imports: `string_to_upper_case16`/`string_to_lower_case16` (pure,
-  capability-free) and `date_now` (exact `time.now`, fatal denial) take host
+  capability-free) and `date_now` (exact `time.now`, recoverable denial
+  through the permission broker: NaN, then the prelude's `NotAllowedError`) take host
   ABI 33. Keep the ASCII fast path in guest code.
 - Tests: Node-pinned runtime cases (`collection_tests`), forced collection
   with test-only fuel, production-budget workloads, privacy and unsupported

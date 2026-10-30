@@ -477,11 +477,6 @@ pub(crate) fn typed(error: RuntimeError) -> RuntimeError {
         Ok(error) => return RuntimeError::Scheduler(error),
         Err(source) => source,
     };
-    let source = match source.downcast::<varta_common::VartaError>() {
-        // A fatal capability denial (v37 `date_now`).
-        Ok(error) => return RuntimeError::Policy(error),
-        Err(source) => source,
-    };
     let source = match source.downcast::<varta_common::net::NetError>() {
         Ok(error) => return RuntimeError::Net(error),
         Err(source) => source,
@@ -757,16 +752,24 @@ pub(crate) fn checkpoint(
         let Some(due) = due else {
             return Ok(());
         };
-        if due >= Duration::from_secs(abi::DEADLINE_SECONDS).as_millis() as f64 {
-            return Err(SchedulerError::TimerDeadline {
-                due_ms: due.ceil() as u64,
-                deadline_seconds: abi::DEADLINE_SECONDS,
-            }
-            .into());
+        if let Some(error) = beyond_deadline(due) {
+            return Err(error.into());
         }
         wait(store.data(), due)?;
         store.data_mut().scheduler.fire().map_err(fatal)?;
     }
+}
+
+/// The budget error of a next timer due at loop time `due` (milliseconds) at
+/// or beyond the execution deadline; it reports the due time rounded up to a
+/// whole millisecond.
+fn beyond_deadline(due: f64) -> Option<SchedulerError> {
+    (due >= Duration::from_secs(abi::DEADLINE_SECONDS).as_millis() as f64).then(|| {
+        SchedulerError::TimerDeadline {
+            due_ms: due.ceil() as u64,
+            deadline_seconds: abi::DEADLINE_SECONDS,
+        }
+    })
 }
 
 /// The microtask checkpoint: every job through `varta_resume` with a
@@ -845,6 +848,54 @@ mod tests {
         // A dispatched token may be scheduled again (its frame suspended anew).
         assert_eq!(full.next().unwrap(), Some(0));
         full.enqueue(0).unwrap();
+    }
+
+    /// The deadline error reports the next due time rounded up to a whole
+    /// millisecond, and only a due time at or past the deadline fails.
+    #[test]
+    fn timer_deadline_rounds_the_due_time_up() {
+        let deadline = Duration::from_secs(abi::DEADLINE_SECONDS).as_millis() as f64;
+        assert_eq!(beyond_deadline(deadline - 0.25), None);
+        assert_eq!(
+            beyond_deadline(5999.25),
+            Some(SchedulerError::TimerDeadline {
+                due_ms: 6000,
+                deadline_seconds: abi::DEADLINE_SECONDS,
+            })
+        );
+        assert_eq!(
+            beyond_deadline(deadline),
+            Some(SchedulerError::TimerDeadline {
+                due_ms: deadline as u64,
+                deadline_seconds: abi::DEADLINE_SECONDS,
+            })
+        );
+    }
+
+    /// Double faults report the first check in the documented order: a
+    /// timer start validates its flags before its serial, and a reaction
+    /// checks the queue bound before a duplicate token.
+    #[test]
+    fn double_faults_report_the_first_check() {
+        let mut scheduler = Scheduler::default();
+        let unissued = 7.0;
+        let bad_flags = !(TIMER_INTERVAL | TIMER_UNREF);
+        assert_eq!(
+            scheduler.timer_start(unissued, 1.0, bad_flags),
+            Err(SchedulerError::TimerState)
+        );
+        assert_eq!(
+            scheduler.timer_start(unissued, 1.0, 0),
+            Err(SchedulerError::UnknownSerial)
+        );
+        let mut full = Scheduler::default();
+        let held: i64 = 0;
+        let serial = full.react(0.0, held).unwrap();
+        for token in 1..MAX_PENDING_CONTINUATIONS as i64 {
+            full.enqueue(token).unwrap();
+        }
+        // `held` is already held and the queue is full: QueueFull wins.
+        assert_eq!(full.react(serial, held), Err(SchedulerError::QueueFull));
     }
 
     #[test]

@@ -40,24 +40,24 @@ fn draw(
     Ok(sample(word))
 }
 
-/// The clock capability `Date.now()` (v37 `date_now`) requires.
-pub(crate) const CLOCK_CAPABILITY: &str = "time.now";
-
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
         "varta",
         HostOperation::DateNow.name(),
         |mut caller: Caller<'_, RuntimeContext>| -> Result<f64, wasmtime::Error> {
             caller.data_mut().tick()?;
-            // Checked before reading the clock; JavaScript has no failure
-            // path for Date.now(), so a denial ends the execution.
-            if !caller.data().policy.enabled(CLOCK_CAPABILITY) {
-                return Err(wasmtime::Error::new(
-                    varta_common::VartaError::CapabilityDenied {
-                        capability: CLOCK_CAPABILITY.into(),
-                        target: "Date.now".into(),
-                    },
-                ));
+            // The broker decides before the clock is read. A denial is
+            // recoverable (v37): it is logged and returns NaN, which no
+            // clock reading produces, and the `Date` prelude throws a
+            // `NotAllowedError` for it.
+            if let crate::permission::Decision::Denied =
+                crate::permission::clock(&caller.data().policy)
+            {
+                let capability = crate::permission::CLOCK_CAPABILITY;
+                caller.data_mut().emit(format!(
+                    "varta log: <capability denied: {capability}> (Date.now)"
+                ))?;
+                return Ok(f64::NAN);
             }
             let elapsed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

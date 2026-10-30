@@ -50,3 +50,29 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 webpki-roots = "=1.0.11"
 # Test-only: certificates for the loopback HTTPS server of the runtime tests.
 rcgen = { version = "=0.13.2", default-features = false, features = ["crypto", "pem", "ring"] }
+
+# Debug and test builds optimize only the Wasm code generator: validating or
+# running a large guest module compiles it with Cranelift, which unoptimized
+# takes seconds per module and let `build --single` launcher probes and
+# wall-clock-bound tests race their deadlines under parallel test load.
+# Release builds and every guest limit are unchanged.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.cranelift-bitset]
+opt-level = 3
+[profile.dev.package.cranelift-control]
+opt-level = 3
+[profile.dev.package.cranelift-assembler-x64]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+[profile.dev.package.wasmtime-environ]
+opt-level = 3

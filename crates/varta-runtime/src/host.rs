@@ -174,8 +174,13 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         "time_now",
         |mut caller: Caller<'_, RuntimeContext>| -> Result<i32, wasmtime::Error> {
             reset(&mut caller)?;
-            if !caller.data().policy.enabled("time.now") {
-                failure(&mut caller, HostFailure::denied("time.now", "clock"))?;
+            // Decided by the permission broker before the clock is read; a
+            // denial is the recoverable failed status of every profile.
+            if let crate::permission::Decision::Denied =
+                crate::permission::clock(&caller.data().policy)
+            {
+                let capability = crate::permission::CLOCK_CAPABILITY;
+                failure(&mut caller, HostFailure::denied(capability, "clock"))?;
                 return Ok(0);
             }
             let seconds = std::time::SystemTime::now()

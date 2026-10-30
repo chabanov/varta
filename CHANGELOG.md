@@ -66,7 +66,7 @@ in [conformance/README.md](conformance/README.md).
   `getUTC*`). They are typed guest code in engine builtin preludes. Three host
   imports with minimum host ABI 33: `string_to_upper_case16` and
   `string_to_lower_case16` (pure) and `date_now` (exact `time.now` grant,
-  fatal denial). No value tag or layout: v37 keeps value layout 17, and
+  recoverable `NotAllowedError` denial). No value tag or layout: v37 keeps value layout 17, and
   logging, `JSON.stringify` and `unknown` reject values holding these
   objects. V36 keeps its bytes and diagnostics.
 

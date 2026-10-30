@@ -8296,13 +8296,15 @@ validation under any older host ABI before instantiation:
   surrogates are copied unchanged. The result is bounded by the 1 MiB string
   limit. The text prelude converts ASCII-only text with guest scans and calls
   the host only for text above U+007F.
-- `date_now() -> f64`: whole milliseconds since the Unix epoch. It is checked
-  against the exact `time.now` grant before reading the clock, consistently
-  with `varta.time.now`. JavaScript gives `Date.now()` no failure path, so a
-  denial is fatal: the execution ends with
-  `capability denied: time.now for Date.now` (`RuntimeError::Policy`) before
-  any later guest effect, as `time.timer` denials end timer arming. `time.now`
-  never authorizes timers, and `time.timer` never authorizes the clock.
+- `date_now() -> f64`: whole milliseconds since the Unix epoch. The
+  [permission broker](#permission-broker-v37) checks the exact `time.now`
+  grant before the clock is read, as it does for `varta.time.now`. A denial
+  is recoverable, like every v37 permission denial: the runtime logs
+  `<capability denied: time.now> (Date.now)` and returns NaN, which no clock
+  reading produces, and the `Date` prelude throws a `NotAllowedError`
+  `DOMException` from `Date.now()` or `new Date()`; the run continues.
+  `time.now` never authorizes timers, and `time.timer` never authorizes the
+  clock.
 
 **Map and Set.** `Map<K, V>`, `Set<T>`, `ReadonlyMap<K, V>` and
 `ReadonlySet<T>` (the readonly names denote the same types) are nominal types
@@ -8779,9 +8781,9 @@ as unknown names and keep their bytes and diagnostics.
 
 #### Permission broker (v37)
 
-V37 routes the capability decisions of operations that complete
-asynchronously (`net.request` and `time.timer`) through one broker in the
-runtime. Today it answers synchronously from the package's requests
+V37 routes the capability decisions of the operations it adds or rebinds
+(`net.request`, `time.timer` and the `time.now` clock) through one broker in
+the runtime. Today it answers synchronously from the package's requests
 intersected with the host ceiling, before the operation has any effect, and a
 denial is recoverable rather than fatal:
 
@@ -8796,7 +8798,20 @@ denial is recoverable rather than fatal:
   `new Promise<void>((resolve) => setTimeout(resolve, ms))` rejects. V36 keeps
   its fatal `TimerDenied` (`timer_start` is frozen); v37 imports
   `timer_start_v2` only, so a v37 module relabelled as v36 fails at its host
-  ABI section.
+  ABI section;
+- a denied clock read (`date_now`, a v37-only import) logs `varta log:
+  <capability denied: time.now> (Date.now)` and returns NaN, and the `Date`
+  prelude throws a `NotAllowedError` from `Date.now()` and `new Date()`;
+  `varta.time.now` keeps the failed host status (`denied`, a failed
+  `VartaResult` when captured) that every profile reports.
+
+Every other capability check a v37 program can reach already reports a
+recoverable failed status: `env.*`, `fs.*`, `net.fetch`/`net.get`,
+`process.exit` and the HTTP `stop` call set the host status, which
+`varta.result.capture` reads. Two checks stay outside the broker by design:
+`net.listen` is decided when the host starts an HTTP service, before any
+guest code runs, and v36's `timer_start` keeps its frozen fatal denial (v37
+never imports it).
 
 The broker is the seam for a later consent prompt: a third answer, "pending
 until the user decides", would leave the operation in its slot without an
