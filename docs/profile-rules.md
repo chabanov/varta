@@ -2819,8 +2819,12 @@ frozen, and add each stream's rules under its own heading here.
   without a new contract: the linear-time and scratch bounds are proven by
   the compiler.
 - Keep the matcher backtracking-free: no construct may make a thread's future
-  depend on more than its instruction and position, except the empty-check
-  registers of `CHECK`. Backreferences, lookaround, `\p{…}`, modifiers,
+  depend on more than its instruction, its position and which enclosing
+  empty-check registers hold that position; the visited set is keyed by
+  exactly that state (`program::NESTING`, at most `MAX_NESTING` levels).
+  Every optional iteration of a nullable body with captures needs its
+  `CHECK`; differential fuzzing against Node found the cases where keying by
+  the instruction alone is wrong. Backreferences, lookaround, `\p{…}`, modifiers,
   duplicate group names and the `d`/`v` flags stay rejected by name
   (`RegExpError::Unsupported`); syntax errors keep V8's text.
 - Program format changes (`regexp::program`) bump `FORMAT_VERSION` and change

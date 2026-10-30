@@ -54,8 +54,31 @@ impl Builder {
         if (self.code.len() + 1) * program::INSTRUCTION_UNITS >= MAX_PROGRAM_UNITS {
             return Err(too_large());
         }
-        self.code.push([op, a, b]);
+        self.code
+            .push([op | self.depth << program::DEPTH_SHIFT, a, b]);
         Ok(self.code.len() - 1)
+    }
+    /// One iteration inside its empty check: one level deeper.
+    fn checked_iteration(
+        &mut self,
+        node: &Node,
+        reset: Option<(u16, u16)>,
+        register: Option<u16>,
+    ) -> Result<(), RegExpError> {
+        if register.is_none() {
+            return self.iteration(node, reset, None);
+        }
+        self.depth += 1;
+        if self.depth > program::MAX_NESTING {
+            return Err(RegExpError::Unsupported(format!(
+                "RegExp quantified groups that can match empty nested deeper than {}",
+                program::MAX_NESTING
+            )));
+        }
+        self.registers = self.registers.max(self.depth);
+        self.iteration(node, reset, register)?;
+        self.depth -= 1;
+        Ok(())
     }
     fn max(&self) -> u32 {
         if self.flags.unicode {
@@ -195,32 +218,24 @@ impl Builder {
         for _ in 0..min {
             self.iteration(node, reset, None)?;
         }
+        // Only captures can observe an empty iteration; an optional iteration
+        // of a body that can match empty records its start in the register
+        // of its depth and fails if it ends there.
+        let register = (node.nullable() && self.captures_on).then_some(self.captures + self.depth);
         let Some(max) = max else {
             let head = self.emit(op::SPLIT, 0, 0)?;
             let body = self.here()?;
-            self.iteration(node, reset, None)?;
+            self.checked_iteration(node, reset, register)?;
             self.emit(op::JUMP, index(head)?, 0)?;
             let exit = self.here()?;
             self.split(head, body, exit, greedy);
             return Ok(());
         };
-        // Only captures can observe an empty iteration.
-        let register = if node.nullable() && self.captures_on {
-            let register = self.captures + self.depth;
-            self.depth += 1;
-            self.registers = self.registers.max(self.depth);
-            Some(register)
-        } else {
-            None
-        };
         let mut splits = Vec::new();
         for _ in min..max {
             let split = self.emit(op::SPLIT, 0, 0)?;
             splits.push((split, self.here()?));
-            self.iteration(node, reset, register)?;
-        }
-        if register.is_some() {
-            self.depth -= 1;
+            self.checked_iteration(node, reset, register)?;
         }
         let exit = self.here()?;
         for (split, body) in splits {
@@ -305,27 +320,31 @@ fn assemble(
         return Err(too_large());
     }
     for instruction in &mut code {
-        if instruction[0] == op::CLASS {
+        if instruction[0] & program::OP_MASK == op::CLASS {
             instruction[1] = offsets[usize::from(instruction[1])];
         }
     }
     let threads = code
         .iter()
-        .filter(|[op, ..]| consuming_or_match(*op))
+        .filter(|[op, ..]| consuming_or_match(op & program::OP_MASK))
         .count();
-    let stack = 1 + code
+    // Each (instruction, freshness) state is followed at most once per
+    // thread addition.
+    let stack = (1 + code
         .iter()
-        .map(|[op, a, b]| match *op {
+        .map(|[op, a, b]| match op & program::OP_MASK {
             op::SPLIT | op::SAVE => 1,
             op::RESET => usize::from(b - a),
             _ => 0,
         })
-        .sum::<usize>();
+        .sum::<usize>())
+        << registers;
     let slots = captures + registers;
     let scratch = program::scratch_bytes(
         u32::from(captures),
         u32::from(slots),
         code.len() as u32,
+        u32::from(registers),
         threads as u32,
         stack as u32,
     );
@@ -359,6 +378,7 @@ fn assemble(
     if flags.unicode && flags.ignore_case {
         bits |= program::EXTRA_WORD;
     }
+    header[program::NESTING] = registers;
     header[program::FLAGS] = bits;
     header[program::CAPTURES] = captures;
     header[program::SLOTS] = slots;
@@ -411,7 +431,7 @@ fn closure(code: &[[u16; 3]], start: usize) -> Option<Vec<Entry>> {
                 break;
             }
             let [op, a, b] = code[at];
-            match op {
+            match op & program::OP_MASK {
                 op::JUMP => at = usize::from(a),
                 op::SPLIT => {
                     pending.push((usize::from(b), writes.clone()));
@@ -448,7 +468,7 @@ fn closures(code: &[[u16; 3]], base: usize) -> Vec<u16> {
     let starts = std::iter::once(0).chain(
         code.iter()
             .enumerate()
-            .filter(|(_, [op, ..])| matches!(*op, op::CHAR | op::ANY | op::CLASS))
+            .filter(|(_, [op, ..])| matches!(op & program::OP_MASK, op::CHAR | op::ANY | op::CLASS))
             .map(|(at, _)| at + 1),
     );
     for start in starts {
@@ -487,7 +507,7 @@ fn reachable(code: &[[u16; 3]], stop: impl Fn(&[u16; 3]) -> bool) -> Vec<usize> 
         if stop(instruction) {
             continue;
         }
-        match instruction[0] {
+        match instruction[0] & program::OP_MASK {
             op::JUMP => pending.push(usize::from(instruction[1])),
             op::SPLIT => {
                 pending.push(usize::from(instruction[1]));
@@ -503,7 +523,7 @@ fn reachable(code: &[[u16; 3]], stop: impl Fn(&[u16; 3]) -> bool) -> Vec<usize> 
 /// Whether every match must start at position 0 (`^` without `m`).
 fn anchored(code: &[[u16; 3]]) -> bool {
     reachable(code, |[op, a, _]| {
-        *op == op::ASSERT && *a == assertion::START
+        op & program::OP_MASK == op::ASSERT && *a == assertion::START
     })
     .is_empty()
 }
@@ -527,7 +547,7 @@ fn prefilter(
     };
     for at in reachable(code, |_| false) {
         let [op, a, _] = code[at];
-        match op {
+        match op & program::OP_MASK {
             op::CHAR => mark(u32::from(a), u32::from(a), &mut other),
             op::CLASS => {
                 let class = &classes[usize::from(a)];

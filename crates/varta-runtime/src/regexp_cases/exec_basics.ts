@@ -64,6 +64,13 @@ export function main(): void {
   run(/(?:a|())*/, 'aa');
   run(/(a|)*b/, 'aab');
   run(/(?:x*)*y/, 'xxy');
+  // A later iteration of an enclosing loop is explored before an inner
+  // lazy loop's own continuation (found by differential fuzzing).
+  run(/(.*?)+?!/, 'ab!');
+  run(/b((a*?)+\s*?)*/, 'ba\n');
+  run(/(a|b*?)+?!/, 'abb!');
+  run(/((a)|b)*?c/, 'abc');
+  run(/(a?)*?b/, 'aab');
   run(/(?<year>\d{4})-(?<month>\d\d)/, 'on 2026-10-29');
   run(/^abc/, 'abcabc');
   run(/^abc/, 'xabc');

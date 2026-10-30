@@ -29,7 +29,14 @@ pub(crate) const CLOSURE_INDEX: usize = FIRST_OTHER + 1;
 pub(crate) const FIRST_COUNT: usize = CLOSURE_INDEX + 1;
 pub(crate) const FIRST_UNIT: usize = FIRST_COUNT + 1;
 pub(crate) const FIRST_UNITS: usize = 2;
-pub(crate) const HEADER_UNITS: usize = FIRST_UNIT + FIRST_UNITS;
+const HEADER_NESTING: usize = FIRST_UNIT + FIRST_UNITS;
+pub(crate) const HEADER_UNITS: usize = HEADER_NESTING + 1;
+/// The opcode is the low byte of an instruction's first unit; the high byte
+/// is its nesting depth (the empty-checked iterations enclosing it).
+pub(crate) const OP_MASK: u16 = 0xFF;
+pub(crate) const DEPTH_SHIFT: u16 = 8;
+/// Most nested empty-checked iterations.
+pub(crate) const MAX_NESTING: u16 = 4;
 
 /// The program format version.
 pub(crate) const FORMAT_VERSION: u16 = 1;
@@ -42,6 +49,10 @@ pub(crate) const ANCHORED: u16 = 2;
 pub(crate) const PREFILTER: u16 = 4;
 /// `\b` and `\B` count U+017F and U+212A as word characters (`u` and `i`).
 pub(crate) const EXTRA_WORD: u16 = 8;
+/// The deepest nesting of empty-checked iterations: the matcher keys its
+/// visited set by instruction and by which enclosing iterations started at
+/// the current position (`2^NESTING` states per instruction).
+pub(crate) const NESTING: usize = HEADER_NESTING;
 
 /// A closure is `[count, entries…]`; an entry is `[target, writes,
 /// (a, b)…]`: the thread continues at consuming instruction (or `MATCH`)
@@ -97,11 +108,13 @@ pub(crate) const WORD_BYTES: u32 = 4;
 pub(crate) const STACK_WORDS: u32 = 2;
 
 /// Scratch bytes the matcher allocates for one run: returned captures,
-/// working slots, the visited stamps, two thread lists and the stack.
+/// working slots, the visited stamps (`2^nesting` per instruction), two
+/// thread lists and the stack.
 pub(crate) fn scratch_bytes(
     captures: u32,
     slots: u32,
     instructions: u32,
+    nesting: u32,
     threads: u32,
     stack: u32,
 ) -> u64 {
@@ -109,7 +122,7 @@ pub(crate) fn scratch_bytes(
     u64::from(WORD_BYTES)
         * (u64::from(captures)
             + u64::from(slots)
-            + u64::from(instructions)
+            + (u64::from(instructions) << nesting)
             + 2 * u64::from(threads) * thread
             + u64::from(STACK_WORDS) * u64::from(stack))
 }

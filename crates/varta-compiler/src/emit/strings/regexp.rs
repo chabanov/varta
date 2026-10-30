@@ -90,7 +90,12 @@ const DEST: u32 = 43;
 const N: u32 = 44;
 const UNITV: u32 = 45;
 const CINDEX: u32 = 46;
-const LAST_LOCAL: u32 = CINDEX;
+/// Nesting of empty-checked iterations: `2^NEST` visited states per
+/// instruction.
+const NEST: u32 = 47;
+/// The depth of the instruction being followed.
+const DEPTH: u32 = 48;
+const LAST_LOCAL: u32 = DEPTH;
 // i64 locals: the ASCII prefilter bitmap halves.
 const LOW_MASK: u32 = LAST_LOCAL + 1;
 const HIGH_MASK: u32 = LAST_LOCAL + 2;
@@ -210,6 +215,12 @@ impl Asm {
     }
     /// Load instruction `pc` into `OP` and `A` (and `B`).
     fn decode(&mut self, pc: u32, with_b: bool) {
+        self.decode_op(pc, false);
+        self.operands(with_b);
+    }
+    /// Load the opcode of instruction `pc` into `OP` (and its nesting depth
+    /// into `DEPTH`), keeping its address in `ADDR`.
+    fn decode_op(&mut self, pc: u32, depth: bool) {
         self.ops([
             I::LocalGet(pc),
             I::I32Const(INSTRUCTION_BYTES),
@@ -220,7 +231,25 @@ impl Asm {
             I::I32Add,
             I::LocalTee(ADDR),
             I::I32Load16U(UNIT),
+            I::LocalTee(OP),
+        ]);
+        if depth {
+            self.ops([
+                I::I32Const(i32::from(program::DEPTH_SHIFT)),
+                I::I32ShrU,
+                I::LocalSet(DEPTH),
+                I::LocalGet(OP),
+            ]);
+        }
+        self.ops([
+            I::I32Const(i32::from(program::OP_MASK)),
+            I::I32And,
             I::LocalSet(OP),
+        ]);
+    }
+    /// Load the operands of the instruction at `ADDR` into `A` (and `B`).
+    fn operands(&mut self, with_b: bool) {
+        self.ops([
             I::LocalGet(ADDR),
             I::I32Load16U(MemArg {
                 offset: UNIT_BYTES as u64,
@@ -459,6 +488,8 @@ impl Asm {
             I::I32Add,
             I::LocalSet(ADDR),
             I::LocalGet(TAG),
+            I::LocalGet(NEST),
+            I::I32Shl,
             I::I32Const(WORD_BYTES),
             I::I32Mul,
             I::LocalGet(VISITED),
@@ -602,8 +633,14 @@ impl Asm {
         self.set(X);
         self.block("stop");
         self.looped("follow");
+        self.decode_op(X, true);
+        self.state_key();
         self.ops([
             I::LocalGet(X),
+            I::LocalGet(NEST),
+            I::I32Shl,
+            I::LocalGet(TMP),
+            I::I32Add,
             I::I32Const(WORD_BYTES),
             I::I32Mul,
             I::LocalGet(VISITED),
@@ -615,7 +652,7 @@ impl Asm {
         ]);
         self.br_if("stop");
         self.ops([I::LocalGet(DEST), I::LocalGet(STAMP), I::I32Store(WORD)]);
-        self.decode(X, true);
+        self.operands(true);
         // JUMP
         self.ops([I::LocalGet(OP), I::I32Const(i32::from(op::JUMP)), I::I32Eq]);
         self.when();
@@ -711,6 +748,58 @@ impl Asm {
         self.end();
         self.end();
     }
+    /// `TMP` = which enclosing empty-checked iterations of the decoded
+    /// instruction started at `AT` (bit `k` for the register of depth `k`):
+    /// with the instruction, it decides every later empty check, so equal
+    /// states have equal futures. Consuming instructions and `MATCH` use
+    /// state 0: consuming makes every open iteration non-empty.
+    fn state_key(&mut self) {
+        self.constant(0);
+        self.set(TMP);
+        self.ops([
+            I::LocalGet(DEPTH),
+            I::I32Const(0),
+            I::I32Ne,
+            I::LocalGet(OP),
+            I::I32Const(i32::from(op::JUMP)),
+            I::I32GeU,
+            I::I32And,
+        ]);
+        self.when();
+        self.constant(0);
+        self.set(K);
+        self.block("keyed");
+        self.looped("bit");
+        self.ops([I::LocalGet(K), I::LocalGet(DEPTH), I::I32GeU]);
+        self.br_if("keyed");
+        self.ops([
+            I::LocalGet(CAPTURES),
+            I::LocalGet(K),
+            I::I32Add,
+            I::I32Const(WORD_BYTES),
+            I::I32Mul,
+            I::LocalGet(WC),
+            I::I32Add,
+            I::I32Load(WORD),
+            I::LocalGet(AT),
+            I::I32Eq,
+        ]);
+        self.when();
+        self.ops([
+            I::LocalGet(TMP),
+            I::I32Const(1),
+            I::LocalGet(K),
+            I::I32Shl,
+            I::I32Or,
+            I::LocalSet(TMP),
+        ]);
+        self.end();
+        self.add_to(K, 1);
+        self.br("bit");
+        self.end();
+        self.end();
+        self.end();
+    }
     /// Push a restore entry for working slot `local`.
     fn restore_entry(&mut self, local: u32) {
         self.push(
@@ -802,6 +891,7 @@ pub(super) fn exec(allocate: u32) -> Function {
         (program::THREADS, THREADS),
         (program::STACK, STACK_CAP),
         (program::CLOSURE_INDEX, CINDEX),
+        (program::NESTING, NEST),
     ] {
         asm.header(index);
         asm.set(local);
@@ -880,6 +970,8 @@ pub(super) fn exec(allocate: u32) -> Function {
         I::LocalGet(SLOTS),
         I::I32Add,
         I::LocalGet(COUNT),
+        I::LocalGet(NEST),
+        I::I32Shl,
         I::I32Add,
         I::I32Const(WORD_BYTES),
         I::I32Mul,
@@ -906,6 +998,8 @@ pub(super) fn exec(allocate: u32) -> Function {
         I::I32Add,
         I::LocalTee(VISITED),
         I::LocalGet(COUNT),
+        I::LocalGet(NEST),
+        I::I32Shl,
         I::I32Const(WORD_BYTES),
         I::I32Mul,
         I::I32Add,
@@ -923,6 +1017,8 @@ pub(super) fn exec(allocate: u32) -> Function {
         I::LocalGet(VISITED),
         I::I32Const(0),
         I::LocalGet(COUNT),
+        I::LocalGet(NEST),
+        I::I32Shl,
         I::I32Const(WORD_BYTES),
         I::I32Mul,
         I::MemoryFill(MEMORY),

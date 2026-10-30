@@ -111,6 +111,11 @@ const EXEC_BASICS: &[&str] = &[
     "0|\"aa\"|~",
     "0|\"aab\"|\"a\"",
     "0|\"xxy\"",
+    "0|\"ab!\"|\"b\"",
+    "0|\"ba\\n\"|\"\\n\"|\"\"",
+    "0|\"abb!\"|\"b\"",
+    "0|\"abc\"|\"b\"|~",
+    "0|\"aab\"|\"a\"",
     "3|\"2026-10\"|\"2026\"|\"10\"",
     "0|\"abc\"",
     "null",
@@ -381,7 +386,7 @@ fn matcher_fuel_per_unit_stays_within_the_contract() {
     let class = per_unit(r"/[0-9]/", "a", "");
     assert!(class <= 40, "{class}");
     let nested = per_unit(r"/^(a+)+$/", "a", "!");
-    assert!(nested <= 1_300, "{nested}");
+    assert!(nested <= 1_600, "{nested}");
     // One run's fixed cost (allocation, header, the RegExp object).
     let fixed = test_fuel("/b/", "'a'").unwrap();
     assert!(fixed <= 4_000, "{fixed}");

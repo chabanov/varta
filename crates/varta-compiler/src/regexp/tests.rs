@@ -58,6 +58,11 @@ fn non_linear_constructs_are_rejected_by_name() {
             "",
             "RegExp escape sequence in a capture group name",
         ),
+        (
+            "((((((a)?)?)?)?)?)?",
+            "",
+            "RegExp quantified groups that can match empty nested deeper than 4",
+        ),
     ] {
         match error(pattern, flags) {
             RegExpError::Unsupported(found) => {

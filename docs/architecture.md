@@ -7954,8 +7954,9 @@ methods with their existing diagnostics and bytes.
   literals). One guest helper, `RegExpExec`, runs any program: a Pike VM that
   steps all threads of a Thompson NFA in lockstep over the input and drops a
   thread that reaches an instruction another thread already reached at the
-  same position. A run therefore executes at most `O(program × input)`
-  instructions, all metered as ordinary guest fuel, and no pattern can
+  same position in the same empty-check state. A run therefore executes at
+  most `O(program × input)` instructions (times at most 16 empty-check
+  states per instruction), all metered as ordinary guest fuel, and no pattern can
   backtrack catastrophically (ReDoS). Under the [thin-host decision](development-plan.md#thin-host-guest-intrinsics)
   the matcher is pure guest code: hosts implement nothing and every host
   (Wasmtime, a browser applier, Raspberry Pi 5) runs the same semantics. The
@@ -7994,18 +7995,25 @@ methods with their existing diagnostics and bytes.
   backreferences `\1` and `\k<name>` (they need backtracking), lookahead and
   lookbehind assertions, Unicode property escapes `\p{…}`/`\P{…}` (no property
   tables), pattern modifiers `(?ims-ims:…)`, duplicate named groups, escapes in
-  group names, the `d` (`hasIndices`) and `v` (`unicodeSets`) flags, and
+  group names, the `d` (`hasIndices`) and `v` (`unicodeSets`) flags,
+  quantified groups that can match empty nested more than four deep, and
   programs larger than 16384 code units (counted repetitions are expanded, so
   `a{100000}` is rejected) or whose matcher scratch exceeds 256 KiB.
 - **Matching semantics.** Leftmost-first priority equals ECMAScript's
   backtracking order: alternatives and greedy quantifiers prefer their first
   branch, lazy quantifiers the exit. Every iteration of a quantified group
   clears its captures first (RepeatMatcher step 4). An iteration that
-  consumes nothing is rejected: an unbounded quantifier's thread returns to
-  its loop instruction at the same position and is dropped, and an optional
-  iteration (`?`, `{n,m}` beyond `n`) of a nullable body with captures records
-  its start in a register and fails an empty iteration, so `/(a?)?/.exec('')`
-  is `['', undefined]` as in Node. Case-insensitive matching is resolved at
+  consumes nothing is rejected as RepeatMatcher's empty check does: every
+  optional iteration (`*`, `+` after the first, `?`, `{n,m}` beyond `n`) of a
+  body that can match empty records its start in a register and fails if it
+  ends there (`CHECK`), so `/(a?)?/.exec('')` is `['', undefined]` as in Node.
+  The visited set is keyed by instruction and by which enclosing empty-checked
+  iterations started at the current position, which with the instruction
+  decides every later check; threads in equal states have equal futures, so
+  the earlier (higher-priority) one is kept, and a later iteration of an
+  enclosing loop is explored before an inner lazy loop continues, as
+  backtracking does (`/(.*?)+?!/.exec('ab!')` captures `b`). Programs without
+  captures (see below) cannot observe empty iterations and need no checks. Case-insensitive matching is resolved at
   compile time: a character or class widens to every character with the same
   Canonicalize value (toUppercase per code unit without `u`, simple case
   folding with `u`, from the Rust standard library's Unicode tables; the
@@ -8013,8 +8021,10 @@ methods with their existing diagnostics and bytes.
   U+212A under `u`+`i`. The matcher compares characters exactly.
 - **Programs.** A program is a header (flags, capture and register slots,
   instruction, thread and stack bounds, an ASCII first-unit bitmap, up to two
-  direct first units, the closure index), three-unit instructions (`MATCH`,
-  `CHAR`, `ANY`, `CLASS`, `JUMP`, `SPLIT`, `SAVE`, `RESET`, `CHECK`, `ASSERT`),
+  direct first units, the closure index, the empty-check nesting), three-unit
+  instructions whose first unit holds the opcode (`MATCH`, `CHAR`, `ANY`,
+  `CLASS`, `JUMP`, `SPLIT`, `SAVE`, `RESET`, `CHECK`, `ASSERT`) and the
+  instruction's empty-check depth,
   sorted class range tables and precomputed epsilon closures: for each
   instruction after a character, the compiler stores the threads it adds with
   their slot writes, so the matcher follows only closures that contain an
@@ -8034,7 +8044,7 @@ methods with their existing diagnostics and bytes.
   of fixed work (including the RegExp object of a literal), a search for one
   or two possible first units about 23 fuel per skipped unit and a class-led
   search about 35, while nested quantifiers such as `/^(a+)+$/` cost about
-  1 100 fuel per unit (every live thread steps per unit). Doubling an
+  1 450 fuel per unit (every live thread steps per unit). Doubling an
   adversarial input at most doubles its fuel; a 100 000-unit adversarial
   input exhausts the production fuel and fails the execution instead of
   hanging. Production budgets are unchanged.
