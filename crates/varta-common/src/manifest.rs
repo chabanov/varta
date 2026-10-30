@@ -30,6 +30,10 @@ pub struct Manifest {
     #[serde(default = "default_policy")]
     pub policy: String,
     pub capabilities: Vec<WireGrant>,
+    /// Requested per-turn and per-instance budgets (v38 `turn_budgets`,
+    /// host ABI 34 and later); in a host ceiling, the budgets it allows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budgets: Option<crate::budget::BudgetRequest>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +48,14 @@ pub struct WireGrant {
     /// method, and no other operation accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub methods: Option<Vec<String>>,
+    /// Permission broker v1 (host ABI 34 and later): whether the application
+    /// cannot run without this grant; absent means required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    /// Permission broker v1 (host ABI 34 and later): untrusted text a prompt
+    /// shows as a quote next to the broker's own description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
 }
 
 impl Manifest {
@@ -74,9 +86,60 @@ impl Manifest {
                         CapabilityValue::Requests(scope) => scope.methods.clone(),
                         _ => None,
                     },
+                    required: None,
+                    purpose: None,
                 })
                 .collect(),
+            budgets: None,
         }
+    }
+
+    /// Whether the manifest uses a member of the v38 broker or budget schema.
+    fn uses_instance_schema(&self) -> bool {
+        self.budgets.is_some()
+            || self
+                .capabilities
+                .iter()
+                .any(|wire| wire.required.is_some() || wire.purpose.is_some())
+    }
+
+    /// The requested (or, in a host ceiling, allowed) budgets.
+    #[must_use]
+    pub fn budget_request(&self) -> crate::budget::BudgetRequest {
+        self.budgets.unwrap_or_default()
+    }
+
+    /// The consent metadata of every grant, by capability id.
+    #[must_use]
+    pub fn consents(&self) -> std::collections::BTreeMap<String, crate::permission::Consent> {
+        self.capabilities
+            .iter()
+            .map(|wire| {
+                (
+                    wire.id.clone(),
+                    crate::permission::Consent {
+                        required: wire.required.unwrap_or(true),
+                        purpose: wire.purpose.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// A host ceiling bounds grants and budgets; consent metadata belongs to
+    /// the package and is rejected there.
+    pub fn validate_ceiling(&self) -> Result<()> {
+        self.grants()?;
+        if self
+            .capabilities
+            .iter()
+            .any(|wire| wire.required.is_some() || wire.purpose.is_some())
+        {
+            return Err(VartaError::InvalidManifest(
+                "a host policy cannot declare required or purpose".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -103,6 +166,20 @@ impl Manifest {
             return Err(VartaError::InvalidManifest(
                 "unsupported manifest version, ABI, policy or target".into(),
             ));
+        }
+        if self.uses_instance_schema() && self.abi_version < crate::abi::PROGRAM_LIMITS_VERSION {
+            return Err(VartaError::InvalidManifest(format!(
+                "budgets, required and purpose require abiVersion {} or later (checked-f64-utf16-v38)",
+                crate::abi::PROGRAM_LIMITS_VERSION
+            )));
+        }
+        if let Some(budgets) = &self.budgets {
+            budgets.validate()?;
+        }
+        for wire in &self.capabilities {
+            if let Some(purpose) = &wire.purpose {
+                crate::permission::validate_purpose(&wire.id, purpose)?;
+            }
         }
         let mut seen = std::collections::BTreeSet::new();
         let grants: Vec<CapabilityGrant> = self
@@ -216,6 +293,49 @@ mod tests {
         let text = String::from_utf8(any.to_bytes().unwrap()).unwrap();
         assert!(!text.contains("methods"), "{text}");
     }
+    #[test]
+    fn instance_schema_requires_host_abi_34() {
+        let v38 = Manifest::parse(
+            br#"{"abiVersion":34,"budgets":{"fuelPerTurn":2000000,"deadlinePerTurnMs":250},
+            "capabilities":[{"id":"net.request","patterns":["https://api.test/**"],"required":false,"purpose":"Sync your items"},
+            {"id":"time.timer","enabled":true}]}"#,
+        )
+        .unwrap();
+        assert_eq!(v38.budget_request().fuel_per_turn, Some(2_000_000));
+        let consents = v38.consents();
+        assert!(!consents["net.request"].required);
+        assert_eq!(
+            consents["net.request"].purpose.as_deref(),
+            Some("Sync your items")
+        );
+        assert!(consents["time.timer"].required);
+        // The wire form round-trips with its new members.
+        let again = Manifest::parse(&v38.to_bytes().unwrap()).unwrap();
+        assert_eq!(again.consents(), consents);
+        assert_eq!(again.budgets, v38.budgets);
+        for source in [
+            r#"{"abiVersion":33,"budgets":{"fuelPerTurn":1},"capabilities":[]}"#,
+            r#"{"budgets":{},"capabilities":[]}"#,
+            r#"{"abiVersion":33,"capabilities":[{"id":"time.now","enabled":true,"required":false}]}"#,
+            r#"{"capabilities":[{"id":"time.now","enabled":true,"purpose":"clock"}]}"#,
+            r#"{"abiVersion":34,"budgets":{"fuelPerTurn":0},"capabilities":[]}"#,
+            r#"{"abiVersion":34,"budgets":{"memoryBytes":2147483648},"capabilities":[]}"#,
+            r#"{"abiVersion":34,"budgets":{"fuel":1},"capabilities":[]}"#,
+            r#"{"abiVersion":34,"capabilities":[{"id":"time.now","enabled":true,"purpose":""}]}"#,
+            r#"{"abiVersion":34,"capabilities":[{"id":"time.now","enabled":true,"purpose":"a\u0007b"}]}"#,
+            r#"{"abiVersion":34,"capabilities":[{"id":"time.now","enabled":true,"required":"no"}]}"#,
+        ] {
+            assert!(Manifest::parse(source.as_bytes()).is_err(), "{source}");
+        }
+        // A host ceiling may cap budgets but never carries consent metadata.
+        let ceiling = Manifest::parse(
+            br#"{"abiVersion":34,"budgets":{"fuelPerTurn":3000000},"capabilities":[]}"#,
+        )
+        .unwrap();
+        ceiling.validate_ceiling().unwrap();
+        assert!(v38.validate_ceiling().is_err());
+    }
+
     #[test]
     fn empty_patterns_are_explicit_denials() {
         let manifest =

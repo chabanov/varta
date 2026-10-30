@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 //! Capability-checked Wasmtime execution. Only portable Wasm enters this API.
+mod application;
 #[cfg(test)]
 mod array_tests;
 mod bigint;
@@ -16,8 +17,14 @@ mod bigint_values_tests;
 #[cfg(test)]
 mod contract_tests;
 mod contracts;
+pub use application::{Application, ApplicationError, ApplicationOptions, InstanceState, Step};
+mod events;
+pub use events::{Delivery, HostEvent};
 mod exceptions;
 mod execution;
+mod turns;
+pub use permission::PermissionPrompter;
+pub use turns::{BUDGET_REPORT_PREFIX, BudgetExhausted, BudgetReport, TurnKind, TurnUsage};
 mod prepared;
 #[cfg(test)]
 mod prepared_tests;
@@ -171,6 +178,8 @@ mod timer_tests;
 #[cfg(test)]
 mod truth_guard_tests;
 #[cfg(test)]
+mod turn_budget_tests;
+#[cfg(test)]
 mod undefined_tests;
 #[cfg(test)]
 mod update_coercion_tests;
@@ -178,11 +187,15 @@ mod update_coercion_tests;
 mod update_tests;
 mod validate;
 
+use std::collections::BTreeMap;
 use std::time::Instant;
-use varta_common::{
-    CapabilityGrant,
-    abi::{self, HostStatus},
+#[cfg(test)]
+use varta_common::abi;
+use varta_common::budget::{BudgetKind, BudgetRequest, Budgets};
+use varta_common::permission::{
+    AuditEntry, Consent, DecisionFile, PermissionError, StoredDecision,
 };
+use varta_common::{CapabilityGrant, Manifest, abi::HostStatus};
 use wasmtime::{Config, Engine, Module, StoreLimits};
 
 #[derive(Debug, thiserror::Error)]
@@ -208,6 +221,15 @@ pub enum RuntimeError {
     /// A v38 (`data_limits`) guest exhausted a real resource.
     #[error(transparent)]
     Resource(#[from] varta_common::limits::ResourceExhausted),
+    /// A v38 turn exhausted a per-turn or per-instance budget.
+    #[error(transparent)]
+    Budget(#[from] BudgetExhausted),
+    #[error(transparent)]
+    Permission(#[from] PermissionError),
+    #[error(transparent)]
+    Event(#[from] varta_common::events::EventError),
+    #[error(transparent)]
+    Application(#[from] ApplicationError),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
 }
@@ -223,11 +245,23 @@ pub(crate) struct RuntimeContext {
     limits: StoreLimits,
     output: RunOutput,
     output_bytes: usize,
+    /// Host calls of the current turn (of the whole execution before v38).
     host_calls: u32,
-    /// The host-call budget: the production `abi::MAX_HOST_CALLS`; only
-    /// tests declare a larger one (`Execution::allow_test_host_calls`).
-    host_call_limit: u32,
+    /// The end of the current turn (of the whole execution before v38).
     deadline: Instant,
+    /// When the instance was created; loop time is measured from here.
+    started: Instant,
+    /// The end of the instance: the execution deadline of a bounded run,
+    /// the embedder's optional lifetime bound of an application instance.
+    lifetime: Option<Instant>,
+    budgets: varta_common::budget::Budgets,
+    turns: turns::Turns,
+    /// The permission broker (v37), with broker v1 states in v38.
+    broker: permission::Broker,
+    /// V38 host event sources and the host task queue.
+    events: events::HostEvents,
+    /// Rearms the store's epoch thread for the next turn's deadline.
+    rearm: Option<std::sync::mpsc::Sender<Option<Instant>>>,
     http_control: Option<(String, HttpShutdown)>,
     random: random::RandomSource,
     scheduler: scheduler::Scheduler,
@@ -247,19 +281,59 @@ impl RuntimeContext {
     }
 
     fn check_budget(&self) -> Result<(), wasmtime::Error> {
-        if self.host_calls > self.host_call_limit || Instant::now() >= self.deadline {
-            return Err(wasmtime::Error::msg("host operation budget exhausted"));
+        if self.host_calls > self.budgets.host_calls_per_turn {
+            return Err(self.turns.exhausted(
+                BudgetKind::HostCalls,
+                &self.budgets,
+                turns::HOST_BUDGET_EXHAUSTED,
+            ));
+        }
+        self.check_deadline()
+    }
+
+    /// The deadline of host bookkeeping: typed in a v38 turn, the frozen
+    /// legacy text before.
+    pub(crate) fn check_deadline(&self) -> Result<(), wasmtime::Error> {
+        if Instant::now() >= self.deadline {
+            return Err(self.turns.exhausted(
+                BudgetKind::Deadline,
+                &self.budgets,
+                turns::HOST_BUDGET_EXHAUSTED,
+            ));
         }
         Ok(())
     }
 
+    /// The error of a deadline reached while the event loop waited.
+    pub(crate) fn deadline_error(&self) -> wasmtime::Error {
+        self.turns.exhausted(
+            BudgetKind::Deadline,
+            &self.budgets,
+            turns::DEADLINE_EXCEEDED,
+        )
+    }
+
+    pub(crate) fn rearm_deadline(&self) {
+        if let Some(rearm) = &self.rearm {
+            // A stopped epoch thread only means the store is being dropped.
+            let _ = rearm.send(Some(self.deadline));
+        }
+    }
+
     fn emit(&mut self, line: String) -> Result<(), wasmtime::Error> {
-        self.output_bytes = self
-            .output_bytes
-            .checked_add(line.len() + 1)
-            .ok_or_else(|| wasmtime::Error::msg("output budget exhausted"))?;
-        if self.output_bytes > abi::MAX_OUTPUT_BYTES {
-            return Err(wasmtime::Error::msg("output budget exhausted"));
+        let exhausted = |context: &Self| {
+            context.turns.exhausted(
+                BudgetKind::Output,
+                &context.budgets,
+                turns::OUTPUT_BUDGET_EXHAUSTED,
+            )
+        };
+        let Some(bytes) = self.output_bytes.checked_add(line.len() + 1) else {
+            return Err(exhausted(self));
+        };
+        self.output_bytes = bytes;
+        if self.output_bytes > self.budgets.output_bytes {
+            return Err(exhausted(self));
         }
         self.output.lines.push(line);
         Ok(())
@@ -420,23 +494,56 @@ impl VartaRuntime {
         ceiling: Option<&[CapabilityGrant]>,
         observer: Option<RuntimeObserver>,
     ) -> Result<RunOutput, RuntimeError> {
-        let module = self.prepare_module(bytes)?;
-        let mut execution = execution::Execution::new(&self.engine, capabilities, ceiling)?;
+        let options = RunOptions {
+            requested: capabilities.to_vec(),
+            ceiling: ceiling.map(<[CapabilityGrant]>::to_vec),
+            observer,
+            ..RunOptions::default()
+        };
+        self.run_with(bytes, options).into_result()
+    }
+
+    /// Run one bounded execution and report everything it produced: the
+    /// output captured before a failure, the failure, the budget report and
+    /// the permission audit log. The earlier entry points are this run with
+    /// default options, minus the partial output of a failed run.
+    #[must_use]
+    pub fn run_with(&self, bytes: &[u8], options: RunOptions) -> RunReport {
+        let mut report = RunReport::new(artifact_identity(bytes));
+        let prepared = match self.prepare_instance(bytes, &options, execution::Mode::Bounded, None)
+        {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                report.failure = Some(error);
+                return report;
+            }
+        };
+        let Prepared {
+            module,
+            mut execution,
+            ..
+        } = prepared;
+        let mut instance = None;
         let result = (|| {
-            let instance = execution.instantiate_prepared(&module)?;
+            let started = execution.instantiate_prepared(&module)?;
             let store = &mut execution.store;
-            (|| {
-                if let Some(start) = instance.get_func(&mut *store, "_start") {
-                    start.call(&mut *store, &[], &mut [])?;
-                }
-                exceptions::finish(&instance, store)?;
-                scheduler::checkpoint(&instance, store)?;
-                Ok::<(), RuntimeError>(())
-            })()
-            .map_err(|error| resources::classify(&instance, store, error))
+            instance = Some(started);
+            if let Some(start) = started.get_func(&mut *store, "_start") {
+                start.call(&mut *store, &[], &mut [])?;
+            }
+            exceptions::finish(&started, store)?;
+            scheduler::checkpoint(&started, store)?;
+            Ok::<(), RuntimeError>(())
         })();
-        let result = result.map_err(scheduler::typed);
         let store = &mut execution.store;
+        let result = result.map_err(scheduler::typed).map_err(|error| {
+            let error = match &instance {
+                Some(instance) => resources::classify(instance, store, error),
+                None => error,
+            };
+            turns::classify(error, store.data())
+        });
+        turns::close(instance.as_ref(), store);
         let exited = result.is_err();
         if let Err(error) = result {
             if let RuntimeError::Execution(source) = &error
@@ -444,23 +551,191 @@ impl VartaRuntime {
             {
                 store.data_mut().output.exit_code = exit.0;
             } else {
-                return Err(error);
+                report.failure = Some(error);
             }
         }
-        let output = std::mem::take(&mut store.data_mut().output);
+        report.collect(store.data_mut());
         drop(execution);
-        if !exited && let Some(contract) = http_contract::read(bytes)? {
-            return server::run(server::Start {
-                engine: self.engine.clone(),
-                module,
-                contract,
-                requested: capabilities,
-                ceiling,
-                output,
-                observer,
-            });
+        if exited {
+            return report;
         }
-        Ok(output)
+        match http_contract::read(bytes) {
+            Ok(Some(contract)) => {
+                let output = std::mem::take(&mut report.output);
+                match server::run(server::Start {
+                    engine: self.engine.clone(),
+                    module,
+                    contract,
+                    requested: &options.requested,
+                    ceiling: options.ceiling.as_deref(),
+                    output,
+                    observer: options.observer.clone(),
+                }) {
+                    Ok(output) => report.output = output,
+                    Err(error) => report.failure = Some(error),
+                }
+            }
+            Ok(None) => {}
+            Err(error) => report.failure = Some(error),
+        }
+        report
+    }
+
+    /// Validate the module and create its instance setup: the profile's turn
+    /// semantics, the budgets resolved against the ceiling and the broker.
+    fn prepare_instance(
+        &self,
+        bytes: &[u8],
+        options: &RunOptions,
+        mode: execution::Mode,
+        prompter: Option<Box<dyn PermissionPrompter>>,
+    ) -> Result<Prepared, RuntimeError> {
+        let module = self.prepare_module(bytes)?;
+        let profile = language::inspect(bytes)?.profile;
+        let v38 = profile.is_some_and(varta_common::language::LanguageProfile::turn_budgets);
+        if let Some(ceiling) = &options.budget_ceiling {
+            ceiling.validate()?;
+        }
+        options.budgets.validate()?;
+        // Earlier profiles keep the production budgets and their meaning.
+        let resolved = if v38 {
+            Budgets::resolve(&options.budgets, options.budget_ceiling.as_ref())
+        } else {
+            Budgets::resolve(&BudgetRequest::default(), None)
+        };
+        let artifact = artifact_identity(bytes);
+        let stored = match (&options.decisions, v38) {
+            (Some(decisions), true) => decisions.decisions_for(&artifact),
+            _ => BTreeMap::new(),
+        };
+        let consents = if v38 {
+            let mut consents = options.consents.clone();
+            for grant in &options.requested {
+                consents
+                    .entry(grant.id.clone())
+                    .or_insert_with(Consent::required);
+            }
+            consents
+        } else {
+            BTreeMap::new()
+        };
+        let setup = execution::Setup {
+            requested: &options.requested,
+            ceiling: options.ceiling.as_deref(),
+            budgets: resolved.budgets,
+            capped: resolved.capped,
+            renew: v38,
+            mode,
+            broker: permission::BrokerSetup {
+                v1: v38,
+                artifact,
+                consents,
+                stored,
+                prompter,
+            },
+        };
+        let execution = execution::Execution::with_setup(&self.engine, setup)?;
+        Ok(Prepared { module, execution })
+    }
+}
+
+/// A validated module with its instance setup, before instantiation.
+struct Prepared {
+    module: PreparedModule,
+    execution: execution::Execution,
+}
+
+/// The application identity before C3 provenance: the SHA-256 digest of the
+/// portable Wasm bytes (`sha256:` and lowercase hexadecimal).
+#[must_use]
+pub fn artifact_identity(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    use std::fmt::Write;
+    let digest = sha2::Sha256::digest(bytes);
+    let mut text = String::from(varta_common::permission::ARTIFACT_PREFIX);
+    for byte in digest {
+        // Writing to a String cannot fail.
+        let _ = write!(text, "{byte:02x}");
+    }
+    text
+}
+
+/// The inputs of one run besides the module.
+#[derive(Default, Clone)]
+pub struct RunOptions {
+    pub requested: Vec<CapabilityGrant>,
+    /// The trusted host ceiling; `None` means the package's requests alone.
+    pub ceiling: Option<Vec<CapabilityGrant>>,
+    /// Budgets the package requests (v38; ignored by earlier profiles).
+    pub budgets: BudgetRequest,
+    /// Budgets the host allows; without it the production defaults cap the
+    /// request.
+    pub budget_ceiling: Option<BudgetRequest>,
+    /// Required/optional and purpose of each requested grant (v38).
+    pub consents: BTreeMap<String, Consent>,
+    /// Stored decisions keyed by application identity (the headless
+    /// policy file); decisions for other identities are ignored.
+    pub decisions: Option<DecisionFile>,
+    pub observer: Option<RuntimeObserver>,
+}
+impl RunOptions {
+    /// The options of a package manifest and an optional host ceiling
+    /// manifest, both validated; a ceiling never carries consent metadata.
+    pub fn from_manifests(
+        package: &Manifest,
+        host: Option<&Manifest>,
+    ) -> Result<Self, RuntimeError> {
+        if let Some(host) = host {
+            host.validate_ceiling()?;
+        }
+        Ok(Self {
+            requested: package.grants()?,
+            ceiling: host.map(Manifest::grants).transpose()?,
+            budgets: package.budget_request(),
+            budget_ceiling: host.and_then(|host| host.budgets),
+            consents: package.consents(),
+            decisions: None,
+            observer: None,
+        })
+    }
+}
+
+/// Everything one run produced. Lines emitted before a failure are kept.
+#[derive(Default)]
+pub struct RunReport {
+    pub output: RunOutput,
+    pub failure: Option<RuntimeError>,
+    /// `None` when the run failed before an instance existed.
+    pub budget: Option<BudgetReport>,
+    pub audit: Vec<AuditEntry>,
+    /// Audit entries dropped beyond the bounded log.
+    pub audit_dropped: u64,
+    /// Stored decisions after the run, including prompt answers (v38).
+    pub decisions: BTreeMap<String, StoredDecision>,
+    /// The application identity decisions are keyed by.
+    pub artifact: String,
+}
+impl RunReport {
+    fn new(artifact: String) -> Self {
+        Self {
+            artifact,
+            ..Self::default()
+        }
+    }
+    fn collect(&mut self, context: &mut RuntimeContext) {
+        self.output = std::mem::take(&mut context.output);
+        self.budget = Some(context.turns.report(context.budgets, context.output_bytes));
+        let (audit, dropped) = context.broker.audit_log();
+        self.audit = audit;
+        self.audit_dropped = dropped;
+        self.decisions = context.broker.decisions();
+    }
+    /// The earlier entry points' result: the output, or only the failure.
+    pub fn into_result(self) -> Result<RunOutput, RuntimeError> {
+        match self.failure {
+            Some(error) => Err(error),
+            None => Ok(self.output),
+        }
     }
 }
 

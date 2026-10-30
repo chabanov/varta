@@ -15,6 +15,12 @@ pub struct Args {
     pub mode: Mode,
     pub policy: Option<PathBuf>,
     pub json: bool,
+    /// Run mode only: print the per-turn budget report to stderr.
+    pub budget_report: bool,
+    /// Run mode only: a long-lived application instance (v38).
+    pub app: bool,
+    /// Run mode only: the headless decision file.
+    pub decisions: Option<PathBuf>,
 }
 impl Args {
     pub fn parse(values: Vec<OsString>) -> Result<Self, Error> {
@@ -61,8 +67,17 @@ impl Args {
         let mut policy = None;
         let mut json = false;
         let mut parameters = false;
+        let mut budget_report = false;
+        let mut app = false;
+        let mut decisions = None;
         while let Some(option) = values.next() {
+            let run = matches!(mode, Mode::Run(_));
             match option.to_str() {
+                Some("--budget-report") if run && !budget_report => budget_report = true,
+                Some("--app") if run && !app => app = true,
+                Some("--decisions") if run && decisions.is_none() => {
+                    decisions = Some(PathBuf::from(next(&mut values)?));
+                }
                 Some("--policy") if policy.is_none() && !matches!(mode, Mode::Validate(_)) => {
                     policy = Some(PathBuf::from(next(&mut values)?))
                 }
@@ -85,7 +100,14 @@ impl Args {
                 }
             }
         }
-        Ok(Self { mode, policy, json })
+        Ok(Self {
+            mode,
+            policy,
+            json,
+            budget_report,
+            app,
+            decisions,
+        })
     }
 }
 fn next(values: &mut impl Iterator<Item = OsString>) -> Result<OsString, Error> {

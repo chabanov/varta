@@ -3097,13 +3097,12 @@ Inherit v37 under checked-f64-utf16-v38 with every v37 selector, value layout
 3, the timer and `net.request` operations and the permission broker's
 recoverable denials. V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION`
 (34) and shares value ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`)
-with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams;
-apart from the program-limits rules below they admit nothing yet: program
-limits (`program_limits`), data limits
-(`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
+with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams:
+program limits (`program_limits`), data limits (`data_limits`) and turn
+budgets (`turn_budgets`) admit their streams (rules below), and linked intrinsics
 (`linked_intrinsics`), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
-(`codegen_v2`). Gate every admission on its own selector, keep v37 and earlier
+(`codegen_v2`) admit nothing yet. Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
 - A v37 rule or binding stated "for v37 only" (prelude pruning, private JSON
@@ -3217,8 +3216,65 @@ profiles frozen, and add each stream's rules under its own heading here.
   derived from the unchanged v37 source (`modules::engine::lift`), so v37
   keeps its prelude bytes.
 - Tests that need more than one production fuel or host-call budget declare
-  test-only budgets (`Execution::set_fuel`, `allow_test_host_calls`,
-  `allow_test_wall_clock`); production budgets never change.
+  test-only budgets through the one budgets mechanism
+  (`Execution::with_test_budgets` with explicit `budget::Budgets`, plus
+  `allow_test_wall_clock`); there is no separate host-call override, and
+  production budgets never change.
 - Dictionary hashing and any layout change (a third dictionary storage
   slot, a value18 sparse layout) belong to the program-limits stream's
   value18 foundation; until it lands, dictionaries keep their linear search.
+
+### Turn budgets, application instances and broker v1 (`turn_budgets`)
+
+Normative contract: [architecture](architecture.md#turn-budgets-and-application-instances-turn_budgets).
+
+- Turns are the unit of budgeting in v38 only. Turn 1 is instantiation,
+  `_start`, the exception check and the microtask drain; every later turn takes
+  exactly one task (fired timer, network completion, host task) and drains its
+  microtasks. Call `turns::boundary` only where a task is taken and
+  `turns::begin`/`turns::close` around application turns; never renew inside a
+  drain, and never split one task across turns.
+- Renew fuel, host calls and microtasks per v38 turn; renew the deadline only in
+  `Mode::Application`. Memory, output, serial counters, live frames and the
+  scheduler's held-token bounds stay per instance. Earlier profiles never
+  renew: their `Turns` record one `execution` entry and keep the frozen legacy
+  error texts (`turns::HOST_BUDGET_EXHAUSTED`, `DEADLINE_EXCEEDED`,
+  `OUTPUT_BUDGET_EXHAUSTED`); v38 reports `BudgetExhausted`.
+- Manifest budgets are valid only with `abiVersion` 34 or later and are
+  ignored for earlier modules even when a host ceiling sets them. Resolve with
+  `Budgets::resolve`: an omitted request is the production default, and without
+  a ceiling value the production default is the cap. Never raise
+  `Budgets::PRODUCTION` or an `abi` budget to admit a program; tests that need
+  more set a manifest request with a ceiling.
+- Host bookkeeping checks the deadline through `RuntimeContext::check_deadline`
+  and budgets through `tick`/`emit`, so v38 errors stay typed; do not add new
+  ad-hoc deadline messages.
+- Transfers started in an application turn get `turns::operation_deadline`
+  (a fresh per-turn allowance), not the turn's own deadline.
+- An application instance is terminated by any failed turn (trap, budget,
+  unhandled rejection, fatal host error) or a guest exit; `step` never runs a
+  later turn and nothing restarts it. HTTP contracts and tools never run as
+  application instances.
+- Host tasks are FIFO by arrival together with due timers and network
+  completions; at most one task per turn. A task names its source id, never
+  reused; deliveries to a closed source are discarded before the guest. Only
+  records marked coalescible are merged (per source) or dropped on overflow;
+  any other overflow fails the instance.
+- Broker v1 states come only from the request, the ceiling, stored decisions
+  for the artifact identity and the prompt seam, in that order. A withheld
+  grant (`denied` or `prompt`) must fail every existing check exactly like an
+  absent request (`Policy::withhold`); releasing it never widens a pattern or
+  the ceiling. Prompts run between turns only (`Broker::resolve` from
+  `Application::step`), never inside a host call, and only for `request()` in a
+  user-gesture turn of an instance with a `PermissionPrompter`; first-run
+  prompts for required grants run before instantiation. Headless and bounded
+  runs never prompt; unresolved optional grants are denied there.
+- `varta.permissions.*` and `varta.events.*` exist only under `turn_budgets`.
+  Their intrinsics (`varta.permissions.state`/`ask`,
+  `varta.events.open`/`watch`/`take`/`text`/`release`) are prelude-only, like
+  the `fetch` intrinsics; the preludes mirror the `varta_common::permission`
+  and `varta_common::events` codes, checked by a compiler test.
+- The runtime (`run_with`, `run_application`) keeps output captured before a
+  failure in `RunReport`; the earlier `Result` entry points still return only
+  the error. The CLI and the companion print the lines, then the
+  `--budget-report` lines, then the diagnostic.

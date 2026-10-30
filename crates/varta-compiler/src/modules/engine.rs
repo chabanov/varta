@@ -338,7 +338,59 @@ pub(crate) const PERMISSION: Prelude = Prelude {
 };
 /// The dotted name the timer lowering calls for a denied timer start.
 pub(crate) const PERMISSION_DENIED: &str = "varta.permission.denied";
-pub(crate) const PRELUDES: [&Prelude; 12] = [
+/// Permission broker v1 (v38 `turn_budgets`): `varta.permissions.query` and
+/// `varta.permissions.request`, bound under their dotted names.
+pub(crate) const PERMISSIONS: Prelude = Prelude {
+    path: "<varta>/app/permissions.ts",
+    source: include_str!("../prelude/permissions.ts"),
+    exports: &[
+        ("PermissionState", Namespace::Type),
+        ("PermissionDescriptor", Namespace::Type),
+        ("PermissionStatus", Namespace::Type),
+    ],
+    members: &[],
+    triggers: &[
+        Trigger {
+            names: &["varta.permissions.query"],
+            function: "permissionsQuery",
+            local: "varta.permissions.query",
+        },
+        Trigger {
+            names: &["varta.permissions.request"],
+            function: "permissionsRequest",
+            local: "varta.permissions.request",
+        },
+    ],
+    admitted: LanguageProfile::turn_budgets,
+    extended: None,
+    loads: &[],
+    lifted: None,
+};
+/// Host event sources (v38 `turn_budgets`): `varta.events.listen` and
+/// `varta.events.close`, bound under their dotted names.
+pub(crate) const EVENTS: Prelude = Prelude {
+    path: "<varta>/app/events.ts",
+    source: include_str!("../prelude/events.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[
+        Trigger {
+            names: &["varta.events.listen"],
+            function: "eventsListen",
+            local: "varta.events.listen",
+        },
+        Trigger {
+            names: &["varta.events.close"],
+            function: "eventsClose",
+            local: "varta.events.close",
+        },
+    ],
+    admitted: LanguageProfile::turn_budgets,
+    extended: None,
+    loads: &[],
+    lifted: None,
+};
+pub(crate) const PRELUDES: [&Prelude; 14] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -351,6 +403,8 @@ pub(crate) const PRELUDES: [&Prelude; 12] = [
     &FETCH,
     &PERMISSION,
     &URL,
+    &PERMISSIONS,
+    &EVENTS,
 ];
 /// The `fetch` prelude's stream class and its engine-internal members, which
 /// only engine prelude modules may call.

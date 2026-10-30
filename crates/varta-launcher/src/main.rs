@@ -7,11 +7,12 @@ use std::{
     sync::Arc,
 };
 use varta_artifact::{Artifact, MAX_MANIFEST_BYTES, read_bounded};
+use varta_common::permission::{DecisionFile, PermissionError};
 use varta_common::{
     Manifest,
     launcher::{INFO_ARGUMENT, LauncherInfo},
 };
-use varta_runtime::{RuntimeEvent, VartaRuntime};
+use varta_runtime::{ApplicationOptions, RunOptions, RuntimeEvent, VartaRuntime};
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -27,6 +28,8 @@ enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Permission(#[from] PermissionError),
 }
 impl Error {
     fn code(&self) -> Option<varta_common::ToolInvocationCode> {
@@ -39,7 +42,7 @@ impl Error {
         }
     }
 }
-const HELP: &str = "Varta execution runtime\n\nPackaged application:\n  app [--policy PATH]\n  app --invoke NAME [--params JSON] [--json] [--policy PATH]\n  app --inspect [--json] [--policy PATH]\n\nStandalone runtime:\n  varta-runtime run ARTIFACT [--policy PATH]\n  varta-runtime invoke ARTIFACT NAME [--params JSON] [--json] [--policy PATH]\n  varta-runtime inspect ARTIFACT [--json] [--policy PATH]\n  varta-runtime --validate ARTIFACT\n  varta-runtime --runtime-info\n\nThis runtime executes portable Wasm; source compilation uses varta.\n";
+const HELP: &str = "Varta execution runtime\n\nPackaged application:\n  app [--policy PATH] [--decisions PATH] [--budget-report] [--app]\n  app --invoke NAME [--params JSON] [--json] [--policy PATH]\n  app --inspect [--json] [--policy PATH]\n\nStandalone runtime:\n  varta-runtime run ARTIFACT [--policy PATH] [--decisions PATH] [--budget-report] [--app]\n  varta-runtime invoke ARTIFACT NAME [--params JSON] [--json] [--policy PATH]\n  varta-runtime inspect ARTIFACT [--json] [--policy PATH]\n  varta-runtime --validate ARTIFACT\n  varta-runtime --runtime-info\n\nRun options:\n  --decisions PATH  stored permission decisions keyed by artifact hash (checked-f64-utf16-v38)\n  --budget-report   print each turn's fuel, host calls, wall time and memory to stderr\n  --app             run a checked-f64-utf16-v38 program as a long-lived application instance\n\nOutput captured before a failure is printed before the diagnostic.\nThis runtime executes portable Wasm; source compilation uses varta.\n";
 fn artifact(path: Option<PathBuf>) -> Result<(Artifact, PathBuf), Error> {
     if let Some(path) = path {
         return Ok((Artifact::read(&path)?, path));
@@ -61,22 +64,49 @@ fn execute(args: Args) -> Result<i32, Error> {
     match args.mode {
         Mode::Run(path) => {
             let (artifact, _) = artifact(path)?;
-            let output = runtime.run_observed(
-                &artifact.wasm,
-                &artifact.grants()?,
-                ceiling.as_deref(),
-                Arc::new(|event| match event {
-                    RuntimeEvent::Listening { address, .. } => {
-                        eprintln!("varta listening: http://{address}")
-                    }
-                    RuntimeEvent::Output(line) => println!("{line}"),
-                    RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
-                }),
-            )?;
-            for line in output.lines {
+            let mut options = RunOptions::from_manifests(&artifact.manifest, host.as_ref())?;
+            options.decisions = args
+                .decisions
+                .as_deref()
+                .map(|path| {
+                    DecisionFile::parse(&read_bounded(path, MAX_MANIFEST_BYTES)?)
+                        .map_err(Error::from)
+                })
+                .transpose()?;
+            options.observer = Some(Arc::new(|event| match event {
+                RuntimeEvent::Listening { address, .. } => {
+                    eprintln!("varta listening: http://{address}")
+                }
+                RuntimeEvent::Output(line) => println!("{line}"),
+                RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
+            }));
+            let report = if args.app {
+                runtime.run_application(
+                    &artifact.wasm,
+                    ApplicationOptions {
+                        run: options,
+                        ..ApplicationOptions::default()
+                    },
+                )
+            } else {
+                runtime.run_with(&artifact.wasm, options)
+            };
+            // Lines emitted before a failure come first, then the report,
+            // then the diagnostic.
+            for line in &report.output.lines {
                 println!("{line}");
             }
-            Ok(output.exit_code)
+            if args.budget_report
+                && let Some(budget) = &report.budget
+            {
+                for line in budget.lines() {
+                    eprintln!("{line}");
+                }
+            }
+            match report.failure {
+                Some(error) => Err(error.into()),
+                None => Ok(report.output.exit_code),
+            }
         }
         Mode::Invoke { path, name, params } => {
             let (artifact, _) = artifact(path)?;

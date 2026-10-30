@@ -12222,19 +12222,21 @@ fn pilot_profile_v36_timers_run_everywhere_and_are_denied_without_time_timer() {
             .output()
             .unwrap();
         assert!(!output.status.success(), "{}", combined(&output));
-        // A failed execution reports its error, not its captured log.
-        assert!(logs(&output).is_empty(), "{}", combined(&output));
+        // A failed execution prints the lines it captured before failing,
+        // then its error.
+        assert_eq!(logs(&output), expected[..1], "{}", combined(&output));
         assert!(
             combined(&output).contains("<capability denied: time.timer>"),
             "{}",
             combined(&output)
         );
     }
-    // Without the grant, the timer call fails before any callback runs.
+    // Without the grant, the timer call fails before any callback runs; the
+    // line logged before it is printed before the diagnostic.
     project.set_capabilities(serde_json::json!({"time":{"now":true}}));
     let dev = project.command(&["dev"]);
     assert!(!dev.status.success(), "{}", combined(&dev));
-    assert!(logs(&dev).is_empty(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected[..1], "{}", combined(&dev));
     assert!(
         combined(&dev).contains("<capability denied: time.timer>"),
         "{}",
@@ -15561,21 +15563,425 @@ fn pilot_profile_v37_collections_run_everywhere_and_the_clock_needs_time_now() {
             .output()
             .unwrap();
         assert!(!output.status.success(), "{}", combined(&output));
-        assert!(logs(&output).is_empty(), "{}", combined(&output));
+        // The lines captured before the failure come first.
+        assert_eq!(logs(&output)[..2], expected[..2], "{}", combined(&output));
         assert!(
             combined(&output).contains("capability denied: time.now"),
             "{}",
             combined(&output)
         );
     }
-    // Without the grant, `Date.now()` fails before any later output.
+    // Without the grant, `Date.now()` fails before any later output; the
+    // lines logged before it are printed before the diagnostic.
     project.set_capabilities(serde_json::json!({}));
     let dev = project.command(&["dev"]);
     assert!(!dev.status.success(), "{}", combined(&dev));
-    assert!(logs(&dev).is_empty(), "{}", combined(&dev));
+    assert_eq!(logs(&dev)[..2], expected[..2], "{}", combined(&dev));
     assert!(
         combined(&dev).contains("capability denied: time.now"),
         "{}",
         combined(&dev)
     );
+}
+
+// Profile v38 turn budgets, application instances, permission broker v1 and
+// run diagnostics (`turn_budgets`, increment P5).
+const V38_PROFILE: &str = "checked-f64-utf16-v38";
+
+impl RegressionProject {
+    fn configure(&self, key: &str, value: serde_json::Value) {
+        let path = self.0.join("varta.config.json");
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        config[key] = value;
+        fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
+    }
+    fn run_in(&self, mut command: Command, args: &[&str]) -> std::process::Output {
+        command.args(args).current_dir(&self.0).output().unwrap()
+    }
+    /// The application identity `inspect` reports for an artifact.
+    fn identity(&self, artifact: &str) -> String {
+        let inspect = self.command(&["inspect", artifact, "--json"]);
+        assert!(inspect.status.success(), "{}", combined(&inspect));
+        let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+        info["identity"].as_str().unwrap().to_owned()
+    }
+}
+
+fn stdout_lines(output: &std::process::Output) -> Vec<String> {
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.starts_with("varta log:"))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn failed_runs_print_captured_output_before_the_diagnostic_in_every_entry_point() {
+    let project = RegressionProject::new(
+        r#"export function main(): void { console.log("before"); let i = 0; while (i >= 0) { i = i + 1; } }"#,
+        serde_json::json!({}),
+    );
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let outputs = [
+        project.command(&["dev"]),
+        project.command(&["run", "dist/app.wasm"]),
+        project.run_in(Command::new(runtime_path()), &["run", "dist/app.wasm"]),
+        project.run_in(Command::new(project.0.join("dist/app")), &[]),
+    ];
+    for output in outputs {
+        assert_eq!(output.status.code(), Some(1), "{}", combined(&output));
+        assert_eq!(
+            stdout_lines(&output),
+            ["varta log: before"],
+            "{}",
+            combined(&output)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("varta failed:") || stderr.contains("varta runtime failed:"),
+            "{stderr}"
+        );
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("completed"));
+    }
+}
+
+const TIMERS_V38: &str = r#"export function main(): void {
+  console.log("main");
+  setTimeout(() => { console.log("timer"); }, 1);
+}"#;
+
+#[test]
+fn budget_reports_list_every_turn_in_dev_run_and_both_binaries() {
+    let project = RegressionProject::new(TIMERS_V38, serde_json::json!({"time":{"timer":true}}));
+    project.language_profile(V38_PROFILE);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let outputs = [
+        project.command(&["dev", "--budget-report"]),
+        project.command(&["run", "dist/app.wasm", "--budget-report"]),
+        project.run_in(
+            Command::new(runtime_path()),
+            &["run", "dist/app.wasm", "--budget-report"],
+        ),
+        project.run_in(
+            Command::new(project.0.join("dist/app")),
+            &["--budget-report"],
+        ),
+    ];
+    for output in outputs {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            stdout_lines(&output),
+            ["varta log: main", "varta log: timer"]
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let budget: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.starts_with("varta budget: "))
+            .collect();
+        assert_eq!(budget.len(), 3, "{stderr}");
+        assert!(
+            budget[0].starts_with("varta budget: turn 1 main: fuel "),
+            "{stderr}"
+        );
+        assert!(budget[0].contains("/1000000, host calls "), "{stderr}");
+        assert!(budget[0].contains("ms (5000 ms per execution)"), "{stderr}");
+        assert!(
+            budget[1].starts_with("varta budget: turn 2 timer: fuel "),
+            "{stderr}"
+        );
+        assert!(
+            budget[2].starts_with("varta budget: total: 2 turns, fuel "),
+            "{stderr}"
+        );
+    }
+    // Without the flag nothing is reported; earlier profiles report one
+    // execution entry.
+    let quiet = project.command(&["dev"]);
+    assert!(!String::from_utf8_lossy(&quiet.stderr).contains("varta budget"));
+    project.language_profile("checked-f64-utf16-v37");
+    let v37 = project.command(&["dev", "--budget-report"]);
+    assert!(v37.status.success(), "{}", combined(&v37));
+    assert!(
+        String::from_utf8_lossy(&v37.stderr).contains("varta budget: execution: fuel "),
+        "{}",
+        combined(&v37)
+    );
+    // The flags are documented in --help of both binaries.
+    for args in [["run", "--help"], ["dev", "--help"]] {
+        let help = varta().args(args).output().unwrap();
+        let text = String::from_utf8_lossy(&help.stdout);
+        for flag in ["--budget-report", "--app", "--decisions"] {
+            assert!(text.contains(flag), "{args:?} lacks {flag}: {text}");
+        }
+    }
+    let help = Command::new(runtime_path()).arg("--help").output().unwrap();
+    let text = String::from_utf8_lossy(&help.stdout);
+    for flag in ["--budget-report", "--app", "--decisions"] {
+        assert!(text.contains(flag), "companion help lacks {flag}: {text}");
+    }
+}
+
+#[test]
+fn manifest_budgets_need_v38_and_are_capped_by_the_host_policy() {
+    let project = RegressionProject::new(
+        r#"export function main(): void { let s = 0; for (let i = 0; i < 2000; i++) { s += i; } console.log(`sum ${s}`); }"#,
+        serde_json::json!({}),
+    );
+    // V37 rejects the v38 manifest members at check time.
+    project.language_profile("checked-f64-utf16-v37");
+    project.configure("budgets", serde_json::json!({"fuelPerTurn": 1000}));
+    let check = project.command(&["check"]);
+    assert!(!check.status.success(), "{}", combined(&check));
+    assert!(
+        combined(&check).contains("abiVersion 34"),
+        "{}",
+        combined(&check)
+    );
+    // V38 accepts them; a lowered fuel budget ends turn 1 after its output.
+    project.language_profile(V38_PROFILE);
+    let low = project.command(&["dev"]);
+    assert_eq!(low.status.code(), Some(1), "{}", combined(&low));
+    assert!(
+        combined(&low)
+            .contains("turn 1 (main) exhausted its fuel budget (1000 instructions per turn)"),
+        "{}",
+        combined(&low)
+    );
+    for bad in [
+        serde_json::json!({"fuelPerTurn": 0}),
+        serde_json::json!({"fuel": 1}),
+        serde_json::json!({"memoryBytes": 4294967296u64}),
+    ] {
+        project.configure("budgets", bad.clone());
+        let check = project.command(&["check"]);
+        assert!(!check.status.success(), "{bad}: {}", combined(&check));
+    }
+    // A raise is capped at the production default unless the host allows it.
+    project.configure("budgets", serde_json::json!({"fuelPerTurn": 5000000}));
+    let build = project.command(&["build"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(info["budgets"]["fuelPerTurn"], 5_000_000);
+    let capped = project.command(&["run", "dist/app.wasm", "--budget-report"]);
+    assert!(capped.status.success(), "{}", combined(&capped));
+    assert!(
+        combined(&capped)
+            .contains("varta budget: capped fuelPerTurn: requested 5000000, allowed 1000000"),
+        "{}",
+        combined(&capped)
+    );
+    fs::write(
+        project.0.join("host-policy.json"),
+        br#"{"abiVersion":34,"budgets":{"fuelPerTurn":3000000},"capabilities":[]}"#,
+    )
+    .unwrap();
+    let allowed = project.command(&[
+        "run",
+        "dist/app.wasm",
+        "--budget-report",
+        "--policy",
+        "host-policy.json",
+    ]);
+    assert!(allowed.status.success(), "{}", combined(&allowed));
+    let text = combined(&allowed);
+    assert!(text.contains("/3000000, host calls"), "{text}");
+    assert!(
+        text.contains("capped fuelPerTurn: requested 5000000, allowed 3000000"),
+        "{text}"
+    );
+    // A host policy never carries consent metadata.
+    fs::write(
+        project.0.join("host-policy.json"),
+        br#"{"abiVersion":34,"capabilities":[{"id":"time.now","enabled":true,"required":false}]}"#,
+    )
+    .unwrap();
+    let rejected = project.command(&["run", "dist/app.wasm", "--policy", "host-policy.json"]);
+    assert!(!rejected.status.success(), "{}", combined(&rejected));
+    assert!(combined(&rejected).contains("cannot declare required or purpose"));
+}
+
+const OPTIONAL_TIMER: &str = r#"export async function main(): Promise<void> {
+  const status = await varta.permissions.query({ name: "time.timer" });
+  console.log(`state ${status.state}`);
+  try {
+    setTimeout(() => { console.log("fired"); }, 1);
+  } catch (error) {
+    console.log(`denied ${error instanceof DOMException ? error.name : "other"}`);
+  }
+}"#;
+
+#[test]
+fn optional_permissions_follow_stored_decisions_keyed_by_artifact_hash() {
+    let project =
+        RegressionProject::new(OPTIONAL_TIMER, serde_json::json!({"time":{"timer":true}}));
+    project.language_profile(V38_PROFILE);
+    project.configure(
+        "permissions",
+        serde_json::json!({"time.timer":{"required":false,"purpose":"Retry failed requests"}}),
+    );
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let identity = project.identity("dist/app.wasm");
+    assert!(
+        identity.starts_with("sha256:") && identity.len() == 71,
+        "{identity}"
+    );
+    assert_eq!(project.identity("dist/app"), identity);
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(info["grants"][0]["required"], false);
+    assert_eq!(info["grants"][0]["purpose"], "Retry failed requests");
+    let decisions = |artifact: &str, decision: &str| {
+        fs::write(
+            project.0.join("decisions.json"),
+            serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"applications":[
+                {"artifact":artifact,"decisions":[{"id":"time.timer","decision":decision}]}]}))
+            .unwrap(),
+        )
+        .unwrap();
+    };
+    let runs = |extra: &[&str]| {
+        let mut outputs = Vec::new();
+        for (mut command, args) in [
+            (varta(), vec!["run", "dist/app.wasm"]),
+            (Command::new(runtime_path()), vec!["run", "dist/app.wasm"]),
+            (Command::new(project.0.join("dist/app")), vec![]),
+        ] {
+            outputs.push(
+                command
+                    .args(&args)
+                    .args(extra)
+                    .current_dir(&project.0)
+                    .output()
+                    .unwrap(),
+            );
+        }
+        outputs
+    };
+    // Headless without a decision: optional grants are denied, recoverably.
+    for output in runs(&[]) {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            stdout_lines(&output)
+                .into_iter()
+                .filter(|l| !l.contains("capability denied"))
+                .collect::<Vec<_>>(),
+            [
+                "varta log: state denied",
+                "varta log: denied NotAllowedError"
+            ],
+            "{}",
+            combined(&output)
+        );
+    }
+    // A stored allow for this artifact grants it.
+    decisions(&identity, "allow");
+    for output in runs(&["--decisions", "decisions.json"]) {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            stdout_lines(&output),
+            ["varta log: state granted", "varta log: fired"],
+            "{}",
+            combined(&output)
+        );
+    }
+    // The host ceiling still wins over a stored allow.
+    project.host_policy(serde_json::json!([]));
+    for output in runs(&[
+        "--decisions",
+        "decisions.json",
+        "--policy",
+        "host-policy.json",
+    ]) {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert!(
+            stdout_lines(&output).contains(&"varta log: state denied".to_owned()),
+            "{}",
+            combined(&output)
+        );
+    }
+    // Decisions for another artifact are ignored.
+    decisions(&format!("sha256:{}", "0".repeat(64)), "allow");
+    for output in runs(&["--decisions", "decisions.json"]) {
+        assert!(stdout_lines(&output).contains(&"varta log: state denied".to_owned()));
+    }
+    // A stored denial of a required grant: the application cannot run.
+    project.configure("permissions", serde_json::json!({}));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    decisions(&project.identity("dist/app.wasm"), "deny");
+    for output in runs(&["--decisions", "decisions.json"]) {
+        assert_eq!(output.status.code(), Some(1), "{}", combined(&output));
+        assert!(stdout_lines(&output).is_empty(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("required permission time.timer is denied"),
+            "{}",
+            combined(&output)
+        );
+    }
+    // Malformed decision files and misplaced flags fail closed.
+    fs::write(
+        project.0.join("decisions.json"),
+        br#"{"applications":[{"artifact":"sha256:00","decisions":[]}]}"#,
+    )
+    .unwrap();
+    let malformed = project.command(&["run", "dist/app.wasm", "--decisions", "decisions.json"]);
+    assert!(!malformed.status.success(), "{}", combined(&malformed));
+    assert!(combined(&malformed).contains("invalid permission decisions"));
+    let misplaced = project.command(&["inspect", "dist/app.wasm", "--decisions", "decisions.json"]);
+    assert!(!misplaced.status.success(), "{}", combined(&misplaced));
+    assert!(combined(&misplaced).contains("--decisions applies to run, dev or a packaged app"));
+}
+
+#[test]
+fn application_mode_renews_the_deadline_for_every_turn() {
+    let project = RegressionProject::new(
+        r#"export function main(): void {
+  console.log("main");
+  setTimeout(() => { console.log("late"); }, 400);
+  setTimeout(() => { console.log("later"); }, 800);
+}"#,
+        serde_json::json!({"time":{"timer":true}}),
+    );
+    project.language_profile(V38_PROFILE);
+    project.configure("budgets", serde_json::json!({"deadlinePerTurnMs": 300}));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    // A bounded run ends at its one deadline, after the output it produced.
+    let bounded = project.command(&["dev"]);
+    assert_eq!(bounded.status.code(), Some(1), "{}", combined(&bounded));
+    assert_eq!(stdout_lines(&bounded), ["varta log: main"]);
+    // An application instance renews the deadline per turn.
+    for output in [
+        project.command(&["dev", "--app", "--budget-report"]),
+        project.run_in(
+            Command::new(runtime_path()),
+            &["run", "dist/app.wasm", "--app"],
+        ),
+        project.run_in(Command::new(project.0.join("dist/app")), &["--app"]),
+    ] {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            stdout_lines(&output),
+            ["varta log: main", "varta log: late", "varta log: later"],
+            "{}",
+            combined(&output)
+        );
+    }
+    let report = project.command(&["dev", "--app", "--budget-report"]);
+    assert!(
+        combined(&report).contains("(300 ms per turn)"),
+        "{}",
+        combined(&report)
+    );
+    // Earlier profiles cannot run as application instances.
+    project.language_profile("checked-f64-utf16-v37");
+    project.configure("budgets", serde_json::Value::Null);
+    let v37 = project.command(&["dev", "--app"]);
+    assert!(!v37.status.success(), "{}", combined(&v37));
+    assert!(combined(&v37).contains("require profile checked-f64-utf16-v38"));
 }

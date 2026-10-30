@@ -1,8 +1,52 @@
 //! One bounded store shared by normal startup and named tool invocation.
 use crate::{RunOutput, RuntimeContext, RuntimeError, host, policy};
-use std::time::{Duration, Instant};
-use varta_common::{CapabilityGrant, abi};
+use std::time::Instant;
+use varta_common::CapabilityGrant;
+use varta_common::budget::{Budgets, CappedBudget};
 use wasmtime::{Engine, Instance, Module, Store, StoreLimitsBuilder};
+
+/// How an instance is driven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mode {
+    /// One bounded execution: the whole run, every turn included, ends at
+    /// one wall-clock deadline (the deadline budget after it started).
+    Bounded,
+    /// A long-lived application instance (v38): the deadline renews per
+    /// turn, and the instance has no lifetime bound unless the embedder sets
+    /// one.
+    Application {
+        lifetime: Option<std::time::Duration>,
+    },
+}
+
+/// Everything an instance is created from, besides the module.
+pub(crate) struct Setup<'a> {
+    pub requested: &'a [CapabilityGrant],
+    pub ceiling: Option<&'a [CapabilityGrant]>,
+    pub budgets: Budgets,
+    pub capped: Vec<CappedBudget>,
+    /// Renew fuel, host calls and microtasks per turn (v38).
+    pub renew: bool,
+    pub mode: Mode,
+    pub broker: crate::permission::BrokerSetup,
+}
+impl<'a> Setup<'a> {
+    /// The production setup of every earlier entry point.
+    pub fn production(
+        requested: &'a [CapabilityGrant],
+        ceiling: Option<&'a [CapabilityGrant]>,
+    ) -> Self {
+        Self {
+            requested,
+            ceiling,
+            budgets: Budgets::PRODUCTION,
+            capped: Vec::new(),
+            renew: false,
+            mode: Mode::Bounded,
+            broker: crate::permission::BrokerSetup::default(),
+        }
+    }
+}
 
 pub(crate) struct Execution {
     pub store: Store<RuntimeContext>,
@@ -15,19 +59,40 @@ impl Execution {
         requested: &[CapabilityGrant],
         ceiling: Option<&[CapabilityGrant]>,
     ) -> Result<Self, RuntimeError> {
-        varta_common::validate_grants(requested)?;
-        if let Some(ceiling) = ceiling {
+        Self::with_setup(engine, Setup::production(requested, ceiling))
+    }
+
+    pub fn with_setup(engine: &Engine, setup: Setup<'_>) -> Result<Self, RuntimeError> {
+        varta_common::validate_grants(setup.requested)?;
+        if let Some(ceiling) = setup.ceiling {
             varta_common::validate_grants(ceiling)?;
         }
+        let mut policy = match setup.ceiling {
+            Some(ceiling) => policy::Policy::with_ceiling(setup.requested, Some(ceiling)),
+            None => policy::Policy::new(setup.requested),
+        };
+        let started = Instant::now();
+        // Required grants are decided before any guest code runs.
+        let broker = crate::permission::Broker::new(setup.broker, &mut policy, started)?;
+        let budgets = setup.budgets;
+        let (deadline, lifetime, renew_deadline) = match setup.mode {
+            Mode::Bounded => {
+                let end = started + budgets.deadline_per_turn;
+                (end, Some(end), false)
+            }
+            Mode::Application { lifetime } => {
+                let lifetime = lifetime.map(|lifetime| started + lifetime);
+                let turn = started + budgets.deadline_per_turn;
+                (lifetime.map_or(turn, |end| turn.min(end)), lifetime, true)
+            }
+        };
+        let control = Deadline::new(engine.clone(), deadline)?;
         let mut store = Store::new(
             engine,
             RuntimeContext {
-                policy: match ceiling {
-                    Some(ceiling) => policy::Policy::with_ceiling(requested, Some(ceiling)),
-                    None => policy::Policy::new(requested),
-                },
+                policy,
                 limits: StoreLimitsBuilder::new()
-                    .memory_size(abi::MAX_MEMORY_BYTES)
+                    .memory_size(budgets.memory_bytes)
                     .memories(1)
                     .tables(1)
                     .table_elements(1024)
@@ -36,18 +101,24 @@ impl Execution {
                 output: RunOutput::default(),
                 output_bytes: 0,
                 host_calls: 0,
-                host_call_limit: abi::MAX_HOST_CALLS,
                 http_control: None,
                 function_catalog: None,
                 module: varta_common::value::ModuleBounds::LEGACY,
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
                 net: crate::net::Net::default(),
-                deadline: Instant::now() + Duration::from_secs(abi::DEADLINE_SECONDS),
+                deadline,
+                started,
+                lifetime,
+                budgets,
+                turns: crate::turns::Turns::new(setup.renew, renew_deadline, setup.capped),
+                broker,
+                events: crate::events::HostEvents::default(),
+                rearm: Some(control.control.clone()),
             },
         );
         store.limiter(|context| &mut context.limits);
-        store.set_fuel(abi::FUEL)?;
+        store.set_fuel(budgets.fuel_per_turn)?;
         store.set_epoch_deadline(1);
         store.epoch_deadline_callback(|context| {
             Ok(if Instant::now() >= context.data().deadline {
@@ -56,10 +127,9 @@ impl Execution {
                 wasmtime::UpdateDeadline::Continue(1)
             })
         });
-        let deadline = Deadline::new(engine.clone(), store.data().deadline)?;
         Ok(Self {
             store,
-            _deadline: deadline,
+            _deadline: control,
             instantiation_started: false,
         })
     }
@@ -106,12 +176,14 @@ impl Execution {
             host::register(&mut linker)?;
             // Wasmtime meters the data-segment copy of instantiation per byte
             // of the initialized image. Under v38 that copy, bounded by the
-            // initial memory and so by the memory budget, gets its own
-            // allowance and the guest keeps its whole fuel budget.
+            // initial memory and so by the instance's memory budget, gets its
+            // own allowance and the guest keeps its whole fuel budget: the
+            // first turn (instantiation, `_start` and its microtasks) is
+            // charged only for guest code.
             let fuel = self.store.get_fuel()?;
             if uncharged_initialization {
-                self.store
-                    .set_fuel(fuel.saturating_add(abi::MAX_MEMORY_BYTES as u64))?;
+                let allowance = self.store.data().budgets.memory_bytes as u64;
+                self.store.set_fuel(fuel.saturating_add(allowance))?;
             }
             let instance = linker.instantiate(&mut self.store, module)?;
             if uncharged_initialization {
@@ -131,51 +203,69 @@ impl Execution {
     /// at the production deadline; the epoch callback then lets the run
     /// continue, bounded by its fuel. Production executions never call this.
     #[cfg(test)]
-    pub fn allow_test_wall_clock(&mut self, allowance: Duration) {
+    pub fn allow_test_wall_clock(&mut self, allowance: std::time::Duration) {
         self.store.data_mut().deadline = Instant::now() + allowance;
     }
-    /// Test-only host-call budget (CLAUDE.md §11) for measurements whose
-    /// workload exceeds the production 1024 host calls. Production executions
-    /// never call this.
+    /// A bounded execution under explicit test-only budgets (CLAUDE.md §11)
+    /// through the one budgets mechanism, for measurements whose workload
+    /// exceeds a production budget. Production executions never call this.
     #[cfg(test)]
-    pub fn allow_test_host_calls(&mut self, calls: u32) {
-        self.store.data_mut().host_call_limit = calls;
+    pub fn with_test_budgets(engine: &Engine, budgets: Budgets) -> Result<Self, RuntimeError> {
+        Self::with_setup(
+            engine,
+            Setup {
+                budgets,
+                ..Setup::production(&[], None)
+            },
+        )
     }
     pub fn check_deadline(&self) -> Result<(), wasmtime::Error> {
         if Instant::now() >= self.store.data().deadline {
-            return Err(wasmtime::Error::msg("execution deadline exceeded"));
+            return Err(wasmtime::Error::msg(crate::turns::DEADLINE_EXCEEDED));
         }
         Ok(())
     }
 }
 
+/// The epoch thread of one store: it increments the engine epoch when the
+/// current deadline passes, then waits to be rearmed for the next turn.
 struct Deadline {
-    stop: std::sync::mpsc::Sender<()>,
+    control: std::sync::mpsc::Sender<Option<Instant>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Deadline {
     fn new(engine: Engine, until: Instant) -> Result<Self, wasmtime::Error> {
-        let (stop, wait) = std::sync::mpsc::channel();
+        let (control, wait) = std::sync::mpsc::channel::<Option<Instant>>();
         let thread = std::thread::Builder::new()
             .name("varta-deadline".into())
             .spawn(move || {
-                if matches!(
-                    wait.recv_timeout(until.saturating_duration_since(Instant::now())),
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                ) {
-                    engine.increment_epoch();
+                use std::sync::mpsc::RecvTimeoutError;
+                let mut until = Some(until);
+                loop {
+                    let message = match until {
+                        Some(at) => wait.recv_timeout(at.saturating_duration_since(Instant::now())),
+                        None => wait.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                    };
+                    match message {
+                        Ok(Some(next)) => until = Some(next),
+                        Err(RecvTimeoutError::Timeout) => {
+                            engine.increment_epoch();
+                            until = None;
+                        }
+                        Ok(None) | Err(RecvTimeoutError::Disconnected) => return,
+                    }
                 }
             })
             .map_err(wasmtime::Error::new)?;
         Ok(Self {
-            stop,
+            control,
             thread: Some(thread),
         })
     }
 }
 impl Drop for Deadline {
     fn drop(&mut self) {
-        let _ = self.stop.send(());
+        let _ = self.control.send(None);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }

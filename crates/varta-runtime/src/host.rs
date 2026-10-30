@@ -19,7 +19,7 @@ pub(super) fn reset(caller: &mut Caller<'_, RuntimeContext>) -> Result<(), wasmt
     global(caller, abi::RESULT_STATUS, HostStatus::Ok as i32)
 }
 
-fn input(
+pub(crate) fn input(
     caller: &mut Caller<'_, RuntimeContext>,
     ptr: i32,
     len: i32,
@@ -117,6 +117,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     crate::random::register(linker)?;
     crate::scheduler::register(linker)?;
     crate::net::register(linker)?;
+    crate::events::register(linker)?;
     crate::primitive_string::register(linker)?;
     crate::primitive_number::register(linker)?;
     crate::number_radix::register(linker)?;
@@ -176,9 +177,8 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             reset(&mut caller)?;
             // Decided by the permission broker before the clock is read; a
             // denial is the recoverable failed status of every profile.
-            if let crate::permission::Decision::Denied =
-                crate::permission::clock(&caller.data().policy)
-            {
+            let context = caller.data_mut();
+            if let crate::permission::Decision::Denied = context.broker.clock(&context.policy) {
                 let capability = crate::permission::CLOCK_CAPABILITY;
                 failure(&mut caller, HostFailure::denied(capability, "clock"))?;
                 return Ok(0);

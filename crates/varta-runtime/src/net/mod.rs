@@ -258,6 +258,10 @@ impl Net {
         }
         Ok(())
     }
+    /// A completion that already arrived, without driving the transfers.
+    pub(crate) fn poll(&mut self) -> Option<Event> {
+        self.events.as_mut()?.1.try_recv().ok()
+    }
     /// Drive the transfers until one reports a completion or `until` passes.
     pub(crate) fn wait(&mut self, until: Instant) -> Option<Event> {
         let (Some(runtime), Some((_, events))) = (&self.runtime, &mut self.events) else {
@@ -352,7 +356,10 @@ fn plan(
     if url::Url::parse(request.url).is_err() {
         return Err(failed(format!("Invalid URL: {}", request.url)));
     }
-    let url = match crate::permission::request(&context.policy, request.url, request.method) {
+    let url = match context
+        .broker
+        .request(&context.policy, request.url, request.method)
+    {
         crate::permission::Decision::Granted(url) => url,
         crate::permission::Decision::Denied => {
             let text = format!(
@@ -410,7 +417,7 @@ fn plan(
         body: request
             .body
             .map(|body| hyper::body::Bytes::copy_from_slice(body.as_bytes())),
-        deadline: context.deadline,
+        deadline: crate::turns::operation_deadline(context),
         tls,
     })
 }
@@ -452,10 +459,7 @@ fn fatal(error: NetError) -> wasmtime::Error {
 /// Request bookkeeping is no host effect: it observes the execution deadline
 /// but is not charged to the host-call budget, like the timer bookkeeping.
 fn deadline(context: &RuntimeContext) -> Result<(), wasmtime::Error> {
-    if Instant::now() >= context.deadline {
-        return Err(wasmtime::Error::msg("host operation budget exhausted"));
-    }
-    Ok(())
+    context.check_deadline()
 }
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {

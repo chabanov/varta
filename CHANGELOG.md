@@ -70,6 +70,27 @@ in [conformance/README.md](conformance/README.md).
   one `value::ModuleBounds` parameter. Dictionary hashing is pending a
   value18 storage slot.
 
+- V38 turn budgets (selector `turn_budgets`, increment P5). A v38 instance
+  runs as event turns: `main` with its microtasks, then one timer, network
+  completion, host event or permission answer per turn. Fuel, host calls and
+  microtasks renew per turn, the deadline too in a long-lived application
+  instance; memory and output stay per instance, and an exhausted budget names
+  its turn. Manifests with `abiVersion` 34 may request `budgets`
+  (`fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`,
+  `outputBytes`), capped by the host ceiling and by the production defaults
+  without one. The runtime gains long-lived application instances
+  (`start_application`, `deliver`, `step`; a trap terminates the instance and
+  nothing restarts it), host event sources (`varta.events.listen`/`close`, FIFO
+  host tasks with coalescing) and permission broker v1:
+  `varta.permissions.query` and user-gesture-only `request`, grant
+  `required`/`purpose`, decisions keyed by the artifact's SHA-256 identity, a
+  `PermissionPrompter` seam and a bounded audit log; headless hosts never
+  prompt. Seven host imports use host ABI 34. `varta dev`, `varta run`, the
+  runtime companion and packaged applications print output captured before a
+  failure ahead of its diagnostic, and accept `--budget-report`, `--app` and
+  `--decisions PATH`; `inspect` reports the application identity. Earlier
+  profiles keep their budgets, texts and event loop.
+
 - Opt-in v38 (batch: program and data limits, turn budgets, linked
   intrinsics, view protocol and TSX, structural subtyping and code generation
   v2, in development) is registered. It inherits every v37 feature, shares

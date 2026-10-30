@@ -8907,7 +8907,8 @@ effect (a request with no transfer, a timer not yet armed) while its frame
 waits on its engine-internal promise through the scheduler; the user's answer
 would then complete it as granted or denied. A user grant is checked against
 the host ceiling like any grant, so a prompt can never exceed the ceiling.
-No prompt or user interface exists yet.
+V37 has no prompt; v38 adds permission states, stored decisions, a prompt
+seam and an audit log ([broker v1](#permission-broker-v1-turn_budgets)).
 
 ### `checked-f64-utf16-v38` — Batch: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping and codegen v2
 
@@ -8951,8 +8952,9 @@ commit, and the other streams rebase onto it. V37 and earlier profiles keep
 their host ABI, value ABI, static region and layouts.
 
 Eight selectors gate the batch's work streams; `program_limits()` admits the
-[multi-page static region](#multi-page-static-region-program_limits), the
-others admit nothing yet:
+[multi-page static region](#multi-page-static-region-program_limits) and the
+profile limits registry, `data_limits()` and `turn_budgets()` admit their
+subsections below, and the others admit nothing yet:
 
 - program-limits stream: `program_limits()` (profile-dependent structural
   limits up to the Wasm limits, a shared descriptor-driven checked decoder,
@@ -8961,9 +8963,11 @@ others admit nothing yet:
 - data-limits stream: `data_limits()` (arrays, dictionaries, `Map`, `Set`,
   `Uint8Array`, strings and JSON bounded only by the memory budget, and more
   than 64 live frames without a trap; [implemented](#data-limits-data_limits));
-- turn-budgets stream: `turn_budgets()` (per-event-turn fuel and deadline
-  configurable by the manifest within the host ceiling, a fuel profiler and
-  logs before failure in `varta dev`);
+- turn-budgets stream: `turn_budgets()` admits event turns with per-turn
+  budgets, manifest budgets within the host ceiling, long-lived application
+  instances, host event sources and permission broker v1 (subsections below),
+  and output before failure plus a per-turn budget report in the CLI and the
+  runtime companion;
 - linked-intrinsics stream: `linked_intrinsics()` (Rust pure intrinsics linked
   into the guest Wasm so third-party hosts stay thin);
 - view-protocol stream: `view_protocol()` (the L0 `view_commit` protocol,
@@ -8977,7 +8981,213 @@ others admit nothing yet:
 
 Until a stream adds its subsection here, a v38 module compiles and runs exactly
 like a v37 module apart from its declared profile and host ABI, and production
-budgets of every profile are unchanged.
+budgets of every profile are unchanged. The turn-budgets stream has added its
+subsections below.
+
+#### Turn budgets and application instances (`turn_budgets()`)
+
+A v38 instance runs as a sequence of **event turns**. Turn 1 covers
+instantiation, `_start`, the exception check and the microtask checkpoint;
+every later turn takes exactly one task and drains the microtasks it queued.
+Tasks are a fired timer, a network completion, a host task (a host event or a
+permission answer, below). Turns never interleave and a turn is never
+interrupted for fairness.
+
+| Budget | Scope in v38 | Earlier profiles |
+| --- | --- | --- |
+| Fuel (`fuelPerTurn`) | Renewed at the start of every turn | One allowance per execution |
+| Host calls (`hostCallsPerTurn`) | Renewed per turn | Per execution |
+| Microtasks (`scheduler::MAX_EXECUTION_JOBS`) | Renewed per turn | Per execution |
+| Deadline (`deadlinePerTurnMs`) | Bounded runs: one deadline for the whole execution; application instances: renewed per turn | One deadline per execution |
+| Memory (`memoryBytes`), output (`outputBytes`) | Per instance, never renewed | Per execution |
+| Serials, live frames, held tokens, pending timers and requests | Per instance | Per execution |
+
+**Manifest budgets.** A package manifest with `abiVersion` 34 or later may
+request budgets; the host ceiling caps them:
+
+```json
+{
+  "abiVersion": 34,
+  "budgets": { "fuelPerTurn": 2000000, "deadlinePerTurnMs": 250 },
+  "capabilities": [{ "id": "time.timer", "enabled": true }]
+}
+```
+
+Members are `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`,
+`hostCallsPerTurn` and `outputBytes`, each optional and in `1..=` its engine
+maximum (`budget::MAX_*`); unknown members are errors. The effective value of
+each budget is the request (or the production default when omitted) capped by
+the host ceiling's `budgets` value (or by the production default when the
+ceiling sets none): a package can lower its budgets, and only the embedder can
+raise them. A capped request is not an error; the budget report lists it. A
+manifest or host policy with `abiVersion` below 34 that declares `budgets`,
+`required` or `purpose` is rejected. Modules of earlier profiles keep the
+production budgets whatever a ceiling declares. Defaults equal the production
+values in the [limits table](#resource-limits), so a v38 module without budgets
+runs with the same allowances as before, now per turn.
+
+**Exhaustion.** A v38 turn that exhausts a budget fails with `BudgetExhausted`
+(`turn N (kind) exhausted its fuel budget (… instructions per turn); the
+instance was terminated`). Exhaustion is contained to the instance: the host
+process, other instances and their stores are unaffected, and the embedder may
+start a new instance. It is never delivered to the guest and the instance is
+never resumed. Earlier profiles keep their texts (`host operation budget
+exhausted`, `execution deadline exceeded`, `output budget exhausted`, fuel
+traps).
+
+**Bounded runs** (`run_wasm_bytes*`, `run_observed`, `run_with`, `varta
+run`/`dev` and the runtime companion without `--app`): the instance ends when no
+source keeps the loop alive, exactly as before, and the whole run is bounded by
+one wall-clock deadline (`deadlinePerTurnMs` after it started); a timer due at
+or after it fails at once with `TimerDeadline`.
+
+**Long-lived application instances** (`VartaRuntime::start_application`,
+`run_application`, `--app`) require a v38 module without an HTTP contract. The
+instance stays alive after `main` while a timer that keeps the loop alive, a
+request in flight, a listening host event source or an open prompt remains.
+Its deadline renews per turn; it has no lifetime bound unless the embedder sets
+`ApplicationOptions::lifetime` or `max_turns`. A failed turn (trap, budget,
+unhandled rejection after the turn, fatal host error) **terminates the
+instance**: no later turn runs and nothing restarts it automatically; only an
+explicit new instance starts again from `main`. A guest exit finishes it with
+its code. Network transfers started in an application turn get a fresh
+per-turn allowance as their end-to-end deadline. Tool and HTTP entry points
+stay stateless fresh-store invocations.
+
+**Measured profile (working UI budget).** An external web developer measured a
+simple loop at about 95 Wasm instructions per iteration (about 10,500
+iterations in 1,000,000 fuel) and one `fetch` at about 65,000 fuel. On the
+reference host `--budget-report` shows the same order: a counting loop costs
+about 90 to 110 instructions per iteration, a timer turn that logs one line
+about 1,000 to 1,600, and the first turn of a small program about 40,000 plus
+its own work. These are the working UI profile: an embedder sets per-turn
+values for UI targets through its ceiling from such measurements; the
+production defaults stay unchanged.
+
+**Run reports and diagnostics.** `VartaRuntime::run_with(bytes, RunOptions)`
+returns a `RunReport`: the output lines captured before any failure, the
+failure, a `BudgetReport` (effective budgets, capped requests, per-turn
+`TurnUsage` for the first `budget::MAX_REPORTED_TURNS` turns: fuel, host calls,
+microtasks, wall time and memory; totals), the permission audit log and the
+stored decisions. The earlier `Result` entry points are `run_with` minus the
+partial output of a failed run. `varta run`, `varta dev`, the runtime companion
+and packaged applications print the captured lines, then (with
+`--budget-report`) the `varta budget:` lines on stderr, then the failure
+diagnostic. Per-function fuel attribution is a later extension of `TurnUsage`
+(the code-generation stream); the per-turn totals are its baseline.
+
+#### Host event sources (`turn_budgets()`)
+
+The guest opens a named source with `varta.events.listen(name, listener)`
+(engine prelude, returns its id; `varta.events.close(id)` closes it). Names are
+1 to `events::MAX_EVENT_NAME_BYTES` bytes of ASCII letters, digits, `.`, `_`
+and `-`, starting with a letter; an invalid or already open name throws
+`TypeError`. Each record the embedder delivers is one **host task** and runs as
+its own turn: it wakes the source's listening frame, which calls the listener
+with the record. A listener that throws ends the source's frame with a
+rejection nobody handles, so the instance fails after that turn.
+
+Ordering is FIFO by arrival across host tasks, due timers (by due time, then
+registration) and network completions (in completion order); at most one task
+runs per turn. A record marked coalescible replaces the pending coalescible
+record of the same source, so a burst costs one turn. At most
+`events::MAX_PENDING_HOST_TASKS` tasks wait at once: overflow drops a
+coalescible record and fails the instance for any other. Records are at most
+`events::MAX_EVENT_RECORD_BYTES` bytes; at most `events::MAX_EVENT_SOURCES`
+sources (named and permission answers) are open at once. Every task carries its
+source id, which is never reused; a task for a closed source is discarded
+before it reaches the guest. Open sources keep an application instance alive;
+they do not keep a bounded run alive (nothing can deliver to it).
+
+Internal imports (host ABI 34, no capability, not charged to the host-call
+budget): `event_source_open(ptr, len) -> id` (0 for an invalid or duplicate
+name), `event_watch(serial, id)`, `event_take(id) -> kind` (`TakeKind`: 1 event,
+2 closed), `event_text(id)` (the record in the host buffer) and
+`event_source_close(id)`. A malformed id, watch or take is a fatal error.
+
+**Stable internal Rust API** (for the view-protocol stream and other host
+event producers; unstable for third-party hosts):
+
+```rust
+let mut app = runtime.start_application(&wasm, ApplicationOptions { run, prompter, lifetime, max_turns })?;
+app.deliver(HostEvent { source: "ui".into(), record, gesture: true, coalesce: false })?; // -> Delivery
+match app.step(Some(timeout)) { Step::Turn(usage) => …, Step::Idle => …, Step::Finished { exit_code } => …, Step::Failed => … }
+app.take_output(); app.budget_report(); app.audit(); app.decisions(); app.revoke("net.request");
+```
+
+`deliver` only queues; `step` answers open prompts (between turns), then runs at
+most one turn, waiting up to `timeout` for a timer or a network completion; with
+only host event sources open it returns `Idle` at once. A UI event of the view
+protocol is a `HostEvent` whose `gesture` marks user-gesture turns and whose
+`coalesce` marks high-frequency kinds; the view stream adds its own records and
+guest-side dispatch on top of this queue and these source ids.
+
+#### Permission broker v1 (`turn_budgets()`)
+
+V38 extends the [permission broker](#permission-broker-v37) with permission
+states. Each requested grant is `granted`, `denied` or `prompt` for an
+instance; a concrete resource outside the package request intersected with the
+host ceiling is always `denied` and never prompted. The broker decides in this
+order: (1) request ∩ ceiling, exactly as before; (2) the stored decision for
+this application identity; (3) the prompt seam, or `denied` where none exists.
+
+- **Manifest.** A grant may carry `"required": false` (default `true`) and
+  `"purpose"`: nonblank text without control characters, at most
+  `permission::MAX_PURPOSE_BYTES` bytes, untrusted, shown in a prompt as a quote
+  next to the broker's own description of the operation and the exact
+  requested patterns. Both need `abiVersion` 34; a host policy rejects them.
+- **Required grants** are granted by policy at start (request ∩ ceiling); a
+  host with a prompt seam asks once before instantiation when no decision is
+  stored. A stored or first-run refusal fails with `PermissionError::
+  RequiredDenied` before any guest code: the application cannot run.
+- **Optional grants** start from the stored decision; without one they are in
+  `prompt` state on a host with a prompt seam and `denied` on headless and
+  server hosts. A withheld grant (`denied` or `prompt`) fails every check of
+  its operation exactly like an absent request, recoverably where the profile
+  reports denials recoverably.
+- **Identity.** Decisions are keyed by the application identity
+  `sha256:<64 lowercase hex>` of the portable Wasm bytes (`varta inspect`
+  reports it as `identity`) until C3 provenance exists. The headless decision
+  file (`--decisions PATH`, run/dev/packaged applications only):
+
+  ```json
+  { "schemaVersion": 1, "applications": [
+      { "artifact": "sha256:…", "decisions": [ { "id": "net.request", "decision": "allow" } ] } ] }
+  ```
+
+  It is strict (unknown members, unknown ids, duplicates, malformed digests and
+  more than `permission::MAX_DECISION_APPLICATIONS` applications are errors),
+  bounded like a manifest, and decisions for other identities are ignored. A
+  stored allow never exceeds the request or the ceiling.
+- **Guest API.** `varta.permissions.query({ name, resource? })` resolves to
+  `{ name, state }` and never prompts; it rejects with `TypeError` for an
+  unknown capability id or a resource on a boolean capability. A resource is a
+  name, path, URL or endpoint matched exactly as the operation would; without
+  one the answer is about the grant (request and ceiling both name the
+  operation with a non-denying filter). `varta.permissions.request(descriptor)`
+  prompts only in a user-gesture turn of an application instance whose host
+  installed a `PermissionPrompter`, only for a `prompt` state, with at most
+  `permission::MAX_OPEN_PROMPTS` open prompts and fewer than
+  `permission::MAX_DISMISSALS` dismissals of that grant; every other call
+  resolves to the current state. Use of a permission in `prompt` state outside
+  `request()` is denied recoverably (v1 does not prompt at first use).
+- **Prompts** run between turns, never while guest code runs, so they consume
+  no fuel and no turn deadline. The answer is a host task on a one-shot source
+  in a later turn. Allow and deny are stored; a dismissal keeps `prompt`, and
+  the `permission::MAX_DISMISSALS`-th becomes a stored denial. `revoke` denies
+  new operations; operations already authorized keep running.
+- **Audit log.** Every start decision, prompt answer, revocation and broker
+  operation decision (`net.request`, `time.timer`, `time.now`) is appended to a
+  bounded per-instance log (`permission::MAX_AUDIT_ENTRIES`, oldest dropped and
+  counted) with its sequence, time since start, source (`policy`, `stored`,
+  `prompt`), operation, bounded resource and outcome. The guest can neither
+  read nor write it.
+
+Internal imports (host ABI 34, no capability, not charged to the host-call
+budget): `permission_query(ptr, len) -> state` and `permission_request(ptr, len)
+-> source id`, over the UTF-16 descriptor `varta-permission-1\n<name>\n<0|1>\n
+<resource>`; state codes are `PermissionState` (1 granted, 2 denied, 3 prompt)
+and 0 marks an invalid descriptor. A malformed descriptor structure is fatal.
 
 #### Program limits (`program_limits`)
 
@@ -9459,11 +9669,17 @@ All host access is denied unless the **exact operation** is granted. A grant for
 `env.has` cannot authorize `env.get`; `fs.read` cannot authorize `fs.print`.
 Logging has no system-access capability but is output-budgeted.
 
-The [permission model](development-plan.md#permission-model) (accepted direction,
-details pending) makes every denial in new profiles recoverable (`NotAllowedError`
-or a failed `VartaResult`, never a trap) and adds permission states, a host
-permission broker and user consent as a grant source bounded by the host ceiling.
-Nothing below changes until a profile adopts it.
+The [permission model](development-plan.md#permission-model) makes every denial
+in new profiles recoverable (`NotAllowedError` or a failed `VartaResult`, never a
+trap) and adds permission states, a host permission broker and user consent as a
+grant source bounded by the host ceiling. V38 adopts its first part
+([permission broker v1](#permission-broker-v1-turn_budgets)): a manifest with
+`abiVersion` 34 may mark a grant `"required": false` and give it a `"purpose"`,
+and may request `"budgets"` ([turn budgets](#turn-budgets-and-application-instances-turn_budgets));
+a host policy may cap budgets but never carries `required` or `purpose`; and
+`--decisions PATH` supplies stored decisions keyed by the artifact's identity
+for `run`, `dev` and packaged applications. Everything below holds for every
+profile; earlier profiles never read the new members.
 
 Configuration shorthand:
 
@@ -10054,6 +10270,13 @@ continuations and timers) are the frozen limits of every profile before v38.
 Profile v38 takes them from `limits::DataLimits::V38`
 ([data limits](#data-limits-data_limits)); its memory, fuel, deadline,
 host-call and output budgets are the production budgets above.
+
+In v38 the fuel, host-call and microtask rows apply per event turn, and the
+deadline per turn in a long-lived application instance; a manifest may lower
+them and a host ceiling may raise them within `budget::MAX_*` ([turn
+budgets](#turn-budgets-and-application-instances-turn_budgets)). Memory and
+output stay per instance. The values above are the defaults and the caps
+without a ceiling.
 
 Preflight limits also bound signatures, function count/body size, memories,
 tables and globals before native compilation. Store budgets apply before Wasm

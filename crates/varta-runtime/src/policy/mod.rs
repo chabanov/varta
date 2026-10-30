@@ -8,6 +8,10 @@ pub(crate) struct Policy {
     requested: Vec<CapabilityGrant>,
     ceiling: Option<Vec<CapabilityGrant>>,
     files: FilePolicy,
+    /// Requested grants the v38 permission broker withholds (state `denied`
+    /// or `prompt`): every check of their operation fails, as if the package
+    /// had not requested them, until the broker grants them.
+    withheld: std::collections::BTreeSet<String>,
 }
 
 impl Policy {
@@ -23,30 +27,101 @@ impl Policy {
             requested: requested.to_vec(),
             ceiling: ceiling.map(ToOwned::to_owned),
             files: FilePolicy::new(requested, ceiling.unwrap_or(requested)),
+            withheld: std::collections::BTreeSet::new(),
         }
     }
 
-    fn both(&self, permits: impl Fn(&[CapabilityGrant]) -> bool) -> bool {
+    /// Withhold or release a requested grant (v38 broker states). Releasing
+    /// never adds authority: the request and the ceiling still decide.
+    pub(crate) fn withhold(&mut self, id: &str, withheld: bool) {
+        if withheld {
+            self.withheld.insert(id.to_owned());
+        } else {
+            self.withheld.remove(id);
+        }
+    }
+
+    /// The request and the ceiling, ignoring broker states.
+    fn permits(&self, permits: impl Fn(&[CapabilityGrant]) -> bool) -> bool {
         permits(&self.requested) && self.ceiling.as_deref().is_none_or(permits)
     }
 
-    pub(crate) fn enabled(&self, id: &str) -> bool {
-        self.both(|grants| {
-            grants
-                .iter()
-                .any(|g| g.id == id && g.value == CapabilityValue::Boolean(true))
+    /// Whether the broker leaves operation `id` open.
+    fn open(&self, id: &str) -> bool {
+        !self.withheld.contains(id)
+    }
+
+    /// The package requests `id` with a non-denying filter, and so does the
+    /// ceiling when there is one (the grant-level view of a broker state).
+    pub(crate) fn requested_open(&self, id: &str) -> bool {
+        self.permits(|grants| grants.iter().any(|g| g.id == id && grant_open(&g.value)))
+    }
+
+    /// The exact requested patterns of `id` (what a prompt shows).
+    pub(crate) fn requested_scope(&self, id: &str) -> Vec<String> {
+        self.requested
+            .iter()
+            .filter(|g| g.id == id)
+            .flat_map(|g| match &g.value {
+                CapabilityValue::PathGlobs(p)
+                | CapabilityValue::UrlGlobs(p)
+                | CapabilityValue::ListenEndpoints(p) => p.clone(),
+                CapabilityValue::Requests(scope) => scope.urls.clone(),
+                CapabilityValue::Boolean(_) => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// Whether the request and the ceiling cover `resource` of `id`, ignoring
+    /// broker states. `None` when the descriptor is malformed: an unknown
+    /// id, or a resource on a boolean operation.
+    pub(crate) fn covers(&self, id: &str, resource: Option<&str>) -> Option<bool> {
+        let kind = varta_common::capability_kind(id)?;
+        let Some(resource) = resource else {
+            return Some(self.requested_open(id));
+        };
+        Some(match kind {
+            varta_common::GrantKind::Boolean => return None,
+            varta_common::GrantKind::Patterns if id.starts_with("fs.") => {
+                self.permits(|grants| grants.iter().any(|g| g.id == id))
+                    && self.files.covers(id, resource)
+            }
+            varta_common::GrantKind::Patterns => self.env_scope(id, resource),
+            varta_common::GrantKind::Urls => self.network_scope(id, resource).is_some(),
+            varta_common::GrantKind::Requests => self.request_scope(resource, None).is_some(),
+            varta_common::GrantKind::Listeners => self.listen_scope(resource),
         })
     }
 
+    pub(crate) fn enabled(&self, id: &str) -> bool {
+        self.open(id)
+            && self.permits(|grants| {
+                grants
+                    .iter()
+                    .any(|g| g.id == id && g.value == CapabilityValue::Boolean(true))
+            })
+    }
+
     pub(crate) fn env(&self, id: &str, name: &str) -> bool {
-        !name.is_empty() && name.len() <= 256 && !name.contains(['=', '\0']) && self.both(|grants| {
+        self.open(id) && self.env_scope(id, name)
+    }
+
+    fn env_scope(&self, id: &str, name: &str) -> bool {
+        !name.is_empty() && name.len() <= 256 && !name.contains(['=', '\0']) && self.permits(|grants| {
             grants.iter().any(|g| g.id == id && matches!(&g.value, CapabilityValue::PathGlobs(p) if p.iter().any(|p| glob(p, name, false))))
         })
     }
 
     pub(crate) fn network(&self, id: &str, input: &str) -> Option<url::Url> {
+        if !self.open(id) {
+            return None;
+        }
+        self.network_scope(id, input)
+    }
+
+    fn network_scope(&self, id: &str, input: &str) -> Option<url::Url> {
         let url = parse_network_url(input, &[HTTP])?;
-        self.both(|grants| {
+        self.permits(|grants| {
             grants.iter().filter(|g| g.id == id).any(|g| {
                 let CapabilityValue::UrlGlobs(patterns) = &g.value else {
                     return false;
@@ -62,8 +137,17 @@ impl Policy {
     /// pattern and the method list of one grant in the package's requests and
     /// in the host ceiling. Nothing is resolved or connected here.
     pub(crate) fn request(&self, input: &str, method: &str) -> Option<url::Url> {
+        if !self.open(varta_common::net::REQUEST_CAPABILITY) {
+            return None;
+        }
+        self.request_scope(input, Some(method))
+    }
+
+    /// The URL scope of `net.request`; without a method, any granted method
+    /// (a nonempty method list or none) qualifies.
+    fn request_scope(&self, input: &str, method: Option<&str>) -> Option<url::Url> {
         let url = parse_network_url(input, &[HTTP, HTTPS])?;
-        self.both(|grants| {
+        self.permits(|grants| {
             grants
                 .iter()
                 .filter(|g| g.id == varta_common::net::REQUEST_CAPABILITY)
@@ -71,23 +155,42 @@ impl Policy {
                     let CapabilityValue::Requests(scope) = &g.value else {
                         return false;
                     };
-                    scope
-                        .methods
-                        .as_ref()
-                        .is_none_or(|methods| methods.iter().any(|m| m == method))
-                        && scope.urls.iter().any(|pattern| url_matches(pattern, &url))
+                    scope.methods.as_ref().is_none_or(|methods| match method {
+                        Some(method) => methods.iter().any(|m| m == method),
+                        None => !methods.is_empty(),
+                    }) && scope.urls.iter().any(|pattern| url_matches(pattern, &url))
                 })
         })
         .then_some(url)
     }
 
     pub(crate) fn listen(&self, endpoint: &str) -> bool {
-        self.both(|grants| grants.iter().any(|g| g.id == "net.listen"
+        self.open("net.listen") && self.listen_scope(endpoint)
+    }
+
+    fn listen_scope(&self, endpoint: &str) -> bool {
+        self.permits(|grants| grants.iter().any(|g| g.id == "net.listen"
             && matches!(&g.value, CapabilityValue::ListenEndpoints(p) if p.iter().any(|p| p == endpoint))))
     }
 
     pub(crate) fn read(&self, id: &str, input: &str) -> Result<Vec<u8>, crate::HostFailure> {
+        if !self.open(id) {
+            return Err(crate::HostFailure::denied(id, input));
+        }
         self.files.read(id, input)
+    }
+}
+
+/// Whether a grant value permits anything at all.
+fn grant_open(value: &CapabilityValue) -> bool {
+    match value {
+        CapabilityValue::Boolean(enabled) => *enabled,
+        CapabilityValue::PathGlobs(patterns)
+        | CapabilityValue::UrlGlobs(patterns)
+        | CapabilityValue::ListenEndpoints(patterns) => !patterns.is_empty(),
+        CapabilityValue::Requests(scope) => {
+            !scope.urls.is_empty() && scope.methods.as_ref().is_none_or(|m| !m.is_empty())
+        }
     }
 }
 

@@ -82,10 +82,14 @@ fn v37_modules_keep_their_bytes() {
 fn run_budgeted(source: &str, profile: P, fuel: u64) -> (Result<Vec<String>, RuntimeError>, u64) {
     let runtime = VartaRuntime::new();
     let module = runtime.prepare_module(&compile(source, profile)).unwrap();
-    let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+    let budgets = varta_common::budget::Budgets {
+        fuel_per_turn: fuel * abi::FUEL,
+        host_calls_per_turn: u32::MAX,
+        ..varta_common::budget::Budgets::PRODUCTION
+    };
+    let mut execution =
+        crate::execution::Execution::with_test_budgets(&runtime.engine, budgets).unwrap();
     execution.allow_test_wall_clock(std::time::Duration::from_secs(120));
-    execution.allow_test_host_calls(u32::MAX);
-    execution.store.set_fuel(fuel * abi::FUEL).unwrap();
     let instance = execution.instantiate_prepared(&module).unwrap();
     let store = &mut execution.store;
     let result = (|| {

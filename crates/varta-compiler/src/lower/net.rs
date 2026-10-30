@@ -41,17 +41,63 @@ const INTRINSICS: [(&str, Host, Type, Type); 5] = [
     ),
 ];
 
+/// The v38 (`turn_budgets`) intrinsics of the permission and host event
+/// preludes, in the same shape.
+const INSTANCE_INTRINSICS: [(&str, Host, Type, Type); 6] = [
+    (
+        "varta.permissions.state",
+        Host::PermissionQuery,
+        Type::String,
+        Type::Float64,
+    ),
+    (
+        "varta.permissions.ask",
+        Host::PermissionRequest,
+        Type::String,
+        Type::Float64,
+    ),
+    (
+        "varta.events.open",
+        Host::EventSourceOpen,
+        Type::String,
+        Type::Float64,
+    ),
+    (
+        "varta.events.take",
+        Host::EventTake,
+        Type::Float64,
+        Type::Float64,
+    ),
+    (
+        "varta.events.text",
+        Host::EventText,
+        Type::Float64,
+        Type::String,
+    ),
+    (
+        "varta.events.release",
+        Host::EventSourceClose,
+        Type::Float64,
+        Type::Void,
+    ),
+];
+
 impl Lower<'_> {
-    /// The intrinsic call `name(argument)` of the `fetch` prelude, if it is one.
+    /// The intrinsic call `name(argument)` of the `fetch` prelude (v37) or of
+    /// the permission and host event preludes (v38), if it is one.
     pub(super) fn prelude_net(&mut self, call: &ast::CallExpr, name: &str) -> Result<Option<Expr>> {
-        let Some((_, host, argument_type, result)) =
-            INTRINSICS.iter().find(|(intrinsic, ..)| *intrinsic == name)
-        else {
+        let net = INTRINSICS
+            .iter()
+            .find(|(intrinsic, ..)| *intrinsic == name)
+            .filter(|_| self.types.profile.net_request());
+        let instance = INSTANCE_INTRINSICS
+            .iter()
+            .find(|(intrinsic, ..)| *intrinsic == name)
+            .filter(|_| self.types.profile.turn_budgets());
+        let Some((_, host, argument_type, result)) = net.or(instance) else {
             return Ok(None);
         };
-        if !self.types.profile.net_request()
-            || !crate::modules::engine::is_prelude_source(self.source)
-        {
+        if !crate::modules::engine::is_prelude_source(self.source) {
             return Ok(None);
         }
         let [argument] = call.args.as_slice() else {
@@ -83,6 +129,41 @@ mod tests {
     };
 
     const FETCH: &str = include_str!("../prelude/fetch.ts");
+    const PERMISSIONS: &str = include_str!("../prelude/permissions.ts");
+    const EVENTS: &str = include_str!("../prelude/events.ts");
+
+    /// The v38 preludes' mirrored constants match the broker and event
+    /// contracts.
+    #[test]
+    fn the_permission_and_event_preludes_mirror_their_contracts() {
+        use varta_common::events::{INVALID_SOURCE, TakeKind};
+        use varta_common::permission::{
+            DESCRIPTOR_NO_RESOURCE, DESCRIPTOR_RESOURCE, DESCRIPTOR_SEPARATOR,
+            DESCRIPTOR_VERSION as PERMISSION_VERSION, INVALID_DESCRIPTOR, PermissionState,
+        };
+        let constant = |source: &str, file: &str, name: &str, value: &str| {
+            let line = format!("const {name} = {value};");
+            assert!(source.contains(&line), "{file} lacks `{line}`");
+        };
+        let permission =
+            |name: &str, value: &str| constant(PERMISSIONS, "permissions.ts", name, value);
+        permission("DESCRIPTOR_VERSION", &format!("'{PERMISSION_VERSION}'"));
+        assert_eq!(DESCRIPTOR_SEPARATOR, '\n');
+        permission("SEPARATOR", "'\\n'");
+        permission("NO_RESOURCE", &format!("'{DESCRIPTOR_NO_RESOURCE}'"));
+        permission("WITH_RESOURCE", &format!("'{DESCRIPTOR_RESOURCE}'"));
+        permission("INVALID_DESCRIPTOR", &INVALID_DESCRIPTOR.to_string());
+        for state in PermissionState::ALL {
+            let name = state.name().to_uppercase();
+            permission(&name, &state.code().to_string());
+            assert!(PERMISSIONS.contains(&format!("'{}'", state.name())));
+        }
+        permission("KIND_EVENT", &(TakeKind::Event as i32).to_string());
+        let event = |name: &str, value: &str| constant(EVENTS, "events.ts", name, value);
+        event("INVALID_SOURCE", &format!("{}", INVALID_SOURCE as i32));
+        event("KIND_EVENT", &(TakeKind::Event as i32).to_string());
+        event("KIND_CLOSED", &(TakeKind::Closed as i32).to_string());
+    }
 
     /// The prelude's mirrored constants match the shared contract.
     #[test]

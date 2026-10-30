@@ -624,9 +624,13 @@ impl LanguageProfile {
     pub fn data_limits(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
-    /// Batch v38, turn-budgets stream: per-event-turn fuel and deadline
-    /// configurable by the manifest within the host ceiling, a fuel profiler
-    /// and logs before failure in `varta dev`. Admits nothing yet.
+    /// Batch v38, turn-budgets stream (increment P5): event turns with fuel,
+    /// host calls and microtasks renewed per turn (and the deadline in a
+    /// long-lived application instance), manifest budgets capped by the host
+    /// ceiling (`crate::budget`), permission broker v1 with
+    /// `varta.permissions.query`/`request` (`crate::permission`) and host
+    /// event sources with `varta.events.listen`/`close` (`crate::events`),
+    /// whose host imports require [`crate::abi::PROGRAM_LIMITS_VERSION`].
     #[must_use]
     pub fn turn_budgets(self) -> bool {
         self == Self::CheckedF64Utf16V38

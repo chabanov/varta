@@ -5355,3 +5355,115 @@ fn public_engine_reports_v38_data_limits_and_typed_resource_failures() {
         other => panic!("expected the memory resource, got {other:?}"),
     }
 }
+
+/// V38 (`turn_budgets`): the embedder API of long-lived application
+/// instances, host events, the prompt seam, run reports and manifest-derived
+/// options, through public engine APIs only.
+#[test]
+fn public_engine_drives_application_instances_events_prompts_and_reports() {
+    use std::sync::{Arc, Mutex};
+    use varta_common::Manifest;
+    use varta_common::language::LanguageProfile;
+    use varta_common::permission::{PermissionPrompt, PromptAnswer, StoredDecision};
+    use varta_runtime::{
+        ApplicationOptions, HostEvent, InstanceState, PermissionPrompter, RunOptions, RuntimeError,
+        Step, TurnKind,
+    };
+    struct Prompts(Arc<Mutex<Vec<String>>>);
+    impl PermissionPrompter for Prompts {
+        fn prompt(&mut self, prompt: &PermissionPrompt) -> PromptAnswer {
+            self.0.lock().unwrap().push(prompt.capability.clone());
+            PromptAnswer::Allow
+        }
+    }
+    let bytes = varta_compiler::compile_typescript_with_profile(
+        r#"
+let clicks = 0;
+export function main(): void {
+  console.log('ready');
+  varta.events.listen('ui', (record: string) => {
+    clicks += 1;
+    varta.permissions.request({ name: 'time.timer' }).then((status) => {
+      console.log(`${record} ${clicks} ${status.state}`);
+      if (status.state === 'granted') {
+        setTimeout(() => { console.log('tick'); }, 1);
+      }
+    });
+  });
+}"#,
+        LanguageProfile::CheckedF64Utf16V38,
+    )
+    .unwrap();
+    let manifest = Manifest::parse(
+        br#"{"abiVersion":34,"budgets":{"fuelPerTurn":500000},
+        "capabilities":[{"id":"time.timer","enabled":true,"required":false,"purpose":"Remind me"}]}"#,
+    )
+    .unwrap();
+    let options = RunOptions::from_manifests(&manifest, None).unwrap();
+    let prompted = Arc::new(Mutex::new(Vec::new()));
+    let runtime = VartaRuntime::new();
+    let mut app = runtime
+        .start_application(
+            &bytes,
+            ApplicationOptions {
+                run: options.clone(),
+                prompter: Some(Box::new(Prompts(prompted.clone()))),
+                ..ApplicationOptions::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(app.take_output(), ["varta log: ready"]);
+    assert_eq!(app.artifact(), varta_runtime::artifact_identity(&bytes));
+    app.deliver(HostEvent {
+        source: "ui".into(),
+        record: "click".into(),
+        gesture: true,
+        coalesce: false,
+    })
+    .unwrap();
+    let mut kinds = Vec::new();
+    loop {
+        match app.step(Some(std::time::Duration::from_millis(500))) {
+            Step::Turn(turn) => kinds.push(turn.kind),
+            Step::Idle => break,
+            other => panic!("{other:?} {:?}", app.failure()),
+        }
+    }
+    assert_eq!(
+        kinds,
+        [TurnKind::HostEvent, TurnKind::Permission, TurnKind::Timer]
+    );
+    assert_eq!(
+        app.take_output(),
+        ["varta log: click 1 granted", "varta log: tick"]
+    );
+    assert_eq!(*prompted.lock().unwrap(), ["time.timer"]);
+    assert_eq!(app.decisions()["time.timer"], StoredDecision::Allow);
+    let report = app.budget_report();
+    assert_eq!(report.budgets.fuel_per_turn, 500_000);
+    assert!(report.per_turn && report.deadline_per_turn);
+    assert_eq!(app.state(), InstanceState::Running);
+
+    // A bounded run of the same module reports output, budgets and the
+    // audit log; the headless optional grant is denied without a prompt.
+    let report = runtime.run_with(&bytes, options);
+    assert!(report.failure.is_none());
+    assert_eq!(report.output.lines, ["varta log: ready"]);
+    assert_eq!(report.budget.unwrap().total_turns, 1);
+    assert!(
+        report
+            .audit
+            .iter()
+            .any(|entry| entry.operation == "time.timer")
+    );
+    // Earlier profiles cannot start an application instance.
+    let v37 = varta_compiler::compile_typescript_with_profile(
+        "export function main(): void {}",
+        LanguageProfile::CheckedF64Utf16V37,
+    )
+    .unwrap();
+    assert!(matches!(
+        runtime.start_application(&v37, ApplicationOptions::default()),
+        Err(RuntimeError::Application(_))
+    ));
+}

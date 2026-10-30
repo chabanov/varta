@@ -75,6 +75,28 @@ impl FilePolicy {
         }
     }
 
+    /// Whether the package's lexical scopes and the pinned authority both
+    /// cover `input`, without opening anything (v38 permission states).
+    pub(super) fn covers(&self, id: &str, input: &str) -> bool {
+        let path = Path::new(input);
+        if input.len() > 4096
+            || !path.is_absolute()
+            || path.components().any(|c| matches!(c, Component::ParentDir))
+        {
+            return false;
+        }
+        let requested = self.requested.iter().filter(|g| g.id == id).any(|g| {
+            matches!(&g.value, CapabilityValue::PathGlobs(patterns) if patterns.iter().any(|pattern| {
+                scope(pattern).is_some_and(|(root, pattern)| matches(&root, pattern, path))
+            }))
+        });
+        requested
+            && self
+                .authority
+                .iter()
+                .any(|rule| rule.operation == id && matches(&rule.root, &rule.pattern, path))
+    }
+
     pub(super) fn read(&self, id: &str, input: &str) -> Result<Vec<u8>, crate::HostFailure> {
         let path = Path::new(input);
         if input.len() > 4096

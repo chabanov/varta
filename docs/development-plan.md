@@ -783,14 +783,15 @@ separate foundation commit
 All selectors are registered. `program_limits()` admits the
 [multi-page static region](architecture.md#multi-page-static-region-program_limits)
 (the batch's layout foundation) and the profile limits registry; `data_limits()`
-admits the [data limits](architecture.md#data-limits-data_limits); the others
+admits the [data limits](architecture.md#data-limits-data_limits);
+`turn_budgets()` admits its stream; the others
 admit nothing yet.
 
 | Selector | Work stream | State |
 | --- | --- | --- |
 | `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Implemented ([contract](architecture.md#program-limits-program_limits)): multi-page static region (host ABI 34, no value 18; the foundation), profile limits registry with the Wasm limits, table-driven `varta_resume`, unreachable async frames and unread constants removed, startup fuel independent of static size. Pending: per-type `request<T>` code (async frame and promise helpers, about 11 functions per response type) |
 | `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Implemented ([contract](architecture.md#data-limits-data_limits)): `DataLimits` registry (2^27 elements, 2^30 string bytes, JSON depth host ceiling 10000), value17 sparse backings above 1024 slots with one bit per slot, typed `RuntimeError::Resource` failures through the `resource_failure`/`resource_request` globals, geometric heap growth and a worklist mark, a hashed growable live-frame table and memory-derived scheduler bounds, `json_stringify_owned` (host ABI 34) into owned guest strings, iterative JSON parsing, lifted `Map`/`Set`/`Uint8Array` preludes and an O(n log n) `join`. Pending: dictionary and mixed-record hashing (needs a value18 storage slot from the program-limits stream), per-element host calls (`String`, `%`) against the 1024 host-call budget, frozen limits in `console.log` diagnostics and primitive conversions |
-| `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Registered, admits nothing |
+| `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Admits event turns with per-turn budgets, manifest budgets capped by the ceiling, long-lived application instances, host event sources and permission broker v1; logs before failure and `--budget-report` in `dev`/`run`/companion ([contract](architecture.md#turn-budgets-and-application-instances-turn_budgets)). Pending: per-function fuel attribution (codegen stream), per-turn UI values from measurements on the targets |
 | `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Registered, admits nothing |
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Registered, admits nothing |
 | `tsx()` | TSX: TSX parsing and template compilation | Registered, admits nothing |
@@ -800,8 +801,12 @@ admit nothing yet.
 ### Platform targets and application model
 
 **Status: design accepted by the owner on 2026-10-29
-([accepted decisions](#accepted-decisions-2026-10-29)). Nothing in this section is
-implemented yet.** The contract that exists today for third-party hosts is
+([accepted decisions](#accepted-decisions-2026-10-29)). The runtime half of P5
+(event turns with per-turn budgets, long-lived application instances, host
+event sources, permission broker v1 with `query`/`request`, stored decisions and
+a prompt seam) is implemented under profile v38 (`turn_budgets()`,
+[contract](architecture.md#turn-budgets-and-application-instances-turn_budgets));
+the rest of this section is not implemented yet.** The contract that exists today for third-party hosts is
 [embedding.md](embedding.md). This section is the agreed design for the owner's
 stated goal:
 
@@ -1480,7 +1485,14 @@ Later increments, each its own capability or capability-free contract:
 
 **Status: accepted direction 2026-10-29; details pending.** Normative once each
 part lands in its profile and in [architecture.md](architecture.md#capabilities-and-trust);
-until then this is the agreed target. Requirement from the owner: permissions are
+until then this is the agreed target. Part 1 has landed in v37, and parts 2 to
+6 for headless and embedder hosts in v38
+([broker v1](architecture.md#permission-broker-v1-turn_budgets): states, `query`, user-gesture `request`, `required`/`purpose`, decisions keyed by
+the artifact hash, the prompt seam, audit log); prompt UI per target
+(P9, P10b) and "allow for this session" remain. V1 narrows two points: a
+permission in `prompt` state is not asked at its first use (only through
+`request()`), and the headless decision file is the only persistent store.
+Requirement from the owner: permissions are
 handled professionally. A denial is never a fatal error, because a user will
 later be able to confirm a permission at the moment it is needed (a consent
 prompt). The security invariants of the capability model do not change; the model
@@ -1658,7 +1670,7 @@ under Node. Order (P1–P12):
 | P2 | Thin host: Rust intrinsics linked into the guest under a new profile | Only the intrinsics an application uses are linked; JSON/Headers/value programs run identically in Node and Wasmtime; `app.wasm` growth, fuel deltas and cold start in the browser and on the Pi 5 recorded | 01, 10, 13, 16 | M1–M4 programs |
 | P3 | Cross-target native packaging (`--target`, offline launcher metadata, musl aarch64) | Same artifact runs on a real Pi 5 (16 KiB pages) and on macOS/Linux; Windows CI | 14 | — |
 | P4 | Structured entry points v2 (binary64/UTF-16 tools and HTTP) | A uarp-sdk-shaped typed tool with records/unions runs in native and Node hosts | 10, 13 | M2–M3 |
-| P5 | Application lifecycle: long-lived instance, event turns, per-turn budgets, timers delivered as tasks; [permission broker](#permission-model), states and `query` | Timer and event ordering tests against Node logs; trap kills the instance without automatic restart; per-turn budget values set from measurements | 07, 08, 09, 17 | M4–M5 (timers, backoff) |
+| P5 | Application lifecycle: long-lived instance, event turns, per-turn budgets, timers delivered as tasks; [permission broker](#permission-model), states and `query` | Timer and event ordering tests against Node logs; trap kills the instance without automatic restart; per-turn budget values set from measurements. **Runtime half implemented under v38 (`turn_budgets()`)**; pending: Node-log ordering cases for host events, per-turn UI values from target measurements, per-function fuel profiling | 07, 08, 09, 17 | M4–M5 (timers, backoff) |
 | P6 | Async `fetch` (`net.request`, replacing `net.get`/`net.fetch` in the new profile), streaming bodies, `AbortSignal`, HTTPS through `rustls` | uarp-sdk `transport.ts`/`sse.ts` paths against a local test server, native and browser | 09, 10, 11 | M5–M6 |
 | P7 | L0 view protocol + headless renderer (tree + accessibility snapshot) | Patch/event conformance cases; malformed patches fail closed | 10, 15, 18 | — |
 | P8 | L1 reactive core package + `tsx` + template compilation (B) | TSX counter/list/form examples produce identical headless snapshots on every host | 02, 03, 18 | — |

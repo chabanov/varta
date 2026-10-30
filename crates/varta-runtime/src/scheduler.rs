@@ -16,11 +16,11 @@
 //! frame, then drains the microtasks again. Loop time starts at zero with the
 //! execution and moves only to the due time of the timer that fires, so the
 //! order of timers never depends on how fast guest code ran.
+use crate::turns::TurnKind;
 use crate::{RuntimeContext, RuntimeError, exceptions::Channel};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 use varta_common::HostOperation;
-use varta_common::abi;
 use varta_common::function::frame::{self, Completion, Outcome};
 use varta_common::scheduler::{
     MAX_EXECUTION_JOBS, MAX_PENDING_CONTINUATIONS, MAX_PENDING_TIMERS, MAX_PROMISE_SERIALS,
@@ -284,6 +284,14 @@ impl Scheduler {
             .enumerate()
             .find(|(_, bits)| **bits != 0)
             .map(|(word, bits)| word as u64 * TRACKING_WORD_BITS + u64::from(bits.trailing_zeros()))
+    }
+    /// Microtasks dispatched in the current allowance.
+    pub(crate) fn dispatched(&self) -> u64 {
+        self.dispatched
+    }
+    /// A v38 turn begins with a fresh microtask allowance.
+    pub(crate) fn renew(&mut self) {
+        self.dispatched = 0;
     }
     /// The next microtask, counted against the per-execution job budget.
     pub(crate) fn next(&mut self) -> Result<Option<i64>, SchedulerError> {
@@ -556,10 +564,7 @@ fn uncaught(caller: &mut Caller<'_, RuntimeContext>, reason: i64) -> wasmtime::E
 /// scheduler's own named limits, and observes the execution deadline, but it
 /// is not charged to the host-call budget.
 fn deadline(context: &RuntimeContext) -> Result<(), wasmtime::Error> {
-    if std::time::Instant::now() >= context.deadline {
-        return Err(wasmtime::Error::msg("host operation budget exhausted"));
-    }
-    Ok(())
+    context.check_deadline()
 }
 
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
@@ -662,7 +667,7 @@ fn register_timers(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::
                 return Err(fatal(SchedulerError::TimerState));
             }
             let context = caller.data_mut();
-            match crate::permission::timer(&context.policy) {
+            match context.broker.timer(&context.policy) {
                 crate::permission::Decision::Granted(()) => context
                     .scheduler
                     .timer_start(serial, delay, flags)
@@ -710,12 +715,11 @@ fn register_timers(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::
 
 /// The wall-clock instant of loop time `due` (milliseconds after the
 /// execution started); now under the test-only virtual clock.
-fn target(context: &RuntimeContext, due: f64) -> Instant {
+pub(crate) fn target(context: &RuntimeContext, due: f64) -> Instant {
     if virtual_clock() {
         return Instant::now();
     }
-    let started = context.deadline - Duration::from_secs(abi::DEADLINE_SECONDS);
-    started + Duration::from_secs_f64(due / MILLISECONDS_PER_SECOND)
+    context.started + Duration::from_secs_f64(due / MILLISECONDS_PER_SECOND)
 }
 
 /// Wait until the wall clock reaches loop time `due`, never past the
@@ -727,7 +731,7 @@ fn wait(context: &RuntimeContext, due: f64) -> Result<(), wasmtime::Error> {
         std::thread::sleep(target.min(context.deadline) - now);
     }
     if Instant::now() >= context.deadline {
-        return Err(wasmtime::Error::msg("execution deadline exceeded"));
+        return Err(context.deadline_error());
     }
     Ok(())
 }
@@ -738,8 +742,7 @@ pub(crate) fn observed_wall_clock(context: &mut RuntimeContext) {
     if virtual_clock() {
         return;
     }
-    let started = context.deadline - Duration::from_secs(abi::DEADLINE_SECONDS);
-    let elapsed = Instant::now().saturating_duration_since(started);
+    let elapsed = Instant::now().saturating_duration_since(context.started);
     context
         .scheduler
         .observe(elapsed.as_secs_f64() * MILLISECONDS_PER_SECOND);
@@ -750,7 +753,11 @@ pub(crate) fn observed_wall_clock(context: &mut RuntimeContext) {
 /// drives the transfers until a completion arrives, the next timer is due or
 /// the deadline passes. A timer due beyond the deadline cannot fire, but a
 /// completion may still clear it, so the wait continues until the deadline.
-fn network_turn(store: &mut Store<RuntimeContext>, due: Option<f64>) -> Result<(), RuntimeError> {
+/// Returns the kind of task taken, if any.
+fn network_turn(
+    store: &mut Store<RuntimeContext>,
+    due: Option<f64>,
+) -> Result<Option<TurnKind>, RuntimeError> {
     let context = store.data_mut();
     let deadline = context.deadline;
     let timer = due.map(|due| (due, target(context, due)));
@@ -759,22 +766,24 @@ fn network_turn(store: &mut Store<RuntimeContext>, due: Option<f64>) -> Result<(
         && fires(at)
         && at <= Instant::now()
     {
-        return context.scheduler.fire().map_err(|e| fatal(e).into());
+        context.scheduler.fire().map_err(fatal)?;
+        return Ok(Some(TurnKind::Timer));
     }
     let until = match timer {
         Some((_, at)) if fires(at) => at,
         _ => deadline,
     };
     if crate::net::wait(context, until)? {
-        return Ok(());
+        return Ok(Some(TurnKind::Network));
     }
     if Instant::now() >= deadline {
-        return Err(wasmtime::Error::msg("execution deadline exceeded").into());
+        return Err(context.deadline_error().into());
     }
     if timer.is_some_and(|(_, at)| fires(at) && at <= Instant::now()) {
         context.scheduler.fire().map_err(fatal)?;
+        return Ok(Some(TurnKind::Timer));
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Run the event loop after the entry point returned: the microtask
@@ -794,35 +803,44 @@ pub(crate) fn checkpoint(
         let busy = store.data().net.alive();
         let due = store.data().scheduler.next_due(busy);
         if busy {
-            network_turn(store, due)?;
+            if let Some(kind) = network_turn(store, due)? {
+                crate::turns::boundary(instance, store, kind)?;
+            }
             continue;
         }
         let Some(due) = due else {
             return Ok(());
         };
-        if let Some(error) = beyond_deadline(due) {
+        if let Some(error) = beyond_deadline(store.data(), due) {
             return Err(error.into());
         }
         wait(store.data(), due)?;
         store.data_mut().scheduler.fire().map_err(fatal)?;
+        crate::turns::boundary(instance, store, TurnKind::Timer)?;
     }
 }
 
 /// The budget error of a next timer due at loop time `due` (milliseconds) at
-/// or beyond the execution deadline; it reports the due time rounded up to a
-/// whole millisecond.
-fn beyond_deadline(due: f64) -> Option<SchedulerError> {
-    (due >= Duration::from_secs(abi::DEADLINE_SECONDS).as_millis() as f64).then(|| {
-        SchedulerError::TimerDeadline {
-            due_ms: due.ceil() as u64,
-            deadline_seconds: abi::DEADLINE_SECONDS,
-        }
+/// or beyond the end of a bounded execution; it reports the due time rounded
+/// up to a whole millisecond. A long-lived instance without a lifetime bound
+/// waits for any timer.
+fn beyond_deadline(context: &RuntimeContext, due: f64) -> Option<SchedulerError> {
+    let lifetime = context.lifetime?.saturating_duration_since(context.started);
+    beyond_lifetime(lifetime, due)
+}
+fn beyond_lifetime(lifetime: Duration, due: f64) -> Option<SchedulerError> {
+    (due >= lifetime.as_millis() as f64).then(|| SchedulerError::TimerDeadline {
+        due_ms: due.ceil() as u64,
+        deadline_seconds: lifetime.as_secs_f64().ceil() as u64,
     })
 }
 
 /// The microtask checkpoint: every job through `varta_resume` with a
 /// `Normal` completion and an `undefined` input, until the queue is empty.
-fn drain(instance: &Instance, store: &mut Store<RuntimeContext>) -> Result<(), RuntimeError> {
+pub(crate) fn drain(
+    instance: &Instance,
+    store: &mut Store<RuntimeContext>,
+) -> Result<(), RuntimeError> {
     let mut resume = None;
     while let Some(token) = store.data_mut().scheduler.next().map_err(fatal)? {
         if resume.is_none() {
@@ -851,6 +869,7 @@ fn drain(instance: &Instance, store: &mut Store<RuntimeContext>) -> Result<(), R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use varta_common::abi;
     use varta_common::exceptions::ThrownValue;
 
     #[test]
@@ -941,17 +960,18 @@ mod tests {
     /// millisecond, and only a due time at or past the deadline fails.
     #[test]
     fn timer_deadline_rounds_the_due_time_up() {
-        let deadline = Duration::from_secs(abi::DEADLINE_SECONDS).as_millis() as f64;
-        assert_eq!(beyond_deadline(deadline - 0.25), None);
+        let lifetime = Duration::from_secs(abi::DEADLINE_SECONDS);
+        let deadline = lifetime.as_millis() as f64;
+        assert_eq!(beyond_lifetime(lifetime, deadline - 0.25), None);
         assert_eq!(
-            beyond_deadline(5999.25),
+            beyond_lifetime(lifetime, 5999.25),
             Some(SchedulerError::TimerDeadline {
                 due_ms: 6000,
                 deadline_seconds: abi::DEADLINE_SECONDS,
             })
         );
         assert_eq!(
-            beyond_deadline(deadline),
+            beyond_lifetime(lifetime, deadline),
             Some(SchedulerError::TimerDeadline {
                 due_ms: deadline as u64,
                 deadline_seconds: abi::DEADLINE_SECONDS,

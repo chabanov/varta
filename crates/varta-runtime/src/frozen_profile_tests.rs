@@ -86,6 +86,7 @@ fn digest(profile: Option<LanguageProfile>) -> (u64, usize, usize) {
 /// their loopback servers and are covered by their own tests.
 #[test]
 fn every_v37_case_runs_identically_under_v38() {
+    use varta_common::budget::BudgetKind;
     let grants: Vec<varta_common::CapabilityGrant> =
         [varta_common::scheduler::TIMER_CAPABILITY, "process.exit"]
             .into_iter()
@@ -102,12 +103,28 @@ fn every_v37_case_runs_identically_under_v38() {
                 // A trap is compared by kind: function indices in the
                 // backtrace differ, and a case that exhausts the production
                 // fuel budget does so later under v38, whose instantiation
-                // is not charged to the guest.
+                // is not charged to the guest. V38 (`turn_budgets`) reports
+                // an exhausted production budget as the typed
+                // `BudgetExhausted` of its turn; it is compared by the budget
+                // it names.
                 .map_err(|error| {
+                    let exhausted =
+                        |budget: BudgetKind| format!("{} budget exhausted", budget.label());
+                    if let crate::RuntimeError::Budget(error) = &error {
+                        return exhausted(error.budget);
+                    }
                     let error = error.to_string();
-                    match error.rsplit_once("wasm trap: ") {
-                        Some((_, trap)) => trap.to_owned(),
-                        None => error,
+                    let trap = error
+                        .rsplit_once("wasm trap: ")
+                        .map_or(error.as_str(), |(_, trap)| trap);
+                    match trap {
+                        "all fuel consumed by WebAssembly" => exhausted(BudgetKind::Fuel),
+                        crate::turns::HOST_BUDGET_EXHAUSTED => exhausted(BudgetKind::HostCalls),
+                        crate::turns::DEADLINE_EXCEEDED | "interrupt" => {
+                            exhausted(BudgetKind::Deadline)
+                        }
+                        crate::turns::OUTPUT_BUDGET_EXHAUSTED => exhausted(BudgetKind::Output),
+                        other => other.to_owned(),
                     }
                 })
         })
