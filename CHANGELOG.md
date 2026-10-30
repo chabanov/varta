@@ -11,6 +11,12 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 `varta_resume` dispatches through a static per-layout table and one
+  `br_table`: about a dozen bytes per frame layout instead of a ~125-byte
+  check block, constant resume fuel, the same checks before any effect and
+  unchanged frame admission. Every pre-v38 runtime case runs identically
+  under v37 and v38.
+
 - V38 `program_limits`: structural limits come from one registry,
   `LanguageProfile::limits()` (`varta_common::limits`), read by the compiler,
   runtime preflight, catalog, schema and closure readers, artifact and

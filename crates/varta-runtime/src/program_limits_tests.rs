@@ -281,6 +281,77 @@ fn function_values_beyond_the_frozen_function_index_are_read() {
     );
 }
 
+/// The exported `varta_resume` dispatcher's body size.
+fn dispatcher_bytes(bytes: &[u8]) -> usize {
+    let mut imported = 0;
+    let mut dispatcher = None;
+    let mut defined = 0;
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.unwrap() {
+            wasmparser::Payload::ImportSection(reader) => imported = reader.count(),
+            wasmparser::Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.unwrap();
+                    if export.name == varta_common::function::frame::RESUME_EXPORT {
+                        dispatcher = Some(export.index);
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                if Some(imported + defined) == dispatcher {
+                    return body.range().len();
+                }
+                defined += 1;
+            }
+            _ => {}
+        }
+    }
+    panic!("no dispatcher");
+}
+
+/// V38 resumes through one `br_table` over a static dispatch table: the
+/// dispatcher grows by a few bytes per frame layout instead of the v37
+/// chain's check block per layout, and every async function still runs.
+#[test]
+fn the_resume_dispatcher_is_table_driven() {
+    let program = |count: usize| {
+        let mut source: String = (0..count)
+            .map(|i| {
+                format!(
+                    "async function a{i}(flag: boolean): Promise<number> {{ \
+                     const v = await Promise.resolve({i}); return flag ? v : 0; }}\n"
+                )
+            })
+            .collect();
+        source.push_str("export async function main(): Promise<void> {\n  let total = 0;\n");
+        for i in 0..count {
+            source.push_str(&format!(
+                "  {{ const v = await a{i}(true); total = total + v; }}\n"
+            ));
+        }
+        source.push_str("  console.log(String(total));\n}\n");
+        source
+    };
+    let size = |profile, count| {
+        dispatcher_bytes(
+            &varta_compiler::compile_typescript_with_profile(&program(count), profile).unwrap(),
+        )
+    };
+    let (small, large) = (4, 16);
+    let v38 = (size(V38, large) - size(V38, small)) / (large - small);
+    let v37 = (size(V37, large) - size(V37, small)) / (large - small);
+    assert!(v38 <= 16, "{v38} bytes per layout under v38");
+    assert!(v37 >= 4 * v38, "{v37} bytes per layout under v37");
+    let bytes = varta_compiler::compile_typescript_with_profile(&program(large), V38).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&bytes, &[])
+            .unwrap()
+            .lines,
+        [log((0..large).sum::<usize>())]
+    );
+}
+
 /// A v38 module over a frozen limit fails before any guest effect when its
 /// profile is relabelled as v37: at its host ABI section, and with that
 /// downgraded as well, at the frozen structural limits of the runtime.

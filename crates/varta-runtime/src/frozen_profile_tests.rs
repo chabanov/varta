@@ -80,6 +80,61 @@ fn digest(profile: Option<LanguageProfile>) -> (u64, usize, usize) {
     (state, compiled, rejected)
 }
 
+/// V38 changes only layouts and limits (static region, table-driven resume
+/// dispatch, registry limits): every pre-v38 case that runs under v37 runs
+/// under v38 with the same output, exit code or error. Network cases need
+/// their loopback servers and are covered by their own tests.
+#[test]
+fn every_v37_case_runs_identically_under_v38() {
+    let grants: Vec<varta_common::CapabilityGrant> =
+        [varta_common::scheduler::TIMER_CAPABILITY, "process.exit"]
+            .into_iter()
+            .map(|id| varta_common::CapabilityGrant {
+                id: id.into(),
+                value: varta_common::CapabilityValue::Boolean(true),
+            })
+            .collect();
+    let run = |bytes: &[u8]| {
+        crate::scheduler::with_virtual_clock(|| {
+            crate::VartaRuntime::new()
+                .run_wasm_bytes(bytes, &grants)
+                .map(|output| (output.lines, output.exit_code))
+                // A trap is compared by kind: function indices in the
+                // backtrace differ, and a case that exhausts the production
+                // fuel budget does so later under v38, whose instantiation
+                // is not charged to the guest.
+                .map_err(|error| {
+                    let error = error.to_string();
+                    match error.rsplit_once("wasm trap: ") {
+                        Some((_, trap)) => trap.to_owned(),
+                        None => error,
+                    }
+                })
+        })
+    };
+    let mut compared = 0;
+    for path in case_files() {
+        if path.parent().is_some_and(|dir| dir.ends_with("net_cases")) {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).unwrap();
+        let Ok(older) = varta_compiler::compile_typescript_with_profile(
+            &source,
+            LanguageProfile::CheckedF64Utf16V37,
+        ) else {
+            continue;
+        };
+        let newer = varta_compiler::compile_typescript_with_profile(
+            &source,
+            LanguageProfile::CheckedF64Utf16V38,
+        )
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(run(&newer), run(&older), "{}", path.display());
+        compared += 1;
+    }
+    assert!(compared > 100, "{compared}");
+}
+
 #[test]
 fn v37_v36_and_legacy_modules_and_diagnostics_stay_byte_identical() {
     let expected = [

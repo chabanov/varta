@@ -9025,6 +9025,33 @@ stream), imports, globals and tables, and all production runtime budgets
 limit relabelled as v37 fails at its host ABI section, and with a downgraded
 host ABI at the frozen structural checks, before any guest effect.
 
+#### Table-driven resume dispatch (`program_limits`)
+
+Under v37 and earlier, `varta_resume` checks a frame against each layout in
+turn: a block of about 125 bytes per layout and resume fuel linear in the
+number of layouts. A v38 dispatcher reads the per-layout facts from a static
+dispatch table and selects the layout's body with one `br_table`:
+
+- The table (static data, placed like descriptors) holds one 16-byte entry
+  per layout in layout-id order — the expected control function
+  (`u32::MAX` for generator layouts, which the dispatcher never resumes), the
+  suspension point count, the `Return` rule (forbidden, unchecked or the
+  largest admitted scalar) and the offset of its per-state input limits —
+  followed by those limits (`u32::MAX` when a state's input is not
+  range-checked, 1 for booleans, 0 for `undefined`/`void`).
+- The checks and their order before the first effect are the v37 chain's:
+  empty exception channel, ownership in the live-frame table, envelope,
+  status, generation and completion kind, then layout id in range,
+  layout/control/state agreement and input admissibility, and only then the
+  `RUNNING` status and the cleared completion. Each `br_table` case is the
+  direct call of its resume body followed by a branch to the shared
+  scheduled or synchronous epilogue, so frame admission (direct calls in
+  layout order, no tables or indirect calls) is unchanged.
+- The dispatcher grows by about a dozen bytes per layout and resumes in
+  constant fuel. The table is guest memory like any static data: a guest
+  that overwrites it can only break its own frames; host-side validation of
+  everything the scheduler reads is unchanged.
+
 #### Multi-page static region (`program_limits`)
 
 The batch's memory-layout foundation, under host ABI 34 and value layout 17

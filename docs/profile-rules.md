@@ -3148,6 +3148,10 @@ profiles frozen, and add each stream's rules under its own heading here.
 - Runtime readers take `value::ModuleBounds` (static region and limits) from
   the validated module, never from guest memory; legacy and test callers use
   `ModuleBounds::LEGACY`.
+- The v38 `varta_resume` is table-driven (`frames::dispatch_table`,
+  `table_dispatch`): keep every check before the `RUNNING` store and keep one
+  direct body call per layout in layout order (frame admission depends on
+  it). V37 and earlier keep the per-layout chain byte for byte.
 - A new structural limit in this batch gets a `ProgramLimits` field, a row in
   the generated program-limits table and a v38 test over the frozen value
   that also shows the v37 diagnostic.

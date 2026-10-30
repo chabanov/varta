@@ -304,6 +304,15 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         schema_offsets.insert(ty, (start, bytes.len() as u32));
         layout_data.push((start, bytes));
     }
+    // V38: the table-driven `varta_resume` dispatch reads static data.
+    let dispatch_table = if program.types.profile.program_limits() && !frame_layouts.is_empty() {
+        let table = frames::dispatch_table(&frame_layouts, &program.suspendable);
+        Some(placement.push(&table).ok_or_else(|| {
+            CompilerError::Invalid("frame dispatch table exceeds static memory budget".into())
+        })?)
+    } else {
+        None
+    };
     let static_region = placement.region()?;
     let hosts: BTreeMap<_, _> = hosts
         .into_iter()
@@ -802,6 +811,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             exceptions,
             allocate: helpers[&strings::Helper::Allocate],
             bindings: &binding_types,
+            table: dispatch_table,
         })?);
     }
     if let Some(exceptions) = exception_globals {

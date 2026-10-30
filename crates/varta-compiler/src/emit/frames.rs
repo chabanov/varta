@@ -903,6 +903,69 @@ pub(super) struct Dispatch<'a> {
     pub exceptions: exceptions::Globals,
     pub allocate: u32,
     pub bindings: &'a BTreeMap<Type, u32>,
+    /// V38 (`program_limits`): static address of the dispatch table, which
+    /// replaces the per-layout check chain by one `br_table`.
+    pub table: Option<u32>,
+}
+
+/// Bytes of one dispatch table entry (v38): the expected control function
+/// (`NOT_DISPATCHED` for generator frames), the suspension point count, the
+/// `Return` rule and the offset of the per-state input limits from the table
+/// base.
+const DISPATCH_ENTRY_BYTES: u32 = 16;
+/// A layout `varta_resume` never resumes (a generator frame).
+const NOT_DISPATCHED: u32 = u32::MAX;
+/// A state, or the `Return` completion, whose input is not range-checked.
+const UNCHECKED_INPUT: u32 = u32::MAX;
+/// A `Return` completion the layout does not admit.
+const RETURN_FORBIDDEN: u32 = u32::MAX - 1;
+
+/// The largest scalar input a state admits: booleans 0/1, `undefined` and
+/// `void` 0; other inputs are not range-checked here.
+fn input_limit(ty: Type) -> Option<u32> {
+    match ty {
+        Type::Boolean => Some(1),
+        Type::Undefined | Type::Void => Some(0),
+        _ => None,
+    }
+}
+
+/// The v38 dispatch table: one entry per layout in id order, then each
+/// layout's per-state input limits (state `n` at index `n - 1`). Static data
+/// like descriptors: it carries the same facts the v37 chain embeds as
+/// constants, so a guest that overwrites it can only break its own frames.
+pub(super) fn dispatch_table(
+    layouts: &[Layout],
+    machines: &BTreeMap<usize, ir::Suspendable>,
+) -> Vec<u8> {
+    let entries = layouts.len() * DISPATCH_ENTRY_BYTES as usize;
+    let mut table = Vec::with_capacity(entries);
+    let mut limits = Vec::new();
+    for layout in layouts {
+        let machine = &machines[&layout.function];
+        let function = if layout.generator.is_some() {
+            NOT_DISPATCHED
+        } else {
+            layout.function as u32
+        };
+        let returned = match machine.return_input {
+            None => RETURN_FORBIDDEN,
+            Some(ty) => input_limit(ty).unwrap_or(UNCHECKED_INPUT),
+        };
+        let offset = (entries + limits.len()) as u32;
+        for word in [function, machine.points.len() as u32, returned, offset] {
+            table.extend(word.to_le_bytes());
+        }
+        for point in &machine.points {
+            limits.extend(
+                input_limit(point.input)
+                    .unwrap_or(UNCHECKED_INPUT)
+                    .to_le_bytes(),
+            );
+        }
+    }
+    table.extend(limits);
+    table
 }
 
 /// `varta_resume(token, completion, value) -> outcome`: closed direct calls by
@@ -916,8 +979,6 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
     const PTR: u32 = 3;
     const CURSOR: u32 = 4;
     const STATE: u32 = 5;
-    const OUTCOME: u32 = 6;
-    const CELL: u32 = 7;
     const HANDLE: u32 = 8;
     let resources = dispatch.resources;
     let globals = dispatch.exceptions;
@@ -1024,8 +1085,12 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
         I::LocalGet(PTR),
         I::I32Load(word(frame::CONTROL_FIELD, true)),
         I::LocalSet(STATE),
-        I::Block(BlockType::Empty),
     ]);
+    if let Some(table) = dispatch.table {
+        table_dispatch(dispatch, table, &mut code);
+        return Ok(dispatch_epilogue(dispatch, code));
+    }
+    code.push(I::Block(BlockType::Empty));
     for (layout, body) in dispatch.layouts.iter().zip(dispatch.bodies) {
         let machine = &dispatch.machines[&layout.function];
         if layout.generator.is_some() {
@@ -1144,10 +1209,24 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
         code.extend([I::Br(1), I::End]);
     }
     code.extend([I::Unreachable, I::End]);
+    Ok(dispatch_epilogue(dispatch, code))
+}
+
+/// The shared tail of `varta_resume`: an uncaught exception leaves the
+/// channel and becomes the frame completion; the outcome is reported.
+fn dispatch_epilogue(dispatch: &Dispatch<'_>, mut code: Vec<I<'static>>) -> wasm_encoder::Function {
+    const PTR: u32 = 3;
+    const CURSOR: u32 = 4;
+    const OUTCOME: u32 = 6;
+    const CELL: u32 = 7;
+    const HANDLE: u32 = 8;
+    let resources = dispatch.resources;
+    let globals = dispatch.exceptions;
     // Uncaught exceptions leave the channel and become the frame completion.
     let exception = dispatch.machines.values().next().map(|m| m.exception);
-    let exception = exception
-        .ok_or_else(|| CompilerError::Internal("dispatcher without frame layouts".into()))?;
+    // Dispatch requires a layout, and every layout of a module shares the
+    // exception union (`Dispatch` is built only when layouts exist).
+    let exception = exception.unwrap_or(Type::Void);
     let bytes = binding_bytes(exception);
     code.extend([
         I::GlobalGet(globals.pending),
@@ -1233,7 +1312,184 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
     for instruction in &code {
         function.instruction(instruction);
     }
-    Ok(function)
+    function
+}
+
+/// V38 dispatch: the per-layout facts come from the static dispatch table and
+/// one `br_table` selects the layout's direct body call, so the dispatcher
+/// grows by a few bytes per layout and resumes in constant fuel. The checks
+/// and their order before the first effect are the v37 chain's.
+fn table_dispatch(dispatch: &Dispatch<'_>, table: u32, code: &mut Vec<I<'static>>) {
+    const KIND: u32 = 1;
+    const VALUE: u32 = 2;
+    const PTR: u32 = 3;
+    const CURSOR: u32 = 4;
+    const STATE: u32 = 5;
+    // Free until the epilogue: the layout id, then its table entry address.
+    const ID: u32 = 6;
+    const ENTRY: u32 = 7;
+    const HANDLE: u32 = 8;
+    let globals = dispatch.exceptions;
+    let trap_if = |code: &mut Vec<I<'static>>| {
+        code.extend([I::If(BlockType::Empty), I::Unreachable, I::End]);
+    };
+    let entry_word = |index: u32| wasm_encoder::MemArg {
+        offset: u64::from(index) * 4,
+        ..strings::WORD
+    };
+    let layouts = dispatch.layouts.len() as u32;
+    code.extend([
+        I::LocalGet(PTR),
+        I::I32Load(strings::WORD),
+        I::LocalTee(ID),
+        I::I32Const(layouts as i32),
+        I::I32GeU,
+    ]);
+    trap_if(code);
+    code.extend([
+        I::LocalGet(ID),
+        I::I32Const(DISPATCH_ENTRY_BYTES as i32),
+        I::I32Mul,
+        I::I32Const(table as i32),
+        I::I32Add,
+        I::LocalSet(ENTRY),
+        // Layout/code/state agreement; generator layouts never match.
+        I::LocalGet(PTR),
+        I::I32Load(word(frame::CONTROL_FIELD, false)),
+        I::LocalGet(ENTRY),
+        I::I32Load(entry_word(0)),
+        I::I32Ne,
+        I::LocalGet(ENTRY),
+        I::I32Load(entry_word(0)),
+        I::I32Const(NOT_DISPATCHED as i32),
+        I::I32Eq,
+        I::I32Or,
+        I::LocalGet(STATE),
+        I::LocalGet(ENTRY),
+        I::I32Load(entry_word(1)),
+        I::I32GtU,
+        I::I32Or,
+    ]);
+    trap_if(code);
+    // A normal completion into a range-checked state.
+    code.extend([
+        I::LocalGet(KIND),
+        I::I32Eqz,
+        I::LocalGet(STATE),
+        I::I32Const(0),
+        I::I32Ne,
+        I::I32And,
+        I::If(BlockType::Empty),
+        I::LocalGet(ENTRY),
+        I::I32Load(entry_word(3)),
+        I::I32Const(table as i32),
+        I::I32Add,
+        I::LocalGet(STATE),
+        I::I32Const(1),
+        I::I32Sub,
+        I::I32Const(4),
+        I::I32Mul,
+        I::I32Add,
+        I::I32Load(strings::WORD),
+        I::LocalTee(ID),
+        I::I32Const(UNCHECKED_INPUT as i32),
+        I::I32Ne,
+        I::LocalGet(VALUE),
+        I::LocalGet(ID),
+        I::I64ExtendI32U,
+        I::I64GtU,
+        I::I32And,
+    ]);
+    trap_if(code);
+    code.push(I::End);
+    // A `Return` completion: forbidden, unchecked or range-checked.
+    code.extend([
+        I::LocalGet(KIND),
+        I::I32Const(frame::Completion::Return as i32),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+        I::LocalGet(ENTRY),
+        I::I32Load(entry_word(2)),
+        I::LocalTee(ID),
+        I::I32Const(RETURN_FORBIDDEN as i32),
+        I::I32Eq,
+        I::LocalGet(ID),
+        I::I32Const(UNCHECKED_INPUT as i32),
+        I::I32Ne,
+        I::LocalGet(VALUE),
+        I::LocalGet(ID),
+        I::I64ExtendI32U,
+        I::I64GtU,
+        I::I32And,
+        I::I32Or,
+    ]);
+    trap_if(code);
+    code.extend([
+        I::End,
+        I::LocalGet(PTR),
+        I::I32Const(frame::STATUS_RUNNING as i32),
+        I::I32Store(word(frame::STATUS_FIELD, false)),
+        I::LocalGet(PTR),
+        I::I64Const(0),
+        I::I64Store(records::field(frame::COMPLETION_FIELD)),
+    ]);
+    // block $sync { block $scheduled { block $case(n-1) … block $case0 {
+    // block $bad { br_table } unreachable } case0 … } … } scheduled tail }
+    code.extend([I::Block(BlockType::Empty), I::Block(BlockType::Empty)]);
+    for _ in 0..layouts {
+        code.push(I::Block(BlockType::Empty));
+    }
+    code.extend([
+        I::Block(BlockType::Empty),
+        I::LocalGet(PTR),
+        I::I32Load(strings::WORD),
+        I::BrTable((1..=layouts).collect::<Vec<_>>().into(), 0),
+        I::End,
+        I::Unreachable,
+    ]);
+    for (index, (layout, body)) in dispatch.layouts.iter().zip(dispatch.bodies).enumerate() {
+        let index = index as u32;
+        code.push(I::End);
+        let machine = &dispatch.machines[&layout.function];
+        if layout.generator.is_some() {
+            // Unreachable (the table check traps); the direct call pairs the
+            // body with its layout for admission.
+            code.push(I::Unreachable);
+        }
+        code.extend([
+            I::LocalGet(HANDLE),
+            I::LocalGet(KIND),
+            I::LocalGet(VALUE),
+            I::Call(*body),
+            // Depth of $scheduled, then $sync, from inside case `index`.
+            I::Br(layouts - 1 - index + u32::from(!machine.scheduled)),
+        ]);
+    }
+    code.push(I::End);
+    // A scheduled body (v34) settles its promise on every completion, so no
+    // exception escapes it, and its suspension point already issued the
+    // generation of the token it registered.
+    code.push(I::GlobalGet(globals.pending));
+    trap_if(code);
+    code.extend([
+        I::LocalGet(PTR),
+        I::I32Load(word(frame::STATUS_FIELD, false)),
+        I::I32Const(frame::STATUS_SUSPENDED as i32),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+        I::I32Const(frame::Outcome::Suspended as i32),
+        I::Return,
+        I::End,
+        I::LocalGet(PTR),
+        I::I32Const(frame::STATUS_COMPLETED as i32),
+        I::I32Store(word(frame::STATUS_FIELD, false)),
+        I::LocalGet(CURSOR),
+        I::I64Const(0),
+        I::I64Store(strings::ROOT),
+        I::I32Const(frame::Outcome::Returned as i32),
+        I::Return,
+        I::End,
+    ]);
 }
 
 /// The resume body's Wasm locals: every IR local (parameters included), cells,
