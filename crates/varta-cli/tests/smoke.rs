@@ -16724,6 +16724,9 @@ console.log((1.5).toFixed(2)+" "+(255).toString(16)+" "+parseInt("ff",16).toStri
 console.log(s.toUpperCase()+" "+s.charAt(4)+" "+s.charCodeAt(4).toString());
 const big=123456789012345678901234567890n;
 console.log((big*3n).toString(16)+" "+String(BigInt.asIntN(64,big))+" "+(big>1e29)+" "+JSON.stringify({n:1.5}));
+const u:number|string=Math.random()>2?"x":2.5;
+const v:unknown=Math.random()>2?[1]:new RangeError("r");
+console.log(String(u)+" "+String(Number(u))+" "+(u<3)+" "+(u==2.5)+" "+typeof v+" "+Array.isArray(v)+" "+(v instanceof RangeError)+" "+(v===null)+" k"+7);
 }"#,
         serde_json::json!({}),
     );
@@ -16735,6 +16738,9 @@ console.log((big*3n).toString(16)+" "+String(BigInt.asIntN(64,big))+" "+(big>1e2
         "varta log: 1.50 ff 255 25",
         "varta log: STRASSE ß 223",
         "varta log: 4acbb2fe44a5ba2caeabd2076 -4362896299872285998 true {\"n\":1.5}",
+        // The primitive conversions, comparisons and value18 readers
+        // (wave 3) are linked as well.
+        "varta log: 2.5 2.5 true true object false true false k7",
     ];
     let logs = |output: &std::process::Output| {
         String::from_utf8_lossy(&output.stdout)

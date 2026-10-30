@@ -4,9 +4,10 @@
 //! Default feature `std` builds the whole crate. Without it the crate is a
 //! `no_std` + `alloc` core holding the value layout: the ABI constants and
 //! static region ([`abi`]), bounded guest-memory reads ([`memory`]), the
-//! value tags, layout constants, primitive-cell reader and error classes
-//! ([`value`]), the BigInt transport ([`bigint`]), the data limits
-//! ([`limits`]) and the UTF-16 helpers ([`text`]). The linked
+//! value tags, layout constants, the cell, record, array, dictionary and
+//! Error readers and the error classes ([`value`]), the closure envelope
+//! readers ([`function`]), the BigInt transport ([`bigint`]), the data and
+//! v38 program limits ([`limits`]) and the UTF-16 helpers ([`text`]). The linked
 //! intrinsic library (`varta-intrinsics`, compiled to wasm32) reads guest
 //! memory through that core, so the layout has one owner.
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -115,8 +116,9 @@ pub const HOST_FREE_EXPORTS: [&str; 6] = [
 #[cfg(feature = "std")]
 pub const HOST_DECLARATIONS: &str = include_str!("varta.d.ts");
 
-/// Opaque, capture-free function object layout for the checked function profile.
-#[cfg(feature = "std")]
+/// Opaque, capture-free function object layout for the checked function
+/// profile. Without `std` only the layout constants and the closure envelope
+/// readers (`function::ClosureView`) are compiled.
 pub mod function;
 
 #[cfg(feature = "std")]

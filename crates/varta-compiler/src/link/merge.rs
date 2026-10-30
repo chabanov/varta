@@ -156,6 +156,9 @@ enum Accessor {
     ResourceFailure,
     /// `() -> i32`: end of the reserved arena.
     ArenaReservedEnd,
+    /// `() -> i32`: the module's static extension pages (`varta.static`),
+    /// the static region of the linked value readers.
+    StaticPages,
 }
 /// What the accessors read from the guest module and its placement.
 #[derive(Debug, Clone, Copy)]
@@ -168,6 +171,7 @@ struct AccessorTargets {
     heap_base: usize,
     arena: usize,
     arena_end: usize,
+    static_pages: u32,
 }
 impl Accessor {
     fn from_name(name: &str) -> Option<Self> {
@@ -179,6 +183,7 @@ impl Accessor {
             "arena_reserved" => Self::ArenaReserved,
             "arena_reserved_end" => Self::ArenaReservedEnd,
             "resource_failure" => Self::ResourceFailure,
+            "static_pages" => Self::StaticPages,
             _ => return None,
         })
     }
@@ -187,7 +192,9 @@ impl Accessor {
         match self {
             Self::MemoryRead | Self::MemoryWrite => (&[I32, I32, I32], &[]),
             Self::ResultLen => (&[I32], &[]),
-            Self::ArenaBase | Self::ArenaReserved | Self::ArenaReservedEnd => (&[], &[I32]),
+            Self::ArenaBase | Self::ArenaReserved | Self::ArenaReservedEnd | Self::StaticPages => {
+                (&[], &[I32])
+            }
             Self::ResourceFailure => (&[I32, I32], &[]),
         }
     }
@@ -233,6 +240,11 @@ impl Accessor {
                         i32::try_from(targets.heap_base).map_err(|e| e.to_string())?,
                     )),
                 };
+            }
+            Self::StaticPages => {
+                function.instruction(&I::I32Const(
+                    i32::try_from(targets.static_pages).map_err(|e| e.to_string())?,
+                ));
             }
             Self::ArenaReserved | Self::ArenaReservedEnd => {
                 let address = if matches!(self, Self::ArenaReserved) {
@@ -689,6 +701,7 @@ impl<'a> Plan<'a> {
             heap_base: guest.region.heap_base(),
             arena: placement.arena,
             arena_end: placement.arena_end(),
+            static_pages: guest.region.extension_pages(),
         };
         let mut plan = Self {
             guest,

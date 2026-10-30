@@ -23,22 +23,34 @@ pub const MAX_BINDING_PATTERN_NODES: usize = 1024;
 pub const MAX_PARAMETER_PATTERN_DEPTH: usize = MAX_BINDING_PATTERN_DEPTH;
 pub const MAX_PARAMETER_PATTERN_NODES: usize = MAX_BINDING_PATTERN_NODES;
 
+/// Physical fields of a continuation frame after the `[layout-id:u32,
+/// field-count:u32]` header (`frame`).
+pub const FRAME_FIELDS: usize = 5;
+pub const FRAME_BYTES: usize =
+    crate::value::RECORD_META_BYTES + FRAME_FIELDS * crate::value::RECORD_SLOT_BYTES;
+
 mod view;
-pub use view::{BindingView, ClosureView, EnvironmentView};
+pub use view::{BindingView, ClosureView, EnvironmentView, check_closure_envelope};
+#[cfg(feature = "std")]
 mod catalog;
 #[cfg(test)]
 mod view_tests;
+#[cfg(feature = "std")]
 pub use catalog::{
     CATALOG_SECTION, CATALOG_VERSION, CaptureBinding, CaptureField, CaptureFunction, CaptureType,
     FrameLayout, FrameSlot, FrameState, FunctionCatalog, MAX_CAPTURE_TYPES,
 };
+#[cfg(feature = "std")]
 pub mod admission;
 #[cfg(test)]
 mod admission_tests;
+#[cfg(feature = "std")]
 pub mod frame;
 #[cfg(test)]
 mod frame_tests;
+#[cfg(feature = "std")]
 mod validate;
+#[cfg(feature = "std")]
 pub use validate::{CaptureValidation, VerifiedFunctionCatalog};
 #[cfg(test)]
 mod catalog_tests;

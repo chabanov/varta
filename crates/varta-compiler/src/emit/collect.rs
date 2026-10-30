@@ -53,6 +53,32 @@ impl<'a> Collected<'a> {
             .entry(strings::ascii_units())
             .or_insert((span, source));
     }
+    /// V38: the inline fast path in front of a linked primitive conversion,
+    /// comparison or value18 reader, with what it calls.
+    fn fast_path(
+        &mut self,
+        host: Host,
+        args: &[Expr],
+        span: swc_common::Span,
+        source: &'a crate::source::Source,
+    ) {
+        let Some(helper) =
+            strings::Helper::fast_path(self.types.profile, host, args, &self.types.unions)
+        else {
+            self.hosts.insert(host);
+            return;
+        };
+        self.hosts.extend(helper.fast_path_hosts(host));
+        {
+            self.helpers.insert(helper);
+            self.helpers.extend(helper.fast_path_dependencies());
+            if helper.spells() {
+                self.strings
+                    .entry(strings::spellings())
+                    .or_insert((span, source));
+            }
+        }
+    }
     fn expression(&mut self, expr: &Expr, source: &'a crate::source::Source) {
         if expr.ty.is_cell() {
             self.unions = true;
@@ -147,13 +173,15 @@ impl<'a> Collected<'a> {
                 self.expression(value, source);
             }
             E::UnionLogical(op, a, b) => {
-                self.hosts.insert(self.types.profile.host_operation(
-                    if *op == BinaryOp::NullishCoalescing {
-                        Host::UnionNullish
-                    } else {
-                        Host::UnionTruthy
-                    },
-                ));
+                let host =
+                    self.types
+                        .profile
+                        .host_operation(if *op == BinaryOp::NullishCoalescing {
+                            Host::UnionNullish
+                        } else {
+                            Host::UnionTruthy
+                        });
+                self.fast_path(host, &[], expr.span, source);
                 self.expression(a, source);
                 self.expression(b, source);
             }
@@ -350,10 +378,10 @@ impl<'a> Collected<'a> {
                 }
             }
             E::Host(host, args) => {
-                self.hosts.insert(*host);
                 if host.returns_string() {
                     self.helpers.insert(strings::Helper::Snapshot);
                 }
+                self.fast_path(*host, args, expr.span, source);
                 for arg in args {
                     self.expression(arg, source);
                 }

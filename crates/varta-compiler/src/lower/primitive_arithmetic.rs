@@ -68,17 +68,20 @@ impl Lower<'_> {
             Some(self.bigint_union_binary(op, left, right, span)?)
         };
         let value = if strings {
-            let cell_ty = unions::intern(
-                vec![
-                    Type::Float64,
-                    Type::String,
-                    Type::Boolean,
-                    Type::Null,
-                    Type::Undefined,
-                    Type::BigInt,
-                ],
-                self.types,
-            )?;
+            let mut members = vec![
+                Type::Float64,
+                Type::String,
+                Type::Boolean,
+                Type::Null,
+                Type::Undefined,
+            ];
+            // V38: BigInt cells only where an operand may be one.
+            if !self.types.profile.linked_intrinsics()
+                || unions::cells_hold_bigint(&[left_ty, right_ty], self.types)
+            {
+                members.push(Type::BigInt);
+            }
+            let cell_ty = unions::intern(members, self.types)?;
             let left = if left_ty == Type::String {
                 local(span, a, left_ty)
             } else {

@@ -19,6 +19,9 @@ mod concat;
 pub(super) use concat::MAX_OPERANDS as MAX_CONCATENATED;
 mod dictionary_probe;
 mod index_key;
+mod primitives;
+pub(super) use primitives::{FastPaths, spellings};
+mod readers;
 mod regexp;
 mod remainder;
 mod roots;
@@ -187,6 +190,36 @@ pub(super) enum Helper {
     /// V38 (`data_limits`): register, find or release a live continuation
     /// frame in the growable hashed live-frame table.
     FrameTable,
+    /// V38 (`linked_intrinsics`): `String` of a primitive cell, inline for
+    /// strings, literals and safe integers, else the linked conversion:
+    /// `primitive_to_string` (no BigInt code) for Numbers and, when the cell
+    /// may hold a BigInt (`true`), `primitive_to_string_v6` for BigInts.
+    PrimitiveText(bool),
+    /// V38: `Number` of a primitive cell, inline except strings
+    /// (`primitive_to_number`) and BigInts (`primitive_to_number_v6`, when
+    /// the cell may hold one).
+    PrimitiveNumber(bool),
+    /// V38: `String(n)` of a Number that is boxed nowhere: inline for safe
+    /// integers, else boxed for `primitive_to_string`.
+    NumberText,
+    /// V38: `Number(s)` of a string that is boxed nowhere: inline for digit
+    /// strings, else boxed for `primitive_to_number`.
+    StringNumber,
+    /// V38: `primitive_compare` with inline fast paths for the kinds its
+    /// cells may hold.
+    PrimitiveOrder(Cells),
+    /// V38: `primitive_equal` with inline fast paths for the kinds its cells
+    /// may hold.
+    PrimitiveEquals(Cells),
+    /// V38: the value18 readers answered from the cell's tag, the linked
+    /// reader behind them (`readers`).
+    ValueTypeOf,
+    ValueTruthy,
+    ValueNullish,
+    ValueIsArray,
+    ValueStrictEqual,
+    ValueNullishEqual,
+    ValueIsErrorClass,
 }
 impl Helper {
     pub(super) fn string_search(mode: crate::ir::StringSearch) -> Self {
@@ -266,6 +299,23 @@ impl Helper {
             Self::Units(count) => (vec![ValType::F64; usize::from(count)], vec![ValType::I64]),
             Self::Collect => (vec![], vec![]),
             Self::FrameTable => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
+            Self::PrimitiveText(_) => (vec![ValType::I64], vec![ValType::I64]),
+            Self::NumberText => (vec![ValType::F64], vec![ValType::I64]),
+            Self::StringNumber => (vec![ValType::I64], vec![ValType::F64]),
+            Self::PrimitiveNumber(_) => (vec![ValType::I64], vec![ValType::F64]),
+            Self::PrimitiveOrder(_) => (vec![ValType::I64; 2], vec![ValType::F64]),
+            Self::PrimitiveEquals(_) => (
+                vec![ValType::I32, ValType::I64, ValType::I64],
+                vec![ValType::I32],
+            ),
+            Self::ValueTypeOf => (vec![ValType::I64], vec![ValType::I64]),
+            Self::ValueTruthy | Self::ValueNullish | Self::ValueIsArray => {
+                (vec![ValType::I64], vec![ValType::I32])
+            }
+            Self::ValueStrictEqual | Self::ValueNullishEqual => {
+                (vec![ValType::I64; 2], vec![ValType::I32])
+            }
+            Self::ValueIsErrorClass => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArraySearch | Self::ArrayLastIndex => (
                 vec![
@@ -330,6 +380,15 @@ impl Helper {
                 | Self::CodeUnit
                 | Self::CharCodeAt
                 | Self::FloatRemainder
+                | Self::PrimitiveNumber(_)
+                | Self::PrimitiveOrder(_)
+                | Self::PrimitiveEquals(_)
+                | Self::ValueTruthy
+                | Self::ValueNullish
+                | Self::ValueIsArray
+                | Self::ValueStrictEqual
+                | Self::ValueNullishEqual
+                | Self::ValueIsErrorClass
                 | Self::StringIncludes
                 | Self::StringStartsWith
                 | Self::StringEndsWith
@@ -346,7 +405,11 @@ impl Helper {
         frames: Option<super::frames::Resources>,
         linked: Linked,
     ) -> Function {
-        let Linked { ascii, remainder } = linked;
+        let Linked {
+            ascii,
+            remainder,
+            fast_paths,
+        } = linked;
         // Emission adds the complete allocator dependency set before indexing.
         match self {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
@@ -468,15 +531,159 @@ impl Helper {
             Self::DictionaryPlace => dictionary_probe::place(),
             Self::DictionaryIndex => dictionary_probe::index(),
             Self::DictionaryInsertAt => dictionary_probe::insert_at(),
+            Self::PrimitiveText(bigint) => primitives::text(
+                helpers[&Self::Allocate],
+                helpers[&Self::Snapshot],
+                fast_paths,
+                bigint,
+            ),
+            Self::PrimitiveNumber(bigint) => primitives::number(fast_paths, bigint),
+            Self::NumberText => primitives::number_text(
+                helpers[&Self::Allocate],
+                helpers[&Self::Snapshot],
+                fast_paths,
+            ),
+            Self::StringNumber => primitives::string_number(
+                helpers[&Self::Allocate],
+                helpers[&Self::RootPush],
+                globals.roots,
+                fast_paths,
+            ),
+            Self::PrimitiveOrder(cells) => {
+                primitives::order(helpers[&Self::Compare], fast_paths, cells)
+            }
+            Self::PrimitiveEquals(cells) => {
+                primitives::equal(helpers[&Self::StringEquals], fast_paths, cells)
+            }
+            Self::ValueTypeOf => readers::type_of(helpers[&Self::Snapshot], fast_paths),
+            Self::ValueTruthy => readers::truthy(fast_paths),
+            Self::ValueNullish => readers::kind_test(fast_paths, true),
+            Self::ValueIsArray => readers::kind_test(fast_paths, false),
+            Self::ValueStrictEqual => {
+                readers::equal(helpers.get(&Self::StringEquals).copied(), fast_paths, true)
+            }
+            Self::ValueNullishEqual => readers::equal(None, fast_paths, false),
+            Self::ValueIsErrorClass => readers::is_error_class(fast_paths),
         }
     }
 }
+/// The kinds the cells of a v38 comparison may hold beyond the Number-like
+/// ones: what its fast-path helper must handle and link.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct Cells {
+    pub bigint: bool,
+    pub string: bool,
+}
 /// V38 (`codegen_v2`) targets some helpers embed: the static ASCII unit table
-/// of `charAt` and the host remainder import of `%`.
+/// of `charAt`, the host remainder import of `%` and the linked primitive
+/// conversions and comparisons with their static spellings.
 #[derive(Clone, Copy)]
 pub(super) struct Linked {
     pub ascii: Option<u32>,
     pub remainder: Option<u32>,
+    pub fast_paths: FastPaths,
+}
+impl Helper {
+    /// The fast-path helper of a linked primitive conversion or comparison
+    /// or value18 reader (v38) with operands `args`, if `host` is one.
+    pub(super) fn fast_path(
+        profile: varta_common::language::LanguageProfile,
+        host: varta_common::HostOperation,
+        args: &[crate::ir::Expr],
+        unions: &[Vec<crate::ir::Type>],
+    ) -> Option<Self> {
+        use varta_common::HostOperation as Host;
+        if !crate::codegen_v2(profile) || !profile.links(host) {
+            return None;
+        }
+        // Whether a cell operand's union holds `kind` (v38 lowering admits
+        // BigInt, and in comparisons any kind, only where a source may hold
+        // it).
+        let holds = |kind: crate::ir::Type| {
+            args.iter().any(|arg| match arg.ty {
+                crate::ir::Type::Union(id) | crate::ir::Type::ReferenceUnion(id) => unions
+                    .get(id as usize)
+                    .is_none_or(|members| members.contains(&kind)),
+                other => other == kind,
+            })
+        };
+        let bigint = || holds(crate::ir::Type::BigInt);
+        let cells = || Cells {
+            bigint: bigint(),
+            string: holds(crate::ir::Type::String),
+        };
+        // A boxed Number (to text) or string (to a Number) needs no cell.
+        let boxed = |ty: crate::ir::Type| {
+            args.first().is_some_and(
+                |arg| matches!(&arg.kind, crate::ir::Expression::BoxUnion(inner) if inner.ty == ty),
+            )
+        };
+        Some(match host {
+            Host::PrimitiveStringV6 if boxed(crate::ir::Type::Float64) => Self::NumberText,
+            Host::PrimitiveNumberV6 if boxed(crate::ir::Type::String) => Self::StringNumber,
+            Host::PrimitiveStringV6 => Self::PrimitiveText(bigint()),
+            Host::PrimitiveNumberV6 => Self::PrimitiveNumber(bigint()),
+            Host::PrimitiveCompare => Self::PrimitiveOrder(cells()),
+            Host::PrimitiveEqual => Self::PrimitiveEquals(cells()),
+            Host::ValueTypeOfV11 => Self::ValueTypeOf,
+            Host::ValueTruthyV11 => Self::ValueTruthy,
+            Host::ValueNullishV11 => Self::ValueNullish,
+            Host::ValueIsArrayV11 => Self::ValueIsArray,
+            Host::ValueStrictEqualV11 => Self::ValueStrictEqual,
+            Host::ValueNullishEqualV11 => Self::ValueNullishEqual,
+            Host::ValueIsErrorClassV7 => Self::ValueIsErrorClass,
+            _ => return None,
+        })
+    }
+    /// The helpers a fast-path helper calls.
+    pub(super) fn fast_path_dependencies(self) -> &'static [Self] {
+        match self {
+            Self::PrimitiveText(_) | Self::NumberText => &[Self::Allocate, Self::Snapshot],
+            Self::StringNumber => &[Self::Allocate, Self::RootPush],
+            Self::ValueTypeOf => &[Self::Snapshot],
+            Self::PrimitiveOrder(_) => &[Self::Compare],
+            Self::PrimitiveEquals(_) | Self::ValueStrictEqual => &[Self::StringEquals],
+            _ => &[],
+        }
+    }
+    /// Whether the helper returns static spellings.
+    pub(super) fn spells(self) -> bool {
+        matches!(
+            self,
+            Self::PrimitiveText(_) | Self::NumberText | Self::ValueTypeOf
+        )
+    }
+    /// The linked operations a fast-path helper calls, which the module
+    /// imports (and linking then replaces) instead of `host`.
+    pub(super) fn fast_path_hosts(
+        self,
+        host: varta_common::HostOperation,
+    ) -> Vec<varta_common::HostOperation> {
+        use varta_common::HostOperation as Host;
+        match self {
+            Self::NumberText => vec![Host::PrimitiveString],
+            Self::StringNumber => vec![Host::PrimitiveNumber],
+            Self::PrimitiveText(bigint) => {
+                let mut hosts = vec![Host::PrimitiveString];
+                hosts.extend(bigint.then_some(host));
+                hosts
+            }
+            Self::PrimitiveNumber(bigint) => {
+                let mut hosts = vec![Host::PrimitiveNumber];
+                hosts.extend(bigint.then_some(host));
+                hosts
+            }
+            // Strings compared with Numbers are parsed by the BigInt-free
+            // conversion; the comparison itself is linked for BigInts.
+            Self::PrimitiveOrder(cells) | Self::PrimitiveEquals(cells) => {
+                let mut hosts = Vec::new();
+                hosts.extend(cells.string.then_some(Host::PrimitiveNumber));
+                hosts.extend(cells.bigint.then_some(host));
+                hosts
+            }
+            _ => vec![host],
+        }
+    }
 }
 /// The code units a trimming helper removes.
 #[derive(Clone, Copy, PartialEq, Eq)]

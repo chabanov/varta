@@ -154,7 +154,10 @@ impl varta_compiler::ModuleLoader for Modules {
 pub(crate) const APP: &str = include_str!("view_cases/app.tsx");
 pub(crate) const SIGNALS: &str = include_str!("view_cases/signals.ts");
 
-fn compile_tsx(entry: &str, modules: &'static [(&'static str, &'static str)]) -> Vec<u8> {
+pub(crate) fn compile_tsx(
+    entry: &str,
+    modules: &'static [(&'static str, &'static str)],
+) -> Vec<u8> {
     let bytes = varta_compiler::compile_modules_with_profile(
         varta_compiler::ModuleSource {
             path: "app.tsx".into(),

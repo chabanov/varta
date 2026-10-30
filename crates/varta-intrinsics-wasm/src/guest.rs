@@ -7,7 +7,10 @@
 //! `memory.copy` within memory 0. Copies are bounds-checked here before the
 //! accessor runs, and `memory.copy` traps on any range a check missed.
 use alloc::borrow::Cow;
-use varta_common::abi::{MAX_RESULT_BYTES, RESULT_BASE, WASM_PAGE_BYTES};
+use varta_common::{
+    abi::{MAX_RESULT_BYTES, RESULT_BASE, StaticRegion, WASM_PAGE_BYTES},
+    value::{ModuleBounds, ValueAbiError},
+};
 use varta_intrinsics::{IntrinsicError, Memory};
 
 /// Guest memory 0, the only memory of a linked module.
@@ -21,6 +24,21 @@ unsafe extern "C" {
     fn memory_write(dst: usize, src: *const u8, len: usize);
     /// Set the guest's `env_result_len` global, when it is exported.
     fn result_len(len: i32);
+    /// The module's static extension pages (`varta.static`), a linker
+    /// constant: the value readers' static region.
+    fn static_pages() -> i32;
+}
+
+/// The bounds of this v38 module's value readers: its static region (the
+/// linker's constant) and the v38 limits, as the host computes them from
+/// the validated module.
+pub fn bounds() -> ModuleBounds {
+    // SAFETY: the accessor only returns a linker constant.
+    let pages = unsafe { static_pages() } as u32;
+    match StaticRegion::with_extension_pages(pages) {
+        Some(region) => ModuleBounds::v38(region),
+        None => core::arch::wasm32::unreachable(),
+    }
 }
 
 /// Guest memory 0, read-only.
@@ -40,6 +58,32 @@ impl Memory for Guest {
         // bytes and the guest range was checked against memory 0's size.
         unsafe { memory_read(out.as_mut_ptr(), at, out.len()) };
         true
+    }
+    /// Words are loaded in place, as [`Memory::borrow`] lends ranges: the
+    /// value readers read many header and descriptor words per call.
+    #[inline]
+    fn u32_at(&self, at: usize) -> Option<u32> {
+        if !in_place(at, size_of::<u32>()) {
+            let mut word = [0; 4];
+            return self
+                .copy_to(at, &mut word)
+                .then(|| u32::from_le_bytes(word));
+        }
+        // SAFETY: as in `borrow`: a nonnull, in-bounds range of memory 0
+        // outside the result buffer, unchanged during the call; wasm32
+        // loads are little-endian and may be unaligned.
+        Some(unsafe { (at as *const u32).read_unaligned() })
+    }
+    #[inline]
+    fn u64_at(&self, at: usize) -> Option<u64> {
+        if !in_place(at, size_of::<u64>()) {
+            let mut word = [0; 8];
+            return self
+                .copy_to(at, &mut word)
+                .then(|| u64::from_le_bytes(word));
+        }
+        // SAFETY: as for `u32_at`.
+        Some(unsafe { (at as *const u64).read_unaligned() })
     }
     /// A guest argument range in place: no per-call copy of a string
     /// argument. A range at address 0 (a Rust slice may not start at null)
@@ -65,6 +109,16 @@ impl Memory for Guest {
     }
 }
 
+/// Whether guest `[at, at + len)` can be read in place: nonnull, inside
+/// memory 0 and outside the result buffer, which linked code writes.
+#[inline]
+fn in_place(at: usize, len: usize) -> bool {
+    let size = core::arch::wasm32::memory_size(MEMORY) * WASM_PAGE_BYTES;
+    at.checked_add(len).is_some_and(|end| {
+        at != 0 && end <= size && (at >= RESULT_BASE + MAX_RESULT_BYTES || end <= RESULT_BASE)
+    })
+}
+
 /// End the execution: a fatal intrinsic failure is a trap in every host.
 pub fn fatal(_error: IntrinsicError) -> ! {
     core::arch::wasm32::unreachable()
@@ -73,6 +127,11 @@ pub fn fatal(_error: IntrinsicError) -> ! {
 /// End the execution on a fatal BigInt failure (an error without a
 /// recoverable class), as the host does.
 pub fn fatal_bigint(_error: varta_bigint::Error) -> ! {
+    core::arch::wasm32::unreachable()
+}
+
+/// End the execution on a noncanonical value cell, as the host does.
+pub fn fatal_value(_error: ValueAbiError) -> ! {
     core::arch::wasm32::unreachable()
 }
 

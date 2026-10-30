@@ -69,7 +69,10 @@ impl Lower<'_> {
         let right_ty = right.ty;
         let a = self.hidden(left_ty);
         let b = self.hidden(right_ty);
-        let cell = unions::intern(
+        // V38: cells of only the kinds the operands may hold.
+        let members = if self.types.profile.linked_intrinsics() {
+            unions::comparison_cells(&[left_ty, right_ty], self.types)
+        } else {
             vec![
                 Type::Float64,
                 Type::String,
@@ -77,9 +80,9 @@ impl Lower<'_> {
                 Type::Null,
                 Type::Undefined,
                 Type::BigInt,
-            ],
-            self.types,
-        )?;
+            ]
+        };
+        let cell = unions::intern(members, self.types)?;
         let aa = self.hidden(cell);
         let bb = self.hidden(cell);
         let mut args = vec![local(span, aa, cell), local(span, bb, cell)];

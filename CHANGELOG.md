@@ -27,6 +27,30 @@ in [conformance/README.md](conformance/README.md).
   and both types. Programs without such conversions keep their functions;
   v37 keeps its bytes and diagnostics.
 
+- V38 links the value18 primitive conversions (`primitive_to_string_v6`,
+  `primitive_to_number_v6`), the primitive comparisons (`primitive_compare`,
+  `primitive_equal`) and the value18 readers (`value_typeof_v11`,
+  `value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`,
+  `value_strict_equal_v11`, `value_nullish_equal_v11`,
+  `value_is_error_class_v7`): a v38 host implements 45 imports instead of
+  56, all effects except checked JSON and `value_log_v12`. Codegen v2 answers
+  the common cases inline (safe-integer text two digits at a time, unboxed
+  Numbers and strings, digit strings, booleans, `null`, `undefined`,
+  same-kind and numeric comparisons, BigInts below 2^32, `typeof` as a
+  static spelling) and calls the linked code for the rest; v38 lowering
+  narrows the cells of conversions and comparisons to the kinds the
+  operands may hold, so code without BigInts or strings links no BigInt
+  code or string parser. The reference, vector, dictionary (with the full
+  hash-table validation), Error and closure-envelope readers are generic
+  over `Memory` in the `no_std` core, and the value8–value17 host readers
+  call the same `varta_intrinsics::value`. No measured workload costs more
+  fuel (list render 160,137 to 148,445, keyed diff 492,170 to 471,773);
+  fractional Number text, non-digit string parsing and comparisons with
+  large BigInts cost the linked code's instructions. The keyed view, the
+  Markdown fixture, the dictionary workload and the TSX application import
+  only `log_string16` or `view_commit`, and Node 24 runs such a module with a
+  host that implements only `log_string16`.
+
 - V38 `typeof` of engine globals (`web_bytes`): `typeof NAME` of a global
   the engine provides and the program does not shadow is its constant
   JavaScript `typeof` (`"function"` for classes and functions such as

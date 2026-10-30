@@ -27,3 +27,5 @@ mod bigint;
 mod exports;
 #[cfg(target_arch = "wasm32")]
 mod guest;
+#[cfg(target_arch = "wasm32")]
+mod values;

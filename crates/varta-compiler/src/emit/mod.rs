@@ -118,6 +118,8 @@ struct Emitter<'a> {
     /// members, and the descriptor shapes that identify each record or class
     /// member (`shared_members`).
     shared: &'a SharedMembers,
+    /// Union members by id (v38: which fast paths may meet a BigInt).
+    unions: &'a [Vec<Type>],
     /// V38 (`codegen_v2`): emitting a quiet subtree (`quiet`).
     quiet_mode: bool,
     /// V38 (`codegen_v2`): builder bindings and their `(tail, cap)` locals
@@ -928,6 +930,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             frame_resources,
             promises: &program.types.promises,
             shared: &shared,
+            unions: &program.types.unions,
             quiet_mode: false,
             builders,
         };
@@ -993,6 +996,23 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             strings::Linked {
                 ascii: offsets.get(&strings::ascii_units()).copied(),
                 remainder: hosts.get(&Host::FloatRemainder).copied(),
+                fast_paths: strings::FastPaths {
+                    spellings: offsets.get(&strings::spellings()).copied(),
+                    result_len,
+                    text: hosts.get(&Host::PrimitiveStringV6).copied(),
+                    number_text: hosts.get(&Host::PrimitiveString).copied(),
+                    number: hosts.get(&Host::PrimitiveNumberV6).copied(),
+                    string_number: hosts.get(&Host::PrimitiveNumber).copied(),
+                    compare: hosts.get(&Host::PrimitiveCompare).copied(),
+                    equal: hosts.get(&Host::PrimitiveEqual).copied(),
+                    type_of: hosts.get(&Host::ValueTypeOfV11).copied(),
+                    truthy: hosts.get(&Host::ValueTruthyV11).copied(),
+                    nullish: hosts.get(&Host::ValueNullishV11).copied(),
+                    is_array: hosts.get(&Host::ValueIsArrayV11).copied(),
+                    strict_equal: hosts.get(&Host::ValueStrictEqualV11).copied(),
+                    nullish_equal: hosts.get(&Host::ValueNullishEqualV11).copied(),
+                    is_error_class: hosts.get(&Host::ValueIsErrorClassV7).copied(),
+                },
             },
         ));
     }

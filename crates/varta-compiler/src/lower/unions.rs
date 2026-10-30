@@ -24,6 +24,47 @@ pub(super) fn members(ty: Type, types: &ir::ValueTypes) -> Vec<Type> {
         vec![ty]
     }
 }
+/// Whether the primitive cells of a conversion or comparison of values of
+/// `sources` include the BigInt kind: always when the profile has BigInt
+/// values, except under v38 (`linked_intrinsics`), where they do only when a
+/// source may hold a BigInt, so a program that never converts or compares a
+/// BigInt links no BigInt code behind the inline fast paths.
+pub(super) fn cells_hold_bigint(sources: &[Type], types: &ir::ValueTypes) -> bool {
+    types.profile.bigint_values()
+        && (!types.profile.linked_intrinsics()
+            || sources
+                .iter()
+                .any(|source| members(*source, types).contains(&Type::BigInt)))
+}
+/// The primitive kinds of the cells of a v38 (`linked_intrinsics`)
+/// comparison of values of `sources`, in the order of the full cell union:
+/// the kinds a source may hold (literals by their base kind), so the inline
+/// fast path in front of the linked comparison is emitted (and links code)
+/// only for kinds that occur. At least two, so the cell stays a union.
+pub(super) fn comparison_cells(sources: &[Type], types: &ir::ValueTypes) -> Vec<Type> {
+    const KINDS: [Type; 6] = [
+        Type::Float64,
+        Type::String,
+        Type::Boolean,
+        Type::Null,
+        Type::Undefined,
+        Type::BigInt,
+    ];
+    let held: Vec<Type> = sources.iter().flat_map(|s| members(*s, types)).collect();
+    let mut kinds: Vec<Type> = KINDS
+        .into_iter()
+        .filter(|kind| {
+            held.iter()
+                .any(|member| literals::member_of(*member, &[*kind], types))
+        })
+        .collect();
+    for filler in [Type::Undefined, Type::Null] {
+        if kinds.len() < 2 && !kinds.contains(&filler) {
+            kinds.push(filler);
+        }
+    }
+    kinds
+}
 pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Type> {
     if !types.profile.unions() {
         return Err(unsupported("union types require checked-f64-utf16-v2"));

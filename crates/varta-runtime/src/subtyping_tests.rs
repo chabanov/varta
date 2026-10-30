@@ -138,12 +138,14 @@ fn views_survive_forced_collections() {
 /// only the accessors its member accesses use.
 #[test]
 fn only_view_accesses_get_accessors() {
+    // No Number text: it would link intrinsic library functions
+    // (`linked_intrinsics`), which are not the program's own.
     let program = |q: &str| {
         format!(
             "interface P{{x:number;y:number}}\
              function len(p:P):number{{return p.x+p.y;}}\
              export function main():void{{const q={q};\
-             console.log(`${{len({{x:1,y:2}})}} ${{len(q)}}`);}}"
+             console.log(len({{x:1,y:2}})===3&&len(q)===3?'3 3':'?');}}"
         )
     };
     let direct = program("{x:1,y:2}");

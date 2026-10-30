@@ -93,13 +93,16 @@ impl Emitter<'_> {
         self.expr(a)?;
         self.code.push(I::LocalTee(self.string_temporary));
         let nullish = op == BinaryOp::NullishCoalescing;
-        self.code.push(I::Call(
-            self.hosts[&self.profile.host_operation(if nullish {
-                Host::UnionNullish
-            } else {
-                Host::UnionTruthy
-            })],
-        ));
+        let host = self.profile.host_operation(if nullish {
+            Host::UnionNullish
+        } else {
+            Host::UnionTruthy
+        });
+        // V38: the fast-path helper in front of the linked reader.
+        match strings::Helper::fast_path(self.profile, host, &[], self.unions) {
+            Some(helper) => self.string_helper(helper)?,
+            None => self.code.push(I::Call(self.hosts[&host])),
+        }
         self.code.push(I::If(BlockType::Result(ValType::I64)));
         if nullish || op == BinaryOp::LogicalAnd {
             self.expr(b)?;

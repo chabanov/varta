@@ -1,20 +1,18 @@
 //! First Error representation: immutable default name and optional own message.
-#[cfg(feature = "std")]
 use super::*;
-#[cfg(feature = "std")]
-use crate::abi;
+use crate::{abi, memory::Memory};
 #[derive(Debug, Clone, Copy)]
 pub struct ErrorObject {
     pub class: ErrorClass,
     pub message: u64,
     pub has_message: bool,
 }
-/// The readers name `ModuleBounds`, which is `std` only.
-#[cfg(feature = "std")]
 impl ErrorObject {
+    #[cfg(feature = "std")]
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
         Self::read_with_version(data, handle, ERROR_VALUE_VERSION)
     }
+    #[cfg(feature = "std")]
     pub fn read_with_version(
         data: &[u8],
         handle: u64,
@@ -23,8 +21,8 @@ impl ErrorObject {
         Self::read_in(data, handle, version, ModuleBounds::LEGACY)
     }
     /// Read within a module's bounds, under its profile's data limits (v38 admits longer messages).
-    pub fn read_in(
-        data: &[u8],
+    pub fn read_in<M: Memory + ?Sized>(
+        data: &M,
         handle: u64,
         version: u32,
         module: ModuleBounds,
@@ -38,11 +36,7 @@ impl ErrorObject {
             return Err(invalid());
         }
         let header = ptr - abi::STRING_HEADER_BYTES;
-        let word = |at: usize| {
-            data.get(at..at.checked_add(4)?)
-                .and_then(|s| s.try_into().ok())
-                .map(u32::from_le_bytes)
-        };
+        let word = |at: usize| data.u32_at(at);
         let size = word(header).ok_or_else(invalid)? as usize;
         let flags = word(ptr).ok_or_else(invalid)?;
         let class = ErrorClass::from_tag(flags >> ERROR_CLASS_SHIFT).ok_or_else(invalid)?;
@@ -64,7 +58,7 @@ impl ErrorObject {
         let own = flags & ERROR_OWN_MESSAGE;
         if size < abi::STRING_HEADER_BYTES + ERROR_BYTES
             || !size.is_multiple_of(HEAP_ALIGNMENT)
-            || header.checked_add(size).is_none_or(|end| end > data.len())
+            || header.checked_add(size).is_none_or(|end| end > data.size())
             || word(header + HEAP_FLAGS_OFFSET)
                 != Some(HEAP_ALLOCATED_FLAG | HEAP_ERROR_FLAG as u32)
             || word(header + HEAP_LINK_OFFSET) != Some(1)
@@ -72,16 +66,12 @@ impl ErrorObject {
         {
             return Err(invalid());
         }
-        let message = data
-            .get(ptr + RECORD_META_BYTES..ptr + ERROR_BYTES)
-            .and_then(|s| s.try_into().ok())
-            .map(u64::from_le_bytes)
-            .ok_or_else(invalid)?;
+        let message = data.u64_at(ptr + RECORD_META_BYTES).ok_or_else(invalid)?;
         let start = message as u32 as usize;
         let len = (message >> i32::BITS) as usize;
         if len > module.limits.data.string_bytes
             || !len.is_multiple_of(2)
-            || start.checked_add(len).is_none_or(|end| end > data.len())
+            || start.checked_add(len).is_none_or(|end| end > data.size())
             || (own == 0 && message != 0)
         {
             return Err(invalid());

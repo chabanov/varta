@@ -779,9 +779,10 @@ impl HostOperation {
     }
     /// Pure operations with a guest-linked implementation in the v38 intrinsic
     /// library (`LanguageProfile::links`): Math and Number power/remainder,
-    /// Number text and parsing, primitive-cell conversions and UTF-16 string
-    /// access/case mapping. The native runtime keeps their host
-    /// implementations for every profile that imports them.
+    /// Number text and parsing, primitive-cell conversions and comparisons,
+    /// UTF-16 string access/case mapping, BigInt arithmetic and the value18
+    /// readers. The native runtime keeps their host implementations for
+    /// every profile that imports them.
     #[must_use]
     pub fn linked(self) -> bool {
         matches!(
@@ -820,13 +821,31 @@ impl HostOperation {
                 | Self::StringCharCodeAt16
                 | Self::StringToUpperCase16
                 | Self::StringToLowerCase16
-                // The BigInt operations (`varta_intrinsics::bigint`). The
-                // value18 primitive conversions and comparisons share that
-                // code but stay host imports: they sit on the string
-                // concatenation and union comparison paths, where linked
-                // code costs far more fuel than the host call. V38 reads
-                // BigInt conversions of value18 cells (`dictionary_hashing`),
-                // whose primitive cells keep the value17 layout.
+                // The value18 primitive conversions and the primitive
+                // comparisons (`varta_intrinsics::bigint`): codegen v2 answers
+                // their common cases inline (integral Numbers, strings,
+                // booleans, null and undefined, same-kind comparisons) and
+                // calls the linked code for the rest, so neither the
+                // concatenation nor the comparison paths cost more fuel.
+                | Self::PrimitiveStringV6
+                | Self::PrimitiveNumberV6
+                | Self::PrimitiveCompare
+                | Self::PrimitiveEqual
+                // The value18 readers (`varta_intrinsics::value`) over the
+                // `no_std` core readers of every value18 layout, the
+                // dictionary hash table included. Logging (`value_log_v12`)
+                // stays an import until its rendering is linked.
+                | Self::ValueTypeOfV11
+                | Self::ValueTruthyV11
+                | Self::ValueNullishV11
+                | Self::ValueIsArrayV11
+                | Self::ValueStrictEqualV11
+                | Self::ValueNullishEqualV11
+                | Self::ValueIsErrorClassV7
+                // The BigInt operations (`varta_intrinsics::bigint`). V38
+                // reads BigInt conversions of value18 cells
+                // (`dictionary_hashing`), whose primitive cells keep the
+                // value17 layout.
                 | Self::BigIntBinary
                 | Self::BigIntUnary
                 | Self::BigIntWidth

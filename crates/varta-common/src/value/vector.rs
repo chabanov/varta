@@ -2,6 +2,7 @@
 use super::*;
 use crate::abi;
 use crate::limits::DataLimits;
+use crate::memory::Memory;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Vector {
@@ -15,14 +16,19 @@ pub struct Vector {
 fn invalid() -> ValueAbiError {
     ValueAbiError("noncanonical resizable array".into())
 }
-fn word(data: &[u8], at: usize) -> Result<u32, ValueAbiError> {
-    at.checked_add(4)
-        .and_then(|end| data.get(at..end))
-        .and_then(|s| s.try_into().ok())
-        .map(u32::from_le_bytes)
-        .ok_or_else(invalid)
+/// Whether every byte of `bytes` is zero, compared eight bytes at a time.
+fn zero(bytes: &[u8]) -> bool {
+    let (words, rest) = bytes.as_chunks::<8>();
+    words.iter().all(|word| u64::from_ne_bytes(*word) == 0) && rest.iter().all(|byte| *byte == 0)
 }
-fn managed(data: &[u8], handle: u64, flag: i32) -> Result<(usize, usize), ValueAbiError> {
+fn word<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u32, ValueAbiError> {
+    data.u32_at(at).ok_or_else(invalid)
+}
+fn managed<M: Memory + ?Sized>(
+    data: &M,
+    handle: u64,
+    flag: i32,
+) -> Result<(usize, usize), ValueAbiError> {
     let ptr = handle as u32 as usize;
     let length = (handle >> i32::BITS) as usize;
     if ptr < abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES
@@ -35,7 +41,7 @@ fn managed(data: &[u8], handle: u64, flag: i32) -> Result<(usize, usize), ValueA
     if size < abi::STRING_HEADER_BYTES
         || !size.is_multiple_of(HEAP_ALIGNMENT)
         || length > size - abi::STRING_HEADER_BYTES
-        || header.checked_add(size).is_none_or(|end| end > data.len())
+        || header.checked_add(size).is_none_or(|end| end > data.size())
         || word(data, header + HEAP_FLAGS_OFFSET)? != HEAP_ALLOCATED_FLAG | flag as u32
     {
         return Err(invalid());
@@ -43,24 +49,33 @@ fn managed(data: &[u8], handle: u64, flag: i32) -> Result<(usize, usize), ValueA
     Ok((ptr, length))
 }
 impl Vector {
-    pub fn is_present(&self, data: &[u8], index: usize) -> Result<bool, ValueAbiError> {
+    pub fn is_present<M: Memory + ?Sized>(
+        &self,
+        data: &M,
+        index: usize,
+    ) -> Result<bool, ValueAbiError> {
         if index >= self.length {
             return Ok(false);
         }
         match self.presence {
             None => Ok(true),
-            Some(at) => data
-                .get(
-                    at.checked_add(index / u8::BITS as usize)
-                        .ok_or_else(invalid)?,
-                )
-                .map(|byte| byte & (1 << (index % u8::BITS as usize)) != 0)
-                .ok_or_else(invalid),
+            Some(at) => {
+                let at = at
+                    .checked_add(index / u8::BITS as usize)
+                    .ok_or_else(invalid)?;
+                let mut byte = [0];
+                if !data.copy_to(at, &mut byte) {
+                    return Err(invalid());
+                }
+                Ok(byte[0] & (1 << (index % u8::BITS as usize)) != 0)
+            }
         }
     }
+    #[cfg(feature = "std")]
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
         Self::read_with_version(data, handle, VECTOR_VALUE_VERSION)
     }
+    #[cfg(feature = "std")]
     pub fn read_with_version(
         data: &[u8],
         handle: u64,
@@ -71,8 +86,8 @@ impl Vector {
     /// Read within a module's bounds, under its profile's data limits: v38 (`data_limits`) admits
     /// capacities up to its Wasm-derived element limit, with one presence
     /// bit per slot beyond the fixed 1024-slot bitmap.
-    pub fn read_in(
-        data: &[u8],
+    pub fn read_in<M: Memory + ?Sized>(
+        data: &M,
         handle: u64,
         version: u32,
         module: ModuleBounds,
@@ -150,28 +165,51 @@ impl Vector {
         {
             return Err(invalid());
         }
-        let spare = storage + ARRAY_META_BYTES + length * ARRAY_SLOT_BYTES;
-        if data[spare..storage + payload_bytes].iter().any(|b| *b != 0) {
+        // Spare slots are zero, and so is every absent slot of a sparse
+        // backing; the presence bitmap has no bit at or beyond the length.
+        // Checked a word at a time: the linked readers of v38 run this code
+        // as guest code, where every byte costs fuel.
+        let slots = data
+            .borrow(storage, payload_bytes + bitmap_bytes)
+            .ok_or_else(invalid)?;
+        let slot = |index: usize| {
+            let at = ARRAY_META_BYTES + index * ARRAY_SLOT_BYTES;
+            &slots[at..at + ARRAY_SLOT_BYTES]
+        };
+        let spare = ARRAY_META_BYTES + length * ARRAY_SLOT_BYTES;
+        if !zero(&slots[spare..payload_bytes]) {
             return Err(invalid());
         }
         let presence = sparse.then_some(storage + payload_bytes);
-        if let Some(presence) = presence {
-            for index in 0..bitmap_bytes * u8::BITS as usize {
-                let present = data[presence + index / u8::BITS as usize]
-                    & (1 << (index % u8::BITS as usize))
-                    != 0;
-                if index >= length {
-                    if present {
-                        return Err(invalid());
-                    }
-                } else if !present
-                    && data[storage + ARRAY_META_BYTES + index * ARRAY_SLOT_BYTES
-                        ..storage + ARRAY_META_BYTES + (index + 1) * ARRAY_SLOT_BYTES]
-                        .iter()
-                        .any(|byte| *byte != 0)
-                {
+        if sparse {
+            let bitmap = &slots[payload_bytes..];
+            let bits = u8::BITS as usize;
+            // Bytes holding a bit below the length: absent slots are zero and
+            // the bits of the last such byte at or beyond the length are
+            // clear. Every later byte is zero.
+            let used = length.div_ceil(bits);
+            for (byte_index, byte) in bitmap[..used].iter().enumerate() {
+                let first = byte_index * bits;
+                let valid = (length - first).min(bits);
+                let below = if valid == bits {
+                    u8::MAX
+                } else {
+                    (1u8 << valid) - 1
+                };
+                if byte & !below != 0 {
                     return Err(invalid());
                 }
+                let mut absent = !byte & below;
+                while absent != 0 {
+                    let bit = absent.trailing_zeros() as usize;
+                    if !zero(slot(first + bit)) {
+                        return Err(invalid());
+                    }
+                    absent &= absent - 1;
+                }
+            }
+            if !zero(&bitmap[used..]) {
+                return Err(invalid());
             }
         }
         Ok(Self {

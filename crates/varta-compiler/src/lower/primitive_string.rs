@@ -104,7 +104,8 @@ impl Lower<'_> {
             Type::Null,
             Type::Undefined,
         ];
-        if self.types.profile.bigint_values() {
+        // V38: BigInt cells only where the value may be one.
+        if unions::cells_hold_bigint(&[input_ty], self.types) {
             members.push(Type::BigInt);
         }
         let union = unions::intern(members, self.types)?;

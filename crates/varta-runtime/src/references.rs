@@ -1,11 +1,26 @@
 //! Versioned pure operations over primitive/reference cells. Shallow validation
 //! precedes observation; diagnostic JSON traversals retain all serializer limits.
+//!
+//! The readers other than logging are `varta_intrinsics::value`, which v38
+//! links into the guest for its value18 readers; these host imports of
+//! value layouts 8 to 17 call the same code.
 use crate::{RuntimeContext, host, number};
 use varta_common::{
     HostOperation as Host,
     value::{ReferenceBox, ValueKind as Kind},
 };
+use varta_intrinsics::value::{self as shared, ValueError};
 use wasmtime::{Caller, Extern, Linker};
+
+/// A fatal reader failure, with the host's diagnostics.
+fn fatal(error: ValueError) -> wasmtime::Error {
+    match error {
+        ValueError::Abi(error) => wasmtime::Error::new(error),
+        ValueError::BigInt(error) => wasmtime::Error::new(error),
+        ValueError::Kind => wasmtime::Error::msg("invalid value kind"),
+        ValueError::Class => wasmtime::Error::msg("invalid error class"),
+    }
+}
 fn data<'a>(caller: &'a mut Caller<'_, RuntimeContext>) -> Result<&'a [u8], wasmtime::Error> {
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(wasmtime::Error::msg("missing value memory"));
@@ -20,9 +35,6 @@ fn read(
     let module = caller.data().module;
     ReferenceBox::read_in(data(caller)?, value as u64, version, module)
         .map_err(wasmtime::Error::new)
-}
-fn nullish(value: ReferenceBox) -> bool {
-    matches!(value.kind, Kind::Null | Kind::Undefined)
 }
 fn text(bytes: &[u8], value: ReferenceBox) -> &[u8] {
     // The checked cell guarantees the complete even-length range.
@@ -254,22 +266,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             move |mut caller: Caller<'_, RuntimeContext>, value: i64| {
                 caller.data_mut().tick()?;
                 let value = read(&mut caller, value, version)?;
-                let name = match value.kind {
-                    Kind::Error
-                    | Kind::Null
-                    | Kind::Record
-                    | Kind::Array
-                    | Kind::Dictionary
-                    | Kind::Promise => "object",
-                    Kind::Undefined => "undefined",
-                    Kind::String => "string",
-                    Kind::Float64 => "number",
-                    Kind::Boolean => "boolean",
-                    Kind::BigInt => "bigint",
-                    // Only value17 readers accept function cells.
-                    Kind::Function => "function",
-                    _ => return Err(wasmtime::Error::msg("invalid value kind")),
-                };
+                let name = shared::type_of(value).map_err(fatal)?;
                 host::result16(&mut caller, name.as_bytes())
                     .map_err(|_| wasmtime::Error::msg("value typeof result transfer"))
             },
@@ -282,32 +279,11 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     caller.data_mut().tick()?;
                     let value = read(&mut caller, value, version)?;
                     let result = if operation == is_array {
-                        value.kind == Kind::Array
+                        shared::is_array(value)
                     } else if operation == is_nullish {
-                        nullish(value)
+                        shared::nullish(value)
                     } else {
-                        match value.kind {
-                            Kind::Null | Kind::Undefined => false,
-                            Kind::Error
-                            | Kind::Record
-                            | Kind::Array
-                            | Kind::Dictionary
-                            | Kind::Function
-                            | Kind::Promise => true,
-                            Kind::BigInt => !varta_common::bigint::BigIntView::read(
-                                data(&mut caller)?,
-                                value.payload,
-                            )
-                            .map_err(wasmtime::Error::new)?
-                            .is_zero(),
-                            Kind::Boolean => value.payload != 0,
-                            Kind::String => value.payload >> i32::BITS != 0,
-                            Kind::Float64 => {
-                                let n = f64::from_bits(value.payload);
-                                n != 0.0 && !n.is_nan()
-                            }
-                            _ => false,
-                        }
+                        shared::truthy(data(&mut caller)?, value).map_err(fatal)?
                     };
                     Ok(i32::from(result))
                 },
@@ -322,28 +298,21 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     let a = read(&mut caller, a, version)?;
                     let b = read(&mut caller, b, version)?;
                     let equal = if operation == nullish_equal {
-                        nullish(a) && nullish(b)
-                    } else if a.kind != b.kind {
-                        false
+                        shared::nullish_equal(a, b)
+                    } else if a.kind == Kind::BigInt && b.kind == Kind::BigInt {
+                        // BigInt comparison work is charged to the fuel.
+                        crate::bigint::native_work(&mut caller, |data, budget| {
+                            shared::strict_equal(data, a, b, budget).map_err(|error| match error {
+                                ValueError::BigInt(error) => error,
+                                _ => varta_bigint::Error::InvalidPayload,
+                            })
+                        })?
+                        .map_err(wasmtime::Error::new)?
                     } else {
-                        match a.kind {
-                            Kind::BigInt => {
-                                crate::bigint::native_work(&mut caller, |data, budget| {
-                                    let left =
-                                        crate::bigint::integer(data, a.payload as i64, budget)?;
-                                    let right =
-                                        crate::bigint::integer(data, b.payload as i64, budget)?;
-                                    Ok(left.compare(&right, budget)? == std::cmp::Ordering::Equal)
-                                })?
-                                .map_err(wasmtime::Error::new)?
-                            }
-                            Kind::Float64 => f64::from_bits(a.payload) == f64::from_bits(b.payload),
-                            Kind::String => {
-                                let bytes = data(&mut caller)?;
-                                text(bytes, a) == text(bytes, b)
-                            }
-                            _ => a.payload == b.payload,
-                        }
+                        // No other kind does BigInt work.
+                        let mut budget = varta_bigint::Budget::new(0, 0);
+                        shared::strict_equal(data(&mut caller)?, a, b, &mut budget)
+                            .map_err(fatal)?
                     };
                     Ok(i32::from(equal))
                 },
@@ -394,20 +363,19 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             operation.name(),
             move |mut caller: Caller<'_, RuntimeContext>, value: i64, class: i32| {
                 caller.data_mut().tick()?;
-                let class = varta_common::value::ErrorClass::from_tag(class as u32)
-                    .ok_or_else(|| wasmtime::Error::msg("invalid error class"))?;
+                if varta_common::value::ErrorClass::from_tag(class as u32).is_none() {
+                    return Err(fatal(ValueError::Class));
+                }
                 let value = read(&mut caller, value, version)?;
-                let matched = if value.kind == Kind::Error {
-                    let object = varta_common::value::ErrorObject::read_with_version(
-                        data(&mut caller)?,
-                        value.payload,
-                        version,
-                    )
-                    .map_err(wasmtime::Error::new)?;
-                    class == varta_common::value::ErrorClass::Error || object.class == class
-                } else {
-                    false
-                };
+                let module = caller.data().module;
+                let matched = shared::is_error_class(
+                    data(&mut caller)?,
+                    value,
+                    class as u32,
+                    version,
+                    module,
+                )
+                .map_err(fatal)?;
                 Ok::<i32, wasmtime::Error>(i32::from(matched))
             },
         )?;
