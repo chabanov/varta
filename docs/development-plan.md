@@ -741,7 +741,7 @@ program-limits stream owns the batch's memory-layout and value-layout
 foundation (any value 18 or static-region ABI change) and lands it as an early
 separate foundation commit
 ([contract](architecture.md#checked-f64-utf16-v38--batch-program-and-data-limits-turn-budgets-linked-intrinsics-view-protocol-and-tsx-structural-subtyping-and-codegen-v2)).
-All selectors are registered and admit nothing yet.
+The selectors are registered; the table records what each stream admits.
 
 | Selector | Work stream | State |
 | --- | --- | --- |
@@ -751,8 +751,26 @@ All selectors are registered and admit nothing yet.
 | `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Registered, admits nothing |
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Registered, admits nothing |
 | `tsx()` | TSX: TSX parsing and template compilation | Registered, admits nothing |
-| `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Registered, admits nothing |
+| `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Implemented in part ([contract](architecture.md#structural-subtyping-structural_subtyping)): width subtyping of records, interfaces and class instances through views (one accessor call plus one descriptor test per source layout; direct slots for shapes without wider sources), identity-preserving comparisons and `instanceof`, diagnostics naming both types and the missing/mismatched/extra members, erased generic method signatures with checked results, `object` annotations, `Array.isArray` narrowing of `unknown`, record and optional spreads, `obj.m?.()` on class methods, property narrowing kept across calls and getters with checked reads, `JSON.stringify` typed `string` and of `never`, literal `??` fallbacks, record-to-dictionary assertions and records held by `unknown` read as JSON objects, `Promise<unknown>` arrow contexts, `as void`, string `for...of`, exhaustive literal `switch`, `encodeURIComponent`/`encodeURI`. Pending: Web byte bodies (`ReadableStream<Uint8Array>`, `arrayBuffer()`, `Blob`, `FormData`), typed `globalThis`/`process.env`, `Promise.race` over differently typed promises, constructor parameter properties, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views. Pilot probe below |
 | `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionaries | Registered, admits nothing |
+
+Structural-subtyping pilot probe (per-file `varta check` of every pilot module
+under v38, scratch copies only, no live API call): the unmodified pilot checks
+5 of 65 files, all others still stop at `ReadableStream<Uint8Array>` in
+`core/sse.ts` (byte bodies, pending). With the byte-body, `Blob`/`FormData`,
+`globalThis` and `Promise.race` uses replaced by text equivalents in a scratch
+copy, every structural-subtyping and pilot-language blocker of the v37 walk is
+gone (`object`, spreads of optional parameters, `Array.isArray`, optional
+method calls, property narrowing in `sse.ts`, `JSON.stringify` typing,
+`encodeURIComponent`, literal fallbacks, `pick`'s record-to-dictionary
+assertion, `Promise<unknown>` page fetchers): 6 files check, and the rest stop
+at limits owned by the program-limits stream (25 at the 128-shape limit, 12 at
+the 256-function limit, 2 shape limits inside the fetch prelude) and 6 at
+`Blob`. With those two limits raised in a scratch build only, the remaining
+first blockers are the resume-body compilation budget (35), the union type
+count (12), the promise type count (3), the function body budget (2), `Blob`
+(7) and one checked conversion to a union of record shapes without a literal
+discriminant.
 
 ### Platform targets and application model
 

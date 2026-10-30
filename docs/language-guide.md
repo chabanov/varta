@@ -5210,3 +5210,120 @@ count against the 256-function limit. Not supported yet: unions that mix a
 `Map`, `Set` or `Uint8Array` with other objects (and `instanceof Map`), byte
 bodies (`ReadableStream<Uint8Array>`, `Blob`, `FormData`), `globalThis`, and
 `Array.isArray` narrowing of `unknown`.
+
+### `checked-f64-utf16-v38`
+
+Profile v38 (in development) runs every v37 program unchanged. Its streams
+add their features here as they land.
+
+#### Structural subtyping (opt-in v38)
+
+An object with more members than a type needs is assignable to that type, as
+in TypeScript. The object is not copied: the narrower type is a view of the
+same object, so identity and writes are shared.
+
+```ts
+interface Readable<T> {
+  readonly value: T;
+  label: string;
+}
+interface Signal<T> extends Readable<T> {
+  set(v: T): void;
+}
+
+function show(r: Readable<number>): string {
+  return `${r.label}=${r.value}`;
+}
+
+class Cell {
+  label = 'cell';
+  #v = 1;
+  get value(): number {
+    return this.#v;
+  }
+  set(v: number): void {
+    this.#v = v;
+  }
+}
+
+export function main(): void {
+  const wide = { label: 'w', value: 2, extra: true };
+  const cell = new Cell();
+  const signal: Signal<number> = cell; // a class instance as an interface
+  signal.set(5);
+  const viewed: Readable<number> = wide;
+  viewed.label = 'x'; // the same object
+  console.log(`${show(wide)} ${show(cell)} ${viewed === wide} ${JSON.stringify(viewed)}`);
+  // x=2 cell=5 true {"label":"x","value":2,"extra":true}
+}
+```
+
+A mismatch names both types and the members: `expected Readable<number>,
+found { label: string } (missing field value)`. Arrays stay invariant
+(`Signal<number>[]` is not a `Readable<number>[]`; copy it with `map`), a
+write through a view must have the member's exact type in every object
+assigned to it, and a class method is reachable through a view only by a
+call.
+
+The same profile admits the pilot's remaining language items:
+
+```ts
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+interface UarpEvent {
+  id?: string;
+  event: string;
+  data: string;
+  json<T = JsonValue>(): T; // a generic method signature
+}
+type Mode = 'json' | 'text';
+interface Spec {
+  mode?: Mode;
+  form?: object;
+}
+
+function makeEvent(fields: { id?: string; event: string; data: string }): UarpEvent {
+  return {
+    ...fields, // spread of a parameter with optional fields
+    json<T = JsonValue>(): T {
+      return JSON.parse(fields.data) as T;
+    },
+  };
+}
+
+function decode(mode: Mode): string {
+  switch (mode) {
+    case 'json':
+      return 'J';
+    case 'text':
+      return 'T';
+  } // exhaustive: no default needed
+}
+
+export function main(): void {
+  const event = makeEvent({ event: 'run', data: '{"steps":[1,2]}' });
+  const run = event.json<{ steps: number[] }>();
+  const spec: Spec = {};
+  const parsed: unknown = JSON.parse('[1,"a"]');
+  let count = 0;
+  if (Array.isArray(parsed)) count = parsed.length; // unknown[]
+  let letters = '';
+  for (const ch of 'hé😀') letters += `[${ch}]`;
+  console.log(`${run.steps.length} ${decode(spec.mode ?? 'json')} ${count} ${letters} ${encodeURIComponent('a b')}`);
+  // 2 J 2 [h][é][😀] a%20b
+}
+```
+
+A generic method's result is checked at the type the call asks for (a
+`TypeError` where TypeScript's `as T` would pass any value through).
+`JSON.stringify` returns `string` (a value without a JSON form throws), a
+property narrowed by a test stays narrowed across calls and getters as in
+TypeScript (a read whose value changed since the test throws `TypeError`),
+`obj.method?.()` calls a class method, a record held by `unknown` reads as
+`Record<string, unknown>`, and `record as Record<string, T>` copies its
+fields. Known differences: spreads and key enumeration through a view list
+the fields that every member provides first (and a view's own members in
+canonical order), and an arrow passed where `(…) => Promise<unknown>` is
+expected takes one more job. Not supported yet: byte bodies
+(`ReadableStream<Uint8Array>`, `Blob`, `FormData`), `globalThis`,
+`Promise.race` over differently typed promises, constructor parameter
+properties and `instanceof Map`.

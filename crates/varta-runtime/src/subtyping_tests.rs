@@ -537,3 +537,23 @@ fn string_iteration_and_exhaustive_switches_match_node() {
         &["[h][é][l][l][o][😀][!] 8", "z BC 20"],
     );
 }
+
+/// The language guide's v38 examples (docs/language-guide.md).
+#[test]
+fn guide_examples_match_node() {
+    run(
+        include_str!("subtyping_cases/guide_views.ts"),
+        &[r#"x=2 cell=5 true {"label":"x","value":2,"extra":true}"#],
+    );
+    run(
+        include_str!("subtyping_cases/guide_items.ts"),
+        &["2 J 2 [h][é][😀] a%20b"],
+    );
+}
+
+/// `request<void>` instances of the pilot's transport: `x as T` with
+/// `T = void` discards the value.
+#[test]
+fn void_assertions_match_node() {
+    run(include_str!("subtyping_cases/void_requests.ts"), &["4 2"]);
+}

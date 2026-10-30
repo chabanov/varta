@@ -3097,8 +3097,8 @@ Inherit v37 under checked-f64-utf16-v38 with every v37 selector, value layout
 3, the timer and `net.request` operations and the permission broker's
 recoverable denials. V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION`
 (34) and shares value ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`)
-with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams and
-admit nothing yet: program limits (`program_limits`), data limits
+with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams; each
+admits nothing until its stream adds its rules below: program limits (`program_limits`), data limits
 (`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
 (`linked_intrinsics`), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
@@ -3128,3 +3128,53 @@ profiles frozen, and add each stream's rules under its own heading here.
   (`pilot_v38_inherits_v37_…` in `varta-common` `language`, the v38 runtime
   language test and the v38 CLI smoke test) change in the stream that
   introduces the difference.
+
+### Structural subtyping (`structural_subtyping`)
+
+Contract: [architecture.md](architecture.md#structural-subtyping-structural_subtyping).
+
+- Gate every admission on `structural_subtyping()`; v37 keeps its bytes and
+  diagnostics (`v37_modules_keep_their_bytes` pins digests computed before
+  the stream, `v37_keeps_rejecting_*`).
+- Coercions go through `unions::widen` → `subtyping::coerce`, which commits
+  edges only when the whole check succeeds; `arguments::accepts` adds
+  `subtyping::assignable` (no edge). A new place that converts a record or
+  instance value to a record type must use `widen`, never retype by hand.
+  Retype with `subtyping::viewed` (in place for locals, `Reinterpret`
+  otherwise): a record literal's own type fixes its layout.
+- Views are resolved after every body (`subtyping::resolve`, before literal
+  erasure and suspension preparation): every IR form that reads a record
+  slot by its static shape (`Field`, `SetField`, `HasOwn`, function-field
+  calls, `RecordEnumerate`, `RecordRest`, `RecordDelete`) must be handled
+  in the rewriter. A new such form must be added there in the same change.
+  Synthesized accessors are never walked again (their branches read exact
+  layouts), and an accessor's fallback is the view's own layout.
+- `Views::shapes` lists every layout a view value may have; union member
+  tests (`emit::shared_members`) use it. `IsClass` stays exact; never widen
+  it globally, since accessors test one source at a time.
+- An object entering a union of several record shapes is viewed by every
+  member it is assignable to (`coerce`); keep the `overlap` rejection, which
+  keeps `in` narrowing sound.
+- Writes through a view require the identical field type in every source;
+  never convert a value on a write (it would break the narrower source's
+  layout). Arrays and other containers stay invariant.
+- Identity comparisons of two object types compare handles
+  (`identity_operands`); never fold them to `false` by type under v38.
+- Generic method signatures: the erased type carries
+  `FunctionType::generic` until erasure; `erased_call` instantiates in the
+  declaring module (`named::enter`) and checks the `unknown` result with
+  `assert_value`. Type parameters stay whole parameters or results.
+- Engine helpers synthesized late (`undeclared_in`, `record_graph`) reserve
+  their function slot and a placeholder body while lowering; `resolve`
+  completes them. `note_boxed` must see every closed record entering
+  `unknown` (it runs in `unknown::widen`).
+- Path facts: under v38 `drop_paths` marks facts `checked` instead of
+  clearing them, and getter paths are facts; a checked read of a cell goes
+  through `checked_narrow`, and a checked literal fact of a primitive is not
+  applied. Root writes still drop facts (`drop_root_paths`).
+- The URI prelude (`<varta>/builtins/uri.ts`) loads only when a module names
+  one of its exports; keep it free of host imports.
+- Tests: `varta-runtime` `subtyping_tests` with Node 24 logs of
+  `subtyping_cases`, two forced-collection drivers, the deviation table,
+  diagnostics and v37 rejections; the public API cross-module test and the
+  CLI smoke test through both binaries.

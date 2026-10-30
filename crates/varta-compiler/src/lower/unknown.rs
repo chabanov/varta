@@ -386,6 +386,22 @@ impl Lower<'_> {
         message: &str,
         span: Span,
     ) -> Result<Expr> {
+        // `x as void` (v38, `request<void>` instances): the value is
+        // evaluated and discarded; `void` has no value to check.
+        if self.types.profile.structural_subtyping() && target == Type::Void {
+            return Ok(Expr {
+                span,
+                ty: Type::Void,
+                kind: E::Sequence(
+                    Box::new(value),
+                    Box::new(Expr {
+                        span,
+                        ty: Type::Void,
+                        kind: E::Zero,
+                    }),
+                ),
+            });
+        }
         // An `object` value (v38) is its `unknown` cell.
         let value = if self.types.profile.structural_subtyping()
             && matches!(value.ty, Type::Object(_))

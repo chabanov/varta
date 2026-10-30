@@ -646,8 +646,8 @@ impl LanguageProfile {
         self == Self::CheckedF64Utf16V38
     }
     /// Batch v38, structural-subtyping stream: width and structural subtyping
-    /// of records, interfaces and classes, plus the remaining pilot language
-    /// items. Admits nothing yet.
+    /// of records, interfaces and classes through views, plus the remaining
+    /// pilot language items (see `lower::subtyping` in the compiler).
     #[must_use]
     pub fn structural_subtyping(self) -> bool {
         self == Self::CheckedF64Utf16V38
