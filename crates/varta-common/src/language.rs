@@ -542,8 +542,8 @@ impl LanguageProfile {
     /// Pilot batch v37, net-request stream: async `fetch`, `Request`,
     /// `Response`, `Headers`, `URL` and `ReadableStream` over the exact
     /// `net.request` capability, and `Symbol.asyncIterator` for async
-    /// iterables; host imports it adds use [`crate::abi::NET_REQUEST_VERSION`].
-    /// Admits nothing yet.
+    /// iterables; host imports it adds use [`crate::abi::NET_REQUEST_VERSION`]
+    /// (`net_*` and `timer_start_v2`, whose denial is recoverable).
     #[must_use]
     pub fn net_request(self) -> bool {
         self == Self::CheckedF64Utf16V37
@@ -1603,6 +1603,10 @@ impl LanguageProfile {
     #[must_use]
     pub fn host_operation(self, operation: crate::HostOperation) -> crate::HostOperation {
         use crate::HostOperation::*;
+        // V37 (`net_request`) arms timers with a recoverable denial.
+        if self.net_request() && operation == TimerStart {
+            return TimerStartV2;
+        }
         if self.function_fields() {
             // Value17 readers replace every value16 reader; nothing else changes.
             let value16 = LanguageProfile::CheckedF64Utf16V35.host_operation(operation);
@@ -2699,7 +2703,6 @@ mod tests {
             H::JsonStringifyV15,
             H::PrimitiveStringV4,
             H::BigIntFromValueV3,
-            H::TimerStart,
             H::TimerClear,
             H::TimerTake,
             H::TimerUncaught,
@@ -2711,6 +2714,14 @@ mod tests {
             );
             assert!(new.host_operation(operation).minimum_abi() <= old.host_abi());
         }
+        // The net-request stream arms v37 timers with a recoverable denial
+        // (`timer_start_v2`, host ABI 33); v36 keeps the fatal `timer_start`.
+        assert_eq!(new.host_operation(H::TimerStart), H::TimerStartV2);
+        assert_eq!(old.host_operation(H::TimerStart), H::TimerStart);
+        assert_eq!(
+            H::TimerStartV2.minimum_abi(),
+            crate::abi::NET_REQUEST_VERSION
+        );
         assert_eq!(
             serde_json::from_str::<LanguageProfile>("\"checked-f64-utf16-v37\"").unwrap(),
             new

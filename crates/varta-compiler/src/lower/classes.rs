@@ -355,7 +355,48 @@ fn member_name(key: &ast::PropName) -> Result<String> {
             "class member named like the inherited {name}"
         )));
     }
+    if name == ASYNC_ITERATOR_METHOD {
+        return Err(unsupported(&format!("class member named {name}")));
+    }
     Ok(name)
+}
+
+/// The name a `[Symbol.asyncIterator]()` method is registered under (v37
+/// `net_request`). A string key cannot register it (`member_name` rejects
+/// the spelling), so only the well-known symbol reaches it.
+pub(super) const ASYNC_ITERATOR_METHOD: &str = "[Symbol.asyncIterator]";
+
+/// Whether `key` is the computed key `[Symbol.asyncIterator]`.
+fn async_iterator_key(key: &ast::PropName) -> bool {
+    let ast::PropName::Computed(computed) = key else {
+        return false;
+    };
+    matches!(
+        &*computed.expr,
+        ast::Expr::Member(ast::MemberExpr { obj, prop: ast::MemberProp::Ident(property), .. })
+            if matches!(&**obj, ast::Expr::Ident(object) if object.sym == "Symbol")
+                && property.sym == "asyncIterator"
+    )
+}
+
+/// An instance method's registered name: `member_name`, or the async
+/// iterator method under `net_request` profiles. Engine preludes of those
+/// profiles may also declare `toString` (`URL`, `URLSearchParams`).
+fn method_name(
+    key: &ast::PropName,
+    profile: varta_common::language::LanguageProfile,
+    prelude: bool,
+) -> Result<String> {
+    if profile.net_request() && async_iterator_key(key) {
+        return Ok(ASYNC_ITERATOR_METHOD.to_owned());
+    }
+    if profile.net_request()
+        && prelude
+        && matches!(key, ast::PropName::Ident(id) if id.sym == error_classes::TO_STRING)
+    {
+        return Ok(error_classes::TO_STRING.to_owned());
+    }
+    member_name(key)
 }
 
 fn receiver_width(signature: &Signature) -> Result<()> {

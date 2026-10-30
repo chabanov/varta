@@ -45,42 +45,38 @@ impl Policy {
     }
 
     pub(crate) fn network(&self, id: &str, input: &str) -> Option<url::Url> {
-        if input.len() > 8192
-            || input
-                .chars()
-                .any(|c| c.is_ascii_control() || c.is_whitespace())
-        {
-            return None;
-        }
-        let url = url::Url::parse(input).ok()?;
-        if url.path().contains('%')
-            || url.scheme() != "http"
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.fragment().is_some()
-        {
-            return None;
-        }
+        let url = parse_network_url(input, &[HTTP])?;
         self.both(|grants| {
             grants.iter().filter(|g| g.id == id).any(|g| {
                 let CapabilityValue::UrlGlobs(patterns) = &g.value else {
                     return false;
                 };
-                patterns.iter().any(|pattern| {
-                    let Ok(allow) = url::Url::parse(pattern) else {
+                patterns.iter().any(|pattern| url_matches(pattern, &url))
+            })
+        })
+        .then_some(url)
+    }
+
+    /// `net.request` (v37): the URL must parse under the network rules (HTTP
+    /// or HTTPS, no credentials, fragment or encoded path) and match a URL
+    /// pattern and the method list of one grant in the package's requests and
+    /// in the host ceiling. Nothing is resolved or connected here.
+    pub(crate) fn request(&self, input: &str, method: &str) -> Option<url::Url> {
+        let url = parse_network_url(input, &[HTTP, HTTPS])?;
+        self.both(|grants| {
+            grants
+                .iter()
+                .filter(|g| g.id == varta_common::net::REQUEST_CAPABILITY)
+                .any(|g| {
+                    let CapabilityValue::Requests(scope) = &g.value else {
                         return false;
                     };
-                    allow.scheme() == url.scheme()
-                        && allow.host_str() == url.host_str()
-                        && allow.port_or_known_default() == url.port_or_known_default()
-                        && wildcard(
-                            &allow[url::Position::BeforePath..],
-                            &url[url::Position::BeforePath..],
-                            false,
-                            false,
-                        )
+                    scope
+                        .methods
+                        .as_ref()
+                        .is_none_or(|methods| methods.iter().any(|m| m == method))
+                        && scope.urls.iter().any(|pattern| url_matches(pattern, &url))
                 })
-            })
         })
         .then_some(url)
     }
@@ -92,6 +88,158 @@ impl Policy {
 
     pub(crate) fn read(&self, id: &str, input: &str) -> Result<Vec<u8>, crate::HostFailure> {
         self.files.read(id, input)
+    }
+}
+
+const HTTP: &str = "http";
+const HTTPS: &str = "https";
+
+/// Parse a guest URL for authorization: bounded, no control characters or
+/// whitespace, one of `schemes`, no credentials, fragment or encoded path.
+/// The same parsed URL is what the transport uses.
+fn parse_network_url(input: &str, schemes: &[&str]) -> Option<url::Url> {
+    if input.len() > varta_common::net::MAX_URL_BYTES
+        || input
+            .chars()
+            .any(|c| c.is_ascii_control() || c.is_whitespace())
+    {
+        return None;
+    }
+    let url = url::Url::parse(input).ok()?;
+    if url.path().contains('%')
+        || !schemes.contains(&url.scheme())
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    Some(url)
+}
+
+/// Exact scheme, host and effective port; wildcards only after the authority.
+fn url_matches(pattern: &str, url: &url::Url) -> bool {
+    let Ok(allow) = url::Url::parse(pattern) else {
+        return false;
+    };
+    allow.scheme() == url.scheme()
+        && allow.host_str() == url.host_str()
+        && allow.port_or_known_default() == url.port_or_known_default()
+        && wildcard(
+            &allow[url::Position::BeforePath..],
+            &url[url::Position::BeforePath..],
+            false,
+            false,
+        )
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+    use varta_common::RequestScope;
+
+    fn grant(urls: &[&str], methods: Option<&[&str]>) -> CapabilityGrant {
+        CapabilityGrant {
+            id: varta_common::net::REQUEST_CAPABILITY.into(),
+            value: CapabilityValue::Requests(RequestScope {
+                urls: urls.iter().map(|u| (*u).into()).collect(),
+                methods: methods.map(|m| m.iter().map(|m| (*m).into()).collect()),
+            }),
+        }
+    }
+
+    #[test]
+    fn requests_match_scheme_host_port_path_and_method_exactly() {
+        let policy = Policy::new(&[grant(
+            &["https://api.test/v1/**", "http://127.0.0.1:8080/**"],
+            Some(&["GET", "POST"]),
+        )]);
+        for (url, method) in [
+            ("https://api.test/v1/items?x=1", "GET"),
+            ("https://API.test:443/v1/items", "POST"),
+            ("http://127.0.0.1:8080/", "GET"),
+        ] {
+            assert!(policy.request(url, method).is_some(), "{method} {url}");
+        }
+        for (url, method) in [
+            ("https://api.test/v1/items", "DELETE"),
+            ("https://api.test/v1/items", "get"),
+            ("http://api.test/v1/items", "GET"),
+            ("https://api.test:8443/v1/items", "GET"),
+            ("https://api.test/v2/items", "GET"),
+            ("https://api.test/v1/../admin", "GET"),
+            ("https://api.test/v1/%2e%2e/admin", "GET"),
+            ("https://user:pw@api.test/v1/x", "GET"),
+            ("https://api.test/v1/x#frag", "GET"),
+            ("https://api.test.evil/v1/x", "GET"),
+            ("http://127.0.0.1:8081/", "GET"),
+            ("ftp://api.test/v1/x", "GET"),
+            ("/v1/relative", "GET"),
+        ] {
+            assert!(policy.request(url, method).is_none(), "{method} {url}");
+        }
+    }
+
+    #[test]
+    fn requests_are_distinct_from_earlier_network_operations() {
+        let fetch = CapabilityGrant {
+            id: "net.fetch".into(),
+            value: CapabilityValue::UrlGlobs(vec!["http://127.0.0.1:8080/**".into()]),
+        };
+        let policy = Policy::new(&[fetch]);
+        assert!(policy.request("http://127.0.0.1:8080/x", "GET").is_none());
+        let request = Policy::new(&[grant(&["http://127.0.0.1:8080/**"], None)]);
+        assert!(
+            request
+                .network("net.fetch", "http://127.0.0.1:8080/x")
+                .is_none()
+        );
+        assert!(
+            request
+                .network("net.get", "http://127.0.0.1:8080/x")
+                .is_none()
+        );
+        assert!(
+            request
+                .request("http://127.0.0.1:8080/x", "PATCH")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn host_ceilings_narrow_urls_and_methods() {
+        let requested = [grant(&["https://api.test/**"], None)];
+        let ceiling = [grant(&["https://api.test/public/**"], Some(&["GET"]))];
+        let policy = Policy::with_ceiling(&requested, Some(&ceiling));
+        assert!(policy.request("https://api.test/public/a", "GET").is_some());
+        assert!(
+            policy
+                .request("https://api.test/public/a", "POST")
+                .is_none()
+        );
+        assert!(policy.request("https://api.test/private", "GET").is_none());
+        assert!(
+            Policy::with_ceiling(&requested, Some(&[]))
+                .request("https://api.test/public/a", "GET")
+                .is_none()
+        );
+        // A ceiling cannot add a request the package did not ask for, and
+        // empty URL or method lists deny.
+        assert!(
+            Policy::with_ceiling(&[], Some(&ceiling))
+                .request("https://api.test/public/a", "GET")
+                .is_none()
+        );
+        assert!(
+            Policy::new(&[grant(&["https://api.test/**"], Some(&[]))])
+                .request("https://api.test/a", "GET")
+                .is_none()
+        );
+        assert!(
+            Policy::new(&[grant(&[], None)])
+                .request("https://api.test/a", "GET")
+                .is_none()
+        );
     }
 }
 

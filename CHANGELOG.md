@@ -84,6 +84,28 @@ in [conformance/README.md](conformance/README.md).
   `d`/`v` flags are rejected by name. No value tag, layout, host import,
   capability or budget changes; v36 and earlier keep their diagnostics.
 
+- Network requests under opt-in v37 (selector `net_request`). `fetch`,
+  `Request`, `Response`, a `ReadableStream` subset, `URL` and
+  `URLSearchParams` are engine preludes over one new exact capability,
+  `net.request` (URL scopes over `http`/`https` with an optional method list;
+  host ceilings narrow both). Requests run on hyper's HTTP/1.1 client, HTTPS
+  through rustls with the compiled-in Mozilla roots; completions wake a
+  scheduled frame like a timer, so the runtime keeps only ids and serials.
+  Bodies stream as bounded, UTF-8 decoded text chunks (bytes wait for
+  `Uint8Array`); `AbortSignal` and `AbortSignal.timeout` cancel transfers;
+  redirects default to `error`, with `manual` and grant-checked `follow`.
+  Classes may declare `async *[Symbol.asyncIterator]()` for `for await`. Six
+  host ABI 33 imports join the registry (`net_request_start` with
+  `net.request`, and five bookkeeping operations).
+- A permission broker for asynchronous capabilities under v37: a denied
+  `net.request` or `time.timer` is decided before any effect, logged, and
+  delivered as a catchable `NotAllowedError` `DOMException` (`fetch` rejects,
+  `setTimeout` throws through the new `timer_start_v2`); v36 keeps its fatal
+  timer denial. The broker is the documented seam for a later consent prompt.
+- New dependencies, exactly pinned: `rustls` (ring provider), `tokio-rustls`
+  and `webpki-roots` for HTTPS, hyper's `client` feature (adds `want` and
+  `try-lock`), and the test-only `rcgen` for loopback certificates.
+
 - Opt-in v37 (pilot batch: language core, class generics, collections and
   binary text, RegExp and `net.request`, in development) is registered. It
   inherits every v36 feature, shares value ABI/layout 17 with v36 and declares

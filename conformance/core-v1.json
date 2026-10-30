@@ -673,6 +673,15 @@
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.split"
+    },
+    {
+      "id": "url",
+      "title": "WHATWG URL and URLSearchParams subset",
+      "core": [
+        "CORE-11"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
     }
   ],
   "cases": [
@@ -2587,6 +2596,21 @@
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
         "reason": "Uint8Array storage and the UTF-8 TextEncoder/TextDecoder are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+      }
+    },
+    {
+      "id": "url-search-params",
+      "feature": "url",
+      "path": "cases/url-search-params.ts",
+      "sha256": "d480e37dc035913dc97eff585a037630e2309a648532db754e076316357166b1",
+      "stdout": [
+        "varta log: http://example.test/p/x/y?z=1",
+        "varta log: 2 x y a=1&b=x+y&a=2&c=d+e"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "URL and URLSearchParams are v37 net_request preludes; the inventory is pinned to v36."
       }
     }
   ]

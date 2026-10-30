@@ -473,6 +473,20 @@ impl Lower<'_> {
                 member.prop.span(),
             ));
         }
+        // Engine-internal members of the v37 `fetch` prelude classes exist
+        // only for other engine prelude modules.
+        let owner = self.types.classes.get(method.owner);
+        if owner.prelude
+            && crate::modules::engine::INTERNAL_MEMBERS
+                .iter()
+                .any(|(class, member)| *class == owner.name && *member == name)
+            && !crate::modules::engine::is_prelude_source(self.source)
+        {
+            return Err(self.source.locate(
+                self.unknown_member(class, &name, "class method"),
+                member.prop.span(),
+            ));
+        }
         self.check_access(
             method.owner,
             method.access,

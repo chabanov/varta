@@ -5212,3 +5212,111 @@ fn public_engine_shares_v37_collections_across_modules_without_naming_them() {
         .to_string();
     assert!(frozen.contains("Set"), "{frozen}");
 }
+
+#[test]
+fn public_engine_runs_v37_fetch_across_modules_with_an_exact_request_grant() {
+    // The pilot's transport shape: a module issues requests with headers and
+    // a JSON body through `fetch`; the entry module reads the response and a
+    // denied origin. A loopback server answers on 127.0.0.1.
+    use std::io::{BufRead, BufReader, Read, Write};
+    use varta_common::language::LanguageProfile;
+    use varta_common::net::REQUEST_CAPABILITY;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let (mut line, mut length) = (String::new(), 0usize);
+            while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+                line.clear();
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let reply = format!("{{\"echo\":{}}}", String::from_utf8_lossy(&body));
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                )
+                .as_bytes(),
+            );
+        }
+    });
+    struct NetSources(String);
+    impl ModuleLoader for NetSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./transport.ts" => Ok("transport.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("transport.ts") => Ok(format!(
+                    "export async function post(path:string,body:string):Promise<Response>{{\
+                     const headers=new Headers();headers.set('Content-Type','application/json');\
+                     return fetch('{}'+path,{{method:'POST',headers,body}});}}",
+                    self.0
+                )),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {post} from './transport.ts';\
+                       export async function main():Promise<void>{\
+                       const response=await post('/items',JSON.stringify({n:1}));\
+                       const value=(await response.json()) as {echo:{n:number}};\
+                       console.log(`${response.status} ${value.echo.n}`);\
+                       try{await fetch('http://127.0.0.1:9/');}\
+                       catch(error){console.log(error instanceof DOMException?error.name:'other');}}"
+                    .into(),
+            },
+            &NetSources(origin.clone()),
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    let modules: Vec<_> = compiled.modules.iter().map(|m| m.path.clone()).collect();
+    // Engine preludes never appear in the module metadata.
+    assert_eq!(
+        modules,
+        [PathBuf::from("transport.ts"), PathBuf::from("entry.ts")]
+    );
+    let grant = varta_common::CapabilityGrant {
+        id: REQUEST_CAPABILITY.into(),
+        value: varta_common::CapabilityValue::Requests(varta_common::RequestScope {
+            urls: vec![format!("{origin}/items")],
+            methods: Some(vec!["POST".into()]),
+        }),
+    };
+    let runtime = VartaRuntime::new();
+    let denial = "varta log: <capability denied: net.request> (GET http://127.0.0.1:9/)";
+    assert_eq!(
+        runtime
+            .run_wasm_bytes(&compiled.wasm, std::slice::from_ref(&grant))
+            .unwrap()
+            .lines,
+        ["varta log: 200 1", denial, "varta log: NotAllowedError"]
+    );
+    // A host ceiling without the origin makes the first request a rejection
+    // that escapes main.
+    let ceiling = runtime
+        .run_wasm_bytes_with_policy(&compiled.wasm, std::slice::from_ref(&grant), &[])
+        .unwrap_err();
+    assert!(ceiling.to_string().contains("NotAllowedError"), "{ceiling}");
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    // V36 has no fetch prelude.
+    assert!(frozen.contains("unsupported"), "{frozen}");
+}

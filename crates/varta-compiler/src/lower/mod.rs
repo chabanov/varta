@@ -385,6 +385,7 @@ mod missing;
 mod mixed_records;
 mod module_constants;
 pub(crate) mod named;
+mod net;
 mod number_format;
 mod number_parse;
 mod number_predicates;

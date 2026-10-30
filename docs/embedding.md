@@ -104,6 +104,7 @@ one grant kind:
 | Boolean | `"enabled": true \| false` | `process.exit`, `time.now`, `time.timer` |
 | Name/path patterns | `"patterns": [...]` | `env.get`, `env.has`, `env.print`, `fs.print`, `fs.read` |
 | URL patterns | `"patterns": [...]` | `net.fetch`, `net.get` |
+| Request scopes (v37) | `"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) | `net.request` |
 | Listen endpoints | `"patterns": ["127.0.0.1:8080"]` | `net.listen` |
 <!-- generated:embedding-grant-kinds:end -->
 
@@ -115,7 +116,8 @@ denies. A pattern is **unsafe**, and the whole manifest is rejected, when:
 | --- | --- |
 | Names, paths and URLs | Longer than 512 bytes; empty or only whitespace; only `*` and `?` characters; contains NUL |
 | `fs.*` paths (additionally) | Not absolute, or contains a `..` component |
-| URLs (additionally) | Does not start with `http://`; empty authority, or an authority containing `*`, `?`, `@` or `#`; any control or whitespace character; a path containing `#`, `%` or `\`; a `.` or `..` path segment; not parseable as a URL, without a host, with a user name or password, or with `%` in the parsed path |
+| Request methods | Not an RFC 9110 token; `CONNECT`, `TRACE` or `TRACK` in any case; `delete`, `get`, `head`, `options`, `post` or `put` not in uppercase; a duplicate; more than `net::MAX_GRANT_METHODS` methods |
+| URLs (additionally) | Does not start with `http://` (`net.request`: `http://` or `https://`); empty authority, or an authority containing `*`, `?`, `@` or `#`; any control or whitespace character; a path containing `#`, `%` or `\`; a `.` or `..` path segment; not parseable as a URL, without a host, with a user name or password, or with `%` in the parsed path |
 | Listen endpoints | Not a literal `IP:port` socket address, or not in canonical form (for example `[::1]:8080`); listen endpoints have no wildcards |
 
 ## Module validation
@@ -241,7 +243,7 @@ profile may import.
 | `checked-f64-utf16-v34` | 30 | 15 | binary64 | UTF-16LE | no | `varta.exception.version_v6` = 6 | `varta_resume`, catalog 2 | yes | 80 |
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
-| `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 87 |
+| `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -405,6 +407,7 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | Clock | `time_now` | Requires `time.now` enabled. Unix seconds as i32; a time outside i32 is status 2 with 0 |
 | Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most 256 bytes, no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 1 if the variable is set and 0 otherwise (status 0 either way). For an allowed name whose variable is **unset** (or whose value is not valid Unicode), `env_get` returns 0 with status 3 (I/O) and `env_print` emits nothing but the diagnostic and sets status 3; a value larger than `abi::MAX_RESULT_BYTES` is status 4. `env_get` returns the value as a string result, `env_print` emits `varta env: <name>=<value>` |
 | Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..` rejected; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it |
+| Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; bounds and descriptor in [Network requests](architecture.md#network-requests-net_request) |
 | Network | `net_get*`, `net_fetch*` | `http:` URLs only; parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
 | Exit | `process_exit`, `process_exit_f64` | Requires `process.exit` enabled. Authorized: end the execution with the code (not the host process); no result is produced. Denied: status 1 and the guest continues. `process_exit_f64` requires a finite integral value within i32, otherwise status 2 and the guest continues |
 | HTTP | `http_service`, `http_stop` | Feature marker and owned shutdown of [HTTP service v1](architecture.md#http-service-v1) |
@@ -656,7 +659,7 @@ import the operation, as contiguous runs in registry order.
 | `primitive_to_number_v5` | (i64) → (f64) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `primitive_to_string_v5` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `timer_clear` | (f64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
-| `timer_start` | (f64, f64, i32) → (f64) | 32 | `time.timer` | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
+| `timer_start` | (f64, f64, i32) → (f64) | 32 | `time.timer` | — | — | `checked-f64-utf16-v36` |
 | `timer_take` | (f64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `timer_uncaught` | (i64) → () | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_is_array_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
@@ -668,8 +671,15 @@ import the operation, as contiguous runs in registry order.
 | `value_truthy_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_typeof_v10` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `date_now` | () → (f64) | 33 | `time.now` | — | — | `checked-f64-utf16-v37` |
+| `net_body_read` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` |
+| `net_request_abort` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` |
+| `net_request_start` | (i32, i32) → (f64) | 33 | `net.request` | — | — | `checked-f64-utf16-v37` |
+| `net_request_take` | (f64) → (i32) | 33 | none | — | — | `checked-f64-utf16-v37` |
+| `net_request_text` | (f64) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
+| `net_request_watch` | (f64, f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` |
 | `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
 | `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
+| `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` |
 <!-- generated:embedding-host-operations:end -->
 
 ## Status and control codes

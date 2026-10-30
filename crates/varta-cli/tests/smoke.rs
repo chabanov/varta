@@ -11958,6 +11958,124 @@ fn pilot_profile_v36_timers_run_everywhere_and_are_denied_without_time_timer() {
     );
 }
 
+/// A loopback HTTP/1.1 server on 127.0.0.1 (ephemeral port) answering every
+/// request with `hello`; returns its origin and the accepted-connection count.
+fn hello_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = accepted.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            count.fetch_add(1, Ordering::SeqCst);
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                line.clear();
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+            );
+        }
+    });
+    (origin, accepted)
+}
+
+#[test]
+fn pilot_profile_v37_fetch_runs_everywhere_and_denials_are_recoverable() {
+    const PROFILE: &str = "checked-f64-utf16-v37";
+    let (origin, accepted) = hello_server();
+    let project = RegressionProject::new(
+        &format!(
+            "async function denied(url:string):Promise<string>{{\
+             try{{await fetch(url);return 'fetched';}}\
+             catch(error){{return error instanceof DOMException?error.name:'other';}}}}\
+             export async function main():Promise<void>{{\
+             const response=await fetch(new Request('{origin}/hello',{{method:'GET'}}));\
+             const text=await response.text();console.log(String(response.status)+' '+text);\
+             const name=await denied('http://127.0.0.1:9/x');console.log('other port '+name);}}"
+        ),
+        serde_json::json!({"net":{"request":{"urls":[format!("{origin}/**")],"methods":["GET"]}}}),
+    );
+    project.language_profile(PROFILE);
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let other = "varta log: <capability denied: net.request> (GET http://127.0.0.1:9/x)";
+    let expected = [
+        "varta log: 200 hello",
+        other,
+        "varta log: other port NotAllowedError",
+    ];
+    let check = project.command(&["check"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info = String::from_utf8_lossy(&inspect.stdout).into_owned();
+    assert!(
+        info.contains("net_request_start") && info.contains("net.request"),
+        "{info}"
+    );
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(validate.status.success(), "{}", combined(&validate));
+    // The host ceiling withholds the origin: every request is denied before
+    // any connection, recoverably, in every runner.
+    project.host_policy(serde_json::json!([]));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let mut restricted = Command::new(command.get_program());
+        restricted.args(command.get_args());
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+        let before = accepted.load(Ordering::SeqCst);
+        let output = restricted
+            .args(["--policy", "host-policy.json"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        // The first request's rejection escapes main: the denial is logged
+        // and the execution reports the uncaught NotAllowedError.
+        assert!(!output.status.success(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("NotAllowedError"),
+            "{}",
+            combined(&output)
+        );
+        assert_eq!(accepted.load(Ordering::SeqCst), before);
+    }
+    // Without any grant validation refuses the reviewed import, and running
+    // denies recoverably without a socket.
+    project.set_capabilities(serde_json::json!({}));
+    let build = project.command(&["build"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(!validate.status.success(), "{}", combined(&validate));
+    assert!(
+        combined(&validate).contains("net.request"),
+        "{}",
+        combined(&validate)
+    );
+}
+
 #[test]
 fn pilot_profile_v35_runs_mixed_records_and_json_to_unknown_in_dev_and_artifacts() {
     let project = RegressionProject::new(

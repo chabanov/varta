@@ -91,7 +91,7 @@ pub(super) fn observe_with_profile(
                 resume.call(&mut *store, (token, 0, 0))?;
             }
             assert!(store.data().scheduler.unhandled_rejection().is_none());
-            if store.data().scheduler.next_due().is_none() {
+            if store.data().scheduler.next_due(false).is_none() {
                 return Ok(());
             }
             store.data_mut().scheduler.fire().unwrap();
