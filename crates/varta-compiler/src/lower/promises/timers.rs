@@ -24,6 +24,36 @@ const CLEAR_INTERVAL: &str = "clearInterval";
 const UNREF_TIMEOUT: &str = "varta.web.unrefTimeout";
 const TIMER_DETAIL: &str = "outside the timer subset of checked-f64-utf16-v36";
 
+/// `ReturnType<typeof setTimeout>` or `ReturnType<typeof setInterval>` (v37
+/// `language_core`): the timer handle, a `number` as these timers return.
+/// The query names the built-in timers; a type named `ReturnType` wins.
+pub(in crate::lower) fn handle_type(
+    reference: &ast::TsTypeRef,
+    types: &ir::ValueTypes,
+) -> Option<Type> {
+    if !types.profile.language_core()
+        || !matches!(&reference.type_name, ast::TsEntityName::Ident(id) if id.sym == "ReturnType")
+        || named::declared(types, "ReturnType")
+    {
+        return None;
+    }
+    let [argument] = reference.type_params.as_ref()?.params.as_slice() else {
+        return None;
+    };
+    let ast::TsType::TsTypeQuery(query) = &**argument else {
+        return None;
+    };
+    match &query.expr_name {
+        ast::TsTypeQueryExpr::TsEntityName(ast::TsEntityName::Ident(id))
+            if query.type_args.is_none()
+                && matches!(id.sym.as_ref(), SET_TIMEOUT | SET_INTERVAL) =>
+        {
+            Some(types.number())
+        }
+        _ => None,
+    }
+}
+
 fn timer_rejected(what: &str) -> CompilerError {
     CompilerError::Unsupported {
         kind: what.into(),

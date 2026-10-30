@@ -143,6 +143,7 @@ pub(super) fn link_module(
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         let (body, locals) =
             lower.initializers(chunk, &scope, (&mut linked.stored, &mut linked.declared))?;
@@ -501,6 +502,7 @@ impl Lower<'_> {
                     initialized: true,
                     mutable: false,
                     readonly: constant.readonly,
+                    tdz: None,
                 },
             );
             let kind = match constant.value {

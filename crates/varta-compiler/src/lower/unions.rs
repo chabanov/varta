@@ -376,6 +376,9 @@ impl Lower<'_> {
         {
             return self.guard(&unary.arg, !yes);
         }
+        if self.path_guard(test, yes)? {
+            return Ok(());
+        }
         // A truthy optional chain `x?.p` (v36) proves `x` is not nullish.
         if yes
             && self.types.profile.function_fields()

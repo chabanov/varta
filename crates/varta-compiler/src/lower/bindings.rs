@@ -112,6 +112,12 @@ impl Lower<'_> {
                     old.ty,
                     self.types,
                 )?
+            } else if self.types.profile.language_core()
+                && declaration.kind == ast::VarDeclKind::Let
+                && let Some(ty) = old.ty
+            {
+                output.push(self.deferred(name, &old, ty, variable.span)?);
+                continue;
             } else {
                 return Err(unsupported(
                     "uninitialized variable without an undefined-capable let annotation",
@@ -119,11 +125,10 @@ impl Lower<'_> {
             };
             value_type(value.ty).map_err(|e| self.source.locate(e, value.span))?;
             if old.ty.is_some_and(|ty| ty != value.ty) {
+                let (expected, found) = self.mismatch(old.ty.unwrap_or(Type::Void), value.ty);
                 return Err(self.source.locate(
                     type_error(format!(
-                        "type mismatch for {name}: expected {}, found {}",
-                        old.ty.unwrap_or(Type::Void),
-                        value.ty
+                        "type mismatch for {name}: expected {expected}, found {found}"
                     )),
                     value.span,
                 ));
@@ -131,7 +136,7 @@ impl Lower<'_> {
             self.update(name, value.ty)?;
             self.mark_const_assertion(name, readonly)?;
             self.flow_known_binding(&old, &value);
-            output.push(S::Init(old.slot, value));
+            output.extend(self.initialize(&old, value));
         }
         Ok(output)
     }

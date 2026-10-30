@@ -34,12 +34,14 @@ impl Lower<'_> {
             ));
         }
         let target = match stmt::unparen(&update.arg) {
-            ast::Expr::Ident(name) => self
-                .prepare_pattern_target(&ast::Pat::Ident(ast::BindingIdent {
+            ast::Expr::Ident(name) => {
+                self.require_assigned_target(name.sym.as_ref())?;
+                self.prepare_pattern_target(&ast::Pat::Ident(ast::BindingIdent {
                     id: name.clone(),
                     type_ann: None,
                 }))?
-                .ok_or_else(|| invalid("missing update binding"))?,
+                .ok_or_else(|| invalid("missing update binding"))?
+            }
             ast::Expr::Member(member) => {
                 let base = self.write_member_base(member)?;
                 if self.types.profile.mixed_index_records()

@@ -438,5 +438,6 @@ mod members;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers};
 pub(super) use error_classes::{
     MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_prelude,
+    root as error_family_root,
 };
 pub(super) use layout::layout_module;

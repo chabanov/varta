@@ -4851,3 +4851,73 @@ fn public_engine_runs_v36_timers_across_modules_with_an_exact_grant() {
         "{frozen}"
     );
 }
+
+#[test]
+fn public_engine_links_the_v37_language_core_across_modules() {
+    // A protocol module with a hoisted helper and a closure created before
+    // the binding it reads, a deferred `let`, a string `switch`, dense reads,
+    // property-path narrowing and a value function passed as a `void`
+    // callback; the entry module drives it.
+    use varta_common::language::LanguageProfile;
+    struct CoreSources;
+    impl ModuleLoader for CoreSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./protocol.ts" => Ok("protocol.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("protocol.ts") => {
+                    "export interface Field{name:string;value?:string}\
+                    export function classify(fields:Field[],each:(n:string)=>void):string{\
+                    const report=():string=>summary+'/'+String(count());\
+                    let total=0;\
+                    for(const field of fields){each(field.name);\
+                    let kind:string;\
+                    switch(field.name){case 'id':case 'key':kind='k';break;default:kind='v';}\
+                    if(field.value!==undefined&&field.value.length>0)total+=field.value.length;\
+                    else total+=kind.length;}\
+                    const summary:string=fields[0].name;\
+                    return report();\
+                    function count():number{return total;}}"
+                }
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {classify} from './protocol.ts';\
+                       export function main():void{const seen:string[]=[];\
+                       const record=(name:string):number=>seen.push(name);\
+                       console.log(classify([{name:'id',value:'abc'},{name:'x'},{name:'key',value:''}],record));\
+                       console.log(String(seen.length)+seen[2]);}"
+                    .into(),
+            },
+            &CoreSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: id/5", "varta log: 3key"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("capture before binding initialization"),
+        "{frozen}"
+    );
+}

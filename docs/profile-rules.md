@@ -2780,9 +2780,10 @@ Inherit v36 under checked-f64-utf16-v37 with every v36 selector, value layout
 scheduler, frame catalog version 3, async generators and the timer operations.
 V37 has its own host ABI `abi::NET_REQUEST_VERSION` (33) and shares value
 ABI/layout 17 (`value::FUNCTION_FIELD_VALUE_VERSION`) with v36; v36 keeps host
-ABI 32. Five selectors gate the streams and admit nothing yet: language core
-(`language_core`), class generics (`class_generics`), collections and binary
-text (`collections`), RegExp (`regexp`) and network requests (`net_request`).
+ABI 32. Five selectors gate the streams: language core (`language_core`,
+implemented below) and, admitting nothing yet, class generics
+(`class_generics`), collections and binary text (`collections`), RegExp
+(`regexp`) and network requests (`net_request`).
 Gate every admission on its own selector, keep v36 and earlier profiles
 frozen, and add each stream's rules under its own heading here.
 
@@ -2805,3 +2806,58 @@ frozen, and add each stream's rules under its own heading here.
   (`pilot_v37_inherits_v36_…` in `varta-common` `language`, the v37 runtime
   language test and the v37 CLI smoke test) change in the stream that
   introduces the difference.
+
+### Language core (`language_core`)
+
+Contract: [architecture.md](architecture.md#language-core-language_core).
+
+- Per-function state lives in `lower::core::State` (`early`, `unassigned`,
+  `paths`, `impure_guard`); `unassigned` and `paths` are also fields of the
+  flow `Snapshot`, so every join, alternate, restore and finalizer transform
+  must carry them: unions for `unassigned`, keyed intersections with unions
+  of types for `paths`, and `restore` may never resurrect a fact. Gate every
+  admission on `language_core()`; an empty state must leave earlier profiles
+  byte-identical (`v36_modules_keep_their_bytes`).
+- Temporal dead zones (`lower::tdz`): reserve flags only through
+  `early_names` (simple declarators and nested function declarations),
+  identify the flag by the declaring function's slot (`Binding::tdz`) and
+  resolve its local slot through `tdz_flag`; the owner learns an early
+  capture when it re-captures a closure's captures (`capture_early`, by
+  `identity.1`, never the closure's slot). An early binding's
+  initialization must be `Set` plus the flag, never `Init` (which would
+  allocate a fresh cell the closure does not hold). Any new write path through
+  a closure must go through `prepare_pattern_target`/`early_target` or test the
+  flag itself. The Error root for `ReferenceError` is created in `link::lower`
+  before the first module when `module_has_early_captures`; never create it
+  lazily during body lowering.
+- Deferred bindings (`lower::deferred`): `flow_assigned` is the only place
+  that clears `unassigned`; conservative invalidation (`flow_write` from loop
+  or call effects) must not count as an assignment. Read-modify-write targets
+  call `require_assigned_target` before `prepare_pattern_target`.
+  `unassigned_outer` hides unassigned bindings from closure snapshots.
+- Dense reads (`lower::dense`): every element-typed read of a possibly
+  missing element goes through `dense_read`; element types that admit
+  `undefined` must stay unchecked.
+- Path facts (`lower::paths`): only data fields are path components; a new
+  construct that can run user code or write a property must drop facts
+  (`path_effects`, `drop_paths`) and be listed in `paths::Scan`. Facts are
+  keyed by the root's local slot, so they never leave the function that
+  created them.
+- `switch` by equality (`lower::switches`) reuses the `Switch` statement over
+  the Boolean `true`; its tests are ordinary `===` lowering of the hidden
+  discriminant binding, lowered before any clause body. Keep scalar switches
+  on the original path (`switch_statement`).
+- `void` conversion (`lower::void_functions`) synthesizes an AST arrow over a
+  hidden binding; keep it to receiverless fixed-arity shapes, and keep
+  diagnostics of earlier profiles on `Type`'s `Display` (`mismatch` renders
+  signatures for v37 only).
+- Return analysis for endless loops is the `loops` completion mode
+  (`exits_function_through_loops`), used only by v37 `finish_body`; never fold
+  it into `normal`, which flow reachability of every profile uses.
+- Stack depth: lowering recursion runs on 2 MiB test threads; keep new
+  per-arm locals out of `statement_inner` and `expr_inner` (call a helper).
+- Tests: Node-pinned `language_core_cases` logs, a forced collection before
+  every job for the async cases and a stress-fuel run for synchronous
+  closures, deviation and diagnostic tables, v36 rejections and frozen v36
+  digests, the public API and CLI smoke tests, and the v36-pinned conformance
+  gaps.

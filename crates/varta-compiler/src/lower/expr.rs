@@ -102,6 +102,9 @@ impl Lower<'_> {
             }
             _ => self.expr_inner(expression),
         };
+        if result.is_ok() {
+            self.path_effects(expression);
+        }
         self.depth -= 1;
         result
             .map(|value| {
@@ -115,6 +118,7 @@ impl Lower<'_> {
                     value
                 }
             })
+            .and_then(|value| self.void_function(value, expected))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }
@@ -205,12 +209,20 @@ impl Lower<'_> {
                     ));
                 }
                 let binding = self.resolve_binding(name.sym.as_ref())?;
+                if !binding.initialized
+                    && binding.tdz.is_some()
+                    && binding.identity.0 != self.index
+                    && self.types.profile.language_core()
+                {
+                    return self.tdz_ident(name.sym.as_ref(), &binding, expression.span());
+                }
                 if !binding.initialized {
                     return Err(invalid(format!(
                         "binding used before initialization: {}",
                         name.sym
                     )));
                 }
+                self.require_assigned(name.sym.as_ref(), &binding)?;
                 let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
                 if let Some(narrow) = self.refinements.get(&binding.slot).copied()
                     // An `object` fact (v35) is read as the `unknown` cell; only
@@ -513,7 +525,13 @@ impl Lower<'_> {
                 }
                 let (left, right) = classes::common_operands(left, right, self.types);
                 let (left, right) = if self.types.profile.has_undefined() {
-                    match super::undefined::binary(binary.op, left, right, expression.span()) {
+                    match super::undefined::binary(
+                        binary.op,
+                        left,
+                        right,
+                        expression.span(),
+                        self.types.profile.language_core(),
+                    ) {
                         super::undefined::Binary::Folded(value) => return Ok(value),
                         super::undefined::Binary::Unchanged(left, right) => (left, right),
                     }
@@ -590,7 +608,7 @@ impl Lower<'_> {
                 return self.conditional(branch, None, None);
             }
             ast::Expr::Call(call) => return self.call(call, None, None),
-            ast::Expr::Member(member) => return self.result_field(member),
+            ast::Expr::Member(member) => return self.member_read(member),
             ast::Expr::Tpl(template) if self.types.profile.template_literals() => {
                 return self.template_literal(template);
             }

@@ -40,6 +40,10 @@ struct Binding {
     mutable: bool,
     /// Bound to an `as const` value (v32): writes through it are rejected.
     readonly: bool,
+    /// V37 (`language_core`): the slot, in the declaring function, of the
+    /// flag cell of a binding that a closure may capture before its
+    /// initialization (`tdz`).
+    tdz: Option<u32>,
 }
 struct Lower<'a> {
     source: &'a Source,
@@ -82,6 +86,8 @@ struct Lower<'a> {
     generator: Option<u32>,
     /// Promise type id of the async function whose body is lowered (v34).
     asynchronous: Option<u32>,
+    /// V37 language-core state of this function body.
+    core: core::State,
 }
 
 pub(crate) use link::lower;
@@ -209,6 +215,11 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     if let ast::TsType::TsTypeLit(literal) = ty {
         return records::type_literal(literal, types);
     }
+    if let ast::TsType::TsTypeRef(reference) = ty
+        && let Some(handle) = promises::timers::handle_type(reference, types)
+    {
+        return Ok(handle);
+    }
     if types.profile.named_types()
         && let ast::TsType::TsTypeRef(reference) = ty
         && let ast::TsEntityName::Ident(id) = &reference.type_name
@@ -300,8 +311,11 @@ mod callback_inference;
 pub(crate) mod classes;
 mod completion;
 mod compound_assignments;
+mod core;
 mod declarations;
 mod declared_fields;
+mod deferred;
+mod dense;
 mod dictionaries;
 mod dictionary_helpers;
 mod dictionary_spread;
@@ -352,6 +366,7 @@ mod object_narrowing;
 mod optional_chains;
 mod own_keys;
 mod parameters;
+mod paths;
 mod patterns;
 mod power;
 mod primitive_arithmetic;
@@ -373,6 +388,8 @@ mod stmt;
 mod string_enumeration;
 mod strings;
 pub(crate) mod suspension;
+mod switches;
+mod tdz;
 mod templates;
 mod tools;
 mod type_operators;
@@ -380,6 +397,7 @@ mod undefined;
 mod unions;
 mod unknown;
 mod updates;
+mod void_functions;
 mod web_text;
 
 impl Lower<'_> {
@@ -412,6 +430,7 @@ impl Lower<'_> {
                     initialized,
                     mutable,
                     readonly: false,
+                    tdz: None,
                 },
             )
             .is_some()

@@ -7,6 +7,10 @@ pub(super) struct Snapshot {
     pub(super) facts: BTreeMap<u32, Type>,
     pub(super) writes: BTreeMap<u32, u64>,
     pub(super) reachable: bool,
+    /// V37 deferred `let` bindings that are not definitely assigned.
+    pub(super) unassigned: BTreeSet<u32>,
+    /// V37 property-path facts.
+    pub(super) paths: BTreeMap<paths::Path, paths::Fact>,
 }
 pub(super) fn native(call: &ast::CallExpr, lower: &Lower<'_>) -> bool {
     let ast::Callee::Expr(callee) = &call.callee else {
@@ -307,14 +311,29 @@ impl Lower<'_> {
             facts: self.refinements.clone(),
             writes: self.writes.clone(),
             reachable: self.reachable,
+            unassigned: self.core.unassigned.clone(),
+            paths: self.core.paths.clone(),
         }
     }
     pub(super) fn flow_alternate(&mut self, saved: &Snapshot) {
         self.refinements = saved.facts.clone();
         self.reachable = saved.reachable;
+        // Bindings declared since `saved` stay unassigned (and out of scope).
+        self.core
+            .unassigned
+            .extend(saved.unassigned.iter().copied());
+        self.core.paths = saved.paths.clone();
     }
     pub(super) fn flow_restore(&mut self, saved: &Snapshot) {
         self.reachable = saved.reachable;
+        self.core
+            .unassigned
+            .extend(saved.unassigned.iter().copied());
+        // Both the skipped and the taken region reach here: keep the facts
+        // that hold after either.
+        self.core
+            .paths
+            .retain(|path, fact| saved.paths.get(path) == Some(fact));
         self.refinements = saved
             .facts
             .iter()
@@ -326,12 +345,14 @@ impl Lower<'_> {
             .collect();
     }
     pub(super) fn flow_write(&mut self, slot: u32) {
+        self.drop_root_paths(slot);
         if self.types.profile.refinement_writes() {
             *self.writes.entry(slot).or_default() += 1;
             self.refinements.remove(&slot);
         }
     }
     pub(super) fn flow_assigned(&mut self, slot: u32, observed: Type) -> Result<()> {
+        self.core.unassigned.remove(&slot);
         if self.types.profile.refinement_writes() {
             self.direct_writes.insert(slot);
         }
@@ -376,6 +397,11 @@ impl Lower<'_> {
         }
         let paths: Vec<_> = paths.iter().filter(|p| p.reachable).collect();
         self.reachable = !paths.is_empty();
+        self.core.unassigned = paths
+            .iter()
+            .flat_map(|p| p.unassigned.iter().copied())
+            .collect();
+        self.flow_join_paths(&paths)?;
         let slots: BTreeSet<_> = paths.iter().flat_map(|p| p.facts.keys().copied()).collect();
         self.refinements.clear();
         for slot in slots {
@@ -432,6 +458,8 @@ impl Lower<'_> {
             )
         };
         let saved = self.guard_blocked.clone();
+        let impure = self.core.impure_guard;
+        self.core.impure_guard |= paths::impure(test);
         if exhausted {
             self.guard_blocked.extend(self.local_types.keys().copied());
         }
@@ -447,15 +475,31 @@ impl Lower<'_> {
         }
         let result = self.guard_inner(test, yes);
         self.guard_blocked = saved;
+        self.core.impure_guard = impure;
         result
     }
+    // A loop entry keeps the path facts (v37) only when no iteration can
+    // write a property or run code; `for...of`/`for...in` steps, handlers and
+    // finalizers drop them.
     pub(super) fn flow_while_effects(&mut self, statement: &ast::WhileStmt) {
+        if paths::impure(statement) {
+            self.drop_paths();
+        }
         self.flow_effects(|effects| statement.visit_with(effects));
     }
     pub(super) fn flow_do_effects(&mut self, statement: &ast::DoWhileStmt) {
+        if paths::impure(statement) {
+            self.drop_paths();
+        }
         self.flow_effects(|effects| statement.visit_with(effects));
     }
     pub(super) fn flow_for_effects(&mut self, statement: &ast::ForStmt) {
+        if paths::impure(&statement.test)
+            || paths::impure(&statement.update)
+            || paths::impure(&*statement.body)
+        {
+            self.drop_paths();
+        }
         self.flow_effects(|effects| {
             statement.test.visit_with(effects);
             statement.update.visit_with(effects);
@@ -463,6 +507,7 @@ impl Lower<'_> {
         });
     }
     pub(super) fn flow_for_of_effects(&mut self, statement: &ast::ForOfStmt) {
+        self.drop_paths();
         self.flow_effects(|effects| {
             let names = effects.head(&statement.left);
             effects.shadows.push(names);
@@ -472,6 +517,7 @@ impl Lower<'_> {
         });
     }
     pub(super) fn flow_for_in_effects(&mut self, statement: &ast::ForInStmt) {
+        self.drop_paths();
         self.flow_effects(|effects| {
             let names = effects.head(&statement.left);
             effects.shadows.push(names);
@@ -481,9 +527,11 @@ impl Lower<'_> {
         });
     }
     pub(super) fn flow_block_effects(&mut self, block: &ast::BlockStmt) {
+        self.drop_paths();
         self.flow_effects(|effects| block.visit_with(effects));
     }
     pub(super) fn flow_try_prefix(&mut self, statement: &ast::TryStmt) {
+        self.drop_paths();
         self.flow_effects(|effects| {
             statement.block.visit_with(effects);
             statement.handler.visit_with(effects);

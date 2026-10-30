@@ -647,11 +647,11 @@ as v36 fails at its host ABI section, and runtimes that do not list v37 reject
 its declared profile name. The collections stream owns any value-layout bump
 (value 18) and lands it as an early foundation commit
 ([contract](architecture.md#checked-f64-utf16-v37--pilot-batch-language-core-class-generics-collections-and-binary-text-regexp-and-netrequest)).
-All selectors are registered and admit nothing yet.
+All selectors are registered; the language core is implemented.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
-| `language_core()` | Language core: TDZ-safe closure capture before declaration, deferred `let x: T;` initialization, dense `for…of` typing, property-path narrowing, `switch` on strings, function assignability fixes | M3, M4 | Registered, admits nothing |
+| `language_core()` | Language core: TDZ-safe closure capture before declaration, deferred `let x: T;` initialization, dense `for…of` typing, property-path narrowing, `switch` on strings, function assignability fixes | M3, M4 | Implemented ([contract](architecture.md#language-core-language_core)): captures before initialization with run-time TDZ (`ReferenceError`-named Error instances), hoisted nested function declarations, definite assignment of `let x: T;`, element-typed `for…of`/`xs[i]`/`s[i]` with checked holes (TypeError deviation), property-path narrowing with call/write invalidation, `switch` by strict equality with clause narrowing, value functions as `void` callbacks with signature diagnostics, endless-loop return analysis, undefined-capable and `new C()` class fields, constructor closures over `this.field`. Open: discriminated unions of several record shapes, `instanceof ReferenceError`, captures of destructured or loop-head bindings before initialization, `Array.isArray` narrowing of `unknown` to an array |
 | `class_generics()` | Classes: generic methods and classes, interface method signatures, `implements`, `#private` | M4, M5 | Registered, admits nothing |
 | `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owns any value18 bump) | M4, M6 | Registered, admits nothing |
 | `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Registered, admits nothing |

@@ -7915,12 +7915,13 @@ their minimum host ABI 33, and the launcher maximum) and lands it as an early
 foundation commit; the other streams rebase onto it. V36 and earlier profiles
 keep their host ABI, value ABI and layouts.
 
-Five selectors gate the batch's work streams, and all admit nothing yet:
+Five selectors gate the batch's work streams:
 
-- language-core stream: `language_core()` (TDZ-safe closure capture before
-  declaration, deferred `let x: T;` initialization, dense `for…of` typing,
-  property-path narrowing, `switch` on strings and function assignability
-  fixes);
+- language-core stream: `language_core()`, implemented below
+  ([language core](#language-core-language_core)): TDZ-safe closure capture
+  before declaration, deferred `let x: T;` initialization, dense `for…of`
+  typing, property-path narrowing, `switch` on strings and function
+  assignability fixes;
 - class-generics stream: `class_generics()` (generic methods and classes,
   interface method signatures, `implements` and `#private` members);
 - collections stream: `collections()` (`Map`/`Set`, tuples, `Array.join`,
@@ -7931,9 +7932,128 @@ Five selectors gate the batch's work streams, and all admit nothing yet:
   `Response`, `Headers`, `URL` and `ReadableStream` over the exact
   `net.request` capability, and `Symbol.asyncIterator` for async iterables).
 
-Until a stream adds its subsection here, a v37 module compiles and runs exactly
-like a v36 module apart from its declared profile and host ABI, and production
-budgets of every profile are unchanged.
+The other four admit nothing yet. Until a stream adds its subsection here, a
+v37 module compiles and runs exactly like a v36 module apart from its declared
+profile and host ABI and the subsections below, and production budgets of every
+profile are unchanged.
+
+#### Language core (`language_core`)
+
+Selector `language_core()`. V37 admits the everyday TypeScript patterns below
+with no value tag, layout, host import, JSON schema, frame catalog or budget
+change; every v37 module of this stream imports exactly what the same v36
+operations import. V36 and earlier keep their bytes and diagnostics (frozen
+by digest in `varta-runtime` `language_core_tests`).
+
+- **Captures before initialization (temporal dead zone).** A closure may
+  capture a `let`/`const` binding (simple identifier declarators only) or a
+  nested function declaration of its block before the binding's
+  initialization runs. A syntactic scan of each block finds the bindings
+  that a function body at or before their declaration position mentions
+  (nested function declarations count as positioned at the block entry);
+  only those reserve a Boolean flag binding. When a closure actually
+  captures one before its initialization, the declaring block allocates the
+  binding cell with the all-zero payload of its type and the cleared flag
+  cell at its entry; the initialization stores into that cell and sets the
+  flag, and the capturing closure captures both cells. Each read through such
+  a closure, and each simple, compound, logical or update assignment through
+  it, tests the flag first and throws an Error-class instance of the Error
+  root with `name` `"ReferenceError"` and Node's message ``Cannot access 'x'
+  before initialization``; a simple assignment evaluates its right side
+  before the test. The zero payload is never observed. A program with such a
+  block creates the Error root before any function body, so every catch
+  union agrees. The binding needs a type at the capture: its annotation, a
+  function initializer whose parameters are annotated and whose result is
+  annotated or a block body without value returns (`void`), or a literal;
+  otherwise the capture is rejected with `capture before initialization of a
+  binding whose type is inferred from its initializer`. Direct reads in the
+  declaring function before the initialization stay the compile-time error
+  `binding used before initialization`, and destructured names, loop heads
+  and catch parameters keep `capture before binding initialization`.
+- **Nested function declarations.** `function f(...) {...}` in a block is a
+  constant binding of that block, initialized at the block entry, in source
+  order, by the equivalent function expression (named, for direct
+  recursion, when it has a return annotation). Mutually recursive and
+  forward-referencing declarations use the captures above. Generators,
+  generic and ambient declarations keep the function-expression rules.
+- **Deferred initialization.** `let x: T;` without an initializer, where `T`
+  does not admit `undefined`, declares `x` with the zero payload of `T` and
+  starts it *unassigned*. As in TypeScript's definite assignment analysis,
+  every read, and every compound, logical or update assignment, requires an
+  assignment on every path to it (`binding used before being assigned: x`).
+  The unassigned set is flow state: branch and `switch` joins take the union
+  of the reachable paths, a `catch` handler and a `finally` block start from
+  the set at `try` entry, loops keep their entry set, and an assignment in a
+  loop test counts for its body. A closure may capture `x` only where it is
+  definitely assigned (JavaScript would read `undefined` through an earlier
+  closure), and `x` may not be captured before its declaration.
+- **Dense element typing.** `for (const x of xs)` over `T[]` binds `x: T`, and
+  `xs[i]` and `s[i]` (strings) read `T` and `string`, as TypeScript types them
+  without `noUncheckedIndexedAccess`. The read is checked: a hole or an index
+  out of range throws `TypeError` (`array element is missing (a hole or an
+  index out of range)`, `array element is a hole` in `for...of`, `string
+  index out of range`) where Node reads `undefined`; this is a documented
+  deviation, so a value of type `T` is never missing. Element types that
+  admit `undefined` read as before, without a test, and `at` keeps
+  `T | undefined`. Comparing a function value with `null` or `undefined` is the
+  constant TypeScript admits (`f !== undefined` is `true`).
+- **Property-path narrowing.** A guard on a property path (an identifier or
+  `this`, then data fields of records and class instances; a getter is never
+  a component) narrows later reads of the same path: `!== undefined`,
+  `=== null`, `typeof`, truthiness, literal comparisons, `switch` clauses and a
+  truthy optional chain `a.b?.c` (every object of the chain is not nullish).
+  Facts are flow state; a join keeps a path only when every reachable path
+  has a fact for it, with the union of the narrowed types. Records are
+  mutable and aliased, so every fact is dropped by any construct that may
+  write a property or run other code: calls other than the checked
+  intrinsics that never reach user code or properties (`Object.*` and
+  `JSON.stringify` drop facts too), `new`, `await`, `yield`, getters, tagged
+  templates, assignments and updates to anything but a plain binding,
+  `delete`, the entry of a loop whose test, update or body contains such a
+  construct, every `for...of`/`for...in` entry, and `catch`/`finally` entries.
+  A write to the root binding drops the facts rooted at it. A guard whose
+  test contains such a construct creates no path fact, and facts never enter
+  closures. Discriminated unions of several record shapes stay outside the
+  subset (their union type is rejected), so `switch (s.kind)` narrows the
+  path `s.kind`, not `s`.
+- **`switch` by strict equality.** A discriminant that is not a number or
+  Boolean (strings, literal unions, `typeof x`, unions) is evaluated once
+  into a hidden binding; each clause value is compared with `===` in source
+  order until one matches, `default` is selected when every test fails
+  wherever it appears, and clauses fall through until `break`. A clause value
+  whose type shares no member with the discriminant's is the type error
+  `switch case type mismatch`. When the discriminant is an identifier, a
+  member path or `typeof` of one and every clause value is a literal (so no
+  test can change it), each clause is entered under the facts of
+  `discriminant === value` (joined with the previous clause's fallthrough),
+  later clauses and the end under the facts of every earlier test failing. Number and Boolean switches keep their
+  lowering.
+- **Function assignability to `void`.** A function value whose result is any
+  value converts to a function type with the same receiverless fixed-arity
+  parameters and a `void` result, where a value of that type is expected
+  (arguments, annotated bindings, record and class fields, returns): the
+  value is evaluated once into a hidden binding and wrapped in a synthesized
+  closure that calls it and discards the result, so the closed call dispatch
+  still sees exact signatures. Where a union is expected (an optional
+  function field), the conversion targets its function member. An arrow or function expression with an
+  annotated non-`void` result in a `void` context keeps its own type and is
+  converted the same way. Mismatches between two function types name both
+  signatures (`expected (p0: number) => void, found (p0: string) => void`).
+- **Return analysis.** A loop without a test (or with the literal `true`)
+  completes normally only through a `break` that targets it, so
+  `for (;;) { ... return x; }` ends a value-returning function.
+- **Class fields.** A field without an initializer whose type admits
+  `undefined` starts as `undefined`, as TypeScript (with class fields
+  defined) does; other fields must still be assigned in the constructor. A
+  field initialized by `new C(...)` of a declared class without type
+  arguments has type `C`. An arrow created in a constructor after
+  `super(...)` may read the fields assigned before it and write any field
+  through `this.field`; `this` itself still never escapes, and methods are
+  still not called on it.
+- **Timer handles.** `ReturnType<typeof setTimeout>` and
+  `ReturnType<typeof setInterval>` (the built-in timers, unless a type named
+  `ReturnType` is declared) are `number`, the handle type of these timers;
+  other `ReturnType` queries stay unsupported.
 
 ## Local modules
 

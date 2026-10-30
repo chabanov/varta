@@ -11,6 +11,25 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- The language core under opt-in v37 (selector `language_core`). Closures may
+  capture `let`/`const` bindings and hoisted nested function declarations
+  before their initialization, with JavaScript's temporal dead zone: an
+  access through the closure before it throws an Error whose `name` is
+  `ReferenceError`. `let x: T;` is admitted with TypeScript-style definite
+  assignment. `for (const x of xs)`, `xs[i]` and `s[i]` have the element type
+  through a checked read (a hole or a missing index throws `TypeError`, where
+  Node reads `undefined`). Guards on property paths (`a.b !== undefined`,
+  `typeof a.b.c`, truthiness, `a.b?.c`, literal comparisons) narrow later
+  reads until a call or property write may change them. `switch` selects by
+  strict equality over strings, literal unions and `typeof`, with clause
+  narrowing. Value-returning functions convert to `void`-result function
+  types, and function mismatches name both signatures. Endless loops end
+  value-returning functions, uninitialized `T | undefined` class fields start
+  as `undefined`, `new C()` types a field, constructor arrows may use
+  `this.field` and `ReturnType<typeof setTimeout>` is the timer handle type.
+  No value tag, layout, host import or budget changes; v36 keeps its bytes
+  and diagnostics.
+
 - Opt-in v37 (pilot batch: language core, class generics, collections and
   binary text, RegExp and `net.request`, in development) is registered. It
   inherits every v36 feature, shares value ABI/layout 17 with v36 and declares

@@ -71,9 +71,11 @@ impl Lower<'_> {
             }));
         }
         let target = match &assign.left {
-            ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(name)) => self
-                .prepare_pattern_target(&ast::Pat::Ident(name.clone()))?
-                .ok_or_else(|| invalid("missing compound assignment binding"))?,
+            ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(name)) => {
+                self.require_assigned_target(name.id.sym.as_ref())?;
+                self.prepare_pattern_target(&ast::Pat::Ident(name.clone()))?
+                    .ok_or_else(|| invalid("missing compound assignment binding"))?
+            }
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) => {
                 let base = self.write_member_base(member)?;
                 if self.types.profile.mixed_index_records()

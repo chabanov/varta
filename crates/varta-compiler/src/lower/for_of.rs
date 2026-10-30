@@ -117,7 +117,11 @@ impl Lower<'_> {
             return Err(invalid("missing for-of array type"));
         };
         let element = self.types.arrays[id as usize];
-        let item = if self.types.profile.sparse_arrays() {
+        // V37: the variable has the element type, read checked (`dense`).
+        let dense = self.types.profile.language_core();
+        let item = if dense {
+            element
+        } else if self.types.profile.sparse_arrays() {
             unions::intern(vec![element, Type::Undefined], self.types)?
         } else {
             element
@@ -128,7 +132,11 @@ impl Lower<'_> {
         init.push(S::Init(index, number(statement.span, 0.0)));
         let read = Expr {
             span: statement.right.span(),
-            ty: item,
+            ty: if dense {
+                unions::intern(vec![element, Type::Undefined], self.types)?
+            } else {
+                item
+            },
             kind: if self.types.profile.sparse_arrays() {
                 E::MaybeIndex(
                     Box::new(local(statement.span, source, array)),
@@ -140,6 +148,11 @@ impl Lower<'_> {
                     Box::new(local(statement.span, index, Type::Float64)),
                 )
             },
+        };
+        let read = if dense {
+            self.dense_read(read, element, dense::ITERATED_HOLE)?
+        } else {
+            read
         };
         // IteratorStepValue precedes evaluation of an assignment reference.
         // S::Init creates a new managed cell for every captured lexical leaf.
