@@ -121,9 +121,6 @@ pub(crate) fn module_with(
     ))
 }
 
-/// Index of v38's private intrinsic memory (after guest memory 0).
-const INTRINSIC_MEMORY: usize = 1;
-
 fn error(message: &str) -> RuntimeError {
     wasmtime::Error::msg(message.to_owned()).into()
 }
@@ -175,6 +172,7 @@ fn preflight(
     let mut tools = false;
     let mut value_version = None;
     let mut static_region = None;
+    let mut intrinsic_section = None;
     let mut memory_initial = None;
     let mut data_segments = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
@@ -281,10 +279,10 @@ fn preflight(
                 return Err(error("too many functions"));
             }
             Payload::MemorySection(reader) => {
-                if reader.count() > 1 + u32::from(linked) {
+                if reader.count() > 1 {
                     return Err(error("only one memory is supported"));
                 }
-                for (index, memory) in reader.into_iter().enumerate() {
+                for memory in reader {
                     let memory = memory.map_err(|e| error(&e.to_string()))?;
                     if memory.memory64
                         || memory.shared
@@ -292,30 +290,7 @@ fn preflight(
                     {
                         return Err(error("unsupported memory type or initial size"));
                     }
-                    if index == 0 {
-                        memory_initial = Some(memory.initial);
-                    }
-                    // V38's second memory is the private intrinsic memory,
-                    // bounded by its own declared maximum.
-                    if index == INTRINSIC_MEMORY
-                        && memory.maximum.is_none_or(|maximum| {
-                            maximum
-                                > (abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64
-                                || memory.initial > maximum
-                        })
-                    {
-                        return Err(error("unbounded or oversized intrinsic memory"));
-                    }
-                }
-            }
-            Payload::ExportSection(reader) if linked => {
-                for export in reader {
-                    let export = export.map_err(|e| error(&e.to_string()))?;
-                    if export.kind == wasmparser::ExternalKind::Memory
-                        && export.index as usize == INTRINSIC_MEMORY
-                    {
-                        return Err(error("the intrinsic memory must not be exported"));
-                    }
+                    memory_initial = Some(memory.initial);
                 }
             }
             Payload::DataSection(reader)
@@ -324,14 +299,10 @@ fn preflight(
                 for segment in reader {
                     let (memory, offset, len) =
                         active_segment(segment.map_err(|e| error(&e.to_string()))?)?;
-                    match memory {
-                        0 => data_segments.push((offset, len)),
-                        // V38 (`linked_intrinsics`): the linked library's
-                        // static data initializes its private memory, which
-                        // Wasmtime bounds at instantiation.
-                        INTRINSIC_MEMORY if linked => {}
-                        _ => return Err(error("static data must be active in memory 0")),
+                    if memory != 0 {
+                        return Err(error("static data must be active in memory 0"));
                     }
+                    data_segments.push((offset, len));
                 }
             }
             Payload::CustomSection(section) if section.name() == abi::STATIC_SECTION => {
@@ -342,6 +313,13 @@ fn preflight(
                     abi::StaticRegion::read_section(section.data())
                         .map_err(|e| error(&e.to_string()))?,
                 );
+            }
+            // V38 (`linked_intrinsics`): the intrinsic region of memory 0.
+            Payload::CustomSection(section) if section.name() == abi::INTRINSIC_SECTION => {
+                if intrinsic_section.is_some() || !linked {
+                    return Err(error("unsupported or duplicate intrinsic region"));
+                }
+                intrinsic_section = Some(section.data());
             }
             Payload::TableSection(reader) => {
                 if reader.count() > 1 {
@@ -432,7 +410,12 @@ fn preflight(
     if (!json_imports.is_empty() || union_imports || profile.exceptions()) && values != 1 {
         return Err(error("JSON import requires structured value ABI metadata"));
     }
-    let static_region = static_region.unwrap_or(abi::StaticRegion::SINGLE_PAGE);
+    let mut static_region = static_region.unwrap_or(abi::StaticRegion::SINGLE_PAGE);
+    if let Some(data) = intrinsic_section {
+        static_region = static_region
+            .read_intrinsic_section(data)
+            .map_err(|e| error(&e.to_string()))?;
+    }
     check_static_region(static_region, memory_initial, &data_segments)?;
     crate::frames::admit(
         bytes,
@@ -475,20 +458,21 @@ fn active_segment(segment: wasmparser::Data<'_>) -> Result<(usize, usize, usize)
 }
 
 /// The static region covers every data segment of a `program_limits` module
-/// (for earlier profiles the list is empty), and a declared extension lies
-/// within the module's initial memory, so the heap starts after it.
+/// (for earlier profiles the list is empty) except the linked library's,
+/// which lie in the declared intrinsic region (v38 `linked_intrinsics`), and
+/// a declared extension or intrinsic region lies within the module's initial
+/// memory, so the heap starts after it.
 fn check_static_region(
     region: abi::StaticRegion,
     memory_initial: Option<u64>,
     data_segments: &[(usize, usize)],
 ) -> Result<(), RuntimeError> {
-    if data_segments
-        .iter()
-        .any(|(offset, len)| !region.contains(*offset, *len))
-    {
+    if data_segments.iter().any(|(offset, len)| {
+        !region.contains(*offset, *len) && !region.intrinsic_contains(*offset, *len)
+    }) {
         return Err(error("data segment outside the static region"));
     }
-    if region.extension_pages() > 0
+    if (region.extension_pages() > 0 || region.intrinsic_pages() > 0)
         && memory_initial.is_none_or(|initial| initial < region.minimum_pages())
     {
         return Err(error("static region exceeds the initial memory"));

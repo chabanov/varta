@@ -1,6 +1,8 @@
+#![no_std]
 #![forbid(unsafe_code)]
 //! Exact integer semantics and canonical transport for checked guest BigInt.
 //! Resource policy is supplied by callers; this crate does not raise VM budgets.
+extern crate alloc;
 mod arithmetic;
 mod convert;
 mod parse;
@@ -126,7 +128,7 @@ impl Integer {
     pub fn from_bool(value: bool, budget: &mut Budget) -> Result<Self, Error> {
         Self::from_i64(i64::from(value), budget)
     }
-    pub fn compare(&self, other: &Self, budget: &mut Budget) -> Result<std::cmp::Ordering, Error> {
+    pub fn compare(&self, other: &Self, budget: &mut Budget) -> Result<core::cmp::Ordering, Error> {
         budget.charge(words(self.bits().max(other.bits())))?;
         Ok(self.0.cmp(&other.0))
     }

@@ -163,6 +163,126 @@ fn linked_number_parsing_matches_the_host() {
 fn linked_primitive_conversions_match_the_host() {
     same_as_host(PRIMITIVES);
 }
+
+/// BigInt operators, conversions, widths and radix text, including the
+/// recoverable errors, and the abstract comparisons and value17 conversions
+/// across every primitive kind (host imports in both profiles, over the same
+/// shared `varta_intrinsics::bigint` code).
+const BIGINT: &[&str] = &[
+    r#"
+function arithmetic(a: bigint, b: bigint): void {
+  console.log(String(a + b) + " " + String(a - b) + " " + String(a * b));
+  console.log(String(a / b) + " " + String(a % b) + " " + String(a ** 3n));
+  console.log(String(-a) + " " + String(~b) + " " + String(a & b));
+  console.log(String(a | b) + " " + String(a ^ b) + " " + String(a << 5n));
+  console.log(String(a >> 7n) + " " + String(b >> 3n));
+}
+function text(a: bigint, b: bigint): void {
+  console.log(BigInt.asIntN(64, a).toString() + " " + BigInt.asUintN(32, b).toString(16));
+  console.log(a.toString(36) + " " + (-255n).toString(2));
+  console.log(String(BigInt(12345)) + " " + String(BigInt("0x1f")) + " " + String(BigInt("  -42  ")));
+  console.log(Number(a) + " " + Number(b));
+}
+function order(a: bigint, b: bigint): void {
+  console.log(String(a > b) + " " + String(b < 5) + " " + String(a >= 1e29));
+  console.log(String(a == b) + " " + String(a === a));
+}
+function failures(a: bigint): void {
+  try { console.log(String(a / 0n)); } catch (e) { console.log(e instanceof RangeError); }
+  try { console.log(String(a ** -1n)); } catch (e) { console.log(e instanceof RangeError); }
+  try { console.log(String(BigInt(1.5))); } catch (e) { console.log(e instanceof RangeError); }
+  try { console.log(String(BigInt("12x"))); } catch (e) { console.log(e instanceof SyntaxError); }
+}
+export function main(): void {
+  const a = 123456789012345678901234567890n;
+  const b = -987654321n;
+  arithmetic(a, b);
+  text(a, b);
+  order(a, b);
+  failures(a);
+}
+"#,
+    r#"
+function pick(i: number): bigint | number | string | boolean | null | undefined {
+  if (i === 0) { return 10n; }
+  if (i === 1) { return 10; }
+  if (i === 2) { return "10"; }
+  if (i === 3) { return " 0x0A "; }
+  if (i === 4) { return true; }
+  if (i === 5) { return null; }
+  if (i === 6) { return undefined; }
+  if (i === 7) { return "abc"; }
+  if (i === 8) { return -0; }
+  return 9007199254740993n;
+}
+export function main(): void {
+  console.log(String(10n * 2n));
+  for (let i = 0; i < 10; i++) {
+    const a = pick(i);
+    console.log(String(a) + " " + Number(a));
+    let line = "";
+    for (let j = 0; j < 10; j++) {
+      const b = pick(j);
+      line = line + (a < b ? "<" : "") + (a > b ? ">" : "") + (a == b ? "=" : "") + (a === b ? "!" : "") + "|";
+    }
+    console.log(line);
+  }
+}
+"#,
+    "export function main():void{console.log(BigInt.asIntN('8','255'));console.log(BigInt.asUintN(true,true));console.log(BigInt.asUintN(false,'999'));console.log(BigInt.asIntN(undefined,'9'));console.log(BigInt.asUintN(null,'9'));console.log(BigInt.asIntN('bad','9'));console.log(BigInt.asIntN(-0.5,1n));console.log(BigInt.asIntN(8.9,'0xff'));console.log(BigInt.asUintN('0x8',-1n));}",
+    "export function main():void{try{BigInt.asIntN(-1,'bad');}catch(e){console.log(e instanceof RangeError);}try{BigInt.asUintN(Infinity,1);}catch(e){console.log(e instanceof RangeError);}try{BigInt.asIntN(1n,'bad');}catch(e){console.log(e instanceof TypeError);}try{BigInt.asIntN(8,'bad');}catch(e){console.log(e instanceof SyntaxError);}try{BigInt.asIntN(0,1);}catch(e){console.log(e instanceof TypeError);}console.log(BigInt(1));}",
+    "function width(n:bigint|number|string|boolean|null|undefined):bigint{return BigInt.asIntN(n,'255');}function text(n:bigint|number|string|boolean|null|undefined):string{return (255n).toString(n);}export function main():void{console.log(width('8'));console.log(width(true));console.log(width(undefined));console.log(text('16'));console.log(text(undefined));try{console.log(width(1n));}catch(e){console.log(e instanceof TypeError);}try{console.log(text(1n));}catch(e){console.log(e instanceof TypeError);}}",
+];
+
+#[test]
+fn linked_bigint_matches_the_host_and_shared_comparisons_agree() {
+    for source in BIGINT {
+        let lines = same_as_host(source);
+        assert!(!lines.is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn linked_bigint_failures_trap_where_the_host_fails() {
+    // A noncanonical BigInt payload is fatal in both: the host reports the
+    // error, linked code traps.
+    let source = "export function main(): void { const a = 7n; console.log(String(a * 6n)); }";
+    for profile in [V37, V38] {
+        let bytes = compile(source, profile);
+        let runtime = VartaRuntime::new();
+        let module = runtime.prepare_module(&bytes).unwrap();
+        let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+        let instance = execution.instantiate_prepared(&module).unwrap();
+        let store = &mut execution.store;
+        // Corrupt every BigInt heap block's sign word before main runs: the
+        // literals are module data copied into the heap on first use, so
+        // corrupt the static payloads instead.
+        let memory = instance.get_memory(&mut *store, "memory").unwrap();
+        let data = memory.data_mut(&mut *store);
+        let sign = 1u32.to_le_bytes();
+        let digits = 1u32.to_le_bytes();
+        let seven = 7u32.to_le_bytes();
+        let pattern: Vec<u8> = [sign, digits, seven].concat();
+        let mut corrupted = 0;
+        let mut at = 0;
+        while let Some(offset) = data[at..]
+            .windows(pattern.len())
+            .position(|window| window == pattern.as_slice())
+        {
+            let start = at + offset;
+            // An invalid sign word makes the payload noncanonical.
+            data[start..start + 4].copy_from_slice(&9u32.to_le_bytes());
+            corrupted += 1;
+            at = start + pattern.len();
+        }
+        assert!(corrupted > 0, "{profile:?}: the literal 7n is in memory");
+        let start = instance.get_func(&mut *store, "_start").unwrap();
+        assert!(
+            start.call(&mut *store, &[], &mut []).is_err(),
+            "{profile:?} must fail on a noncanonical BigInt"
+        );
+    }
+}
 #[test]
 fn linked_string_access_and_case_mapping_match_the_host() {
     same_as_host(STRINGS);
@@ -355,7 +475,7 @@ export function main(): void {
 }
 
 #[test]
-fn v38_validation_rejects_imported_pure_intrinsics_and_exposed_intrinsic_memory() {
+fn v38_validation_rejects_imported_pure_intrinsics_and_a_misplaced_library() {
     let runtime = VartaRuntime::new();
     // A v37 module relabelled as v38 still imports host intrinsics.
     let v37 = compile(
@@ -394,158 +514,285 @@ fn v38_validation_rejects_imported_pure_intrinsics_and_exposed_intrinsic_memory(
         error.contains("pure intrinsic must be linked into the module, not imported: number_sin"),
         "{error}"
     );
-    // A second memory is v38's alone, bounded and private.
+    // Linked code needs no second memory, and no module may declare one.
     let v38 = compile(
         "export function main(): void { console.log(Math.sin(0.5)); }",
         V38,
     );
     runtime.validate_module(&v38).unwrap();
-    let mut two_memories = v37.clone();
-    two_memories = rewrite(&two_memories, |id, data| {
+    let rejected = |bytes: &[u8]| runtime.validate_module(bytes).err().unwrap().to_string();
+    let two_memories = rewrite(&v38, |id, data| {
         let mut data = data.to_vec();
-        if id == 5 {
+        if id == MEMORY_SECTION {
             data[0] += 1;
             data.extend_from_slice(&[0x01, 0x00, 0x01]);
         }
         vec![data]
     });
-    let error = runtime
-        .validate_module(&two_memories)
-        .err()
-        .unwrap()
-        .to_string();
+    let error = rejected(&two_memories);
     assert!(error.contains("only one memory is supported"), "{error}");
-    let oversized = rewrite(&v38, |id, data| {
-        let mut data = data.to_vec();
-        if id == 5 {
-            // The private memory's maximum is the last LEB of the section.
-            let maximum = (abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u8;
-            let at = data.iter().rposition(|&b| b == maximum).unwrap();
-            data[at] = maximum + 1;
+    // Without its intrinsic region the library's data lies outside the
+    // static region.
+    let undeclared = rewrite(&v38, |id, data| {
+        if id == CUSTOM_SECTION && custom(data, abi::INTRINSIC_SECTION) {
+            return vec![];
         }
-        vec![data]
+        vec![data.to_vec()]
     });
-    let error = runtime
-        .validate_module(&oversized)
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(error.contains("oversized intrinsic memory"), "{error}");
-    let exported = rewrite(&v38, |id, data| {
-        let mut data = data.to_vec();
-        if id == 7 {
-            data[0] += 1;
-            data.extend_from_slice(&[1, b'm', 2, 1]);
-        }
-        vec![data]
-    });
-    let error = runtime
-        .validate_module(&exported)
-        .err()
-        .unwrap()
-        .to_string();
+    let error = rejected(&undeclared);
     assert!(
-        error.contains("intrinsic memory must not be exported"),
+        error.contains("data segment outside the static region"),
         "{error}"
+    );
+    // The region is declared once, by a linking profile, within the
+    // initial memory.
+    let duplicated = rewrite(&v38, |id, data| {
+        if id == CUSTOM_SECTION && custom(data, abi::INTRINSIC_SECTION) {
+            return vec![data.to_vec(), data.to_vec()];
+        }
+        vec![data.to_vec()]
+    });
+    let error = rejected(&duplicated);
+    assert!(error.contains("duplicate intrinsic region"), "{error}");
+    let enlarged = rewrite(&v38, |id, data| {
+        let mut data = data.to_vec();
+        if id == CUSTOM_SECTION && custom(&data, abi::INTRINSIC_SECTION) {
+            let at = data.len() - size_of::<u32>();
+            data[at] += 1;
+        }
+        vec![data]
+    });
+    let error = rejected(&enlarged);
+    assert!(error.contains("exceeds the initial memory"), "{error}");
+    let foreign = rewrite(&v37, |id, data| {
+        let mut sections = vec![data.to_vec()];
+        if id == CUSTOM_SECTION && custom(data, abi::SECTION) {
+            let mut section = vec![abi::INTRINSIC_SECTION.len() as u8];
+            section.extend_from_slice(abi::INTRINSIC_SECTION.as_bytes());
+            section.extend_from_slice(&1u32.to_le_bytes());
+            sections.push(section);
+        }
+        sections
+    });
+    let error = rejected(&foreign);
+    assert!(error.contains("intrinsic region"), "{error}");
+}
+
+const CUSTOM_SECTION: u8 = 0;
+const MEMORY_SECTION: u8 = 5;
+/// Whether a custom section payload carries `name`.
+fn custom(data: &[u8], name: &str) -> bool {
+    data.first() == Some(&(name.len() as u8))
+        && data.get(1..1 + name.len()) == Some(name.as_bytes())
+}
+
+/// Run `bytes` with a memory budget of `pages` and test-only fuel, returning
+/// the logs and the typed failure.
+fn run_with_memory(bytes: &[u8], pages: u64) -> (Vec<String>, Result<(), RuntimeError>) {
+    let runtime = VartaRuntime::new();
+    let module = runtime.prepare_module(bytes).unwrap();
+    let budgets = varta_common::budget::Budgets {
+        fuel_per_turn: 1000 * abi::FUEL,
+        host_calls_per_turn: u32::MAX,
+        memory_bytes: pages as usize * abi::WASM_PAGE_BYTES,
+        ..varta_common::budget::Budgets::PRODUCTION
+    };
+    let mut execution =
+        crate::execution::Execution::with_test_budgets(&runtime.engine, budgets).unwrap();
+    execution.allow_test_wall_clock(std::time::Duration::from_secs(120));
+    let instance = execution.instantiate_prepared(&module).unwrap();
+    let store = &mut execution.store;
+    let result = (|| {
+        let start = instance.get_func(&mut *store, "_start").unwrap();
+        start.call(&mut *store, &[], &mut [])?;
+        Ok::<(), RuntimeError>(())
+    })()
+    .map_err(|error| crate::resources::classify(&instance, store, error));
+    (std::mem::take(&mut store.data_mut().output.lines), result)
+}
+
+#[test]
+fn an_exhausted_linked_arena_is_a_typed_memory_failure() {
+    // Upper-casing 65536 "ﬃ" units maps each to "FFI": the linked call needs
+    // about 18 bytes of scratch per input unit (the UTF-8 run, its mapping
+    // and the UTF-16 output), far beyond the reserved arena and the guest's
+    // own footprint, so sweeping the memory budget page by page reaches
+    // budgets where the input fits but the arena cannot grow. Every failure
+    // is the typed memory resource, never a bare trap. A failure after
+    // "built" whose request is not the guest's snapshot of the 393216-byte
+    // result (its heap block) is the linked arena's.
+    let source = r#"
+export function main(): void {
+  let t = "ﬃ";
+  for (let i = 0; i < 16; i++) { t = t + t; }
+  console.log("built");
+  console.log(t.toUpperCase().length);
+}
+"#;
+    let result_bytes = 3 * 65536 * 2;
+    let snapshot = (result_bytes + abi::STRING_HEADER_BYTES)
+        .next_multiple_of(varta_common::value::HEAP_ALIGNMENT) as u32;
+    let bytes = compile(source, V38);
+    let mut initial = 0;
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        if let wasmparser::Payload::MemorySection(reader) = payload.unwrap() {
+            initial = reader.into_iter().next().unwrap().unwrap().initial;
+        }
+    }
+    let mut linked_failures = 0;
+    let mut succeeded = false;
+    for pages in initial..=(abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64 {
+        let (lines, result) = run_with_memory(&bytes, pages);
+        match result {
+            Ok(()) => {
+                assert_eq!(lines, ["varta log: built", "varta log: 196608"]);
+                succeeded = true;
+                break;
+            }
+            Err(RuntimeError::Resource(failure)) => {
+                assert_eq!(failure.resource, varta_common::limits::Resource::Memory);
+                assert!(failure.requested > 0);
+                if lines == ["varta log: built"] && failure.requested != snapshot {
+                    linked_failures += 1;
+                }
+            }
+            Err(other) => panic!("{pages} pages: {other:?}, after {lines:?}"),
+        }
+    }
+    assert!(succeeded, "the mapping runs once memory suffices");
+    assert!(linked_failures > 0, "a budget exhausts the linked arena");
+}
+
+#[test]
+fn linked_calls_with_small_scratch_run_when_memory_cannot_grow() {
+    // A memory budget of exactly the initial memory: the guest cannot grow
+    // memory 0, and a linked call's scratch fits the region's reserved arena
+    // instead of growing above the heap end.
+    let source = r#"
+export function main(): void {
+  const s = "Straße";
+  console.log(s.charCodeAt(4));
+  console.log(Math.sin(0.5));
+}
+"#;
+    let bytes = compile(source, V38);
+    let mut initial = None;
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        if let wasmparser::Payload::MemorySection(reader) = payload.unwrap() {
+            initial = reader
+                .into_iter()
+                .next()
+                .map(|memory| memory.unwrap().initial);
+        }
+    }
+    let initial = initial.unwrap() as usize * abi::WASM_PAGE_BYTES;
+    let runtime = VartaRuntime::new();
+    let module = runtime.prepare_module(&bytes).unwrap();
+    let mut setup = crate::execution::Setup::production(&[], None);
+    setup.budgets.memory_bytes = initial;
+    let mut execution = crate::execution::Execution::with_setup(&runtime.engine, setup).unwrap();
+    let instance = execution.instantiate_prepared(&module).unwrap();
+    let store = &mut execution.store;
+    let start = instance.get_func(&mut *store, "_start").unwrap();
+    start.call(&mut *store, &[], &mut []).unwrap();
+    let memory = instance.get_memory(&mut *store, "memory").unwrap();
+    assert_eq!(memory.data_size(&*store), initial, "memory never grew");
+    assert_eq!(
+        store.data().output.lines,
+        ["varta log: 223", "varta log: 0.479425538604203"]
     );
 }
 
 #[test]
-fn intrinsic_layout_matches_common() {
-    use varta_common::value;
-    use varta_intrinsics::layout as l;
-    assert_eq!(l::RESULT_BASE, abi::RESULT_BASE);
-    assert_eq!(l::MAX_RESULT_BYTES, abi::MAX_RESULT_BYTES);
-    assert_eq!(l::MAX_STRING_BYTES, abi::MAX_STRING_BYTES);
-    assert_eq!(l::OWNED_STRING_BASE, abi::OWNED_STRING_BASE);
-    assert_eq!(l::STRING_HEADER_BYTES, abi::STRING_HEADER_BYTES);
-    assert_eq!(l::WASM_PAGE_BYTES, abi::WASM_PAGE_BYTES);
-    assert_eq!(l::HEAP_ALIGNMENT, value::HEAP_ALIGNMENT);
-    assert_eq!(l::HEAP_FLAGS_OFFSET, value::HEAP_FLAGS_OFFSET);
-    assert_eq!(l::HEAP_LINK_OFFSET, value::HEAP_LINK_OFFSET);
-    assert_eq!(l::HEAP_ALLOCATED_FLAG, value::HEAP_ALLOCATED_FLAG);
-    assert_eq!(l::HEAP_UNION_FLAG, value::HEAP_UNION_FLAG as u32);
-    assert_eq!(l::UNION_META_BYTES, value::UNION_META_BYTES);
-    assert_eq!(l::UNION_BYTES, value::UNION_BYTES);
-    for tag in 0..=u8::MAX as u32 {
-        let common = value::ValueKind::from_tag(tag);
-        let shared = l::Kind::from_tag(tag);
-        assert_eq!(
-            common.map(|k| k as u32),
-            shared.map(|k| k as u32),
-            "tag {tag}"
-        );
-        if let (Some(common), Some(shared)) = (common, shared) {
-            assert_eq!(common.is_reference(), shared.is_reference(), "tag {tag}");
-        }
-    }
-    for unit in 0..=u16::MAX {
-        assert_eq!(
-            varta_common::text::ecmascript_whitespace(unit),
-            varta_intrinsics::text::ecmascript_whitespace(unit)
-        );
-    }
+fn linked_stack_and_arena_stay_inside_memory_0_regions() {
+    // A deep recursion of linked calls in guest code (each linked call has
+    // its own short stack use) and long arena inputs: the region's stack
+    // never overflows, and arena memory above the heap is reused by the
+    // guest allocator afterwards.
+    let source = r#"
+function fmt(n: number): string {
+  if (n <= 0) { return ""; }
+  return (n * 1.5).toFixed(2) + fmt(n - 1);
+}
+export function main(): void {
+  let text = "Straße ";
+  for (let i = 0; i < 14; i++) { text = text + text; }
+  const upper = text.toUpperCase();
+  console.log(upper.length + " " + upper.charAt(5) + " " + fmt(40).length);
+  let kept = "";
+  for (let i = 0; i < 200; i++) { kept = kept + (i / 7).toPrecision(6).charAt(2); }
+  console.log(kept.length);
+}
+"#;
+    let host = execute(&compile(source, V37), 1000).0;
+    assert_eq!(execute(&compile(source, V38), 1000).0, host);
+}
+
+/// Linked string and text operations on long non-ASCII strings. Each reads
+/// its argument in place in guest memory and copies only its result, so an
+/// operation that inspects a bounded prefix (code-unit access, a parse that
+/// stops at the first unit) costs the same on 1024 and 2048 units, and case
+/// mapping pays once per unit it maps. A per-call copy of the input costs
+/// about 20 fuel per unit (measured: `charAt` 24,533 fuel on 1024 units
+/// before, 645 after) and breaks these checks.
+const IN_PLACE: &[(&str, &str, Cost)] = &[
+    ("charCodeAt", "t.charCodeAt(500)", Cost::Constant(600)),
+    ("charAt", "t.charAt(501).length", Cost::Constant(900)),
+    ("parseInt", "parseInt(t)", Cost::Constant(3_000)),
+    ("parseFloat", "parseFloat(t)", Cost::Constant(2_000)),
+    // Measured 824 and 594 per unit; a copy of the input adds about 23.
+    ("toUpperCase", "t.toUpperCase().length", Cost::PerUnit(835)),
+    ("toLowerCase", "t.toLowerCase().length", Cost::PerUnit(605)),
+];
+#[derive(Clone, Copy)]
+enum Cost {
+    /// At most this fuel per call, independent of the input length.
+    Constant(u64),
+    /// At most this fuel per input unit and call.
+    PerUnit(u64),
+}
+
+/// Marginal fuel of one call of `operation` on a string of `2^(doublings+1)`
+/// units.
+fn in_place_fuel(operation: &str, doublings: u32) -> u64 {
+    let program = |calls: usize| {
+        format!(
+            "export function main(): void {{ let t = \"ßẞ\"; \
+             for (let i = 0; i < {doublings}; i++) {{ t = t + t; }} let r = 0; \
+             for (let i = 0; i < {calls}; i++) {{ r = r + {operation}; }} console.log(r); }}"
+        )
+    };
+    let one = execute(&compile(&program(1), V38), 100).1;
+    let eleven = execute(&compile(&program(11), V38), 100).1;
+    (eleven - one) / 10
 }
 
 #[test]
-fn shared_primitive_cell_reader_agrees_with_common() {
-    // Canonical cells of every primitive kind, then every single-byte
-    // corruption of their headers and payloads: both readers accept or
-    // reject each the same way and agree on accepted contents.
-    let source = r#"
-function cell(i: number): string | number | boolean | null | undefined {
-  if (i === 0) { return "text"; }
-  if (i === 1) { return 2.5; }
-  if (i === 2) { return false; }
-  if (i === 3) { return null; }
-  return undefined;
-}
-export function main(): void {
-  for (let i = 0; i < 5; i++) { console.log(String(cell(i))); }
-}
-"#;
-    let bytes = compile(source, V37);
-    let runtime = VartaRuntime::new();
-    let module = runtime.prepare_module(&bytes).unwrap();
-    let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
-    let instance = execution.instantiate_prepared(&module).unwrap();
-    let store = &mut execution.store;
-    instance
-        .get_func(&mut *store, "_start")
-        .unwrap()
-        .call(&mut *store, &[], &mut [])
-        .unwrap();
-    let memory = instance.get_memory(&mut *store, "memory").unwrap();
-    let data = memory.data(&*store).to_vec();
-    // Every aligned heap address is a candidate handle of a 16-byte cell.
-    let mut accepted = 0;
-    for ptr in
-        (abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES..data.len()).step_by(value_alignment())
-    {
-        let handle = ((varta_common::value::UNION_BYTES as u64) << 32) | ptr as u64;
-        let common = varta_common::value::PrimitiveBox::read(&data, handle);
-        let shared = varta_intrinsics::cell::Cell::read(&data[..], handle);
-        assert_eq!(common.is_ok(), shared.is_ok(), "handle {handle:#x}");
-        if let (Ok(common), Ok(shared)) = (common, shared) {
-            accepted += 1;
-            assert_eq!(common.kind as u32, shared.kind as u32);
-            assert_eq!(common.payload, shared.payload);
-            let mut corrupt = data.clone();
-            for offset in ptr - abi::STRING_HEADER_BYTES..ptr + varta_common::value::UNION_BYTES {
-                corrupt[offset] ^= 0x41;
-                assert_eq!(
-                    varta_common::value::PrimitiveBox::read(&corrupt, handle).is_ok(),
-                    varta_intrinsics::cell::Cell::read(&corrupt[..], handle).is_ok(),
-                    "corruption at {offset:#x}"
-                );
-                corrupt[offset] ^= 0x41;
-            }
+fn linked_string_operations_read_their_input_in_place() {
+    let mut over = Vec::new();
+    for &(name, operation, cost) in IN_PLACE {
+        let short = in_place_fuel(operation, 9);
+        let long = in_place_fuel(operation, 10);
+        println!("{name}: {short} fuel per call on 1024 units, {long} on 2048");
+        let fits = match cost {
+            // The longer input may cost no more than a tenth extra.
+            Cost::Constant(ceiling) => long <= ceiling && long * 10 <= short * 11,
+            Cost::PerUnit(ceiling) => long <= ceiling * 2048,
+        };
+        if !fits {
+            over.push(format!(
+                "{name}: {short} / {long} fuel exceeds {:?}",
+                cost_text(cost)
+            ));
         }
     }
-    assert!(accepted >= 5, "found {accepted} primitive cells");
+    assert!(over.is_empty(), "{over:#?}");
 }
-fn value_alignment() -> usize {
-    varta_common::value::HEAP_ALIGNMENT
+fn cost_text(cost: Cost) -> String {
+    match cost {
+        Cost::Constant(ceiling) => format!("{ceiling} per call"),
+        Cost::PerUnit(ceiling) => format!("{ceiling} per unit"),
+    }
 }
 
 /// Size, compile-time and fuel measurements for the documentation; run with
@@ -588,13 +835,23 @@ fn linked_intrinsic_measurements() {
             "export function main(): void { const s = \"abc\"; console.log(s.charAt(1) + s.charCodeAt(2)); }",
         ),
         (
+            "BigInt * and String(bigint)",
+            "export function main(): void { console.log(String(12345678901234567890n * 3n)); }",
+        ),
+        (
+            "number in string concatenation",
+            "export function main(): void { const n = 2.5; console.log(\"n=\" + n); }",
+        ),
+        (
             "toUpperCase/toLowerCase",
             "export function main(): void { const s = \"Straße\"; console.log(s.toUpperCase() + s.toLowerCase()); }",
         ),
     ];
     let engine = wasmtime::Engine::default();
-    println!("| Family | v37 bytes | v38 bytes | growth | v38 compile ms | fuel v37 | fuel v38 |");
-    println!("| --- | --- | --- | --- | --- | --- | --- |");
+    println!(
+        "| Family | v37 bytes | v38 bytes | growth | v38 compile ms | fuel v37 | fuel v38 | region pages |"
+    );
+    println!("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (name, source) in families {
         let v37 = compile(source, V37);
         let v38 = compile(source, V38);
@@ -606,10 +863,11 @@ fn linked_intrinsic_measurements() {
         let (_, fuel37) = execute(&v37, 1);
         let (_, fuel38) = execute(&v38, 1);
         println!(
-            "| {name} | {} | {} | {:+} | {compile_ms:.1} | {fuel37} | {fuel38} |",
+            "| {name} | {} | {} | {:+} | {compile_ms:.1} | {fuel37} | {fuel38} | {} |",
             v37.len(),
             v38.len(),
-            v38.len() as i64 - v37.len() as i64
+            v38.len() as i64 - v37.len() as i64,
+            intrinsic_pages(&v38)
         );
         // Modules for an external cold-start measurement (for example Node).
         for (profile, bytes) in [("v37", &v37), ("v38", &v38)] {
@@ -620,4 +878,16 @@ fn linked_intrinsic_measurements() {
             std::fs::write(path, bytes).unwrap();
         }
     }
+}
+
+/// The intrinsic region pages a module declares (0 without linked code).
+fn intrinsic_pages(bytes: &[u8]) -> u32 {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::CustomSection(section) = payload.unwrap()
+            && section.name() == abi::INTRINSIC_SECTION
+        {
+            return u32::from_le_bytes(section.data().try_into().unwrap());
+        }
+    }
+    0
 }

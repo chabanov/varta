@@ -9,11 +9,16 @@
 //! | Guest-defined functions, unchanged order | `K..K+G` |
 //! | Linked library functions, ascending library index | `K+G..K+G+L` |
 //! | Synthesized `varta_link` accessors | after the library functions |
+//! | Synthesized stack-pointer check | last |
 //!
-//! Library types are deduplicated against the guest's, library globals and
-//! data segments follow the guest's, and the library's memory becomes the
-//! module's last memory (private: no export, no import).
-use super::library::{Closure, LINK_MODULE, Library};
+//! Library types are deduplicated against the guest's and the library's
+//! stack pointer follows the guest's globals. The module keeps its one
+//! memory: the library's memory is memory 0, its reached data segments
+//! follow the guest's in the module's intrinsic region
+//! ([`super::library::Placement`]), its stack pointer starts at the top of
+//! the region's stack, and every write of the stack pointer goes through
+//! the check, which traps below the region.
+use super::library::{Closure, LINK_MODULE, Library, Placement};
 use std::collections::BTreeMap;
 use varta_common::{HostOperation, HostScalar, abi};
 use wasm_encoder::{
@@ -21,14 +26,12 @@ use wasm_encoder::{
     reencode::{Error as ReencodeError, Reencode},
 };
 use wasmparser::{
-    BlockType, CustomSectionReader, ExternalKind, FuncType, FunctionBody, Operator, Parser,
-    Payload, TypeRef, ValType,
+    BinaryReader, BlockType, CustomSectionReader, ExternalKind, FuncType, FunctionBody, Operator,
+    Parser, Payload, TypeRef, ValType,
 };
 
-/// Guest memory 0: the exported ABI memory every accessor addresses.
+/// Guest memory 0: the only memory of a linked module.
 const GUEST_MEMORY: u32 = 0;
-/// `memory.size` counts pages; the size accessor reports bytes.
-const PAGE_SHIFT: i32 = abi::WASM_PAGE_BYTES.trailing_zeros() as i32;
 
 pub(super) struct Import<'a> {
     pub module: &'a str,
@@ -43,6 +46,9 @@ pub(super) struct Guest<'a> {
     memories: u32,
     globals: u32,
     result_len: Option<u32>,
+    resource: (Option<u32>, Option<u32>),
+    /// The module's declared layout (`varta.static`, `varta.intrinsics`).
+    pub region: abi::StaticRegion,
 }
 
 impl<'a> Guest<'a> {
@@ -53,7 +59,10 @@ impl<'a> Guest<'a> {
             memories: 0,
             globals: 0,
             result_len: None,
+            resource: (None, None),
+            region: abi::StaticRegion::SINGLE_PAGE,
         };
+        let mut intrinsic_section = None;
         for payload in Parser::new(0).parse_all(bytes) {
             match payload.map_err(|e| e.to_string())? {
                 Payload::TypeSection(reader) => {
@@ -82,16 +91,39 @@ impl<'a> Guest<'a> {
                 Payload::ExportSection(reader) => {
                     for export in reader {
                         let export = export.map_err(|e| e.to_string())?;
+                        if export.kind == ExternalKind::Global
+                            && export.name == varta_common::limits::RESOURCE_FAILURE
+                        {
+                            guest.resource.0 = Some(export.index);
+                        }
+                        if export.kind == ExternalKind::Global
+                            && export.name == varta_common::limits::RESOURCE_REQUEST
+                        {
+                            guest.resource.1 = Some(export.index);
+                        }
                         if export.kind == ExternalKind::Global && export.name == abi::RESULT_LEN {
                             guest.result_len = Some(export.index);
                         }
                     }
+                }
+                Payload::CustomSection(section) if section.name() == abi::STATIC_SECTION => {
+                    guest.region = abi::StaticRegion::read_section(section.data())
+                        .map_err(|e| e.to_string())?;
+                }
+                Payload::CustomSection(section) if section.name() == abi::INTRINSIC_SECTION => {
+                    intrinsic_section = Some(section.data());
                 }
                 _ => {}
             }
         }
         if guest.memories != 1 {
             return Err("linked intrinsics need exactly one guest memory".into());
+        }
+        if let Some(data) = intrinsic_section {
+            guest.region = guest
+                .region
+                .read_intrinsic_section(data)
+                .map_err(|e| e.to_string())?;
         }
         Ok(guest)
     }
@@ -107,72 +139,138 @@ impl<'a> Guest<'a> {
 /// The linker-provided functions the library imports from [`LINK_MODULE`].
 #[derive(Debug, Clone, Copy)]
 enum Accessor {
-    /// `() -> i32`: byte size of guest memory 0.
-    MemorySize,
-    /// `(pages) -> i32`: `memory.grow` of guest memory 0.
-    MemoryGrow,
-    /// `(private dst, guest src, len)`: copy out of guest memory 0.
+    /// `(library dst, guest src, len)`: copy a guest value into a library
+    /// buffer.
     MemoryRead,
-    /// `(guest dst, private src, len)`: copy into guest memory 0.
+    /// `(guest dst, library src, len)`: copy a library buffer into guest
+    /// memory.
     MemoryWrite,
     /// `(len)`: set the guest's exported `env_result_len`.
     ResultLen,
+    /// `() -> i32`: the guest heap's end, where the per-call arena continues
+    /// once the reserved arena is full.
+    ArenaBase,
+    /// `() -> i32`: start of the reserved arena in the intrinsic region.
+    ArenaReserved,
+    /// `(code, request)`: store a `limits::Resource` failure before trapping.
+    ResourceFailure,
+    /// `() -> i32`: end of the reserved arena.
+    ArenaReservedEnd,
+}
+/// What the accessors read from the guest module and its placement.
+#[derive(Debug, Clone, Copy)]
+struct AccessorTargets {
+    result_len: Option<u32>,
+    /// The exported `resource_failure` and `resource_request` globals.
+    resource: (Option<u32>, Option<u32>),
+    /// The guest allocator's heap-end global, when the module has a heap.
+    heap: Option<u32>,
+    heap_base: usize,
+    arena: usize,
+    arena_end: usize,
 }
 impl Accessor {
     fn from_name(name: &str) -> Option<Self> {
         Some(match name {
-            "memory_size" => Self::MemorySize,
-            "memory_grow" => Self::MemoryGrow,
             "memory_read" => Self::MemoryRead,
             "memory_write" => Self::MemoryWrite,
             "result_len" => Self::ResultLen,
+            "arena_base" => Self::ArenaBase,
+            "arena_reserved" => Self::ArenaReserved,
+            "arena_reserved_end" => Self::ArenaReservedEnd,
+            "resource_failure" => Self::ResourceFailure,
             _ => return None,
         })
     }
     fn signature(self) -> (&'static [ValType], &'static [ValType]) {
         const I32: ValType = ValType::I32;
         match self {
-            Self::MemorySize => (&[], &[I32]),
-            Self::MemoryGrow => (&[I32], &[I32]),
             Self::MemoryRead | Self::MemoryWrite => (&[I32, I32, I32], &[]),
             Self::ResultLen => (&[I32], &[]),
+            Self::ArenaBase | Self::ArenaReserved | Self::ArenaReservedEnd => (&[], &[I32]),
+            Self::ResourceFailure => (&[I32, I32], &[]),
         }
     }
-    fn body(self, private: u32, result_len: Option<u32>) -> encoder::Function {
+    fn body(self, targets: AccessorTargets) -> Result<encoder::Function, String> {
         use encoder::Instruction as I;
         let mut function = encoder::Function::new([]);
-        let copy = |function: &mut encoder::Function, src_mem, dst_mem| {
-            for local in 0..3 {
-                function.instruction(&I::LocalGet(local));
-            }
-            function.instruction(&I::MemoryCopy { src_mem, dst_mem });
-        };
         match self {
-            Self::MemorySize => {
-                function
-                    .instruction(&I::MemorySize(GUEST_MEMORY))
-                    .instruction(&I::I32Const(PAGE_SHIFT))
-                    .instruction(&I::I32Shl);
+            Self::MemoryRead | Self::MemoryWrite => {
+                for local in 0..3 {
+                    function.instruction(&I::LocalGet(local));
+                }
+                function.instruction(&I::MemoryCopy {
+                    src_mem: GUEST_MEMORY,
+                    dst_mem: GUEST_MEMORY,
+                });
             }
-            Self::MemoryGrow => {
-                function
-                    .instruction(&I::LocalGet(0))
-                    .instruction(&I::MemoryGrow(GUEST_MEMORY));
+            Self::ResourceFailure => {
+                // A v38 module with an intrinsic region exports both
+                // globals; the runtime reports the trap as typed.
+                for (local, global) in [targets.resource.0, targets.resource.1]
+                    .into_iter()
+                    .enumerate()
+                {
+                    if let Some(global) = global {
+                        function
+                            .instruction(&I::LocalGet(local as u32))
+                            .instruction(&I::GlobalSet(global));
+                    }
+                }
             }
-            Self::MemoryRead => copy(&mut function, GUEST_MEMORY, private),
-            Self::MemoryWrite => copy(&mut function, private, GUEST_MEMORY),
             Self::ResultLen => {
                 // Hosts set the global only when the module exports it.
-                if let Some(global) = result_len {
+                if let Some(global) = targets.result_len {
                     function
                         .instruction(&I::LocalGet(0))
                         .instruction(&I::GlobalSet(global));
                 }
             }
+            Self::ArenaBase => {
+                match targets.heap {
+                    Some(global) => function.instruction(&I::GlobalGet(global)),
+                    None => function.instruction(&I::I32Const(
+                        i32::try_from(targets.heap_base).map_err(|e| e.to_string())?,
+                    )),
+                };
+            }
+            Self::ArenaReserved | Self::ArenaReservedEnd => {
+                let address = if matches!(self, Self::ArenaReserved) {
+                    targets.arena
+                } else {
+                    targets.arena_end
+                };
+                function.instruction(&I::I32Const(
+                    i32::try_from(address).map_err(|e| e.to_string())?,
+                ));
+            }
         }
         function.instruction(&I::End);
-        function
+        Ok(function)
     }
+}
+
+/// `(i32) -> ()`: set the linked stack pointer, trapping below the region's
+/// stack (`[base, base + abi::INTRINSIC_STACK_BYTES)`), where it would
+/// overwrite the static extension or the root stack.
+fn stack_check(base: usize, stack_pointer: u32) -> Result<encoder::Function, String> {
+    use encoder::Instruction as I;
+    let base = i32::try_from(base).map_err(|e| e.to_string())?;
+    let mut function = encoder::Function::new([]);
+    for instruction in [
+        I::LocalGet(0),
+        I::I32Const(base),
+        I::I32LtU,
+        I::If(encoder::BlockType::Empty),
+        I::Unreachable,
+        I::End,
+        I::LocalGet(0),
+        I::GlobalSet(stack_pointer),
+        I::End,
+    ] {
+        function.instruction(&instruction);
+    }
+    Ok(function)
 }
 
 fn scalar(value: &HostScalar) -> ValType {
@@ -210,7 +308,9 @@ struct LibraryIndices {
     functions: BTreeMap<u32, u32>,
     types: BTreeMap<u32, u32>,
     globals: BTreeMap<u32, u32>,
-    memory: u32,
+    /// The library's stack-pointer global and the merged index of its
+    /// checked setter, which replaces every `global.set` of it.
+    stack: Option<(u32, u32)>,
 }
 fn missing(what: &str, index: u32) -> ReencodeError<String> {
     ReencodeError::UserError(format!("intrinsic library: unmapped {what} {index}"))
@@ -237,9 +337,22 @@ impl Reencode for LibraryIndices {
     }
     fn memory_index(&mut self, memory: u32) -> Result<u32, ReencodeError<String>> {
         if memory == 0 {
-            Ok(self.memory)
+            Ok(GUEST_MEMORY)
         } else {
             Err(missing("memory", memory))
+        }
+    }
+    fn instruction<'a>(
+        &mut self,
+        operator: Operator<'a>,
+    ) -> Result<encoder::Instruction<'a>, ReencodeError<String>> {
+        match (operator, self.stack) {
+            (Operator::GlobalSet { global_index }, Some((stack_pointer, check)))
+                if global_index == stack_pointer =>
+            {
+                Ok(encoder::Instruction::Call(check))
+            }
+            (operator, _) => encoder::reencode::utils::instruction(self, operator),
         }
     }
     fn table_index(&mut self, table: u32) -> Result<u32, ReencodeError<String>> {
@@ -389,13 +502,14 @@ fn roots(
                 operation.name()
             )
         })?;
-        let (params, results) = operation.scalar_signature();
-        let expected = FuncType::new(params.iter().map(scalar), results.iter().map(scalar));
+        let expected = registry_signature(operation);
         let declared = match guest.imports[import as usize].ty {
             TypeRef::Func(ty) => guest.types.get(ty as usize),
             _ => None,
         };
-        if library.signature(export) != Some(&expected) || declared != Some(&expected) {
+        if library.signature(export) != Some(&export_signature(operation))
+            || declared != Some(&expected)
+        {
             return Err(format!(
                 "linked operation {} has a mismatched signature",
                 operation.name()
@@ -406,6 +520,63 @@ fn roots(
     Ok(roots)
 }
 
+/// The registry signature of `operation`, as the guest imports it.
+fn registry_signature(operation: HostOperation) -> FuncType {
+    let (params, results) = operation.scalar_signature();
+    FuncType::new(params.iter().map(scalar), results.iter().map(scalar))
+}
+/// Whether `operation` returns two i32 values, which its library export
+/// packs into one i64 (stable Rust has no multi-value C ABI).
+pub(super) fn packed_pair(operation: HostOperation) -> bool {
+    operation.scalar_signature().1 == [HostScalar::I32, HostScalar::I32]
+}
+/// The signature of `operation`'s library export: the registry signature,
+/// with a packed i64 for a pair of i32 results.
+pub(super) fn export_signature(operation: HostOperation) -> FuncType {
+    let (params, _) = operation.scalar_signature();
+    if packed_pair(operation) {
+        FuncType::new(params.iter().map(scalar), [ValType::I64])
+    } else {
+        registry_signature(operation)
+    }
+}
+
+/// A synthesized function of an operation's registry signature that calls
+/// its library export, which returns the two i32 results packed in one i64
+/// (low word first), and unpacks them.
+struct Adapter {
+    /// The guest function import it replaces.
+    import: u32,
+    /// Its merged function index.
+    index: u32,
+    operation: HostOperation,
+}
+impl Adapter {
+    fn body(&self, export: u32) -> encoder::Function {
+        use encoder::Instruction as I;
+        let params = self.operation.scalar_signature().0.len() as u32;
+        // One i64 local after the parameters holds the packed pair.
+        let packed = params;
+        let mut function = encoder::Function::new([(1, encoder::ValType::I64)]);
+        for local in 0..params {
+            function.instruction(&I::LocalGet(local));
+        }
+        for instruction in [
+            I::Call(export),
+            I::LocalTee(packed),
+            I::I32WrapI64,
+            I::LocalGet(packed),
+            I::I64Const(i64::from(u32::BITS)),
+            I::I64ShrU,
+            I::I32WrapI64,
+            I::End,
+        ] {
+            function.instruction(&instruction);
+        }
+        function
+    }
+}
+
 /// Everything the merged module is written from (see the module index plan).
 struct Plan<'a> {
     guest: &'a Guest<'a>,
@@ -414,6 +585,9 @@ struct Plan<'a> {
     /// Guest function import index -> linked library export.
     roots: BTreeMap<u32, u32>,
     closure: Closure,
+    placement: Placement,
+    adapters: Vec<Adapter>,
+    targets: AccessorTargets,
     /// Linked library functions and accessors, in output order.
     defined: Vec<u32>,
     accessors: Vec<u32>,
@@ -423,16 +597,36 @@ struct Plan<'a> {
     library_indices: LibraryIndices,
 }
 
+/// The closure `roots` reach, placed at the intrinsic region of `region`
+/// (whose declared pages must hold it).
+pub(super) fn placed(
+    library: &Library,
+    roots: &[u32],
+    region: abi::StaticRegion,
+) -> Result<(Closure, Placement), String> {
+    let closure = library.closure(roots)?;
+    let placement = library.place(&closure, region.intrinsic_base())?;
+    if placement.bytes > region.intrinsic_bytes() {
+        return Err("intrinsic region is smaller than the linked library".into());
+    }
+    Ok((closure, placement))
+}
+
 impl<'a> Plan<'a> {
     fn new(
         bytes: &'a [u8],
         guest: &'a Guest<'a>,
         library: &'a Library,
         linked: &[(u32, HostOperation)],
+        heap: Option<u32>,
     ) -> Result<Self, String> {
         let sections = Sections::read(bytes)?;
         let roots = roots(guest, library, linked)?;
-        let closure = library.closure(&roots.values().copied().collect::<Vec<_>>())?;
+        let (closure, placement) = placed(
+            library,
+            &roots.values().copied().collect::<Vec<_>>(),
+            guest.region,
+        )?;
         let library_imports = library.imports.len() as u32;
         let (accessors, defined): (Vec<u32>, Vec<u32>) = closure
             .functions
@@ -448,29 +642,63 @@ impl<'a> Plan<'a> {
             .enumerate()
             .map(|(offset, &index)| (index, base + offset as u32))
             .collect();
+        // The checked stack-pointer setter follows the accessors, and the
+        // pair adapters follow it.
+        let check = base + functions.len() as u32;
+        let linked_stack = closure.globals.contains(&library.stack_pointer);
+        let adapters: Vec<Adapter> = linked
+            .iter()
+            .filter(|(_, operation)| packed_pair(*operation))
+            .enumerate()
+            .map(|(offset, &(import, operation))| Adapter {
+                import,
+                index: check + u32::from(linked_stack) + offset as u32,
+                operation,
+            })
+            .collect();
         let mut next = 0;
         let imports = guest
             .function_imports()
-            .map(|(index, _)| match roots.get(&index) {
-                Some(export) => functions[export],
-                None => {
-                    next += 1;
-                    next - 1
+            .map(|(index, _)| {
+                match (
+                    roots.get(&index),
+                    adapters.iter().find(|a| a.import == index),
+                ) {
+                    (_, Some(adapter)) => adapter.index,
+                    (Some(export), None) => functions[export],
+                    (None, None) => {
+                        next += 1;
+                        next - 1
+                    }
                 }
             })
             .collect();
-        let globals = closure
+        // Only the stack pointer and the zero bases are linked
+        // (`Library::closure`).
+        let globals: BTreeMap<u32, u32> = closure
             .globals
             .iter()
             .enumerate()
             .map(|(offset, &index)| (index, guest.globals + offset as u32))
             .collect();
+        let stack = linked_stack.then_some((library.stack_pointer, check));
+        let targets = AccessorTargets {
+            result_len: guest.result_len,
+            resource: guest.resource,
+            heap,
+            heap_base: guest.region.heap_base(),
+            arena: placement.arena,
+            arena_end: placement.arena_end(),
+        };
         let mut plan = Self {
             guest,
             library,
             sections,
             roots,
             closure,
+            placement,
+            adapters,
+            targets,
             defined,
             accessors,
             function_types: Vec::new(),
@@ -484,7 +712,7 @@ impl<'a> Plan<'a> {
                 functions,
                 types: BTreeMap::new(),
                 globals,
-                memory: guest.memories,
+                stack,
             },
         };
         plan.plan_types()?;
@@ -500,18 +728,23 @@ impl<'a> Plan<'a> {
             .library
             .types
             .get(ty as usize)
-            .ok_or_else(|| format!("intrinsic library: unknown type {ty}"))?;
+            .ok_or_else(|| format!("intrinsic library: unknown type {ty}"))?
+            .clone();
+        let index = self.intern(func);
+        self.library_indices.types.insert(ty, index);
+        Ok(index)
+    }
+    /// `func` as an index of the merged type section.
+    fn intern(&mut self, func: FuncType) -> u32 {
         let existing = self.guest.types.iter().chain(&self.appended_types);
-        let index = match existing.clone().position(|t| t == func) {
+        (match existing.clone().position(|t| *t == func) {
             Some(index) => index,
             None => {
                 let index = existing.count();
-                self.appended_types.push(func.clone());
+                self.appended_types.push(func);
                 index
             }
-        } as u32;
-        self.library_indices.types.insert(ty, index);
-        Ok(index)
+        }) as u32
     }
 
     /// Function types of the linked functions and accessors, then the types
@@ -529,6 +762,19 @@ impl<'a> Plan<'a> {
             };
             let merged = self.merged_type(ty)?;
             self.function_types.push(merged);
+        }
+        if self.library_indices.stack.is_some() {
+            let setter = self.intern(FuncType::new([ValType::I32], []));
+            self.function_types.push(setter);
+        }
+        for operation in self
+            .adapters
+            .iter()
+            .map(|a| a.operation)
+            .collect::<Vec<_>>()
+        {
+            let adapter = self.intern(registry_signature(operation));
+            self.function_types.push(adapter);
         }
         for index in self.defined.clone() {
             let body = &self.body(index)?;
@@ -622,7 +868,6 @@ impl<'a> Plan<'a> {
                 if let Some(reader) = self.sections.memories.clone() {
                     reencode(identity.parse_memory_section(&mut section, reader))?;
                 }
-                section.memory(reencode(identity.memory_type(self.library.memory))?);
                 module.section(&section);
             }
             Kind::Global => self.globals(module)?,
@@ -680,8 +925,22 @@ impl<'a> Plan<'a> {
                 .get(index as usize)
                 .ok_or("intrinsic library: missing global")?;
             let ty = reencode(Identity.global_type(global.ty))?;
-            let init = reencode(self.library_indices.const_expr(global.init.clone()))?;
-            section.global(ty, &init);
+            if global.zero_base {
+                // Relocated relative addresses are absolute: the base stays 0.
+                section.global(ty, &encoder::ConstExpr::i32_const(0));
+                continue;
+            }
+            if index != self.library.stack_pointer
+                || global.ty.content_type != ValType::I32
+                || !global.ty.mutable
+            {
+                return Err(
+                    "intrinsic library: linked globals must be its i32 stack pointer".into(),
+                );
+            }
+            // The stack starts at the top of the region's stack.
+            let top = i32::try_from(self.placement.stack_top()).map_err(|e| e.to_string())?;
+            section.global(ty, &encoder::ConstExpr::i32_const(top));
         }
         if !section.is_empty() {
             module.section(&section);
@@ -698,7 +957,12 @@ impl<'a> Plan<'a> {
             )?;
         }
         for index in self.defined.clone() {
-            let body = self.body(index)?;
+            let function = self
+                .library
+                .defined(index)
+                .ok_or("intrinsic library: missing body")?;
+            let bytes = self.library.relocated_body(function, &self.placement)?;
+            let body = FunctionBody::new(BinaryReader::new(&bytes, 0));
             reencode(self.library_indices.parse_function_body(&mut section, body))?;
         }
         for &index in &self.accessors {
@@ -717,7 +981,19 @@ impl<'a> Plan<'a> {
                     import.name
                 ));
             }
-            section.function(&accessor.body(self.library_indices.memory, self.guest.result_len));
+            section.function(&accessor.body(self.targets)?);
+        }
+        if let Some((stack_pointer, _)) = self.library_indices.stack {
+            let merged = self.library_indices.globals[&stack_pointer];
+            section.function(&stack_check(self.placement.base, merged)?);
+        }
+        for adapter in &self.adapters {
+            let export = self
+                .roots
+                .get(&adapter.import)
+                .and_then(|export| self.library_indices.functions.get(export))
+                .ok_or("intrinsic library: unmapped pair adapter")?;
+            section.function(&adapter.body(*export));
         }
         module.section(&section);
         Ok(())
@@ -734,11 +1010,12 @@ impl<'a> Plan<'a> {
                 .segments
                 .get(index as usize)
                 .ok_or("intrinsic library: missing data segment")?;
-            let offset = reencode(self.library_indices.const_expr(segment.offset.clone()))?;
+            let address =
+                i32::try_from(self.placement.addresses[&index]).map_err(|e| e.to_string())?;
             section.active(
-                self.library_indices.memory,
-                &offset,
-                segment.data.iter().copied(),
+                GUEST_MEMORY,
+                &encoder::ConstExpr::i32_const(address),
+                self.library.relocated_segment(segment, &self.placement)?,
             );
         }
         if !section.is_empty() {
@@ -753,6 +1030,7 @@ pub(super) fn merge(
     guest: &Guest<'_>,
     library: &Library,
     linked: &[(u32, HostOperation)],
+    heap: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    Plan::new(bytes, guest, library, linked)?.emit()
+    Plan::new(bytes, guest, library, linked, heap)?.emit()
 }

@@ -1,5 +1,6 @@
 //! Budgeted conversion to the canonical guest binary payload; no decimal bridge.
 use super::*;
+use alloc::vec::Vec;
 use num_bigint::Sign as NumericSign;
 use varta_common::bigint::{BigIntView, DIGIT_BYTES, MAX_PAYLOAD_BYTES, META_BYTES, Sign};
 

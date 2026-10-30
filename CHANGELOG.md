@@ -11,6 +11,45 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 links every BigInt operation: a v38 host implements 54 imports instead
+  of 67. `varta-bigint` builds without `std`, and the BigInt operations, the
+  value13+ primitive conversions and the abstract comparisons are
+  `varta_intrinsics::bigint`, which the v28–v37 host imports now call too.
+  Operations with two i32 results are exported packed in one i64 and
+  unpacked by a linker-synthesized adapter. The value17 conversions and
+  comparisons stay host imports (linked, they cost far more fuel on string
+  concatenation and union comparisons), as do JSON and the value17 readers.
+  The intrinsic region gains a reserved arena, so small linked calls need no
+  memory growth when the guest heap fills the memory budget.
+
+- V38 linked code reports an exhausted memory budget as the typed
+  `RuntimeError::Resource` (memory, with the request) through the module's
+  `resource_failure`/`resource_request` exports instead of a bare trap,
+  reads string arguments in place (`charAt` on 1,024 non-ASCII units: 24,533
+  to 738 fuel per call), and reuses freed arena blocks. The region's stack
+  and reserved arena are measured (5,016 and 6,984 bytes at most over
+  adversarial inputs) and set to 16 KiB each, pinned by a test: one page per
+  linking module instead of two to three.
+
+- `varta-common` is the one owner of the value layout: a default `std`
+  feature, and without it a `no_std` + `alloc` core (`abi`, `memory`, the
+  `value` constants and primitive-cell reader, the `limits` constants,
+  `text`) that `varta-intrinsics` and the wasm32 shim depend on with default
+  features off. The intrinsics' restated layout constants, cell reader and
+  UTF-16 helpers and their agreement tests are gone; linked v38 code reads
+  string arguments and cells within the v38 data limit instead of 1 MiB.
+  The full verification plan and CI check the core build.
+
+- V38 linked intrinsics run in memory 0: a linked module has exactly one
+  memory (no multi-memory, so Safari and embedded engines run it). Emission
+  reserves an intrinsic region after the static extension (`varta.intrinsics`,
+  `abi::StaticRegion::intrinsic_base`) holding the library's shadow
+  stack and the data segments its linked operations reach; the compiler
+  relocates those segments through the library's kept wasm-ld relocations,
+  checks every stack-pointer write against the region, and starts the
+  per-call arena at the guest heap's end. Validation admits one memory for
+  every profile and the library's data only inside the declared region.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of

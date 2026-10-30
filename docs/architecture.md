@@ -9300,13 +9300,23 @@ metadata changes). Every earlier profile keeps static data in the single page
 `[0, 65536)`. A v38 module may extend its static region
 (`abi::StaticRegion`):
 
-| Region | Addresses (v38 with `n` extension pages) |
+| Region | Addresses (v38 with `n` extension pages and `m` intrinsic pages) |
 | --- | --- |
 | Static page | `[0, 65536)` |
 | Host results | `[65536, 1114112)` (unchanged) |
 | Reference roots | `[1114112, 1179648)` (unchanged) |
 | Static extension | `[1179648, 1179648 + n·65536)` |
-| Managed heap | from `heap_base = 1179648 + n·65536` |
+| Intrinsic region ([linked intrinsics](#linked-intrinsics-linked_intrinsics)) | `[1179648 + n·65536, 1179648 + (n + m)·65536)` |
+| Managed heap | from `heap_base = 1179648 + (n + m)·65536` |
+
+`m` is 0 unless the module links intrinsics; the custom section
+`varta.intrinsics` (`abi::INTRINSIC_SECTION`) declares it like `n`, with
+`1 ≤ m` and `n + m ≤ abi::MAX_STATIC_EXTENSION_PAGES`, at most once and only
+for a `linked_intrinsics()` profile. The intrinsic region is neither static
+data (`StaticRegion::contains` excludes it, so no descriptor, key or schema
+may lie there) nor heap; validation admits a data segment there
+(`StaticRegion::intrinsic_contains`) and requires the initial memory to cover
+`heap_base`.
 
 - The custom section `varta.static` (`abi::STATIC_SECTION`) declares `n` as
   one little-endian u32, `1 ≤ n ≤ abi::MAX_STATIC_EXTENSION_PAGES` (the
@@ -9796,81 +9806,187 @@ every host computes the same bits and a third-party host implements only
 effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
 
 - **One implementation.** The pure algorithms live in `varta-intrinsics`
-  (`no_std` + `alloc`, no `unsafe`, no dependency on `varta-common`). The
-  native runtime calls it for the host imports of earlier profiles; the
-  `varta-intrinsics-wasm` shim compiles the same code to one core wasm32
-  module (`scripts/build-intrinsics.py`), which the compiler embeds as a
-  checked-in artifact (`crates/varta-compiler/src/link/intrinsics.wasm`, with
-  its source fingerprint in `intrinsics.json`). The compiler test
-  `intrinsic_library_matches_its_sources` fails while the artifact is stale.
-  The layout constants the library reads are restated in
-  `varta_intrinsics::layout` and checked equal to `abi`/`value` by the runtime
-  test `intrinsic_layout_matches_common`; its primitive-cell reader, which the
-  runtime's linked-family host imports now use, is checked against
-  `value::PrimitiveBox` on valid and corrupted cells
-  (`shared_primitive_cell_reader_agrees_with_common`) until the value readers
-  have one owner.
+  (`no_std` + `alloc`, no `unsafe`). The native runtime calls it for the host
+  imports of earlier profiles; the `varta-intrinsics-wasm` shim compiles the
+  same code to one core wasm32 module (`scripts/build-intrinsics.py`), which
+  the compiler embeds as a checked-in artifact
+  (`crates/varta-compiler/src/link/intrinsics.wasm`, with its source
+  fingerprint in `intrinsics.json`). The compiler test
+  `intrinsic_library_matches_its_sources` fails while the artifact is stale;
+  the fingerprint covers both intrinsics crates and the varta-common files
+  the library compiles.
+- **One owner of the value layout.** `varta-common` has a default `std`
+  feature; without it the crate is a `no_std` + `alloc` core: the ABI
+  constants and static region (`abi`), bounded guest-memory reads
+  (`memory::Memory`, implemented for byte slices), the value tags, layout
+  constants and the primitive-cell reader `value::PrimitiveBox` (generic over
+  `Memory`, with the caller's string limit), the data-limit constants
+  (`limits`) and the UTF-16 helpers (`text`). `varta-intrinsics` and the shim
+  depend on it with `default-features = false` (checked by the boundary test
+  `engine_dependencies_cannot_point_back_to_project_tooling_or_cli`), so host
+  imports and linked code read cells with the same code; the profile tables
+  and frozen ceilings that name engine modules stay `std` only. Linked code
+  reads string arguments and string cells within the v38 data limit
+  (`limits::V38_MAX_STRING_BYTES`); host imports of earlier profiles pass the
+  frozen `abi::MAX_STRING_BYTES`. String results of both still travel through
+  the result buffer, whose size (`abi::MAX_RESULT_BYTES`) bounds them.
 - **Linked set.** `HostOperation::linked` names the operations with a linked
   implementation; `LanguageProfile::links` is true for them under v38 only.
   Today they are Math (the unary functions and `atan2`), `number_power`,
   `number_remainder`, Number text (`number_to_string`, `number_to_fixed`,
   `number_to_exponential`, `number_to_precision`), `number_parse_int`,
   `number_parse_float`, the primitive-cell conversions `primitive_to_string`
-  and `primitive_to_number`, and the UTF-16 operations `string_char_at16`,
+  and `primitive_to_number`, the UTF-16 operations `string_char_at16`,
   `string_char_code_at16`, `string_to_upper_case16` and
-  `string_to_lower_case16`. The value-layout-bound operations (JSON, value17
-  readers and conversions, `primitive_compare`/`primitive_equal`, BigInt) stay
-  host imports until the value readers move into the shared library.
+  `string_to_lower_case16`, every BigInt operation (`bigint_binary`,
+  `bigint_unary`, `bigint_width`/`_v2`, `bigint_from_number`,
+  `bigint_from_string`, `bigint_from_value_v4`, `bigint_to_string`/`_v2`,
+  `bigint_to_number`, `bigint_compare`, `bigint_compare_number`,
+  `bigint_compare_string`). The BigInt family is `varta_intrinsics::bigint`
+  over `varta-bigint` (both `no_std`); the host imports of v28–v37 call the
+  same functions with a fuel-derived work budget and the frozen string
+  limits, linked code with fuel as its only work bound (the bit capacity
+  still applies). An operation whose registry signature returns two i32
+  values is exported returning one i64 (low word first) and the linker
+  synthesizes an adapter of the registry signature that unpacks it. Still
+  host imports (see [pending](embedding.md#linked-intrinsics-pending)): the
+  value17 primitive conversions `primitive_to_string_v5`/
+  `primitive_to_number_v5` and the comparisons `primitive_compare`/
+  `primitive_equal` (implemented by the same shared code, but on the string
+  concatenation and union comparison paths a linked call costs far more fuel
+  than the host call; linking them was measured and reverted), and
+  `json_parse_v18`, `json_stringify_owned` and the value17 readers
+  (`value_*_v10`, `value_is_error_class_v6`, `value_log_v11`), which read
+  layouts the `no_std` core does not hold yet.
 - **Linking.** After emission the compiler replaces each `varta.<name>` import
   of a linked operation by the library export of the same name, whose
   signature must equal `HostOperation::scalar_signature`, and appends exactly
   the library functions, globals and data segments reachable from those exports
   (wasm-ld relocations, kept with `--emit-relocs`, attribute data to
-  functions). Kept imports keep their order; guest-defined functions keep their
-  relative order and indices after the imports, so `varta.functions` codes are
-  unchanged; linked functions and the synthesized accessors follow them; library
-  types are deduplicated against the guest's. A library function that uses a
-  table, an indirect call, a passive segment or a start function is not
-  linkable. Linking is deterministic, and a program without a linked import is
-  emitted byte for byte as before.
-- **Memory.** The library runs on a second, private memory: its shadow stack,
-  static data and a per-call bump arena, bounded by its declared maximum
-  `abi::MAX_INTRINSIC_MEMORY_BYTES` and never exported. Guest memory 0 and its
-  layout are unchanged. The library reaches memory 0 and the result globals
-  only through five synthesized accessors (`memory.size`/`memory.grow` of
-  memory 0, bounds-checked `memory.copy` in each direction, and setting the
-  exported `env_result_len`); string results are written at
+  functions and to the data that points at other data). Kept imports keep
+  their order; guest-defined functions keep their relative order and indices
+  after the imports, so `varta.functions` codes are unchanged; linked
+  functions, the synthesized accessors and the stack-pointer check follow
+  them; library types are deduplicated against the guest's. A library function
+  that uses a table, an indirect call, a passive segment, a start function, a
+  global other than its stack pointer and the zero memory/table bases of
+  position-independent code, an absolute linker symbol (such as
+  `__heap_base`) or a 64-bit, TLS or location-relative memory relocation is
+  not linkable. Linking is deterministic, and a program without a linked
+  import is emitted byte for byte as before.
+- **Memory: the intrinsic region of memory 0.** A linked module has exactly
+  one memory (owner decision: no multi-memory, so Safari and embedded engines
+  run it). Emission sizes the module's intrinsic region
+  ([static region](#multi-page-static-region-program_limits), `m` pages after
+  the static extension, declared by `varta.intrinsics`) from the operations
+  it links, before code is emitted, so the heap base, the allocator, the
+  collector and the memory minimum already account for it. The region holds:
+  - `[base, base + abi::INTRINSIC_STACK_BYTES)`: the library's shadow stack.
+    Its stack pointer starts at the top, and every `global.set` of it in
+    linked code is replaced by a call of one synthesized check that traps
+    when the new value is below `base`, so a deep linked call can never
+    overwrite the static extension or the root stack below the region;
+  - from `base + abi::INTRINSIC_STACK_BYTES`: the data segments the linked
+    functions reach, in library order, each at the next offset of its own
+    `WASM_SEGMENT_INFO` alignment (zero-initialized `.bss` segments
+    included);
+  - then, 16-byte aligned, the reserved arena of `abi::INTRINSIC_ARENA_BYTES`
+    that ends the region. Nothing else is placed there.
+
+  Both sizes are measured (`linked_footprint_tests`): the stack and reserved
+  arena are painted before `_start` and scanned afterwards, over adversarial
+  inputs of every linked family (every Math function at extreme arguments,
+  Number text of the largest, smallest-normal and subnormal Numbers with 100
+  digits and every radix, long parse prefixes, `BigInt(Number.MAX_VALUE)`,
+  case mapping of 2^16 expanding units, 100,000-digit parses and BigInt
+  multiplication, division, widths and text of 300,000-bit operands). The
+  maximum stack depth is 5,016 bytes and the largest bounded scratch (the
+  operations whose inputs are Numbers or bounded prefixes) 6,984 bytes; both
+  constants are 16 KiB, at least twice the measurement, and the test fails
+  when a rebuilt library needs more than half of either or when bounded
+  scratch leaves the reserved arena. A region is one page for every measured
+  closure (two to three pages with the earlier 64 KiB stack and 32 KiB
+  arena).
+- **Relocation.** The library is linked once, at its own placeholder
+  addresses, with relocations kept (`--emit-relocs`, one data segment per
+  input section). Linking moves each reached segment to its region address
+  and rewrites every memory address that names it: the padded LEB/SLEB
+  immediates of `R_WASM_MEMORY_ADDR_LEB`/`SLEB` and of
+  `R_WASM_MEMORY_ADDR_REL_SLEB` (position-independent code from the
+  `wasm32-wasip2` standard library adds them to `__memory_base`, which the
+  library links as 0, so they are absolute and the base stays 0) in code, and
+  the `R_WASM_MEMORY_ADDR_I32` words in data. Each new value is the placed
+  segment address plus the symbol offset and addend from the `linking`
+  symbol table; the old value in the bytes must equal the library address the
+  relocation names, or linking fails. No absolute address is assumed.
+- **Arena and accessors.** The per-call arena of an allocating export starts
+  in the region's reserved arena (committed with the region, so a call with
+  bounded scratch needs no memory growth, even when the guest heap fills the
+  memory budget). An allocation that no longer fits continues at the guest
+  heap's end (the allocator's bump pointer, read by the synthesized
+  `arena_base` accessor; the heap base for a module without a managed heap)
+  and grows memory 0 within its maximum and the memory budget. The arena is
+  a bump allocator that returns the newest block to the bump pointer and
+  keeps other freed blocks in size-class free lists (first fit within a
+  class, else the smallest larger nonempty class), so the out-of-order
+  temporaries of big-integer text and arithmetic reuse their bytes within a
+  call. When the memory budget cannot hold an allocation, linked code stores
+  `limits::Resource::Memory` and the requested bytes in the module's
+  `resource_failure`/`resource_request` exports (every module with an
+  intrinsic region exports them) and traps, so the runtime reports the typed
+  `RuntimeError::Resource` (memory budget exhausted, with the request) of the
+  [data limits](#data-limits-data_limits), never a bare trap. The arena's
+  memory, reserved or grown, counts against the memory budget like any guest
+  memory. Linked code never calls the guest allocator or collector, so
+  nothing else writes above the heap end during the call; afterwards the
+  guest allocator uses those bytes as fresh heap space (it initializes every
+  block it hands out, as it does for reused blocks).
+- **Arguments in place.** String arguments and string cells are read in
+  place in guest memory after their bounds, limit and UTF-16 length checks
+  (`memory::Memory::borrow`), so an operation never copies its input per
+  call; only results are copied (`charAt` on 1,024 non-ASCII units: 24,533
+  fuel per call with the earlier copy, 738 now, and the same on 2,048
+  units). A range at address 0 (a Rust slice cannot start at null) or
+  overlapping the result buffer (which linked code writes) is copied. The
+  pinned fuel checks (`linked_string_operations_read_their_input_in_place`)
+  fail when an operation that reads a bounded prefix costs more on a longer
+  input or case mapping exceeds its measured cost per unit.
+- **Accessors.** The library reaches guest values and the result globals
+  only through synthesized accessors: bounds-checked `memory.copy` within
+  memory 0 in each direction, setting the exported `env_result_len`,
+  `arena_base`, the reserved arena's bounds (`arena_reserved`,
+  `arena_reserved_end`) and `resource_failure`; string results are written at
   `abi::RESULT_BASE` exactly as a host writes them. Each allocating export
-  resets the arena on entry and traps on a nested entry, so no pointer or state
-  survives a call; linked code never allocates in, roots or retains guest heap
-  values, and guest values it reads are copied first. A v38 module that links
-  an intrinsic therefore needs an engine with multi-memory (Wasmtime, V8,
-  SpiderMonkey); the single-memory alternative, a reserved library region in
-  memory 0, is a layout change for the program-limits stream.
+  resets the arena on entry and traps on a nested entry, so no pointer or
+  state survives a call; linked code never allocates in, roots or retains
+  guest heap values.
 - **Validation.** A v38 module that imports a linked operation is rejected
-  before instantiation ("pure intrinsic must be linked"). V38 admits a second
-  memory only as the private intrinsic memory (32-bit, unshared, declared
-  maximum within `abi::MAX_INTRINSIC_MEMORY_BYTES`, not exported); linked
-  functions and signatures count against v38's own structural limits (the Wasm
-  limits of [program limits](#program-limits-program_limits)), and the
-  library's data segments are the only ones a v38 module may place outside its
-  static region (in the private memory). The runtime raises the store's memory
-  count to two only for such a module, and the v38 instantiation allowance
-  covers the private memory's image as well. Earlier profiles keep one memory
-  and their limits.
+  before instantiation ("pure intrinsic must be linked"). Every module has at
+  most one memory. The library's data segments are the only ones a v38 module
+  may place outside its static region, and only inside its declared
+  intrinsic region; linked functions and signatures count against v38's own
+  structural limits (the Wasm limits of
+  [program limits](#program-limits-program_limits)). The region is part of
+  memory 0, so the store limits and the v38 instantiation allowance (the
+  memory budget) cover it with no extra memory or fuel.
 - **Semantics and budgets.** Results equal the host implementation's on the
   same inputs, with two documented differences: Math and `**` use the portable
   `libm` backend (bit-identical on every host, faithful but not always
   correctly rounded; earlier profiles keep the platform library), and a fatal
-  failure (a noncanonical argument, an exhausted private memory) is a trap
-  instead of a host error message. Linked calls consume fuel and no host-call
-  budget; their data segments are covered by the v38 instantiation allowance
-  like every v38 data segment. Integral `Number.prototype.toString(radix)`
+  failure (a noncanonical argument, a linked stack overflow) is a trap
+  instead of a host error message, and an exhausted memory budget is the
+  typed resource failure above. Linked BigInt multiplication and decimal
+  text of operands near a million bits exhaust the 8 MiB budget in linked
+  code where the host import (native allocator) succeeds. Linked calls
+  consume fuel and no host-call budget; their data segments are covered by
+  the v38 instantiation allowance like every v38 data segment, and the region
+  takes `m` pages of the memory budget. Integral `Number.prototype.toString(radix)`
   arguments below 2^53 take an exact integer-digit path instead of the
   big-integer interval search. Production budgets are unchanged. Linked
-  string intrinsics still read and return strings within the frozen 1 MiB
-  string and result-buffer limits (open with the move of the library into a
-  reserved region of memory 0).
+  string intrinsics read strings within the v38 data limit; a result above
+  the 1 MiB result buffer (case mapping or `String(x)` of a longer string)
+  traps, as the host's result transfer fails. Delivering such results as
+  owned guest strings needs allocating call sites and is open.
 
 ### V38 view protocol and TSX (`view_protocol()`, `tsx()`)
 
@@ -10666,7 +10782,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Resource | Limit | Source constant |
 | --- | --- | --- |
 | Guest linear memory | 8 MiB | `abi::MAX_MEMORY_BYTES` |
-| Private intrinsic memory (v38 `linked_intrinsics`) | 8 MiB | `abi::MAX_INTRINSIC_MEMORY_BYTES` |
+| Linked intrinsic stack in memory 0 (v38 `linked_intrinsics`) | 16 KiB | `abi::INTRINSIC_STACK_BYTES` |
 | Guest instructions (fuel) | 1000000 | `abi::FUEL` |
 | Execution/HTTP deadline | 5 s | `abi::DEADLINE_SECONDS` |
 | Host calls per execution | 1024 | `abi::MAX_HOST_CALLS` |

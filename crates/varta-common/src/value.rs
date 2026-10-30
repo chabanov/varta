@@ -83,12 +83,16 @@ pub const DICTIONARY_FIELDS: usize = 2;
 pub const MAX_DICTIONARY_ENTRIES: usize = MAX_ARRAY_ELEMENTS;
 /// Largest canonical array index (2^32 - 2); such keys enumerate first.
 pub const MAX_ARRAY_INDEX: u64 = u32::MAX as u64 - 1;
+#[cfg(feature = "std")]
 mod dictionary;
+#[cfg(feature = "std")]
 pub use dictionary::{Dictionary, array_index};
 pub const HEAP_VECTOR_FLAG: i32 = 32;
 pub const VECTOR_BYTES: usize = 16;
 pub const VECTOR_STORAGE_OFFSET: u64 = 8;
+#[cfg(feature = "std")]
 mod vector;
+#[cfg(feature = "std")]
 pub use vector::Vector;
 #[must_use]
 pub fn array_capacity(length: usize) -> usize {
@@ -222,8 +226,10 @@ pub const UNION_META_BYTES: usize = 8;
 pub const UNION_BYTES: usize = UNION_META_BYTES + RECORD_SLOT_BYTES;
 pub const MAX_UNION_TYPES: usize = 128;
 mod primitive;
-pub use primitive::PrimitiveBox;
+pub use primitive::{PrimitiveBox, string_range};
+#[cfg(feature = "std")]
 mod reference;
+#[cfg(feature = "std")]
 pub use reference::{ReferenceBox, validate_aggregate, validate_aggregate_in};
 
 /// What a module's layout-bound readers may accept (v38 `program_limits`
@@ -231,11 +237,13 @@ pub use reference::{ReferenceBox, validate_aggregate, validate_aggregate_in};
 /// and its profile's structural limits (closure codes and signatures). Every
 /// module before v38 reads with [`ModuleBounds::LEGACY`]. Comes from validated
 /// module metadata, never from guest memory.
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModuleBounds {
     pub static_region: crate::abi::StaticRegion,
     pub limits: crate::limits::ProgramLimits,
 }
+#[cfg(feature = "std")]
 impl ModuleBounds {
     pub const LEGACY: Self = Self {
         static_region: crate::abi::StaticRegion::SINGLE_PAGE,
@@ -253,6 +261,7 @@ impl ModuleBounds {
         }
     }
 }
+#[cfg(feature = "std")]
 impl Default for ModuleBounds {
     fn default() -> Self {
         Self::LEGACY
@@ -477,4 +486,4 @@ impl ValueKind {
 /// Malformed guest exports/call graphs for managed value transfer.
 #[derive(Debug, thiserror::Error)]
 #[error("invalid value ABI: {0}")]
-pub struct ValueAbiError(pub String);
+pub struct ValueAbiError(pub alloc::string::String);

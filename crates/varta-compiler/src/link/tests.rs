@@ -74,6 +74,48 @@ fn scalar(value: &HostScalar) -> ValType {
     }
 }
 
+/// The files of the `no_std` value-layout core of varta-common the library
+/// compiles (`COMMON_CORE` of `scripts/build-intrinsics.py`).
+const COMMON_CORE: &[&str] = &[
+    "crates/varta-common/Cargo.toml",
+    "crates/varta-common/src/lib.rs",
+    "crates/varta-common/src/abi.rs",
+    "crates/varta-common/src/abi/static_region.rs",
+    "crates/varta-common/src/bigint.rs",
+    "crates/varta-common/src/limits.rs",
+    "crates/varta-common/src/memory.rs",
+    "crates/varta-common/src/text.rs",
+    "crates/varta-common/src/value.rs",
+    "crates/varta-common/src/value/error.rs",
+    "crates/varta-common/src/value/primitive.rs",
+];
+
+#[test]
+fn the_fingerprint_covers_every_compiled_common_core_file() {
+    // Every common module the core build compiles is fingerprinted: a module
+    // declared without `#[cfg(feature = "std")]` in lib.rs or value.rs must
+    // be listed.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../varta-common/src");
+    for (file, prefix) in [("lib.rs", ""), ("value.rs", "value/")] {
+        let source = std::fs::read_to_string(root.join(file)).unwrap();
+        let mut gated = false;
+        for line in source.lines() {
+            if let Some(name) = line
+                .strip_prefix("pub mod ")
+                .or_else(|| line.strip_prefix("mod "))
+                .and_then(|rest| rest.strip_suffix(';'))
+                && !gated
+            {
+                let module = format!("crates/varta-common/src/{prefix}{name}.rs");
+                assert!(COMMON_CORE.contains(&module.as_str()), "{module}");
+            }
+            if !line.starts_with("///") {
+                gated = line == "#[cfg(feature = \"std\")]";
+            }
+        }
+    }
+}
+
 /// FNV-1a 64 over `path NUL content NUL` of each intrinsics source file,
 /// sorted by path: the algorithm of `scripts/build-intrinsics.py`.
 fn source_fingerprint() -> String {
@@ -98,9 +140,16 @@ fn source_fingerprint() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let root = root.canonicalize().unwrap();
     let mut files = Vec::new();
-    for crate_dir in ["crates/varta-intrinsics", "crates/varta-intrinsics-wasm"] {
+    for crate_dir in [
+        "crates/varta-bigint",
+        "crates/varta-intrinsics",
+        "crates/varta-intrinsics-wasm",
+    ] {
         walk(&root.join(crate_dir), &root, &mut files);
     }
+    // The `no_std` value-layout core of varta-common the library compiles
+    // (`COMMON_CORE` of the build script).
+    files.extend(COMMON_CORE.iter().map(|file| (*file).to_owned()));
     files.sort();
     let mut value: u64 = 0xcbf2_9ce4_8422_2325;
     for name in files {
@@ -140,8 +189,18 @@ fn intrinsic_library_exports_every_linked_operation_with_its_signature() {
         };
         assert!(operation.linked(), "{name} is exported but not linked");
         let (params, results) = operation.scalar_signature();
-        let expected = FuncType::new(params.iter().map(scalar), results.iter().map(scalar));
+        // A pair of i32 results is exported packed into one i64.
+        let expected = if results == [HostScalar::I32, HostScalar::I32] {
+            FuncType::new(params.iter().map(scalar), [ValType::I64])
+        } else {
+            FuncType::new(params.iter().map(scalar), results.iter().map(scalar))
+        };
         assert_eq!(library.signature(index), Some(&expected), "{name}");
+        assert_eq!(
+            super::merge::export_signature(operation),
+            expected,
+            "{name}"
+        );
         assert!(operation.capability().is_none(), "{name} is privileged");
         count += 1;
     }
@@ -172,14 +231,52 @@ fn every_linked_operation() -> Vec<HostOperation> {
         .collect()
 }
 
+/// The declared layout of a module: its extension and intrinsic region.
+fn region(bytes: &[u8]) -> abi::StaticRegion {
+    let mut region = abi::StaticRegion::SINGLE_PAGE;
+    let mut intrinsics = None;
+    for payload in Parser::new(0).parse_all(bytes) {
+        if let Payload::CustomSection(section) = payload.unwrap() {
+            if section.name() == abi::STATIC_SECTION {
+                region = abi::StaticRegion::read_section(section.data()).unwrap();
+            } else if section.name() == abi::INTRINSIC_SECTION {
+                intrinsics = Some(section.data().to_vec());
+            }
+        }
+    }
+    match intrinsics {
+        Some(data) => region.read_intrinsic_section(&data).unwrap(),
+        None => region,
+    }
+}
+/// (offset, length) of every active data segment.
+fn segments(bytes: &[u8]) -> Vec<(usize, usize)> {
+    let mut segments = Vec::new();
+    for payload in Parser::new(0).parse_all(bytes) {
+        if let Payload::DataSection(reader) = payload.unwrap() {
+            for data in reader {
+                let data = data.unwrap();
+                let wasmparser::DataKind::Active {
+                    memory_index: 0,
+                    offset_expr,
+                } = data.kind
+                else {
+                    panic!("only active memory 0 segments");
+                };
+                let Ok(wasmparser::Operator::I32Const { value }) =
+                    offset_expr.get_operators_reader().read()
+                else {
+                    panic!("constant offsets");
+                };
+                segments.push((value as u32 as usize, data.data.len()));
+            }
+        }
+    }
+    segments
+}
+
 #[test]
-fn intrinsic_library_declares_its_memory_bound() {
-    let memory = library().unwrap().memory;
-    assert!(!memory.memory64 && !memory.shared);
-    assert_eq!(
-        memory.maximum,
-        Some((abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64)
-    );
+fn intrinsic_library_fits_the_wasm_limits() {
     // Linked code counts against the profile's own structural limits (v38:
     // the Wasm limits of `varta_common::limits::WASM`).
     assert!(library().unwrap().functions.len() < varta_common::limits::WASM.wasm_functions / 2);
@@ -192,15 +289,30 @@ fn v38_modules_import_no_linked_intrinsic_and_instantiate() {
     let remaining = imports(&v38);
     assert!(remaining.iter().all(|name| name.starts_with("varta.")));
     assert!(remaining.iter().any(|name| name == "varta.log_string16"));
+    // One memory: the library lives in the intrinsic region of memory 0.
     let memories = memories(&v38);
-    assert_eq!(
-        memories.len(),
-        2,
-        "guest memory and private intrinsic memory"
-    );
-    assert_eq!(
-        memories[1].maximum,
-        Some((abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64)
+    assert_eq!(memories.len(), 1, "linked code needs no second memory");
+    let region = region(&v38);
+    assert!(region.intrinsic_pages() > 0);
+    assert!(memories[0].initial >= region.minimum_pages());
+    let segments = segments(&v38);
+    for &(offset, len) in &segments {
+        assert!(
+            region.contains(offset, len) || region.intrinsic_contains(offset, len),
+            "segment [{offset}, +{len}) outside the static and intrinsic regions"
+        );
+    }
+    let library_data: Vec<_> = segments
+        .iter()
+        .filter(|&&(offset, len)| region.intrinsic_contains(offset, len))
+        .collect();
+    assert!(!library_data.is_empty(), "library data in the region");
+    // The library's data follows the region's shadow stack.
+    let data_start = region.intrinsic_base() + abi::INTRINSIC_STACK_BYTES;
+    assert!(
+        library_data
+            .iter()
+            .all(|&&(offset, _)| offset >= data_start)
     );
     wasmparser::Validator::new().validate_all(&v38).unwrap();
     instantiate(&v38);
@@ -211,7 +323,8 @@ fn v38_modules_import_no_linked_intrinsic_and_instantiate() {
         "{:?}",
         linked_imports(&v37)
     );
-    assert_eq!(super::link(v37.clone(), V37).unwrap(), v37);
+    assert_eq!(super::link(v37.clone(), V37, None).unwrap(), v37);
+    assert_eq!(super::tests::region(&v37), abi::StaticRegion::SINGLE_PAGE);
 }
 
 #[test]
@@ -223,7 +336,11 @@ fn linking_is_deterministic_and_links_only_what_a_program_uses() {
         V38,
     );
     let plain = compile("export function main(): void { console.log(0.5); }", V38);
-    assert_eq!(memories(&plain).len(), 1, "no intrinsic, no private memory");
+    assert_eq!(
+        region(&plain).intrinsic_pages(),
+        0,
+        "no intrinsic, no region"
+    );
     assert!(sine.len() > plain.len());
     assert!(sine.len() < first.len());
     assert!(
@@ -231,4 +348,61 @@ fn linking_is_deterministic_and_links_only_what_a_program_uses() {
         "Math.sin links {} bytes",
         sine.len() - plain.len()
     );
+    // The region holds the stack and the reached data only.
+    let stack_pages = (abi::INTRINSIC_STACK_BYTES / abi::WASM_PAGE_BYTES) as u32;
+    assert!(region(&sine).intrinsic_pages() <= stack_pages + 1);
+    assert!(region(&sine).intrinsic_pages() <= region(&first).intrinsic_pages());
+}
+
+#[test]
+fn the_intrinsic_region_follows_the_static_extension() {
+    // Enough literal text to spill into the static extension.
+    let words: Vec<String> = (0..4_000)
+        .map(|i| format!("\"word number {i:05}\""))
+        .collect();
+    let source = format!(
+        "export function main(): void {{ const words: string[] = [{}]; \
+         console.log(words[1].toUpperCase() + (2.5).toFixed(1)); }}",
+        words.join(", ")
+    );
+    let bytes = compile(&source, V38);
+    let region = region(&bytes);
+    assert!(region.extension_pages() > 0 && region.intrinsic_pages() > 0);
+    assert_eq!(
+        region.intrinsic_base(),
+        abi::OWNED_STRING_BASE + region.extension_bytes()
+    );
+    wasmparser::Validator::new().validate_all(&bytes).unwrap();
+    instantiate(&bytes);
+}
+
+#[test]
+fn every_linked_stack_pointer_write_is_checked_against_the_region() {
+    let bytes = compile(
+        "export function main(): void { console.log((1.5).toFixed(2)); }",
+        V38,
+    );
+    let base = region(&bytes).intrinsic_base();
+    let mut checks = 0;
+    for payload in Parser::new(0).parse_all(&bytes) {
+        if let Payload::CodeSectionEntry(body) = payload.unwrap() {
+            let operators: Vec<_> = body
+                .get_operators_reader()
+                .unwrap()
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+            if let [
+                wasmparser::Operator::LocalGet { local_index: 0 },
+                wasmparser::Operator::I32Const { value },
+                wasmparser::Operator::I32LtU,
+                ..,
+            ] = operators.as_slice()
+                && *value as u32 as usize == base
+            {
+                checks += 1;
+            }
+        }
+    }
+    assert_eq!(checks, 1, "one checked stack-pointer setter");
 }

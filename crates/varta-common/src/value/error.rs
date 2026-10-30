@@ -1,5 +1,7 @@
 //! First Error representation: immutable default name and optional own message.
+#[cfg(feature = "std")]
 use super::*;
+#[cfg(feature = "std")]
 use crate::abi;
 #[derive(Debug, Clone, Copy)]
 pub struct ErrorObject {
@@ -7,6 +9,8 @@ pub struct ErrorObject {
     pub message: u64,
     pub has_message: bool,
 }
+/// The readers name `ModuleBounds`, which is `std` only.
+#[cfg(feature = "std")]
 impl ErrorObject {
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
         Self::read_with_version(data, handle, ERROR_VALUE_VERSION)

@@ -16167,6 +16167,8 @@ const s="Straße";
 console.log(Math.sin(0.5).toString()+" "+(2 ** -0.5).toString());
 console.log((1.5).toFixed(2)+" "+(255).toString(16)+" "+parseInt("ff",16).toString()+" "+parseFloat("2.5e1").toString());
 console.log(s.toUpperCase()+" "+s.charAt(4)+" "+s.charCodeAt(4).toString());
+const big=123456789012345678901234567890n;
+console.log((big*3n).toString(16)+" "+String(BigInt.asIntN(64,big))+" "+(big>1e29)+" "+JSON.stringify({n:1.5}));
 }"#,
         serde_json::json!({}),
     );
@@ -16177,6 +16179,7 @@ console.log(s.toUpperCase()+" "+s.charAt(4)+" "+s.charCodeAt(4).toString());
         "varta log: 0.479425538604203 0.7071067811865475",
         "varta log: 1.50 ff 255 25",
         "varta log: STRASSE ß 223",
+        "varta log: 4acbb2fe44a5ba2caeabd2076 -4362896299872285998 true {\"n\":1.5}",
     ];
     let logs = |output: &std::process::Output| {
         String::from_utf8_lossy(&output.stdout)
@@ -16190,11 +16193,19 @@ console.log(s.toUpperCase()+" "+s.charAt(4)+" "+s.charCodeAt(4).toString());
     assert_eq!(logs(&dev), expected);
     let build = project.command(&["build", "--single"]);
     assert!(build.status.success(), "{}", combined(&build));
+    let wasm = fs::read(project.0.join("dist/app.wasm")).unwrap();
+    let section = varta_common::abi::INTRINSIC_SECTION.as_bytes();
+    assert!(
+        wasm.windows(section.len()).any(|window| window == section),
+        "a linked module declares its intrinsic region"
+    );
     for artifact in ["dist/app.wasm", "dist/app"] {
         let inspect = project.command(&["inspect", artifact, "--json"]);
         assert!(inspect.status.success(), "{}", combined(&inspect));
         let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
         assert_eq!(info["language"]["profile"], PROFILE);
+        // One memory: the library lives in the intrinsic region of memory 0.
+        assert_eq!(info["memories"], 1, "{info}");
         let imports: Vec<&str> = info["imports"]
             .as_array()
             .unwrap()

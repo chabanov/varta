@@ -147,5 +147,5 @@ pub fn format(mode: Mode, value: f64, digits: f64) -> Result<String, IntrinsicEr
 
 /// [`format`] as UTF-16LE result bytes.
 pub fn format16(mode: Mode, value: f64, digits: f64) -> Result<Vec<u8>, IntrinsicError> {
-    format(mode, value, digits).map(|text| crate::text::encode(&text))
+    format(mode, value, digits).map(|text| varta_common::text::encode(&text))
 }

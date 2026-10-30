@@ -746,6 +746,24 @@ impl HostOperation {
                 | Self::StringCharCodeAt16
                 | Self::StringToUpperCase16
                 | Self::StringToLowerCase16
+                // The BigInt operations (`varta_intrinsics::bigint`). The
+                // value17 primitive conversions and comparisons share that
+                // code but stay host imports: they sit on the string
+                // concatenation and union comparison paths, where linked
+                // code costs far more fuel than the host call.
+                | Self::BigIntBinary
+                | Self::BigIntUnary
+                | Self::BigIntWidth
+                | Self::BigIntWidthV2
+                | Self::BigIntFromNumber
+                | Self::BigIntFromString
+                | Self::BigIntFromValueV4
+                | Self::BigIntToString
+                | Self::BigIntToStringV2
+                | Self::BigIntToNumber
+                | Self::BigIntCompare
+                | Self::BigIntCompareNumber
+                | Self::BigIntCompareString
         )
     }
     /// The v37 (`collections`) Unicode case conversions.

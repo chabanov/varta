@@ -1,14 +1,20 @@
 //! Canonical, immutable primitive-union cells in value ABI v6.
+//!
+//! The one reader of the cell layout: host readers pass the instance's
+//! memory as a byte slice, the linked intrinsic library its guest-memory
+//! accessors ([`Memory`]).
 use super::*;
-use crate::abi;
+use crate::{abi, memory::Memory};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrimitiveBox {
     pub kind: ValueKind,
     pub payload: u64,
 }
 impl PrimitiveBox {
-    pub(super) fn raw(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
+    /// The cell structure (heap header, tag, trace mask) without payload
+    /// canonicality.
+    pub fn raw<M: Memory + ?Sized>(memory: &M, handle: u64) -> Result<Self, ValueAbiError> {
         let invalid = || ValueAbiError("noncanonical primitive union".into());
         let ptr = handle as u32 as usize;
         if (handle >> i32::BITS) as usize != UNION_BYTES
@@ -18,52 +24,57 @@ impl PrimitiveBox {
             return Err(invalid());
         }
         let header = ptr - abi::STRING_HEADER_BYTES;
-        let read = |at: usize| {
-            data.get(at..at.checked_add(4)?)
-                .and_then(|s| s.try_into().ok())
-                .map(u32::from_le_bytes)
-        };
-        let size = read(header).ok_or_else(invalid)? as usize;
+        let size = memory.u32_at(header).ok_or_else(invalid)? as usize;
         if size < abi::STRING_HEADER_BYTES + UNION_BYTES
             || !size.is_multiple_of(HEAP_ALIGNMENT)
-            || header.checked_add(size).is_none_or(|end| end > data.len())
-            || read(header + HEAP_FLAGS_OFFSET)
+            || header
+                .checked_add(size)
+                .is_none_or(|end| end > memory.size())
+            || memory.u32_at(header + HEAP_FLAGS_OFFSET)
                 != Some(HEAP_ALLOCATED_FLAG | HEAP_UNION_FLAG as u32)
-            || read(ptr + 4) != Some(1)
+            || memory.u32_at(ptr + 4) != Some(1)
         {
             return Err(invalid());
         }
-        let kind = read(ptr)
+        let kind = memory
+            .u32_at(ptr)
             .and_then(ValueKind::from_tag)
             .ok_or_else(invalid)?;
-        let payload = data
-            .get(ptr + UNION_META_BYTES..ptr + UNION_BYTES)
-            .and_then(|s| s.try_into().ok())
-            .map(u64::from_le_bytes)
-            .ok_or_else(invalid)?;
-        if read(header + HEAP_LINK_OFFSET) != Some(u32::from(kind.is_reference())) {
+        let payload = memory.u64_at(ptr + UNION_META_BYTES).ok_or_else(invalid)?;
+        if memory.u32_at(header + HEAP_LINK_OFFSET) != Some(u32::from(kind.is_reference())) {
             return Err(invalid());
         }
         Ok(Self { kind, payload })
     }
-    pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
-        Self::read_in(data, handle, ModuleBounds::LEGACY)
+    /// A canonical cell under the frozen string limit of every profile
+    /// before v38.
+    pub fn read<M: Memory + ?Sized>(memory: &M, handle: u64) -> Result<Self, ValueAbiError> {
+        Self::read_limited(memory, handle, abi::MAX_STRING_BYTES)
     }
     /// Read within a module's bounds, under its profile's data limits (v38 admits longer strings).
+    #[cfg(feature = "std")]
     pub fn read_in(data: &[u8], handle: u64, module: ModuleBounds) -> Result<Self, ValueAbiError> {
+        Self::read_limited(data, handle, module.limits.data.string_bytes)
+    }
+    /// A canonical cell: null/undefined carry 0, booleans 0 or 1, strings an
+    /// even, in-memory UTF-16 range of at most `string_bytes` bytes.
+    pub fn read_limited<M: Memory + ?Sized>(
+        memory: &M,
+        handle: u64,
+        string_bytes: usize,
+    ) -> Result<Self, ValueAbiError> {
         let invalid = || ValueAbiError("noncanonical primitive union".into());
-        let cell = Self::raw(data, handle)?;
+        let cell = Self::raw(memory, handle)?;
         let Self { kind, payload } = cell;
         let canonical = match kind {
             ValueKind::Null | ValueKind::Undefined => payload == 0,
             ValueKind::Boolean => payload <= 1,
             ValueKind::Float64 => true,
             ValueKind::String => {
-                let len = (payload >> i32::BITS) as usize;
-                let ptr = payload as u32 as usize;
-                len <= module.limits.data.string_bytes
+                let (ptr, len) = string_range(payload);
+                len <= string_bytes
                     && len.is_multiple_of(2)
-                    && ptr.checked_add(len).is_some_and(|end| end <= data.len())
+                    && ptr.checked_add(len).is_some_and(|end| end <= memory.size())
             }
             _ => false,
         };
@@ -72,6 +83,12 @@ impl PrimitiveBox {
         }
         Ok(cell)
     }
+}
+
+/// The `(ptr, byte length)` of a packed string handle.
+#[must_use]
+pub fn string_range(handle: u64) -> (usize, usize) {
+    (handle as u32 as usize, (handle >> i32::BITS) as usize)
 }
 
 #[cfg(test)]
@@ -142,5 +159,44 @@ mod tests {
         for bad in [0, handle + 1, handle ^ (1u64 << i32::BITS), u64::MAX] {
             assert!(PrimitiveBox::read(&bytes, bad).is_err());
         }
+    }
+
+    /// Guest memory reached only through copies, as linked code reads it.
+    struct Copied(Vec<u8>);
+    impl Memory for Copied {
+        fn size(&self) -> usize {
+            self.0.len()
+        }
+        fn copy_to(&self, at: usize, out: &mut [u8]) -> bool {
+            self.0.as_slice().copy_to(at, out)
+        }
+    }
+
+    #[test]
+    fn copying_and_slice_memories_read_every_corruption_alike() {
+        let (bytes, handle) = cell(ValueKind::String, 2u64 << i32::BITS);
+        let header = abi::OWNED_STRING_BASE;
+        for at in header..header + abi::STRING_HEADER_BYTES + UNION_BYTES {
+            for flip in [1u8, 0x80] {
+                let mut bad = bytes.clone();
+                bad[at] ^= flip;
+                let slice = PrimitiveBox::read(&bad, handle).ok();
+                let copied = PrimitiveBox::read(&Copied(bad), handle).ok();
+                assert_eq!(slice, copied, "byte {at}");
+            }
+        }
+        // The caller's limit bounds string cells: v38 linked code admits
+        // strings beyond the frozen 1 MiB.
+        let long = ((abi::MAX_STRING_BYTES as u64 + 2) << i32::BITS) | 8;
+        let (bytes, handle) = cell(ValueKind::String, long);
+        assert!(bytes.len() >= abi::MAX_STRING_BYTES + 10);
+        assert!(PrimitiveBox::read(&bytes, handle).is_err());
+        let limit = crate::limits::V38_MAX_STRING_BYTES;
+        assert_eq!(
+            PrimitiveBox::read_limited(&Copied(bytes), handle, limit)
+                .unwrap()
+                .payload,
+            long
+        );
     }
 }

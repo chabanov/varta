@@ -31,7 +31,13 @@
 //! the trap as a typed [`ResourceExhausted`] error instead of an anonymous
 //! `unreachable` trap. The globals carry no authority: they only select the
 //! diagnostic of an execution that already failed.
-use crate::{abi, function, json, language::LanguageProfile, value};
+//!
+//! Without the `std` feature (the value-layout core) this module keeps the
+//! limit constants, [`DataLimits`] and [`ProgramLimits`]; the profile tables
+//! and frozen ceilings that name engine modules are `std` only.
+use crate::{abi, value};
+#[cfg(feature = "std")]
+use crate::{function, json, language::LanguageProfile};
 
 /// The JS API limit on functions (imported plus defined) per module, which
 /// `wasmparser` (`MAX_WASM_FUNCTIONS`) enforces for Wasmtime.
@@ -84,6 +90,7 @@ pub struct ProgramLimits {
 
 /// The limits of every profile before v38, byte for byte the historical
 /// constants.
+#[cfg(feature = "std")]
 pub const FROZEN: ProgramLimits = ProgramLimits {
     user_functions: abi::MAX_USER_FUNCTIONS,
     wasm_functions: abi::MAX_USER_FUNCTIONS + abi::MAX_INTERNAL_FUNCTIONS + abi::MAX_HTTP_HANDLERS,
@@ -102,6 +109,7 @@ pub const FROZEN: ProgramLimits = ProgramLimits {
 };
 
 /// The `program_limits()` (v38) limits: the Wasm implementation limits.
+#[cfg(feature = "std")]
 pub const WASM: ProgramLimits = ProgramLimits {
     user_functions: WASM_FUNCTIONS,
     wasm_functions: WASM_FUNCTIONS,
@@ -126,6 +134,7 @@ pub const MAX_PROMISE_TYPES: usize = 64;
 /// The largest limits any profile admits: readers that must bound input
 /// before they know its profile (the Wasm size before language inspection,
 /// artifact payloads) use these and then the profile's own limits.
+#[cfg(feature = "std")]
 pub const MAXIMUM: ProgramLimits = WASM;
 
 impl ProgramLimits {
@@ -142,6 +151,7 @@ impl ProgramLimits {
     }
 }
 
+#[cfg(feature = "std")]
 impl LanguageProfile {
     /// This profile's structural limits: [`WASM`] for a `program_limits()`
     /// profile, [`FROZEN`] for every earlier one.
@@ -174,14 +184,17 @@ pub const V38_MAX_ALLOCATION_BYTES: usize = (1 << 31) - (1 << 16);
 /// the frame envelope. Every pending resume token and every pending timer
 /// names a distinct live frame, so the host tracks at most one entry per such
 /// block of the memory budget.
+#[cfg(feature = "std")]
 pub const FRAME_BLOCK_BYTES: usize = abi::STRING_HEADER_BYTES + crate::function::frame::FRAME_BYTES;
 /// V38 host bound on pending resume tokens (queued or awaiting a promise):
 /// the memory budget divided by [`FRAME_BLOCK_BYTES`] (131072 under the
 /// production 8 MiB budget). A correct module exhausts its memory budget,
 /// which it reports as [`Resource::Memory`], before it reaches this bound.
+#[cfg(feature = "std")]
 pub const V38_MAX_PENDING_CONTINUATIONS: usize = abi::MAX_MEMORY_BYTES / FRAME_BLOCK_BYTES;
 /// V38 host bound on pending timers: half the continuation bound, as before
 /// v38 (each timer also holds one resume token).
+#[cfg(feature = "std")]
 pub const V38_MAX_PENDING_TIMERS: usize = V38_MAX_PENDING_CONTINUATIONS / 2;
 /// Nesting depth of one v38 JSON value the host serializes or parses: a host
 /// ceiling, as a JavaScript engine's native stack bounds its recursive
@@ -272,6 +285,7 @@ pub struct DataLimits {
 }
 impl DataLimits {
     /// The frozen ceilings of every profile before v38.
+    #[cfg(feature = "std")]
     pub const LEGACY: Self = Self {
         array_elements: value::MAX_ARRAY_ELEMENTS,
         string_bytes: abi::MAX_STRING_BYTES,
@@ -288,6 +302,7 @@ impl DataLimits {
     /// bounds data in practice. Visited JSON values are bounded by the
     /// encoded size, which the memory budget bounds; JSON nesting by the
     /// host's JSON depth ceiling [`V38_MAX_JSON_DEPTH`].
+    #[cfg(feature = "std")]
     pub const V38: Self = Self {
         array_elements: V38_MAX_ARRAY_ELEMENTS,
         string_bytes: V38_MAX_STRING_BYTES,

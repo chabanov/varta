@@ -1,12 +1,37 @@
 use super::*;
+use alloc::string::String;
+use core::cmp::Ordering;
 use num_bigint::{BigUint, Sign};
 use num_traits::{One, ToPrimitive};
-use std::cmp::Ordering;
 const MAX_INDEX: u64 = (1 << 53) - 1;
+/// 2^52: every finite binary64 of at least this magnitude is an integer.
+const INTEGRAL_MAGNITUDE: f64 = (1u64 << 52) as f64;
+/// Binary64 exponent bias and the position of the exponent field.
+const EXPONENT_BIAS: u64 = 1023;
+const EXPONENT_SHIFT: u32 = 52;
+/// `f64::trunc` without `std`, exactly: the cast truncates toward zero for
+/// every magnitude below 2^52, and larger or non-finite values are their own
+/// truncation.
+fn truncate(value: f64) -> f64 {
+    if !(-INTEGRAL_MAGNITUDE < value && value < INTEGRAL_MAGNITUDE) {
+        return value;
+    }
+    let truncated = (value as i64) as f64;
+    if truncated == 0.0 && value.is_sign_negative() {
+        -0.0
+    } else {
+        truncated
+    }
+}
+/// `2.0f64.powi(shift)` without `std`, exactly, for a shift whose power is a
+/// normal binary64 (at most 1023).
+fn power_of_two(shift: u64) -> f64 {
+    f64::from_bits((shift + EXPONENT_BIAS) << EXPONENT_SHIFT)
+}
 impl Integer {
     pub fn from_number(value: f64, budget: &mut Budget) -> Result<Self, Error> {
         budget.charge(1)?;
-        if !value.is_finite() || value.fract() != 0.0 {
+        if !value.is_finite() || truncate(value) != value {
             return Err(Error::NonIntegralNumber);
         }
         if value == 0.0 {
@@ -44,7 +69,7 @@ impl Integer {
             if guard && (sticky || leading & 1 != 0) {
                 leading += 1;
             }
-            (leading as f64) * 2.0f64.powi(shift as i32)
+            (leading as f64) * power_of_two(shift)
         };
         Ok(if self.0.sign() == Sign::Minus {
             -value
@@ -131,7 +156,7 @@ impl Integer {
         if value.is_nan() || value == 0.0 {
             return Ok(0);
         }
-        let value = value.trunc();
+        let value = truncate(value);
         if !value.is_finite() || value < 0.0 || value > MAX_INDEX as f64 {
             return Err(Error::InvalidWidth);
         }
@@ -190,5 +215,51 @@ impl Integer {
             value -= BigInt::one() << (usize::try_from(bits).map_err(|_| Error::BitCapacity)?);
         }
         budget.finish(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+
+    #[test]
+    fn core_float_helpers_equal_the_std_methods_they_replace() {
+        let mut samples = std::vec![
+            0.0,
+            -0.0,
+            0.5,
+            -0.5,
+            1.5,
+            -1.5,
+            2.0f64.powi(52) - 0.5,
+            -(2.0f64.powi(52) - 0.5),
+            2.0f64.powi(52),
+            2.0f64.powi(53) + 2.0,
+            1e300,
+            f64::MIN_POSITIVE,
+            5e-324,
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        for _ in 0..10_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            samples.push(f64::from_bits(state));
+        }
+        for value in samples {
+            assert_eq!(
+                truncate(value).to_bits(),
+                value.trunc().to_bits(),
+                "{value:e}"
+            );
+        }
+        for shift in 0..=1023 {
+            assert_eq!(power_of_two(shift), 2.0f64.powi(shift as i32), "{shift}");
+        }
     }
 }

@@ -4,7 +4,8 @@ use crate::{RuntimeContext, host};
 use varta_common::HostOperation;
 use wasmtime::{Caller, Extern, Linker};
 pub(super) fn convert(bytes: &[u8], cell: i64) -> Result<Vec<u8>, wasmtime::Error> {
-    varta_intrinsics::primitive::to_string(bytes, cell as u64)
+    varta_intrinsics::primitive::to_string(bytes, cell as u64, varta_common::abi::MAX_STRING_BYTES)
+        .map(std::borrow::Cow::into_owned)
         .map_err(|error| wasmtime::Error::msg(error.to_string()))
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {

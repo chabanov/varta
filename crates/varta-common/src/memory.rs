@@ -1,15 +1,24 @@
 //! Bounded read access to guest linear memory.
-use alloc::vec::Vec;
+use alloc::{borrow::Cow, vec::Vec};
 
-/// A read-only view of guest memory 0. The native runtime passes the
-/// instance's memory as a byte slice; linked guest code copies ranges out of
-/// memory 0 into the intrinsic's private memory. Every read is bounds-checked
-/// and an out-of-range read is `None`/`false`, never a partial copy.
+/// A read-only view of guest memory 0. Host readers pass the instance's
+/// memory as a byte slice (`[u8]` implements it); linked guest code
+/// (`varta-intrinsics-wasm`) reads words through its `varta_link` accessors
+/// and borrows argument ranges in place. Every read is bounds-checked and an
+/// out-of-range read is `None`/`false`, never a partial copy.
 pub trait Memory {
     /// Current byte size of guest memory.
     fn size(&self) -> usize;
     /// Copy `out.len()` bytes starting at `at`; false when out of range.
     fn copy_to(&self, at: usize, out: &mut [u8]) -> bool;
+
+    /// The `len` bytes at `at`, borrowed in place where the memory can lend
+    /// them (a byte slice, linked code's guest memory) and copied otherwise.
+    /// Readers of string arguments use this, so an operation never copies
+    /// its input per call.
+    fn borrow(&self, at: usize, len: usize) -> Option<Cow<'_, [u8]>> {
+        self.bytes(at, len).map(Cow::Owned)
+    }
 
     /// An owned copy of `len` bytes at `at`.
     fn bytes(&self, at: usize, len: usize) -> Option<Vec<u8>> {
@@ -35,6 +44,11 @@ impl Memory for [u8] {
     fn size(&self) -> usize {
         self.len()
     }
+    fn borrow(&self, at: usize, len: usize) -> Option<Cow<'_, [u8]>> {
+        at.checked_add(len)
+            .and_then(|end| self.get(at..end))
+            .map(Cow::Borrowed)
+    }
     fn copy_to(&self, at: usize, out: &mut [u8]) -> bool {
         match at.checked_add(out.len()).and_then(|end| self.get(at..end)) {
             Some(bytes) => {
@@ -43,6 +57,18 @@ impl Memory for [u8] {
             }
             None => false,
         }
+    }
+}
+/// An owned copy of guest memory reads like the slice.
+impl Memory for Vec<u8> {
+    fn size(&self) -> usize {
+        self.as_slice().size()
+    }
+    fn copy_to(&self, at: usize, out: &mut [u8]) -> bool {
+        self.as_slice().copy_to(at, out)
+    }
+    fn borrow(&self, at: usize, len: usize) -> Option<Cow<'_, [u8]>> {
+        self.as_slice().borrow(at, len)
     }
 }
 

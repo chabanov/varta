@@ -2,7 +2,8 @@
 //!
 //! V28/ABI27 select scalar transport; v29/value13 admits it in value graphs.
 //! A managed value is an immutable leaf: no digit word is a child reference.
-use crate::{abi, value::ValueAbiError};
+use crate::{abi, memory::Memory, value::ValueAbiError};
+use alloc::vec::Vec;
 
 pub const TRANSPORT_VERSION: u32 = 1;
 pub const HEAP_FLAG: u32 = 2048;
@@ -28,13 +29,34 @@ pub struct BigIntView<'a> {
 fn invalid() -> ValueAbiError {
     ValueAbiError("noncanonical BigInt transport".into())
 }
-fn word(data: &[u8], offset: usize) -> Result<u32, ValueAbiError> {
-    offset
-        .checked_add(DIGIT_BYTES)
-        .and_then(|end| data.get(offset..end))
-        .and_then(|bytes| bytes.try_into().ok())
-        .map(u32::from_le_bytes)
-        .ok_or_else(invalid)
+fn word<M: Memory + ?Sized>(data: &M, offset: usize) -> Result<u32, ValueAbiError> {
+    data.u32_at(offset).ok_or_else(invalid)
+}
+/// The `(pointer, length)` of the payload of a canonical managed BigInt
+/// block: its heap header, flags and reserved words checked.
+fn block<M: Memory + ?Sized>(data: &M, handle: u64) -> Result<(usize, usize), ValueAbiError> {
+    let pointer = handle as u32 as usize;
+    let length = (handle >> u32::BITS) as usize;
+    if pointer < abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES
+        || !pointer.is_multiple_of(crate::value::HEAP_ALIGNMENT)
+        || !(META_BYTES..=MAX_PAYLOAD_BYTES).contains(&length)
+    {
+        return Err(invalid());
+    }
+    let header = pointer - abi::STRING_HEADER_BYTES;
+    let size = word(data, header)? as usize;
+    if size < abi::STRING_HEADER_BYTES
+        || !size.is_multiple_of(crate::value::HEAP_ALIGNMENT)
+        || length > size - abi::STRING_HEADER_BYTES
+        || header.checked_add(size).is_none_or(|end| end > data.size())
+        || word(data, header + crate::value::HEAP_FLAGS_OFFSET)?
+            != crate::value::HEAP_ALLOCATED_FLAG | HEAP_FLAG
+        || word(data, header + crate::value::HEAP_LINK_OFFSET)? != 0
+        || word(data, header + BLOCK_RESERVED_OFFSET)? != 0
+    {
+        return Err(invalid());
+    }
+    Ok((pointer, length))
 }
 impl<'a> BigIntView<'a> {
     /// Validate host result bytes before a managed guest copy is published.
@@ -67,32 +89,24 @@ impl<'a> BigIntView<'a> {
     /// Validate the complete managed block, exact payload and zero child mask.
     /// Structured readers admit this leaf only under value ABI13.
     pub fn read(data: &'a [u8], handle: u64) -> Result<Self, ValueAbiError> {
-        let pointer = handle as u32 as usize;
-        let length = (handle >> u32::BITS) as usize;
-        if pointer < abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES
-            || !pointer.is_multiple_of(crate::value::HEAP_ALIGNMENT)
-            || !(META_BYTES..=MAX_PAYLOAD_BYTES).contains(&length)
-        {
-            return Err(invalid());
-        }
-        let header = pointer - abi::STRING_HEADER_BYTES;
-        let size = word(data, header)? as usize;
-        if size < abi::STRING_HEADER_BYTES
-            || !size.is_multiple_of(crate::value::HEAP_ALIGNMENT)
-            || length > size - abi::STRING_HEADER_BYTES
-            || header.checked_add(size).is_none_or(|end| end > data.len())
-            || word(data, header + crate::value::HEAP_FLAGS_OFFSET)?
-                != crate::value::HEAP_ALLOCATED_FLAG | HEAP_FLAG
-            || word(data, header + crate::value::HEAP_LINK_OFFSET)? != 0
-            || word(data, header + BLOCK_RESERVED_OFFSET)? != 0
-        {
-            return Err(invalid());
-        }
+        let (pointer, length) = block(data, handle)?;
         let payload = pointer
             .checked_add(length)
             .and_then(|end| data.get(pointer..end))
             .ok_or_else(invalid)?;
         Self::from_payload(payload)
+    }
+    /// The validated payload of the managed BigInt `handle`, copied out of
+    /// `memory` (the reader of linked code, which reaches guest memory only
+    /// through copies).
+    pub fn read_owned<M: Memory + ?Sized>(
+        memory: &M,
+        handle: u64,
+    ) -> Result<Vec<u8>, ValueAbiError> {
+        let (pointer, length) = block(memory, handle)?;
+        let payload = memory.bytes(pointer, length).ok_or_else(invalid)?;
+        BigIntView::from_payload(&payload)?;
+        Ok(payload)
     }
     #[must_use]
     pub fn sign(self) -> Sign {
@@ -173,6 +187,7 @@ impl BinaryOp {
 }
 
 /// Render owned BigInt exceptions without an unbounded decimal conversion.
+#[cfg(feature = "std")]
 pub fn write_diagnostic(f: &mut std::fmt::Formatter<'_>, payload: &[u8]) -> std::fmt::Result {
     let Ok(value) = BigIntView::from_payload(payload) else {
         return f.write_str("<invalid BigInt>");

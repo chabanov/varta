@@ -2963,6 +2963,8 @@ mod tests {
             H::NumberParseInt,
             H::PrimitiveString,
             H::StringToUpperCase16,
+            H::BigIntBinary,
+            H::BigIntFromValueV4,
         ] {
             assert!(operation.linked() && v38.links(operation), "{operation:?}");
             assert!(operation.capability().is_none(), "{operation:?}");
@@ -2982,7 +2984,7 @@ mod tests {
             H::JsonStringifyV17,
             H::ValueTypeOfV10,
             H::PrimitiveStringV5,
-            H::BigIntBinary,
+            H::PrimitiveCompare,
         ] {
             assert!(!v38.links(operation), "{operation:?}");
         }

@@ -7,10 +7,10 @@ use varta_intrinsics::parse::string_number;
 use wasmtime::{Caller, Extern, Linker};
 #[cfg(test)]
 pub(super) fn whitespace(unit: u16) -> bool {
-    varta_intrinsics::text::ecmascript_whitespace(unit)
+    varta_common::text::ecmascript_whitespace(unit)
 }
 pub(super) fn convert(bytes: &[u8], cell: i64) -> Result<f64, wasmtime::Error> {
-    varta_intrinsics::primitive::to_number(bytes, cell as u64)
+    varta_intrinsics::primitive::to_number(bytes, cell as u64, varta_common::abi::MAX_STRING_BYTES)
         .map_err(|error| wasmtime::Error::msg(error.to_string()))
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {

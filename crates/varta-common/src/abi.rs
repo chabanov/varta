@@ -98,7 +98,7 @@ pub fn supported(version: u32) -> bool {
 }
 mod static_region;
 pub use static_region::{
-    MAX_STATIC_EXTENSION_PAGES, STATIC_SECTION, StaticRegion, StaticRegionError,
+    INTRINSIC_SECTION, MAX_STATIC_EXTENSION_PAGES, STATIC_SECTION, StaticRegion, StaticRegionError,
     WASM_MEMORY32_PAGES,
 };
 pub const SECTION: &str = "varta.abi";
@@ -143,9 +143,21 @@ pub enum HostStatus {
 }
 
 pub const MAX_WASM_FUNCTION_BODY_BYTES: usize = 65_536;
-/// V38 (`linked_intrinsics`): maximum of the private intrinsic memory, the
-/// module's second memory, which holds only the linked library's stack,
-/// static data and per-call arena. It is never exported, starts empty of
-/// guest values and is bounded by its declared maximum; guest memory 0 keeps
-/// [`MAX_MEMORY_BYTES`] and its layout.
-pub const MAX_INTRINSIC_MEMORY_BYTES: usize = 8 * 1024 * 1024;
+/// V38 (`linked_intrinsics`): the shadow stack of the linked intrinsic
+/// library, the first bytes of the intrinsic region of memory 0
+/// ([`StaticRegion::intrinsic_base`]). Linked code traps instead of moving its
+/// stack pointer below the region. Measured maximum over adversarial inputs
+/// of every linked operation: 5016 bytes (BigInt widths and parsing); this is
+/// that maximum with a margin of more than 2x, rounded to a power of two, and
+/// `linked_operations_fit_the_region_stack_and_reserved_arena_with_margin`
+/// fails when a rebuilt library needs more than half of it.
+pub const INTRINSIC_STACK_BYTES: usize = 16 * 1024;
+/// V38 (`linked_intrinsics`): the arena reserved at the end of the intrinsic
+/// region, after the linked data. A linked call allocates there first, so a
+/// call with small scratch needs no memory above the guest heap and works
+/// even when the heap fills the memory budget; larger scratch continues
+/// above the guest heap's end. Measured maximum of the operations with
+/// bounded scratch (Math, Number text, parse prefixes, `BigInt(number)`):
+/// 6984 bytes (`toString(radix)` of the largest Number); this is that maximum
+/// with a margin of more than 2x, pinned by the same test.
+pub const INTRINSIC_ARENA_BYTES: usize = 16 * 1024;

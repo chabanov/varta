@@ -1,4 +1,5 @@
 use super::*;
+use alloc::vec::Vec;
 use num_bigint::Sign;
 impl Integer {
     /// ECMAScript StringToBigInt grammar, including its exact whitespace set.
