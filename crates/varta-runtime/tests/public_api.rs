@@ -5320,3 +5320,38 @@ fn public_engine_runs_v37_fetch_across_modules_with_an_exact_request_grant() {
     // V36 has no fetch prelude.
     assert!(frozen.contains("unsupported"), "{frozen}");
 }
+
+/// V38 (`data_limits`) through the public API: arrays past 1024 elements run,
+/// and exhausting the memory budget is the typed `RuntimeError::Resource`
+/// with the requested amount, while v37 keeps its anonymous ceiling trap.
+#[test]
+fn public_engine_reports_v38_data_limits_and_typed_resource_failures() {
+    use varta_common::language::LanguageProfile;
+    use varta_common::limits::{Resource, ResourceExhausted};
+    let compile = |source: &str, profile| {
+        varta_compiler::compile_typescript_with_profile(source, profile).unwrap()
+    };
+    let runtime = VartaRuntime::new();
+    let large = "export function main():void{const xs:number[]=[];xs.length=1100;\
+        xs[1099]=7;console.log(String(xs.length)+' '+String(xs[1099]));}";
+    let output = runtime
+        .run_wasm_bytes(&compile(large, LanguageProfile::CheckedF64Utf16V38), &[])
+        .unwrap();
+    assert_eq!(output.lines, ["varta log: 1100 7"]);
+    assert!(
+        runtime
+            .run_wasm_bytes(&compile(large, LanguageProfile::CheckedF64Utf16V37), &[])
+            .is_err()
+    );
+    let exhausted = "export function main():void{const xs:number[]=[];xs.length=4000000;}";
+    match runtime.run_wasm_bytes(
+        &compile(exhausted, LanguageProfile::CheckedF64Utf16V38),
+        &[],
+    ) {
+        Err(varta_runtime::RuntimeError::Resource(ResourceExhausted {
+            resource: Resource::Memory,
+            requested,
+        })) => assert!(requested as usize > varta_common::abi::MAX_MEMORY_BYTES),
+        other => panic!("expected the memory resource, got {other:?}"),
+    }
+}

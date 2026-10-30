@@ -11820,6 +11820,67 @@ fn pilot_profile_v38_declares_host_abi_34_with_value17_through_both_binaries() {
     rejects("matching host ABI");
 }
 
+/// V38 `data_limits` through `varta dev`, both artifacts, both binaries and
+/// the packaged executable: a 1200-element array (past the 1024-element
+/// ceiling that v37 keeps; production fuel bounds the size here), and a
+/// length beyond the memory budget reported as a typed resource failure
+/// instead of an anonymous trap.
+#[test]
+fn v38_data_limits_run_past_1024_elements_and_report_resources_through_both_binaries() {
+    // Every entry point: `varta dev`, both artifacts under both binaries and
+    // the packaged executable.
+    let everywhere = |source: &str, expect: &dyn Fn(&std::process::Output)| {
+        let project = RegressionProject::new(source, serde_json::json!({}));
+        project.language_profile("checked-f64-utf16-v38");
+        expect(&project.command(&["dev"]));
+        let build = project.command(&["build", "--single"]);
+        assert!(build.status.success(), "{}", combined(&build));
+        for artifact in ["dist/app.wasm", "dist/app"] {
+            for mut command in [varta(), Command::new(runtime_path())] {
+                let output = command
+                    .args(["run", artifact])
+                    .current_dir(&project.0)
+                    .output()
+                    .unwrap();
+                expect(&output);
+            }
+        }
+        expect(&Command::new(project.0.join("dist/app")).output().unwrap());
+        project
+    };
+    let large = "export function main():void{const xs:number[]=[];xs.length=1200;\
+        let t=0;for(let i=0;i<1200;i++){xs[i]=i;t+=i;}\
+        console.log(String(xs.length)+' '+String(t));}";
+    let project = everywhere(large, &|output| {
+        assert!(output.status.success(), "{}", combined(output));
+        assert!(
+            combined(output).contains("varta log: 1200 719400"),
+            "{}",
+            combined(output)
+        );
+    });
+    // V37 keeps the 1024-element ceiling: the length assignment traps.
+    project.language_profile("checked-f64-utf16-v37");
+    let output = project.command(&["dev"]);
+    assert!(!output.status.success(), "{}", combined(&output));
+    assert!(
+        !combined(&output).contains("varta log"),
+        "{}",
+        combined(&output)
+    );
+    let exhausted = "export function main():void{const big:number[]=[];big.length=4000000;\
+        console.log(String(big.length));}";
+    everywhere(exhausted, &|output| {
+        let text = combined(output);
+        assert!(!output.status.success(), "{text}");
+        assert!(
+            text.contains("resource limit: memory budget exhausted"),
+            "{text}"
+        );
+        assert!(!text.contains("unreachable"), "{text}");
+    });
+}
+
 /// The v37 language core through `varta dev`, both artifacts, both binaries
 /// and the packaged executable: a timer callback naming the abort listener
 /// declared after it, hoisted helpers, a closure reading its binding before
