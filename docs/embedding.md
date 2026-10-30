@@ -1555,7 +1555,8 @@ round-2 grammar.
 **Clipboard (`clipboard.write`, accepted, moved into v1).** A boolean grant
 authorizes `copy_text(text)` (an operation, since it carries a string): plain text
 only, at most the value-byte limit, and only in the batch committed by a turn whose
-task was a trusted `click` or `keydown` record (a user gesture). **Revised in
+task was a trusted user-gesture record (`click`, `keydown` or `submit`, per
+[round 6](#view-draft-v0-round-6-gestures-and-platform-refusals)). **Revised in
 [round 5](#view-draft-v0-round-5-command-results):** `copy_text` carries a request
 id, and every outcome (copied, denied, refused by the platform, or attempted
 outside a user gesture) comes back as a `command_result` record; nothing is
@@ -1693,6 +1694,73 @@ batch and is never silent. This revises round 3.
 | — | identity of `copy_text` | `copy_text` | `seq` = the request id, `target` = 0 | — |
 | — | identity of `open_url` | `open_url` | `seq` = 0, `target` = the activated `a` node | — |
 <!-- generated:view-command-results:end -->
+
+### View draft v0 round 6: gestures and platform refusals
+
+Found by the first browser applier (all rounds 1–5 pass in Chromium).
+
+- **Gesture flag (scheduler ↔ applier contract).** The host scheduler hands every
+  batch to the applier together with a `gesture` flag (the reference applier's
+  `apply(bytes, { gesture })`). The flag is true exactly when the task of the turn
+  that committed the batch is a **trusted** record of a user-gesture kind (table
+  below): a record the host produced from a real platform input event, never one
+  the guest caused. It covers the whole turn: the handler, every microtask drained
+  in that turn and the one batch committed at its end. It does not carry over: a
+  continuation that resumes in a later turn (after a timer, an I/O completion, a
+  `command_result` or any other task) runs in a non-gesture turn. The flag is
+  never guest-controlled: no patch, command, value or export can set it, and the
+  applier ignores any gesture claim except the scheduler's. `copy_text` uses it
+  ([round 5](#view-draft-v0-round-5-command-results)); `ui.open_url` activations
+  are gestures by construction and do not depend on it.
+
+<!-- generated:view-gestures:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Task of the turn | User-gesture turn |
+| --- | --- |
+| trusted `click` record | yes |
+| trusted `input` record | no |
+| trusted `change` record | no |
+| trusted `submit` record | yes |
+| trusted `keydown` record | yes |
+| trusted `focusin` record | no |
+| trusted `focusout` record | no |
+| trusted `scroll` record | no |
+| trusted `cancel` record | no |
+| trusted `close` record | no |
+| trusted `command_result` record | no |
+<!-- generated:view-gestures:end -->
+
+- **Platform refusal.** A granted operation reports `ok` unless the condition in
+  the table below holds. In the browser, `window.open` with `noopener` returns
+  `null` even on success, so a blocked popup is indistinguishable from success and
+  reports `ok`; only a thrown exception reports `refused_by_platform`. Native
+  shells observe a real launch failure.
+
+<!-- generated:view-refusals:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Operation | Renderer | `refused_by_platform` when |
+| --- | --- | --- |
+| `copy_text` | browser | when `navigator.clipboard.writeText` rejects or throws |
+| `copy_text` | native shell | when the system clipboard write fails |
+| `open_url` | browser | only when `window.open` throws; with `noopener` it returns `null` even on success, so a blocked popup cannot be detected and reports `ok` |
+| `open_url` | native shell | when the system browser cannot be launched or the URL is rejected by the OS |
+<!-- generated:view-refusals:end -->
+
+- **Transient activation after a prompt.** Platforms require a fresh user
+  activation for `window.open` and `navigator.clipboard.writeText` (Chromium about
+  5 s; Safari's clipboard only within the same task). When the permission broker
+  has to prompt, that activation is gone by the time the user answers. Therefore,
+  for both `copy_text` and `open_url`, on the browser and natively: if the
+  decision needs a prompt, the **host performs the action itself inside the
+  handler of the prompt's "Allow" activation** (a fresh, trusted gesture in the
+  host's own UI) and only then sends the `command_result` with the platform's
+  outcome. "Deny" or dismissing the prompt reports `not_allowed`. Without a prompt
+  (a granted or stored decision) the action runs in the activation of the original
+  gesture as before. The guest never receives the gesture of the prompt and the
+  prompt's turn is not a guest gesture turn.
+- **Arbitrary external links (pending owner decision).** Agent answers contain
+  links to arbitrary sites, which a fixed `ui.open_url` pattern list cannot cover.
+  One option under discussion is an `https://*` grant form whose every activation
+  prompts with the full URL and never stores a decision. Not decided; until then
+  external links need matching patterns as specified in round 3 and round 5.
 
 ## Entry-point limits
 

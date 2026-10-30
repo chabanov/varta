@@ -5,7 +5,7 @@ use super::DOCUMENT;
 use crate::support::{assert_block, table};
 use varta_common::view::{
     self, Attribute, Command, CommandStatus, CssProperty, CssValue, DraftCapability, DraftGrant,
-    EventFlag, EventKind, Key, ListenOption, Opcode, ResultOperation, Tag, Tags,
+    EventFlag, EventKind, Key, ListenOption, Opcode, Renderer, ResultOperation, Tag, Tags,
 };
 
 fn codes(rows: impl Iterator<Item = (u32, &'static str)>) -> String {
@@ -345,6 +345,33 @@ fn command_results() -> String {
     )
 }
 
+fn gestures() -> String {
+    table(
+        &["Task of the turn", "User-gesture turn"],
+        EventKind::ALL.iter().map(|&kind| {
+            vec![
+                format!("trusted `{}` record", kind.name()),
+                if kind.user_gesture() { "yes" } else { "no" }.to_owned(),
+            ]
+        }),
+    )
+}
+
+fn refusals() -> String {
+    table(
+        &["Operation", "Renderer", "`refused_by_platform` when"],
+        ResultOperation::ALL.iter().flat_map(|&operation| {
+            Renderer::ALL.iter().map(move |&renderer| {
+                vec![
+                    format!("`{}`", operation.name()),
+                    renderer.name().to_owned(),
+                    operation.refusal(renderer).to_owned(),
+                ]
+            })
+        }),
+    )
+}
+
 #[test]
 fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-layout", &layout());
@@ -364,4 +391,6 @@ fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-capabilities", &capabilities());
     assert_block(DOCUMENT, "view-defaults", &defaults());
     assert_block(DOCUMENT, "view-command-results", &command_results());
+    assert_block(DOCUMENT, "view-gestures", &gestures());
+    assert_block(DOCUMENT, "view-refusals", &refusals());
 }
