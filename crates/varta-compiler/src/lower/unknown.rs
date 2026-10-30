@@ -97,6 +97,13 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
             value.ty
         )));
     }
+    if classes::reaches_private(value.ty, types) {
+        return Err(type_error(format!(
+            "{} value is not assignable to unknown; it may reach a class instance with \
+             #private fields, which host readers would see as properties",
+            value.ty
+        )));
+    }
     if value.ty.is_union() {
         return Ok(Expr {
             ty: Type::Unknown,

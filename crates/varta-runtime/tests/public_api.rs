@@ -4851,3 +4851,69 @@ fn public_engine_runs_v36_timers_across_modules_with_an_exact_grant() {
         "{frozen}"
     );
 }
+
+#[test]
+fn public_engine_instantiates_generic_classes_and_methods_across_modules_in_v37() {
+    // The pilot's transport shape: a client with a generic async
+    // `request<T>` method and `#private` state, a resource base holding it,
+    // resource methods whose `Promise<R>` results infer `T`, and a generic
+    // page class instantiated in another module, re-exported through a barrel.
+    use varta_common::language::LanguageProfile;
+    struct GenericSources;
+    impl ModuleLoader for GenericSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./client.ts" => Ok("client.ts".into()),
+                "./index.ts" => Ok("index.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("client.ts") => "export interface Spec{path:string}\
+                    export class Page<T>{items:T[];cursor:string|null;\
+                    constructor(items:T[],cursor:string|null){this.items=items;this.cursor=cursor;}\
+                    map<U>(f:(item:T)=>U):Page<U>{const out:U[]=[];for(let i=0;i<this.items.length;i++){out.push(f(this.items[i]!));}return new Page<U>(out,this.cursor);}}\
+                    export class Client{#calls=0;\
+                    async request<T>(spec:Spec,decode:(path:string)=>T):Promise<T>{this.#calls+=1;await null;return decode(spec.path);}\
+                    get calls():number{return this.#calls;}}\
+                    export class APIResource{protected readonly client:Client;constructor(client:Client){this.client=client;}}",
+                Some("index.ts") => "export * from './client.ts';",
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {APIResource,Client,Page} from './index.ts';\
+                       class Items extends APIResource{\
+                       list(n:number):Promise<Page<number>>{return this.client.request({path:'/items'},(p:string):Page<number>=>new Page([n,p.length],null));}\
+                       name():Promise<string>{return this.client.request<string>({path:'/name'},(p:string):string=>p);}}\
+                       export async function main():Promise<void>{\
+                       const client=new Client();const items=new Items(client);\
+                       const page=await items.list(3);const labels=page.map((x:number):string=>`#${x}`);\
+                       console.log(`${labels.items[1]} ${await items.name()} ${client.calls}`);}"
+                    .into(),
+            },
+            &GenericSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    // Node 24 prints the same line.
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: #6 /name 2"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(frozen.contains("unsupported generic class"), "{frozen}");
+}

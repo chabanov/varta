@@ -11,6 +11,18 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- Class generics under opt-in v37 (selector `class_generics`): generic
+  instance, static and async methods (monomorphized per type-argument list,
+  inferred from arguments and from the contextual result type, so the pilot's
+  `return this._client.request(spec)` instantiates `request<R>` from the
+  method's `Promise<R>`), overrides of generic methods dispatched per
+  instantiation, generic classes (`class Page<T>`, `extends Page<T>`,
+  `class Numbers extends Page<number>`, statics on the template), method
+  signatures in interfaces as function fields with object-literal methods
+  that do not use `this`, checked `implements`, and `#private` fields,
+  methods and getters with `#x in value`. No value tag, layout, host import
+  or budget changes; v36 keeps its diagnostics and bytes.
+
 - Opt-in v37 (pilot batch: language core, class generics, collections and
   binary text, RegExp and `net.request`, in development) is registered. It
   inherits every v36 feature, shares value ABI/layout 17 with v36 and declares

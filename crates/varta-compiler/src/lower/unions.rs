@@ -418,6 +418,15 @@ impl Lower<'_> {
         let ast::Expr::Bin(binary) = test else {
             return Ok(());
         };
+        // `#x in value` narrows like `value instanceof C` (v37).
+        if binary.op == ast::BinaryOp::In
+            && self.types.profile.class_generics()
+            && let ast::Expr::PrivateName(name) = &*binary.left
+            && let ast::Expr::Ident(id) = &*binary.right
+        {
+            let class = self.private_owner(name)?;
+            return self.refine_class(id.sym.as_ref(), class, yes);
+        }
         if binary.op == ast::BinaryOp::In && yes && self.types.profile.unknown_json() {
             return self.in_guard(&binary.left, &binary.right);
         }

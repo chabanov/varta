@@ -4742,3 +4742,94 @@ generator's values (and its `return()` and `throw()`). Not supported yet:
 `yield*` over arrays or synchronous generators, async generator function
 expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
 `await` inside an intrinsic call or template (bind it to a `const` first). `for await` costs a few microtasks per value, like Node.
+
+### `checked-f64-utf16-v37`
+
+Profile v37 (in development) runs every v36 program unchanged. Its streams
+add their features below as they land.
+
+#### Generic methods and classes, private names, `implements` (opt-in v37)
+
+Methods and classes may be generic, interfaces may declare methods, classes
+may state `implements`, and `#private` members keep state inside the class:
+
+```ts
+interface ResponseBody {
+  text(): Promise<string>;   // a method signature is a function field
+  close?(): void;            // optional method: call it with `?.()`
+}
+interface Sized {
+  size(): number;
+}
+class Page<T> implements Sized {   // checked at compile time
+  items: T[];
+  constructor(items: T[]) {
+    this.items = items;
+  }
+  size(): number {
+    return this.items.length;
+  }
+  map<U>(f: (item: T) => U): Page<U> {
+    const out: U[] = [];
+    for (let i = 0; i < this.items.length; i++) out.push(f(this.items[i]!));
+    return new Page(out);          // Page<U>, inferred from the argument
+  }
+}
+class Transport {
+  #calls = 0;                                   // private, not a property
+  readonly #fetch: (path: string) => Promise<ResponseBody>;
+  constructor(fetch: (path: string) => Promise<ResponseBody>) {
+    this.#fetch = fetch;
+  }
+  async request<T>(path: string, decode: (text: string) => T): Promise<T> {
+    this.#calls += 1;
+    const body = await this.#fetch(path);
+    const text = await body.text();
+    body.close?.();
+    return decode(text);
+  }
+  get calls(): number {
+    return this.#calls;
+  }
+}
+class Users {
+  readonly #client: Transport;
+  constructor(client: Transport) {
+    this.#client = client;
+  }
+  // `T` is inferred from the declared result `Promise<Page<string>>`.
+  list(): Promise<Page<string>> {
+    return this.#client.request('/users', (text: string): Page<string> => new Page([text, `${text}2`]));
+  }
+}
+export async function main(): Promise<void> {
+  const transport = new Transport(async (path: string): Promise<ResponseBody> => ({
+    async text(): Promise<string> {   // object literal method
+      return `user${path.length}`;
+    },
+  }));
+  const page = await new Users(transport).list();
+  const lengths = page.map((name: string): number => name.length);
+  console.log(`${page.size()} ${lengths.items[1]} ${transport.calls}`);   // 2 6 1
+}
+```
+
+Each type-argument list is compiled separately: `request<Page<string>>` and
+`request<number>` are two functions, `Page<number>` and `Page<string>` two
+classes, so a program with many distinct instantiations reaches the function
+limit sooner (about ten functions per distinct response type in the pattern
+above, 24 distinct types per program). Type arguments are inferred from the
+arguments and then from the expected result; write them explicitly when
+nothing determines them (`t.count<number>()`). Overrides of generic methods
+dispatch like other overrides; static members of a generic class are written
+on the class (`Page.empty()`) and cannot use its type parameters.
+
+Object-literal methods and the values of method signatures are called
+without `this`, so a method that uses `this` is rejected; use the variables
+it closes over instead. A class instance is still not assignable to an
+interface: `implements` only checks the class. `#x in value` is a brand test
+(`value instanceof` the declaring class). Not supported yet: generic method
+signatures such as `json<T>(): T` in interfaces and generic object-literal
+methods, overrides inside generic classes, `instanceof Page` on `unknown`
+values, static or setter private members, `abstract`, and `JSON.stringify` or
+`unknown` for values that may contain an instance with private fields.

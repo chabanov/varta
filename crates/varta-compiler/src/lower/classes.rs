@@ -7,7 +7,8 @@
 //! subclass is known before bodies are lowered, so overridden methods dispatch
 //! through one synthesized function per overridden root method.
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
+use std::rc::Rc;
 use swc_common::Span;
 use varta_common::value::MAX_RECORD_SHAPES;
 
@@ -68,6 +69,18 @@ impl Method {
         }
     }
 }
+/// A generic method (v37 `class_generics`): it gets no function slot; each
+/// distinct type-argument list is one method function of its owner.
+pub(super) struct GenericMethod {
+    pub owner: u32,
+    /// The ancestor that first declared this method name.
+    pub root: u32,
+    pub access: Access,
+    pub is_static: bool,
+    /// The declaration without its type parameters, lowered per instance.
+    pub function: Rc<generics::Function>,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 enum Member {
     Init,
@@ -93,12 +106,31 @@ pub(super) struct Class {
     pub methods: BTreeMap<String, Method>,
     /// Static methods, own and inherited: receiver-free direct calls `C.m()`.
     pub statics: BTreeMap<String, Method>,
+    /// Generic instance and static methods, own and inherited (v37).
+    pub generic_methods: BTreeMap<String, Rc<GenericMethod>>,
+    pub generic_statics: BTreeMap<String, Rc<GenericMethod>>,
     pub init: Option<Signature>,
     /// Own field initializers in declaration order.
     initializers: Vec<(String, Box<ast::Expr>)>,
     state: State,
     /// Declared by an engine prelude module (v35 Web types).
     pub prelude: bool,
+    /// Type parameters of a generic class template (v37 `class_generics`).
+    /// A template has only static members; each instantiation is a class of
+    /// its own with `template` set.
+    params: Option<Rc<ast::TsTypeParamDecl>>,
+    /// The template of a generic class instance.
+    pub template: Option<u32>,
+    /// The type arguments of a generic class instance, by parameter name.
+    pub frame: generics::Frame,
+    /// Own members of an instance whose function slots are not allocated yet.
+    unallocated: Vec<Member>,
+}
+impl Class {
+    /// A generic class declaration (not one of its instances).
+    pub(super) fn is_template(&self) -> bool {
+        self.params.is_some()
+    }
 }
 
 /// The class whose member bodies are being lowered; `init` is the function
@@ -125,6 +157,20 @@ pub(crate) struct Classes {
     method_names: BTreeSet<String>,
     /// Synthetic native-error root classes (v32 `error_subclasses`).
     error_roots: BTreeMap<varta_common::value::ErrorClass, u32>,
+    /// Generic method instances by (owner, name, static, type arguments).
+    method_instances: BTreeMap<generic_methods::InstanceKey, Signature>,
+    /// Dispatchers of overridden generic methods by (root, name, arguments).
+    generic_dispatchers: BTreeMap<(u32, String, Vec<Type>), usize>,
+    /// Generic method instances whose bodies are not lowered yet.
+    pending_methods: VecDeque<generic_methods::Pending>,
+    /// Generic class instances by (template, type arguments).
+    instances: BTreeMap<(u32, Vec<Type>), u32>,
+    /// Instances created before every declared class was laid out.
+    deferred: Vec<u32>,
+    /// Every declared class is laid out: instances lay out when created.
+    ready: bool,
+    /// Instance member bodies to lower: (function index, class, member).
+    pending_members: VecDeque<generic_classes::PendingMember>,
 }
 impl Classes {
     pub(crate) fn shape(&self, id: u32) -> u32 {
@@ -393,22 +439,48 @@ pub(super) fn register(
     if types.classes.list.len() >= MAX_RECORD_SHAPES {
         return Err(source.locate(invalid("class count exceeds limit"), declaration.ident.span));
     }
+    let params = match &declaration.class.type_params {
+        Some(params) if types.profile.class_generics() => {
+            if matches!(&declaration.class.super_class, Some(parent)
+                if matches!(&**parent, ast::Expr::Ident(id)
+                    if varta_common::value::ErrorClass::from_name(id.sym.as_ref()).is_some()))
+            {
+                return Err(source.locate(
+                    unsupported("generic Error subclass"),
+                    declaration.ident.span,
+                ));
+            }
+            Some(Rc::new((**params).clone()))
+        }
+        _ => None,
+    };
     let id = types.classes.list.len() as u32;
     types.classes.list.push(Class {
         name: name.clone(),
         module,
         source: source.clone(),
         span: declaration.ident.span,
-        declaration: declaration.class.clone(),
+        // `#x` members and references become `private` members named `#x` (v37).
+        declaration: if types.profile.class_generics() {
+            private_names::rewrite(&declaration.class, source)?
+        } else {
+            declaration.class.clone()
+        },
         parent: None,
         shape: 0,
         fields: Vec::new(),
         methods: BTreeMap::new(),
         statics: BTreeMap::new(),
+        generic_methods: BTreeMap::new(),
+        generic_statics: BTreeMap::new(),
         init: None,
         initializers: Vec::new(),
         state: State::Pending,
         prelude: crate::modules::engine::is_prelude_source(source),
+        params,
+        template: None,
+        frame: generics::Frame::new(),
+        unallocated: Vec::new(),
     });
     Ok(Some((name, id)))
 }
@@ -433,10 +505,19 @@ impl Lower<'_> {
 mod constructors;
 mod dispatch;
 mod error_classes;
+mod generic_classes;
+mod generic_methods;
+mod implements;
 mod layout;
 mod members;
-pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers};
+mod private_names;
+pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers, late_dispatch_bodies};
 pub(super) use error_classes::{
     MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_prelude,
 };
+pub(super) use generic_classes::{instantiate_class, member_body, next_member};
+pub(super) use generic_methods::{
+    generic_dispatch_bodies, generic_method_body, next_generic_method,
+};
 pub(super) use layout::layout_module;
+pub(super) use private_names::{is_private_name, reaches_private};

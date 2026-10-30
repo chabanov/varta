@@ -2267,6 +2267,48 @@
       "baseline": {
         "status": "supported"
       }
+    },
+    {
+      "id": "class-generic-method",
+      "feature": "generics",
+      "path": "cases/class-generic-method.ts",
+      "sha256": "8d4e5f54a24a2c907fef742619921ebc9823b1e1a124a9a7ba0a4f094f91a608",
+      "stdout": [
+        "varta log: 7"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Generic class methods with inference from the contextual result type are admitted by v37 class_generics; the inventory pins v36."
+      }
+    },
+    {
+      "id": "class-private-names",
+      "feature": "classes",
+      "path": "cases/class-private-names.ts",
+      "sha256": "9cc07dee51fc21e47eab88697565e429f2771026cc44400bf3a16452d5ca8297",
+      "stdout": [
+        "varta log: 12 true false"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "ES #private fields, methods and the #x in brand check are admitted by v37 class_generics; the inventory pins v36."
+      }
+    },
+    {
+      "id": "class-generic-class",
+      "feature": "generics",
+      "path": "cases/class-generic-class.ts",
+      "sha256": "b39bbc23d70e8bf3d3ae93f6fedae598f21a4737c278432493ae8e3edcabc075",
+      "stdout": [
+        "varta log: a 3 page"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Generic classes and generic bases are admitted by v37 class_generics; the inventory pins v36."
+      }
     }
   ]
 }
