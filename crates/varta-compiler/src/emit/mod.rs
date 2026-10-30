@@ -234,7 +234,10 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     let layouts = collected.layouts;
     let schemas = collected.schemas;
-    let has_parser = hosts.contains(&program.types.profile.json_parse());
+    // The owned JSON serializer (v38) allocates through the same value ABI
+    // helpers as the checked parser.
+    let has_parser = hosts.contains(&program.types.profile.json_parse())
+        || hosts.contains(&Host::JsonStringifyOwned);
     let trace_values = !layouts.is_empty()
         || collected.arrays
         || collected.unions

@@ -20,8 +20,14 @@ impl Encoder<'_, '_> {
         if !varta_common::value::promise_layout(self.version) {
             return Err(error("incompatible promise value"));
         }
-        validate_aggregate(self.data, ValueKind::Record, packed, self.version)
-            .map_err(wasmtime::Error::new)?;
+        validate_aggregate_limited(
+            self.data,
+            ValueKind::Record,
+            packed,
+            self.version,
+            self.limits,
+        )
+        .map_err(wasmtime::Error::new)?;
         self.visit(depth + 1)?;
         if self.diagnostic_budget.is_none() {
             return self.write(b"{}");

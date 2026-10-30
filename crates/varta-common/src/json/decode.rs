@@ -1,20 +1,49 @@
 use super::*;
-use crate::{abi, value::*};
+use crate::{limits::DataLimits, value::*};
 use serde::Deserialize;
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
-use std::{cell::Cell, fmt};
+use std::{cell::Cell, fmt, time::Instant};
+
+/// Values decoded between two deadline checks.
+const DEADLINE_STRIDE: usize = 1024;
+/// Whether the host decoding work must stop: checked every
+/// [`DEADLINE_STRIDE`] visited values against the execution deadline.
+pub(super) fn overdue(nodes: usize, deadline: Option<Instant>) -> bool {
+    nodes.is_multiple_of(DEADLINE_STRIDE) && deadline.is_some_and(|at| Instant::now() >= at)
+}
 
 impl JsonSchema {
     pub fn parse_json(&self, bytes: &[u8]) -> Result<JsonValue, CheckedJsonError> {
-        self.decode_with_limits(bytes, &Cell::new(None))
+        self.parse_json_limited(bytes, DataLimits::LEGACY)
+    }
+    /// [`Self::parse_json`] under a profile's data limits (v38 `data_limits`).
+    pub fn parse_json_limited(
+        &self,
+        bytes: &[u8],
+        limits: DataLimits,
+    ) -> Result<JsonValue, CheckedJsonError> {
+        self.decode_with_limits(bytes, &Cell::new(None), limits, None)
+    }
+    /// [`Self::parse_json_limited`] that stops with
+    /// [`JsonInputLimit::Deadline`] once `deadline` passes: the host work of
+    /// a v38 decode is bounded by the execution deadline.
+    pub fn parse_json_until(
+        &self,
+        bytes: &[u8],
+        limits: DataLimits,
+        deadline: Instant,
+    ) -> Result<JsonValue, CheckedJsonError> {
+        self.decode_with_limits(bytes, &Cell::new(None), limits, Some(deadline))
     }
     pub(super) fn decode_with_limits(
         &self,
         bytes: &[u8],
         limit: &Cell<Option<JsonInputLimit>>,
+        limits: DataLimits,
+        deadline: Option<Instant>,
     ) -> Result<JsonValue, CheckedJsonError> {
         self.validate()?;
-        if bytes.len() > abi::MAX_INPUT_BYTES {
+        if bytes.len() > limits.json_input_bytes {
             limit.set(Some(JsonInputLimit::Bytes));
             return Err(CheckedJsonError::Input("byte limit".into()));
         }
@@ -24,6 +53,7 @@ impl JsonSchema {
             ));
         }
         let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+        unbounded(&mut deserializer, limits);
         let mut nodes = 0;
         let value = Seed {
             limit,
@@ -31,6 +61,8 @@ impl JsonSchema {
             ty: self.root,
             nodes: &mut nodes,
             depth: 0,
+            limits,
+            deadline,
         }
         .deserialize(&mut deserializer)
         .map_err(|e| CheckedJsonError::Input(e.to_string()))?;
@@ -40,12 +72,24 @@ impl JsonSchema {
         Ok(value)
     }
 }
+/// Lift serde_json's fixed recursion limit of 128 when the profile's own
+/// depth limit is deeper (v38); the profile's limit is checked by the seed.
+pub(super) fn unbounded<'de, R: serde_json::de::Read<'de>>(
+    deserializer: &mut serde_json::Deserializer<R>,
+    limits: DataLimits,
+) {
+    if limits.json_depth > DataLimits::LEGACY.json_depth {
+        deserializer.disable_recursion_limit();
+    }
+}
 struct Seed<'a> {
     limit: &'a Cell<Option<JsonInputLimit>>,
     schema: &'a JsonSchema,
     ty: u32,
     nodes: &'a mut usize,
     depth: usize,
+    limits: DataLimits,
+    deadline: Option<Instant>,
 }
 impl Seed<'_> {
     fn expected<E: de::Error>(&self, kind: ValueKind) -> Result<(), E> {
@@ -81,12 +125,17 @@ impl<'de> DeserializeSeed<'de> for Seed<'_> {
                 })
                 .ok_or_else(|| de::Error::custom("value type does not match union schema"))?;
             let mut decoder = serde_json::Deserializer::from_str(raw.get());
+            if self.limits.json_depth > DataLimits::LEGACY.json_depth {
+                decoder.disable_recursion_limit();
+            }
             let value = Seed {
                 limit: self.limit,
                 schema: self.schema,
                 ty: *member,
                 nodes: self.nodes,
                 depth: self.depth,
+                limits: self.limits,
+                deadline: self.deadline,
             }
             .deserialize(&mut decoder)
             .map_err(de::Error::custom)?;
@@ -97,8 +146,12 @@ impl<'de> DeserializeSeed<'de> for Seed<'_> {
             });
         }
         *self.nodes += 1;
-        if self.depth > MAX_JSON_DEPTH || *self.nodes > MAX_JSON_NODES {
-            self.limit.set(Some(if self.depth > MAX_JSON_DEPTH {
+        if overdue(*self.nodes, self.deadline) {
+            self.limit.set(Some(JsonInputLimit::Deadline));
+            return Err(de::Error::custom("execution deadline"));
+        }
+        if self.depth > self.limits.json_depth || *self.nodes > self.limits.json_nodes {
+            self.limit.set(Some(if self.depth > self.limits.json_depth {
                 JsonInputLimit::Depth
             } else {
                 JsonInputLimit::Nodes
@@ -126,11 +179,11 @@ impl Seed<'_> {
         let mut seen = std::collections::BTreeSet::new();
         while let Some(key) = map.next_key::<KeySeed>()? {
             let KeySeed(units) = key;
-            if units.len() > abi::MAX_STRING_BYTES / 2 {
+            if units.len() > self.limits.string_bytes / 2 {
                 self.limit.set(Some(JsonInputLimit::StringBytes));
                 return Err(de::Error::custom("string byte limit"));
             }
-            if entries.len() == MAX_DICTIONARY_ENTRIES {
+            if entries.len() == self.limits.array_elements {
                 self.limit.set(Some(JsonInputLimit::DictionaryEntries));
                 return Err(de::Error::custom("dictionary entry limit"));
             }
@@ -143,6 +196,8 @@ impl Seed<'_> {
                 ty: value,
                 nodes: self.nodes,
                 depth: self.depth + 1,
+                limits: self.limits,
+                deadline: self.deadline,
             })?;
             entries.push((units, entry));
         }
@@ -221,7 +276,7 @@ impl<'de> Visitor<'de> for Seed<'_> {
     fn visit_bytes<E: de::Error>(self, bytes: &[u8]) -> Result<JsonValue, E> {
         self.expected(ValueKind::String)?;
         let units = crate::text::from_wtf8(bytes).map_err(E::custom)?;
-        if units.len() > abi::MAX_STRING_BYTES / 2 {
+        if units.len() > self.limits.string_bytes / 2 {
             self.limit.set(Some(JsonInputLimit::StringBytes));
             return Err(E::custom("string byte limit"));
         }
@@ -229,7 +284,7 @@ impl<'de> Visitor<'de> for Seed<'_> {
     }
     fn visit_str<E: de::Error>(self, value: &str) -> Result<JsonValue, E> {
         self.expected(ValueKind::String)?;
-        if value.len() > abi::MAX_STRING_BYTES {
+        if value.len() > self.limits.string_bytes {
             self.limit.set(Some(JsonInputLimit::StringBytes));
             return Err(E::custom("string byte limit"));
         }
@@ -237,7 +292,7 @@ impl<'de> Visitor<'de> for Seed<'_> {
     }
     fn visit_string<E: de::Error>(self, value: String) -> Result<JsonValue, E> {
         self.expected(ValueKind::String)?;
-        if value.len() > abi::MAX_STRING_BYTES {
+        if value.len() > self.limits.string_bytes {
             self.limit.set(Some(JsonInputLimit::StringBytes));
             return Err(E::custom("string byte limit"));
         }
@@ -264,6 +319,8 @@ impl<'de> Visitor<'de> for Seed<'_> {
                 ty: fields[index].ty,
                 nodes: self.nodes,
                 depth: self.depth + 1,
+                limits: self.limits,
+                deadline: self.deadline,
             })?);
         }
         let fields = values
@@ -273,7 +330,7 @@ impl<'de> Visitor<'de> for Seed<'_> {
                 Some(value) => Ok(value),
                 None if fields[slot].optional => {
                     *self.nodes += 1;
-                    if *self.nodes > MAX_JSON_NODES {
+                    if *self.nodes > self.limits.json_nodes {
                         self.limit.set(Some(JsonInputLimit::Nodes));
                         return Err(de::Error::custom("node limit"));
                     }
@@ -305,8 +362,10 @@ impl<'de> Visitor<'de> for Seed<'_> {
             ty: element,
             nodes: self.nodes,
             depth: self.depth + 1,
+            limits: self.limits,
+            deadline: self.deadline,
         })? {
-            if values.len() == MAX_ARRAY_ELEMENTS {
+            if values.len() == self.limits.array_elements {
                 self.limit.set(Some(JsonInputLimit::ArrayElements));
                 return Err(de::Error::custom("array element limit"));
             }

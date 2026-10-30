@@ -19,6 +19,7 @@ pub(super) fn function(
     closures: bool,
     frames: bool,
     wide: bool,
+    array_elements: usize,
 ) -> Function {
     const ROOT_CURSOR: u32 = 0;
     const CURRENT: u32 = 1;
@@ -93,7 +94,14 @@ pub(super) fn function(
         ],
     );
     if trace_values {
-        trace(&mut function, globals, closures, frames, wide);
+        trace(
+            &mut function,
+            globals,
+            closures,
+            frames,
+            wide,
+            array_elements,
+        );
     }
     instructions(
         &mut function,
@@ -189,7 +197,14 @@ pub(super) fn function(
 
 // Fixed-point tracing is iterative: no native/Wasm recursion or allocation during
 // collection. Every newly reached block is marked once; scans consume guest fuel.
-fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool, wide: bool) {
+fn trace(
+    function: &mut Function,
+    globals: Globals,
+    closures: bool,
+    frames: bool,
+    wide: bool,
+    array_elements: usize,
+) {
     use varta_common::value as values;
     const CURRENT: u32 = 1;
     const AGAIN: u32 = 0;
@@ -272,7 +287,7 @@ fn trace(function: &mut Function, globals: Globals, closures: bool, frames: bool
         I::LocalTee(FIELD_COUNT),
         I::LocalGet(IS_ARRAY),
         I::If(BlockType::Result(ValType::I32)),
-        I::I32Const(values::MAX_ARRAY_ELEMENTS as i32),
+        I::I32Const(array_elements as i32),
         I::Else,
         I::LocalGet(CURRENT),
         I::I32Load(FLAG),

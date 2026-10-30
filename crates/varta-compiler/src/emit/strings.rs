@@ -263,6 +263,7 @@ impl Helper {
                 profile.closures(),
                 frames,
                 profile.wide_records(),
+                profile.data().array_elements,
             ),
             Self::RootPush => roots::function(globals),
             Self::ArraySearch => array_search::function(

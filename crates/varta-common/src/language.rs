@@ -1758,6 +1758,14 @@ impl LanguageProfile {
     #[must_use]
     pub fn host_operation(self, operation: crate::HostOperation) -> crate::HostOperation {
         use crate::HostOperation::*;
+        // V38 (`data_limits`) serializes into an owned guest string instead
+        // of the 1 MiB host result buffer; everything else is v37's.
+        if self.data_limits() {
+            return match LanguageProfile::CheckedF64Utf16V37.host_operation(operation) {
+                JsonStringifyV17 => JsonStringifyOwned,
+                other => other,
+            };
+        }
         // V37 and v38 (`net_request`) arm timers with a recoverable denial.
         if self.net_request() && operation == TimerStart {
             return TimerStartV2;
@@ -2049,9 +2057,8 @@ impl LanguageProfile {
             Self::CheckedF64Utf16V34 => crate::HostOperation::JsonStringifyV14,
             Self::CheckedF64Utf16V35 => crate::HostOperation::JsonStringifyV15,
             Self::CheckedF64Utf16V36 => crate::HostOperation::JsonStringifyV16,
-            Self::CheckedF64Utf16V37 | Self::CheckedF64Utf16V38 => {
-                crate::HostOperation::JsonStringifyV17
-            }
+            Self::CheckedF64Utf16V37 => crate::HostOperation::JsonStringifyV17,
+            Self::CheckedF64Utf16V38 => crate::HostOperation::JsonStringifyOwned,
             Self::CheckedF64Utf16V13
             | Self::CheckedF64Utf16V14
             | Self::CheckedF64Utf16V15
@@ -3016,16 +3023,38 @@ mod tests {
         ));
         assert_eq!(new.exception_channel(), old.exception_channel());
         assert_eq!(new.json_parse(), old.json_parse());
-        assert_eq!(new.json_stringify(), old.json_stringify());
-        assert_eq!(new.json_stringify(), H::JsonStringifyV17);
+        // The data-limits stream serializes into owned strings (host ABI 34).
+        assert_eq!(old.json_stringify(), H::JsonStringifyV17);
+        assert_eq!(new.json_stringify(), H::JsonStringifyOwned);
+        for serializer in [
+            H::JsonStringifyV15,
+            H::JsonStringifyV16,
+            H::JsonStringifyV17,
+        ] {
+            assert_eq!(old.host_operation(serializer), H::JsonStringifyV17);
+            assert_eq!(new.host_operation(serializer), H::JsonStringifyOwned);
+        }
+        assert_eq!(
+            H::JsonStringifyOwned.minimum_abi(),
+            crate::abi::PROGRAM_LIMITS_VERSION
+        );
+        assert_eq!(
+            old.host_operation(H::JsonStringifyOwned),
+            H::JsonStringifyOwned
+        );
+        assert!(H::JsonStringifyOwned.minimum_abi() > old.host_abi());
+        assert_eq!(H::JsonStringifyOwned.capability(), None);
+        assert!(!H::JsonStringifyOwned.needs_result_globals());
+        assert_eq!(
+            H::from_name(H::JsonStringifyOwned.name()),
+            Some(H::JsonStringifyOwned)
+        );
         assert_eq!(
             crate::function::admission::frame_catalog_version(new),
             crate::function::admission::frame_catalog_version(old)
         );
-        // Every host operation binds exactly as under v37, including the
-        // recoverable timer start, the private-state JSON serializer and the
-        // `net.request` operations; no registered operation requires host ABI
-        // 34 yet.
+        // Every other host operation binds exactly as under v37, including
+        // the recoverable timer start and the `net.request` operations.
         for operation in [
             H::LogString,
             H::LogFloat,
@@ -3036,8 +3065,6 @@ mod tests {
             H::ValueIsError,
             H::ValueLogV10,
             H::JsonParseV17,
-            H::JsonStringifyV15,
-            H::JsonStringifyV16,
             H::PrimitiveStringV4,
             H::BigIntFromValueV3,
             H::TimerStart,

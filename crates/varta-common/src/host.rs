@@ -26,6 +26,14 @@ pub enum HostOperation {
     /// JavaScript's `JSON.stringify` skips them. Same signature, no
     /// capability.
     JsonStringifyV17,
+    /// v38 (`data_limits`): `json_stringify_v17` without the host result
+    /// buffer. The host serializes under the module's data limits into a
+    /// buffer bounded by the memory budget, allocates the owned UTF-16 string
+    /// through the module's host-free `varta.value_abi.allocate` helper,
+    /// retains it through `varta.value_abi.retain` and returns its packed
+    /// handle (zero for an `undefined` result) with the error class word of
+    /// `json_stringify_v17`. Capability-free.
+    JsonStringifyOwned,
     /// Value17 (profile v36) readers: each mirrors its value16 counterpart's
     /// signature and contract, reading value17 layouts (which add function
     /// values as tagged values) and nothing else.
@@ -451,6 +459,7 @@ impl HostOperation {
             Self::NetRequestAbort => "net_request_abort",
             Self::TimerStartV2 => "timer_start_v2",
             Self::JsonStringifyV17 => "json_stringify_v17",
+            Self::JsonStringifyOwned => "json_stringify_owned",
             Self::TimerStart => "timer_start",
             Self::TimerClear => "timer_clear",
             Self::TimerTake => "timer_take",
@@ -707,6 +716,9 @@ impl HostOperation {
             )
         {
             return crate::abi::NET_REQUEST_VERSION;
+        }
+        if self == Self::JsonStringifyOwned {
+            return crate::abi::PROGRAM_LIMITS_VERSION;
         }
         if self.value16_counterpart().is_some() || self.timer() {
             return crate::abi::TIMERS_VERSION;
@@ -1006,6 +1018,7 @@ impl HostOperation {
             | Self::JsonStringifyV15
             | Self::JsonStringifyV14
             | Self::JsonStringifyV13 => (&[I32, I32, I32], &[I32, I32]),
+            Self::JsonStringifyOwned => (&[I32, I32, I32], &[I64, I32]),
             Self::ValueIsErrorClassV6
             | Self::ValueIsErrorClassV5
             | Self::ValueIsErrorClassV4
@@ -1219,6 +1232,7 @@ impl HostOperation {
             "net_request_abort" => Self::NetRequestAbort,
             "timer_start_v2" => Self::TimerStartV2,
             "json_stringify_v17" => Self::JsonStringifyV17,
+            "json_stringify_owned" => Self::JsonStringifyOwned,
             "timer_start" => Self::TimerStart,
             "timer_clear" => Self::TimerClear,
             "timer_take" => Self::TimerTake,
@@ -1436,6 +1450,7 @@ impl HostOperation {
             | Self::ValueIsErrorClassV5
             | Self::JsonParseV18
             | Self::JsonParseV17
+            | Self::JsonStringifyOwned
             | Self::JsonStringifyV17
             | Self::JsonStringifyV16
             | Self::JsonStringifyV15

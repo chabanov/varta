@@ -673,7 +673,7 @@ import the operation, as contiguous runs in registry order.
 | `value_truthy_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
 | `value_typeof_v10` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v38` |
 | `date_now` | () → (f64) | 33 | `time.now` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
-| `json_stringify_v17` | (i32, i32, i32) → (i32, i32) | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `json_stringify_v17` | (i32, i32, i32) → (i32, i32) | 33 | none | — | — | `checked-f64-utf16-v37` |
 | `net_body_read` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `net_request_abort` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `net_request_start` | (i32, i32) → (f64) | 33 | `net.request` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
@@ -683,6 +683,7 @@ import the operation, as contiguous runs in registry order.
 | `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 <!-- generated:embedding-host-operations:end -->
 
 ## Status and control codes

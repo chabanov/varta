@@ -161,7 +161,7 @@ registries change, replace a block with the test's expected output.
 | `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
 | `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
 | `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
-| `checked-f64-utf16-v38` | 34 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
+| `checked-f64-utf16-v38` | 34 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_owned` | `json_parse_v18` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->

@@ -70,6 +70,8 @@ mod interface_extends_tests;
 mod invocation_tests;
 mod invoke;
 mod json;
+#[cfg(test)]
+mod json_limit_tests;
 mod json_parse;
 #[cfg(test)]
 mod json_parse_abi_tests;
