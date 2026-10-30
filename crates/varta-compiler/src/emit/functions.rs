@@ -90,6 +90,7 @@ impl Emitter<'_> {
             self.code
                 .push(I::LocalSet(self.local_slots[slot as usize] + offset));
         }
+        self.reset_builder(slot);
     }
     pub(super) fn scratch_get(&mut self, slot: u32, ty: Type) {
         for offset in 0..ty.width() {

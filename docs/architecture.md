@@ -8977,12 +8977,14 @@ subsections below, and the others admit nothing yet:
   subtyping of records, interfaces and classes, plus the remaining pilot
   language items);
 - codegen-v2 stream: `codegen_v2()` (cheaper code generation for loops, string
-  comparison and concatenation, and dictionaries).
+  comparison and concatenation, and dictionary call sites; it changes code, not
+  the admitted language).
 
 Until a stream adds its subsection here, a v38 module compiles and runs exactly
 like a v37 module apart from its declared profile and host ABI, and production
-budgets of every profile are unchanged. The turn-budgets stream has added its
-subsections below.
+budgets of every profile are unchanged. The streams below have added their
+subsections; the code-generation subsection changes only the emitted code and
+its fuel use.
 
 #### Turn budgets and application instances (`turn_budgets()`)
 
@@ -9533,6 +9535,117 @@ than about 1000 elements exhaust the production host-call budget. `console.log`
 diagnostics and the primitive `String`/`Number`/BigInt conversions still read
 with the frozen string and depth limits, and the logs of a failed execution
 are not shown.
+
+
+#### Code generation v2 (`codegen_v2`)
+
+V38 emits cheaper code for the same source semantics; it admits no syntax, adds
+no host import, value tag, layout, static-region or ABI change, and v37 and
+earlier profiles keep their exact bytes (pinned v37 digests; every runtime case
+program compiles to identical bytes under v1, v12, v30 and v34–v37). Every v38
+program that v37 accepts behaves identically (output, failure cause, budgets),
+which the case-corpus parity test checks; only its fuel use is lower.
+
+- **Quiet expressions.** An expression whose subtree allocates nothing, calls no
+  guest function and never moves the shadow-root pointer (a closed whitelist:
+  literals, binding reads, Number/Boolean/reference operators, string
+  comparisons and searches, lengths, record field and dense element reads,
+  code-unit reads, union tests and unboxing, Math and Number predicates, and
+  value blocks or assignments built only from these) is emitted without
+  expression root marks and without temporary roots for its operands. Leaf
+  statements made only of quiet expressions emit no temporary-root reset. A
+  quiet expression's own reference result is still rooted when its consumer may
+  allocate. A string `switch` releases its discriminant and case roots before
+  the case bodies, so quiet bodies never accumulate roots across iterations.
+- **Stable operands.** Concatenation, `slice`/`substring`, the trims, the Web
+  code-unit operations, `charAt` and `fromUnits` whose operands are quiet and
+  write no binding take no operand roots: every operand value is a literal or
+  reachable from a binding that stays unchanged until the helper consumes it.
+- **Calls.** A direct call whose arguments are quiet takes no expression mark or
+  argument roots (callees root their parameters before any allocation and every
+  exit restores the root pointer). A function with no reference slots has a
+  three-instruction prologue; small reference frames are zeroed slot by slot
+  instead of with `memory.fill`, which is charged per byte.
+- **Operand caches and updates.** After lowering, a value block that only caches
+  plain binding reads or literals for a write-free operation collapses into the
+  operation (hidden slots must be private to the block; a cached binding is
+  re-read at most once; suspendable functions are left unchanged). A
+  statement-level `x++`, `x--`, `x op= e` (`+ - * /`) on a mutable initialized
+  Number binding of the function, and `s += e` on such a String binding, lower
+  as `x = x op e`. Branch conditions skip the 0/1 normalization of i32 truth
+  values that `if`/`br_if` already treat as nonzero.
+- **String equality.** `===`/`!==`/`==`/`!=` on Strings use a content-equality
+  helper: identical handles, then byte lengths, then eight-byte chunks with an
+  overlapping final chunk (or one overlapping pair of smaller words), every load
+  inside both slices. Against a literal of at most 16 bytes the comparison is
+  inline: the length, then one or two overlapping words against constants.
+  Array searches (and the dictionary lookups built on them) use the same
+  equality. Ordering comparisons first skip the common prefix eight bytes at a
+  time, then continue by code unit as before (UTF-16 code-unit order).
+- **String builders.** For a function-local, non-closure-shared String binding
+  of a non-suspendable function that the body appends to (`s = s + t`,
+  `s += t`), two hidden i32 locals record the end of the binding's value
+  (`tail`) and of the heap block it was built in (`cap`). An append whose value
+  still ends at `tail` and fits copies only the new bytes into the block and
+  lengthens the binding's slice; otherwise a fresh block with twice the total
+  length (at least 32 bytes, at most the 1 MiB per-value limit) receives both
+  operands. Strings stay immutable slices: aliases keep their own shorter
+  length and never see the appended bytes. Every other write of the binding
+  (including scope exit and a catch binding) resets both locals, so the bytes in
+  `[tail, cap)` belong to no other value. A total above the per-value limit traps
+  in the allocator as concatenation does.
+- **Code units and remainders.** `charAt` and `charCodeAt` run in the guest with
+  `ToIntegerOrInfinity` positions (NaN and `-0` select 0; outside the string,
+  `""` and NaN) and consume no host call; `charAt` of an ASCII unit returns a
+  static one-unit slice of a 256-byte table in static data, any other unit a
+  fresh one-unit string. Number `%` is exact in the guest for integral operands
+  below 2^53 in magnitude with a nonzero divisor (a zero result takes the
+  dividend's sign); every other operand pair calls the host remainder as before.
+- **Allocator.** The first free-list scan of a request examines at most eight
+  blocks before taking fresh heap space, and the heap grows without a
+  collection while its end stays below twice the heap left by the previous
+  collection. A request that would exceed the memory budget or whose growth the
+  store refuses still collects first and then scans the whole free list, so an
+  allocation fails only when no block fits after a collection, as before. The
+  collector, its exact roots and the heap block layout are unchanged.
+
+#### Fuel profile builds (`varta dev --profile-fuel`)
+
+A fuel profile build is a separately compiled, instrumented copy of a program of
+any profile (`varta_compiler::compile_modules_for_fuel_profile`). Two imports
+follow the host imports: `varta_profile.enter(i32) -> ()` and
+`varta_profile.exit(i32) -> ()` (`varta_common::profile::Probe`); every defined
+function index moves up by two, host import indices stay. Each code-section body
+calls `enter(id)` first and `exit(id)` before every `return` and its final
+`end`, where `id` is its code-section position; the custom section
+`varta.profile.names` (`[count:u32]` then `[len:u32][utf8]` entries of at most
+256 bytes) names every body: user and prelude functions as
+`file:line:column first-line`, compiler helpers as `<helper Name>`, resume
+bodies, the frame dispatcher and generator steps. The frame dispatcher
+(`varta_resume`) is named but not instrumented: frame admission requires that
+it calls only defined functions, and its fuel counts as outside guest
+functions.
+
+Only a run with `RunOptions::fuel_profile` (`VartaRuntime::run_with`,
+`run_application`, and the `run_fuel_profile` shorthand) links the probes; it
+is the ordinary run path with the same grants, ceiling, manifest budgets and
+decisions. In v38 the profile spans every turn: its consumed fuel is the sum of
+the turns' fuel in the per-turn budget report and its budget the sum of the
+turns' allowances. `varta dev --profile-fuel` accepts the same execution flags
+as `varta dev` (`--budget-report`, `--app`, `--decisions`). Ordinary validation,
+execution, inspection and artifact packaging reject `varta_profile` imports as
+unknown host imports, and `build` never writes a profile build. A probe reads
+the store's remaining fuel, refunds its own `i32.const` and `call` (2 units
+under Wasmtime's default operator costs), and attributes the fuel since the
+previous probe to the innermost open activation, so a profiled run consumes
+exactly the fuel of the ordinary build and stops at the same point. Probes need
+no capability, do not count against the host-call budget and never touch guest
+memory. The report (`FuelProfile`) lists self fuel, total fuel (outermost
+activations of recursion only) and calls per function by descending self fuel,
+the fuel outside every function (instantiation: data segments and initial
+memory), and the activations a trap or an exhausted budget left open; a guest
+exit is not an error. An HTTP service's startup is profiled and its server is
+not started.
 
 ## Local modules
 

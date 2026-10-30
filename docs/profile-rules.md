@@ -3278,3 +3278,59 @@ Normative contract: [architecture](architecture.md#turn-budgets-and-application-
   failure in `RunReport`; the earlier `Result` entry points still return only
   the error. The CLI and the companion print the lines, then the
   `--budget-report` lines, then the diagnostic.
+
+### Code generation v2 (`codegen_v2`)
+
+Every codegen path goes through `varta_compiler::codegen_v2(profile)`, which is
+the v38 selector unless the test-only `codegen-v2-all-profiles` feature applies
+it to every profile. The [contract](architecture.md#code-generation-v2-codegen_v2)
+lists what changes; these rules keep it sound.
+
+- Never change bytes of v37 or earlier: `v37_modules_keep_their_bytes` pins
+  digests from before the stream, and the v35/v36 frozen tests stay. Put new
+  helpers in new `Helper` variants and new globals only under the selector.
+- `quiet` is a closed whitelist. Add a form only when its emission allocates
+  nothing, calls no guest function, writes no binding outside its own hidden
+  value-block slots and leaves the root pointer unchanged; a form that calls a
+  host import is quiet only if the host cannot allocate in the guest. A cell
+  `Init` allocates and is never quiet.
+- Skip operand roots of an allocating helper only through `stable_operands`:
+  operands must be quiet and `Expr::write_free` (no value block, assignment or
+  call), so each value is a literal or reachable from an unchanged binding.
+  Calls may take quiet (not necessarily write-free) arguments, because no
+  collection can run before the callee roots its parameters.
+- A construct that evaluates a reference outside a leaf statement (`switch`
+  discriminants and case tests) must reset its temporaries before nested
+  statements under v38, since quiet statements no longer reset them.
+- Builder bindings: every write of a builder slot outside `string_builder`
+  must reset both hidden locals (`reset_builder`, called by `scratch_set`,
+  `clear_scopes` and the catch binding). A new direct `LocalSet` of a binding
+  slot adds the reset. Suspendable functions and closure-shared bindings never
+  get builders.
+- The IR simplification runs after pruning, skips suspendable functions, and
+  collapses a value block only when its hidden slots are private to the block
+  (`mention_counts`), every cached operand is a binding read or literal of the
+  slot's own type, a cached binding is read at most once and the operation is
+  write-free. `plain_update` rewrites only statement-level updates of mutable,
+  initialized, non-global, non-TDZ bindings of the current function with a
+  Number (or, for `+=`, String) type, and only in profiles with closures.
+- Guest replacements of host operations (`charAt`, `charCodeAt`, `%`) must be
+  exact: compare them with the v37 host results over edge inputs, and keep the
+  host import for any operand class the guest path does not cover.
+- Allocator policy changes must keep "collect, then scan everything, before
+  failing": an allocation may only fail where v37 would have failed after a
+  collection.
+- Fuel probes: `fuel_profile` instruments only profile builds and never the
+  frame dispatcher (frame admission forbids its calls to imports). Probe
+  imports stay outside the `varta` namespace, are accepted only by a run with
+  `RunOptions::fuel_profile` (the ordinary `run_with`/`run_application` path),
+  refund exactly `PROBE_FUEL`, and never count as host calls. Turn renewal
+  (`turns::begin`) rebases the profiler so it attributes every turn. `probes_refund_their_cost_and_attribute_every_unit` must keep the
+  profiled and ordinary fuel equal; change `PROBE_FUEL` only with the Wasmtime
+  operator-cost model.
+- Measure with the profiler before optimizing, and record ceilings in
+  `codegen_v2_tests` (`codegen_v2_fuel_ceilings_hold`); raise a ceiling only
+  with an explanation, never a production budget. Run
+  `cargo test -p varta-runtime --lib --features codegen-v2-all-profiles` after
+  emitter changes: only the frozen-digest tests, exact-fuel and cost-ratio
+  assertions of earlier profiles may differ.

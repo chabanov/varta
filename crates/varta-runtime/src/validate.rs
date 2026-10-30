@@ -6,6 +6,16 @@ pub(crate) fn module(
     engine: &Engine,
     bytes: &[u8],
 ) -> Result<(crate::PreparedModule, Option<varta_common::ToolCatalog>), RuntimeError> {
+    module_with(engine, bytes, false)
+}
+
+/// `probes` additionally admits the fuel-profile probe imports
+/// ([`varta_common::profile`]); only the profiling entry point passes it.
+pub(crate) fn module_with(
+    engine: &Engine,
+    bytes: &[u8],
+    probes: bool,
+) -> Result<(crate::PreparedModule, Option<varta_common::ToolCatalog>), RuntimeError> {
     let (language, function_catalog, static_region) = preflight(bytes)?;
     let version = language.profile.map_or(abi::VERSION, |p| p.host_abi());
     if bytes.len() > language.profile.unwrap_or_default().limits().wasm_bytes
@@ -15,6 +25,24 @@ pub(crate) fn module(
     }
     let module = Module::new(engine, bytes)?;
     for import in module.imports() {
+        if probes && import.module() == varta_common::profile::MODULE {
+            let probe_signature = matches!(
+                import.ty(),
+                wasmtime::ExternType::Func(ty)
+                    if ty.results().len() == 0
+                        && ty.params().len() == 1
+                        && ty.params().all(|param| matches!(param, wasmtime::ValType::I32))
+            );
+            if varta_common::profile::Probe::from_name(import.name()).is_none() || !probe_signature
+            {
+                return Err(wasmtime::Error::msg(format!(
+                    "invalid fuel profile probe: {}",
+                    import.name()
+                ))
+                .into());
+            }
+            continue;
+        }
         if import.module() != "varta" || varta_common::host_capability(import.name()).is_none() {
             return Err(wasmtime::Error::msg(format!(
                 "unknown host import: {}.{}",

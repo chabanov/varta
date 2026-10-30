@@ -27,6 +27,25 @@ impl Source {
     }
 
     /// The source text of `span`, for messages that quote a construct.
+    /// `file:line:column first-line-of-source`, a fuel profile row label.
+    pub(crate) fn label(&self, span: Span) -> String {
+        const SNIPPET_CHARS: usize = 48;
+        let start = self.position(self.clamp(span.lo()));
+        let file = std::path::Path::new(&self.file.name.to_string())
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+        let snippet: String = self
+            .text(span)
+            .unwrap_or_default()
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .chars()
+            .take(SNIPPET_CHARS)
+            .collect();
+        format!("{file}:{}:{} {snippet}", start.line, start.column)
+    }
     pub(crate) fn text(&self, span: Span) -> Option<String> {
         swc_common::SourceMapper::span_to_snippet(&*self.map, span).ok()
     }

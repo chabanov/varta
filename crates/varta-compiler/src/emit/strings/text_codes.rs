@@ -147,3 +147,114 @@ pub(super) fn from_units(allocate: u32, resizable: bool) -> Function {
     f.instruction(&I::End);
     f
 }
+
+/// The ASCII code units served from static data by [`char_at`].
+pub(super) const ASCII_UNITS: u16 = 0x80;
+
+/// The `ToIntegerOrInfinity` position of `index` within a string of `units`
+/// code units: NaN and `-0` select 0; a position outside branches to the
+/// enclosing block's `outside` arm. Leaves the i32 position in `at`.
+fn position(f: &mut Function, [input, index, bytes, at]: [u32; 4], outside: I<'static>) {
+    length(f, input, bytes);
+    instructions(
+        f,
+        [
+            I::LocalGet(index),
+            I::F64Trunc,
+            I::LocalTee(index),
+            I::F64Const(0.0.into()),
+            I::F64Lt,
+            I::LocalGet(index),
+            I::LocalGet(bytes),
+            I::I32Const(1),
+            I::I32ShrU,
+            I::F64ConvertI32U,
+            I::F64Ge,
+            I::I32Or,
+            I::If(BlockType::Empty),
+            outside,
+            I::Return,
+            I::End,
+            // Saturation maps NaN to 0, which ToIntegerOrInfinity selects.
+            I::LocalGet(index),
+            I::I32TruncSatF64U,
+            I::I32Const(UNIT_BYTES),
+            I::I32Mul,
+            I::LocalGet(input),
+            I::I32WrapI64,
+            I::I32Add,
+            I::LocalSet(at),
+        ],
+    );
+}
+
+/// V38 `(input: string, index: f64) -> f64`: `charCodeAt`.
+pub(super) fn char_code_at() -> Function {
+    const INPUT: u32 = 0;
+    const INDEX: u32 = 1;
+    const BYTES: u32 = 2;
+    const AT: u32 = 3;
+    let mut f = Function::new([(AT - BYTES + 1, ValType::I32)]);
+    position(
+        &mut f,
+        [INPUT, INDEX, BYTES, AT],
+        I::F64Const(f64::NAN.into()),
+    );
+    instructions(
+        &mut f,
+        [
+            I::LocalGet(AT),
+            I::I32Load16U(UNIT_MEMORY),
+            I::F64ConvertI32U,
+            I::End,
+        ],
+    );
+    f
+}
+
+/// V38 `(input: string, index: f64) -> string`: `charAt`. An ASCII unit is a
+/// static slice of the `ascii` table; any other unit is copied into a fresh
+/// one-unit string. The input stays rooted by its caller.
+pub(super) fn char_at(allocate: u32, ascii: u32) -> Function {
+    const INPUT: u32 = 0;
+    const INDEX: u32 = 1;
+    const BYTES: u32 = 2;
+    const AT: u32 = 3;
+    const UNIT: u32 = 4;
+    const DEST: u32 = 5;
+    let mut f = Function::new([(DEST - BYTES + 1, ValType::I32)]);
+    position(&mut f, [INPUT, INDEX, BYTES, AT], I::I64Const(0));
+    let one_unit = i64::from(UNIT_BYTES) << LENGTH_SHIFT;
+    instructions(
+        &mut f,
+        [
+            I::LocalGet(AT),
+            I::I32Load16U(UNIT_MEMORY),
+            I::LocalTee(UNIT),
+            I::I32Const(i32::from(ASCII_UNITS)),
+            I::I32LtU,
+            I::If(BlockType::Empty),
+            I::LocalGet(UNIT),
+            I::I32Const(UNIT_BYTES),
+            I::I32Mul,
+            I::I32Const(ascii as i32),
+            I::I32Add,
+            I::I64ExtendI32U,
+            I::I64Const(one_unit),
+            I::I64Or,
+            I::Return,
+            I::End,
+            I::I32Const(UNIT_BYTES),
+            I::Call(allocate),
+            I::LocalTee(DEST),
+            I::LocalGet(UNIT),
+            I::I32Store16(UNIT_MEMORY),
+            I::LocalGet(DEST),
+            I::I64ExtendI32U,
+            I::I64Const(one_unit),
+            I::I64Or,
+            I::End,
+        ],
+    );
+    f
+}

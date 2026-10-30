@@ -40,6 +40,14 @@ mod tool_tests;
 
 pub use error::CompilerError;
 
+/// Whether the v38 code generator (`codegen_v2`) emits this profile. The
+/// test-only `codegen-v2-all-profiles` feature applies it to every profile so
+/// the existing behavior suites exercise it; it changes the bytes of earlier
+/// profiles and production dependents never enable it.
+pub(crate) fn codegen_v2(profile: varta_common::language::LanguageProfile) -> bool {
+    profile.codegen_v2() || cfg!(feature = "codegen-v2-all-profiles")
+}
+
 /// Test-only access to the K4.4 suspension lowering hook for other crates'
 /// tests (runtime admission of resumable frames). Never enabled by production
 /// dependents; no source profile admits suspension syntax through it.
@@ -131,11 +139,37 @@ pub fn compile_modules_with_profile(
     loader: &dyn ModuleLoader,
     profile: varta_common::language::LanguageProfile,
 ) -> Result<Compilation, CompilerError> {
+    compile_graph(entry, loader, profile, false)
+}
+
+/// Compile a development fuel-profile build (`varta dev --profile-fuel`): the
+/// same program with the [`varta_common::profile`] probes in every function
+/// and a names section. Artifact validation rejects it; only the runtime's
+/// profiling entry point runs it.
+pub fn compile_modules_for_fuel_profile(
+    entry: ModuleSource,
+    loader: &dyn ModuleLoader,
+    profile: varta_common::language::LanguageProfile,
+) -> Result<Compilation, CompilerError> {
+    compile_graph(entry, loader, profile, true)
+}
+
+fn compile_graph(
+    entry: ModuleSource,
+    loader: &dyn ModuleLoader,
+    profile: varta_common::language::LanguageProfile,
+    fuel_profile: bool,
+) -> Result<Compilation, CompilerError> {
     use swc_common::Spanned;
     let graph = modules::Graph::load_with_profile(entry, loader, profile)?;
     let root = &graph.units[&graph.entry];
     let program = lower::lower(&graph, profile)?;
-    let bytes = emit::emit(&program).map_err(|e| root.source.locate(e, root.ast.span()))?;
+    let bytes = if fuel_profile {
+        emit::emit_profiled(&program)
+    } else {
+        emit::emit(&program)
+    }
+    .map_err(|e| root.source.locate(e, root.ast.span()))?;
     wasmparser::Validator::new()
         .validate_all(&bytes)
         .map_err(|e| {

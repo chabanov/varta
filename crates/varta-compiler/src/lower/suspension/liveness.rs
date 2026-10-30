@@ -614,3 +614,32 @@ fn confined(body: &[S], params: usize, cells: &BTreeSet<u32>) -> Set {
         .map(|(slot, _)| slot)
         .collect()
 }
+
+/// How often each local is named anywhere in `body`: statement targets and
+/// hidden slots, reads, captures and the slots of nested statements (v38
+/// `codegen_v2` simplification proves a hidden slot private to one block).
+pub(in crate::lower) fn mention_counts(body: &[S]) -> BTreeMap<u32, usize> {
+    fn statements(body: &[S], counts: &mut BTreeMap<u32, usize>) {
+        for statement in body {
+            statement_fields(statement, &mut |slot| *counts.entry(slot).or_default() += 1);
+            for operand in operands(statement) {
+                expression_counts(operand, counts);
+            }
+            for body in substatements(statement) {
+                statements(body, counts);
+            }
+        }
+    }
+    let mut counts = BTreeMap::new();
+    statements(body, &mut counts);
+    counts
+}
+
+/// [`mention_counts`] of one expression.
+pub(in crate::lower) fn expression_counts(expr: &Expr, counts: &mut BTreeMap<u32, usize>) {
+    expression(expr, &mut |mention| {
+        if let Mention::Local(slot) = mention {
+            *counts.entry(slot).or_default() += 1;
+        }
+    });
+}

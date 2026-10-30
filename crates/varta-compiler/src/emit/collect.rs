@@ -167,7 +167,8 @@ impl<'a> Collected<'a> {
                 } else {
                     self.helpers.insert(strings::Helper::ArraySearch);
                 }
-                self.helpers.insert(strings::Helper::Compare);
+                self.helpers
+                    .insert(strings::Helper::equality(self.types.profile));
                 self.expression(base, source);
                 self.expression(needle, source);
                 self.expression(from, source);
@@ -363,6 +364,15 @@ impl<'a> Collected<'a> {
                         self.helpers.insert(strings::Helper::FromUnits);
                     }
                     ir::Intrinsic::Identity => {}
+                    ir::Intrinsic::CharAt => {
+                        self.helpers.insert(strings::Helper::CharAt);
+                        self.strings
+                            .entry(strings::ascii_units())
+                            .or_insert((expr.span, source));
+                    }
+                    ir::Intrinsic::CharCodeAt => {
+                        self.helpers.insert(strings::Helper::CharCodeAt);
+                    }
                 }
                 for arg in args {
                     self.expression(arg, source);
@@ -380,6 +390,9 @@ impl<'a> Collected<'a> {
             E::Binary(op, a, b) => {
                 if a.ty == Type::Float64 && *op == BinaryOp::Mod {
                     self.hosts.insert(Host::FloatRemainder);
+                    if crate::codegen_v2(self.types.profile) {
+                        self.helpers.insert(strings::Helper::FloatRemainder);
+                    }
                 }
                 if a.ty == Type::Float64 && *op == BinaryOp::Exp {
                     self.hosts.insert(Host::FloatPower);
@@ -387,6 +400,13 @@ impl<'a> Collected<'a> {
                 if a.ty == Type::String {
                     self.helpers.insert(if *op == BinaryOp::Add {
                         strings::Helper::Concat
+                    } else if crate::codegen_v2(self.types.profile)
+                        && matches!(
+                            op,
+                            BinaryOp::EqEq | BinaryOp::EqEqEq | BinaryOp::NotEq | BinaryOp::NotEqEq
+                        )
+                    {
+                        strings::Helper::StringEquals
                     } else {
                         strings::Helper::Compare
                     });
@@ -504,6 +524,13 @@ impl<'a> Collected<'a> {
                     if self.types.profile.sparse_arrays() {
                         self.helpers.insert(strings::Helper::ArraySetPresent);
                     }
+                }
+                S::Set(slot, e)
+                    if crate::codegen_v2(self.types.profile)
+                        && string_builder::append_operand(*slot, e).is_some() =>
+                {
+                    self.helpers.insert(strings::Helper::StringGrow);
+                    self.expression(e, source);
                 }
                 S::Throw(e)
                 | S::Init(_, e)

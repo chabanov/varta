@@ -15985,3 +15985,99 @@ fn application_mode_renews_the_deadline_for_every_turn() {
     assert!(!v37.status.success(), "{}", combined(&v37));
     assert!(combined(&v37).contains("require profile checked-f64-utf16-v38"));
 }
+
+/// `varta dev --profile-fuel` (v38 codegen-v2 stream): the program's output
+/// stays on stdout, the per-function fuel table (or JSON) goes to stderr, a
+/// trap still reports the profile, `build --single` packages only the
+/// ordinary build and the flag requires a dev run.
+#[test]
+fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
+    let project = RegressionProject::new(
+        "function square(n:number):number{return n*n;}\nexport function main():void{let t=0;for(let i=0;i<40;i++){t=t+square(i);}let s=\"\";for(let i=0;i<20;i++){s+=\"ab\";}console.log(String(t)+\" \"+String(s.length));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v38");
+    let plain = project.command(&["dev"]);
+    assert!(plain.status.success(), "{}", combined(&plain));
+    let profiled = project.command(&["dev", "--profile-fuel"]);
+    assert!(profiled.status.success(), "{}", combined(&profiled));
+    // The profile run prints exactly the ordinary output on stdout.
+    assert_eq!(profiled.stdout, plain.stdout);
+    assert!(String::from_utf8_lossy(&plain.stdout).contains("varta log: 20540 40"));
+    let report = String::from_utf8_lossy(&profiled.stderr);
+    assert!(report.contains("varta fuel profile: "), "{report}");
+    assert!(report.contains("of 1000000 fuel"), "{report}");
+    let row = |name: &str| {
+        report
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("{name}: {report}"))
+            .split_whitespace()
+            .take(3)
+            .map(|field| field.parse::<u64>().unwrap())
+            .collect::<Vec<_>>()
+    };
+    let square = row("function square(n:number)");
+    assert_eq!(square[2], 40, "{report}");
+    assert_eq!(row("function main():void")[2], 1, "{report}");
+    assert!(row("<helper StringGrow>")[2] >= 1, "{report}");
+    // JSON: consumed = attributed + outside.
+    let json = project.command(&["dev", "--profile-fuel", "--json"]);
+    assert!(json.status.success(), "{}", combined(&json));
+    let profile: serde_json::Value = serde_json::from_slice(&json.stderr).unwrap();
+    let attributed: u64 = profile["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["selfFuel"].as_u64().unwrap())
+        .sum();
+    assert_eq!(
+        attributed + profile["outside"].as_u64().unwrap(),
+        profile["consumed"].as_u64().unwrap()
+    );
+    assert_eq!(profile["unfinished"], 0);
+    // The profile and the per-turn budget report describe the same run.
+    let both = project.command(&["dev", "--profile-fuel", "--json", "--budget-report"]);
+    assert!(both.status.success(), "{}", combined(&both));
+    let stderr = String::from_utf8_lossy(&both.stderr);
+    let mut lines = stderr.lines();
+    let profile: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    let total = lines
+        .find(|line| line.starts_with("varta budget: total: "))
+        .unwrap_or_else(|| panic!("{stderr}"));
+    assert!(
+        total.contains(&format!("fuel {},", profile["consumed"].as_u64().unwrap())),
+        "{stderr}"
+    );
+    // An exhausted budget still prints the profile, then fails.
+    fs::write(
+        project.0.join("src/main.ts"),
+        "function spin():number{let t=0;while(true){t=t+1;}return t;}\nexport function main():void{console.log(\"start\");console.log(String(spin()));}",
+    )
+    .unwrap();
+    let spin = project.command(&["dev", "--profile-fuel"]);
+    assert!(!spin.status.success(), "{}", combined(&spin));
+    let text = combined(&spin);
+    assert!(text.contains("varta log: start"), "{text}");
+    assert!(text.contains("2 activations unfinished"), "{text}");
+    assert!(text.contains("function spin():number"), "{text}");
+    assert!(text.contains("fuel"), "{text}");
+    // Builds never contain probes; --json needs --profile-fuel.
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert!(
+        info["imports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|import| !import.as_str().unwrap().starts_with("varta_profile.")),
+        "{info}"
+    );
+    let usage = project.command(&["dev", "--json"]);
+    assert!(!usage.status.success(), "{}", combined(&usage));
+    let help = varta().args(["dev", "--help"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--profile-fuel"));
+}

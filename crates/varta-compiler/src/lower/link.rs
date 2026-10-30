@@ -229,6 +229,9 @@ pub(crate) fn lower(
     super::suspension::prepare(&mut program, graph)?;
     let entry = &graph.units[&graph.entry];
     prune::prune(&mut program).map_err(|e| entry.source.locate(e, entry.ast.span()))?;
+    if crate::codegen_v2(profile) {
+        simplify::simplify(&mut program);
+    }
     Ok(program)
 }
 

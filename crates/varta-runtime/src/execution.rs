@@ -115,6 +115,7 @@ impl Execution {
                 broker,
                 events: crate::events::HostEvents::default(),
                 rearm: Some(control.control.clone()),
+                profiler: None,
             },
         );
         store.limiter(|context| &mut context.limits);
@@ -174,6 +175,9 @@ impl Execution {
         let result = (|| {
             let mut linker = wasmtime::Linker::new(self.store.engine());
             host::register(&mut linker)?;
+            if self.store.data().profiler.is_some() {
+                crate::fuel_profile::register(&mut linker)?;
+            }
             // Wasmtime meters the data-segment copy of instantiation per byte
             // of the initialized image. Under v38 that copy, bounded by the
             // initial memory and so by the instance's memory budget, gets its

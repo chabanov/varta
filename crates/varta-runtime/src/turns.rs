@@ -309,6 +309,11 @@ pub(crate) fn boundary(
 /// Begin a turn of `kind` with a fresh allowance.
 pub(crate) fn begin(store: &mut Store<RuntimeContext>, kind: TurnKind) -> Result<(), RuntimeError> {
     let fuel = store.data().budgets.fuel_per_turn;
+    // A fuel-profiling execution keeps attributing across turns.
+    let remaining = store.get_fuel()?;
+    if let Some(profiler) = store.data_mut().profiler.as_mut() {
+        profiler.renew(remaining, fuel);
+    }
     store.set_fuel(fuel)?;
     let context = store.data_mut();
     context.turns.current += 1;

@@ -146,7 +146,21 @@ fn every_v37_case_runs_identically_under_v38() {
             LanguageProfile::CheckedF64Utf16V38,
         )
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        assert_eq!(run(&newer), run(&older), "{}", path.display());
+        let (newer, older) = (run(&newer), run(&older));
+        match &older {
+            // V38 (`codegen_v2`) may finish where v37 ran out of fuel or
+            // host calls; it never runs out where v37 finished.
+            Err(error)
+                if [BudgetKind::Fuel, BudgetKind::HostCalls]
+                    .iter()
+                    .any(|budget| *error == format!("{} budget exhausted", budget.label())) =>
+            {
+                if let Err(newer) = &newer {
+                    assert_eq!(newer, error, "{}", path.display());
+                }
+            }
+            _ => assert_eq!(newer, older, "{}", path.display()),
+        }
         compared += 1;
     }
     assert!(compared > 100, "{compared}");

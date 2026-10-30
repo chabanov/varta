@@ -796,7 +796,42 @@ admit nothing yet.
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Registered, admits nothing |
 | `tsx()` | TSX: TSX parsing and template compilation | Registered, admits nothing |
 | `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Registered, admits nothing |
-| `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionaries | Registered, admits nothing |
+| `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionary call sites; fuel profiler | Implemented for codegen ([contract](architecture.md#code-generation-v2-codegen_v2)): quiet expressions without root traffic, call and frame fast paths, operand-cache collapse, plain updates, content-equality and inline literal comparisons, amortized string builders, guest `charAt`/`charCodeAt`/`%`, bounded first allocation scans and a collection threshold; `varta dev --profile-fuel` ([profile builds](architecture.md#fuel-profile-builds-varta-dev---profile-fuel)). Admits no syntax; v37 bytes frozen |
+
+#### Code generation v2 measurements
+
+Fuel of the measured web workloads under the production budget model
+(`codegen_v2_fuel_ceilings_hold`, `--nocapture`): totals at the checked size,
+the v37/v38 ratio, the marginal fuel per iteration between half and full size,
+and the largest size one production budget (1,000,000 fuel) runs. The v38
+column of the size limit was found by bisection over the same sources. V37
+spends one host call per `charAt`/`charCodeAt`/`%`, so its scans also stop at
+the 1024 host calls of an execution.
+
+| Workload | Size | v37 fuel | v38 fuel | Ratio | v37 / iteration | v38 / iteration | Max size v37 → v38 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `x = x + i` loop | 10,000 | 950,477 | 140,453 | 6.77× | 95.0 | 14.0 | 10,496 → 71,168 |
+| 3-char string `===` | 4,000 | 1,129,277 | 321,117 | 3.52× | 278.0 | 76.0 | 3,520 → 12,928 |
+| string `===` literal | 4,000 | 1,517,333 | 149,095 | 10.18× | 375.0 | 33.0 | 2,608 → 29,696 |
+| `s = s + "x"` | 800 | 999,604 | 66,679 | 14.99× | 1,638.7 | 61.5 | 800 → 16,128 |
+| dictionary 50 inserts + 50 reads | 50 | 628,459 | 456,275 | 1.38× | 15,712.7 | 11,303.4 | 67 → 81 |
+| record field reads | 1,000 | 180,012 | 38,966 | 4.62× | 163.0 | 22.0 | 6,016 → 44,544 |
+| direct function calls | 1,000 | 129,469 | 27,445 | 4.72× | 129.0 | 27.0 | 7,744 → 36,864 |
+| closure calls | 1,000 | 426,855 | 330,829 | 1.29× | 426.0 | 330.0 | 2,336 → 3,024 |
+| array `push` + index sum | 500 | 649,595 | 542,676 | 1.20× | 1,413.9 | 1,211.1 | 736 → 776 |
+| Markdown-like scan (lines) | 10 | 335,140 | 82,362 | 4.07× | 31,852.6 | 6,450.6 | 27 → 141 |
+| `JSON.parse` of ~2 KB (records) | 40 | 327,996 | 118,086 | 2.78× | 10,034.5 | 2,498.0 | 80 → 340 |
+| list render (rows) | 100 | 2,928,606 | 508,776 | 5.76× | 50,624.7 | 6,953.1 | 74 → 204 |
+| keyed-list diff (rows) | 100 | 4,969,154 | 2,170,657 | 2.29× | 73,483.8 | 26,044.2 | 45 → 56 |
+
+The profiler attributes what remains: dictionary reads and writes are linear
+searches (the data-limits stream replaces their storage), `push` allocates an
+argument array per call, an index read of `number[]` allocates a union cell
+for `number | undefined`, closure calls revalidate the function value at the
+call site and in the callee, and allocation-heavy workloads spend most fuel in
+the first-fit allocator and the fixpoint mark phase of the collector. These are
+the next codegen and runtime candidates; none needs a layout change except the
+union cell.
 
 ### Platform targets and application model
 

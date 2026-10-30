@@ -16,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 pub use varta_common::permission::DecisionFile;
+pub use varta_common::profile::{FuelProfile, FunctionFuel};
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
 pub use varta_runtime::{RunOutput, RunReport, RuntimeEvent, RuntimeObserver};
 
@@ -70,21 +71,7 @@ pub struct CheckedProject {
 impl CheckedProject {
     /// The same semantic/type and Wasm validation stages serve check, dev and build.
     pub fn load(config_path: &Path) -> Result<Self> {
-        let source = artifact::read_bounded(config_path, artifact::MAX_MANIFEST_BYTES)?;
-        let config: VartaConfig = serde_json::from_slice(&source)
-            .map_err(|e| varta_common::VartaError::InvalidManifest(e.to_string()))?;
-        config.validate()?;
-        let base = config_path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let entry_path = base.join(&config.entry).canonicalize()?;
-        let loader = modules::SourceLoader::new(base, config.language_profile)?;
-        let compilation = varta_compiler::compile_modules_with_profile(
-            loader.entry(&entry_path)?,
-            &loader,
-            config.language_profile,
-        )?;
+        let (config, base, compilation) = compile(config_path, false)?;
         let wasm = compilation.wasm;
         VartaRuntime::new().validate_module(&wasm)?;
         let manifest = config.manifest();
@@ -119,6 +106,58 @@ impl CheckedProject {
     pub fn run_with_policy(&self, policy: &HostPolicy) -> Result<RunOutput> {
         run_with_policy(&self.artifact, policy)
     }
+
+    /// `varta dev --profile-fuel`: compile the project again as a fuel-profile
+    /// build (every guest function instrumented, [`FuelProfile`]) and run it
+    /// exactly as [`run_report`] runs this project: its grants and budget
+    /// requests, the optional host ceiling, stored decisions and, with
+    /// `settings.application`, as an application instance. The probes refund
+    /// their own fuel, so the profiled run consumes what the ordinary build
+    /// does; the report carries the profile across all turns
+    /// ([`RunReport::fuel_profile`]) next to the per-turn budget report. A
+    /// profile build is never written or packaged; ordinary builds carry no
+    /// instrumentation.
+    pub fn profile_fuel(
+        &self,
+        config_path: &Path,
+        policy: Option<&HostPolicy>,
+        settings: RunSettings,
+    ) -> Result<RunReport> {
+        let (_, _, compilation) = compile(config_path, true)?;
+        execute_report(
+            &compilation.wasm,
+            &self.artifact.manifest,
+            policy,
+            settings,
+            true,
+        )
+    }
+}
+
+/// Read and validate the configuration, then compile its module graph (as a
+/// fuel-profile build when `fuel_profile` is set).
+fn compile(
+    config_path: &Path,
+    fuel_profile: bool,
+) -> Result<(VartaConfig, PathBuf, varta_compiler::Compilation)> {
+    let source = artifact::read_bounded(config_path, artifact::MAX_MANIFEST_BYTES)?;
+    let config: VartaConfig = serde_json::from_slice(&source)
+        .map_err(|e| varta_common::VartaError::InvalidManifest(e.to_string()))?;
+    config.validate()?;
+    let base = config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_owned();
+    let entry_path = base.join(&config.entry).canonicalize()?;
+    let loader = modules::SourceLoader::new(&base, config.language_profile)?;
+    let entry = loader.entry(&entry_path)?;
+    let compilation = if fuel_profile {
+        varta_compiler::compile_modules_for_fuel_profile(entry, &loader, config.language_profile)?
+    } else {
+        varta_compiler::compile_modules_with_profile(entry, &loader, config.language_profile)?
+    };
+    Ok((config, base, compilation))
 }
 
 pub fn run(artifact: &Artifact) -> Result<RunOutput> {
@@ -165,21 +204,32 @@ pub fn run_report(
     host: Option<&HostPolicy>,
     settings: RunSettings,
 ) -> Result<RunReport> {
-    let mut options =
-        RunOptions::from_manifests(&artifact.manifest, host.map(HostPolicy::manifest))?;
+    execute_report(&artifact.wasm, &artifact.manifest, host, settings, false)
+}
+
+/// The one run path of `run`, `dev` and `dev --profile-fuel`.
+fn execute_report(
+    wasm: &[u8],
+    manifest: &varta_common::Manifest,
+    host: Option<&HostPolicy>,
+    settings: RunSettings,
+    fuel_profile: bool,
+) -> Result<RunReport> {
+    let mut options = RunOptions::from_manifests(manifest, host.map(HostPolicy::manifest))?;
     options.decisions = settings.decisions;
     options.observer = settings.observer;
+    options.fuel_profile = fuel_profile;
     let runtime = VartaRuntime::new();
     Ok(if settings.application {
         runtime.run_application(
-            &artifact.wasm,
+            wasm,
             ApplicationOptions {
                 run: options,
                 ..ApplicationOptions::default()
             },
         )
     } else {
-        runtime.run_with(&artifact.wasm, options)
+        runtime.run_with(wasm, options)
     })
 }
 

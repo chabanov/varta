@@ -22,6 +22,9 @@ mod events;
 pub use events::{Delivery, HostEvent};
 mod exceptions;
 mod execution;
+mod fuel_profile;
+#[cfg(test)]
+mod fuel_profile_tests;
 mod turns;
 pub use permission::PermissionPrompter;
 pub use turns::{BUDGET_REPORT_PREFIX, BudgetExhausted, BudgetReport, TurnKind, TurnUsage};
@@ -272,6 +275,18 @@ pub(crate) struct RuntimeContext {
     /// record descriptors, keys and JSON schemas may lie, and its profile's
     /// structural limits.
     module: varta_common::value::ModuleBounds,
+    /// Present only in a fuel-profiling execution (`fuel_profile`).
+    profiler: Option<Box<fuel_profile::Profiler>>,
+}
+
+/// A fuel-profiled execution ([`VartaRuntime::run_fuel_profile`]). A trap or
+/// an exhausted budget keeps the output and the profile up to that point.
+#[derive(Debug)]
+pub struct FuelProfileRun {
+    pub output: RunOutput,
+    pub profile: varta_common::profile::FuelProfile,
+    /// Why the execution stopped early; a guest exit is not an error.
+    pub error: Option<RuntimeError>,
 }
 
 impl RuntimeContext {
@@ -487,6 +502,40 @@ impl VartaRuntime {
         self.execute(bytes, requested, ceiling, Some(observer))
     }
 
+    /// Run a fuel-profile build (`varta dev --profile-fuel`) with the same
+    /// grants, ceiling and budgets as [`Self::run_wasm_bytes_with_policy`] and
+    /// report the fuel of every guest function: [`Self::run_with`] with
+    /// [`RunOptions::fuel_profile`], which also carries manifest budgets,
+    /// decisions and the per-turn budget report. The probes refund their own
+    /// cost, so the run consumes the fuel of the uninstrumented program. An
+    /// HTTP service's startup is profiled; its server is not started.
+    pub fn run_fuel_profile(
+        &self,
+        bytes: &[u8],
+        requested: &[CapabilityGrant],
+        ceiling: Option<&[CapabilityGrant]>,
+    ) -> Result<FuelProfileRun, RuntimeError> {
+        let report = self.run_with(
+            bytes,
+            RunOptions {
+                requested: requested.to_vec(),
+                ceiling: ceiling.map(<[CapabilityGrant]>::to_vec),
+                fuel_profile: true,
+                ..RunOptions::default()
+            },
+        );
+        match report.fuel_profile {
+            Some(profile) => Ok(FuelProfileRun {
+                output: report.output,
+                profile,
+                error: report.failure,
+            }),
+            None => Err(report
+                .failure
+                .unwrap_or_else(|| wasmtime::Error::msg("missing fuel profiler").into())),
+        }
+    }
+
     fn execute(
         &self,
         bytes: &[u8],
@@ -554,9 +603,12 @@ impl VartaRuntime {
                 report.failure = Some(error);
             }
         }
+        report.collect_profile(store);
         report.collect(store.data_mut());
         drop(execution);
-        if exited {
+        // A profiled HTTP service's startup is profiled; its server is not
+        // started.
+        if exited || options.fuel_profile {
             return report;
         }
         match http_contract::read(bytes) {
@@ -590,7 +642,15 @@ impl VartaRuntime {
         mode: execution::Mode,
         prompter: Option<Box<dyn PermissionPrompter>>,
     ) -> Result<Prepared, RuntimeError> {
-        let module = self.prepare_module(bytes)?;
+        let (module, profiled) = if options.fuel_profile {
+            let names = fuel_profile::names(bytes)?;
+            (
+                validate::module_with(&self.engine, bytes, true)?.0,
+                Some(names),
+            )
+        } else {
+            (self.prepare_module(bytes)?, None)
+        };
         let profile = language::inspect(bytes)?.profile;
         let v38 = profile.is_some_and(varta_common::language::LanguageProfile::turn_budgets);
         if let Some(ceiling) = &options.budget_ceiling {
@@ -634,7 +694,12 @@ impl VartaRuntime {
                 prompter,
             },
         };
-        let execution = execution::Execution::with_setup(&self.engine, setup)?;
+        let mut execution = execution::Execution::with_setup(&self.engine, setup)?;
+        if let Some(names) = profiled {
+            let budget = execution.store.get_fuel()?;
+            execution.store.data_mut().profiler =
+                Some(Box::new(fuel_profile::Profiler::new(budget, names)));
+        }
         Ok(Prepared { module, execution })
     }
 }
@@ -677,6 +742,10 @@ pub struct RunOptions {
     /// policy file); decisions for other identities are ignored.
     pub decisions: Option<DecisionFile>,
     pub observer: Option<RuntimeObserver>,
+    /// Development only: `bytes` is a fuel-profile build
+    /// ([`varta_common::profile`]); link its probes and report the fuel of
+    /// every guest function across all turns in [`RunReport::fuel_profile`].
+    pub fuel_profile: bool,
 }
 impl RunOptions {
     /// The options of a package manifest and an optional host ceiling
@@ -696,6 +765,7 @@ impl RunOptions {
             consents: package.consents(),
             decisions: None,
             observer: None,
+            fuel_profile: false,
         })
     }
 }
@@ -714,12 +784,26 @@ pub struct RunReport {
     pub decisions: BTreeMap<String, StoredDecision>,
     /// The application identity decisions are keyed by.
     pub artifact: String,
+    /// The per-function fuel of a fuel-profiling run
+    /// ([`RunOptions::fuel_profile`]), up to a failure.
+    pub fuel_profile: Option<varta_common::profile::FuelProfile>,
 }
 impl RunReport {
     fn new(artifact: String) -> Self {
         Self {
             artifact,
             ..Self::default()
+        }
+    }
+    /// Close a fuel-profiling run's profile; a malformed probe sequence is
+    /// the run's failure unless it already failed.
+    fn collect_profile(&mut self, store: &mut wasmtime::Store<RuntimeContext>) {
+        match fuel_profile::finish(store) {
+            Some(Ok(profile)) => self.fuel_profile = Some(profile),
+            Some(Err(error)) => {
+                self.failure.get_or_insert(error);
+            }
+            None => {}
         }
     }
     fn collect(&mut self, context: &mut RuntimeContext) {
@@ -958,3 +1042,5 @@ pub fn encode_value_graph_with_functions(
         function_work,
     )?)
 }
+#[cfg(test)]
+mod codegen_v2_tests;

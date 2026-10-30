@@ -409,6 +409,7 @@ mod primitive_string;
 mod primitive_unary;
 pub(crate) mod promises;
 mod prune;
+mod simplify;
 pub(crate) use prune::LINKED_FUNCTIONS;
 mod property_deletion;
 mod record_reads;

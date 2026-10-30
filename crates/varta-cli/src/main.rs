@@ -33,11 +33,26 @@ enum Commands {
     },
     /// Check, compile and execute portable Wasm with resource budgets.
     /// Output captured before a failure is printed before the diagnostic.
+    ///
+    /// With --profile-fuel, also compile an instrumented profile build, run it
+    /// instead of the ordinary build (same grants, policy, budgets, decisions
+    /// and execution flags; the probes refund their own fuel) and print the
+    /// fuel of every guest function, engine prelude and compiler helper to
+    /// stderr, by descending self fuel, summed over every turn. A trap or an
+    /// exhausted budget still prints the profile up to that point; with
+    /// --budget-report the per-turn report follows it. Profile builds are
+    /// never written or packaged.
     Dev {
         #[arg(long, default_value = "varta.config.json")]
         config: PathBuf,
         #[command(flatten)]
         execution: ExecutionFlags,
+        /// Print per-function fuel (self, total, calls) of this run to stderr.
+        #[arg(long)]
+        profile_fuel: bool,
+        /// With --profile-fuel, print the profile as one JSON object instead.
+        #[arg(long, requires = "profile_fuel")]
+        json: bool,
     },
     /// Build validated Wasm; --single embeds portable Wasm in a native launcher.
     Build {
@@ -160,7 +175,25 @@ fn execute(
                 println!("varta check: ok ({})", config.display());
             }
         }
-        Some(Commands::Dev { config, execution }) => {
+        Some(Commands::Dev {
+            config,
+            execution,
+            profile_fuel: true,
+            json,
+        }) => {
+            let project = CheckedProject::load(&config)?;
+            let mut report =
+                project.profile_fuel(&config, policy.as_ref(), settings(decisions, &execution))?;
+            if let Some(profile) = report.fuel_profile.take() {
+                report_profile(&profile, json)?;
+            }
+            let code = finish(report, execution.budget_report)?;
+            println!("varta dev: completed");
+            return Ok(code);
+        }
+        Some(Commands::Dev {
+            config, execution, ..
+        }) => {
             let project = CheckedProject::load(&config)?;
             let report = run_report(&project.artifact, policy.as_ref(), decisions, &execution)?;
             let code = finish(report, execution.budget_report)?;
@@ -278,6 +311,37 @@ fn observer() -> varta_project::RuntimeObserver {
     })
 }
 
+/// The fuel profile table (or JSON object) on stderr, keeping stdout for the
+/// program's own output.
+fn report_profile(profile: &varta_project::FuelProfile, json: bool) -> Result<(), ProjectError> {
+    if json {
+        eprintln!(
+            "{}",
+            serde_json::to_string(profile).map_err(|e| ProjectError::Usage(e.to_string()))?
+        );
+        return Ok(());
+    }
+    eprintln!(
+        "varta fuel profile: {} of {} fuel ({} outside guest functions{})",
+        profile.consumed,
+        profile.budget,
+        profile.outside,
+        if profile.unfinished > 0 {
+            format!(", {} activations unfinished", profile.unfinished)
+        } else {
+            String::new()
+        }
+    );
+    eprintln!("{:>10} {:>10} {:>8}  function", "self", "total", "calls");
+    for row in &profile.functions {
+        eprintln!(
+            "{:>10} {:>10} {:>8}  {}",
+            row.self_fuel, row.total_fuel, row.calls, row.name
+        );
+    }
+    Ok(())
+}
+
 fn run(
     artifact: &Artifact,
     policy: Option<&HostPolicy>,
@@ -291,15 +355,19 @@ fn run_report(
     decisions: Option<varta_project::DecisionFile>,
     flags: &ExecutionFlags,
 ) -> Result<varta_project::RunReport, ProjectError> {
-    varta_project::run_report(
-        artifact,
-        policy,
-        varta_project::RunSettings {
-            application: flags.app,
-            decisions,
-            observer: Some(observer()),
-        },
-    )
+    varta_project::run_report(artifact, policy, settings(decisions, flags))
+}
+
+/// How the execution flags run a program.
+fn settings(
+    decisions: Option<varta_project::DecisionFile>,
+    flags: &ExecutionFlags,
+) -> varta_project::RunSettings {
+    varta_project::RunSettings {
+        application: flags.app,
+        decisions,
+        observer: Some(observer()),
+    }
 }
 
 fn main() {

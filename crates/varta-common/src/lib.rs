@@ -22,6 +22,8 @@ mod module;
 pub mod net;
 /// Permission broker v1 (v38 `turn_budgets`).
 pub mod permission;
+/// Development fuel profiling (`varta dev --profile-fuel`).
+pub mod profile;
 pub mod scheduler;
 pub mod text;
 mod tool;

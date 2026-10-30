@@ -2,9 +2,64 @@ use super::*;
 
 impl Emitter<'_> {
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<()> {
+        self.expr_rooted(expr, true)
+    }
+    /// V38: evaluate a value whose consumer allocates nothing before using
+    /// it, so the result itself needs no temporary root. Earlier profiles
+    /// keep rooting it.
+    pub(super) fn expr_unrooted(&mut self, expr: &Expr) -> Result<()> {
+        self.expr_rooted(expr, !self.codegen_v2())
+    }
+    fn expr_rooted(&mut self, expr: &Expr, root: bool) -> Result<()> {
         let Some(memory) = self.memory else {
             return self.expr_inner(expr);
         };
+        if self.codegen_v2() {
+            if self.quiet_mode {
+                // Inside a quiet subtree nothing allocates before the
+                // outermost quiet expression's consumer.
+                return self.expr_inner(expr);
+            }
+            if self.quiet(expr) {
+                self.quiet_mode = true;
+                let emitted = self.expr_inner(expr);
+                self.quiet_mode = false;
+                emitted?;
+                if root {
+                    self.root_result(expr.ty)?;
+                }
+                return Ok(());
+            }
+            if self.stable_operands(expr) {
+                self.quiet_mode = true;
+                let emitted = self.expr_inner(expr);
+                self.quiet_mode = false;
+                emitted?;
+                if root {
+                    self.root_result(expr.ty)?;
+                }
+                return Ok(());
+            }
+            if let E::Call(index, args) = &expr.kind
+                && !self.frame_functions.contains_key(index)
+                && args.iter().all(|arg| self.quiet(arg))
+            {
+                // Quiet arguments push nothing, the callee roots its
+                // parameters before any allocation and every callee exit
+                // restores the root stack pointer, so the call needs no mark.
+                self.quiet_mode = true;
+                let emitted = args.iter().try_for_each(|arg| self.expr_inner(arg));
+                self.quiet_mode = false;
+                emitted?;
+                self.code
+                    .push(I::Call(self.functions_begin + *index as u32));
+                self.check_exception()?;
+                if root {
+                    self.root_result(expr.ty)?;
+                }
+                return Ok(());
+            }
+        }
         let marker = self.root_mark_base + self.expr_depth;
         self.expr_depth += 1;
         self.max_expr_depth = self.max_expr_depth.max(self.expr_depth);
@@ -13,16 +68,22 @@ impl Emitter<'_> {
         self.expr_inner(expr)?;
         self.code
             .extend([I::LocalGet(marker), I::GlobalSet(memory.roots)]);
-        if expr.ty.needs_root() {
-            if expr.ty == Type::ResultString {
+        if root {
+            self.root_result(expr.ty)?;
+        }
+        self.expr_depth -= 1;
+        Ok(())
+    }
+    fn root_result(&mut self, ty: Type) -> Result<()> {
+        if ty.needs_root() {
+            if ty == Type::ResultString {
                 self.code.push(I::LocalSet(self.temporary));
             }
             self.string_helper(strings::Helper::RootPush)?;
-            if expr.ty == Type::ResultString {
+            if ty == Type::ResultString {
                 self.code.push(I::LocalGet(self.temporary));
             }
         }
-        self.expr_depth -= 1;
         Ok(())
     }
     fn expr_inner(&mut self, expr: &Expr) -> Result<()> {
@@ -133,6 +194,8 @@ impl Emitter<'_> {
                 match op {
                     ir::Intrinsic::CodeUnit => self.string_helper(strings::Helper::CodeUnit)?,
                     ir::Intrinsic::FromUnits => self.string_helper(strings::Helper::FromUnits)?,
+                    ir::Intrinsic::CharAt => self.string_helper(strings::Helper::CharAt)?,
+                    ir::Intrinsic::CharCodeAt => self.string_helper(strings::Helper::CharCodeAt)?,
                     // The low word of every managed handle is its payload address.
                     ir::Intrinsic::Identity => self.code.extend([I::I32WrapI64, I::F64ConvertI32U]),
                 }
@@ -216,8 +279,7 @@ impl Emitter<'_> {
                 }
             }
             E::Conditional(test, yes, no) => {
-                self.expr(test)?;
-                self.truthy(test.ty);
+                self.test(test)?;
                 self.code
                     .push(I::If(BlockType::Result(wasm_types(expr.ty)[0])));
                 self.expr(yes)?;
@@ -579,11 +641,23 @@ impl Emitter<'_> {
                         I::I64Ne
                     });
             }
+            E::Binary(op, left, right)
+                if left.ty == Type::String && self.literal_equality(*op, left, right)? => {}
             E::Binary(op, left, right) if left.ty == Type::String => {
                 self.expr(left)?;
                 self.expr(right)?;
                 if *op == BinaryOp::Add {
                     self.string_helper(strings::Helper::Concat)?;
+                } else if self.codegen_v2()
+                    && matches!(
+                        op,
+                        BinaryOp::EqEq | BinaryOp::EqEqEq | BinaryOp::NotEq | BinaryOp::NotEqEq
+                    )
+                {
+                    self.string_helper(strings::Helper::StringEquals)?;
+                    if matches!(op, BinaryOp::NotEq | BinaryOp::NotEqEq) {
+                        self.code.push(I::I32Eqz);
+                    }
                 } else {
                     self.string_helper(strings::Helper::Compare)?;
                     self.code.push(I::I32Const(0));
@@ -683,13 +757,20 @@ impl Emitter<'_> {
             .memory
             .ok_or_else(|| CompilerError::Internal("missing assignment expression roots".into()))?;
         let marker = self.local_slots[marker as usize];
-        self.code
-            .extend([I::GlobalGet(memory.roots), I::LocalSet(marker)]);
-        let prior = self.temporary_floor.replace(marker);
+        // A quiet (v38) assignment pushes no temporaries to release.
+        let prior = if self.quiet_mode {
+            self.temporary_floor
+        } else {
+            self.code
+                .extend([I::GlobalGet(memory.roots), I::LocalSet(marker)]);
+            self.temporary_floor.replace(marker)
+        };
         self.scopes.push(vec![input]);
         self.expr(value)?;
         self.write_binding(input, value.ty, true)?;
-        self.end_temporaries();
+        if !self.quiet_mode {
+            self.end_temporaries();
+        }
         self.statements(body)?;
         self.scratch_get(input, value.ty);
         // No allocation occurs between loading the result and its outer expr
@@ -715,9 +796,14 @@ impl Emitter<'_> {
             .memory
             .ok_or_else(|| CompilerError::Internal("missing value-block roots".into()))?;
         let marker = self.local_slots[marker as usize];
-        self.code
-            .extend([I::GlobalGet(memory.roots), I::LocalSet(marker)]);
-        let prior = self.temporary_floor.replace(marker);
+        // A quiet (v38) value block pushes no temporaries to release.
+        let prior = if self.quiet_mode {
+            self.temporary_floor
+        } else {
+            self.code
+                .extend([I::GlobalGet(memory.roots), I::LocalSet(marker)]);
+            self.temporary_floor.replace(marker)
+        };
         self.scopes.push(roots.to_vec());
         self.statements(body)?;
         self.scratch_get(output, ty);

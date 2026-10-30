@@ -479,6 +479,7 @@ impl Application {
 
     fn report_into(mut self, report: &mut RunReport) {
         report.failure = self.failure.take();
+        report.collect_profile(&mut self.execution.store);
         report.collect(self.execution.store.data_mut());
         if let InstanceState::Finished { exit_code } = self.state {
             report.output.exit_code = exit_code;

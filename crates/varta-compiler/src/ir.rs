@@ -633,6 +633,40 @@ pub(crate) struct Expr {
     pub ty: Type,
     pub kind: Expression,
 }
+impl Expr {
+    /// V38 (`codegen_v2`): evaluation writes no binding and runs no guest
+    /// function, so a binding read before it still holds the same value
+    /// afterwards (allocation is allowed).
+    pub(crate) fn write_free(&self) -> bool {
+        use Expression as E;
+        match &self.kind {
+            E::Integer(_) | E::Float64(_) | E::Status | E::ModuleConstant(_) | E::Local(_) => true,
+            E::String(_) => self.ty != Type::BigInt,
+            E::Binary(_, a, b) | E::NumberSameValue(a, b) | E::Sequence(a, b) | E::Index(a, b) => {
+                a.write_free() && b.write_free()
+            }
+            E::Conditional(a, b, c) | E::StringSearch(_, a, b, c) => {
+                a.write_free() && b.write_free() && c.write_free()
+            }
+            E::Not(value)
+            | E::Negative(value)
+            | E::ToBoolean(value)
+            | E::Length(value)
+            | E::Field(value, _)
+            | E::Undefined(value)
+            | E::IsUndefined(value)
+            | E::IsNullish(value)
+            | E::UnboxUnion(value)
+            | E::BoxUnion(value)
+            | E::IsUnionMember(value, _) => value.write_free(),
+            E::Math(_, args) | E::NumberPredicate(_, args) => args.iter().all(Self::write_free),
+            E::Intrinsic(Intrinsic::CodeUnit | Intrinsic::CharAt | Intrinsic::CharCodeAt, args) => {
+                args.iter().all(Self::write_free)
+            }
+            _ => false,
+        }
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArraySearch {
     Includes,
@@ -696,6 +730,14 @@ pub(crate) enum Intrinsic {
     /// `(reference) -> number`: the stable address of a managed reference
     /// (the nonmoving heap never relocates it), a collection key hash.
     Identity,
+    /// V38 (`codegen_v2`) `String.prototype.charAt`: `(string, index) ->
+    /// string`, the one-unit string at `ToIntegerOrInfinity(index)` or the
+    /// empty string outside, without a host call.
+    CharAt,
+    /// V38 (`codegen_v2`) `String.prototype.charCodeAt`: `(string, index) ->
+    /// number`, the code unit at `ToIntegerOrInfinity(index)` or NaN outside,
+    /// without a host call.
+    CharCodeAt,
 }
 
 /// Engine-internal guest operations of the v37 RegExp prelude

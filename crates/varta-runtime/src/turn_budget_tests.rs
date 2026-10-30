@@ -62,7 +62,11 @@ export function main(): void {
   setTimeout(() => { console.log(`second ${work(__N__)}`); }, 2);
 }
 "#;
-const ITERATIONS: &str = "6000";
+// Each turn of `SPREAD` fits the production fuel budget and the three
+// together do not, under the v38 code generator (`codegen_v2`) and, with
+// `V37_ITERATIONS`, under the v37 code generator.
+const ITERATIONS: &str = "30000";
+const V37_ITERATIONS: &str = "6000";
 
 #[test]
 fn fuel_renews_for_every_turn_in_v38_and_not_before() {
@@ -88,6 +92,7 @@ fn fuel_renews_for_every_turn_in_v38_and_not_before() {
     );
 
     // V37 keeps one allowance for the whole execution and fails.
+    let source = SPREAD.replace("__N__", V37_ITERATIONS);
     let report = bounded(&compile_with(&source, V37), options(timers()));
     let failure = report.failure.expect("v37 exhausts its execution fuel");
     assert!(

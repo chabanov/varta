@@ -979,15 +979,25 @@ impl Lower<'_> {
             if index.ty != Type::Float64 {
                 return Err(type_error("string index must be a number"));
             }
-            let (host, ty) = if method.sym == "charAt" {
-                (Host::StringCharAt16, Type::String)
+            let (host, intrinsic, ty) = if method.sym == "charAt" {
+                (Host::StringCharAt16, ir::Intrinsic::CharAt, Type::String)
             } else {
-                (Host::StringCharCodeAt16, Type::Float64)
+                (
+                    Host::StringCharCodeAt16,
+                    ir::Intrinsic::CharCodeAt,
+                    Type::Float64,
+                )
+            };
+            // V38 reads the code unit in the guest (no host call budget).
+            let kind = if crate::codegen_v2(self.types.profile) {
+                E::Intrinsic(intrinsic, vec![value, index])
+            } else {
+                E::Host(host, vec![value, index])
             };
             return Ok(Expr {
                 span: call.span,
                 ty,
-                kind: E::Host(host, vec![value, index]),
+                kind,
             });
         }
         if let Some(class) = self.error_callee(callee) {
