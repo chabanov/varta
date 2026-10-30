@@ -921,3 +921,36 @@ fn text_imports_reach_the_view_verbatim() {
     let app = by_id(&run.snapshot["tree"], "app").unwrap();
     assert_eq!(app["style"]["color"], "#0a84ff");
 }
+
+/// TSX holes are getter closures: a parameter narrowed by a `switch` keeps
+/// its narrowing inside them (v38 `closure_narrowing`).
+const NARROWED_HOLES: &str = r#"type Inline = { kind: 'text'; text: string } | { kind: 'code'; text: string; lang: string };
+function render(n: Inline): number {
+  switch (n.kind) {
+    case 'code':
+      return <code class={n.lang}>{n.text}</code>;
+    default:
+      return <span>{n.text}</span>;
+  }
+}
+function Item(props: { n: Inline }): number {
+  return render(props.n);
+}
+export function main(): void {
+  const code: Inline = { kind: 'code', text: 'let x', lang: 'ts' };
+  const plain: Inline = { kind: 'text', text: 'plain' };
+  View.mount(<main id="app"><Item n={code} /><Item n={plain} /></main>);
+}"#;
+
+#[test]
+fn narrowing_reaches_tsx_holes() {
+    let bytes = compile_tsx(NARROWED_HOLES, &[]);
+    let run = run_view(&bytes, &[], None, &script(NO_INPUTS)).unwrap();
+    let app = by_id(&run.snapshot["tree"], "app").unwrap();
+    let children = app["children"].as_array().unwrap();
+    assert_eq!(children[0]["tag"], "code");
+    assert_eq!(children[0]["class"], "ts");
+    assert_eq!(text_of(&children[0]), "let x");
+    assert_eq!(children[1]["tag"], "span");
+    assert_eq!(text_of(&children[1]), "plain");
+}

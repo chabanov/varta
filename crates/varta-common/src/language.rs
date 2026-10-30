@@ -670,6 +670,13 @@ impl LanguageProfile {
     pub fn text_imports(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, TSX stream: TypeScript 5.4's narrowing in closures created
+    /// after the last assignment, for parameters and `let` bindings that no
+    /// nested function assigns (`const` bindings keep theirs since v24).
+    #[must_use]
+    pub fn closure_narrowing(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, structural-subtyping stream: width and structural subtyping
     /// of records, interfaces and classes through views, plus the remaining
     /// pilot language items (see `lower::subtyping` in the compiler).
@@ -3051,6 +3058,7 @@ mod tests {
                 profile.view_protocol(),
                 profile.tsx(),
                 profile.text_imports(),
+                profile.closure_narrowing(),
                 profile.structural_subtyping(),
                 profile.codegen_v2(),
             ] {

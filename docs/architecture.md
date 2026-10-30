@@ -9872,6 +9872,36 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   string and result-buffer limits (open with the move of the library into a
   reserved region of memory 0).
 
+### V38 closure narrowing (`closure_narrowing()`)
+
+Profile v38 adopts TypeScript 5.4's preserved narrowing in closures created
+after the last assignment, for every closure: arrows, function expressions
+and the getter holes of TSX templates. A `const` binding's narrowing reaches
+every closure since v24. A parameter or `let` binding B of a function F
+keeps its narrowing (union members, literal and `unknown` refinements of
+the write-aware flow analysis) inside a closure C created at position P
+when, by the syntactic scan of F's parameters and body:
+
+1. no function, arrow, function expression or class nested in F assigns the
+   name of B (an assignment in another closure, called or not, withholds it);
+2. every assignment to the name in F (`=`, compound and logical assignment,
+   `++`/`--`, a destructuring target, a `for…in`/`for…of` head) lies before
+   P, where an assignment inside a loop of F counts at the end of the
+   outermost such loop (a later iteration may run it after C was created);
+3. C is not a hoisted function declaration (it can run before P).
+
+Assignments are matched by name, so a shadowing binding of the same name
+counts and only ever withholds narrowing; TypeScript also exempts a loop
+that contains B's own declaration, which this rule does not. Such a binding
+is never written after C is created, so inside C, and in closures created
+inside C, the narrowing is a fact: a call inside C does not invalidate it
+(the binding is excluded from the mutable cells an unknown call may write).
+Reads keep the checks of the current narrowing model; the closure captures
+the binding's cell as before, so the emitted capture layout is unchanged,
+and v1–v37 keep narrowing only `const` bindings into closures. A binding
+that fails the rule keeps the existing diagnostic (`… is not declared by
+every member of the union; narrow it first`).
+
 ### V38 view protocol and TSX (`view_protocol()`, `tsx()`)
 
 The view-protocol and TSX streams implement increment P7 and the start of P8

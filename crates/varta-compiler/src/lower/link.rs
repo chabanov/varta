@@ -537,6 +537,11 @@ pub(super) fn body(
         }
         _ => None,
     };
+    lower.core.assignments = Some(closure_narrowing::scan(|scan| {
+        use swc_ecma_visit::VisitWith;
+        declaration.function.params.visit_with(scan);
+        declaration.function.body.visit_with(scan);
+    }));
     let mut prologue = lower.module_constants(constants, &declaration.function)?;
     prologue.extend(lower.initialize_parameters(&plans, signature.receiver.is_some())?);
     let start = prologue.len();

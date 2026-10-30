@@ -5495,6 +5495,24 @@ Unknown elements or attributes, invalid static values (`rows="0"`,
 `style="color: red"`), unknown filters, fragments, spreads and component
 children are compile errors.
 
+A narrowed parameter or `let` binding stays narrowed inside closures and
+TSX holes created after its last assignment, as in TypeScript 5.4:
+
+```tsx
+function render(n: Inline): number {
+  switch (n.kind) {
+    case 'code':
+      return <code>{n.text}</code>; // the hole `() => n.text` sees the code member
+    default:
+      return <span>{n.text}</span>;
+  }
+}
+```
+
+Reassigning the binding after the closure is created, inside any other
+closure, or anywhere in a loop around the closure withdraws it (the read
+then needs its own narrowing).
+
 Accessible names follow accname 1.2: `aria-hidden="true"` content (and
 `display: none` or a closed dialog) is left out of a name from content, so
 this button is `button "Reasoning"`:

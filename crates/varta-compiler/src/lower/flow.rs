@@ -1,6 +1,8 @@
 //! Declared storage types bound flow facts; writes and branch joins update them.
 use super::*;
 use std::collections::BTreeSet;
+/// A binding identity: its declaring function and slot.
+type Identity = (usize, u32);
 use swc_ecma_visit::{Visit, VisitWith};
 #[derive(Clone)]
 pub(super) struct Snapshot {
@@ -440,6 +442,7 @@ impl Lower<'_> {
             .flat_map(|s| s.values())
             .chain(self.captures.values())
             .filter(|b| b.mutable && (self.cells.contains(&b.slot) || b.global.is_some()))
+            .filter(|b| !self.stable(b))
             .map(|b| b.slot)
             .collect()
     }
@@ -583,20 +586,30 @@ impl Lower<'_> {
             self.flow_write(slot);
         }
     }
-    pub(super) fn capture_narrows(&self) -> BTreeMap<(usize, u32), Type> {
+    /// The narrowings a closure created at `at` starts with, and the
+    /// mutable bindings it may keep them for (v38 `closure_narrowing`).
+    pub(super) fn capture_narrows(
+        &self,
+        at: swc_common::BytePos,
+    ) -> (BTreeMap<Identity, Type>, BTreeSet<Identity>) {
+        let stable = self.stable_bindings(at);
         let mut result = self.outer_narrows.clone();
+        result.retain(|identity, _| {
+            // An inherited narrowing of a mutable binding needs it stable.
+            !self.core.stable.contains(identity) || stable.contains(identity)
+        });
         for binding in self
             .scopes
             .iter()
             .flat_map(|s| s.values())
             .chain(self.captures.values())
         {
-            if !binding.mutable
+            if (!binding.mutable || stable.contains(&binding.identity))
                 && let Some(&ty) = self.refinements.get(&binding.slot)
             {
                 result.insert(binding.identity, ty);
             }
         }
-        result
+        (result, stable)
     }
 }

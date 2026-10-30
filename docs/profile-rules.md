@@ -3483,6 +3483,18 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   `varta.view.units`, append strings as themselves, never loop per code unit
   in guest code (`the_initial_render_of_the_example_app_stays_inside_production_fuel`).
 
+### Closure narrowing (`closure_narrowing()`)
+
+- The rule lives in `lower/closure_narrowing.rs`: a per-function name scan
+  of assignments (loop-extended, nested functions flagged) decides at each
+  closure's position which mutable bindings are stable; the child inherits
+  them in `core::State::stable`. Never mark such a binding immutable or
+  change its capture: it stays a cell, only its flow facts are kept.
+- A stable binding is excluded from `mutable_cells` and call write sets, so
+  an unknown call in the closure keeps its narrowing. Any new assignment form
+  must be added to the scan in the same change, or narrowing becomes
+  unsound. Hoisted declarations (`core.hoisting`) never take it.
+
 ### TSX stream (`tsx()`)
 
 - Parse JSX only in `.tsx` modules of a profile with `tsx()`; every other

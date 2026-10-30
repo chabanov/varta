@@ -21,4 +21,13 @@ pub(super) struct State {
     /// inferred binding of such a name initialized by an index read, and a
     /// `for...of` variable of such a name, read `T | undefined` unchecked.
     pub(super) undefined_checked: BTreeSet<String>,
+    /// V38 (`closure_narrowing`): where this function body assigns each
+    /// name, for the closures it creates.
+    pub(super) assignments: Option<std::rc::Rc<super::closure_narrowing::Assignments>>,
+    /// V38 (`closure_narrowing`): mutable bindings of enclosing functions
+    /// that are never written after this closure was created.
+    pub(super) stable: BTreeSet<(usize, u32)>,
+    /// Set while a hoisted function declaration is lowered: it never keeps
+    /// the narrowing of a mutable binding.
+    pub(super) hoisting: bool,
 }

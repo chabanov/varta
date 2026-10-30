@@ -1023,6 +1023,13 @@ in [conformance/README.md](conformance/README.md).
 
 ### Fixed
 
+- V38 keeps the narrowing of parameters and `let` bindings inside closures
+  created after their last assignment (TypeScript 5.4), for arrows,
+  function expressions and TSX hole getters: `case "code": return
+  <code>{n.text}</code>` now compiles. An assignment after the closure, in
+  any nested function or in a loop around the closure withholds it; hoisted
+  function declarations never take it. V1–v37 are unchanged.
+
 - V38 `varta dev --view-script` runs on virtual time: a scripted input is
   performed only when no task is runnable (records, arrived completions, due
   timers, and zero-delay timers with their chains in Node's order), so a node
