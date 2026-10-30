@@ -125,7 +125,11 @@ impl Lower<'_> {
         let element = self.types.arrays[id as usize];
         // V37: the variable has the element type, read checked (`dense`),
         // unless the storage has no holes (`packed`: collections, tuples).
-        let checked = self.types.profile.language_core() && !packed;
+        // A loop variable the enclosing code compares with `undefined` keeps
+        // JavaScript's `undefined` for holes (`dense::undefined_comparisons`).
+        let compared = matches!(pattern, ast::Pat::Ident(binding)
+            if self.core.undefined_checked.contains(binding.id.sym.as_ref()));
+        let checked = self.types.profile.language_core() && !packed && !compared;
         let sparse = self.types.profile.sparse_arrays() && !packed;
         let item = if sparse && !checked {
             unions::intern(vec![element, Type::Undefined], self.types)?

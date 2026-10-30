@@ -9,6 +9,7 @@
 //! Node, which never throws there). Element types that admit `undefined` read
 //! as before, without a check. Earlier profiles keep `T | undefined`.
 use super::*;
+use std::collections::BTreeSet;
 use varta_common::value::ErrorClass;
 
 /// The `TypeError` message of a missing array element.
@@ -18,6 +19,57 @@ pub(super) const MISSING_ELEMENT: &str =
 pub(super) const MISSING_UNIT: &str = "string index out of range";
 /// The `TypeError` message of a hole visited by `for...of`.
 pub(super) const ITERATED_HOLE: &str = "array element is a hole";
+
+/// The identifiers `statements` compare with `undefined` anywhere inside
+/// (`x === undefined`, `x != undefined`, `typeof x === 'undefined'`, either
+/// operand order): TypeScript types `const x = xs[i]` as the element type,
+/// and such code relies on JavaScript reading `undefined` there.
+pub(super) fn undefined_comparisons(statements: &[ast::Stmt]) -> BTreeSet<String> {
+    use swc_ecma_visit::{Visit, VisitWith};
+    fn undefined(expr: &ast::Expr) -> bool {
+        match stmt::unparen(expr) {
+            ast::Expr::Ident(id) => id.sym == "undefined",
+            ast::Expr::Lit(ast::Lit::Str(text)) => text.value.as_str() == Some("undefined"),
+            ast::Expr::Unary(unary) => unary.op == ast::UnaryOp::Void,
+            _ => false,
+        }
+    }
+    fn operand(expr: &ast::Expr) -> Option<String> {
+        match stmt::unparen(expr) {
+            ast::Expr::Ident(id) => Some(id.sym.to_string()),
+            ast::Expr::Unary(unary) if unary.op == ast::UnaryOp::TypeOf => {
+                match stmt::unparen(&unary.arg) {
+                    ast::Expr::Ident(id) => Some(id.sym.to_string()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+    #[derive(Default)]
+    struct Names(BTreeSet<String>);
+    impl Visit for Names {
+        fn visit_bin_expr(&mut self, binary: &ast::BinExpr) {
+            use ast::BinaryOp::{EqEq, EqEqEq, NotEq, NotEqEq};
+            if matches!(binary.op, EqEq | EqEqEq | NotEq | NotEqEq) {
+                for (name, other) in [(&binary.left, &binary.right), (&binary.right, &binary.left)]
+                {
+                    if undefined(other)
+                        && let Some(name) = operand(name)
+                    {
+                        self.0.insert(name);
+                    }
+                }
+            }
+            binary.visit_children_with(self);
+        }
+    }
+    let mut names = Names::default();
+    for statement in statements {
+        statement.visit_with(&mut names);
+    }
+    names.0
+}
 
 impl Lower<'_> {
     /// Marks `expression`, when it is an index read `xs[i]`/`s[i]` lowered
@@ -45,7 +97,10 @@ impl Lower<'_> {
     /// `maybe` (of type `element | undefined`) as `element`, throwing
     /// `TypeError(message)` when it is `undefined`.
     pub(super) fn dense_read(&mut self, maybe: Expr, element: Type, message: &str) -> Result<Expr> {
-        if unions::members(element, self.types).contains(&Type::Undefined) {
+        // `unknown` holds `undefined` itself, so a hole reads as one.
+        if element == Type::Unknown
+            || unions::members(element, self.types).contains(&Type::Undefined)
+        {
             return Ok(maybe);
         }
         let span = maybe.span;

@@ -16,6 +16,12 @@ impl Lower<'_> {
             self.scopes.push(BTreeMap::new());
         }
         let core = self.types.profile.language_core();
+        let checked = core.then(|| {
+            let names = dense::undefined_comparisons(statements);
+            let saved = self.core.undefined_checked.clone();
+            self.core.undefined_checked.extend(names);
+            saved
+        });
         for statement in statements {
             match statement {
                 ast::Stmt::Decl(ast::Decl::Var(var)) => self
@@ -54,6 +60,9 @@ impl Lower<'_> {
                 .map_or_else(Default::default, |s| s.span());
             let prologue = self.tdz_prologue(&bindings, span);
             result.splice(0..0, prologue);
+        }
+        if let Some(saved) = checked {
+            self.core.undefined_checked = saved;
         }
         if scope {
             let slots = self

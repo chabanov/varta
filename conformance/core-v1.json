@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v36",
+  "profile": "checked-f64-utf16-v37",
   "features": [
     {
       "id": "binary64",
@@ -1044,9 +1044,7 @@
         "varta log: 2"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Map allocation, key semantics and tracing are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -1058,9 +1056,7 @@
         "varta log: 1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Set allocation, key semantics and tracing are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -1072,9 +1068,7 @@
         "varta log: 1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Typed-array storage and conversion semantics are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -1213,9 +1207,7 @@
         "varta log: 1970"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Date construction and time semantics are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -1227,9 +1219,7 @@
         "varta log: 1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "RegExp is admitted from checked-f64-utf16-v37 (ahead-of-time linear-time matcher); this inventory pins checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -1242,9 +1232,7 @@
         "varta log: truetrue2"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "RegExp is admitted from checked-f64-utf16-v37 (ahead-of-time linear-time matcher); this inventory pins checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -1259,9 +1247,7 @@
         "varta log: 3 3"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "RegExp is admitted from checked-f64-utf16-v37 (ahead-of-time linear-time matcher); this inventory pins checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -2409,9 +2395,7 @@
         "varta log: ReferenceError 7 14"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "The v36 pin rejects closure captures before a binding's initialization and nested function declarations; v37 admits them with run-time temporal dead zones."
+        "status": "supported"
       }
     },
     {
@@ -2423,9 +2407,7 @@
         "varta log: big even 4|small odd 3|error"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "The v36 pin rejects a let without an initializer unless its type admits undefined; v37 checks definite assignment instead."
+        "status": "supported"
       }
     },
     {
@@ -2438,9 +2420,7 @@
         "varta log: ns"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "The v36 pin admits switch only over number and boolean discriminants; v37 selects by strict equality."
+        "status": "supported"
       }
     },
     {
@@ -2452,9 +2432,7 @@
         "varta log: 2abc3|"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "The v36 pin narrows only local bindings, so property reads keep their declared union types; v37 narrows property paths."
+        "status": "supported"
       }
     },
     {
@@ -2466,9 +2444,7 @@
         "varta log: 33 ab1"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "type_error",
-        "reason": "The v36 pin types indexed reads as T | undefined; v37 types them as T with checked reads."
+        "status": "supported"
       }
     },
     {
@@ -2480,9 +2456,7 @@
         "varta log: 4 10"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "type_error",
-        "reason": "The v36 pin requires exactly equal function types; v37 converts value-returning functions to void-result function types."
+        "status": "supported"
       }
     },
     {
@@ -2494,9 +2468,7 @@
         "varta log: 3circle! 6rect! 0point "
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "The v36 pin admits at most one record shape per union; v37 tells several apart by descriptor."
+        "status": "supported"
       }
     },
     {
@@ -2509,9 +2481,7 @@
         "varta log: 2 b"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "The v36 pin rejects module-level let declarations and function-valued module constants; v37 stores module variables in permanent root slots."
+        "status": "supported"
       }
     },
     {
@@ -2523,9 +2493,7 @@
         "varta log: 7"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Generic class methods with inference from the contextual result type are admitted by v37 class_generics; the inventory pins v36."
+        "status": "supported"
       }
     },
     {
@@ -2537,9 +2505,7 @@
         "varta log: 12 true false"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "ES #private fields, methods and the #x in brand check are admitted by v37 class_generics; the inventory pins v36."
+        "status": "supported"
       }
     },
     {
@@ -2551,9 +2517,7 @@
         "varta log: a 3 page"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Generic classes and generic bases are admitted by v37 class_generics; the inventory pins v36."
+        "status": "supported"
       }
     },
     {
@@ -2565,9 +2529,7 @@
         "varta log: 3 2 n5"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Tuple types are not admitted: v36 has no positional element types. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -2579,9 +2541,7 @@
         "varta log: .a|.b|..|.c MIX!"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "String.prototype.split, padStart, toUpperCase, String.fromCharCode and Array.prototype.join are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -2593,9 +2553,7 @@
         "varta log: 3 195 hé"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Uint8Array storage and the UTF-8 TextEncoder/TextDecoder are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+        "status": "supported"
       }
     },
     {
@@ -2608,9 +2566,7 @@
         "varta log: 2 x y a=1&b=x+y&a=2&c=d+e"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "URL and URLSearchParams are v37 net_request preludes; the inventory is pinned to v36."
+        "status": "supported"
       }
     }
   ]

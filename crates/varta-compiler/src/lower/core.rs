@@ -17,4 +17,8 @@ pub(super) struct State {
     /// The span of an index read whose context admits `undefined` (`dense`):
     /// it reads `T | undefined` as in JavaScript instead of a checked `T`.
     pub(super) optional_index: Option<swc_common::Span>,
+    /// Names the enclosing blocks compare with `undefined` (`dense`): an
+    /// inferred binding of such a name initialized by an index read, and a
+    /// `for...of` variable of such a name, read `T | undefined` unchecked.
+    pub(super) undefined_checked: BTreeSet<String>,
 }

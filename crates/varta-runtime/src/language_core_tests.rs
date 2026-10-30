@@ -159,11 +159,18 @@ fn dense_element_reads_match_node() {
 
 #[test]
 fn index_reads_in_undefined_contexts_match_node() {
-    // A `T | undefined` return, parameter or binding and the left operand of
-    // `??` read holes and missing indices as `undefined` without a check.
+    // A `T | undefined` return, parameter or binding, the left operand of
+    // `??`, bindings and loop variables compared with `undefined`, and
+    // `unknown[]` elements read holes and missing indices as `undefined`.
     run(
         OPTIONAL_INDEX,
-        &["undefined a", "undefined -1 1", "none b z", "3 0"],
+        &[
+            "undefined a",
+            "undefined -1 1",
+            "none b z",
+            "3 0",
+            "missing 13 string;undefined;number; undefined",
+        ],
     );
 }
 

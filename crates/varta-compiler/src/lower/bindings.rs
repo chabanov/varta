@@ -89,6 +89,11 @@ impl Lower<'_> {
                 None => (None, false),
             };
             let value = if let Some(init) = init {
+                // V37: `const x = xs[i]` later compared with `undefined` reads
+                // `T | undefined`, as JavaScript does (`dense`).
+                if old.ty.is_none() && self.core.undefined_checked.contains(name) {
+                    self.optional_index(init);
+                }
                 if old.ty.is_none() && self.types.profile.literal_types() {
                     // An inferred binding keeps a literal-typed initializer's type.
                     self.expr_preserving(init)?
