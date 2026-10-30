@@ -11,6 +11,15 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- `varta-common` is the one owner of the value layout: a default `std`
+  feature, and without it a `no_std` + `alloc` core (`abi`, `memory`, the
+  `value` constants and primitive-cell reader, the `limits` constants,
+  `text`) that `varta-intrinsics` and the wasm32 shim depend on with default
+  features off. The intrinsics' restated layout constants, cell reader and
+  UTF-16 helpers and their agreement tests are gone; linked v38 code reads
+  string arguments and cells within the v38 data limit instead of 1 MiB.
+  The full verification plan and CI check the core build.
+
 - V38 linked intrinsics run in memory 0: a linked module has exactly one
   memory (no multi-memory, so Safari and embedded engines run it). Emission
   reserves an intrinsic region after the static extension (`varta.intrinsics`,

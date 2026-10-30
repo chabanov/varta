@@ -12,7 +12,7 @@ use core::{
     alloc::{GlobalAlloc, Layout},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
 };
-use varta_intrinsics::layout::WASM_PAGE_BYTES;
+use varta_common::abi::WASM_PAGE_BYTES;
 
 /// Guest memory 0, the only memory of a linked module.
 const MEMORY: u32 = 0;

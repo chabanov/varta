@@ -2,7 +2,7 @@
 //! (also linked into v38 guests). Resource conversion lives in the
 //! privileged host path; logging stays a host effect.
 use crate::{RuntimeContext, host};
-use varta_common::HostOperation as Host;
+use varta_common::{HostOperation as Host, abi};
 use varta_intrinsics::string;
 use wasmtime::{Caller, Extern, Linker};
 
@@ -17,7 +17,7 @@ fn read(
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(wasmtime::Error::msg("missing memory"));
     };
-    string::read(memory.data(&*caller), ptr, len).map_err(fatal)
+    string::read(memory.data(&*caller), ptr, len, abi::MAX_STRING_BYTES).map_err(fatal)
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
@@ -61,7 +61,8 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             move |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
                 caller.data_mut().tick()?;
                 let units = read(&mut caller, ptr, len)?;
-                let bytes = string::convert_case16(&units, upper).map_err(fatal)?;
+                let bytes =
+                    string::convert_case16(&units, upper, abi::MAX_STRING_BYTES).map_err(fatal)?;
                 host::result_bytes(&mut caller, &bytes)
                     .map_err(|_| wasmtime::Error::msg("UTF-16 result transfer failed"))
             },

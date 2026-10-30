@@ -54,6 +54,9 @@ def commands(args: argparse.Namespace) -> list[list[str]]:
     return [
         cargo("fmt", "--all", "--", "--check"),
         check + ["--lib", "--locked"],
+        # The value-layout core the wasm32 intrinsic library builds against.
+        cargo("check", "-p", "varta-common", "-p", "varta-intrinsics", "--no-default-features",
+              "--lib", "--locked"),
         companion(),
         cargo("clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"),
         cargo("build", "--workspace", "--all-targets", "--locked"),

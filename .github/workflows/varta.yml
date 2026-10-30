@@ -28,6 +28,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Core libraries without project tooling or CLI
         run: cargo check -p varta-common -p varta-compiler -p varta-runtime -p varta-artifact --lib --locked
+      - name: No-std value-layout core of the linked intrinsics
+        run: cargo check -p varta-common -p varta-intrinsics --no-default-features --lib --locked
       - name: Independent execution runtime without source tooling
         run: cargo build -p varta-launcher --bin varta-runtime --locked
       - name: Clippy

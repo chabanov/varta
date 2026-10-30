@@ -1,5 +1,5 @@
 //! UTF-16LE guest strings. Byte lengths are physical; source lengths count u16 units.
-use std::io::Write;
+use alloc::{string::String, vec::Vec};
 
 #[derive(Debug, thiserror::Error)]
 #[error("invalid string encoding")]
@@ -61,9 +61,9 @@ pub fn json_input_limited(bytes: &[u8], limit: usize) -> Result<Vec<u8>, JsonTex
                 if !quoted || escaped {
                     return Err(JsonTextError::Syntax);
                 }
-                // Writing into a Vec cannot fail.
-                write!(output, "\\u{:04x}", error.unpaired_surrogate())
-                    .map_err(|_| JsonTextError::Encoding)?;
+                output.extend_from_slice(
+                    alloc::format!("\\u{:04x}", error.unpaired_surrogate()).as_bytes(),
+                );
             }
             Ok(c) => {
                 if quoted {
@@ -98,7 +98,7 @@ pub fn from_wtf8(bytes: &[u8]) -> Result<Vec<u16>, TextError> {
             && (0x80..=0xbf).contains(&bytes[index + 2])
         {
             result.extend(
-                std::str::from_utf8(&bytes[start..index])
+                core::str::from_utf8(&bytes[start..index])
                     .map_err(|_| TextError)?
                     .encode_utf16(),
             );
@@ -114,14 +114,15 @@ pub fn from_wtf8(bytes: &[u8]) -> Result<Vec<u16>, TextError> {
         }
     }
     result.extend(
-        std::str::from_utf8(&bytes[start..])
+        core::str::from_utf8(&bytes[start..])
             .map_err(|_| TextError)?
             .encode_utf16(),
     );
     Ok(result)
 }
 /// Well-formed JSON: paired surrogates become their scalar; unpaired units are escaped.
-pub fn write_json(writer: &mut impl Write, units: &[u16]) -> std::io::Result<()> {
+#[cfg(feature = "std")]
+pub fn write_json(writer: &mut impl std::io::Write, units: &[u16]) -> std::io::Result<()> {
     writer.write_all(b"\"")?;
     for value in char::decode_utf16(units.iter().copied()) {
         match value {

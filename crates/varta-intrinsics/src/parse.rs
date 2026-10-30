@@ -1,8 +1,8 @@
 //! Numeric text: the strict ECMAScript `StringToNumber` grammar and the
 //! `parseInt`/`parseFloat` prefix parsers, over UTF-16LE bytes.
-use crate::text::ecmascript_whitespace as whitespace;
 use alloc::vec::Vec;
 use num_bigint::BigUint;
+use varta_common::text::ecmascript_whitespace as whitespace;
 
 fn decimal(bytes: &[u8]) -> f64 {
     let unsigned = if matches!(bytes.first(), Some(b'+' | b'-')) {

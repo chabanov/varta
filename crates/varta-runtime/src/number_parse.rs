@@ -1,7 +1,7 @@
 //! ABI26 `parseInt`/`parseFloat` host imports over the shared
 //! `varta-intrinsics` implementation (also linked into v38 guests).
 use crate::RuntimeContext;
-use varta_common::HostOperation as Host;
+use varta_common::{HostOperation as Host, abi};
 #[cfg(test)]
 use varta_intrinsics::parse::{float, int32, integer};
 use wasmtime::{Caller, Extern, Linker};
@@ -10,7 +10,8 @@ fn fatal(error: varta_intrinsics::IntrinsicError) -> wasmtime::Error {
 }
 #[cfg(test)]
 fn text(bytes: &[u8], cell: i64) -> Result<Vec<u8>, wasmtime::Error> {
-    varta_intrinsics::primitive::parse_input(bytes, cell as u64).map_err(fatal)
+    varta_intrinsics::primitive::parse_input(bytes, cell as u64, abi::MAX_STRING_BYTES)
+        .map_err(fatal)
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
@@ -25,8 +26,13 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 return Err(wasmtime::Error::msg("missing value memory"));
             };
             let bytes = memory.data(&caller);
-            let result = varta_intrinsics::primitive::parse_int(bytes, input as u64, radix as u64)
-                .map_err(fatal)?;
+            let result = varta_intrinsics::primitive::parse_int(
+                bytes,
+                input as u64,
+                radix as u64,
+                abi::MAX_STRING_BYTES,
+            )
+            .map_err(fatal)?;
             caller.data().check_budget()?;
             Ok(result)
         },
@@ -39,9 +45,12 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
                 return Err(wasmtime::Error::msg("missing value memory"));
             };
-            let result =
-                varta_intrinsics::primitive::parse_float(memory.data(&caller), input as u64)
-                    .map_err(fatal)?;
+            let result = varta_intrinsics::primitive::parse_float(
+                memory.data(&caller),
+                input as u64,
+                abi::MAX_STRING_BYTES,
+            )
+            .map_err(fatal)?;
             caller.data().check_budget()?;
             Ok(result)
         },

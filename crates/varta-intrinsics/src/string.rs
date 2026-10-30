@@ -1,20 +1,27 @@
 //! UTF-16 string intrinsics: code-unit access and default case conversion.
-use crate::{IntrinsicError, Memory, layout, text};
+//!
+//! `limit` is the caller's string limit in bytes: the frozen
+//! `abi::MAX_STRING_BYTES` for host imports of earlier profiles, the v38
+//! data limit for linked code.
+use crate::{IntrinsicError, Memory};
 use alloc::{string::String, vec::Vec};
+use varta_common::text;
 
-/// The units of a borrowed guest string `(ptr, byte length)`.
+/// The units of a borrowed guest string `(ptr, byte length)` of at most
+/// `limit` bytes.
 pub fn read<M: Memory + ?Sized>(
     memory: &M,
     ptr: i32,
     len: i32,
+    limit: usize,
 ) -> Result<Vec<u16>, IntrinsicError> {
-    if ptr < 0 || len < 0 || len as usize > layout::MAX_STRING_BYTES {
+    if ptr < 0 || len < 0 || len as usize > limit {
         return Err(IntrinsicError::Utf16Range);
     }
     let bytes = memory
         .bytes(ptr as usize, len as usize)
         .ok_or(IntrinsicError::Utf16Memory)?;
-    text::units(&bytes)
+    text::units(&bytes).map_err(|_| IntrinsicError::Utf16Length)
 }
 /// The unit index `ToIntegerOrInfinity(position)` names, if in range.
 #[must_use]
@@ -71,13 +78,13 @@ pub fn convert_case(units: &[u16], upper: bool) -> Vec<u16> {
     flush(&mut run, &mut output);
     output
 }
-/// [`convert_case`] as UTF-16LE result bytes within the string limit.
-pub fn convert_case16(units: &[u16], upper: bool) -> Result<Vec<u8>, IntrinsicError> {
+/// [`convert_case`] as UTF-16LE result bytes of at most `limit` bytes.
+pub fn convert_case16(units: &[u16], upper: bool, limit: usize) -> Result<Vec<u8>, IntrinsicError> {
     let bytes: Vec<u8> = convert_case(units, upper)
         .into_iter()
         .flat_map(u16::to_le_bytes)
         .collect();
-    if bytes.len() > layout::MAX_STRING_BYTES {
+    if bytes.len() > limit {
         return Err(IntrinsicError::CaseLimit);
     }
     Ok(bytes)

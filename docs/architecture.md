@@ -9806,20 +9806,30 @@ every host computes the same bits and a third-party host implements only
 effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
 
 - **One implementation.** The pure algorithms live in `varta-intrinsics`
-  (`no_std` + `alloc`, no `unsafe`, no dependency on `varta-common`). The
-  native runtime calls it for the host imports of earlier profiles; the
-  `varta-intrinsics-wasm` shim compiles the same code to one core wasm32
-  module (`scripts/build-intrinsics.py`), which the compiler embeds as a
-  checked-in artifact (`crates/varta-compiler/src/link/intrinsics.wasm`, with
-  its source fingerprint in `intrinsics.json`). The compiler test
-  `intrinsic_library_matches_its_sources` fails while the artifact is stale.
-  The layout constants the library reads are restated in
-  `varta_intrinsics::layout` and checked equal to `abi`/`value` by the runtime
-  test `intrinsic_layout_matches_common`; its primitive-cell reader, which the
-  runtime's linked-family host imports now use, is checked against
-  `value::PrimitiveBox` on valid and corrupted cells
-  (`shared_primitive_cell_reader_agrees_with_common`) until the value readers
-  have one owner.
+  (`no_std` + `alloc`, no `unsafe`). The native runtime calls it for the host
+  imports of earlier profiles; the `varta-intrinsics-wasm` shim compiles the
+  same code to one core wasm32 module (`scripts/build-intrinsics.py`), which
+  the compiler embeds as a checked-in artifact
+  (`crates/varta-compiler/src/link/intrinsics.wasm`, with its source
+  fingerprint in `intrinsics.json`). The compiler test
+  `intrinsic_library_matches_its_sources` fails while the artifact is stale;
+  the fingerprint covers both intrinsics crates and the varta-common files
+  the library compiles.
+- **One owner of the value layout.** `varta-common` has a default `std`
+  feature; without it the crate is a `no_std` + `alloc` core: the ABI
+  constants and static region (`abi`), bounded guest-memory reads
+  (`memory::Memory`, implemented for byte slices), the value tags, layout
+  constants and the primitive-cell reader `value::PrimitiveBox` (generic over
+  `Memory`, with the caller's string limit), the data-limit constants
+  (`limits`) and the UTF-16 helpers (`text`). `varta-intrinsics` and the shim
+  depend on it with `default-features = false` (checked by the boundary test
+  `engine_dependencies_cannot_point_back_to_project_tooling_or_cli`), so host
+  imports and linked code read cells with the same code; the profile tables
+  and frozen ceilings that name engine modules stay `std` only. Linked code
+  reads string arguments and string cells within the v38 data limit
+  (`limits::V38_MAX_STRING_BYTES`); host imports of earlier profiles pass the
+  frozen `abi::MAX_STRING_BYTES`. String results of both still travel through
+  the result buffer, whose size (`abi::MAX_RESULT_BYTES`) bounds them.
 - **Linked set.** `HostOperation::linked` names the operations with a linked
   implementation; `LanguageProfile::links` is true for them under v38 only.
   Today they are Math (the unary functions and `atan2`), `number_power`,
@@ -9910,9 +9920,10 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   takes `m` pages of the memory budget. Integral `Number.prototype.toString(radix)`
   arguments below 2^53 take an exact integer-digit path instead of the
   big-integer interval search. Production budgets are unchanged. Linked
-  string intrinsics still read and return strings within the frozen 1 MiB
-  string and result-buffer limits (open with the move of the library into a
-  reserved region of memory 0).
+  string intrinsics read strings within the v38 data limit; a result above
+  the 1 MiB result buffer (case mapping or `String(x)` of a longer string)
+  traps, as the host's result transfer fails. Delivering such results as
+  owned guest strings needs allocating call sites and is open.
 
 ### V38 view protocol and TSX (`view_protocol()`, `tsx()`)
 

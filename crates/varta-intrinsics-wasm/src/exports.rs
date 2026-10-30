@@ -1,9 +1,15 @@
 //! One export per linked host operation, named and typed exactly like the
 //! `varta.<name>` import it replaces (`HostOperation::name`/`scalar_signature`).
+//!
+//! Linked code is v38 code: string arguments and string cells are read
+//! within the v38 data limit (`limits::V38_MAX_STRING_BYTES`); string
+//! results still travel through the result buffer, whose size
+//! (`abi::MAX_RESULT_BYTES`) bounds them.
 use crate::{
     arena::entry,
     guest::{Guest, checked, result},
 };
+use varta_common::{abi::MAX_RESULT_BYTES, limits::V38_MAX_STRING_BYTES as STRING_BYTES};
 use varta_intrinsics::{
     format::{self, Mode},
     math::{self, Portable, Unary},
@@ -57,7 +63,7 @@ pub extern "C" fn number_remainder(dividend: f64, divisor: f64) -> f64 {
 pub extern "C" fn number_to_string(value: f64, radix: f64) -> i32 {
     entry(|| {
         let text = checked(radix::format(value, radix));
-        result(&varta_intrinsics::text::encode(&text))
+        result(&varta_common::text::encode(&text))
     })
 }
 fn decimal(mode: Mode, value: f64, digits: f64) -> i32 {
@@ -78,39 +84,56 @@ pub extern "C" fn number_to_precision(value: f64, digits: f64) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn number_parse_float(input: i64) -> f64 {
-    entry(|| checked(primitive::parse_float(&Guest, input as u64)))
+    entry(|| checked(primitive::parse_float(&Guest, input as u64, STRING_BYTES)))
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn number_parse_int(input: i64, radix: i64) -> f64 {
-    entry(|| checked(primitive::parse_int(&Guest, input as u64, radix as u64)))
+    entry(|| {
+        checked(primitive::parse_int(
+            &Guest,
+            input as u64,
+            radix as u64,
+            STRING_BYTES,
+        ))
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn primitive_to_string(cell: i64) -> i32 {
-    entry(|| result(&checked(primitive::to_string(&Guest, cell as u64))))
+    entry(|| {
+        result(&checked(primitive::to_string(
+            &Guest,
+            cell as u64,
+            STRING_BYTES,
+        )))
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn primitive_to_number(cell: i64) -> f64 {
-    entry(|| checked(primitive::to_number(&Guest, cell as u64)))
+    entry(|| checked(primitive::to_number(&Guest, cell as u64, STRING_BYTES)))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn string_char_at16(ptr: i32, len: i32, position: f64) -> i32 {
     entry(|| {
-        let units = checked(string::read(&Guest, ptr, len));
+        let units = checked(string::read(&Guest, ptr, len, STRING_BYTES));
         result(&string::char_at(&units, position))
     })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn string_char_code_at16(ptr: i32, len: i32, position: f64) -> f64 {
     entry(|| {
-        let units = checked(string::read(&Guest, ptr, len));
+        let units = checked(string::read(&Guest, ptr, len, STRING_BYTES));
         string::char_code_at(&units, position)
     })
 }
 fn case(ptr: i32, len: i32, upper: bool) -> i32 {
     entry(|| {
-        let units = checked(string::read(&Guest, ptr, len));
-        result(&checked(string::convert_case16(&units, upper)))
+        let units = checked(string::read(&Guest, ptr, len, STRING_BYTES));
+        result(&checked(string::convert_case16(
+            &units,
+            upper,
+            MAX_RESULT_BYTES,
+        )))
     })
 }
 #[unsafe(no_mangle)]

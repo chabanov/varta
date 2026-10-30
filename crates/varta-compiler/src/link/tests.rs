@@ -74,6 +74,46 @@ fn scalar(value: &HostScalar) -> ValType {
     }
 }
 
+/// The files of the `no_std` value-layout core of varta-common the library
+/// compiles (`COMMON_CORE` of `scripts/build-intrinsics.py`).
+const COMMON_CORE: &[&str] = &[
+    "crates/varta-common/Cargo.toml",
+    "crates/varta-common/src/lib.rs",
+    "crates/varta-common/src/abi.rs",
+    "crates/varta-common/src/abi/static_region.rs",
+    "crates/varta-common/src/limits.rs",
+    "crates/varta-common/src/memory.rs",
+    "crates/varta-common/src/text.rs",
+    "crates/varta-common/src/value.rs",
+    "crates/varta-common/src/value/primitive.rs",
+];
+
+#[test]
+fn the_fingerprint_covers_every_compiled_common_core_file() {
+    // Every common module the core build compiles is fingerprinted: a module
+    // declared without `#[cfg(feature = "std")]` in lib.rs or value.rs must
+    // be listed.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../varta-common/src");
+    for (file, prefix) in [("lib.rs", ""), ("value.rs", "value/")] {
+        let source = std::fs::read_to_string(root.join(file)).unwrap();
+        let mut gated = false;
+        for line in source.lines() {
+            if let Some(name) = line
+                .strip_prefix("pub mod ")
+                .or_else(|| line.strip_prefix("mod "))
+                .and_then(|rest| rest.strip_suffix(';'))
+                && !gated
+            {
+                let module = format!("crates/varta-common/src/{prefix}{name}.rs");
+                assert!(COMMON_CORE.contains(&module.as_str()), "{module}");
+            }
+            if !line.starts_with("///") {
+                gated = line == "#[cfg(feature = \"std\")]";
+            }
+        }
+    }
+}
+
 /// FNV-1a 64 over `path NUL content NUL` of each intrinsics source file,
 /// sorted by path: the algorithm of `scripts/build-intrinsics.py`.
 fn source_fingerprint() -> String {
@@ -101,6 +141,9 @@ fn source_fingerprint() -> String {
     for crate_dir in ["crates/varta-intrinsics", "crates/varta-intrinsics-wasm"] {
         walk(&root.join(crate_dir), &root, &mut files);
     }
+    // The `no_std` value-layout core of varta-common the library compiles
+    // (`COMMON_CORE` of the build script).
+    files.extend(COMMON_CORE.iter().map(|file| (*file).to_owned()));
     files.sort();
     let mut value: u64 = 0xcbf2_9ce4_8422_2325;
     for name in files {

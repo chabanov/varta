@@ -1,10 +1,11 @@
 //! Bounded read access to guest linear memory.
 use alloc::vec::Vec;
 
-/// A read-only view of guest memory 0. The native runtime passes the
-/// instance's memory as a byte slice; linked guest code copies ranges out of
-/// memory 0 into the intrinsic's private memory. Every read is bounds-checked
-/// and an out-of-range read is `None`/`false`, never a partial copy.
+/// A read-only view of guest memory 0. Host readers pass the instance's
+/// memory as a byte slice (`[u8]` implements it); linked guest code
+/// (`varta-intrinsics-wasm`) copies ranges through its `varta_link`
+/// accessors. Every read is bounds-checked and an out-of-range read is
+/// `None`/`false`, never a partial copy.
 pub trait Memory {
     /// Current byte size of guest memory.
     fn size(&self) -> usize;
@@ -43,6 +44,15 @@ impl Memory for [u8] {
             }
             None => false,
         }
+    }
+}
+/// An owned copy of guest memory reads like the slice.
+impl Memory for Vec<u8> {
+    fn size(&self) -> usize {
+        self.as_slice().size()
+    }
+    fn copy_to(&self, at: usize, out: &mut [u8]) -> bool {
+        self.as_slice().copy_to(at, out)
     }
 }
 

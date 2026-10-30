@@ -9,21 +9,19 @@
 //! same bits and a third-party host implements only effects.
 //!
 //! Nothing here performs I/O, reads ambient state or holds authority. Guest
-//! memory is read only through [`memory::Memory`], which bounds every access.
+//! memory is read only through [`Memory`], which bounds every access. The
+//! value layout (cells, tags, heap header and limits) has one owner,
+//! `varta-common`, whose `no_std` core this crate builds against.
 extern crate alloc;
 
-pub mod cell;
 pub mod error;
 pub mod format;
-pub mod layout;
 pub mod math;
-pub mod memory;
 pub mod number;
 pub mod parse;
 pub mod primitive;
 pub mod radix;
 pub mod string;
-pub mod text;
 
 pub use error::IntrinsicError;
-pub use memory::Memory;
+pub use varta_common::memory::Memory;

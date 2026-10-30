@@ -3391,17 +3391,35 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
 [embedding](embedding.md#linked-intrinsics-v38).
 
 - Pure algorithms have one implementation, in `varta-intrinsics` (`no_std`,
-  `alloc`, `#![forbid(unsafe_code)]`, no `varta-common` dependency). The
-  runtime's host imports call it; never copy an algorithm into the runtime, a
-  generated host or the shim. Earlier profiles keep their own observable
-  behaviour: Math keeps the platform backend (`native_math::Platform`) there,
-  and error messages stay the host's.
+  `alloc`, `#![forbid(unsafe_code)]`). The runtime's host imports call it;
+  never copy an algorithm into the runtime, a generated host or the shim.
+  Earlier profiles keep their own observable behaviour: Math keeps the
+  platform backend (`native_math::Platform`) there, and error messages stay
+  the host's.
+- The value layout has one owner: `varta-common`'s `no_std` core (`std`
+  feature off: `abi`, `memory`, `value` constants and `PrimitiveBox`,
+  `limits` constants, `text`). The intrinsics crates depend on it with
+  `default-features = false` and never restate a constant, tag or reader.
+  A reader the library needs moves into that core (gate only what names
+  `std`-only modules); add every newly compiled common file to
+  `COMMON_CORE` of `scripts/build-intrinsics.py` and of the compiler's link
+  tests (`the_fingerprint_covers_every_compiled_common_core_file`). Pass the
+  caller's string limit explicitly: the frozen `abi::MAX_STRING_BYTES` from
+  host imports, `limits::V38_MAX_STRING_BYTES` from linked code.
 - `varta-intrinsics-wasm` is the only crate with `unsafe`: the `varta_link`
   extern block, `#[unsafe(no_mangle)]` exports, the arena allocator and the
   panic handler. An export has the exact name and scalar signature of its
   `HostOperation`, resets the arena through `arena::entry` when it allocates,
   reads guest memory only through `guest::Guest` (bounds-checked copies) and
-  publishes string results only through `guest::result`.
+  publishes string results only through `guest::result`. It never calls the
+  guest allocator or collector: its arena lives above the guest heap's end
+  only while no guest allocation can run.
+- Linked code runs in memory 0. The linker places its stack and reached data
+  in the module's intrinsic region (`varta.intrinsics`, sized at emission by
+  `link::region_pages` before any code that depends on the heap base is
+  emitted), rewrites every relocated address and routes every stack-pointer
+  write through the region check. Never assume a library address, never add
+  a second memory and never place library data in the static region.
 - To link an operation: add its export, add it to `HostOperation::linked`, run
   `scripts/build-intrinsics.py`, regenerate the embedding tables, and add a
   corpus test in `linked_intrinsic_tests` that compares v38 with the v37 host
@@ -3411,12 +3429,13 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
 - After changing either intrinsics crate, rebuild the artifact with the script
   (offline, locked) and commit `intrinsics.wasm` and `intrinsics.json`
   together; `intrinsic_library_matches_its_sources` fails otherwise. Keep the
-  library free of tables, indirect calls, passive segments and start
-  functions (the linker rejects them) and keep `layout.rs` equal to `abi` and
-  `value` (`intrinsic_layout_matches_common`).
-- Linking never changes a v37 or earlier module, never reorders guest-defined
-  functions and never exports the private memory. Production budgets stay
-  unchanged: linked code is charged fuel, not host calls.
+  library free of tables, indirect calls, passive segments, start functions,
+  absolute linker symbols and globals other than its stack pointer and the
+  zero bases (the linker rejects them).
+- Linking never changes a v37 or earlier module and never reorders
+  guest-defined functions. Production budgets stay unchanged: linked code is
+  charged fuel, not host calls, and its region pages count against the
+  memory budget.
 - One v38 path per operation: where codegen v2 has an inline fast path
   (`charAt`/`s[i]` ASCII table, integral `%`), the linked intrinsic is its
   general fallback through the same helper (`text_codes::char_at`,

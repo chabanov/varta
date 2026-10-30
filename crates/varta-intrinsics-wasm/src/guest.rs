@@ -6,7 +6,8 @@
 //! `varta_link` functions the compiler's linker synthesizes as
 //! `memory.copy` within memory 0. Copies are bounds-checked here before the
 //! accessor runs, and `memory.copy` traps on any range a check missed.
-use varta_intrinsics::{IntrinsicError, Memory, layout};
+use varta_common::abi::{MAX_RESULT_BYTES, RESULT_BASE, WASM_PAGE_BYTES};
+use varta_intrinsics::{IntrinsicError, Memory};
 
 /// Guest memory 0, the only memory of a linked module.
 const MEMORY: u32 = 0;
@@ -25,7 +26,7 @@ unsafe extern "C" {
 pub struct Guest;
 impl Memory for Guest {
     fn size(&self) -> usize {
-        core::arch::wasm32::memory_size(MEMORY) * layout::WASM_PAGE_BYTES
+        core::arch::wasm32::memory_size(MEMORY) * WASM_PAGE_BYTES
     }
     fn copy_to(&self, at: usize, out: &mut [u8]) -> bool {
         if at
@@ -55,15 +56,15 @@ pub fn checked<T>(result: Result<T, IntrinsicError>) -> T {
 /// as a host result transfer. Memory 0 of a linked module already holds the
 /// whole result buffer: its minimum covers the heap base, which follows it.
 pub fn result(bytes: &[u8]) -> i32 {
-    if bytes.len() > layout::MAX_RESULT_BYTES {
+    if bytes.len() > MAX_RESULT_BYTES {
         fatal(IntrinsicError::ResultTooLarge);
     }
     // SAFETY: `bytes` is a live library buffer and memory 0 holds
     // `[RESULT_BASE, RESULT_BASE + len)`, below the intrinsic region; the
     // length fits i32 (at most 1 MiB).
     unsafe {
-        memory_write(layout::RESULT_BASE, bytes.as_ptr(), bytes.len());
+        memory_write(RESULT_BASE, bytes.as_ptr(), bytes.len());
         result_len(bytes.len() as i32);
     }
-    layout::RESULT_BASE as i32
+    RESULT_BASE as i32
 }
