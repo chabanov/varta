@@ -66,13 +66,17 @@ fn json_operations() -> BTreeSet<HostOperation> {
 
 /// Whether a module declaring `profile` may import `operation`: the import's
 /// minimum ABI fits the profile's host ABI, the profile selects exactly this
-/// encoding/layout variant, JSON imports match the profile's pair, and the
-/// HTTP feature marker needs a profile that admits HTTP contracts.
+/// encoding/layout variant and does not link it into the module (v38), JSON
+/// imports match the profile's pair, and the HTTP feature marker needs a
+/// profile that admits HTTP contracts.
 fn admitted(
     operation: HostOperation,
     profile: LanguageProfile,
     json: &BTreeSet<HostOperation>,
 ) -> bool {
+    if profile.links(operation) {
+        return false;
+    }
     if operation.minimum_abi() > profile.host_abi()
         || profile.host_operation(operation) != operation
     {
@@ -278,9 +282,48 @@ fn profile_acceptance() -> String {
                 values.join(", "),
                 catalog,
                 helpers.to_string(),
-                (abi::MAX_USER_FUNCTIONS + helpers + abi::MAX_HTTP_HANDLERS).to_string(),
+                (abi::MAX_USER_FUNCTIONS
+                    + helpers
+                    + abi::MAX_HTTP_HANDLERS
+                    + if profile.linked_intrinsics() {
+                        abi::MAX_LINKED_INTRINSIC_FUNCTIONS
+                    } else {
+                        0
+                    })
+                .to_string(),
             ]
         }),
+    )
+}
+
+/// The operations each linking profile links into the module instead of
+/// importing (`LanguageProfile::links`), in registry order.
+fn linked_intrinsics() -> String {
+    let operations = registered_operations();
+    table(
+        &[
+            "Profile",
+            "Linked, never imported",
+            "Private memory maximum",
+        ],
+        language::SUPPORTED_PROFILES
+            .iter()
+            .filter(|profile| profile.linked_intrinsics())
+            .map(|&profile| {
+                let linked: Vec<String> = operations
+                    .iter()
+                    .filter(|&&operation| profile.links(operation))
+                    .map(|operation| format!("`{}`", operation.name()))
+                    .collect();
+                vec![
+                    format!("`{}`", profile_name(profile)),
+                    linked.join(", "),
+                    format!(
+                        "{} pages (`abi::MAX_INTRINSIC_MEMORY_BYTES`)",
+                        abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES
+                    ),
+                ]
+            }),
     )
 }
 
@@ -1065,6 +1108,11 @@ fn embedding_profiles_match_registry() {
         DOCUMENT,
         "embedding-profile-acceptance",
         &profile_acceptance(),
+    );
+    assert_block(
+        DOCUMENT,
+        "embedding-linked-intrinsics",
+        &linked_intrinsics(),
     );
 }
 

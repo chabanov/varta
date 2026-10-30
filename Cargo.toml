@@ -10,6 +10,8 @@ members = [
   "crates/varta-project",
   "crates/varta-conformance",
   "crates/varta-bigint",
+  "crates/varta-intrinsics",
+  "crates/varta-intrinsics-wasm",
 ]
 default-members = ["crates/varta-cli", "crates/varta-launcher"]
 
@@ -76,3 +78,15 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.wasmtime-environ]
 opt-level = 3
+
+# The v38 guest intrinsic library (`scripts/build-intrinsics.py`): a size-
+# optimized, abort-on-panic wasm32 build of `varta-intrinsics-wasm`. Only that
+# script uses this profile; every native build keeps its own settings.
+[profile.intrinsics]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true

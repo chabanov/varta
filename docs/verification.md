@@ -36,6 +36,7 @@ with the appropriate filters instead of widening a filter until it happens to pa
 | ABI, value layout, GC, roots or exception channels | Common/ABI validation and affected runtime suites | Historical-profile rejection, canonical payloads, collections/roots, host-free helper checks, public API/packaged execution; full |
 | Permissions or host boundaries | Allowed/denied calls, exact grants and host ceilings | Malformed inputs, fatal limits, status and finalizer behavior through public API/CLI; full |
 | Artifact, launcher or packaging | Artifact/launcher/project tests and focused CLI paths | Full, plus separate `cargo test -p varta --test smoke --locked` after the companion build |
+| Linked intrinsics (`varta-intrinsics`, `varta-intrinsics-wasm`) | `cargo test -p varta-intrinsics`, then `python3 scripts/build-intrinsics.py` (offline, locked; commit `intrinsics.wasm` and `intrinsics.json` together) and the compiler `link::` tests | Runtime `linked_intrinsic` corpus tests and the host suites of every family whose code moved; the v38 CLI smoke test; full |
 | Dependency/build changes | Relevant isolated builds and engine dependency-boundary test | Full; verify lockfile and runtime distribution boundaries |
 | Conformance inventory/runner | Local `varta-conformance` tests and reviewed case changes | Baseline JSON, strict JSON with expected exit status and explicit gap review; full for code/inventory changes |
 | Documentation only | Diff, links, documented commands and consistency | No repeated engine suite if engine/build inputs are unchanged |

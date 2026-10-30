@@ -15378,3 +15378,71 @@ fn pilot_profile_v37_collections_run_everywhere_and_the_clock_needs_time_now() {
         combined(&dev)
     );
 }
+
+#[test]
+fn linked_intrinsics_v38_run_identically_through_dev_build_single_and_both_binaries() {
+    use varta_common::HostOperation;
+    const PROFILE: &str = "checked-f64-utf16-v38";
+    let project = RegressionProject::new(
+        r#"export function main():void{
+const s="Straße";
+console.log(Math.sin(0.5).toString()+" "+(2 ** -0.5).toString());
+console.log((1.5).toFixed(2)+" "+(255).toString(16)+" "+parseInt("ff",16).toString()+" "+parseFloat("2.5e1").toString());
+console.log(s.toUpperCase()+" "+s.charAt(4)+" "+s.charCodeAt(4).toString());
+}"#,
+        serde_json::json!({}),
+    );
+    project.language_profile(PROFILE);
+    // The same bits on every host: libm's `2 ** -0.5` is one unit below the
+    // correctly rounded value a platform library may return under v37.
+    let expected = [
+        "varta log: 0.479425538604203 0.7071067811865475",
+        "varta log: 1.50 ff 255 25",
+        "varta log: STRASSE ß 223",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        let inspect = project.command(&["inspect", artifact, "--json"]);
+        assert!(inspect.status.success(), "{}", combined(&inspect));
+        let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+        assert_eq!(info["language"]["profile"], PROFILE);
+        let imports: Vec<&str> = info["imports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|name| name.as_str().unwrap())
+            .collect();
+        assert!(!imports.is_empty());
+        for import in &imports {
+            let operation = import
+                .strip_prefix("varta.")
+                .and_then(HostOperation::from_name)
+                .unwrap_or_else(|| panic!("unknown import {import}"));
+            assert!(!operation.linked(), "v38 imports linked {import}");
+        }
+    }
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}

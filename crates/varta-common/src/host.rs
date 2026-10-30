@@ -659,6 +659,51 @@ impl HostOperation {
                 | Self::PromiseHandled
         )
     }
+    /// Pure operations with a guest-linked implementation in the v38 intrinsic
+    /// library (`LanguageProfile::links`): Math and Number power/remainder,
+    /// Number text and parsing, primitive-cell conversions and UTF-16 string
+    /// access/case mapping. The native runtime keeps their host
+    /// implementations for every profile that imports them.
+    #[must_use]
+    pub fn linked(self) -> bool {
+        matches!(
+            self,
+            Self::FloatRemainder
+                | Self::FloatPower
+                | Self::MathAcos
+                | Self::MathAcosh
+                | Self::MathAsin
+                | Self::MathAsinh
+                | Self::MathAtan
+                | Self::MathAtanh
+                | Self::MathAtan2
+                | Self::MathCbrt
+                | Self::MathCos
+                | Self::MathCosh
+                | Self::MathExp
+                | Self::MathExpm1
+                | Self::MathLog
+                | Self::MathLog1p
+                | Self::MathLog10
+                | Self::MathLog2
+                | Self::MathSin
+                | Self::MathSinh
+                | Self::MathTan
+                | Self::MathTanh
+                | Self::NumberToString
+                | Self::NumberToFixed
+                | Self::NumberToExponential
+                | Self::NumberToPrecision
+                | Self::NumberParseFloat
+                | Self::NumberParseInt
+                | Self::PrimitiveString
+                | Self::PrimitiveNumber
+                | Self::StringCharAt16
+                | Self::StringCharCodeAt16
+                | Self::StringToUpperCase16
+                | Self::StringToLowerCase16
+        )
+    }
     /// The v37 (`collections`) Unicode case conversions.
     #[must_use]
     pub fn text_case(self) -> bool {

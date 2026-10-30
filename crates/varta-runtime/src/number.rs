@@ -13,43 +13,10 @@ fn checked_exit(value: f64) -> Result<i32, HostFailure> {
     }
     Ok(value as i32)
 }
-/// Number::exponentiate special cases precede the platform's approximated pow.
+/// Number::exponentiate: the shared special cases, then the platform's
+/// approximated pow (v38 links the portable `libm` backend instead).
 fn power(base: f64, exponent: f64) -> f64 {
-    if exponent.is_nan() {
-        return f64::NAN;
-    }
-    if exponent == 0.0 {
-        return 1.0;
-    }
-    if base.is_nan() {
-        return f64::NAN;
-    }
-    let odd = exponent.is_finite() && exponent.fract() == 0.0 && exponent.abs() % 2.0 == 1.0;
-    let negative = base.is_sign_negative() && odd;
-    if base.is_infinite() {
-        let magnitude = if exponent > 0.0 { f64::INFINITY } else { 0.0 };
-        return if negative { -magnitude } else { magnitude };
-    }
-    if base == 0.0 {
-        let magnitude = if exponent > 0.0 { 0.0 } else { f64::INFINITY };
-        return if negative { -magnitude } else { magnitude };
-    }
-    if exponent.is_infinite() {
-        let magnitude = base.abs();
-        if magnitude == 1.0 {
-            return f64::NAN;
-        }
-        return if (magnitude > 1.0) == exponent.is_sign_positive() {
-            f64::INFINITY
-        } else {
-            0.0
-        };
-    }
-    if base < 0.0 && exponent.fract() != 0.0 {
-        return f64::NAN;
-    }
-    let magnitude = base.abs().powf(exponent);
-    if negative { -magnitude } else { magnitude }
+    varta_intrinsics::math::power::<crate::native_math::Platform>(base, exponent)
 }
 pub(super) fn display(value: f64) -> String {
     if value == f64::INFINITY {
@@ -61,11 +28,7 @@ pub(super) fn display(value: f64) -> String {
     }
 }
 pub(super) fn canonical_display(value: f64) -> String {
-    if value == 0.0 {
-        "0".into()
-    } else {
-        ryu_js::Buffer::new().format(value).to_owned()
-    }
+    varta_intrinsics::number::canonical_display(value)
 }
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
@@ -113,9 +76,9 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         Host::FloatRemainder.name(),
         |mut caller: Caller<'_, RuntimeContext>, a: f64, b: f64| -> Result<f64, wasmtime::Error> {
             caller.data_mut().tick()?;
-            // Truncating floating remainder, not IEEE nearest-integer remainder.
-            // std's fmod semantics preserve the dividend's zero/sign and special cases.
-            Ok(a % b)
+            // Truncating floating remainder (C `fmod`), not IEEE
+            // nearest-integer remainder; exact on every host.
+            Ok(varta_intrinsics::math::remainder(a, b))
         },
     )?;
     linker.func_wrap(

@@ -748,11 +748,74 @@ All selectors are registered and admit nothing yet.
 | `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Registered, admits nothing |
 | `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Registered, admits nothing |
 | `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Registered, admits nothing |
-| `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Registered, admits nothing |
+| `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | First increment implemented ([contract](architecture.md#linked-intrinsics-linked_intrinsics)): 34 pure operations (Math, `**`/`%`, Number text and parsing, primitive-cell conversions, UTF-16 access and case mapping) are guest code from the shared `varta-intrinsics` crate, linked function by function with their data onto a private second memory; a v38 host implements 59 of 93 imports. Measured below ([linked intrinsics measurement](#linked-intrinsics-measurement-v38)). Pending: the value17 readers and conversions, JSON, `primitive_compare`/`primitive_equal` and BigInt, which need the value-layout readers in the shared crate |
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Registered, admits nothing |
 | `tsx()` | TSX: TSX parsing and template compilation | Registered, admits nothing |
 | `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Registered, admits nothing |
 | `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionaries | Registered, admits nothing |
+
+#### Linked intrinsics measurement (v38)
+
+Measured on the author's macOS arm64 host with production budgets
+(`cargo test -p varta-runtime --lib linked_intrinsic_measurements -- --ignored
+--nocapture`; Node 24 for the cold start). Growth is the v38 module minus the
+same program compiled for v37; fuel is one whole run, including instantiation.
+
+| Program uses | v37 bytes | v38 bytes | Growth | Imports v37 / v38 | Fuel v37 | Fuel v38 | Wasmtime compile ms (v38) | Node first run ms v37 / v38 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| none | 1917 | 1917 | +0 | 1 / 1 | 34 | 34 | 3.0 | 0.13 / 0.14 |
+| Math.sin | 1951 | 6656 | +4705 | 2 / 1 | 39 | 16510 | 3.8 | 0.28 / 0.16 |
+| every Math | 3080 | 25544 | +22464 | 23 / 1 | 377 | 40494 | 7.3 | 0.16 / 0.87 |
+| toFixed | 3016 | 94979 | +91963 | 2 / 1 | 16798 | 53419 | 22.2 | 0.16 / 0.68 |
+| toString(radix) | 2911 | 76251 | +73340 | 2 / 1 | 16775 | 139851 | 23.4 | 0.14 / 1.24 |
+| Number text (4) | 6531 | 104997 | +98466 | 5 / 1 | 18774 | 173912 | 29.2 | 0.28 / 1.66 |
+| parseInt/parseFloat | 2433 | 52142 | +49709 | 3 / 1 | 17014 | 70342 | 13.2 | 0.18 / 0.80 |
+| isNaN/isFinite(union) | 2481 | 25372 | +22891 | 2 / 1 | 17104 | 68190 | 12.7 | 0.20 / 0.77 |
+| charAt/charCodeAt | 2519 | 4323 | +1804 | 4 / 2 | 17197 | 34704 | 9.0 | 0.22 / 0.38 |
+| toUpperCase/toLowerCase | 3079 | 22596 | +19517 | 3 / 1 | 17620 | 72615 | 9.9 | 0.18 / 0.56 |
+
+- **Size.** Math costs about 1 KiB per function; the first Number-text or
+  parse function pulls in exact big-integer arithmetic (`num-bigint`) and Ryū
+  tables, 50–90 KiB once, shared by the rest of the family; `Number` of a
+  string pulls in the decimal parser (about 22 KiB) and case mapping the
+  Unicode tables (about 20 KiB). The whole library is
+  `crates/varta-compiler/src/link/intrinsics.json` `bytes`; a program links only
+  what it reaches.
+- **Fuel.** A linked call costs its instructions (`Math.sin(0.5)` about 100,
+  `toFixed` a few thousand, BigInt-backed radix text tens of thousands)
+  instead of one of `abi::MAX_HOST_CALLS`. Wasmtime also charges
+  instantiation for data segments in 16 KiB steps (about 16,400 fuel per
+  step), which is most of the fixed cost of the smaller rows. Production
+  budgets are unchanged; the turn-budgets stream owns any per-turn change.
+- **Compile and cold start.** Wasmtime (debug test build, Cranelift
+  optimized) compiles the largest module in about 30 ms. Node's first
+  compile, instantiate and `_start` with stub imports stays under 2 ms
+  (V8 compiles lazily; later runs of the same bytes hit V8's module cache).
+  The browser and Raspberry Pi 5 were not measured: no browser automation
+  and no device were used.
+
+**Next increment: the value-layout readers.** The remaining pure imports all
+read value layout 17 beyond primitive cells: reference cells, error objects,
+records, arrays, dictionaries, vectors, function envelopes, BigInt payloads and
+JSON schemas. Linking them needs, in this order:
+
+1. The readers of `varta_common::value` and `varta_common::bigint` generic over
+   `varta_intrinsics::Memory`, owned by one `no_std` crate. `varta-common` may
+   not depend on another workspace crate (`crates/varta-project/tests/boundaries.rs`),
+   so either the readers move into `varta-intrinsics` and the runtime uses them
+   from there (constants mirrored and checked as in `layout.rs`), or the
+   boundary rule admits `varta-common -> varta-intrinsics`. Owner decision; the
+   program-limits stream owns value 18 and must land first or together.
+2. `varta-bigint` without `std` (its `varta-common` uses are the BigInt payload
+   view, ECMAScript whitespace and the error class), so BigInt operations and
+   the value17 conversions link with the same work budget, charged as fuel.
+3. The JSON encoder and checked decoder on `serde_json` without `std` (`alloc`
+   and `raw_value`), with the decoder calling the guest's allocator and
+   retainer exports through a new linker import module that resolves to guest
+   exports by name, and keeping every child rooted until its parent is
+   published, exactly as the host writer does.
+4. `value_log_v11` as linked rendering followed by the `log_string16` effect,
+   so logging stays the only host output.
 
 ### Platform targets and application model
 

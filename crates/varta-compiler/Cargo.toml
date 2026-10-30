@@ -8,7 +8,9 @@ license.workspace = true
 varta-bigint = { path = "../varta-bigint" }
 varta-common = { path = "../varta-common" }
 thiserror.workspace = true
-wasm-encoder.workspace = true
+# `wasmparser` enables `reencode`, used to link the v38 intrinsic library
+# (no new crate: wasm-encoder already depends on the locked wasmparser).
+wasm-encoder = { workspace = true, features = ["wasmparser"] }
 wasmparser.workspace = true
 swc_common = "26.0.0"
 swc_ecma_parser = "46.1.2"

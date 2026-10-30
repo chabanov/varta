@@ -1,0 +1,16 @@
+[package]
+name = "varta-intrinsics-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The v38 guest intrinsic library: `varta-intrinsics` compiled to a core
+# wasm32 module by `scripts/build-intrinsics.py` (profile `intrinsics`). The
+# compiler embeds the checked-in result and links the functions a program uses
+# into its guest module. On native targets this crate is empty.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+varta-intrinsics = { path = "../varta-intrinsics" }

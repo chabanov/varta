@@ -33,6 +33,13 @@ pub(crate) fn module(
                 varta_common::HostScalar::F64 => matches!(actual, wasmtime::ValType::F64),
                 varta_common::HostScalar::I64 => matches!(actual, wasmtime::ValType::I64),
             };
+        if language.profile.is_some_and(|p| p.links(host)) {
+            return Err(wasmtime::Error::msg(format!(
+                "pure intrinsic must be linked into the module, not imported: {}",
+                import.name()
+            ))
+            .into());
+        }
         if language
             .profile
             .is_some_and(|p| p.host_operation(host) != host)
@@ -66,6 +73,9 @@ pub(crate) fn module(
         tools,
     ))
 }
+
+/// Index of v38's private intrinsic memory (after guest memory 0).
+const INTRINSIC_MEMORY: usize = 1;
 
 fn error(message: &str) -> RuntimeError {
     wasmtime::Error::msg(message.to_owned()).into()
@@ -101,6 +111,7 @@ fn preflight(
         return Err(error("Wasm exceeds size limit"));
     }
     let language = crate::language::inspect(bytes)?;
+    let linked = language.profile.is_some_and(|p| p.linked_intrinsics());
     let mut values = 0;
     let mut function_catalog = None;
     let mut union_imports = false;
@@ -114,9 +125,15 @@ fn preflight(
                 return Err(error("exception profile forbids a Wasm start function"));
             }
             Payload::TypeSection(reader) => {
+                let signatures = abi::MAX_WASM_SIGNATURES
+                    + if linked {
+                        abi::MAX_LINKED_INTRINSIC_SIGNATURES
+                    } else {
+                        0
+                    };
                 for (count, ty) in reader.into_iter_err_on_gc_types().enumerate() {
                     let ty = ty.map_err(|e| error(&e.to_string()))?;
-                    if count >= abi::MAX_WASM_SIGNATURES
+                    if count >= signatures
                         || ty.params().len() > abi::MAX_WASM_PARAMETERS
                         || ty.results().len() > 2
                     {
@@ -196,21 +213,47 @@ fn preflight(
                         } else {
                             abi::LEGACY_INTERNAL_FUNCTIONS
                         }
-                        + abi::MAX_HTTP_HANDLERS =>
+                        + abi::MAX_HTTP_HANDLERS
+                        + if linked {
+                            abi::MAX_LINKED_INTRINSIC_FUNCTIONS
+                        } else {
+                            0
+                        } =>
             {
                 return Err(error("too many functions"));
             }
             Payload::MemorySection(reader) => {
-                if reader.count() > 1 {
+                if reader.count() > 1 + u32::from(linked) {
                     return Err(error("only one memory is supported"));
                 }
-                for memory in reader {
+                for (index, memory) in reader.into_iter().enumerate() {
                     let memory = memory.map_err(|e| error(&e.to_string()))?;
                     if memory.memory64
                         || memory.shared
                         || memory.initial > (abi::MAX_MEMORY_BYTES / abi::RESULT_BASE) as u64
                     {
                         return Err(error("unsupported memory type or initial size"));
+                    }
+                    // V38's second memory is the private intrinsic memory,
+                    // bounded by its own declared maximum.
+                    if index == INTRINSIC_MEMORY
+                        && memory.maximum.is_none_or(|maximum| {
+                            maximum
+                                > (abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64
+                                || memory.initial > maximum
+                        })
+                    {
+                        return Err(error("unbounded or oversized intrinsic memory"));
+                    }
+                }
+            }
+            Payload::ExportSection(reader) if linked => {
+                for export in reader {
+                    let export = export.map_err(|e| error(&e.to_string()))?;
+                    if export.kind == wasmparser::ExternalKind::Memory
+                        && export.index as usize == INTRINSIC_MEMORY
+                    {
+                        return Err(error("the intrinsic memory must not be exported"));
                     }
                 }
             }

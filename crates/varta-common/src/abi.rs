@@ -136,3 +136,15 @@ pub enum HostStatus {
 }
 
 pub const MAX_WASM_FUNCTION_BODY_BYTES: usize = 65_536;
+/// V38 (`linked_intrinsics`): maximum of the private intrinsic memory, the
+/// module's second memory, which holds only the linked library's stack,
+/// static data and per-call arena. It is never exported, starts empty of
+/// guest values and is bounded by its declared maximum; guest memory 0 keeps
+/// [`MAX_MEMORY_BYTES`] and its layout.
+pub const MAX_INTRINSIC_MEMORY_BYTES: usize = 8 * 1024 * 1024;
+/// V38: defined functions the linked intrinsic library may add on top of the
+/// profile's user, helper and HTTP allowance.
+pub const MAX_LINKED_INTRINSIC_FUNCTIONS: usize = 512;
+/// V38: function signatures the linked intrinsic library may add on top of
+/// [`MAX_WASM_SIGNATURES`] after deduplication against the guest's.
+pub const MAX_LINKED_INTRINSIC_SIGNATURES: usize = 64;

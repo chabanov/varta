@@ -4,6 +4,20 @@ use std::time::{Duration, Instant};
 use varta_common::{CapabilityGrant, abi};
 use wasmtime::{Engine, Instance, Module, Store, StoreLimitsBuilder};
 
+/// Guest memory 0; a v38 module (`linked_intrinsics`) adds its private
+/// intrinsic memory, whose maximum validation bounds by
+/// `abi::MAX_INTRINSIC_MEMORY_BYTES`.
+const GUEST_MEMORIES: usize = 1;
+fn limits(memories: usize) -> wasmtime::StoreLimits {
+    StoreLimitsBuilder::new()
+        .memory_size(abi::MAX_MEMORY_BYTES)
+        .memories(memories)
+        .tables(1)
+        .table_elements(1024)
+        .instances(1)
+        .build()
+}
+
 pub(crate) struct Execution {
     pub store: Store<RuntimeContext>,
     _deadline: Deadline,
@@ -26,13 +40,7 @@ impl Execution {
                     Some(ceiling) => policy::Policy::with_ceiling(requested, Some(ceiling)),
                     None => policy::Policy::new(requested),
                 },
-                limits: StoreLimitsBuilder::new()
-                    .memory_size(abi::MAX_MEMORY_BYTES)
-                    .memories(1)
-                    .tables(1)
-                    .table_elements(1024)
-                    .instances(1)
-                    .build(),
+                limits: limits(GUEST_MEMORIES),
                 output: RunOutput::default(),
                 output_bytes: 0,
                 host_calls: 0,
@@ -86,6 +94,15 @@ impl Execution {
         self.instantiation_started = true;
         self.store.data_mut().function_catalog = catalog;
         let result = (|| {
+            // Validation admitted a second memory only as v38's private
+            // intrinsic memory; every other module keeps the limits it has.
+            let memories = module.resources_required().num_memories as usize;
+            if memories > GUEST_MEMORIES {
+                self.store.data_mut().limits = limits(memories);
+                // Wasmtime reads the instance, memory and table counts when
+                // the limiter is installed; install it again with the count.
+                self.store.limiter(|context| &mut context.limits);
+            }
             let mut linker = wasmtime::Linker::new(self.store.engine());
             host::register(&mut linker)?;
             let instance = linker.instantiate(&mut self.store, module)?;

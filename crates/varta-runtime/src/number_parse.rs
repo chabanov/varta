@@ -1,185 +1,16 @@
-//! ABI26 primitive ToString followed by decimal or integer-prefix interpretation.
-use crate::{RuntimeContext, number, primitive_number};
-use num_bigint::BigUint;
-use std::borrow::Cow;
-use varta_common::{
-    HostOperation as Host,
-    value::{PrimitiveBox, ValueKind},
-};
+//! ABI26 `parseInt`/`parseFloat` host imports over the shared
+//! `varta-intrinsics` implementation (also linked into v38 guests).
+use crate::RuntimeContext;
+use varta_common::HostOperation as Host;
+#[cfg(test)]
+use varta_intrinsics::parse::{float, int32, integer};
 use wasmtime::{Caller, Extern, Linker};
-fn text(bytes: &[u8], cell: i64) -> Result<Cow<'_, [u8]>, wasmtime::Error> {
-    let value = PrimitiveBox::read(bytes, cell as u64).map_err(wasmtime::Error::new)?;
-    let spelling = match value.kind {
-        ValueKind::String => {
-            let start = value.payload as u32 as usize;
-            let length = (value.payload >> 32) as usize;
-            return Ok(Cow::Borrowed(&bytes[start..start + length]));
-        }
-        ValueKind::Float64 => number::canonical_display(f64::from_bits(value.payload)),
-        ValueKind::Boolean => if value.payload == 0 { "false" } else { "true" }.into(),
-        ValueKind::Null => "null".into(),
-        ValueKind::Undefined => "undefined".into(),
-        _ => {
-            return Err(wasmtime::Error::msg(
-                "numeric parsing requires primitive cells",
-            ));
-        }
-    };
-    Ok(Cow::Owned(varta_common::text::encode(&spelling)))
+fn fatal(error: varta_intrinsics::IntrinsicError) -> wasmtime::Error {
+    wasmtime::Error::msg(error.to_string())
 }
-fn unit(bytes: &[u8], at: usize) -> Option<u16> {
-    bytes
-        .get(at * 2..at * 2 + 2)
-        .map(|s| u16::from_le_bytes([s[0], s[1]]))
-}
-fn trim_start(bytes: &[u8]) -> usize {
-    let mut at = 0;
-    while unit(bytes, at).is_some_and(primitive_number::whitespace) {
-        at += 1;
-    }
-    at
-}
-fn digit(unit: u16) -> Option<u32> {
-    Some(match unit {
-        0x30..=0x39 => u32::from(unit - 0x30),
-        0x41..=0x5a => u32::from(unit - 0x41) + 10,
-        0x61..=0x7a => u32::from(unit - 0x61) + 10,
-        _ => return None,
-    })
-}
-fn int32(value: f64) -> i32 {
-    let bits = value.to_bits();
-    let exponent = ((bits >> 52) & 0x7ff) as i32 - 1023;
-    if !(0..84).contains(&exponent) {
-        return 0;
-    }
-    let significand = (bits & 0xf_ffff_ffff_ffff) | (1 << 52);
-    let magnitude = if exponent < 52 {
-        (significand >> (52 - exponent)) as u32
-    } else {
-        (significand as u32).wrapping_shl((exponent - 52) as u32)
-    };
-    if value.is_sign_negative() {
-        magnitude.wrapping_neg() as i32
-    } else {
-        magnitude as i32
-    }
-}
-fn rounded(value: &BigUint) -> f64 {
-    let mut bits = value.bits();
-    if bits <= 53 {
-        return value.to_u64_digits().first().copied().unwrap_or(0) as f64;
-    }
-    if bits > 1024 {
-        return f64::INFINITY;
-    }
-    let shift = (bits - 53) as usize;
-    let mut leading = (value >> shift).to_u64_digits()[0];
-    let remainder = value - (BigUint::from(leading) << shift);
-    let half = BigUint::from(1_u8) << (shift - 1);
-    if remainder > half || (remainder == half && leading & 1 != 0) {
-        leading += 1;
-    }
-    if leading == 1 << 53 {
-        leading >>= 1;
-        bits += 1;
-    }
-    if bits > 1024 {
-        return f64::INFINITY;
-    }
-    f64::from_bits(((bits + 1022) << 52) | (leading & 0xf_ffff_ffff_ffff))
-}
-fn integer(bytes: &[u8], radix: i32) -> f64 {
-    let mut at = trim_start(bytes);
-    let negative = unit(bytes, at) == Some(0x2d);
-    if matches!(unit(bytes, at), Some(0x2b | 0x2d)) {
-        at += 1;
-    }
-    if radix != 0 && !(2..=36).contains(&radix) {
-        return f64::NAN;
-    }
-    let strip = radix == 0 || radix == 16;
-    let mut radix = if radix == 0 { 10 } else { radix as u32 };
-    if strip && unit(bytes, at) == Some(0x30) && matches!(unit(bytes, at + 1), Some(0x78 | 0x58)) {
-        radix = 16;
-        at += 2;
-    }
-    let first = at;
-    let mut value = BigUint::from(0_u8);
-    while let Some(digit) = unit(bytes, at).and_then(digit).filter(|&n| n < radix) {
-        value *= radix;
-        value += digit;
-        at += 1;
-        // Every extension is >= this overflowing prefix; its suffix cannot change the result.
-        if value.bits() > 1024 {
-            return if negative {
-                f64::NEG_INFINITY
-            } else {
-                f64::INFINITY
-            };
-        }
-    }
-    if at == first {
-        return f64::NAN;
-    }
-    let result = rounded(&value);
-    if negative { -result } else { result }
-}
-fn float(bytes: &[u8]) -> f64 {
-    let start = trim_start(bytes);
-    let mut at = start;
-    let negative = unit(bytes, at) == Some(0x2d);
-    if matches!(unit(bytes, at), Some(0x2b | 0x2d)) {
-        at += 1;
-    }
-    if b"Infinity"
-        .iter()
-        .enumerate()
-        .all(|(offset, &ch)| unit(bytes, at + offset) == Some(u16::from(ch)))
-    {
-        return if negative {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
-        };
-    }
-    let digits_start = at;
-    while unit(bytes, at).is_some_and(|ch| (0x30..=0x39).contains(&ch)) {
-        at += 1;
-    }
-    let mut digits = at - digits_start;
-    if unit(bytes, at) == Some(0x2e) {
-        at += 1;
-        let fraction = at;
-        while unit(bytes, at).is_some_and(|ch| (0x30..=0x39).contains(&ch)) {
-            at += 1;
-        }
-        digits += at - fraction;
-    }
-    if digits == 0 {
-        return f64::NAN;
-    }
-    let mut end = at;
-    if matches!(unit(bytes, at), Some(0x65 | 0x45)) {
-        at += 1;
-        if matches!(unit(bytes, at), Some(0x2b | 0x2d)) {
-            at += 1;
-        }
-        let exponent = at;
-        while unit(bytes, at).is_some_and(|ch| (0x30..=0x39).contains(&ch)) {
-            at += 1;
-        }
-        if at > exponent {
-            end = at;
-        }
-    }
-    let ascii = (start..end)
-        .map(|i| unit(bytes, i).unwrap() as u8)
-        .collect::<Vec<_>>();
-    std::str::from_utf8(&ascii)
-        .unwrap()
-        .parse()
-        .unwrap_or(f64::NAN)
+#[cfg(test)]
+fn text(bytes: &[u8], cell: i64) -> Result<Vec<u8>, wasmtime::Error> {
+    varta_intrinsics::primitive::parse_input(bytes, cell as u64).map_err(fatal)
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
@@ -194,9 +25,8 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 return Err(wasmtime::Error::msg("missing value memory"));
             };
             let bytes = memory.data(&caller);
-            let input = text(bytes, input)?;
-            let radix = int32(primitive_number::convert(bytes, radix)?);
-            let result = integer(&input, radix);
+            let result = varta_intrinsics::primitive::parse_int(bytes, input as u64, radix as u64)
+                .map_err(fatal)?;
             caller.data().check_budget()?;
             Ok(result)
         },
@@ -209,17 +39,21 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
                 return Err(wasmtime::Error::msg("missing value memory"));
             };
-            let result = float(&text(memory.data(&caller), input)?);
+            let result =
+                varta_intrinsics::primitive::parse_float(memory.data(&caller), input as u64)
+                    .map_err(fatal)?;
             caller.data().check_budget()?;
             Ok(result)
         },
     )?;
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitive_number;
+    use num_bigint::BigUint;
+    use varta_common::value::ValueKind;
     fn same(actual: f64, expected: f64) {
         if expected.is_nan() {
             assert!(actual.is_nan(), "{actual}");
@@ -1788,7 +1622,6 @@ mod tests {
             .copy_from_slice(&packed.to_le_bytes());
         bytes[start..].copy_from_slice(&units);
         let handle = (((value::UNION_BYTES as u64) << 32) | cell as u64) as i64;
-        assert!(matches!(text(&bytes, handle).unwrap(), Cow::Borrowed(_)));
         assert_eq!(&*text(&bytes, handle).unwrap(), units);
         for (offset, word) in [
             (header, 16),

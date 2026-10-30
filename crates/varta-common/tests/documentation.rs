@@ -58,6 +58,11 @@ fn limits() -> String {
             "abi::MAX_MEMORY_BYTES",
         ),
         (
+            "Private intrinsic memory (v38 `linked_intrinsics`)",
+            mib(abi::MAX_INTRINSIC_MEMORY_BYTES),
+            "abi::MAX_INTRINSIC_MEMORY_BYTES",
+        ),
+        (
             "Guest instructions (fuel)",
             abi::FUEL.to_string(),
             "abi::FUEL",
@@ -122,6 +127,15 @@ fn limits() -> String {
                 abi::MAX_INTERNAL_FUNCTIONS
             ),
             "abi::*_INTERNAL_FUNCTIONS",
+        ),
+        (
+            "Linked intrinsic functions / signatures (v38)",
+            format!(
+                "{} / {}",
+                abi::MAX_LINKED_INTRINSIC_FUNCTIONS,
+                abi::MAX_LINKED_INTRINSIC_SIGNATURES
+            ),
+            "abi::MAX_LINKED_INTRINSIC_*",
         ),
         (
             "Record fields",

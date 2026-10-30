@@ -3100,7 +3100,7 @@ recoverable denials. V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION`
 with v36 and v37; v37 keeps host ABI 33. Eight selectors gate the streams and
 admit nothing yet: program limits (`program_limits`), data limits
 (`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
-(`linked_intrinsics`), the view protocol (`view_protocol`), TSX (`tsx`),
+(`linked_intrinsics`, [rules below](#v38-linked-intrinsics)), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
 (`codegen_v2`). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
@@ -3128,3 +3128,36 @@ profiles frozen, and add each stream's rules under its own heading here.
   (`pilot_v38_inherits_v37_…` in `varta-common` `language`, the v38 runtime
   language test and the v38 CLI smoke test) change in the stream that
   introduces the difference.
+
+### V38 linked intrinsics
+
+Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
+[embedding](embedding.md#linked-intrinsics-v38).
+
+- Pure algorithms have one implementation, in `varta-intrinsics` (`no_std`,
+  `alloc`, `#![forbid(unsafe_code)]`, no `varta-common` dependency). The
+  runtime's host imports call it; never copy an algorithm into the runtime, a
+  generated host or the shim. Earlier profiles keep their own observable
+  behaviour: Math keeps the platform backend (`native_math::Platform`) there,
+  and error messages stay the host's.
+- `varta-intrinsics-wasm` is the only crate with `unsafe`: the `varta_link`
+  extern block, `#[unsafe(no_mangle)]` exports, the arena allocator and the
+  panic handler. An export has the exact name and scalar signature of its
+  `HostOperation`, resets the arena through `arena::entry` when it allocates,
+  reads guest memory only through `guest::Guest` (bounds-checked copies) and
+  publishes string results only through `guest::result`.
+- To link an operation: add its export, add it to `HostOperation::linked`, run
+  `scripts/build-intrinsics.py`, regenerate the embedding tables, and add a
+  corpus test in `linked_intrinsic_tests` that compares v38 with the v37 host
+  output (or, for approximated Math, with the native `Portable` backend). An
+  operation that reads value layouts beyond primitive cells needs those
+  readers in the shared library first; never link a partial reader.
+- After changing either intrinsics crate, rebuild the artifact with the script
+  (offline, locked) and commit `intrinsics.wasm` and `intrinsics.json`
+  together; `intrinsic_library_matches_its_sources` fails otherwise. Keep the
+  library free of tables, indirect calls, passive segments and start
+  functions (the linker rejects them) and keep `layout.rs` equal to `abi` and
+  `value` (`intrinsic_layout_matches_common`).
+- Linking never changes a v37 or earlier module, never reorders guest-defined
+  functions and never exports the private memory. Production budgets stay
+  unchanged: linked code is charged fuel, not host calls.

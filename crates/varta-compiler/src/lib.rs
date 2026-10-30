@@ -3,6 +3,7 @@
 mod emit;
 mod error;
 mod ir;
+mod link;
 mod lower;
 mod modules;
 pub use modules::{Compilation, ModuleLoader, ModuleSource};
@@ -135,7 +136,9 @@ pub fn compile_modules_with_profile(
     let graph = modules::Graph::load_with_profile(entry, loader, profile)?;
     let root = &graph.units[&graph.entry];
     let program = lower::lower(&graph, profile)?;
-    let bytes = emit::emit(&program).map_err(|e| root.source.locate(e, root.ast.span()))?;
+    let bytes = emit::emit(&program)
+        .and_then(|bytes| link::link(bytes, profile))
+        .map_err(|e| root.source.locate(e, root.ast.span()))?;
     wasmparser::Validator::new()
         .validate_all(&bytes)
         .map_err(|e| {
