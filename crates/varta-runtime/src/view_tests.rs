@@ -719,6 +719,63 @@ fn scripted_inputs_wait_for_zero_delay_timers_and_their_chains() {
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }
 
+pub(crate) const TIMERS: &str = include_str!("view_cases/timers.ts");
+pub(crate) const TIMERS_SCRIPT: &str = r##"{"inputs":[
+    {"input":"type","target":"#box","text":"a"},
+    {"input":"key","target":"#box","key":"Enter"},
+    {"input":"click","target":"#later"},
+    {"input":"wait","ms":30},
+    {"input":"type","target":"#box","text":"b"}
+]}"##;
+/// Runs of the determinism cases; at least 20.
+const DETERMINISM_RUNS: usize = 25;
+
+/// A scripted session is a function of the artifact and the script: the
+/// same turns, output and final tree on every run, however fast the host
+/// is (cb6795d decided the input/timer boundary by the wall clock).
+#[test]
+fn scripted_sessions_are_deterministic_across_runs() {
+    let bytes = compile(TIMERS);
+    let grants = [timers()];
+    let first = run_view(&bytes, &grants, None, &script(TIMERS_SCRIPT)).unwrap();
+    use crate::TurnKind::{Main, Timer, View};
+    assert_eq!(
+        turn_kinds(&first),
+        [
+            Main, Timer, Timer, Timer, // the m chain
+            View, Timer, Timer, Timer, // type a: the i chain
+            // Enter: keydown and the newline's input, then the k chain, the
+            // button and the i chain interleaved in timer order.
+            View, View, Timer, Timer, Timer, Timer, Timer, Timer, Timer, Timer, Timer, View, Timer,
+            Timer, Timer, Timer, // click: the c chain
+            Timer, // wait 30: delayed
+            View, Timer, Timer, Timer, // type b
+        ]
+    );
+    assert_eq!(
+        first.output.lines,
+        [
+            "varta log: input a",
+            "varta log: key Enter",
+            "varta log: input a\n",
+            "varta log: click later",
+            "varta log: input a\nb"
+        ]
+    );
+    let log = text_of(by_id(&first.snapshot["tree"], "log").unwrap());
+    assert_eq!(
+        log,
+        "1:m3;2:m2;3:m1;4:i3;5:i2;6:i1;7:k5;8:i3;9:k4;10:i2;11:k3;12:i1;13:k2;14:k1;\
+         15:c4;16:c3;17:c2;18:c1;19:delayed;20:i3;21:i2;22:i1;"
+    );
+    for _ in 1..DETERMINISM_RUNS {
+        let again = run_view(&bytes, &grants, None, &script(TIMERS_SCRIPT)).unwrap();
+        assert_eq!(turn_kinds(&first), turn_kinds(&again));
+        assert_eq!(first.output.lines, again.output.lines);
+        assert_eq!(first.snapshot, again.snapshot);
+    }
+}
+
 /// Zero-delay timers keep Node's 1 ms minimum on the virtual clock: a chain
 /// interleaves with a 2 ms timer in Node's order (Node 24 prints
 /// `c0 a c1 c2 b`), all before the input; the 50 ms timer needs a wait.

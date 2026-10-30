@@ -1020,7 +1020,11 @@ in [conformance/README.md](conformance/README.md).
   new `{"input":"wait","ms":N}` step advances virtual time and fires the
   timers due by then; nothing waits for the wall clock, a timer no wait
   reaches never fires, and one step settles within `Script::MAX_STEP_TURNS`
-  turns.
+  turns. Root cause of the run-to-run differences: `run_view` decided each
+  timer's dueness by comparing its wall-clock target with `Instant::now()`
+  after every turn, so a 1 ms timer fired before or after the next input
+  depending on host speed. Scripted sessions are now deterministic (25-run
+  runtime and 20-run CLI tests compare turns, output and snapshot).
 
 - V38 accessible names follow the accname 1.2 steps the L0 subset admits:
   `aria-hidden="true"`, `display: none` and closed-dialog descendants no

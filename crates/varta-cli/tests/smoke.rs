@@ -16400,6 +16400,56 @@ fn view_capabilities_are_exact_and_scripts_fail_closed() {
     );
 }
 
+const VIEW_TIMER_CASE: &str = include_str!("../../varta-runtime/src/view_cases/timers.ts");
+
+/// The per-turn budget lines without their wall-clock part: label, fuel,
+/// host calls and microtasks of every turn, then the totals.
+fn turn_lines(output: &std::process::Output) -> Vec<String> {
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .chain(String::from_utf8_lossy(&output.stdout).lines())
+        .filter(|line| line.starts_with("varta budget: turn"))
+        .map(|line| line.split(", wall").next().unwrap_or(line).to_owned())
+        .collect()
+}
+
+/// `varta dev --view-script` is a function of the artifact and the script:
+/// typing, Enter, a click, zero-delay chains and a waited-for timer give the
+/// same turns, output and snapshot on every one of 20 runs.
+#[test]
+fn view_script_sessions_are_deterministic_across_runs() {
+    let project = RegressionProject::new(
+        VIEW_TIMER_CASE,
+        serde_json::json!({"time": {"timer": true}}),
+    );
+    project.language_profile("checked-f64-utf16-v38");
+    fs::write(
+        project.0.join("script.json"),
+        r##"{"inputs":[
+  {"input":"type","target":"#box","text":"a"},
+  {"input":"key","target":"#box","key":"Enter"},
+  {"input":"click","target":"#later"},
+  {"input":"wait","ms":30},
+  {"input":"type","target":"#box","text":"b"}
+]}"##,
+    )
+    .unwrap();
+    let args = ["dev", "--view-script", "script.json", "--budget-report"];
+    let first = project.command(&args);
+    assert!(first.status.success(), "{}", combined(&first));
+    let turns = turn_lines(&first);
+    assert_eq!(turns.len(), 29, "{}", combined(&first));
+    assert!(turns[0].contains(" main:"), "{turns:?}");
+    let snapshot = view_snapshot(&first);
+    assert!(view_text(view_node(&snapshot, "log")).ends_with("19:delayed;20:i3;21:i2;22:i1;"));
+    for _ in 1..20 {
+        let again = project.command(&args);
+        assert!(again.status.success(), "{}", combined(&again));
+        assert_eq!(turns, turn_lines(&again));
+        assert_eq!(first.stdout, again.stdout);
+    }
+}
+
 /// A node that appears in a zero-delay timer turn, and one after 200 ms.
 const VIEW_TIMERS: &str = r#"
 export function main(): void {

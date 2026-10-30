@@ -9974,9 +9974,30 @@ trusted platform inputs above, and `prompts`) or a wait,
 - `Date.now()` and `performance.now()` keep reading the clock their
   `time.now` grant authorizes; virtual time governs timers only.
 
-Same script, same artifact and same answers give the same turns, output and
-snapshot on every run. An embedder that drives `Application::step` itself
-keeps the wall clock.
+**Determinism guarantee.** For a scripted session without network requests
+in flight, the same artifact, script, grants and host policy give the same
+sequence of turns (kinds and order, and the fuel, host calls and
+microtasks of each), the same output and the same final snapshot on every
+run and every host speed. No wall-clock read decides whether a timer is
+due, how tasks are ordered or when a step is performed: host tasks keep
+their queue order, timers their (due time, sequence) key, and the wall
+clock bounds only the per-turn deadline and the optional lifetime, whose
+exhaustion fails the session instead of reordering it. The guarantee does
+not cover the `wall` and memory fields of the budget report, `Date.now()`
+and `performance.now()`, the audit log's timestamps, or the arrival of
+network completions. (Before this rule, `run_view` compared each timer's
+wall-clock target, `started` + due time, with `Instant::now()` after every
+turn, so a `setTimeout(…, 0)` due at 1 ms fired before or after the next
+input depending on how long the previous turns took.)
+
+**Live applications.** An embedder that drives `Application::step` itself
+(a native or browser shell) keeps the wall clock: timers are due by
+`Instant::now()` and real inputs arrive whenever the user acts, so the
+order of an input and a timer due at about the same moment, of network
+completions and timers, and the number of interval firings before an input
+are inherently racy and are not guaranteed. What every host guarantees is
+the turn model itself: one task per turn, microtasks drained in the turn,
+timers in (due time, sequence) order, host tasks in arrival order.
 
 **Capabilities.** `ui.open_url` (`GrantKind::OpenUrls`: URL patterns under
 the network URL rules over `https://` and `http://`, plus the exact
