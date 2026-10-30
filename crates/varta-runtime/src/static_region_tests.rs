@@ -208,7 +208,7 @@ fn malformed_or_foreign_static_regions_fail_before_instantiation() {
 
 /// Guest fuel of one run: instantiation plus `_start` under a test-only
 /// ceiling large enough for the v37 data-segment copy.
-fn fuel_of(bytes: &[u8]) -> u64 {
+pub(super) fn fuel_of(bytes: &[u8]) -> u64 {
     const CEILING: u64 = 64 * abi::FUEL;
     let runtime = VartaRuntime::new();
     let module = runtime.prepare_module(bytes).unwrap();

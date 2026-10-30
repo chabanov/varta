@@ -11,6 +11,11 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 skips the initialization of module constants that no reachable code
+  reads and renumbers the rest, so startup fuel, root slots and static data no
+  longer grow with unused constants (100 unread enum objects: 5991 fuel under
+  v38 against 45253 under v37; adding 200 more leaves v38 unchanged).
+
 - V38 `varta_resume` dispatches through a static per-layout table and one
   `br_table`: about a dozen bytes per frame layout instead of a ~125-byte
   check block, constant resume fuel, the same checks before any effect and

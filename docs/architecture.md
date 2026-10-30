@@ -9025,6 +9025,27 @@ stream), imports, globals and tables, and all production runtime budgets
 limit relabelled as v37 fails at its host ABI section, and with a downgraded
 host ABI at the frozen structural checks, before any guest effect.
 
+#### Unread module constants (`program_limits`)
+
+V37 removes unreachable functions but keeps every module-constant
+initializer, so a program pays at startup for every constant of every module
+it reaches (the pilot's 356 enum-value objects in `models.ts` cost about 390 K
+fuel). V38 extends the removal to constants: a constant whose value no
+reachable code reads — directly, through another read constant, through a
+local of the same initializer chunk or through a function-valued constant —
+is not initialized. Initializers are a checked pure subset, so skipping one is
+unobservable. Reads are found to a fixpoint over the reachable functions
+(initializer bodies excluded) and the kept initializer statements; an
+initializer chunk left empty is no longer called and is removed with the
+unreachable functions; an initializer with any statement other than a local
+or constant initialization is kept whole. The constants still read or
+written are renumbered densely, so a dropped constant takes no permanent root
+slot, and its record descriptors and strings are no longer emitted. Startup
+cost then depends only on the read constants and their chunks, not on the
+number of declared ones. Unused record shapes, unions and preludes already
+cost no emitted code or data (descriptors are emitted only for shapes that
+emitted code builds), so their interning stays eager.
+
 #### Table-driven resume dispatch (`program_limits`)
 
 Under v37 and earlier, `varta_resume` checks a frame against each layout in

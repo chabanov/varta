@@ -3148,6 +3148,11 @@ profiles frozen, and add each stream's rules under its own heading here.
 - Runtime readers take `value::ModuleBounds` (static region and limits) from
   the validated module, never from guest memory; legacy and test callers use
   `ModuleBounds::LEGACY`.
+- V38 skips unread module constants (`prune::unread_constants`) and renumbers
+  the remaining ones. Any new constant reference in the IR must be visible to
+  `each_constant` and `reads`, and an initializer statement other than
+  `Init`/`InitModuleConstant` keeps its whole chunk; only pure initializers
+  may ever be skipped.
 - The v38 `varta_resume` is table-driven (`frames::dispatch_table`,
   `table_dispatch`): keep every check before the `RUNNING` store and keep one
   direct body call per layout in layout order (frame admission depends on

@@ -281,6 +281,68 @@ fn function_values_beyond_the_frozen_function_index_are_read() {
     );
 }
 
+/// V38 skips the initialization of module constants that no reachable code
+/// reads (initializers are pure): startup fuel and static data no longer grow
+/// with unused enum-like objects, while constants read directly, through
+/// other constants, through function-valued constants and module variables
+/// keep their values.
+#[test]
+fn unread_module_constants_cost_nothing_at_startup() {
+    const COUNT: usize = 100;
+    let program = |count: usize| {
+        let mut source: String = (0..count)
+            .map(|i| {
+                format!(
+                    "export const E{i} = {{ A: \"a{i}\", B: \"b{i}\", C: \"c{i}\" }} as const;\n"
+                )
+            })
+            .collect();
+        source.push_str(
+            "const BASE = { tag: \"base\" };\n\
+             const DERIVED = { base: BASE, n: 1 };\n\
+             const PICK = (): string => DERIVED.base.tag;\n\
+             const UNUSED_FN = (): string => E3.B;\n\
+             let counter = 5;\n\
+             function bump(): number { counter = counter + 1; return counter; }\n\
+             export function main(): void {\n\
+               console.log(E7.A + \":\" + PICK() + \":\" + String(bump()) + \":\" + String(DERIVED.n));\n\
+             }\n",
+        );
+        source
+    };
+    let expected = [log("a7:base:6:1")];
+    let compile = |profile, count| {
+        varta_compiler::compile_typescript_with_profile(&program(count), profile).unwrap()
+    };
+    let run = |bytes: &[u8]| {
+        VartaRuntime::new()
+            .run_wasm_bytes(bytes, &[])
+            .unwrap()
+            .lines
+    };
+    let (v37, v38) = (compile(V37, COUNT), compile(V38, COUNT));
+    assert_eq!(run(&v37), expected);
+    assert_eq!(run(&v38), expected);
+    let fuel = crate::static_region_tests::fuel_of;
+    // V38 startup does not depend on the number of unread constants (only on
+    // the initializer chunks that hold read ones).
+    let large = compile(V38, 3 * COUNT);
+    assert_eq!(run(&large), expected);
+    assert!(
+        fuel(&large) <= fuel(&v38) + 200,
+        "{} vs {}",
+        fuel(&large),
+        fuel(&v38)
+    );
+    assert!(
+        fuel(&v38) * 4 < fuel(&v37),
+        "{} vs {}",
+        fuel(&v38),
+        fuel(&v37)
+    );
+    assert!(v38.len() < v37.len());
+}
+
 /// The exported `varta_resume` dispatcher's body size.
 fn dispatcher_bytes(bytes: &[u8]) -> usize {
     let mut imported = 0;
