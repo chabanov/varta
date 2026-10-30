@@ -21,4 +21,8 @@ pub(super) struct State {
     /// inferred binding of such a name initialized by an index read, and a
     /// `for...of` variable of such a name, read `T | undefined` unchecked.
     pub(super) undefined_checked: BTreeSet<String>,
+    /// V38 (`strict_members`): the record-union members that the most
+    /// recently completed `switch` over a discriminant left unhandled, when
+    /// no statement followed it; named by a missing-return diagnostic.
+    pub(super) uncovered: Option<String>,
 }

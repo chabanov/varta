@@ -263,6 +263,11 @@ fn program_limits() -> String {
         ),
         ("Union types", |l| count(l.union_types), "union_types"),
         (
+            "Structural members of one union",
+            |l| count(l.union_members),
+            "union_members",
+        ),
+        (
             "Array element types",
             |l| count(l.array_types),
             "array_types",
@@ -288,6 +293,11 @@ fn program_limits() -> String {
             "schema_types()",
         ),
         ("JSON schema", |l| bytes(l.schema_bytes), "schema_bytes"),
+        (
+            "Members of one JSON schema union",
+            |l| count(l.json_union_members),
+            "json_union_members",
+        ),
         (
             "Function capture types",
             |l| count(l.capture_types()),

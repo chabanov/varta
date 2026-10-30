@@ -16399,3 +16399,67 @@ fn view_capabilities_are_exact_and_scripts_fail_closed() {
         combined(&unknown)
     );
 }
+
+// Profile v38 strict members and wide discriminated unions (`strict_members`).
+const STRICT_MEMBERS_V38: &str = r#"interface A { kind: "a" }
+interface B { kind: "b"; n: number }
+interface C { kind: "c"; tags: string[] }
+type U = A | B | C;
+function f(u: U): string {
+  switch (u.kind) {
+    case "a": return "a";
+    case "b": return "b" + String(u.n);
+    case "c": return "c" + u.tags.join("+");
+  }
+}
+export function main(): void {
+  for (const text of ['{"kind":"b","n":2}', '{"tags":["x","y"],"kind":"c"}', '{"kind":"a"}']) {
+    console.log(f(JSON.parse(text) as U));
+  }
+  try {
+    console.log(f(JSON.parse('{"kind":"d"}') as U));
+  } catch (e) {
+    console.log(e instanceof TypeError ? "unmatched" : "other");
+  }
+}"#;
+
+#[test]
+fn strict_members_and_discriminated_unions_run_in_dev_and_single_binaries() {
+    let project = RegressionProject::new(STRICT_MEMBERS_V38, serde_json::json!({}));
+    project.language_profile(V38_PROFILE);
+    let expected = [
+        "varta log: b2",
+        "varta log: cx+y",
+        "varta log: a",
+        "varta log: unmatched",
+    ];
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    for output in [
+        project.command(&["dev"]),
+        project.run_in(Command::new(project.0.join("dist/app")), &[]),
+    ] {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(stdout_lines(&output), expected, "{}", combined(&output));
+    }
+    // An undeclared read is a located check error under v38 and reads
+    // `undefined` under v37.
+    fs::write(
+        project.0.join("src/main.ts"),
+        "interface CallPayload { name: string }\nexport function main(): void {\n  \
+         const p: CallPayload = { name: \"now\" };\n  console.log(\"plain \" + p.tool_name);\n}\n",
+    )
+    .unwrap();
+    let check = project.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check)
+            .contains("main.ts:4:28: property tool_name is not declared by CallPayload"),
+        "{}",
+        combined(&check)
+    );
+    project.language_profile("checked-f64-utf16-v37");
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(stdout_lines(&dev), ["varta log: plain undefined"]);
+}

@@ -11,6 +11,26 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 (`strict_members`) rejects a static access to a property the type does
+  not declare, as `tsc --strict` does (TS2339): reads, writes, compound,
+  update and logical assignments, optional chains, literal computed keys and
+  destructuring on records, interfaces, views, class instances and narrowed
+  union members fail with `property tool_name is not declared by CallPayload`
+  at the property. V3 to v37 keep reading such names as `undefined`.
+
+- V38 takes the per-union member limits from the limits registry
+  (`ProgramLimits::union_members` and `json_union_members`, frozen 16 and 7
+  for v1 to v37), so a discriminated union of 24 or 200 record interfaces
+  compiles; checked conversion looks the discriminant up once and selects the
+  member with a literal chain (about 55 fuel per member before the match), and
+  an unknown discriminant is a catchable `TypeError`. The limit diagnostic adds
+  the counts in every profile: `union has 24 structural members; limit 16`.
+
+- V38 treats a `switch` without `default` over a discriminant path (`u.kind`,
+  `e.payload.type`) as exhaustive when its clauses cover every member, and a
+  missing clause names the unhandled members in the missing-return
+  diagnostic.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of

@@ -206,8 +206,9 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
             if types.profile.literal_types() {
                 return literals::union(union, types);
             }
-            if union.types.len() > literals::MAX_UNION_MEMBERS {
-                return Err(invalid("union member count exceeds limit"));
+            let limit = types.profile.limits().union_members;
+            if union.types.len() > limit {
+                return Err(literals::member_limit(union.types.len(), "", limit));
             }
             let members = union
                 .types

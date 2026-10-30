@@ -43,6 +43,10 @@ impl Lower<'_> {
             Err(self
                 .source
                 .locate(unsupported("inherited object binding property"), span))
+        } else if self.types.profile.strict_members() {
+            Err(self
+                .source
+                .locate(records::undeclared(name, ty, self.types), span))
         } else {
             Ok(undefined(span))
         }

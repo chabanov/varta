@@ -994,6 +994,8 @@ mod regexp_tests;
 #[cfg(test)]
 mod static_region_tests;
 #[cfg(test)]
+mod strict_member_tests;
+#[cfg(test)]
 mod subtyping_tests;
 #[cfg(test)]
 mod unknown_json_tests;

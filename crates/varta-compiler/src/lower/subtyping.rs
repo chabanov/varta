@@ -318,6 +318,8 @@ fn shallow(ty: Type, types: &ir::ValueTypes) -> String {
     }
     match ty {
         Type::Class(class) => types.classes.get(class).name.clone(),
+        // A discriminant by its values (`type: 'x'`).
+        Type::Literal(_, id) => literals::describe(id, types),
         _ => void_functions::describe(ty, types),
     }
 }

@@ -1,10 +1,11 @@
 use super::*;
 use varta_common::language::LanguageProfile as P;
-/// The documented v32 bounds (`literals::MAX_LITERAL_MEMBERS`,
-/// `MAX_LITERAL_TABLE_MEMBERS` and `MAX_UNION_MEMBERS` in varta-compiler).
+/// The documented v32 bounds (`literals::MAX_LITERAL_MEMBERS` and
+/// `MAX_LITERAL_TABLE_MEMBERS` in varta-compiler, and the frozen
+/// `ProgramLimits::union_members` of `varta_common::limits`).
 const LITERAL_MEMBERS: usize = 4096;
 const LITERAL_TABLE_MEMBERS: usize = 65_536;
-const UNION_MEMBERS: usize = 16;
+const UNION_MEMBERS: usize = varta_common::limits::FROZEN.union_members;
 fn compile(source: &str, profile: P) -> Result<Vec<u8>, varta_compiler::CompilerError> {
     varta_compiler::compile_typescript_with_profile(source, profile)
 }

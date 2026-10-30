@@ -69,6 +69,20 @@ impl Lower<'_> {
             None => invalid(format!("unknown {kind}: {name}")),
         }
     }
+    /// A missing instance member: under v38 (`strict_members`) named with its
+    /// class, as for records, unless an engine prelude explains it.
+    fn undeclared_member(&self, class: u32, name: &str, kind: &str) -> CompilerError {
+        if self.types.profile.strict_members()
+            && self
+                .types
+                .classes
+                .pending_member(class, name, self.types.profile)
+                .is_none()
+        {
+            return records::undeclared(name, Type::Class(class), self.types);
+        }
+        self.unknown_member(class, name, kind)
+    }
     fn member_key(&self, prop: &ast::MemberProp) -> Result<String> {
         match prop {
             ast::MemberProp::Ident(id) => Ok(id.sym.to_string()),
@@ -391,7 +405,7 @@ impl Lower<'_> {
                     member.prop.span(),
                 )),
                 None => Err(self.source.locate(
-                    self.unknown_member(class, &name, "class member"),
+                    self.undeclared_member(class, &name, "class member"),
                     member.prop.span(),
                 )),
             };
@@ -462,7 +476,7 @@ impl Lower<'_> {
                 if self.types.classes.field(class, &name).is_some() {
                     type_error(format!("class field {name} is not callable"))
                 } else {
-                    self.unknown_member(class, &name, "class method")
+                    self.undeclared_member(class, &name, "class method")
                 },
                 member.prop.span(),
             ));

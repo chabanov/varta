@@ -16,8 +16,6 @@ pub(crate) const MAX_LITERAL_MEMBERS: usize = 4096;
 /// Members across all interned literal sets of one compilation, flow
 /// refinements included. Refinements that would exceed it are skipped.
 pub(crate) const MAX_LITERAL_TABLE_MEMBERS: usize = 65_536;
-/// Members of a union that are not literal types (the pre-v32 syntactic limit).
-pub(crate) const MAX_UNION_MEMBERS: usize = 16;
 /// Members shown when a diagnostic describes a literal set.
 const DESCRIBED_MEMBERS: usize = 6;
 
@@ -111,25 +109,38 @@ pub(super) fn annotation(literal: &ast::TsLitType, types: &mut ir::ValueTypes) -
 }
 
 /// A union annotation: literal members merge into one constrained primitive per
-/// base; at most `MAX_UNION_MEMBERS` other members remain structural.
+/// base; at most the profile's `union_members` other members remain
+/// structural (`LanguageProfile::limits`).
 pub(super) fn union(union: &ast::TsUnionType, types: &mut ir::ValueTypes) -> Result<Type> {
-    if union.types.len() > MAX_LITERAL_MEMBERS + MAX_UNION_MEMBERS {
-        return Err(invalid("union member count exceeds limit"));
+    let limit = types.profile.limits().union_members;
+    if union.types.len() > MAX_LITERAL_MEMBERS + limit {
+        return Err(member_limit(
+            union.types.len(),
+            "",
+            MAX_LITERAL_MEMBERS + limit,
+        ));
     }
     let members = union
         .types
         .iter()
         .map(|ty| keyword_type(ty, types))
         .collect::<Result<Vec<_>>>()?;
-    if members
+    let structural = members
         .iter()
         .filter(|ty| !matches!(ty, Type::Literal(..)))
-        .count()
-        > MAX_UNION_MEMBERS
-    {
-        return Err(invalid("union member count exceeds limit"));
+        .count();
+    if structural > limit {
+        return Err(member_limit(structural, "structural ", limit));
     }
     unions::intern(members, types)
+}
+
+/// A union annotation with more members than its profile admits. The text
+/// keeps the earlier prefix, so v1 to v37 diagnostics only gain the counts.
+pub(super) fn member_limit(count: usize, kind: &str, limit: usize) -> CompilerError {
+    invalid(format!(
+        "union member count exceeds limit: union has {count} {kind}members; limit {limit}"
+    ))
 }
 
 fn string_bytes(
@@ -386,7 +397,7 @@ pub(super) fn conform(value: Expr, expected: Option<Type>, types: &ir::ValueType
     }
 }
 
-fn describe(id: u32, types: &ir::ValueTypes) -> String {
+pub(super) fn describe(id: u32, types: &ir::ValueTypes) -> String {
     let set = types.literals.set(id);
     let mut text: Vec<_> = set
         .iter()

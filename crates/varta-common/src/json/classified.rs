@@ -44,7 +44,7 @@ impl JsonSchema {
     /// Recoverable syntax/type classification with fatal, schema-independent budgets.
     /// Syntax locations are serde_json's one-based lines/byte columns in UTF-8 input.
     pub fn parse_json_classified(&self, bytes: &[u8]) -> Result<JsonValue, JsonDecodeError> {
-        self.classify(bytes, DataLimits::LEGACY, None)
+        self.classify(bytes, (DataLimits::LEGACY, &crate::limits::FROZEN), None)
     }
     /// [`Self::parse_json_classified_limited`] whose host work stops with
     /// [`JsonInputLimit::Deadline`] once `deadline` passes.
@@ -54,7 +54,7 @@ impl JsonSchema {
         limits: DataLimits,
         deadline: Instant,
     ) -> Result<JsonValue, JsonDecodeError> {
-        self.classify(bytes, limits, Some(deadline))
+        self.classify(bytes, (limits, &crate::limits::MAXIMUM), Some(deadline))
     }
     /// [`Self::parse_json_classified`] under a profile's data limits (v38
     /// `data_limits`): input bytes, depth, visited values, array and
@@ -64,15 +64,16 @@ impl JsonSchema {
         bytes: &[u8],
         limits: DataLimits,
     ) -> Result<JsonValue, JsonDecodeError> {
-        self.classify(bytes, limits, None)
+        self.classify(bytes, (limits, &crate::limits::MAXIMUM), None)
     }
     fn classify(
         &self,
         bytes: &[u8],
-        limits: DataLimits,
+        (limits, structural): (DataLimits, &crate::limits::ProgramLimits),
         deadline: Option<Instant>,
     ) -> Result<JsonValue, JsonDecodeError> {
-        self.validate()?;
+        // As in `decode_with_limits`.
+        self.validate_within(structural)?;
         if bytes.len() > limits.json_input_bytes {
             return Err(JsonDecodeError::Limit(JsonInputLimit::Bytes));
         }
@@ -93,7 +94,7 @@ impl JsonSchema {
                 syntax(error)
             });
         }
-        self.decode_with_limits(bytes, &limit, limits, deadline)
+        self.decode_with_limits(bytes, &limit, (limits, structural), deadline)
             .map_err(|_| {
                 if let Some(limit) = limit.get() {
                     JsonDecodeError::Limit(limit)

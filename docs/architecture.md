@@ -5445,7 +5445,7 @@ memory-layout change. All budgets are unchanged.
   interned by one compilation, guard refinements included, hold at most
   `MAX_LITERAL_TABLE_MEMBERS` (65,536) members, and a refinement that would exceed
   it is skipped rather than rejected. Literal members do not count against the
-  structural union limit `MAX_UNION_MEMBERS` (16), which still bounds the other
+  structural union limit `ProgramLimits::union_members` (16 through v37), which still bounds the other
   members, so a union annotation has at most 4096 + 16 syntactic members. A union
   that mixes a set with other members (`Kind | null`, `'a' | number`) is an
   ordinary structural union within the existing value-ABI union limits.
@@ -8951,7 +8951,7 @@ or any change to the static-region ABI lands as an early, separate foundation
 commit, and the other streams rebase onto it. V37 and earlier profiles keep
 their host ABI, value ABI, static region and layouts.
 
-Eight selectors gate the batch's work streams; each admits nothing until its
+Nine selectors gate the batch's work streams; each admits nothing until its
 stream adds a subsection below:
 
 - program-limits stream: `program_limits()` (profile-dependent structural
@@ -8976,7 +8976,11 @@ stream adds a subsection below:
   language items);
 - codegen-v2 stream: `codegen_v2()` (cheaper code generation for loops, string
   comparison and concatenation, and dictionary call sites; it changes code, not
-  the admitted language).
+  the admitted language);
+- strict-members stream: `strict_members()` (undeclared member access is a
+  compile error, per-union member limits from the registry, discriminant
+  dispatch and exhaustive discriminant switches;
+  [implemented](#strict-members-and-wide-unions-strict_members)).
 
 The view-protocol and TSX streams add
 [their subsection](#v38-view-protocol-and-tsx-view_protocol-tsx). Until a
@@ -9224,13 +9228,18 @@ The v38 values (`limits::WASM`) and why:
   counterpart, so they take the same uniform entity bound as the index spaces
   they lower to (ids stay `u32`, below the `i32` range of Wasm constants).
   Module size, static memory and compile time bound them much earlier.
+- **Members of one union** (structural members of an annotation, members of
+  a checked JSON schema union) the same entity bound, added by the
+  strict-members stream
+  ([strict members](#strict-members-and-wide-unions-strict_members)); v1 to
+  v37 keep 16 and 7.
 - **JSON schema bytes**: the memory budget (schemas live in the static
   region, see below); **static extension**: up to
   `abi::MAX_STATIC_EXTENSION_PAGES`, the memory32 address space, and in
   practice the module's memory maximum.
 
 Unchanged for every profile: physical parameters (`abi::MAX_WASM_PARAMETERS`),
-record fields, record key bytes, JSON union members, suspension states per
+record fields, record key bytes, suspension states per
 function, live frames and the other data limits (owned by the data-limits
 stream), imports, globals and tables, and all production runtime budgets
 (fuel, memory, deadline, host calls, output). A v38 module over a frozen
@@ -9786,8 +9795,97 @@ Not yet admitted: Web byte bodies (`ReadableStream<Uint8Array>`,
 `arrayBuffer()`, `Blob`, `FormData`), typed `globalThis` member access,
 `Promise.race` over differently typed promises, `A[] | B[]` of record
 element types, `instanceof Map/Set/
-Uint8Array`, unions mixing collections with other objects, exhaustive switches
-over discriminant paths, and record spreads that keep JavaScript's key order.
+Uint8Array`, unions mixing collections with other objects, and record spreads
+that keep JavaScript's key order. Exhaustive switches over discriminant paths
+are admitted by [strict members](#strict-members-and-wide-unions-strict_members).
+
+#### Strict members and wide unions (`strict_members`)
+
+Selector `strict_members()` (v38 only) makes member access as strict as
+TypeScript's `strict` checking and lets discriminated unions grow to the
+registry's Wasm-derived bound. It changes no host ABI, value layout or JSON
+schema version.
+
+**Undeclared names are compile errors.** Under v3 to v37 a static read of an
+ordinary name that a closed record type does not declare yields `undefined`
+(the "unknown ordinary names read Undefined" rules of the earlier profile
+sections, which stay frozen for them). Under v38 a static access to a name
+that the static type of its object does not declare is a compile error
+(TypeScript's TS2339): a read, a write, a compound (`+=`), update (`++`) or
+logical (`??=`) assignment, an optional chain `p?.x`, a computed literal key
+`p["x"]` and an object binding pattern `{ x } = p`, on a closed record, an
+interface, a view (the parameter's type decides, not the wider argument), a
+class instance (field, getter or method) or a union member narrowed by its
+discriminant (`e.payload.x` after `switch (e.type)` or `if (e.type === …)`).
+The diagnostic is a `type` category error at the property's range naming the
+property and its owner, the interface or alias name where one resolves to the
+shape, the shape otherwise:
+
+```text
+main.ts:4:28: property tool_name is not declared by CallPayload
+main.ts:3:47: property tool_name is not declared by { name: string }
+```
+
+Unchanged in v38: declared optional fields read `T | undefined`; index
+signatures (`[key: string]: T`, mixed records), `Record<string, T>` and other
+dictionaries, `unknown` and `object` keep their own rules; `"x" in p` tests
+any name without reading it (a view may hold an object that has it); a
+dynamic (non-literal) key keeps the bounded all-fields-plus-`undefined` read;
+inherited `Object.prototype` names keep their earlier errors (`unknown or
+inherited object property: …`); a name a union does not declare on every
+member keeps `property … is not declared by every member of the union`; an
+engine prelude member that is still pending keeps its `unsupported` reason.
+Engine preludes declare every name they read (checked by a test that loads
+each of them under v38).
+
+**Per-union member limits come from the registry.** The structural (non-
+literal) members of one union annotation and the members of one checked JSON
+schema union are `ProgramLimits::union_members` and `json_union_members` of
+`LanguageProfile::limits()` ([resource limits](#resource-limits)); the frozen
+16 and 7 hold for v1 to v37 and v38 takes the uniform entity bound
+`limits::ENTITIES`. The compiler's union lowering, the JSON schema validator
+(`JsonSchema::validate_within`, used by the compiler, by the runtime's
+schema reader with the module's limits, and by the checked decoders, which
+re-validate within `limits::MAXIMUM` after the reader checked the profile's
+own limits) and its bounded backward references read them. No descriptor or
+cell field encodes a member index: a union cell carries its member's value
+kind and a record member is told apart by its payload's own layout
+descriptor, so no field width caps the member count. Literal members keep the
+compiler's literal-set bounds. The diagnostic of an annotation over the limit
+keeps its earlier prefix in every profile and adds the counts:
+`union member count exceeds limit: union has 24 structural members; limit 16`
+(and `invalid JSON schema: union member count: union has 8 members; limit 7`
+for a schema union). A v38 module with a wide union relabelled as v37 fails
+at its host ABI section, and with a downgraded host ABI at validation, before
+any guest effect.
+
+**Discriminated unions dispatch on the discriminant.** Checked conversion to
+a union of record members (`JSON.parse(text) as U`, `unknown` assertions and
+declared reads) looks up each distinct discriminant field once (one lookup
+for a union discriminated by `type`), then runs a flat sequence of the
+members' literal tests in member order; the first match builds its member
+through that member's shared build function, boxed directly into the union.
+An object no test selects, a missing discriminant and an undeclared field
+throw the catchable checked-conversion `TypeError` (strict checked JSON).
+Measured costs under production budgets: about 55 fuel per member before the
+matching one (one short string comparison) and about 9 per member after it
+(a flag test), with no per-member key lookup or frame slot; a field read
+through a 200-member union costs about 9 fuel per member. A union wider than
+the frozen 16 members reads fields through a flat guarded sequence instead of
+a nested chain and tests exactness as a balanced disjunction with one record
+tag test in front of its record members, so the compiler's passes and the
+emitted blocks do not nest deeper with the member count; unions within 16
+members keep their nested chains and bytes.
+
+**Exhaustive discriminant switches.** A `switch` without `default` over a
+discriminant path (`u.kind`, or a nested path such as `e.payload.type`) whose
+literal clauses narrow its object to `never` is exhaustive, as in TypeScript:
+the missing default is unreachable and traps, a value-returning function
+needs no final return, and each clause keeps its narrowing. When such a
+switch is not exhaustive and the function's end follows it, the missing-return
+diagnostic names the unhandled members: `value-returning function must return
+on every path; the switch at 6:3 does not handle B | C`. `if`/`else if` chains
+are not treated as exhaustive (TypeScript reports TS2366 for them as well).
 
 #### Linked intrinsics (`linked_intrinsics`)
 
@@ -10717,12 +10815,14 @@ budgets are the same for every profile.
 | Wasm function body | 65536 bytes | 7654321 bytes | `function_body_bytes` |
 | Record shapes / classes | 128 | 1000000 | `record_shapes` |
 | Union types | 128 | 1000000 | `union_types` |
+| Structural members of one union | 16 | 1000000 | `union_members` |
 | Array element types | 128 | 1000000 | `array_types` |
 | `Promise<T>` types | 64 | 1000000 | `promise_types` |
 | Generator types | 64 | 1000000 | `generator_types` |
 | Function types | 128 | 1000000 | `function_types` |
 | JSON schema types (legacy / current schemas) | 260 / 389 | 2000004 / 3000005 | `schema_types()` |
 | JSON schema | 65536 bytes | 8388608 bytes | `schema_bytes` |
+| Members of one JSON schema union | 7 | 1000000 | `json_union_members` |
 | Function capture types | 672 | 5000032 | `capture_types()` |
 | Static extension pages | 0 | 65518 | `static_extension_pages` |
 <!-- generated:program-limits:end -->
