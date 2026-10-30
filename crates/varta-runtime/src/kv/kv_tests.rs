@@ -307,6 +307,60 @@ fn deno_written_values_decode_strictly_into_their_types() {
     );
 }
 
+/// The shapes the production census found common, written by Deno 2.9.7
+/// (`kv_cases/deno-2.9.7-probe/probe.kv`): arrays of a holey elements kind
+/// that miss no index read as dense arrays, a genuinely missing index is a
+/// `TypeError`, a sub-object referenced twice reads as two equal copies, and
+/// an explicit `undefined` property fills a required `T | undefined` field.
+#[test]
+fn deno_written_holey_kinds_shared_objects_and_undefined_fields_read_strictly() {
+    const PROBE: &[u8] = include_bytes!("../kv_cases/deno-2.9.7-probe/probe.kv");
+    let tree = Tree::new();
+    std::fs::write(tree.root().join("probe.kv"), PROBE).unwrap();
+    let source = format!(
+        "interface Meta {{ tag: string; n: number }}\n\
+         interface Shared {{ first: Meta; second: Meta; list: Meta[] }}\n{}",
+        guarded(
+            "/data/probe.kv",
+            "    const refilled = await kv.get<number[]>(['p', 'refilled']);\n\
+             console.log(JSON.stringify(refilled.value));\n\
+             const filled = await kv.get<number[]>(['p', 'newarray']);\n\
+             console.log(JSON.stringify(filled.value));\n\
+             const shared = (await kv.get<Shared>(['p', 'shared_record'])).value;\n\
+             if (shared !== null) {\n\
+               console.log(JSON.stringify(shared) + ' ' + String(shared.first === shared.second));\n\
+               shared.first.n = 2;\n\
+               console.log(String(shared.second.n));\n\
+             }\n\
+             const required = (await kv.get<{ a: number; b: number | undefined }>(['p', 'required_undefined'])).value;\n\
+             if (required !== null) { console.log(String(required.b === undefined) + ' ' + String(Object.keys(required).length)); }\n\
+             const optional = (await kv.get<{ a: number; b?: number }>(['p', 'required_undefined'])).value;\n\
+             if (optional !== null) { console.log(String(optional.b === undefined)); }\n\
+             const holey: string[] = ['holey_strings', 'holeend'];\n\
+             for (const key of holey) {\n\
+               try { await kv.get<unknown[]>(['p', key]); } catch (e) { if (e instanceof Error) { console.log(key + ': ' + e.message); } }\n\
+             }\n\
+             try { await kv.get<{ a: number; b: number }>(['p', 'required_undefined']); } catch (e) { if (e instanceof Error) { console.log(e.name); } }",
+        )
+    );
+    assert_eq!(
+        run(&source, read_write(), tree.roots()),
+        [
+            "[1,5,3]",
+            "[1,2]",
+            // Decoded records take the schema's field order, as checked JSON does.
+            r#"{"first":{"n":1,"tag":"t"},"list":[{"n":1,"tag":"t"},{"n":1,"tag":"t"}],"second":{"n":1,"tag":"t"}} false"#,
+            "1",
+            "true 2",
+            "true",
+            "holey_strings: KV value does not match the checked type: a stored array has holes",
+            "holeend: KV value does not match the checked type: a stored array has holes",
+            "TypeError",
+            "done",
+        ]
+    );
+}
+
 #[test]
 fn mismatched_stored_values_are_catchable_type_errors() {
     let tree = Tree::new();
@@ -779,6 +833,211 @@ fn a_file_locked_by_another_writer_fails_clearly() {
         ),
         ["done"]
     );
+}
+
+/// A writable database of `tree`'s `fixture.kv`, opened directly.
+fn open_fixture(tree: &Tree) -> store::Database {
+    let policy = crate::policy::Policy::with_files(
+        &read_write(),
+        None,
+        &crate::policy::FileMode::Virtual(tree.roots()),
+    );
+    let target = policy
+        .database(kv::READ_CAPABILITY, "/data/fixture.kv")
+        .unwrap();
+    store::open(target, "/data/fixture.kv", true).unwrap()
+}
+
+/// One `set` of `["fenced", name]` to the string `"x"`.
+fn fenced_set(name: &str) -> (Vec<denokv_proto::Check>, Vec<denokv_proto::Mutation>) {
+    let key = denokv_proto::encode_key(&denokv_proto::Key(vec![
+        KeyPart::String("fenced".into()),
+        KeyPart::String(name.into()),
+    ]))
+    .unwrap();
+    let value = v8::encode(
+        &v8::Value::String(vec![u16::from(b'x')]),
+        kv::MAX_VALUE_BYTES,
+    )
+    .unwrap();
+    let mutation = denokv_proto::Mutation {
+        key,
+        kind: MutationKind::Set(KvValue::V8(value)),
+        expire_at: None,
+    };
+    (Vec::new(), vec![mutation])
+}
+
+fn fenced_rows(path: &Path) -> usize {
+    rows(path)
+        .iter()
+        .filter(|row| row.0.windows(6).any(|w| w == b"fenced"))
+        .count()
+}
+
+fn waiting_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+}
+
+fn failed_message(result: Result<Option<denokv_proto::Versionstamp>, store::Wait>) -> String {
+    match result {
+        Err(store::Wait::Failed(error)) => {
+            assert_eq!(error.name, kv::error::TYPE_ERROR);
+            error.message
+        }
+        Err(store::Wait::Deadline) => panic!("deadline"),
+        Ok(outcome) => panic!("committed: {outcome:?}"),
+    }
+}
+
+/// A commit fails fast on a write lock another connection holds, and on a
+/// turn with too little time left; nothing is applied either way.
+#[test]
+fn commits_fail_fast_on_a_held_lock_and_a_spent_turn() {
+    let tree = Tree::new();
+    let path = tree.fixture("fixture.kv");
+    let runtime = waiting_runtime();
+    let mut database = open_fixture(&tree);
+    let holder = rusqlite::Connection::open(&path).unwrap();
+    holder.execute_batch("begin immediate;").unwrap();
+    let started = std::time::Instant::now();
+    let deadline = started + std::time::Duration::from_secs(5);
+    let (checks, mutations) = fenced_set("busy");
+    let message = failed_message(database.commit(&runtime, deadline, checks, mutations));
+    assert_eq!(
+        message,
+        "the KV database /data/fixture.kv is locked by another writer; nothing was applied"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    holder.execute_batch("rollback;").unwrap();
+    // Less than the commit reserve left: nothing is submitted.
+    let soon =
+        std::time::Instant::now() + std::time::Duration::from_millis(kv::COMMIT_RESERVE_MS / 2);
+    let (checks, mutations) = fenced_set("late");
+    let message = failed_message(database.commit(&runtime, soon, checks, mutations));
+    assert!(
+        message.starts_with("too little time is left in this turn"),
+        "{message}"
+    );
+    // The database stays usable and commits once the lock is free.
+    let (checks, mutations) = fenced_set("free");
+    assert!(
+        database
+            .commit(&runtime, deadline, checks, mutations)
+            .unwrap()
+            .is_some()
+    );
+    drop(database);
+    assert_eq!(fenced_rows(&path), 1);
+}
+
+/// A lock taken after the probe keeps the worker waiting: at the cutoff the
+/// commit fails with a `TypeError`, and when the lock is released later the
+/// worker's commit is refused at its commit point, so nothing is ever
+/// applied and the database accepts nothing more.
+#[test]
+fn a_commit_that_misses_its_turn_is_never_applied() {
+    let tree = Tree::new();
+    let path = tree.fixture("fixture.kv");
+    let runtime = waiting_runtime();
+    let mut database = open_fixture(&tree);
+    let holder = rusqlite::Connection::open(&path).unwrap();
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_millis(kv::COMMIT_RESERVE_MS + 300);
+    let (checks, mutations) = fenced_set("missed");
+    let result = database.commit_with(&runtime, deadline, (checks, mutations), &mut || {
+        holder.execute_batch("begin immediate;").unwrap();
+    });
+    let message = failed_message(result);
+    assert_eq!(
+        message,
+        "the commit to the KV database /data/fixture.kv did not finish in this turn (another writer may hold its lock); nothing was applied"
+    );
+    assert!(std::time::Instant::now() < deadline);
+    // Release the lock: the worker retries, reaches the commit point and is
+    // refused there.
+    holder.execute_batch("rollback;").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(fenced_rows(&path), 0);
+    let later = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let (checks, mutations) = fenced_set("after");
+    let message = failed_message(database.commit(&runtime, later, checks, mutations));
+    assert!(
+        message.contains("unavailable after an unfinished operation"),
+        "{message}"
+    );
+    drop(database);
+    drop(holder);
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(fenced_rows(&path), 0);
+}
+
+/// The environment variable that makes the ignored test below a lock holder
+/// process (set only by the test that spawns it).
+const LOCK_HOLDER: &str = "VARTA_KV_TEST_LOCK_HOLDER";
+
+/// Run as a child process: hold the write lock of the file the variable
+/// names until its `.release` marker exists.
+#[test]
+#[ignore = "a helper process of a_write_lock_held_by_another_process_fails_fast"]
+fn kv_lock_holder_process() {
+    let Some(path) = std::env::var_os(LOCK_HOLDER) else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    let holder = rusqlite::Connection::open(&path).unwrap();
+    holder.execute_batch("begin immediate;").unwrap();
+    std::fs::write(path.with_extension("held"), b"").unwrap();
+    let release = path.with_extension("release");
+    let started = std::time::Instant::now();
+    while !release.exists() && started.elapsed() < std::time::Duration::from_secs(30) {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    holder.execute_batch("rollback;").unwrap();
+}
+
+/// Another process holding the write lock fails the commit at once, with
+/// nothing applied.
+#[test]
+#[cfg(unix)]
+fn a_write_lock_held_by_another_process_fails_fast() {
+    let tree = Tree::new();
+    let path = tree.fixture("fixture.kv");
+    let runtime = waiting_runtime();
+    let mut database = open_fixture(&tree);
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "kv::tests::kv_lock_holder_process",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(LOCK_HOLDER, &path)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while !path.with_extension("held").exists() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "no lock holder"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let (checks, mutations) = fenced_set("process");
+    let message = failed_message(database.commit(&runtime, deadline, checks, mutations));
+    assert!(
+        message.ends_with("is locked by another writer; nothing was applied"),
+        "{message}"
+    );
+    std::fs::write(path.with_extension("release"), b"").unwrap();
+    assert!(child.wait().unwrap().success());
+    drop(database);
+    assert_eq!(fenced_rows(&path), 0);
 }
 
 #[test]

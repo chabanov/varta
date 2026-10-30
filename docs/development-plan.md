@@ -940,18 +940,41 @@ reaches SQLite. Rejected: a hand-written SQLite schema or V8 engine, and
 codec; denokv uses that crate only for its V8 `sum`, which Varta does not
 call).
 
+**KV storage decisions (owner, 2026-10-30).** Writes fail fast: a busy
+write lock or a spent turn fails before anything is submitted, a commit is
+reported `ok` only once durable, and a commit not decided by its cutoff is
+refused at its commit point and never applied
+([contract](architecture.md#kv-storage-kv)). KV operations stay synchronous
+within the turn, with Deno's promise-returning API.
+
+**Production census (uarp.kv, 2026-10-30).** A read-only aggregate scan by the
+owner's API developer (counts only; no keys or values left the host), with a
+streaming serializer parser checked against the 2.9.4 fixture (45 of 45):
+1,201,564 rows with `v_encoding` 1, every one with header version 16 (`FF
+10`), none over 64 KiB, none unparsable (479,105 at most 256 B, 651,992 at most
+4 KiB, 70,467 at most 64 KiB). Top-level values: object 1,071,399, int32
+73,415, one-byte string 46,635, double 8,921, `true` 906, dense array 193,
+two-byte string 88, sparse array 7. Tag totals: one-byte string 23.9M, double
+16.45M, int32 2.88M, object 2.59M, `undefined` 1.06M, two-byte string 402,734,
+dense array 371,406, padding 188,599, `true` 163,463, sparse array 142,455,
+`false` 88,299, `null` 2,388, object reference 240. Never present: Date, Map,
+Set, BigInt, ArrayBuffer and views, RegExp, Error, primitive wrappers, UTF-8
+strings. Consequences: complete sparse-form arrays read as dense arrays,
+back-references read as copies, `undefined` properties fill `T | undefined`
+fields, and Date, Map, Set, BigInt and bytes inside values stay read-side
+`TypeError`s without a guest mapping (low priority). Besides these rows the file
+holds 139 KvU64 values and 1 bytes value (the earlier count).
+
 **KV storage open items.** `watch` (three uses in the UARP API) and queues
-(not used); asynchronous completions through the event loop like
-`net.request` instead of a synchronous wait (owner choice: the synchronous
-wait was taken because SQLite is local, it keeps commit order deterministic
-and denokv's single worker serializes writes anyway); `Date`, `Map`, `Set`,
-BigInt and nested `Uint8Array` values in both directions (the codec reads and
-writes them; the guest mappings are missing); key parts other than strings
-and numbers; reading a property holding `undefined` as present; a browser
-backend; measuring the serializer header versions in the production file (the
-reader accepts 13 to 16; Deno 2.9 writes 16) and whether it holds `Date`/`Map`
-values; a fixture written by Deno 2.9.4 under its own Varta-written
-counterpart in CI, which needs Deno in CI. The fixtures are synthetic: Deno
+(not used); event-loop completions like `net.request` instead of the
+synchronous wait within the turn; `Date`, `Map`, `Set`, BigInt and nested
+`Uint8Array` values (not in production; the codec reads and writes them, the
+guest mappings are missing); key parts other than strings and numbers;
+keeping a stored record's property order and aliasing on read; reading a
+property holding `undefined` as present for optional fields; a browser
+backend; Deno in CI to read Varta-written files automatically. The
+`if (res.ok)` narrowing and the other API-shape deviations are wave-3
+language items. The fixtures are synthetic: Deno
 2.9.4 (x86_64-linux, the owner's API developer) and Deno 2.9.7
 (aarch64-darwin) write byte-identical `v` and `v_encoding` for all 48 rows;
 versionstamps differ by design (random steps).

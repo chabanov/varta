@@ -10601,7 +10601,8 @@ into the static type the program names. V37 and earlier profiles reject
   and without `SQLITE_OPEN_CREATE`. After the schema check, the process's open
   descriptors (`/dev/fd`, `/proc/self/fd` on Linux, read with `stat` only, since
   closing any descriptor of a file drops the process's POSIX locks on it) must
-  show one new descriptor of the pinned file: a swap of the path between the
+  show a new descriptor of the pinned file for each SQLite connection (the
+  worker's, and the lock probe of a writable database): a swap of the path between the
   check and SQLite's open makes SQLite open another file, which this rejects
   (`the KV database … changed while it was opened`). KV opens are serialized in
   the process. SQLite opens the `-wal` and `-shm` files beside the verified
@@ -10621,16 +10622,42 @@ into the static type the program names. V37 and earlier profiles reject
   POSIX advisory locks), so a Deno process and a Varta process may share a
   file. A writable open probes the write lock without waiting (`BEGIN
   IMMEDIATE`); a file another writer holds fails with `TypeError: the KV
-  database … is locked by another writer`. After the open, `denokv_sqlite`
-  retries a busy lock as Deno does; a read or commit still waiting at the turn
-  deadline ends the turn with the deadline error and the database is not
-  closed in place (its worker may still finish once the other writer
-  releases the lock).
+  database … is locked by another writer`.
+- **Commits fail fast and never outlive their turn.** No guest write commits
+  after its turn has ended or after the guest was told it failed:
+  - A commit first probes the write lock on a second connection to the
+    verified file, waiting at most `kv::LOCK_WAIT_MS` and never past the
+    cutoff (the worker's own expiry collection holds it for a moment); a
+    lock another connection or process holds fails then with `TypeError: … is locked by another writer;
+    nothing was applied`, before anything is submitted.
+  - The **commit cutoff** is `kv::COMMIT_RESERVE_MS` before the turn
+    deadline. A commit started later fails at once with a `TypeError` and
+    applies nothing.
+  - The worker connection's SQLite commit hook decides, at SQLite's commit
+    point (before anything of the transaction is in the file), whether a
+    guest commit may go through: only before the cutoff. A commit it let
+    through is waited for until SQLite reports it durable (WAL with
+    `synchronous = FULL`) and only then reported `ok`.
+  - A commit still undecided at the cutoff (another writer took the lock
+    after the probe, or the worker is still busy) fails with `TypeError: the
+    commit … did not finish in this turn …; nothing was applied`. Whenever
+    the worker later reaches that commit's commit point, the hook refuses it,
+    so it is never applied. The database then accepts no further commit,
+    `denokv_sqlite`'s own maintenance included, and every later operation on
+    it fails with a `TypeError` until it is closed and opened again.
+  - So a commit never ends a turn with the deadline error, and nothing
+    commits in the background on behalf of the guest. The only commits
+    outside a guest commit are `denokv_sqlite`'s schema creation for a new
+    file and its expiry collection (deleting entries whose `expireIn` has
+    passed, as Deno does), which carry no guest data.
 - **Execution.** Each database has one `denokv_sqlite` worker thread (Deno's
-  configuration: one worker, no batching). A read or commit is one synchronous
-  host call that waits for the worker on a current-thread Tokio runtime,
-  bounded by the remaining turn deadline; the prelude's promises settle in the
-  same turn. Expired entries are collected by the worker as in Deno.
+  configuration: one worker, no batching). KV operations are synchronous
+  within the turn: a read or commit is one host call that waits for the
+  worker on a current-thread Tokio runtime (a commit until its cutoff, a read
+  until the turn deadline, after which the database is unavailable), and the
+  guest API returns promises, like `Deno.Kv`, that settle in the same turn.
+  Event-loop completions like `net.request`'s are an
+  [open item](development-plan.md#batch-v38-in-development).
 - **Imports.** Nine host ABI 34 imports. `kv_open (ptr, len) -> f64` (a
   UTF-16 virtual path; capability `kv.read`), `kv_read (ptr, len) -> f64`
   (capability `kv.read`) and `kv_commit (ptr, len) -> f64` (capability
@@ -10704,7 +10731,9 @@ into the static type the program names. V37 and earlier profiles reject
   the result of `Date.now() - start`) and the two-byte form for a Latin-1
   string sliced from a two-byte one; both read back as the same value, and
   Varta writes the canonical forms above, which equal Deno's bytes for values
-  written from literals and integer arithmetic. Every Deno 2.9.4 fixture value
+  written from literals and integer arithmetic. For an integer-valued double
+  V8 holds as a heap number, Varta's bytes (`I`) therefore differ from Deno's
+  (`N`) while the stored values are identical, and Deno reads both. Every Deno 2.9.4 fixture value
   and every Deno 2.9.7 probe value re-encodes byte-identically.
 - **Strict reads.** `get<T>`, `getMany<T>` and `list<T>` decode each value
   into `T` exactly like `varta.json.parse<T>`: the same targets (literal types
@@ -10713,8 +10742,16 @@ into the static type the program names. V37 and earlier profiles reject
   properties and missing required fields, `Record<string, unknown>` and index
   signatures admitting any keys, and mixed records validating their declared
   fields. Unlike JSON a number keeps `-0`, NaN and the infinities, and
-  `undefined` fills an optional or `undefined`-admitting position (a property
-  holding `undefined` reads as absent). A stored `Date`, `Map`, `Set`, nested
+  `undefined` fills an optional or `undefined`-admitting position: a property
+  holding `undefined` fills a required `x: T | undefined` field and reads as
+  absent for an optional `x?: T`. An array that V8 wrote in sparse form
+  because of its holey elements kind (`new Array(n)` filled, or a deleted
+  element written again) but that misses no index reads as a dense array; a
+  missing index is a `TypeError`. A sub-object referenced twice (`^`) reads as
+  two equal, independent copies: Varta values keep no aliasing across
+  storage. Records take the schema's field order, as checked JSON parsing
+  does, so a record read and written back is equal to the stored one but its
+  properties may be written in another order. A stored `Date`, `Map`, `Set`, nested
   `Uint8Array`, BigInt or an array with holes has no checked type yet. Any
   mismatch rejects with a catchable `TypeError: KV value does not match the
   checked type: …`; reading a `KvU64` or `Uint8Array` entry needs that type.

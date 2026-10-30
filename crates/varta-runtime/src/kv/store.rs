@@ -17,12 +17,20 @@
 //!    symbolic link in any component) and without `SQLITE_OPEN_CREATE`.
 //! 5. A read transaction checks the schema; then the process's own open
 //!    descriptors (`/dev/fd`, `/proc/self/fd` on Linux) are compared with
-//!    the ones before step 4: one descriptor SQLite opened must be the
-//!    pinned file. A swap of the path between steps 3 and 4 makes SQLite
+//!    the ones before step 4: each SQLite connection (the worker's, and the
+//!    lock probe of a writable database) must have opened the pinned file. A swap of the path between steps 3 and 4 makes SQLite
 //!    open another file, which this check rejects (KV opens are serialized
 //!    in the process, so no other open of the same file can interleave).
 //! 6. A writable database probes the write lock (`BEGIN IMMEDIATE` with no
 //!    busy wait): a file another writer holds fails clearly.
+//!
+//! Commits fail fast and never outlive their turn (see [`Fence`]): each one
+//! first probes the write lock without waiting on a second connection, and
+//! the worker's connection has a commit hook that lets a guest commit reach
+//! the file only before the commit cutoff, `kv::COMMIT_RESERVE_MS` before
+//! the turn deadline. A commit not decided by the cutoff is refused at its
+//! commit point whenever the worker gets there, so it is never applied, and
+//! the database accepts no commit after that.
 //!
 //! SQLite opens the `-wal` and `-shm` files next to the verified file by
 //! name, with `O_NOFOLLOW`; a process that can rename directories inside
@@ -94,6 +102,63 @@ static OPENING: Mutex<()> = Mutex::new(());
 /// The (device, inode) identity of a file.
 type Identity = (u64, u64);
 
+/// Where a guest commit stands, decided under one lock by the host and by the
+/// worker connection's commit hook (which runs at SQLite's commit point,
+/// before anything of the transaction is in the file).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Commit {
+    /// No guest commit in flight: the worker's own maintenance (Deno KV's
+    /// expiry collection and its schema creation) may commit.
+    Idle,
+    /// A guest commit may commit until the cutoff.
+    Open(Instant),
+    /// The hook let the guest commit through before the cutoff; SQLite is
+    /// making it durable.
+    Committing,
+    /// The cutoff passed first: every later commit is refused.
+    Closed,
+}
+
+/// The commit fence of a writable database.
+#[derive(Debug)]
+struct Fence(Mutex<Commit>);
+
+impl Fence {
+    fn state(&self) -> std::sync::MutexGuard<'_, Commit> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    fn set(&self, state: Commit) {
+        *self.state() = state;
+    }
+    /// The commit hook: whether SQLite must turn this commit into a rollback.
+    fn refuses(&self) -> bool {
+        let mut state = self.state();
+        match *state {
+            Commit::Idle | Commit::Committing => false,
+            Commit::Open(cutoff) if Instant::now() < cutoff => {
+                *state = Commit::Committing;
+                false
+            }
+            Commit::Open(_) | Commit::Closed => {
+                *state = Commit::Closed;
+                true
+            }
+        }
+    }
+    /// At the cutoff: close an undecided commit; whether the hook had let
+    /// it through already.
+    fn close(&self) -> bool {
+        let mut state = self.state();
+        if *state == Commit::Committing {
+            return true;
+        }
+        *state = Commit::Closed;
+        false
+    }
+}
+
 /// An open database.
 pub(crate) struct Database {
     sqlite: denokv_sqlite::Sqlite,
@@ -102,8 +167,13 @@ pub(crate) struct Database {
     pub path: String,
     /// The pinned file, held while the database is open.
     pinned: Option<std::fs::File>,
-    /// A read or commit outlived its deadline; the database is not joined on
-    /// close, since its worker may still be waiting for a lock.
+    /// A second connection to the verified file that probes the write lock
+    /// before each commit (writable databases).
+    probe: Option<rusqlite::Connection>,
+    fence: std::sync::Arc<Fence>,
+    /// A read or commit did not finish in its turn: the database refuses
+    /// every operation, and it is not joined on close, since its worker may
+    /// still be waiting for a lock.
     abandoned: bool,
 }
 
@@ -183,16 +253,28 @@ pub(crate) fn open_with(
         .busy_timeout(Duration::ZERO)
         .map_err(|e| KvError::io(path, e))?;
     check_schema(&connection, path, writable)?;
+    let probe = if writable {
+        let probe = rusqlite::Connection::open_with_flags(&host, flags)
+            .map_err(|e| KvError::io(path, e))?;
+        probe
+            .busy_timeout(Duration::ZERO)
+            .map_err(|e| KvError::io(path, e))?;
+        Some(probe)
+    } else {
+        None
+    };
     let after = open_descriptors().map_err(|e| KvError::io(path, e))?;
     // The pinned descriptor itself is no open by SQLite, whatever a rename
     // of its file did to the change time it shows.
     let pinned_fd = descriptor(&pinned);
     let reference = pinned_fd.and_then(shown);
-    if reference.is_none()
-        || !after
-            .difference(&before)
-            .any(|(fd, opened)| Some(*fd) != pinned_fd && Some(*opened) == reference)
-    {
+    // Each SQLite connection opens the file once: the worker's, and the
+    // probe of a writable database.
+    let opened = after
+        .difference(&before)
+        .filter(|(fd, opened)| Some(*fd) != pinned_fd && Some(*opened) == reference)
+        .count();
+    if reference.is_none() || opened < 1 + usize::from(writable) {
         return Err(KvError::type_error(format!(
             "the KV database {path} changed while it was opened"
         )));
@@ -203,6 +285,17 @@ pub(crate) fn open_with(
     connection
         .busy_timeout(BUSY_TIMEOUT)
         .map_err(|e| KvError::io(path, e))?;
+    let fence = std::sync::Arc::new(Fence(Mutex::new(Commit::Idle)));
+    let hook = std::sync::Arc::clone(&fence);
+    connection
+        .commit_hook(Some(move || hook.refuses()))
+        .map_err(|e| KvError::io(path, e))?;
+    if writable {
+        // A commit is reported only once it is durable (WAL, synchronous FULL).
+        connection
+            .pragma_update(None, "synchronous", "FULL")
+            .map_err(|e| KvError::io(path, e))?;
+    }
     let mut connection = Some(connection);
     let sqlite = denokv_sqlite::Sqlite::new(
         move || {
@@ -232,6 +325,8 @@ pub(crate) fn open_with(
         writable,
         path: path.to_owned(),
         pinned: Some(pinned),
+        probe,
+        fence,
         abandoned: false,
     })
 }
@@ -478,6 +573,7 @@ fn probe_write_lock(connection: &rusqlite::Connection, path: &str) -> Result<(),
 }
 
 /// Why a read or commit returned without a result.
+#[derive(Debug)]
 pub(crate) enum Wait {
     Failed(KvError),
     /// The deadline passed while the database worker was still running.
@@ -512,6 +608,7 @@ impl Database {
         let options = SnapshotReadOptions {
             consistency: denokv_proto::Consistency::Strong,
         };
+        self.available()?;
         let sqlite = self.sqlite.clone();
         self.wait(runtime, deadline, sqlite.snapshot_read(ranges, options))
     }
@@ -524,24 +621,101 @@ impl Database {
         checks: Vec<Check>,
         mutations: Vec<Mutation>,
     ) -> Result<Option<denokv_proto::Versionstamp>, Wait> {
+        self.commit_with(runtime, deadline, (checks, mutations), &mut || {})
+    }
+
+    /// [`Self::commit`] with `before_submit` called after the lock probe,
+    /// right before the write goes to the worker (tests take the lock there).
+    ///
+    /// The commit fails fast: a busy write lock, or too little time left in
+    /// the turn, fails before anything is submitted. Otherwise the commit
+    /// may reach the file only until the cutoff; one the commit hook let
+    /// through is waited for until it is durable and reported, one still
+    /// undecided at the cutoff is refused at its commit point (never
+    /// applied) and fails with a `TypeError`, and the database then accepts
+    /// nothing more.
+    pub(crate) fn commit_with(
+        &mut self,
+        runtime: &tokio::runtime::Runtime,
+        deadline: Instant,
+        (checks, mutations): (Vec<Check>, Vec<Mutation>),
+        before_submit: &mut dyn FnMut(),
+    ) -> Result<Option<denokv_proto::Versionstamp>, Wait> {
         if !self.writable {
             return Err(Wait::Failed(KvError::type_error(format!(
                 "the KV database {} is open read-only",
                 self.path
             ))));
         }
+        self.available()?;
+        let cutoff = deadline
+            .checked_sub(Duration::from_millis(kv::COMMIT_RESERVE_MS))
+            .filter(|cutoff| Instant::now() < *cutoff)
+            .ok_or_else(|| {
+                Wait::Failed(KvError::type_error(format!(
+                    "too little time is left in this turn to commit to the KV database {}; nothing was applied",
+                    self.path
+                )))
+            })?;
+        if let Some(probe) = &self.probe {
+            // Wait briefly, never past the cutoff: the worker's own expiry
+            // collection holds the lock for a moment.
+            let wait = Duration::from_millis(kv::LOCK_WAIT_MS)
+                .min(cutoff.saturating_duration_since(Instant::now()));
+            probe
+                .busy_timeout(wait)
+                .map_err(|e| Wait::Failed(KvError::io(&self.path, e)))?;
+            probe_write_lock(probe, &self.path).map_err(|error| {
+                Wait::Failed(KvError {
+                    message: format!("{}; nothing was applied", error.message),
+                    ..error
+                })
+            })?;
+        }
+        before_submit();
         let write = AtomicWrite {
             checks,
             mutations,
             enqueues: Vec::new(),
         };
         let sqlite = self.sqlite.clone();
-        Ok(
-            match self.wait(runtime, deadline, sqlite.atomic_write(write))? {
-                AtomicWriteOutcome::Committed(result) => Some(result.versionstamp),
-                AtomicWriteOutcome::CheckFailed { .. } => None,
-            },
-        )
+        let fence = std::sync::Arc::clone(&self.fence);
+        fence.set(Commit::Open(cutoff));
+        let outcome = runtime.block_on(async {
+            let mut write = std::pin::pin!(sqlite.atomic_write(write));
+            let cutoff = tokio::time::Instant::from_std(cutoff);
+            match tokio::time::timeout_at(cutoff, write.as_mut()).await {
+                Ok(outcome) => Some(outcome),
+                // Let through before the cutoff: SQLite holds the write lock
+                // and is making the commit durable; wait for it.
+                Err(_) if fence.close() => Some(write.await),
+                Err(_) => None,
+            }
+        });
+        let Some(outcome) = outcome else {
+            self.abandoned = true;
+            return Err(Wait::Failed(KvError::type_error(format!(
+                "the commit to the KV database {} did not finish in this turn (another writer may hold its lock); nothing was applied",
+                self.path
+            ))));
+        };
+        fence.set(Commit::Idle);
+        match outcome {
+            Ok(AtomicWriteOutcome::Committed(result)) => Ok(Some(result.versionstamp)),
+            Ok(AtomicWriteOutcome::CheckFailed { .. }) => Ok(None),
+            Err(error) => Err(Wait::Failed(KvError::type_error(error.to_string()))),
+        }
+    }
+
+    /// Fail once a read or commit was abandoned.
+    fn available(&self) -> Result<(), Wait> {
+        if self.abandoned {
+            return Err(Wait::Failed(KvError::type_error(format!(
+                "the KV database {} is unavailable after an unfinished operation; close and open it again",
+                self.path
+            ))));
+        }
+        Ok(())
     }
 }
 

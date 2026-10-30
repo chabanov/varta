@@ -212,7 +212,7 @@ fn deno_2_9_7_probe_values_reencode_byte_identically() {
         assert_eq!(encode(&value, usize::MAX).unwrap(), bytes, "{name}");
         checked += 1;
     }
-    assert_eq!(checked, 25);
+    assert_eq!(checked, 29);
     // Arrays with named properties are outside the subset.
     assert_eq!(
         decode(&probe("arrprops"), LIMITS),

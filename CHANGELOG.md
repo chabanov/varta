@@ -34,9 +34,12 @@ in [conformance/README.md](conformance/README.md).
   byte-identically. `Kv.get/getMany/list/set/delete/atomic` with
   `check/set/delete/sum/min/max/commit`, `KvU64` and `KvListIterator` with
   cursors; reads decode strictly into `T` like `varta.json.parse<T>`. Denials
-  are recoverable `NotAllowedError`s. Synthetic fixtures written by Deno 2.9.4
-  and 2.9.7 are in `crates/varta-runtime/src/kv_cases`. `watch` and queues are
-  not available.
+  are recoverable `NotAllowedError`s. Commits fail fast (a busy write lock or
+  a spent turn fails before anything is submitted), are reported only once
+  durable, and a commit not decided by its cutoff is refused at SQLite's
+  commit point through a commit hook, so it is never applied. Synthetic
+  fixtures written by Deno 2.9.4 and 2.9.7 are in
+  `crates/varta-runtime/src/kv_cases`. `watch` and queues are not available.
 
 - `for await` over a generic class instance first created inside a generic
   method (its instance members were not allocated yet) no longer panics the

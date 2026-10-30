@@ -3379,9 +3379,15 @@ Normative contract: [architecture](architecture.md#kv-storage-kv).
 - The V8 codec (`kv::v8`) is strict: every Deno fixture value must re-encode
   byte-identically, unknown tags and malformed input fail with `V8Error`, and
   no partial value escapes. Add a tag only with a Deno-written fixture row.
-- Operations are synchronous host calls bounded by the turn deadline; a
-  deadline while the worker waits for a lock abandons the database rather
-  than joining its thread.
+- Operations are synchronous host calls within the turn. Commits go through
+  `Database::commit_with`: lock probe, cutoff (`kv::COMMIT_RESERVE_MS` before
+  the deadline), and the worker connection's commit hook (`Fence`) as the only
+  place a guest commit is admitted. Never return before a commit the hook let
+  through is durable, never let an undecided commit through after the cutoff,
+  and never reopen a fence once closed: the database stays unavailable. A
+  commit must never end a turn with the deadline error. A read that reaches
+  the deadline makes the database unavailable rather than joining its
+  thread.
 - `watch`, queues, `consistency` and in-memory databases are not admitted;
   keep them compile errors until their own increment.
 

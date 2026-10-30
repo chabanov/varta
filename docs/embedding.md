@@ -619,7 +619,10 @@ storage MUST still link the imports and deny every `kv_open` (return
    opened).
 3. Reject a file whose schema is not exactly Deno KV's version 3 before any
    write, and fail clearly on a file another writer locks.
-4. Encode and decode values only in the subset of the contract, failing with a
+4. Fail a commit fast when the write lock is busy or too little of the turn
+   is left, report it only once durable, and never let a commit reach the
+   file after its turn or after its failure was reported.
+5. Encode and decode values only in the subset of the contract, failing with a
    typed error and no partial value, and decode into the module's schema with
    checked-JSON strictness (a mismatch is a recoverable `TypeError` through the
    exception channel, as for `json_parse_v19`).

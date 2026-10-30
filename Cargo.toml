@@ -62,7 +62,9 @@ webpki-roots = "=1.0.11"
 # engine. Host side only: `varta-runtime` is their one dependent.
 denokv_sqlite = { version = "=0.14.0", default-features = false }
 denokv_proto = "=0.14.0"
-rusqlite = { version = "=0.40.1", features = ["bundled", "fallible_uint"] }
+# `hooks` (also on in Deno through `session`): the commit hook that keeps a
+# guest commit from reaching the file after its turn's commit cutoff.
+rusqlite = { version = "=0.40.1", features = ["bundled", "fallible_uint", "hooks"] }
 # The error type of the denokv connection factory and the versionstamp
 # generator it takes (Deno's own `StdRng::from_entropy`); rand stays at its locked 0.8.8.
 deno_error = "=0.7.1"

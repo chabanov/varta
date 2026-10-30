@@ -161,6 +161,11 @@ mod tests {
         ("setTimeout", "function"),
     ];
 
+    /// Engine globals no JavaScript host defines (Node 24: `undefined`),
+    /// with their `typeof` in Varta: Deno's `Deno.KvU64` is the KV
+    /// prelude's global `KvU64` (v38 `kv`).
+    const VARTA_ONLY: &[(&str, &str)] = &[("KvU64", "function")];
+
     /// Every name a prelude registry entry spells: exports, member objects,
     /// triggers and load keys that are identifiers.
     fn prelude_names(prelude: &Prelude) -> impl Iterator<Item = &'static str> + '_ {
@@ -196,7 +201,7 @@ mod tests {
             .into_iter()
             .filter_map(|name| kind(name, V38).map(|kind| (name, kind.type_of())))
             .collect();
-        let expected: BTreeMap<&str, &str> = NODE_24.iter().copied().collect();
+        let expected: BTreeMap<&str, &str> = NODE_24.iter().chain(VARTA_ONLY).copied().collect();
         assert_eq!(found, expected);
     }
 

@@ -3,7 +3,8 @@
  * in CI). Writes edge-case values with Deno KV, then prints each row's key
  * name, v_encoding and value bytes in hex: rows.txt is its output under the
  * Deno version in deno-version.txt.
- * Usage: deno run -A --unstable-kv probe.ts <fresh.kv> > rows.txt
+ * Usage: deno run -A --unstable-kv probe.ts probe.kv > rows.txt (from an
+ * empty directory; probe.kv is kept as a Deno-written test database).
  * `datediff` is a heap number (an integral double V8 writes as `N`); it is
  * 1500 unless a clock millisecond passes between its two reads.
  */
@@ -25,6 +26,10 @@ const values: [string, unknown][] = [
   ["emptyobjarr", [{}, []]], ["undefarr", [undefined, null]], ["neg0arr", [-0, NaN]],
   ["newarray", (() => { const a = new Array(2); a[0] = 1; a[1] = 2; return a; })()],
   ["pushed", (() => { const a: number[] = []; a.push(1); a.push(2); return a; })()],
+  ["refilled", (() => { const a = [1, 2, 3]; delete a[1]; a[1] = 5; return a; })()],
+  ["holey_strings", (() => { const a = new Array<string>(3); a[0] = "a"; a[2] = "c"; return a; })()],
+  ["shared_record", (() => { const meta = { tag: "t", n: 1 }; return { first: meta, second: meta, list: [meta, meta] }; })()],
+  ["required_undefined", { a: 1, b: undefined }],
 ];
 for (const [k, v] of values) await kv.set(["p", k], v);
 kv.close();

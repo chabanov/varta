@@ -3,9 +3,9 @@
 //! The runtime holds database ids, staged keys and values (already encoded)
 //! and the entries of the last read, never a guest reference. Reads and
 //! commits run on the `denokv_sqlite` worker of the database and the host
-//! call waits for them, bounded by the turn deadline: the operations are
-//! synchronous host calls, and the prelude's promises settle in the same
-//! turn. Every failure the guest can cause is recoverable (`kv::FAILED` and
+//! call waits for them within the turn (a commit only until its cutoff, see
+//! `store`): the operations are synchronous host calls, and the prelude's
+//! promises settle in the same turn. Every failure the guest can cause is recoverable (`kv::FAILED` and
 //! `kv_text`); malformed descriptors and ids are fatal, because only a
 //! tampered module produces them.
 mod decode;

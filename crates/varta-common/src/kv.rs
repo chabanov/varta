@@ -37,6 +37,16 @@ pub const CHECK_FAILED: f64 = 0.0;
 /// The result of a committed write.
 pub const COMMITTED: f64 = 1.0;
 
+/// Milliseconds before the turn deadline after which a guest commit may no
+/// longer reach the file: the host's time to finish a commit SQLite has
+/// begun (making it durable) and to return to the guest. A commit started
+/// with less time left fails at once and applies nothing.
+pub const COMMIT_RESERVE_MS: u64 = 50;
+/// Milliseconds a commit's lock probe waits for the write lock, at most and
+/// never past the commit cutoff: long enough for the database worker's own
+/// brief maintenance transactions, short enough to fail fast on another
+/// writer.
+pub const LOCK_WAIT_MS: u64 = 100;
 /// Databases one instance holds open at once.
 pub const MAX_OPEN_DATABASES: usize = 8;
 /// Values staged and not yet consumed by a read or a commit: every key and
