@@ -11,6 +11,20 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 code generator hotspots: `push` with one to four arguments appends
+  without an argument array, checked element reads load the slot without a
+  union cell, string `+` chains concatenate up to eight operands per
+  allocation, calls of function values with quiet operands take no roots,
+  small literal and grown array backings zero their presence bitmap word by
+  word (Wasmtime charges bulk memory per byte) and literals reserve four
+  slots, and the allocator keeps blocks up to 280 bytes in exact-size free
+  lists. Against the integrated v38 tip: array push + index sum 464,755 →
+  112,049 fuel, list render of 100 rows 292,803 → 160,137, the 100-row keyed
+  diff 1,785,586 → 1,445,572 (73% of it is now the dictionary's linear key
+  search), and a reactive keyed view fits 129 instead of 74 mounted and 51
+  instead of 35 updated rows in one production budget. V37 and earlier keep
+  their bytes.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of

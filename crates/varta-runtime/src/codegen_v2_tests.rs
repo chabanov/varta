@@ -11,23 +11,48 @@ use varta_common::{CapabilityGrant, CapabilityValue, language::LanguageProfile a
 const V37: P = P::CheckedF64Utf16V37;
 const V38: P = P::CheckedF64Utf16V38;
 
-fn compile(source: &str, profile: P) -> Vec<u8> {
+pub(crate) fn compile(source: &str, profile: P) -> Vec<u8> {
     let bytes = varta_compiler::compile_typescript_with_profile(source, profile)
         .unwrap_or_else(|e| panic!("{e}\n{source}"));
     wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
     bytes
 }
 
-struct Run {
-    lines: Vec<String>,
-    fuel: u64,
-    error: Option<String>,
+pub(crate) struct Run {
+    pub lines: Vec<String>,
+    pub fuel: u64,
+    pub error: Option<String>,
 }
 /// Run with a test-only budget of `budgets` production fuel budgets.
-fn run_with(bytes: &[u8], grants: &[CapabilityGrant], budgets: u64) -> Run {
+pub(crate) fn run_with(bytes: &[u8], grants: &[CapabilityGrant], budgets: u64) -> Run {
     let runtime = VartaRuntime::new();
+    let execution = execution::Execution::new(&runtime.engine, grants, None).unwrap();
+    execute(&runtime, execution, bytes, budgets)
+}
+/// Run with test-only budgets (CLAUDE.md §11): `budgets` production fuel
+/// budgets and host calls beyond the production per-turn count, so a
+/// workload is measured by its guest work alone.
+pub(crate) fn run_test_budgets(bytes: &[u8], budgets: u64) -> Run {
+    const HOST_CALLS: u32 = 1 << 20;
+    let runtime = VartaRuntime::new();
+    let execution = execution::Execution::with_test_budgets(
+        &runtime.engine,
+        varta_common::budget::Budgets {
+            fuel_per_turn: budgets * abi::FUEL,
+            host_calls_per_turn: HOST_CALLS,
+            ..varta_common::budget::Budgets::PRODUCTION
+        },
+    )
+    .unwrap();
+    execute(&runtime, execution, bytes, budgets)
+}
+fn execute(
+    runtime: &VartaRuntime,
+    mut execution: execution::Execution,
+    bytes: &[u8],
+    budgets: u64,
+) -> Run {
     let module = runtime.prepare_module(bytes).unwrap();
-    let mut execution = execution::Execution::new(&runtime.engine, grants, None).unwrap();
     let budget = budgets * abi::FUEL;
     execution.store.set_fuel(budget).unwrap();
     if budgets > 1 {
@@ -61,7 +86,7 @@ fn output(source: &str) -> Vec<String> {
     assert_eq!(run.error, None, "{source}");
     run.lines
 }
-fn lines(expected: &[&str]) -> Vec<String> {
+pub(crate) fn lines(expected: &[&str]) -> Vec<String> {
     expected.iter().map(|s| format!("varta log: {s}")).collect()
 }
 
@@ -148,6 +173,24 @@ fn list_render(n: usize) -> String {
     )
 }
 
+/// A fine-grained reactive keyed list of `rows` rows (signal, effect and
+/// keyed mapping, `codegen_v2_fixtures/keyed_view.ts`): mount them, or mount
+/// them, then reverse their order and change every row's text.
+fn keyed_view(rows: usize, update: bool) -> String {
+    include_str!("codegen_v2_fixtures/keyed_view.ts")
+        .replace("const ROWS = 10;", &format!("const ROWS = {rows};"))
+        .replace(
+            "const UPDATE = false;",
+            &format!("const UPDATE = {update};"),
+        )
+}
+fn view_mount(rows: usize) -> String {
+    keyed_view(rows, false)
+}
+fn view_update(rows: usize) -> String {
+    keyed_view(rows, true)
+}
+
 const PATTERNS: &[Pattern] = &[
     Pattern {
         name: "number loop",
@@ -181,8 +224,8 @@ const PATTERNS: &[Pattern] = &[
         name: "dictionary 50+50",
         source: dictionary,
         size: 50,
-        ceiling: 520_000,
-        speedup: 1.3,
+        ceiling: 420_000,
+        speedup: 1.5,
     },
     Pattern {
         name: "record field reads",
@@ -202,49 +245,75 @@ const PATTERNS: &[Pattern] = &[
         name: "closure calls",
         source: closure_calls,
         size: 1_000,
-        ceiling: 380_000,
-        speedup: 1.2,
+        ceiling: 340_000,
+        speedup: 1.3,
     },
     Pattern {
         name: "array push + index sum",
         source: array_sum,
         size: 500,
-        ceiling: 600_000,
-        speedup: 1.15,
+        ceiling: 130_000,
+        speedup: 5.0,
     },
     Pattern {
         name: "markdown-like scan",
         source: markdown_scan,
         size: 10,
-        ceiling: 120_000,
-        speedup: 3.0,
+        ceiling: 75_000,
+        speedup: 4.5,
     },
     Pattern {
         name: "JSON.parse ~2 KB",
         source: json_parse,
         size: 40,
-        ceiling: 150_000,
-        speedup: 2.2,
+        ceiling: 75_000,
+        speedup: 4.5,
     },
     Pattern {
         name: "list render 100 rows",
         source: list_render,
         size: 100,
-        ceiling: 600_000,
-        speedup: 5.0,
+        ceiling: 180_000,
+        speedup: 15.0,
     },
     Pattern {
         name: "keyed diff 100 rows",
         source: keyed_diff,
         size: 100,
-        ceiling: 2_600_000,
+        ceiling: 1_600_000,
+        speedup: 3.0,
+    },
+    Pattern {
+        name: "keyed diff 500 rows",
+        source: keyed_diff,
+        size: 500,
+        ceiling: 30_000_000,
+        speedup: 0.0,
+    },
+    Pattern {
+        name: "keyed view mount 10 rows",
+        source: view_mount,
+        size: 10,
+        ceiling: 95_000,
         speedup: 2.0,
+    },
+    Pattern {
+        name: "keyed view update 10 rows",
+        source: view_update,
+        size: 10,
+        ceiling: 180_000,
+        speedup: 5.0,
     },
 ];
 
-/// Fuel of `source(n)` under `profile`, with a generous test-only budget.
+/// Test-only fuel budgets of a measured run: enough for every v38 workload
+/// and for v37 below the 500-row keyed diff, which runs out at this budget.
+const MEASURED_BUDGETS: u64 = 40;
+
+/// Fuel of `source(n)` under `profile`, with generous test-only budgets
+/// (fuel and host calls, so v37's host calls do not end a scan early).
 fn fuel(pattern: &Pattern, n: usize, profile: P) -> Run {
-    run_with(&compile(&(pattern.source)(n), profile), &[], 20)
+    run_test_budgets(&compile(&(pattern.source)(n), profile), MEASURED_BUDGETS)
 }
 
 #[test]
@@ -304,6 +373,62 @@ fn codegen_v2_fuel_ceilings_hold() {
             show(old),
             show(new),
         );
+    }
+}
+
+/// Row counts of the keyed view that one production budget (1M fuel, 1024
+/// host calls) runs: v38 mounts and updates more rows than before the
+/// hotspot work (74 and 35 rows at cb6795d) and than v37 (19 and 11).
+#[test]
+fn keyed_views_fit_one_production_budget() {
+    const MOUNTED: usize = 120;
+    const UPDATED: usize = 50;
+    for (source, rows) in [
+        (view_mount(MOUNTED), MOUNTED),
+        (view_update(UPDATED), UPDATED),
+    ] {
+        let run = run_with(&compile(&source, V38), &[], 1);
+        assert_eq!(run.error, None, "{rows} rows");
+        assert!(
+            run.lines[0].starts_with(&format!("varta log: {rows} ")),
+            "{:?}",
+            run.lines
+        );
+    }
+}
+
+/// The largest size of every workload that one production budget runs
+/// (bisection; the "Max size" column of the development-plan table):
+/// `cargo test -p varta-runtime --lib codegen_v2_largest_sizes -- --ignored
+/// --nocapture`.
+#[test]
+#[ignore]
+fn codegen_v2_largest_sizes() {
+    const LARGEST: usize = 1 << 20;
+    for pattern in PATTERNS {
+        let mut line = format!("| {} |", pattern.name);
+        for profile in [V37, V38] {
+            let fits = |n: usize| {
+                run_with(&compile(&(pattern.source)(n), profile), &[], 1)
+                    .error
+                    .is_none()
+            };
+            let (mut low, mut high) = (0, 1);
+            while high < LARGEST && fits(high) {
+                low = high;
+                high *= 2;
+            }
+            while high - low > 1 {
+                let middle = (low + high) / 2;
+                if fits(middle) {
+                    low = middle;
+                } else {
+                    high = middle;
+                }
+            }
+            line += &format!(" {low} |");
+        }
+        println!("{line}");
     }
 }
 

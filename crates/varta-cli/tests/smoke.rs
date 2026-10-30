@@ -15993,7 +15993,7 @@ fn application_mode_renews_the_deadline_for_every_turn() {
 #[test]
 fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     let project = RegressionProject::new(
-        "function square(n:number):number{return n*n;}\nexport function main():void{let t=0;for(let i=0;i<40;i++){t=t+square(i);}let s=\"\";for(let i=0;i<20;i++){s+=\"ab\";}console.log(String(t)+\" \"+String(s.length));}",
+        "function square(n:number):number{return n*n;}\nexport function main():void{let t=0;for(let i=0;i<40;i++){t=t+square(i);}let s=\"\";for(let i=0;i<20;i++){s+=\"ab\";}const xs:number[]=[];for(let i=0;i<5;i++){xs.push(i);}console.log(String(t)+\" \"+String(s.length)+\" \"+String(xs.length));}",
         serde_json::json!({}),
     );
     project.language_profile("checked-f64-utf16-v38");
@@ -16003,7 +16003,7 @@ fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     assert!(profiled.status.success(), "{}", combined(&profiled));
     // The profile run prints exactly the ordinary output on stdout.
     assert_eq!(profiled.stdout, plain.stdout);
-    assert!(String::from_utf8_lossy(&plain.stdout).contains("varta log: 20540 40"));
+    assert!(String::from_utf8_lossy(&plain.stdout).contains("varta log: 20540 40 5"));
     let report = String::from_utf8_lossy(&profiled.stderr);
     assert!(report.contains("varta fuel profile: "), "{report}");
     assert!(report.contains("of 1000000 fuel"), "{report}");
@@ -16021,6 +16021,8 @@ fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     assert_eq!(square[2], 40, "{report}");
     assert_eq!(row("function main():void")[2], 1, "{report}");
     assert!(row("<helper StringGrow>")[2] >= 1, "{report}");
+    // V38 appends without an argument array (`codegen_v2` hotspots).
+    assert_eq!(row("<helper ArrayAppend(1)>")[2], 5, "{report}");
     // JSON: consumed = attributed + outside.
     let json = project.command(&["dev", "--profile-fuel", "--json"]);
     assert!(json.status.success(), "{}", combined(&json));

@@ -3320,6 +3320,30 @@ lists what changes; these rules keep it sound.
 - Allocator policy changes must keep "collect, then scan everything, before
   failing": an allocation may only fail where v37 would have failed after a
   collection.
+- Exact-size free lists (`strings::free_classes`): every list holds blocks of
+  exactly its class size with the ordinary free header, and the mask bit of a
+  list is set exactly while it is nonempty (set on every push, cleared on the
+  pop that empties it, reset with the lists at the sweep's start). A block
+  enters a list only from the sweep or as a split remainder of at least one
+  header and alignment unit. Never put list heads or the mask in static, host
+  or root memory, and never add a fast path that can fail: a request that
+  misses every constant-time path continues into the existing loop.
+- `push` appends through `ArrayAppend(n)` only for a static argument list
+  (`arrays::appended`); the emitter and the helper-collection pass must use
+  that one predicate. The helper may read the backing only after every
+  argument ran and must keep zero spare slots and no presence bit at or beyond
+  the length (the value readers reject anything else).
+- Checked element reads skip the union cell only in the exact value-block
+  shape `lower::dense_read` produces (`dense::dense_read`); a change to that
+  lowering must keep the shape or update the matcher in the same change. The
+  throw path is emitted with `quiet_mode` off and must never fall through.
+- Concatenation chains: the collection pass inserts the helpers of the whole
+  chain and of the right child (a builder appends the right child alone);
+  `concat_chain::steps` is the only chunking. A stable chain must fit one
+  helper call, since intermediate results are rooted only outside quiet mode.
+- Literal backings may reserve more capacity than their length (a power of
+  two); they must still zero every absent and spare slot and every presence
+  bit at or beyond the length.
 - Fuel probes: `fuel_profile` instruments only profile builds and never the
   frame dispatcher (frame admission forbids its calls to imports). Probe
   imports stay outside the `varta` namespace, are accepted only by a run with

@@ -125,6 +125,10 @@ pub(super) fn function(
     if worklist {
         function.instruction(&I::End);
     }
+    if let Some(classes) = globals.classes {
+        instructions(&mut function, segregated_sweep(globals, classes));
+        return function;
+    }
     instructions(
         &mut function,
         [
@@ -215,6 +219,123 @@ pub(super) fn function(
         ],
     );
     function
+}
+
+/// V38 (`codegen_v2`) sweep: unmark live blocks and coalesce each run of
+/// dead blocks; a finished run of at most `MAX_CLASS_BYTES` heads its
+/// exact-size free list, a larger one joins the address-ordered list, and a
+/// trailing run returns to the heap end. Allocates nothing.
+fn segregated_sweep(globals: Globals, classes: u32) -> Vec<I<'static>> {
+    const CURRENT: u32 = 1;
+    const SIZE: u32 = 2;
+    const RUN: u32 = 3;
+    const HEAD: u32 = 4;
+    const TAIL: u32 = 5;
+    const RUN_SIZE: u32 = 6;
+    /// The root cursor's pointer local, free during the sweep.
+    const CLASS: u32 = 7;
+    const AGAIN: u32 = 0;
+    const DONE: u32 = 1;
+    let lists = super::free_classes::Lists::new(classes);
+    let mut code = lists.reset();
+    code.extend([
+        I::I32Const(globals.base as i32),
+        I::LocalSet(CURRENT),
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(CURRENT),
+        I::GlobalGet(globals.heap),
+        I::I32GeU,
+        I::BrIf(DONE),
+        I::LocalGet(CURRENT),
+        I::I32Load(WORD),
+        I::LocalSet(SIZE),
+        I::LocalGet(CURRENT),
+        I::I32Load(FLAG),
+        I::I32Const(MARKED),
+        I::I32And,
+        I::If(BlockType::Empty),
+        I::LocalGet(CURRENT),
+        I::LocalGet(CURRENT),
+        I::I32Load(FLAG),
+        I::I32Const(!MARKED),
+        I::I32And,
+        I::I32Store(FLAG),
+    ]);
+    code.extend(close_run(lists));
+    code.extend([
+        I::Else,
+        I::LocalGet(CURRENT),
+        I::I32Const(0),
+        I::I32Store(FLAG),
+        I::LocalGet(RUN),
+        I::If(BlockType::Empty),
+        I::LocalGet(RUN),
+        I::LocalGet(RUN),
+        I::I32Load(WORD),
+        I::LocalGet(SIZE),
+        I::I32Add,
+        I::I32Store(WORD),
+        I::Else,
+        I::LocalGet(CURRENT),
+        I::LocalSet(RUN),
+        I::End,
+        I::End,
+        I::LocalGet(CURRENT),
+        I::LocalGet(SIZE),
+        I::I32Add,
+        I::LocalSet(CURRENT),
+        I::Br(AGAIN),
+        I::End,
+        I::End,
+        // A dead trailing run returns to the heap end; no list holds it.
+        I::LocalGet(RUN),
+        I::If(BlockType::Empty),
+        I::LocalGet(RUN),
+        I::GlobalSet(globals.heap),
+        I::End,
+        I::LocalGet(HEAD),
+        I::GlobalSet(globals.free),
+        I::End,
+    ]);
+    // The run's list: its exact class, or the tail of the larger blocks.
+    fn close_run(lists: super::free_classes::Lists) -> Vec<I<'static>> {
+        let mut code = vec![
+            I::LocalGet(RUN),
+            I::If(BlockType::Empty),
+            I::LocalGet(RUN),
+            I::I32Load(WORD),
+            I::LocalTee(RUN_SIZE),
+            I::I32Const(super::free_classes::MAX_CLASS_BYTES),
+            I::I32LeU,
+            I::If(BlockType::Empty),
+        ];
+        code.extend(lists.push(RUN, RUN_SIZE, CLASS));
+        code.extend([
+            I::Else,
+            I::LocalGet(RUN),
+            I::I32Const(0),
+            I::I32Store(LINK),
+            I::LocalGet(TAIL),
+            I::I32Eqz,
+            I::If(BlockType::Empty),
+            I::LocalGet(RUN),
+            I::LocalSet(HEAD),
+            I::Else,
+            I::LocalGet(TAIL),
+            I::LocalGet(RUN),
+            I::I32Store(LINK),
+            I::End,
+            I::LocalGet(RUN),
+            I::LocalSet(TAIL),
+            I::End,
+            I::I32Const(0),
+            I::LocalSet(RUN),
+            I::End,
+        ]);
+        code
+    }
+    code
 }
 
 // Fixed-point tracing is iterative: no native/Wasm recursion or allocation during

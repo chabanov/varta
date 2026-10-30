@@ -1,5 +1,9 @@
 //! Nonmoving immutable strings with exact compiler roots and a bounded reusable heap.
 mod allocate;
+mod free_classes;
+pub(super) use free_classes::CLASSES as FREE_CLASSES;
+mod array_append;
+pub(super) use array_append::{MAX_VALUES as MAX_APPENDED, MIN_CAPACITY as MIN_APPEND_CAPACITY};
 mod array_enumeration;
 mod array_fill;
 mod array_index;
@@ -12,6 +16,7 @@ mod array_slice;
 mod collect;
 mod compare;
 mod concat;
+pub(super) use concat::MAX_OPERANDS as MAX_CONCATENATED;
 mod index_key;
 mod regexp;
 mod remainder;
@@ -69,6 +74,10 @@ pub(super) struct Globals {
     /// V38 (`codegen_v2`): the heap end up to which memory grows without a
     /// collection (`allocate`).
     pub collect_at: Option<u32>,
+    /// V38 (`codegen_v2`): the first of the [`free_classes::CLASSES`] globals
+    /// heading the exact-size free lists of small blocks; the i64 mask of
+    /// nonempty classes follows them.
+    pub classes: Option<u32>,
 }
 impl Globals {
     /// Trap, first recording `resource` and the amount in local `amount` when
@@ -96,6 +105,8 @@ impl Globals {
 pub(super) enum Helper {
     Snapshot,
     Concat,
+    /// V38 (`codegen_v2`): one concatenation of this many operands.
+    ConcatMany(u8),
     /// V38 (`codegen_v2`): a builder block with doubled capacity holding
     /// both operands (`string_builder`).
     StringGrow,
@@ -126,6 +137,9 @@ pub(super) enum Helper {
     ArrayKeys,
     ArrayValues,
     ArrayPush,
+    /// V38 (`codegen_v2`): `push` of this many evaluated slots, without an
+    /// argument array (`array_append`).
+    ArrayAppend(u8),
     ArraySlice,
     ArrayReverse,
     ArrayFill,
@@ -214,6 +228,7 @@ impl Helper {
             }
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
             Self::Concat | Self::StringGrow => (vec![ValType::I64; 2], vec![ValType::I64]),
+            Self::ConcatMany(count) => (vec![ValType::I64; usize::from(count)], vec![ValType::I64]),
             Self::StringEquals => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
@@ -258,6 +273,10 @@ impl Helper {
             | Self::TrimHttpWhitespace => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayKeys | Self::ArrayValues => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayPush => (vec![ValType::I64; 2], vec![ValType::I32]),
+            Self::ArrayAppend(count) => (
+                vec![ValType::I64; 1 + usize::from(count)],
+                vec![ValType::I32],
+            ),
             Self::ArrayResize => (vec![ValType::I64, ValType::I32], vec![]),
             Self::ArrayReverse => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArrayFill => (
@@ -307,6 +326,9 @@ impl Helper {
         match self {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
             Self::Concat => concat::function(helpers[&Self::Allocate]),
+            Self::ConcatMany(count) => {
+                concat::many(count, helpers[&Self::Allocate], globals, profile.data())
+            }
             Self::StringGrow => concat::grow(helpers[&Self::Allocate]),
             Self::StringEquals => compare::equals(profile.utf16()),
             Self::Compare => compare::function(profile.utf16(), crate::codegen_v2(profile)),
@@ -408,6 +430,12 @@ impl Helper {
                 profile.data(),
             ),
             Self::ArrayPush => array_push::function(
+                helpers[&Self::Allocate],
+                profile.sparse_arrays(),
+                profile.data(),
+            ),
+            Self::ArrayAppend(count) => array_append::function(
+                count,
                 helpers[&Self::Allocate],
                 profile.sparse_arrays(),
                 profile.data(),

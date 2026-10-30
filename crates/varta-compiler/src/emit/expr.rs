@@ -59,6 +59,19 @@ impl Emitter<'_> {
                 }
                 return Ok(());
             }
+            if self.quiet_function_call(expr) {
+                // The same for a function value read from an unchanged
+                // binding: the checked dispatch reads the value before the
+                // call, and the callee roots its parameters and cells.
+                self.quiet_mode = true;
+                let emitted = self.expr_inner(expr);
+                self.quiet_mode = false;
+                emitted?;
+                if root {
+                    self.root_result(expr.ty)?;
+                }
+                return Ok(());
+            }
         }
         let marker = self.root_mark_base + self.expr_depth;
         self.expr_depth += 1;
@@ -74,7 +87,7 @@ impl Emitter<'_> {
         self.expr_depth -= 1;
         Ok(())
     }
-    fn root_result(&mut self, ty: Type) -> Result<()> {
+    pub(super) fn root_result(&mut self, ty: Type) -> Result<()> {
         if ty.needs_root() {
             if ty == Type::ResultString {
                 self.code.push(I::LocalSet(self.temporary));
@@ -87,6 +100,11 @@ impl Emitter<'_> {
         Ok(())
     }
     fn expr_inner(&mut self, expr: &Expr) -> Result<()> {
+        if self.codegen_v2()
+            && let Some(read) = dense::dense_read(expr)
+        {
+            return self.dense_index(&read, expr.ty);
+        }
         match &expr.kind {
             E::ValueBlock {
                 output,
@@ -338,8 +356,18 @@ impl Emitter<'_> {
             E::ArrayAt(base, index) => self.maybe_index(base, index, expr.ty, true)?,
             E::ArrayPush(base, items) => {
                 self.expr(base)?;
-                self.expr(items)?;
-                self.string_helper(strings::Helper::ArrayPush)?;
+                if let Some(appended) = arrays::appended(self.profile, items) {
+                    // V38: each slot is rooted (or stable) like an operand,
+                    // and the helper appends them without an argument array.
+                    for value in &appended {
+                        self.expr(value)?;
+                        self.pack_slot(value.ty);
+                    }
+                    self.string_helper(strings::Helper::ArrayAppend(appended.len() as u8))?;
+                } else {
+                    self.expr(items)?;
+                    self.string_helper(strings::Helper::ArrayPush)?;
+                }
                 self.code.push(I::F64ConvertI32U);
             }
             E::ArrayPop(base) => self.array_pop(base, expr.ty)?,
@@ -646,6 +674,9 @@ impl Emitter<'_> {
             }
             E::Binary(op, left, right)
                 if left.ty == Type::String && self.literal_equality(*op, left, right)? => {}
+            E::Binary(BinaryOp::Add, left, _) if left.ty == Type::String && self.codegen_v2() => {
+                self.concat_chain(expr)?;
+            }
             E::Binary(op, left, right) if left.ty == Type::String => {
                 self.expr(left)?;
                 self.expr(right)?;
