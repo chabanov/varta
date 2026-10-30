@@ -1189,7 +1189,9 @@ ident          = [A-Za-z_] { [A-Za-z0-9_-] }
 custom-value   = one or more tokens of the property value grammar, without ";", "{", "}"
 ```
 
-`:root` matches the root container (node 1) and is meant for custom properties. A
+`:root` matches the root container (node 1) on every renderer (see
+[round 4](#view-draft-v0-round-4-subset-fixes) for the browser) and is meant for
+custom properties. A
 `property` is a name of the CSS property table and its `value` follows that
 property's grammar; custom properties exist only in stylesheets in v0 (`set_style`
 has no custom-property code) and are referenced through `var()`. The following
@@ -1218,6 +1220,9 @@ values:
 | `<color>` | `#rgb` \| `#rrggbb` \| `#rrggbbaa` \| `rgb(` <integer>`,` <integer>`,` <integer> `)` \| `rgba(` <integer>`,` <integer>`,` <integer>`,` <number> `)` \| `transparent` \| `currentcolor` |
 | `<time>` | <number>`ms` \| <number>`s` |
 | `<track>` | <length-percentage> \| <number>`fr` \| `auto` \| `minmax(` <track>`,` <track> `)` \| `repeat(` <integer>`,` <track>+ `)` |
+| `<line>` | `auto` \| <integer> \| `span` <integer> |
+| `<string>` | a double-quoted string without `"` or `\` |
+| `<ident>` | `[A-Za-z_][A-Za-z0-9_-]*` |
 | `<var>` | `var(--`name`)` or `var(--`name`,` fallback`)`, allowed wherever a whole component value is expected |
 <!-- generated:view-css-values:end -->
 
@@ -1320,6 +1325,7 @@ values:
 | 28 | `dialog` |
 | 29 | `progress` |
 | 30 | `img` |
+| 31 | `aside` |
 <!-- generated:view-tags:end -->
 
 **Attributes.**
@@ -1343,7 +1349,7 @@ values:
 | 14 | `alt` | `img` | text |
 | 15 | `tabindex` | all | `0` \| `-1` |
 | 16 | `max` | `progress` | finite nonnegative number |
-| 17 | `role` | all | `table` \| `row` \| `cell` \| `columnheader` \| `dialog` \| `alert` \| `status` \| `navigation` \| `list` \| `listitem` \| `tab` \| `tablist` \| `tabpanel` |
+| 17 | `role` | all | `table` \| `row` \| `cell` \| `columnheader` \| `dialog` \| `alert` \| `status` \| `navigation` \| `list` \| `listitem` \| `tab` \| `tablist` \| `tabpanel` \| `complementary` |
 | 18 | `aria-label` | all | text |
 | 19 | `aria-labelledby` | all | space-separated ident list |
 | 20 | `aria-describedby` | all | space-separated ident list |
@@ -1360,77 +1366,82 @@ values:
 **CSS properties.**
 
 <!-- generated:view-css-properties:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
-| Code | Property | Values |
-| --- | --- | --- |
-| 1 | `display` | `block \| flex \| grid \| none \| inline` |
-| 2 | `width` | `auto \| <length-percentage>` |
-| 3 | `height` | `auto \| <length-percentage>` |
-| 4 | `min-width` | `auto \| <length-percentage>` |
-| 5 | `min-height` | `auto \| <length-percentage>` |
-| 6 | `max-width` | `none \| <length-percentage>` |
-| 7 | `max-height` | `none \| <length-percentage>` |
-| 8 | `margin` | `[auto \| <length-percentage>]{1,4}` |
-| 9 | `margin-top` | `auto \| <length-percentage>` |
-| 10 | `margin-right` | `auto \| <length-percentage>` |
-| 11 | `margin-bottom` | `auto \| <length-percentage>` |
-| 12 | `margin-left` | `auto \| <length-percentage>` |
-| 13 | `padding` | `<length-percentage>{1,4} (nonnegative)` |
-| 14 | `padding-top` | `<length-percentage> (nonnegative)` |
-| 15 | `padding-right` | `<length-percentage> (nonnegative)` |
-| 16 | `padding-bottom` | `<length-percentage> (nonnegative)` |
-| 17 | `padding-left` | `<length-percentage> (nonnegative)` |
-| 18 | `gap` | `<length-percentage>{1,2}` |
-| 19 | `row-gap` | `<length-percentage>` |
-| 20 | `column-gap` | `<length-percentage>` |
-| 21 | `flex-direction` | `row \| row-reverse \| column \| column-reverse` |
-| 22 | `flex-wrap` | `nowrap \| wrap \| wrap-reverse` |
-| 23 | `justify-content` | `start \| end \| flex-start \| flex-end \| center \| space-between \| space-around \| space-evenly` |
-| 24 | `align-items` | `stretch \| start \| end \| flex-start \| flex-end \| center \| baseline` |
-| 25 | `align-self` | `auto \| stretch \| start \| end \| flex-start \| flex-end \| center \| baseline` |
-| 26 | `flex-grow` | `<number> (nonnegative)` |
-| 27 | `flex-shrink` | `<number> (nonnegative)` |
-| 28 | `flex-basis` | `auto \| <length-percentage>` |
-| 29 | `grid-template-columns` | `none \| <track>+` |
-| 30 | `grid-template-rows` | `none \| <track>+` |
-| 31 | `grid-column` | `<line> [/ <line>]? where <line> = auto \| <integer> \| span <integer>` |
-| 32 | `grid-row` | `<line> [/ <line>]? where <line> = auto \| <integer> \| span <integer>` |
-| 33 | `position` | `static \| relative \| absolute \| fixed` |
-| 34 | `top` | `auto \| <length-percentage>` |
-| 35 | `right` | `auto \| <length-percentage>` |
-| 36 | `bottom` | `auto \| <length-percentage>` |
-| 37 | `left` | `auto \| <length-percentage>` |
-| 38 | `z-index` | `auto \| <integer>` |
-| 39 | `overflow` | `visible \| hidden \| auto` |
-| 40 | `border` | `none \| [<length> \|\| solid \|\| <color>]` |
-| 41 | `border-width` | `<length>` |
-| 42 | `border-style` | `none \| solid` |
-| 43 | `border-color` | `<color>` |
-| 44 | `border-radius` | `<length-percentage>{1,4}` |
-| 45 | `background-color` | `<color>` |
-| 46 | `color` | `<color>` |
-| 47 | `opacity` | `<number> (0 to 1)` |
-| 48 | `outline` | `none \| [<length> \|\| solid \|\| <color>]` |
-| 49 | `outline-width` | `<length>` |
-| 50 | `outline-style` | `none \| solid` |
-| 51 | `outline-color` | `<color>` |
-| 52 | `outline-offset` | `<length>` |
-| 53 | `font-family` | `[<string> \| <ident> \| sans-serif \| serif \| monospace \| system-ui]# (artifact or generic families)` |
-| 54 | `font-size` | `<length-percentage>` |
-| 55 | `font-weight` | `normal \| bold \| 400 \| 500 \| 600 \| 700` |
-| 56 | `font-style` | `normal \| italic` |
-| 57 | `line-height` | `normal \| <number> \| <length-percentage>` |
-| 58 | `text-align` | `left \| center \| right` |
-| 59 | `text-decoration` | `none \| underline` |
-| 60 | `white-space` | `normal \| nowrap \| pre-wrap` |
-| 61 | `text-overflow` | `clip \| ellipsis` |
-| 62 | `overflow-wrap` | `normal \| anywhere` |
-| 63 | `cursor` | `default \| pointer \| text \| not-allowed` |
-| 64 | `transform` | `none \| [translate(<length-percentage>[, <length-percentage>]) \| translateX(<length-percentage>) \| translateY(<length-percentage>) \| scale(<number>[, <number>])]+` |
-| 65 | `transition-property` | `none \| all \| [opacity \| color \| background-color \| transform]#` |
-| 66 | `transition-duration` | `<time>#` |
-| 67 | `transition-timing-function` | `[linear \| ease \| ease-in \| ease-out \| ease-in-out]#` |
-| 68 | `transition-delay` | `<time>#` |
-| 69 | `field-sizing` | `fixed \| content (textarea only)` |
+| Code | Property | Values | Note |
+| --- | --- | --- | --- |
+| 1 | `display` | `block \| flex \| grid \| none \| inline` | — |
+| 2 | `width` | `auto \| <length-percentage>` | — |
+| 3 | `height` | `auto \| <length-percentage>` | — |
+| 4 | `min-width` | `auto \| <length-percentage>` | — |
+| 5 | `min-height` | `auto \| <length-percentage>` | — |
+| 6 | `max-width` | `none \| <length-percentage>` | — |
+| 7 | `max-height` | `none \| <length-percentage>` | — |
+| 8 | `margin` | `[auto \| <length-percentage>]{1,4}` | — |
+| 9 | `margin-top` | `auto \| <length-percentage>` | — |
+| 10 | `margin-right` | `auto \| <length-percentage>` | — |
+| 11 | `margin-bottom` | `auto \| <length-percentage>` | — |
+| 12 | `margin-left` | `auto \| <length-percentage>` | — |
+| 13 | `padding` | `<length-percentage>{1,4}` | nonnegative |
+| 14 | `padding-top` | `<length-percentage>` | nonnegative |
+| 15 | `padding-right` | `<length-percentage>` | nonnegative |
+| 16 | `padding-bottom` | `<length-percentage>` | nonnegative |
+| 17 | `padding-left` | `<length-percentage>` | nonnegative |
+| 18 | `gap` | `<length-percentage>{1,2}` | — |
+| 19 | `row-gap` | `<length-percentage>` | — |
+| 20 | `column-gap` | `<length-percentage>` | — |
+| 21 | `flex-direction` | `row \| row-reverse \| column \| column-reverse` | — |
+| 22 | `flex-wrap` | `nowrap \| wrap \| wrap-reverse` | — |
+| 23 | `justify-content` | `start \| end \| flex-start \| flex-end \| center \| space-between \| space-around \| space-evenly` | — |
+| 24 | `align-items` | `stretch \| start \| end \| flex-start \| flex-end \| center \| baseline` | — |
+| 25 | `align-self` | `auto \| stretch \| start \| end \| flex-start \| flex-end \| center \| baseline` | — |
+| 26 | `flex-grow` | `<number>` | nonnegative |
+| 27 | `flex-shrink` | `<number>` | nonnegative |
+| 28 | `flex-basis` | `auto \| <length-percentage>` | — |
+| 29 | `grid-template-columns` | `none \| <track>+` | — |
+| 30 | `grid-template-rows` | `none \| <track>+` | — |
+| 31 | `grid-column` | `<line> [/ <line>]?` | — |
+| 32 | `grid-row` | `<line> [/ <line>]?` | — |
+| 33 | `position` | `static \| relative \| absolute \| fixed` | — |
+| 34 | `top` | `auto \| <length-percentage>` | — |
+| 35 | `right` | `auto \| <length-percentage>` | — |
+| 36 | `bottom` | `auto \| <length-percentage>` | — |
+| 37 | `left` | `auto \| <length-percentage>` | — |
+| 38 | `z-index` | `auto \| <integer>` | — |
+| 39 | `overflow` | `visible \| hidden \| auto` | — |
+| 40 | `border` | `none \| [<length> \|\| solid \|\| <color>]` | — |
+| 41 | `border-width` | `<length>` | — |
+| 42 | `border-style` | `none \| solid` | — |
+| 43 | `border-color` | `<color>` | — |
+| 44 | `border-radius` | `<length-percentage>{1,4}` | — |
+| 45 | `background-color` | `<color>` | — |
+| 46 | `color` | `<color>` | — |
+| 47 | `opacity` | `<number>` | 0 to 1 |
+| 48 | `outline` | `none \| [<length> \|\| solid \|\| <color>]` | — |
+| 49 | `outline-width` | `<length>` | — |
+| 50 | `outline-style` | `none \| solid` | — |
+| 51 | `outline-color` | `<color>` | — |
+| 52 | `outline-offset` | `<length>` | — |
+| 53 | `font-family` | `[<string> \| <ident> \| sans-serif \| serif \| monospace \| system-ui]#` | artifact fonts or generic families |
+| 54 | `font-size` | `<length-percentage>` | — |
+| 55 | `font-weight` | `normal \| bold \| 400 \| 500 \| 600 \| 700` | — |
+| 56 | `font-style` | `normal \| italic` | — |
+| 57 | `line-height` | `normal \| <number> \| <length-percentage>` | — |
+| 58 | `text-align` | `left \| center \| right` | — |
+| 59 | `text-decoration` | `none \| underline` | — |
+| 60 | `white-space` | `normal \| nowrap \| pre-wrap` | — |
+| 61 | `text-overflow` | `clip \| ellipsis` | — |
+| 62 | `overflow-wrap` | `normal \| anywhere` | — |
+| 63 | `cursor` | `default \| pointer \| text \| not-allowed` | — |
+| 64 | `transform` | `none \| [translate(<length-percentage> [, <length-percentage>]?) \| translateX(<length-percentage>) \| translateY(<length-percentage>) \| scale(<number> [, <number>]?)]+` | — |
+| 65 | `transition-property` | `none \| all \| [opacity \| color \| background-color \| transform]#` | — |
+| 66 | `transition-duration` | `<time>#` | — |
+| 67 | `transition-timing-function` | `[linear \| ease \| ease-in \| ease-out \| ease-in-out]#` | — |
+| 68 | `transition-delay` | `<time>#` | — |
+| 69 | `field-sizing` | `fixed \| content` | textarea only |
+| 70 | `border-top` | `none \| [<length> \|\| solid \|\| <color>]` | — |
+| 71 | `border-right` | `none \| [<length> \|\| solid \|\| <color>]` | — |
+| 72 | `border-bottom` | `none \| [<length> \|\| solid \|\| <color>]` | — |
+| 73 | `border-left` | `none \| [<length> \|\| solid \|\| <color>]` | — |
+| 74 | `resize` | `none \| vertical` | textarea only; treated as `none` with `field-sizing: content` |
 <!-- generated:view-css-properties:end -->
 
 **Events.**
@@ -1543,7 +1554,10 @@ only, at most the value-byte limit, and only in the batch committed by a turn wh
 task was a trusted `click` or `keydown` record (a user gesture). In any other turn
 `copy_text` invalidates the batch. Without the grant, or when the platform refuses
 the write, the copy is skipped with a host diagnostic and no event (draft: no
-result is reported to the guest yet). The browser applier uses
+result is reported to the guest yet). **Superseded direction:** the accepted
+[permission model](development-plan.md#permission-model) requires that denials
+and refusals of `copy_text` and of `ui.open_url` activations reach the guest as
+recoverable results; the result records are a pending draft change. The browser applier uses
 `navigator.clipboard.writeText` within the platform's user-activation window;
 natively the shell writes the system clipboard. `clipboard.read` stays out of v1.
 
@@ -1574,8 +1588,69 @@ use grid with roles).
 
 **Pending owner confirmation** (product-visible draft choices of this round): the
 key table's coverage (named keys only, no letter shortcuts such as Ctrl+K in v1);
-that a denied or refused `copy_text` is silent to the guest; the `rows` default of
+how a denied or refused `copy_text` is reported to the guest (no longer silent,
+per the permission model); the `rows` default of
 2; and that Markdown block quotes and rules stay out of v1.
+
+### View draft v0 round 4: subset fixes
+
+Found by the first application mockups and a subset linter driven by the
+generated tables. Unstable draft v0, like the rest of the view protocol.
+
+- **`transform` grammar.** Round 3 wrote `translate(<length-percentage>[,
+  <length-percentage>])` and `scale(<number>[, <number>])`, which in value
+  definition syntax make the second argument mandatory, so `scale(0.98)` and
+  `translate(4px)` were invalid. The second argument is now optional (`[, …]?`).
+  All grammars are pure value definitions now (restrictions moved to the **Note**
+  column) and are checked by a matcher in `varta_common::view`'s unit tests against
+  valid samples for every property, including the single-argument forms, and
+  against malformed samples.
+- **Per-side borders.** `border-top`, `border-right`, `border-bottom` and
+  `border-left` join the subset with the `border` grammar; per-side width, style and
+  colour longhands do not (set the side shorthand instead). The native renderer
+  draws each side with its own width and colour, solid only.
+- **`aside`.** The `aside` element (landmark role `complementary`) and the
+  `complementary` role value join the subset.
+- **`resize`.** `textarea` takes `resize: none | vertical`, default `none` on every
+  renderer (the browser applier's base style sets it). With `field-sizing:
+  content` the textarea sizes itself and `resize` is treated as `none`, so no
+  renderer shows a handle; with `fixed`, a user drag sets an explicit height (still
+  clamped by `min-height`/`max-height`) that lasts until the node is removed or its
+  `rows` or height style changes.
+- **`:root`.** `:root` normatively means the **guest view root**, the root
+  container (node 1), on every renderer. In a closed shadow root a browser does not
+  match `:root`, so the browser applier rewrites every `:root` selector of a guest
+  stylesheet to the root-container selector of the defaults table below (an
+  attribute only the applier sets on node 1), keeping its specificity of one
+  pseudo-class; custom properties declared there cascade identically everywhere.
+- **Dialog backdrop.** There are no pseudo-elements, so the backdrop of a modal
+  `dialog` is fixed: it covers the viewport behind the dialog in the colour of the
+  defaults table for the active colour scheme, without blur, and cannot be
+  styled in v0. A modal dialog is centred in the viewport with the default
+  background and text colours below, no border and no padding; guest classes may
+  override the dialog's own box, not the backdrop. The browser applier puts these
+  rules (including `::backdrop`) in its own base stylesheet inside the shadow
+  root, below every guest sheet; the native renderer draws them itself.
+
+<!-- generated:view-defaults:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Default | Light / dark |
+| --- | --- |
+| `dialog` backdrop colour | `rgba(0, 0, 0, 0.4)` / `rgba(0, 0, 0, 0.6)` |
+| `dialog` background colour | `#ffffff` / `#1f1f1f` |
+| `dialog` text colour | `#111111` / `#eeeeee` |
+| Browser selector substituted for `:root` | `[data-l0-root]` (both schemes) |
+<!-- generated:view-defaults:end -->
+
+**Authoring note (L1 templates).** A grid or flex container whose items include
+form fields needs tracks that may shrink below the fields' intrinsic width: use
+`grid-template-columns: minmax(0, 1fr)` (and `min-width: 0` on flex items).
+With an implicit or `1fr` track a `textarea`'s intrinsic width (its `cols`
+default) overflows narrow layouts such as a 375 px phone viewport. The same rule
+holds on every renderer, since all follow the CSS min-content sizing of the
+subset.
+
+**Pending owner confirmation** (round 4): the dialog backdrop and default colours
+above; per-side border longhands staying out of v1; `resize` defaulting to `none`.
 
 ## Entry-point limits
 

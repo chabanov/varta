@@ -883,7 +883,7 @@ web-developer peer.
 
 | Area | In v1 | Not in v1 |
 | --- | --- | --- |
-| Structure | `div`, `span`, `p`, `h1`–`h3`, `ul`/`ol`/`li`, `header`/`nav`/`main`/`section`/`footer` (landmarks for AccessKit) | Table elements (Taffy has no table layout: use grid with `role=table/row/cell/columnheader`) |
+| Structure | `div`, `span`, `p`, `h1`–`h3`, `ul`/`ol`/`li`, `header`/`nav`/`main`/`section`/`aside`/`footer` (landmarks for AccessKit; `aside` added in [round 4](embedding.md#view-draft-v0-round-4-subset-fixes)) | Table elements (Taffy has no table layout: use grid with `role=table/row/cell/columnheader`) |
 | Text | `strong`, `em`, `code`, `pre`, `br` | Raw HTML, `contenteditable` |
 | Controls | `button`; `a` for internal routing, and external links opened by the renderer under the accepted `ui.open_url` capability; `form` only as a submit boundary (no `action`/`method`); `label` (`for` focuses the field); `input` types text, password, number, search, checkbox, radio; `textarea`; `select`/`option` with a native popup; `progress` | `input` types date, color, range, file; `details`/`summary` |
 | Overlays | `dialog` with the `showModal` command, top layer, focus trap, Esc = cancel | — |
@@ -897,6 +897,10 @@ web-developer peer.
 | Cursor | default, pointer, text, not-allowed | — |
 | Motion | Transitions on opacity, color, background-color and transform (translate/scale only) | `@keyframes`, rotate (v1.1) |
 
+- **Authoring guidance.** Grid and flex containers holding form fields use
+  shrinkable tracks (`grid-template-columns: minmax(0, 1fr)`, `min-width: 0` on
+  flex items); otherwise a `textarea`'s intrinsic width overflows narrow
+  viewports such as 375 px ([round 4](embedding.md#view-draft-v0-round-4-subset-fixes)).
 - **Fonts.** The application ships its fonts in the artifact (by default one sans
   and one mono). The browser loads the same fonts through `@font-face` from
   artifact resources, so layout is comparable across renderers.
@@ -1332,6 +1336,133 @@ Later increments, each its own capability or capability-free contract:
   future transitions) would need a versioned tz data subset and are out of the
   first increment.
 
+#### Permission model
+
+**Status: accepted direction 2026-10-29; details pending.** Normative once each
+part lands in its profile and in [architecture.md](architecture.md#capabilities-and-trust);
+until then this is the agreed target. Requirement from the owner: permissions are
+handled professionally. A denial is never a fatal error, because a user will
+later be able to confirm a permission at the moment it is needed (a consent
+prompt). The security invariants of the capability model do not change; the model
+adds a decision step and a user as a bounded grant source.
+
+**1. Recoverable denials (new profiles, from v37).**
+
+- Every capability-checked operation fails **recoverably** when it is denied or the
+  platform refuses it. Asynchronous APIs (`fetch`/`net.request`, timers,
+  `clipboard.write`, `ui.open_url`, future storage) **reject** their promise with a
+  `DOMException` named `NotAllowedError`; synchronous APIs **throw** that
+  `DOMException`, or keep returning a failed `VartaResult` with status 1 where the
+  `VartaResult` ABI applies. A denial **never traps** and never ends the execution;
+  only budgets, traps of guest code and authorized exits stay fatal.
+- **Revision of round 3.** `copy_text` and the `ui.open_url` activation report a
+  denial or a platform refusal to the guest instead of staying silent: proposed, a
+  `copy_text` takes a request id and the host answers with a result event record
+  (`granted` or `NotAllowedError`), and a denied external link delivers a
+  `link_denied` record to the link's `click` listeners. The exact records are a
+  draft v0 change of the [view protocol](embedding.md#view-draft-v0-round-3-chat-requirements).
+- **Profiles.** The v37 net-request stream is implementing recoverable
+  `net.request` denials and recoverable v37 timer denials now. **v36 is frozen**: a
+  denied `timer_start` stays fatal there, exactly as its contract states. Earlier
+  synchronous operations keep their recoverable `VartaResult` statuses, which
+  already never trap.
+
+**2. Permission states.** Each capability (with its concrete resource where the
+grant has patterns) is in one of three states, following the
+[Permissions API](https://www.w3.org/TR/permissions/):
+
+| State | Meaning |
+| --- | --- |
+| `granted` | Package request ∩ host ceiling allow it, and the user has allowed it or it needs no consent |
+| `denied` | Outside the request or the ceiling, or the user refused it; operations fail recoverably at once |
+| `prompt` | Requested and within the ceiling, but no decision yet; the next use (or `request()`) asks the user |
+
+- **Query.** A guest API `varta.permissions.query({ name, resource? })` resolves
+  to `{ state }` and never prompts. In the browser it maps to
+  `navigator.permissions.query` where the browser exposes that permission, and to
+  the broker's own state otherwise.
+- **Request (optional, proposed).** `varta.permissions.request({ name, resource? })`
+  asks explicitly. For UI-sensitive permissions (`clipboard.write`, `ui.open_url`,
+  future camera, microphone or location) it is valid only during a user-gesture
+  turn; outside one it resolves to the current state without prompting.
+
+**3. Manifest.** A requested grant gains, besides its exact resource patterns:
+
+- `"required": true | false`. Required permissions are decided at install or first
+  run (prompted once, or granted by policy); if the user refuses one, the shell
+  says that the application cannot run instead of starting it half-authorized.
+  Optional permissions start in `prompt` and are requested at the point of use.
+- `"purpose"`: a short human-readable text shown in every prompt, for example
+  "Connect to your UARP workspace". It is untrusted package text: the prompt shows
+  it as a quote next to the broker's own description of the operation and the
+  exact resource, never instead of them.
+- The patterns stay exact and are the only resources a prompt can grant: a user can
+  allow `https://api.uarp.example/v1/**` because the package asked for it, never a
+  broader one.
+
+**4. Permission broker (host).** One host component decides every concrete
+operation, asynchronously:
+
+1. Package request ∩ host ceiling, exactly as today (deny by default, exact
+   operation and resource matching). Outside it: `denied`, no prompt.
+2. Stored user decisions for this application identity: allow, deny, or allow for
+   this session.
+3. Otherwise the prompt UI of the target, or `denied` where no prompt exists.
+
+- **Ceiling.** A user decision can only narrow or confirm within the ceiling; it can
+  never exceed it. The ceiling stays embedder-owned and is never written by a
+  prompt.
+- **Identity and persistence.** Decisions persist per application identity: the
+  artifact hash until C3 provenance exists, then the signer and application id (so
+  an update by the same signer keeps decisions, unless its requests grew). Users
+  can revoke decisions at runtime; revocation affects **new** operations, never one
+  already authorized and running.
+- **Audit log.** Every decision (source, operation, resource, outcome, time) is
+  appended to a bounded host audit log the user and embedder can read; the guest
+  cannot read or write it.
+- **Prompt UI per target.**
+  - Browser: the host page's own dialog outside the guest's view (the guest renders
+    only inside its closed shadow root), or the browser's own permission prompt where
+    the browser has one for that permission.
+  - Native shell: a dialog drawn by the renderer **outside the guest's control**
+    (its own window layer, not an L0 node), so a guest cannot spoof or overlay it.
+  - Headless and server: a policy file only, never a prompt; anything unresolved is
+    `denied`.
+- **Anti-abuse.** No prompt from a background turn (a timer, I/O completion or
+  any turn that is not a user-gesture turn); UI-sensitive permissions prompt only on
+  a user gesture; prompts are rate-limited per application (for example at most one
+  open prompt and a cool-down after repeated refusals), and repeated refusals
+  become a stored `denied`.
+
+**5. Budgets while waiting.** A decision that needs the user suspends the operation
+through the scheduler: the guest's promise stays pending and **no fuel** is used
+while waiting. The prompt does not count against a turn's deadline, because the
+turn ends when the guest returns to the scheduler; the decision arrives later as an
+ordinary task (a completion record) in a new turn. Synchronous APIs cannot wait: a
+synchronous operation in `prompt` state fails at once with `NotAllowedError` (or
+status 1), and the application asks through `request()` first. Within one
+execution (the current model) the wait still counts against the execution
+deadline; long-lived application instances bound only their turns.
+
+**6. Invariants unchanged.** Deny by default; check before effect; exact
+operation matching; grants are the only authority. A user decision is one more
+**grant source**, bounded by the package request and the host ceiling, and its
+result is a concrete grant for that application identity. No guest value, prompt
+text or purpose string is ever authority.
+
+**7. Increment placement.** Recoverable denials: v37 now (net-request stream).
+Broker, permission states and `query`: with the application lifecycle increment
+(P5), since they need tasks across turns. Prompt UI: with the browser bundle (P9)
+and the OS bundles and first-run approval of the shells (P10b). The headless
+policy-file path needs no new UI.
+
+**Open questions.** Whether `request()` exists at all or prompts happen only at the
+point of use; whether "allow for this session" is offered; the exact identity key
+before C3; how a required permission refused at first run is presented on each
+target; the exact result records for `copy_text` and `ui.open_url`; whether
+`query` reveals `denied` versus `prompt` to the guest (a fingerprinting concern in
+the browser); the rate-limit values.
+
 #### Increments and acceptance
 
 Each increment is a separate versioned contract with positive, negative and
@@ -1345,14 +1476,14 @@ under Node. Order (P1–P12):
 | P2 | Thin host: Rust intrinsics linked into the guest under a new profile | Only the intrinsics an application uses are linked; JSON/Headers/value programs run identically in Node and Wasmtime; `app.wasm` growth, fuel deltas and cold start in the browser and on the Pi 5 recorded | 01, 10, 13, 16 | M1–M4 programs |
 | P3 | Cross-target native packaging (`--target`, offline launcher metadata, musl aarch64) | Same artifact runs on a real Pi 5 (16 KiB pages) and on macOS/Linux; Windows CI | 14 | — |
 | P4 | Structured entry points v2 (binary64/UTF-16 tools and HTTP) | A uarp-sdk-shaped typed tool with records/unions runs in native and Node hosts | 10, 13 | M2–M3 |
-| P5 | Application lifecycle: long-lived instance, event turns, per-turn budgets, timers delivered as tasks | Timer and event ordering tests against Node logs; trap kills the instance without automatic restart; per-turn budget values set from measurements | 07, 08, 09, 17 | M4–M5 (timers, backoff) |
+| P5 | Application lifecycle: long-lived instance, event turns, per-turn budgets, timers delivered as tasks; [permission broker](#permission-model), states and `query` | Timer and event ordering tests against Node logs; trap kills the instance without automatic restart; per-turn budget values set from measurements | 07, 08, 09, 17 | M4–M5 (timers, backoff) |
 | P6 | Async `fetch` (`net.request`, replacing `net.get`/`net.fetch` in the new profile), streaming bodies, `AbortSignal`, HTTPS through `rustls` | uarp-sdk `transport.ts`/`sse.ts` paths against a local test server, native and browser | 09, 10, 11 | M5–M6 |
 | P7 | L0 view protocol + headless renderer (tree + accessibility snapshot) | Patch/event conformance cases; malformed patches fail closed | 10, 15, 18 | — |
 | P8 | L1 reactive core package + `tsx` + template compilation (B) | TSX counter/list/form examples produce identical headless snapshots on every host | 02, 03, 18 | — |
-| P9 | Browser bundle (Worker host + applier, CSP/SRI loader, deterministic metering transform), `varta dev --target browser` | The UARP console's `app.wasm` runs in Chromium, Firefox and WebKit with the headless snapshots; metering overhead measured | 14, 16, 18 | M7 |
+| P9 | Browser bundle (Worker host + applier, CSP/SRI loader, deterministic metering transform), `varta dev --target browser` | The UARP console's `app.wasm` runs in Chromium, Firefox and WebKit with the headless snapshots; metering overhead measured; permission prompts in the host page or the browser's own prompts | 14, 16, 18 | M7 |
 | P10 | Native renderer, first increment: box, text, flex, button, text input with IME, scrolling; `varta-desktop` shell (each dependency justified and pinned at adoption) | The UARP console's settings and list screens render on macOS and a Pi 5 with layout matching the headless renderer; startup, memory, frame time and keystroke latency measured | 14, 16, 18 | M7 |
 | P10a | Prebuilt shells per target distributed through releases, `varta build --target desktop-…`, offline `runtime-info.json` labelled unverified | A macOS host builds Windows and Pi 5 bundles without a cross toolchain; the payload is validated by the builder's runtime | 14 | — |
-| P10b | OS bundles (`.app`, `.exe`/MSIX, `.deb`/AppImage), manifest `app` metadata, first-run capability approval | Bundles install and run; denied grants stay denied | 14 | — |
+| P10b | OS bundles (`.app`, `.exe`/MSIX, `.deb`/AppImage), manifest `app` metadata, first-run capability approval | Bundles install and run; denied grants stay denied; required permissions decided at first run and optional ones prompted at use in a dialog outside the guest's control | 14 | — |
 | P10c | Startup: measure a pilot-sized compile; shell-generated cache through Wasmtime's cache feature; Winch for development starts | Startup budget met; tampered cache entries rejected | 14, 16 | — |
 | P10d | Rest of the L0 v1 subset natively | Freeze criterion passes on native, headless and browser renderers; the **same UARP console `app.wasm`** passes the scripted acceptance session in the browser, the macOS native renderer, the Pi 5 (`desktop-linux-aarch64`) native renderer and the headless conformance run | 14, 15, 18 | M7 |
 | P11 | Hooks subset over L1 (specified; never called "React compatible") | Subset spec plus differential cases | 03, 18 | — |
