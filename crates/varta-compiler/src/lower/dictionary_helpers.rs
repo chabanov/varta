@@ -159,6 +159,7 @@ impl Lower<'_> {
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         let slots: Vec<u32> = params.iter().map(|ty| child.hidden(*ty)).collect();
         let arguments = slots

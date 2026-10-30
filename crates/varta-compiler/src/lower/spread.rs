@@ -202,6 +202,7 @@ impl Lower<'_> {
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         for value in &operands {
             child.hidden(value.ty);

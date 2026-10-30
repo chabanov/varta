@@ -296,6 +296,8 @@ impl Lower<'_> {
                         member.prop.span(),
                     )?;
                     let (target, receiver) = method.target();
+                    // A getter runs code (v37 `paths`).
+                    self.drop_paths();
                     Ok(Expr {
                         span: member.span,
                         ty: method.signature.result,

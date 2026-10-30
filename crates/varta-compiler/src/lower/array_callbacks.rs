@@ -257,6 +257,7 @@ impl Lower<'_> {
             guarded: Default::default(),
             generator: None,
             asynchronous: None,
+            core: Default::default(),
         };
         let body = child.array_iteration(&iteration, signature.params.len(), signature.result)?;
         let mut operands = vec![base, callback];

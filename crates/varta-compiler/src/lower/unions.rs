@@ -14,6 +14,10 @@ pub(super) fn primitive(ty: Type) -> bool {
     )
 }
 pub(super) fn members(ty: Type, types: &ir::ValueTypes) -> Vec<Type> {
+    // `never` (v37) has no member.
+    if ty == Type::Never {
+        return Vec::new();
+    }
     if let Type::Union(id) | Type::ReferenceUnion(id) = ty {
         types.unions[id as usize].clone()
     } else {
@@ -34,10 +38,15 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
             "recursive type alias as a direct member of a union; refer to it through an array, record or dictionary",
         ));
     }
+    let never = values.contains(&Type::Never);
     let mut values: Vec<_> = values
         .into_iter()
         .flat_map(|ty| members(ty, types))
         .collect();
+    // `never | T` is `T`, and a union of `never` alone is `never` (v37).
+    if never && values.is_empty() {
+        return Ok(Type::Never);
+    }
     if values.iter().any(|ty| matches!(ty, Type::Generator(_))) {
         return Err(generators::opaque("a union"));
     }
@@ -108,17 +117,22 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                 | Type::NativeError(_)
         )
     });
-    // Records and class instances share the record union tag.
-    if values
-        .iter()
-        .filter(|ty| matches!(ty, Type::Record(_) | Type::Class(_)))
-        .count()
-        > 1
-        || values
+    // Records and class instances share the record union tag. V37
+    // (`language_core`) tells several of them apart by their layout
+    // descriptors, and several arrays by distinct element kinds.
+    let shared = types.profile.language_core();
+    if !shared
+        && values
             .iter()
-            .filter(|ty| matches!(ty, Type::Array(_)))
+            .filter(|ty| matches!(ty, Type::Record(_) | Type::Class(_)))
             .count()
             > 1
+        || !shared
+            && values
+                .iter()
+                .filter(|ty| matches!(ty, Type::Array(_)))
+                .count()
+                > 1
         || values
             .iter()
             .filter(|ty| matches!(ty, Type::Dictionary(_)))
@@ -140,6 +154,29 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
         } else {
             "multiple record shapes, array element types or promise types in one union"
         }));
+    }
+    if shared {
+        let kinds: Vec<_> = values
+            .iter()
+            .filter_map(|ty| match ty {
+                Type::Array(id) => Some(
+                    types.arrays[*id as usize]
+                        .profile_kind(types.profile)
+                        .map(|kind| kind as u32),
+                ),
+                _ => None,
+            })
+            .collect();
+        let mut distinct = kinds.clone();
+        distinct.sort();
+        distinct.dedup();
+        if distinct.len() != kinds.len() || kinds.iter().any(Option::is_none) {
+            return Err(unsupported(
+                "array members of one union with the same element kind (they are told apart by \
+                 element kind, so for example string[] | number[] works but A[] | B[] of two \
+                 record types does not)",
+            ));
+        }
     }
     if values.len() == 1 {
         return Ok(values[0]);
@@ -164,6 +201,25 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
     })
 }
 pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes) -> Result<Expr> {
+    // `never` (v37) converts to every type: the code is unreachable, so the
+    // placeholder of the target type is never observed.
+    if value.ty == Type::Never
+        && let Some(target) = expected.filter(|target| *target != Type::Never)
+    {
+        let span = value.span;
+        return Ok(Expr {
+            span,
+            ty: target,
+            kind: E::Sequence(
+                Box::new(value),
+                Box::new(Expr {
+                    span,
+                    ty: target,
+                    kind: E::Zero,
+                }),
+            ),
+        });
+    }
     let value = literals::conform(value, expected, types)?;
     if expected == Some(Type::Unknown) {
         return unknown::widen(value, types);
@@ -376,6 +432,9 @@ impl Lower<'_> {
         {
             return self.guard(&unary.arg, !yes);
         }
+        if self.path_guard(test, yes)? {
+            return Ok(());
+        }
         // A truthy optional chain `x?.p` (v36) proves `x` is not nullish.
         if yes
             && self.types.profile.function_fields()
@@ -418,6 +477,11 @@ impl Lower<'_> {
         let ast::Expr::Bin(binary) = test else {
             return Ok(());
         };
+        if binary.op == ast::BinaryOp::In
+            && self.property_guard(&binary.left, &binary.right, yes)?
+        {
+            return Ok(());
+        }
         if binary.op == ast::BinaryOp::In && yes && self.types.profile.unknown_json() {
             return self.in_guard(&binary.left, &binary.right);
         }

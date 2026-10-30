@@ -102,6 +102,9 @@ impl Lower<'_> {
             }
             _ => self.expr_inner(expression),
         };
+        if result.is_ok() {
+            self.path_effects(expression);
+        }
         self.depth -= 1;
         result
             .map(|value| {
@@ -115,6 +118,7 @@ impl Lower<'_> {
                     value
                 }
             })
+            .and_then(|value| self.void_function(value, expected))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }
@@ -205,13 +209,32 @@ impl Lower<'_> {
                     ));
                 }
                 let binding = self.resolve_binding(name.sym.as_ref())?;
+                if binding.global.is_some() {
+                    return self.global_read(&binding, expression.span());
+                }
+                if !binding.initialized
+                    && binding.tdz.is_some()
+                    && binding.identity.0 != self.index
+                    && self.types.profile.language_core()
+                {
+                    return self.tdz_ident(name.sym.as_ref(), &binding, expression.span());
+                }
                 if !binding.initialized {
                     return Err(invalid(format!(
                         "binding used before initialization: {}",
                         name.sym
                     )));
                 }
+                self.require_assigned(name.sym.as_ref(), &binding)?;
                 let ty = binding.ty.ok_or_else(|| invalid("missing binding type"))?;
+                // Narrowed to `never` (v37): no value is read.
+                if self.refinements.get(&binding.slot) == Some(&Type::Never) {
+                    return Ok(Expr {
+                        span: expression.span(),
+                        ty: Type::Never,
+                        kind: E::Zero,
+                    });
+                }
                 if let Some(narrow) = self.refinements.get(&binding.slot).copied()
                     // An `object` fact (v35) is read as the `unknown` cell; only
                     // `object_value` consumers use it.
@@ -508,12 +531,26 @@ impl Lower<'_> {
                 if left.ty.is_error() && right.ty.is_error() && left.ty != right.ty {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
+                if binary.op == ast::BinaryOp::In
+                    && self.shared_records(right.ty)
+                    && let ast::Expr::Lit(ast::Lit::Str(text)) = stmt::unparen(&binary.left)
+                    && let Some(name) = text.value.as_str()
+                {
+                    let name = name.to_owned();
+                    return self.shared_in(&name, right, expression.span());
+                }
                 if left.ty.is_cell() || right.ty.is_cell() {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
                 let (left, right) = classes::common_operands(left, right, self.types);
                 let (left, right) = if self.types.profile.has_undefined() {
-                    match super::undefined::binary(binary.op, left, right, expression.span()) {
+                    match super::undefined::binary(
+                        binary.op,
+                        left,
+                        right,
+                        expression.span(),
+                        self.types.profile.language_core(),
+                    ) {
                         super::undefined::Binary::Folded(value) => return Ok(value),
                         super::undefined::Binary::Unchanged(left, right) => (left, right),
                     }
@@ -590,7 +627,7 @@ impl Lower<'_> {
                 return self.conditional(branch, None, None);
             }
             ast::Expr::Call(call) => return self.call(call, None, None),
-            ast::Expr::Member(member) => return self.result_field(member),
+            ast::Expr::Member(member) => return self.member_read(member),
             ast::Expr::Tpl(template) if self.types.profile.template_literals() => {
                 return self.template_literal(template);
             }
@@ -643,6 +680,13 @@ impl Lower<'_> {
                     && !self.prelude_member(callee)
                 {
                     return self.class_static_call(call, member, class);
+                }
+                if let ast::Expr::Member(member) = stmt::unparen(callee)
+                    && self
+                        .peek_type(&member.obj, 0)
+                        .is_some_and(|ty| self.shared_classes(ty))
+                {
+                    return self.shared_method_call(call, member);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && self.class_receiver(&member.obj, 0).is_some()

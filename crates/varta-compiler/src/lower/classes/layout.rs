@@ -150,7 +150,12 @@ fn layout_members(
                 }
                 if let Some(value) = initializer {
                     initializers.push((field.name.clone(), value));
-                } else if property.is_optional {
+                } else if property.is_optional
+                    // V37 (`language_core`): an uninitialized field whose type
+                    // admits `undefined` starts as `undefined`, as in TypeScript.
+                    || types.profile.language_core()
+                        && unions::members(field.ty, types).contains(&Type::Undefined)
+                {
                     // `x?: T` defines the own property `x` as `undefined`.
                     initializers
                         .push((field.name.clone(), initializer_or_undefined(None, property)));
@@ -275,7 +280,9 @@ fn field(
         None => property
             .value
             .as_deref()
-            .and_then(|value| parameters::literal(value, types))
+            .and_then(|value| {
+                parameters::literal(value, types).or_else(|| constructed(value, types))
+            })
             .ok_or_else(|| {
                 invalid(format!(
                     "class field {name} requires a type annotation or a literal initializer"
@@ -351,6 +358,24 @@ fn redeclare(inherited: &mut Field, own: &Field) -> Result<()> {
 }
 
 /// The initializer of a field definition: its own, or `undefined`.
+/// V37 (`language_core`): a field initialized by `new C(...)` of a declared
+/// class without type arguments has the type `C`, as TypeScript infers it.
+fn constructed(value: &ast::Expr, types: &ir::ValueTypes) -> Option<Type> {
+    if !types.profile.language_core() {
+        return None;
+    }
+    let ast::Expr::New(new) = stmt::unparen(value) else {
+        return None;
+    };
+    let ast::Expr::Ident(name) = &*new.callee else {
+        return None;
+    };
+    if new.type_args.is_some() {
+        return None;
+    }
+    named::class(types, name.sym.as_ref()).map(Type::Class)
+}
+
 fn initializer_or_undefined(
     initializer: Option<Box<ast::Expr>>,
     property: &ast::ClassProp,

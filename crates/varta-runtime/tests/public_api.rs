@@ -4851,3 +4851,146 @@ fn public_engine_runs_v36_timers_across_modules_with_an_exact_grant() {
         "{frozen}"
     );
 }
+
+#[test]
+fn public_engine_shares_v37_module_variables_and_record_unions_across_modules() {
+    // A store module exports a `let` (a live binding), a function constant
+    // and a discriminated union; the entry module reads the variable after
+    // the store's functions changed it and switches on the union.
+    use varta_common::language::LanguageProfile;
+    struct StoreSources;
+    impl ModuleLoader for StoreSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./store.ts" => Ok("store.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("store.ts") => {
+                    "export type Event={kind:'add';n:number}|{kind:'reset'};\
+                    export let total=0;\
+                    export const apply=(e:Event):void=>{switch(e.kind){case 'add':total+=e.n;break;\
+                    case 'reset':total=0;break;default:{const never:never=e;}}};"
+                }
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {apply,total} from './store.ts';import type {Event} from './store.ts';\
+                       export function main():void{const events:Event[]=[{kind:'add',n:2},{kind:'add',n:5}];\
+                       for(const e of events)apply(e);console.log(String(total));\
+                       apply({kind:'reset'});console.log(String(total));}"
+                    .into(),
+            },
+            &StoreSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: 7", "varta log: 0"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("top-level let or var declaration"),
+        "{frozen}"
+    );
+    // Importers read a module variable but may not assign it.
+    let assigned = varta_compiler::compile_modules_with_profile(
+        ModuleSource {
+            path: "entry.ts".into(),
+            text: "import {total} from './store.ts';export function main():void{total=1;}".into(),
+        },
+        &StoreSources,
+        LanguageProfile::CheckedF64Utf16V37,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(assigned.contains("assignment"), "{assigned}");
+}
+
+#[test]
+fn public_engine_links_the_v37_language_core_across_modules() {
+    // A protocol module with a hoisted helper and a closure created before
+    // the binding it reads, a deferred `let`, a string `switch`, dense reads,
+    // property-path narrowing and a value function passed as a `void`
+    // callback; the entry module drives it.
+    use varta_common::language::LanguageProfile;
+    struct CoreSources;
+    impl ModuleLoader for CoreSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./protocol.ts" => Ok("protocol.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            Ok(match path.to_str() {
+                Some("protocol.ts") => {
+                    "export interface Field{name:string;value?:string}\
+                    export function classify(fields:Field[],each:(n:string)=>void):string{\
+                    const report=():string=>summary+'/'+String(count());\
+                    let total=0;\
+                    for(const field of fields){each(field.name);\
+                    let kind:string;\
+                    switch(field.name){case 'id':case 'key':kind='k';break;default:kind='v';}\
+                    if(field.value!==undefined&&field.value.length>0)total+=field.value.length;\
+                    else total+=kind.length;}\
+                    const summary:string=fields[0].name;\
+                    return report();\
+                    function count():number{return total;}}"
+                }
+                _ => return Err(CompilerError::Module("unknown virtual module".into())),
+            }
+            .into())
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {classify} from './protocol.ts';\
+                       export function main():void{const seen:string[]=[];\
+                       const record=(name:string):number=>seen.push(name);\
+                       console.log(classify([{name:'id',value:'abc'},{name:'x'},{name:'key',value:''}],record));\
+                       console.log(String(seen.length)+seen[2]);}"
+                    .into(),
+            },
+            &CoreSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        ["varta log: id/5", "varta log: 3key"]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("capture before binding initialization"),
+        "{frozen}"
+    );
+}

@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 62 feature rows and 110 cases:
-101 pass, 9 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 70 feature rows and 118 cases:
+101 pass, 17 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -262,3 +262,22 @@ their pinned hashes and expected output, which matches Node.js v24.20.0 type
 stripping, and were promoted. The timer case was observed as a denied runtime
 failure without a grant, and passes with its reviewed grant. Earlier-profile
 rejections stay covered by the compiler/runtime/CLI regression tests.
+
+The v37 language-core stream adds eight original cases while the pin stays at
+v36, each a reviewed known gap with the exact v36 diagnostic code and an
+output that matches Node.js v24.20.0 type stripping and the v37 compiler:
+`tdz-closure-capture` (`temporal-dead-zone`, CORE-03: a closure reading a
+`const` before its initialization throws `ReferenceError`, and a nested
+function declaration is hoisted), `deferred-let-assignment`
+(`definite-assignment`), `string-switch` (`switch-statement`, strict-equality
+selection with fallthrough and a leading `default`), `property-path-narrowing`
+(`property-narrowing`), `dense-element-reads` (`dense-element-types`, CORE-02)
+and `void-function-assignability`, plus `discriminated-unions`
+(`record-unions`, CORE-02: a union of three record shapes switched on its
+literal `kind`, with `never` in `default`) and `module-variables`
+(`module-variables`, CORE-12: module `let` state shared with a
+function-valued module constant). The Varta-contract rows reference the
+architecture contract. When the pin moves to v37 each is expected to be
+observed as unexpected support and reviewed for promotion; the TypeError
+deviations of dense reads of holes and missing indices stay pinned in the
+runtime tests, not here.

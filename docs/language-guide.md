@@ -4742,3 +4742,136 @@ generator's values (and its `return()` and `throw()`). Not supported yet:
 `yield*` over arrays or synchronous generators, async generator function
 expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
 `await` inside an intrinsic call or template (bind it to a `const` first). `for await` costs a few microtasks per value, like Node.
+
+### `checked-f64-utf16-v37`
+
+Profile v37 (in development) runs every v36 program and adds, so far, the
+language-core patterns below. Its other streams (class generics, collections,
+RegExp and `fetch`) are not admitted yet.
+
+#### Language core (opt-in v37)
+
+```ts
+interface Settings { cancel?: AbortSignal; label?: string }
+
+function delay(ms: number, settings: Settings): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // The timer callback names `stop`, declared below: a capture before
+    // initialization, legal because the callback runs later.
+    const handle = setTimeout(() => {
+      settings.cancel?.removeEventListener("abort", stop);
+      resolve(describe());
+    }, ms);
+    const stop = () => {
+      clearTimeout(handle);
+      reject(settings.cancel?.reason);
+    };
+    settings.cancel?.addEventListener("abort", stop);
+    // Nested function declarations are hoisted to the block entry.
+    function describe(): string {
+      // Property-path narrowing: `settings.label` is a string here.
+      return settings.label !== undefined ? settings.label : "done";
+    }
+  });
+}
+
+function kind(field: string): string {
+  let out: string;                 // assigned on every path before the read
+  switch (field) {                 // strict equality over strings
+    case "id":
+    case "key":
+      out = "key";
+      break;
+    default:
+      out = "value";
+  }
+  return out;
+}
+
+export async function main(): Promise<void> {
+  console.log(await delay(5, { label: "slept" }));      // slept
+  const parts: string[] = ["id", "x"];
+  let joined = "";
+  for (const part of parts) joined += kind(part);        // part: string
+  console.log(joined + " " + parts[0]);                  // keyvalue id
+  const seen: number[] = [];
+  const record = (n: number): number => seen.push(n);   // returns a number
+  [1, 2].forEach(record);                                // as a void callback
+  const read = (): number => late;
+  try {
+    read();
+  } catch (e) {
+    if (e instanceof Error) console.log(e.name);         // ReferenceError
+  }
+  const late = 1;
+  console.log(String(read()));                           // 1
+}
+```
+
+Run it with the timer grant (`"capabilities": { "time": { "timer": true } }`).
+A closure may capture a `let`/`const` or a nested function before its
+declaration; reading or assigning it through the closure before the
+declaration ran throws an error whose `name` is `"ReferenceError"`, as in
+Node (`instanceof ReferenceError` is not available yet: test `e.name`). The
+binding needs a type that is known at the capture: an annotation, an arrow
+or function whose parameters and result are annotated (or whose block body
+returns nothing), or a literal. A read in the same function before the
+declaration is still a compile-time error.
+
+`let x: T;` may be declared without an initializer when every read is
+preceded by an assignment on every path, including `switch` clauses with a
+`default` and `try` blocks whose `catch` leaves; a closure may capture it only
+after it is assigned. `for (const x of xs)` and `xs[i]` have the element type,
+as in TypeScript; a hole or an index out of range throws a `TypeError` instead
+of producing `undefined` (use `xs.at(i)` or test `i < xs.length` where that can
+happen). A guard on `a.b`, `a.b.c` or `a.b?.c` narrows later reads of the same
+path until a call, a property assignment or a loop that may run code
+intervenes (Varta is stricter than TypeScript there, because objects are
+shared). `switch` works on strings, literal unions and `typeof x`. A function
+that returns a value can be passed where a `void` callback is expected. Class
+fields typed `T | undefined` may be left uninitialized, a field initialized by
+`new C()` has type `C`, and an arrow created in a constructor may use
+`this.field` once the fields it reads are assigned.
+
+#### Unions of object types and module variables (opt-in v37)
+
+```ts
+type Event = { kind: "chunk"; text: string } | { kind: "done" };
+
+let text = "";            // module state: every function sees the current value
+let finished = 0;
+
+export const record = (e: Event): void => {
+  switch (e.kind) {       // narrows `e` by its discriminant
+    case "chunk":
+      text += e.text;
+      break;
+    case "done":
+      finished++;
+      break;
+    default: {
+      const unreachable: never = e;   // exhaustiveness check
+    }
+  }
+};
+
+export function main(): void {
+  record({ kind: "chunk", text: "ab" });
+  record({ kind: "done" });
+  console.log(text + " " + String(finished));          // ab 1
+  const parsed = JSON.parse('{"kind":"chunk","text":"c"}') as Event;
+  record(parsed);
+  console.log(text);                                    // abc
+}
+```
+
+A union may combine several object shapes, interfaces and classes, and
+arrays of different element kinds (`string[] | number[]`, `string | Item[]`,
+but not `A[] | B[]` of two object types). Narrow it with a literal field
+(`if (e.kind === "chunk")`, `switch`), `in`, `instanceof`,
+`Array.isArray` or `typeof`; fields that every member declares can be read,
+and methods every class member has can be called, without narrowing.
+`JSON.parse(text) as T` picks the member by its literal discriminant field and
+throws a `TypeError` when none matches. Module-level `let` (and `var`) hold
+state for the whole program run; other modules may import and read them but
+not assign them. Module constants may hold arrow and function expressions.

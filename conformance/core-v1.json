@@ -582,6 +582,78 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md"
+    },
+    {
+      "id": "temporal-dead-zone",
+      "title": "Closure captures before initialization (temporal dead zone)",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-let-and-const-declarations"
+    },
+    {
+      "id": "definite-assignment",
+      "title": "Deferred let initialization with definite assignment",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "switch-statement",
+      "title": "switch selection by strict equality over strings and typeof",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/ecmascript-language-statements-and-declarations.html#sec-switch-statement"
+    },
+    {
+      "id": "property-narrowing",
+      "title": "Property-path narrowing with write and call invalidation",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "dense-element-types",
+      "title": "Element-typed for...of and indexed reads with checked holes",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "void-function-assignability",
+      "title": "Value-returning functions as void-result function types",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "record-unions",
+      "title": "Unions of record shapes with discriminant narrowing and never",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "module-variables",
+      "title": "Module-level let bindings and function-valued module constants",
+      "core": [
+        "CORE-12"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
     }
   ],
   "cases": [
@@ -2266,6 +2338,120 @@
       ],
       "baseline": {
         "status": "supported"
+      }
+    },
+    {
+      "id": "tdz-closure-capture",
+      "feature": "temporal-dead-zone",
+      "path": "cases/tdz-closure-capture.ts",
+      "sha256": "db058dfb3004bbfe95a5219cd78c9613d90e7d1afbfa64f7860285241a5dd63e",
+      "stdout": [
+        "varta log: ReferenceError 7 14"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "The v36 pin rejects closure captures before a binding's initialization and nested function declarations; v37 admits them with run-time temporal dead zones."
+      }
+    },
+    {
+      "id": "deferred-let-assignment",
+      "feature": "definite-assignment",
+      "path": "cases/deferred-let-assignment.ts",
+      "sha256": "7fde307d73a83e0548ff02f5cfc7246ec6281b4d5d7617e3778620909ae949e8",
+      "stdout": [
+        "varta log: big even 4|small odd 3|error"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "The v36 pin rejects a let without an initializer unless its type admits undefined; v37 checks definite assignment instead."
+      }
+    },
+    {
+      "id": "string-switch",
+      "feature": "switch-statement",
+      "path": "cases/string-switch.ts",
+      "sha256": "5bea55fb848d29cc362c6c9a954e6fda1f7179283af56655e424640f075b25fd",
+      "stdout": [
+        "varta log: 11 10 3 -1",
+        "varta log: ns"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "The v36 pin admits switch only over number and boolean discriminants; v37 selects by strict equality."
+      }
+    },
+    {
+      "id": "property-path-narrowing",
+      "feature": "property-narrowing",
+      "path": "cases/property-path-narrowing.ts",
+      "sha256": "6bb9c18a8ba749cfd474c13f75efbe90394291f07b7066a3028b099fc71fc27f",
+      "stdout": [
+        "varta log: 2abc3|"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "The v36 pin narrows only local bindings, so property reads keep their declared union types; v37 narrows property paths."
+      }
+    },
+    {
+      "id": "dense-element-reads",
+      "feature": "dense-element-types",
+      "path": "cases/dense-element-reads.ts",
+      "sha256": "f6bd1e8f3578987c1e7d0038a67665eac7496d08c893b060fd1771a0af301393",
+      "stdout": [
+        "varta log: 33 ab1"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "type_error",
+        "reason": "The v36 pin types indexed reads as T | undefined; v37 types them as T with checked reads."
+      }
+    },
+    {
+      "id": "void-function-assignability",
+      "feature": "void-function-assignability",
+      "path": "cases/void-function-assignability.ts",
+      "sha256": "f58129999779f039bb51ef85c1ccebead9ea7799e0dbfad470426c90cdd3eb33",
+      "stdout": [
+        "varta log: 4 10"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "type_error",
+        "reason": "The v36 pin requires exactly equal function types; v37 converts value-returning functions to void-result function types."
+      }
+    },
+    {
+      "id": "discriminated-unions",
+      "feature": "record-unions",
+      "path": "cases/discriminated-unions.ts",
+      "sha256": "a36fcd9c0914e840fa0ad9ae32a9f042cc6557e1ef2ce1ad5ed3c21143ed13db",
+      "stdout": [
+        "varta log: 3circle! 6rect! 0point "
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "The v36 pin admits at most one record shape per union; v37 tells several apart by descriptor."
+      }
+    },
+    {
+      "id": "module-variables",
+      "feature": "module-variables",
+      "path": "cases/module-variables.ts",
+      "sha256": "4a73fb0587913e841ebb711a4cc41ee0292cb8621697f7fc08d749f54ea3285a",
+      "stdout": [
+        "varta log: 0 none",
+        "varta log: 2 b"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "The v36 pin rejects module-level let declarations and function-valued module constants; v37 stores module variables in permanent root slots."
       }
     }
   ]

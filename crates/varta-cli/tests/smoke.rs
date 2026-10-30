@@ -11727,6 +11727,132 @@ fn pilot_profile_v37_declares_host_abi_33_with_value17_through_both_binaries() {
     rejects("matching host ABI");
 }
 
+/// The v37 language core through `varta dev`, both artifacts, both binaries
+/// and the packaged executable: a timer callback naming the abort listener
+/// declared after it, hoisted helpers, a closure reading its binding before
+/// initialization (a `ReferenceError`), a deferred `let`, a string `switch`,
+/// dense reads and property-path narrowing. The same project fails `check`
+/// under v36 with that profile's diagnostic.
+#[test]
+fn pilot_profile_v37_language_core_runs_everywhere_and_v36_rejects_it() {
+    const PROFILE: &str = "checked-f64-utf16-v37";
+    let project = RegressionProject::new(
+        "interface Options{signal?:AbortSignal;label?:string}\
+         function delay(ms:number,options:Options):Promise<string>{return new Promise((resolve,reject)=>{\
+         const handle=setTimeout(()=>{options.signal?.removeEventListener('abort',stop);resolve(describe());},ms);\
+         const stop=()=>{clearTimeout(handle);reject(options.signal?.reason);};\
+         options.signal?.addEventListener('abort',stop);\
+         function describe():string{return options.label!==undefined?options.label:'done';}});}\
+         function kind(field:string):string{let out:string;switch(field){case 'id':out='key';break;default:out='value';}return out;}\
+         export async function main():Promise<void>{\
+         console.log(await delay(2,{label:'slept'}));\
+         const controller=new AbortController();const pending=delay(50,{signal:controller.signal});\
+         controller.abort('cancelled');\
+         try{await pending;}catch(e){console.log('rejected '+String(e));}\
+         const parts:string[]=['id','x'];let joined='';for(const part of parts)joined+=kind(part)+parts[0];\
+         console.log(joined);\
+         const early=():number=>late;\
+         try{early();}catch(e){if(e instanceof Error)console.log(e.name+': '+e.message);}\
+         const late=1;console.log(String(early()));}",
+        serde_json::json!({"time":{"timer":true}}),
+    );
+    project.language_profile(PROFILE);
+    let expected = [
+        "varta log: slept",
+        "varta log: rejected cancelled",
+        "varta log: keyidvalueid",
+        "varta log: ReferenceError: Cannot access 'late' before initialization",
+        "varta log: 1",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(validate.status.success(), "{}", combined(&validate));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+    }
+    project.language_profile("checked-f64-utf16-v36");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success(), "{}", combined(&check));
+    assert!(
+        combined(&check).contains("capture before binding initialization"),
+        "{}",
+        combined(&check)
+    );
+}
+
+/// V37 record unions and module variables through `varta dev`, both
+/// artifacts, both binaries and the packaged executable; v36 rejects them.
+#[test]
+fn pilot_profile_v37_record_unions_and_module_variables_run_everywhere() {
+    const PROFILE: &str = "checked-f64-utf16-v37";
+    let project = RegressionProject::new(
+        "import {record,summary} from './state.ts';\
+         export function main():void{record({kind:'chunk',text:'ab'});record({kind:'done'});\
+         record({kind:'chunk',text:'c'});console.log(summary());}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/state.ts"),
+        "export type Event={kind:'chunk';text:string}|{kind:'done'};\
+         let text='';let finished=0;\
+         export const record=(e:Event):void=>{switch(e.kind){case 'chunk':text+=e.text;break;\
+         case 'done':finished++;break;default:{const never:never=e;}}};\
+         export function summary():string{return text+' '+String(finished);}",
+    )
+    .unwrap();
+    project.language_profile(PROFILE);
+    let expected = ["varta log: abc 1"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+    }
+    project.language_profile("checked-f64-utf16-v36");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success(), "{}", combined(&check));
+}
+
 /// V36 timers through `varta dev`, both artifacts, both binaries and the
 /// packaged executable: the sleep/backoff pattern, an interval, timer
 /// arguments and `AbortSignal.timeout` keep Node's order. Arming a timer

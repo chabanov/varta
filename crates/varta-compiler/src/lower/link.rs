@@ -20,6 +20,23 @@ pub(crate) fn lower(
     };
     let mut next = 0;
     let mut main = None;
+    // A program whose closures may capture a binding before its
+    // initialization throws `ReferenceError` instances of the Error root
+    // (v37 `language_core`), so the root exists before any catch union.
+    if profile.language_core()
+        && let Some(unit) = graph
+            .order
+            .iter()
+            .map(|path| &graph.units[path])
+            .find(|unit| tdz::module_has_early_captures(&unit.ast))
+    {
+        classes::error_family_root(
+            varta_common::value::ErrorClass::Error,
+            &unit.source,
+            unit.ast.span(),
+            &mut types,
+        )?;
+    }
     let mut type_exports: BTreeMap<PathBuf, named::Exports> = BTreeMap::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];
@@ -475,6 +492,7 @@ pub(super) fn body(
         guarded: Default::default(),
         generator,
         asynchronous,
+        core: Default::default(),
     };
     if let Some(ty) = signature.receiver {
         lower.declare("this", Some(ty), true, false)?;
@@ -596,6 +614,8 @@ pub(super) fn finish_body(
         && !returns(statements)
         && !(lower.types.profile.checked_declared_fields()
             && completion::exits_function_through_switches(statements))
+        && !(lower.types.profile.language_core()
+            && completion::exits_function_through_loops(statements))
     {
         return Err(lower.source.locate(
             invalid("value-returning function must return on every path"),

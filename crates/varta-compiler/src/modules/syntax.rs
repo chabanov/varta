@@ -103,7 +103,7 @@ pub(super) fn scan(
                     ast::Decl::Var(var)
                         if profile.module_constants()
                             && !var.declare
-                            && var.kind == ast::VarDeclKind::Const =>
+                            && (var.kind == ast::VarDeclKind::Const || profile.language_core()) =>
                     {
                         for declarator in &var.decls {
                             if let ast::Pat::Ident(binding) = &declarator.name {

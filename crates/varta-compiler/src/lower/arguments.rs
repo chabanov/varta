@@ -88,10 +88,10 @@ impl Lower<'_> {
             });
             let value = unions::widen(value, Some(*ty), self.types)?;
             if value.ty != *ty {
+                let (expected, found) = self.mismatch(*ty, value.ty);
                 return Err(self.source.locate(
                     type_error(format!(
-                        "argument type mismatch: expected {ty}, found {}",
-                        value.ty
+                        "argument type mismatch: expected {expected}, found {found}"
                     )),
                     value.span,
                 ));

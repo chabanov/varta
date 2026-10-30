@@ -11,6 +11,9 @@ fn local(span: swc_common::Span, slot: u32, ty: Type) -> Expr {
 
 impl Lower<'_> {
     pub(super) fn simple_assignment_value(&mut self, assign: &ast::AssignExpr) -> Result<Expr> {
+        if let Some(value) = self.global_compound(assign)? {
+            return Ok(value);
+        }
         if assign.op != ast::AssignOp::Assign {
             return self.compound_assignment_value(assign);
         }

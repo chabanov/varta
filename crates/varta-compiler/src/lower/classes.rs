@@ -183,7 +183,7 @@ impl Classes {
         }
     }
     /// Record shapes of `ancestor` and all of its descendants.
-    pub(super) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
+    pub(crate) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
         (0..self.list.len() as u32)
             .filter(|id| self.descends(*id, ancestor))
             .map(|id| self.shape(id))
@@ -438,5 +438,6 @@ mod members;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers};
 pub(super) use error_classes::{
     MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_prelude,
+    root as error_family_root,
 };
 pub(super) use layout::layout_module;

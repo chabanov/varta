@@ -15,23 +15,59 @@ impl Lower<'_> {
         if scope {
             self.scopes.push(BTreeMap::new());
         }
+        let core = self.types.profile.language_core();
         for statement in statements {
-            if let ast::Stmt::Decl(ast::Decl::Var(var)) = statement {
-                self.predeclare(var)
-                    .map_err(|e| self.source.locate(e, var.span()))?;
+            match statement {
+                ast::Stmt::Decl(ast::Decl::Var(var)) => self
+                    .predeclare(var)
+                    .map_err(|e| self.source.locate(e, var.span()))?,
+                ast::Stmt::Decl(ast::Decl::Fn(function)) if core => self
+                    .predeclare_function(function)
+                    .map_err(|e| self.source.locate(e, function.span()))?,
+                _ => {}
             }
         }
-        let mut result = statements
-            .iter()
-            .map(|s| self.statement(s))
-            .collect::<Result<Vec<_>>>()?;
+        let early = if core {
+            self.reserve_early(statements)?
+        } else {
+            Vec::new()
+        };
+        let mut result = if core {
+            self.hoisted_functions(statements)?
+        } else {
+            Vec::new()
+        };
+        for statement in statements {
+            result.push(self.statement(statement)?);
+        }
+        if core {
+            let bindings: Vec<Binding> = self
+                .scopes
+                .last()
+                .ok_or_else(|| invalid("missing lexical scope"))?
+                .values()
+                .filter(|binding| early.contains(&binding.slot))
+                .cloned()
+                .collect();
+            let span = statements
+                .first()
+                .map_or_else(Default::default, |s| s.span());
+            let prologue = self.tdz_prologue(&bindings, span);
+            result.splice(0..0, prologue);
+        }
         if scope {
             let slots = self
                 .scopes
                 .pop()
                 .ok_or_else(|| invalid("missing lexical scope"))?
                 .values()
-                .map(|binding| binding.slot)
+                .flat_map(|binding| {
+                    std::iter::once(binding.slot).chain(
+                        binding
+                            .tdz
+                            .filter(|_| self.core.early.contains(&binding.slot)),
+                    )
+                })
                 .collect();
             result = vec![S::Scope(slots, result)];
         }
@@ -60,6 +96,10 @@ impl Lower<'_> {
             ast::Stmt::Throw(t) => self.throw_statement(t)?,
             ast::Stmt::Try(t) => self.try_statement(t)?,
             ast::Stmt::Decl(ast::Decl::Var(var)) => S::Block(self.variables(var)?),
+            // Hoisted to the block entry (v37 `language_core`).
+            ast::Stmt::Decl(ast::Decl::Fn(_)) if self.types.profile.language_core() => {
+                S::Block(vec![])
+            }
             ast::Stmt::Decl(ast::Decl::Class(_)) if self.types.profile.classes() => {
                 return Err(unsupported("class declaration outside module top level"));
             }
@@ -123,11 +163,11 @@ impl Lower<'_> {
                     .asynchronous
                     .is_some_and(|id| value.as_ref().is_some_and(|v| v.ty == Type::Promise(id)));
                 if !adopted && value.as_ref().map_or(Type::Void, |e| e.ty) != self.result {
+                    let (expected, found) =
+                        self.mismatch(self.result, value.as_ref().map_or(Type::Void, |v| v.ty));
                     return Err(self.source.locate(
                         type_error(format!(
-                            "return type mismatch: expected {}, found {}",
-                            self.result,
-                            value.as_ref().map_or(Type::Void, |v| v.ty)
+                            "return type mismatch: expected {expected}, found {found}"
                         )),
                         value.as_ref().map_or(ret.span, |v| v.span),
                     ));
@@ -256,77 +296,7 @@ impl Lower<'_> {
                     .collect();
                 S::Scope(slots, vec![S::For(init, test, update, body)])
             }
-            ast::Stmt::Switch(statement) => {
-                let value = self.expr(&statement.discriminant)?;
-                scalar(value.ty).map_err(|e| self.source.locate(e, value.span))?;
-                let discriminant = self.next;
-                let selected = self.next + 1;
-                self.local_types.insert(discriminant, value.ty);
-                self.next += 2;
-                let mut cases = Vec::new();
-                let mut default = false;
-                let saved = self.flow_snapshot();
-                let flow = self.types.profile.refinement_writes();
-                let mut tests = Vec::new();
-                if flow {
-                    // Selection tests run before any body and may themselves
-                    // be skipped. No body fact may influence a later test.
-                    for case in &statement.cases {
-                        tests.push(case.test.as_deref().map(|e| self.expr(e)).transpose()?);
-                        self.flow_restore(&saved);
-                    }
-                }
-                let direct = self.flow_snapshot();
-                let mut previous = None;
-                let target = self.flow_target(flow_control::Kind::Switch);
-                self.switches += 1;
-                for (index, case) in statement.cases.iter().enumerate() {
-                    let test = if flow {
-                        let mut paths = vec![direct.clone()];
-                        paths.extend(previous.take());
-                        self.flow_join(&direct, &paths)?;
-                        tests[index].take()
-                    } else {
-                        case.test.as_deref().map(|e| self.expr(e)).transpose()?
-                    };
-                    if test.as_ref().is_some_and(|e| e.ty != value.ty) {
-                        return Err(self
-                            .source
-                            .locate(type_error("switch case type mismatch"), case.span));
-                    }
-                    if test.is_none() {
-                        if default {
-                            return Err(self
-                                .source
-                                .locate(invalid("duplicate default"), case.span));
-                        }
-                        default = true;
-                    }
-                    if case.cons.iter().any(|s| matches!(s, ast::Stmt::Decl(_))) {
-                        return Err(unsupported("case declaration without a block"));
-                    }
-                    let body = self.block(&case.cons, true)?;
-                    if flow && self.reachable {
-                        previous = Some(self.flow_snapshot());
-                    }
-                    cases.push((test, body));
-                }
-                self.switches -= 1;
-                if flow {
-                    let mut paths = self.flow_end(target);
-                    paths.extend(previous);
-                    if !default {
-                        paths.push(direct);
-                    }
-                    self.flow_join(&saved, &paths)?;
-                }
-                S::Switch {
-                    value,
-                    discriminant,
-                    selected,
-                    cases,
-                }
-            }
+            ast::Stmt::Switch(statement) => return self.switch_statement(statement),
             ast::Stmt::Break(statement) => {
                 if let Some(label) = &statement.label {
                     return self.named_branch(label, false);
@@ -360,8 +330,17 @@ impl Lower<'_> {
         ])
     }
     fn assignment(&mut self, assign: &ast::AssignExpr) -> Result<S> {
-        self.assignment_inner(assign)
-            .map_err(|e| self.source.locate(e, assign.span))
+        let statement = self
+            .assignment_inner(assign)
+            .map_err(|e| self.source.locate(e, assign.span))?;
+        // A property or pattern store may change any path (v37 `paths`).
+        if !matches!(
+            assign.left,
+            ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(_))
+        ) {
+            self.drop_paths();
+        }
+        Ok(statement)
     }
     fn assignment_inner(&mut self, assign: &ast::AssignExpr) -> Result<S> {
         if assign.op != ast::AssignOp::Assign {
@@ -455,7 +434,21 @@ impl Lower<'_> {
             return Err(unsupported("assignment target"));
         };
         let binding = self.resolve_binding(name.id.sym.as_ref())?;
-        if !binding.mutable || !binding.initialized {
+        if binding.global.is_some() {
+            return Ok(S::Expr(self.global_assignment_value(
+                &binding,
+                &assign.right,
+                assign.span,
+            )?));
+        }
+        // A store through a closure that captured the binding before its
+        // initialization (v37 `tdz`) checks the flag after the right side.
+        let early = binding.mutable
+            && !binding.initialized
+            && binding.tdz.is_some()
+            && binding.identity.0 != self.index
+            && self.types.profile.language_core();
+        if (!binding.mutable || !binding.initialized) && !early {
             return Err(invalid("assignment to constant or uninitialized binding"));
         }
         if self.refinements.contains_key(&binding.slot) && !self.types.profile.refinement_writes() {
@@ -475,19 +468,19 @@ impl Lower<'_> {
         } else {
             value.ty != expected
         } {
+            let (expected, found) = self.mismatch(binding.ty.unwrap_or(Type::Void), value.ty);
             return Err(self.source.locate(
                 type_error(format!(
-                    "assignment type mismatch: expected {}, found {}",
-                    binding.ty.unwrap_or(Type::Void),
-                    value.ty
+                    "assignment type mismatch: expected {expected}, found {found}"
                 )),
                 value.span,
             ));
         }
         self.flow_assigned(binding.slot, value.ty)?;
-        Ok(S::Set(
-            binding.slot,
-            unions::widen(value, Some(expected), self.types)?,
-        ))
+        let value = unions::widen(value, Some(expected), self.types)?;
+        if early {
+            return self.tdz_write(name.id.sym.as_ref(), &binding, value);
+        }
+        Ok(S::Set(binding.slot, value))
     }
 }

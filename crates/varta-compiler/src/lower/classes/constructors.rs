@@ -17,6 +17,12 @@ struct ThisUse<'a> {
     allow_this: bool,
     /// Inside an arrow body: `this` would be captured; returns are local.
     closure: bool,
+    /// V37 (`language_core`): a closure created after `super(...)` may read
+    /// the fields assigned where it is created and write any field through
+    /// `this.field`, but never let `this` escape or call a method on it.
+    capture: bool,
+    /// Whether closures created at this statement may capture `this.field`.
+    complete: bool,
     /// v32 `error_subclasses`: `new.target.name` is admitted in constructor
     /// parameters and bodies (not in field initializers or closures).
     new_target: bool,
@@ -29,7 +35,7 @@ impl ThisUse<'_> {
         }
     }
     fn this_member(&mut self, member: &ast::MemberExpr, write: bool) {
-        if !self.allow_this || self.closure {
+        if !self.allow_this || self.closure && !self.capture {
             return self.fail(self.this_message(), member.span);
         }
         let ast::MemberProp::Ident(name) = &member.prop else {
@@ -85,8 +91,11 @@ impl Visit for ThisUse<'_> {
     }
     fn visit_arrow_expr(&mut self, node: &ast::ArrowExpr) {
         let closure = std::mem::replace(&mut self.closure, true);
+        let capture = self.capture;
+        self.capture |= !closure && self.complete;
         node.visit_children_with(self);
         self.closure = closure;
+        self.capture = capture;
     }
     fn visit_member_expr(&mut self, node: &ast::MemberExpr) {
         if self.new_target && error_classes::new_target_name(node) {
@@ -171,6 +180,8 @@ struct Discipline<'a> {
     assigned: BTreeSet<String>,
     source: &'a Source,
     new_target: bool,
+    /// V37 (`language_core`): constructor closures may capture `this.field`.
+    closures: bool,
 }
 impl Discipline<'_> {
     fn check(&self, node: &dyn Checked, allow_this: bool) -> Result<()> {
@@ -186,6 +197,8 @@ impl Discipline<'_> {
             assigned: &self.assigned,
             allow_this,
             closure: false,
+            capture: false,
+            complete: self.closures && allow_this,
             new_target,
             violation: None,
         };
@@ -268,6 +281,7 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
         assigned: BTreeSet::new(),
         source,
         new_target: types.profile.error_subclasses(),
+        closures: types.profile.language_core(),
     };
     // Field initializers never see `this` or constructor-scoped bindings.
     let mut scoped = BTreeSet::new();

@@ -42,6 +42,10 @@ impl Lower<'_> {
             return self.new_target_member(member);
         }
         let value = self.expr(&member.obj)?;
+        // V37: a field read on a union of several record shapes (`shared`).
+        if self.shared_records(value.ty) {
+            return self.shared_field(member, value);
+        }
         if value.ty == Type::Unknown {
             return Err(self.source.locate(
                 type_error("property access on an unknown value; narrow it with typeof, instanceof or a checked `as` first"),

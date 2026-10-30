@@ -33,6 +33,9 @@ fn scalar(span: swc_common::Span, slot: u32, ty: Type, member: Type) -> Expr {
 
 impl Lower<'_> {
     pub(super) fn compound_assignment_value(&mut self, assign: &ast::AssignExpr) -> Result<Expr> {
+        if let Some(value) = self.global_compound(assign)? {
+            return Ok(value);
+        }
         if matches!(
             assign.op,
             ast::AssignOp::AndAssign | ast::AssignOp::OrAssign | ast::AssignOp::NullishAssign
@@ -71,9 +74,11 @@ impl Lower<'_> {
             }));
         }
         let target = match &assign.left {
-            ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(name)) => self
-                .prepare_pattern_target(&ast::Pat::Ident(name.clone()))?
-                .ok_or_else(|| invalid("missing compound assignment binding"))?,
+            ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(name)) => {
+                self.require_assigned_target(name.id.sym.as_ref())?;
+                self.prepare_pattern_target(&ast::Pat::Ident(name.clone()))?
+                    .ok_or_else(|| invalid("missing compound assignment binding"))?
+            }
             ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) => {
                 let base = self.write_member_base(member)?;
                 if self.types.profile.mixed_index_records()
