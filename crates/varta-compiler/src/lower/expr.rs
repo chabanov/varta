@@ -585,10 +585,23 @@ impl Lower<'_> {
                     let name = name.to_owned();
                     return self.shared_in(&name, right, expression.span());
                 }
+                // `"key" in object` as a value (v38): the own-field presence
+                // of a record (through its view accessors), an instance member.
+                if binary.op == ast::BinaryOp::In
+                    && self.types.profile.structural_subtyping()
+                    && matches!(right.ty, Type::Record(_) | Type::Class(_))
+                    && let ast::Expr::Lit(ast::Lit::Str(text)) = stmt::unparen(&binary.left)
+                    && let Some(name) = text.value.as_str()
+                {
+                    let name = name.to_owned();
+                    return self.object_in(&name, right, expression.span());
+                }
                 if left.ty.is_cell() || right.ty.is_cell() {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
                 let (left, right) = classes::common_operands(left, right, self.types);
+                let (left, right) =
+                    subtyping::identity_operands(binary.op, left, right, self.types);
                 let (left, right) = if self.types.profile.has_undefined() {
                     match super::undefined::binary(
                         binary.op,

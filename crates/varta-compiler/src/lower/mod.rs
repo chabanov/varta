@@ -424,6 +424,7 @@ mod spread;
 mod stmt;
 mod string_enumeration;
 mod strings;
+pub(crate) mod subtyping;
 pub(crate) mod suspension;
 mod switches;
 mod tdz;

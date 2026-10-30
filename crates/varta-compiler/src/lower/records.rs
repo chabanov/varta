@@ -140,7 +140,12 @@ pub(super) fn type_fields(
         let ast::TsTypeElement::TsPropertySignature(field) = member else {
             return Err(unsupported("object type member"));
         };
-        if field.optional && !types.profile.missing() || field.readonly || field.computed {
+        // `readonly` (v38 `structural_subtyping`) is a type-level modifier
+        // that does not change the field's value or layout.
+        if field.optional && !types.profile.missing()
+            || field.readonly && !types.profile.structural_subtyping()
+            || field.computed
+        {
             return Err(unsupported("optional, readonly or computed object field"));
         }
         let name = expression_key(&field.key)?;

@@ -5320,3 +5320,66 @@ fn public_engine_runs_v37_fetch_across_modules_with_an_exact_request_grant() {
     // V36 has no fetch prelude.
     assert!(frozen.contains("unsupported"), "{frozen}");
 }
+
+#[test]
+fn public_engine_views_wider_objects_across_modules_in_v38() {
+    // One module declares the interfaces and functions over the narrow
+    // ones; another passes a wider record, a class instance and an interface
+    // value of the wider type. They stay the same objects (identity and writes
+    // through the view are visible), and the class's getter and method run
+    // through the view.
+    use varta_common::language::LanguageProfile;
+    struct ViewSources;
+    impl ModuleLoader for ViewSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./api.ts" => Ok("api.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("api.ts") => Ok("export interface Readable<T>{readonly value:T;label:string;}\
+                    export interface Signal<T> extends Readable<T>{set(v:T):void;}\
+                    export function show(r:Readable<number>):string{return `${r.label}=${r.value}`;}\
+                    export function rename(r:Readable<number>,label:string):Readable<number>{r.label=label;return r;}\
+                    export function bump(s:Signal<number>):void{s.set(s.value+1);}"
+                    .into()),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {type Signal,show,rename,bump} from './api.ts';\
+                       class Cell{label='cell';#v=1;get value():number{return this.#v;}set(v:number):void{this.#v=v;}}\
+                       export function main():void{\
+                       const wide={label:'w',value:2,extra:true};const c=new Cell();\
+                       const s:Signal<number>=c;bump(s);bump(c);\
+                       console.log(`${show(wide)} ${show(c)} ${rename(wide,'x')===wide} ${JSON.stringify(wide)}`);}"
+                    .into(),
+            },
+            &ViewSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V38).unwrap();
+    // Node 24 prints the same line.
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [r#"varta log: w=2 cell=3 true {"label":"x","value":2,"extra":true}"#]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V37)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        frozen.contains("unsupported optional, readonly"),
+        "{frozen}"
+    );
+}

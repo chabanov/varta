@@ -274,6 +274,33 @@ pub(super) fn declared(types: &ir::ValueTypes, name: &str) -> bool {
     is_type(types, types.named.current, name)
 }
 
+/// The declared name of a resolved interface or alias type, with its type
+/// arguments (`Readable<number>`), for diagnostics (v38). The first
+/// declaration in key order wins when several resolve to one shape.
+pub(super) fn name_of(types: &ir::ValueTypes, ty: Type) -> Option<String> {
+    if !matches!(ty, Type::Record(_)) {
+        return None;
+    }
+    let ((_, name), arguments) = types
+        .named
+        .resolved
+        .iter()
+        .find(|(_, resolved)| **resolved == ty)
+        .map(|(key, _)| key)?;
+    if arguments.is_empty() {
+        return Some(name.clone());
+    }
+    let arguments: Vec<String> = arguments
+        .iter()
+        .map(|argument| match argument {
+            Type::Record(_) => name_of(types, *argument)
+                .unwrap_or_else(|| void_functions::describe(*argument, types)),
+            other => void_functions::describe(*other, types),
+        })
+        .collect();
+    Some(format!("{name}<{}>", arguments.join(", ")))
+}
+
 /// The class named `name` in the current module's type namespace, if any.
 pub(super) fn class(types: &ir::ValueTypes, name: &str) -> Option<u32> {
     let mut key = (types.named.current, name.to_owned());

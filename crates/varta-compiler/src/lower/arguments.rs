@@ -19,6 +19,10 @@ pub(super) fn context(
     }
 }
 pub(super) fn accepts(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
+    nominal_accepts(expected, actual, types) || subtyping::assignable(expected, actual, types)
+}
+/// `accepts` without structural views (v38 `structural_subtyping`).
+pub(super) fn nominal_accepts(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
     expected == actual
         || literals::assignable(expected, actual, types)
         || classes::upcast(types, actual, expected)

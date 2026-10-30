@@ -313,6 +313,8 @@ pub(crate) struct ValueTypes {
     pub tuples: Vec<TupleType>,
     /// Loaded engine prelude modules and their functions (v37).
     pub engine: crate::lower::engine::EngineModules,
+    /// Structural views admitted by width subtyping (v38).
+    pub subtyping: crate::lower::subtyping::Views,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1).

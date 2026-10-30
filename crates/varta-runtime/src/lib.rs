@@ -590,6 +590,8 @@ mod mixed_record_tests;
 #[cfg(test)]
 mod regexp_tests;
 #[cfg(test)]
+mod subtyping_tests;
+#[cfg(test)]
 mod unknown_json_tests;
 #[cfg(test)]
 mod unknown_tests;

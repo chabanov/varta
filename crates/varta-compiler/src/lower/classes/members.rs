@@ -896,6 +896,13 @@ impl Lower<'_> {
             }
             Type::Unknown => return self.unknown_instance_of(value, Type::Class(class), span),
             ty if ty.is_union() => return self.union_instance_of(value, class, span),
+            // A record shape may view a class instance (v38 structural
+            // subtyping): test the descriptor like a supertype instance.
+            Type::Record(_) if self.types.profile.structural_subtyping() => E::IsClass {
+                value: Box::new(value),
+                shapes: classes.family_shapes(class),
+                slot: self.hidden(Type::Number),
+            },
             // Class instances never inhabit unrelated classes, records,
             // arrays, primitives or Error values.
             ty if ty.value_kind().is_some() => {

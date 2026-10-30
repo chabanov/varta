@@ -15378,3 +15378,75 @@ fn pilot_profile_v37_collections_run_everywhere_and_the_clock_needs_time_now() {
         combined(&dev)
     );
 }
+
+/// V38 structural subtyping through `varta dev`, both artifacts, both
+/// binaries and the packaged executable: a wider interface value, a class
+/// instance and a wider record literal viewed through narrower interfaces in
+/// another module; no capability is granted.
+#[test]
+fn pilot_profile_v38_views_wider_objects_in_dev_and_artifacts() {
+    let project = RegressionProject::new(
+        "import {show,bump} from './api.ts';import type {Signal} from './api.ts';\
+         class Cell{label='cell';#v=1;get value():number{return this.#v;}set(v:number):void{this.#v=v;}}\
+         export function main():void{const wide={label:'w',value:2,extra:true};const c=new Cell();\
+         const s:Signal<number>=c;bump(s);\
+         console.log(`${show(wide)} ${show(c)} ${JSON.stringify(wide)}`);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/api.ts"),
+        "export interface Readable<T>{readonly value:T;label:string}\
+         export interface Signal<T> extends Readable<T>{set(v:T):void}\
+         export function show(r:Readable<number>):string{return `${r.label}=${r.value}`;}\
+         export function bump(s:Signal<number>):void{s.set(s.value+1);}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v38");
+    // Node 24 prints the same line.
+    let expected = [r#"varta log: w=2 cell=2 {"label":"w","value":2,"extra":true}"#];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn structural_subtyping_stays_rejected_by_v37_projects() {
+    let project = RegressionProject::new(
+        "interface N{name:string}function f(n:N):string{return n.name;}\
+         export function main():void{const e={name:'a',n:1};console.log(f(e));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v37");
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success());
+    let text = combined(&dev);
+    assert!(
+        text.contains("argument type mismatch: expected object, found object"),
+        "{text}"
+    );
+    assert!(!text.contains("varta log:"), "{text}");
+}

@@ -265,6 +265,8 @@ pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes)
     {
         return Ok(Expr { ty, ..value });
     }
+    // A wider record or class instance viewed as a record shape (v38).
+    let value = subtyping::coerce(value, expected, types)?;
     let Some(ty @ (Type::Union(id) | Type::ReferenceUnion(id))) = expected else {
         return Ok(value);
     };
