@@ -134,6 +134,9 @@ pub(super) enum Helper {
     RegExpSlot,
     /// V37 RegExp prelude: one code unit without a host call, or -1.
     RegExpUnit,
+    /// V38 (`data_limits`): register, find or release a live continuation
+    /// frame in the growable hashed live-frame table.
+    FrameTable,
 }
 impl Helper {
     pub(super) fn string_search(mode: crate::ir::StringSearch) -> Self {
@@ -184,6 +187,7 @@ impl Helper {
             Self::CodeUnit => (vec![ValType::I64, ValType::F64], vec![ValType::F64]),
             Self::FromUnits => (vec![ValType::I64], vec![ValType::I64]),
             Self::Collect => (vec![], vec![]),
+            Self::FrameTable => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
             Self::ArraySearch | Self::ArrayLastIndex => (
                 vec![
@@ -249,7 +253,7 @@ impl Helper {
         helpers: &BTreeMap<Self, u32>,
         trace_values: bool,
         profile: varta_common::language::LanguageProfile,
-        frames: bool,
+        frames: Option<super::frames::Resources>,
     ) -> Function {
         // Emission adds the complete allocator dependency set before indexing.
         match self {
@@ -261,8 +265,16 @@ impl Helper {
                 globals,
                 trace_values,
                 profile.closures(),
-                frames,
+                frames.is_some(),
                 profile.wide_records(),
+                profile.data().array_elements,
+            ),
+            Self::FrameTable => super::frames::table_helper(
+                globals,
+                frames,
+                helpers[&Self::Allocate],
+                helpers[&Self::RootPush],
+                profile.data(),
             ),
             Self::RootPush => roots::function(globals),
             Self::ArraySearch => array_search::function(

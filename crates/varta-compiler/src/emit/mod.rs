@@ -127,11 +127,16 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     let constant_roots = (varta_common::abi::STRING_ROOT_BASE + reserved_roots) as u32;
     let reserved_roots =
         program.constants as usize * varta_common::abi::STRING_ROOT_SLOT_BYTES + reserved_roots;
-    // Live continuation frames are retained by a bounded permanent root table.
+    // Live continuation frames are retained by a bounded permanent root table;
+    // under v38 (`data_limits`) one permanent root slot holds a growable
+    // hashed table on the managed heap instead.
     let frame_table = (varta_common::abi::STRING_ROOT_BASE + reserved_roots) as u32;
+    let growable_frames = program.types.profile.data_limits();
     let reserved_roots = reserved_roots
         + if program.suspendable.is_empty() {
             0
+        } else if growable_frames {
+            varta_common::abi::STRING_ROOT_SLOT_BYTES
         } else {
             varta_common::function::frame::MAX_LIVE_FRAMES
                 * varta_common::abi::STRING_ROOT_SLOT_BYTES
@@ -251,6 +256,9 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     if program.types.profile.array_mutations() {
         helpers.insert(strings::Helper::ArrayResize);
+    }
+    if growable_frames && !program.suspendable.is_empty() {
+        helpers.insert(strings::Helper::FrameTable);
     }
     let needs_arena = helpers.iter().any(|helper| helper.needs_arena());
     if needs_arena {
@@ -529,9 +537,23 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             },
             &wasm_encoder::ConstExpr::i32_const(0),
         );
+        // V38: the live-entry count of the growable table.
+        let live = growable_frames.then(|| {
+            let live = globals.len();
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(0),
+            );
+            live
+        });
         frames::Resources {
             table: frame_table,
             generation,
+            live,
         }
     });
     module.section(&globals);
@@ -813,7 +835,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             &helpers,
             trace_values,
             program.types.profile,
-            frame_resources.is_some(),
+            frame_resources,
         ));
     }
     for body in &resume_code {
@@ -827,6 +849,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             resources,
             exceptions,
             allocate: helpers[&strings::Helper::Allocate],
+            table: helpers.get(&strings::Helper::FrameTable).copied(),
             bindings: &binding_types,
         })?);
     }

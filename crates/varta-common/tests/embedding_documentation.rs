@@ -805,6 +805,8 @@ fn scheduler_error_name(error: &scheduler::SchedulerError) -> &'static str {
         E::UnknownSerial => "UnknownSerial",
         E::Outcome => "Outcome",
         E::TimerBudget => "TimerBudget",
+        E::ContinuationLimit { .. } => "ContinuationLimit",
+        E::TimerLimit { .. } => "TimerLimit",
         E::TimerDenied => "TimerDenied",
         E::TimerState => "TimerState",
         E::TimerDeadline { .. } => "TimerDeadline",
@@ -1023,6 +1025,13 @@ fn scheduler_errors() -> String {
         E::UnknownSerial,
         E::Outcome,
         E::TimerBudget,
+        // V38 (`data_limits`): the memory-derived host bounds.
+        E::ContinuationLimit {
+            limit: varta_common::limits::V38_MAX_PENDING_CONTINUATIONS,
+        },
+        E::TimerLimit {
+            limit: varta_common::limits::V38_MAX_PENDING_TIMERS,
+        },
         E::TimerDenied,
         E::TimerState,
         E::TimerDeadline {

@@ -58,6 +58,8 @@ mod exit_flow_tests;
 #[cfg(test)]
 mod frame_admission_tests;
 #[cfg(test)]
+mod frame_limit_tests;
+#[cfg(test)]
 mod frame_liveness_tests;
 mod frames;
 #[cfg(test)]

@@ -88,6 +88,7 @@ impl Execution {
         self.instantiation_started = true;
         self.store.data_mut().function_catalog = catalog;
         self.store.data_mut().data = data;
+        self.store.data_mut().scheduler.set_bounds(data);
         let result = (|| {
             let mut linker = wasmtime::Linker::new(self.store.engine());
             host::register(&mut linker)?;

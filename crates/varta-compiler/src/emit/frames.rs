@@ -2,7 +2,9 @@
 //! creator at its own index, a resume body and one branch of the closed exported
 //! dispatcher. Saved bindings are binding cells reached through frame-private
 //! environment segments; the frame itself is a separate managed kind retained by
-//! a bounded permanent root table while it is live.
+//! a bounded permanent root table while it is live. Under v38 (`data_limits`)
+//! that table is a growable hashed table on the managed heap, rooted by one
+//! permanent root slot (see [`table_helper`]).
 use super::*;
 use crate::lower::promises::fields as promise_fields;
 use frame::Completion;
@@ -170,8 +172,12 @@ impl Layout {
 /// Module-wide frame resources, present only when a frame layout exists.
 #[derive(Clone, Copy)]
 pub(super) struct Resources {
+    /// The permanent root-table slots, or (v38) the one slot rooting the
+    /// growable table.
     pub table: u32,
     pub generation: u32,
+    /// V38 (`data_limits`): the live-entry count of the growable table.
+    pub live: Option<u32>,
 }
 /// Emission context of one resume body.
 #[derive(Clone, Copy)]
@@ -220,6 +226,459 @@ fn next_generation(resources: Resources) -> [I<'static>; 9] {
     ]
 }
 use varta_common::{abi, value};
+
+/// Growable live-frame table operations (v38, [`table_helper`]).
+pub(super) const TABLE_REGISTER: i32 = 0;
+pub(super) const TABLE_FIND: i32 = 1;
+pub(super) const TABLE_RELEASE: i32 = 2;
+/// Slots of the first growable table; the table doubles at half load.
+const INITIAL_TABLE_SLOTS: i32 = 64;
+/// Fibonacci hashing multiplier (2^32 / golden ratio) over `ptr >> 3`.
+const TABLE_HASH: u32 = 0x9E37_79B1;
+const TABLE_HASH_FOLD: i32 = 15;
+const SLOT_SHIFT: i32 = abi::STRING_ROOT_SLOT_BYTES.trailing_zeros() as i32;
+const ALIGN_SHIFT: i32 = value::HEAP_ALIGNMENT.trailing_zeros() as i32;
+fn slot_memarg() -> wasm_encoder::MemArg {
+    wasm_encoder::MemArg {
+        offset: value::ARRAY_META_BYTES as u64,
+        ..strings::ROOT
+    }
+}
+
+/// The pre-v38 linear ownership scan of the fixed table: the slot address in
+/// `cursor` and the stored handle in `handle`, or a trap when absent.
+fn ownership_scan(resources: Resources, cursor: u32, ptr: u32, handle: u32) -> Vec<I<'static>> {
+    vec![
+        I::I32Const(resources.table as i32),
+        I::LocalSet(cursor),
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(cursor),
+        I::I32Const(table_end(resources)),
+        I::I32GeU,
+        I::If(BlockType::Empty),
+        I::Unreachable,
+        I::End,
+        I::LocalGet(cursor),
+        I::I64Load(strings::ROOT),
+        I::LocalTee(handle),
+        I::I32WrapI64,
+        I::LocalGet(ptr),
+        I::I32Eq,
+        I::BrIf(1),
+        I::LocalGet(cursor),
+        I::I32Const(abi::STRING_ROOT_SLOT_BYTES as i32),
+        I::I32Add,
+        I::LocalSet(cursor),
+        I::Br(0),
+        I::End,
+        I::End,
+    ]
+}
+/// A completed frame leaves the table: the fixed table clears the slot found
+/// before the body ran; the v38 table looks the frame up again, because the
+/// body may have grown (reallocated) the table.
+fn leave_table(table: Option<u32>, cursor: u32, handle: u32) -> Vec<I<'static>> {
+    match table {
+        Some(table) => vec![
+            I::LocalGet(handle),
+            I::I32Const(TABLE_RELEASE),
+            I::Call(table),
+            I::Drop,
+        ],
+        None => vec![
+            I::LocalGet(cursor),
+            I::I64Const(0),
+            I::I64Store(strings::ROOT),
+        ],
+    }
+}
+
+/// The v38 (`data_limits`) live-frame table helper
+/// `(handle:i64, op:i32) -> i32`. One permanent root slot (`resources.table`)
+/// holds the packed handle of a private array backing (heap flag 8, reference
+/// elements, no value tag: no value reader ever reaches it) whose `capacity`
+/// slots are an open-addressing set of live frame handles keyed by the frame
+/// pointer: Fibonacci hashing, linear probing and backward-shift deletion (no
+/// tombstones). The collector traces every slot like any reference array;
+/// empty slots are zero. `live` counts the entries.
+///
+/// - `TABLE_REGISTER` inserts `handle` (absent), first doubling the table
+///   when one more entry would exceed half its capacity. The frame is pushed
+///   on the root stack and the old table stays rooted in its slot while the
+///   new one is allocated; entries move without further allocation, then the
+///   new table is published. A capacity beyond the profile's element limit
+///   reports `Resource::LiveFrames`; failed allocation reports
+///   `Resource::Memory` through the allocator. Returns 0.
+/// - `TABLE_FIND` returns the slot address holding the frame of `handle`'s
+///   pointer, or 0 when it is not live.
+/// - `TABLE_RELEASE` removes the frame (which must be live) and returns 0.
+pub(super) fn table_helper(
+    globals: strings::Globals,
+    resources: Option<Resources>,
+    allocate: u32,
+    root_push: u32,
+    limits: varta_common::limits::DataLimits,
+) -> wasm_encoder::Function {
+    const HANDLE: u32 = 0;
+    const OP: u32 = 1;
+    const TABLE: u32 = 2;
+    const MASK: u32 = 3;
+    const INDEX: u32 = 4;
+    const KEY: u32 = 5;
+    const NEXT: u32 = 6;
+    const HOME: u32 = 7;
+    const FRESH: u32 = 8;
+    const CURSOR: u32 = 9;
+    const BYTES: u32 = 10;
+    const SAVED: u32 = 11;
+    const CAPACITY: u32 = 12;
+    const HASH: u32 = 13;
+    const ENTRY: u32 = 14;
+    let mut function =
+        wasm_encoder::Function::new([(ENTRY - TABLE, ValType::I32), (1, ValType::I64)]);
+    let (Some(resources), Some(live)) = (resources, resources.and_then(|r| r.live)) else {
+        function.instruction(&I::Unreachable);
+        function.instruction(&I::End);
+        return function;
+    };
+    // Home index of the frame pointer in `key` under `mask`, on the stack.
+    let home = |key: u32| {
+        vec![
+            I::LocalGet(key),
+            I::I32Const(ALIGN_SHIFT),
+            I::I32ShrU,
+            I::I32Const(TABLE_HASH as i32),
+            I::I32Mul,
+            I::LocalTee(HASH),
+            I::LocalGet(HASH),
+            I::I32Const(TABLE_HASH_FOLD),
+            I::I32ShrU,
+            I::I32Xor,
+            I::LocalGet(MASK),
+            I::I32And,
+        ]
+    };
+    // The address of slot `index` of the table in `table`, on the stack.
+    let slot = |table: u32, index: u32| {
+        vec![
+            I::LocalGet(table),
+            I::LocalGet(index),
+            I::I32Const(SLOT_SHIFT),
+            I::I32Shl,
+            I::I32Add,
+        ]
+    };
+    // Insert the handle in `entry` into the table in `table` (no allocation).
+    let insert = |table: u32, entry: u32| {
+        let mut code = vec![I::LocalGet(entry), I::I32WrapI64, I::LocalSet(KEY)];
+        code.extend(home(KEY));
+        code.extend([
+            I::LocalSet(INDEX),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+        ]);
+        code.extend(slot(table, INDEX));
+        code.extend([
+            I::I64Load(slot_memarg()),
+            I::I64Eqz,
+            I::BrIf(1),
+            I::LocalGet(INDEX),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalGet(MASK),
+            I::I32And,
+            I::LocalSet(INDEX),
+            I::Br(0),
+            I::End,
+            I::End,
+        ]);
+        code.extend(slot(table, INDEX));
+        code.extend([I::LocalGet(entry), I::I64Store(slot_memarg())]);
+        code
+    };
+    let load = vec![
+        I::I32Const(resources.table as i32),
+        I::I64Load(strings::ROOT),
+        I::I32WrapI64,
+        I::LocalTee(TABLE),
+        I::If(BlockType::Result(ValType::I32)),
+        I::LocalGet(TABLE),
+        I::I32Load(wasm_encoder::MemArg {
+            offset: value::ARRAY_LENGTH_OFFSET,
+            ..strings::WORD
+        }),
+        I::Else,
+        I::I32Const(0),
+        I::End,
+        I::LocalTee(CAPACITY),
+        I::I32Const(1),
+        I::I32Sub,
+        I::LocalSet(MASK),
+    ];
+    let mut code = load;
+    // Register: grow at half load, then insert.
+    code.extend([
+        I::LocalGet(OP),
+        I::I32Const(TABLE_REGISTER),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+        I::GlobalGet(live),
+        I::I32Const(1),
+        I::I32Add,
+        I::I32Const(1),
+        I::I32Shl,
+        I::LocalGet(CAPACITY),
+        I::I32GtU,
+        I::If(BlockType::Empty),
+        I::LocalGet(CAPACITY),
+        I::If(BlockType::Result(ValType::I32)),
+        I::LocalGet(CAPACITY),
+        I::I32Const(1),
+        I::I32Shl,
+        I::Else,
+        I::I32Const(INITIAL_TABLE_SLOTS),
+        I::End,
+        I::LocalTee(FRESH),
+        I::I32Const(limits.array_elements as i32),
+        I::I32GtU,
+        I::If(BlockType::Empty),
+    ]);
+    code.extend(globals.fail(varta_common::limits::Resource::LiveFrames, FRESH));
+    code.extend([
+        I::End,
+        // The new frame stays rooted while the table grows.
+        I::GlobalGet(globals.roots),
+        I::LocalSet(SAVED),
+        I::LocalGet(HANDLE),
+        I::Call(root_push),
+        I::Drop,
+        I::LocalGet(FRESH),
+        I::I32Const(SLOT_SHIFT),
+        I::I32Shl,
+        I::I32Const(value::ARRAY_META_BYTES as i32),
+        I::I32Add,
+        I::LocalTee(BYTES),
+        I::Call(allocate),
+        I::LocalSet(NEXT),
+        I::LocalGet(NEXT),
+        I::I32Const(0),
+        I::LocalGet(BYTES),
+        I::MemoryFill(strings::MEMORY),
+        I::LocalGet(NEXT),
+        I::I32Const(abi::STRING_HEADER_BYTES as i32),
+        I::I32Sub,
+        I::I32Const(strings::ALLOCATED | value::HEAP_ARRAY_FLAG),
+        I::I32Store(strings::FLAG),
+        I::LocalGet(NEXT),
+        I::I32Const(abi::STRING_HEADER_BYTES as i32),
+        I::I32Sub,
+        I::I32Const(1),
+        I::I32Store(strings::LINK),
+        I::LocalGet(NEXT),
+        I::LocalGet(FRESH),
+        I::I32Store(wasm_encoder::MemArg {
+            offset: value::ARRAY_LENGTH_OFFSET,
+            ..strings::WORD
+        }),
+        // Move every entry of the old table (none when it is absent).
+        I::LocalGet(FRESH),
+        I::I32Const(1),
+        I::I32Sub,
+        I::LocalSet(MASK),
+        I::I32Const(0),
+        I::LocalSet(CURSOR),
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(CURSOR),
+        I::LocalGet(CAPACITY),
+        I::I32GeU,
+        I::BrIf(1),
+    ]);
+    code.extend(slot(TABLE, CURSOR));
+    code.extend([
+        I::I64Load(slot_memarg()),
+        I::LocalTee(ENTRY),
+        I::I64Eqz,
+        I::I32Eqz,
+        I::If(BlockType::Empty),
+    ]);
+    code.extend(insert(NEXT, ENTRY));
+    code.extend([
+        I::End,
+        I::LocalGet(CURSOR),
+        I::I32Const(1),
+        I::I32Add,
+        I::LocalSet(CURSOR),
+        I::Br(0),
+        I::End,
+        I::End,
+        // Publish the new table, then drop the temporary frame root.
+        I::I32Const(resources.table as i32),
+        I::LocalGet(NEXT),
+        I::I64ExtendI32U,
+        I::LocalGet(BYTES),
+        I::I64ExtendI32U,
+        I::I64Const(i64::from(strings::LENGTH_SHIFT)),
+        I::I64Shl,
+        I::I64Or,
+        I::I64Store(strings::ROOT),
+        I::LocalGet(SAVED),
+        I::GlobalSet(globals.roots),
+        I::LocalGet(NEXT),
+        I::LocalSet(TABLE),
+        I::End,
+    ]);
+    code.extend(insert(TABLE, HANDLE));
+    code.extend([
+        I::GlobalGet(live),
+        I::I32Const(1),
+        I::I32Add,
+        I::GlobalSet(live),
+        I::I32Const(0),
+        I::Return,
+        I::End,
+    ]);
+    // Find or release: probe from the home slot until the frame or an empty slot.
+    code.extend([
+        I::LocalGet(TABLE),
+        I::I32Eqz,
+        I::If(BlockType::Empty),
+        I::LocalGet(OP),
+        I::I32Const(TABLE_FIND),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+        I::I32Const(0),
+        I::Return,
+        I::End,
+        I::Unreachable,
+        I::End,
+        I::LocalGet(HANDLE),
+        I::I32WrapI64,
+        I::LocalSet(KEY),
+    ]);
+    code.extend(home(KEY));
+    code.extend([
+        I::LocalSet(INDEX),
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+    ]);
+    code.extend(slot(TABLE, INDEX));
+    code.extend([
+        I::I64Load(slot_memarg()),
+        I::LocalTee(ENTRY),
+        I::I64Eqz,
+        I::If(BlockType::Empty),
+        I::LocalGet(OP),
+        I::I32Const(TABLE_FIND),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+        I::I32Const(0),
+        I::Return,
+        I::End,
+        I::Unreachable,
+        I::End,
+        I::LocalGet(ENTRY),
+        I::I32WrapI64,
+        I::LocalGet(KEY),
+        I::I32Eq,
+        I::BrIf(1),
+        I::LocalGet(INDEX),
+        I::I32Const(1),
+        I::I32Add,
+        I::LocalGet(MASK),
+        I::I32And,
+        I::LocalSet(INDEX),
+        I::Br(0),
+        I::End,
+        I::End,
+        I::LocalGet(OP),
+        I::I32Const(TABLE_FIND),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+    ]);
+    code.extend(slot(TABLE, INDEX));
+    code.extend([
+        I::I32Const(value::ARRAY_META_BYTES as i32),
+        I::I32Add,
+        I::Return,
+        I::End,
+        // Release: backward-shift deletion keeps every probe chain unbroken.
+        I::LocalGet(INDEX),
+        I::LocalSet(CURSOR),
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(CURSOR),
+        I::I32Const(1),
+        I::I32Add,
+        I::LocalGet(MASK),
+        I::I32And,
+        I::LocalSet(CURSOR),
+    ]);
+    code.extend(slot(TABLE, CURSOR));
+    code.extend([
+        I::I64Load(slot_memarg()),
+        I::LocalTee(ENTRY),
+        I::I64Eqz,
+        I::BrIf(1),
+        I::LocalGet(ENTRY),
+        I::I32WrapI64,
+        I::LocalSet(KEY),
+    ]);
+    code.extend(home(KEY));
+    code.extend([
+        I::LocalSet(HOME),
+        // The entry at `cursor` may move to the hole at `index` unless its
+        // home lies cyclically in (index, cursor].
+        I::LocalGet(INDEX),
+        I::LocalGet(CURSOR),
+        I::I32LeU,
+        I::If(BlockType::Result(ValType::I32)),
+        I::LocalGet(HOME),
+        I::LocalGet(INDEX),
+        I::I32LeU,
+        I::LocalGet(HOME),
+        I::LocalGet(CURSOR),
+        I::I32GtU,
+        I::I32Or,
+        I::Else,
+        I::LocalGet(HOME),
+        I::LocalGet(INDEX),
+        I::I32LeU,
+        I::LocalGet(HOME),
+        I::LocalGet(CURSOR),
+        I::I32GtU,
+        I::I32And,
+        I::End,
+        I::If(BlockType::Empty),
+    ]);
+    code.extend(slot(TABLE, INDEX));
+    code.extend([
+        I::LocalGet(ENTRY),
+        I::I64Store(slot_memarg()),
+        I::LocalGet(CURSOR),
+        I::LocalSet(INDEX),
+        I::End,
+        I::Br(0),
+        I::End,
+        I::End,
+    ]);
+    code.extend(slot(TABLE, INDEX));
+    code.extend([
+        I::I64Const(0),
+        I::I64Store(slot_memarg()),
+        I::GlobalGet(live),
+        I::I32Const(1),
+        I::I32Sub,
+        I::GlobalSet(live),
+        I::I32Const(0),
+        I::End,
+    ]);
+    for instruction in &code {
+        function.instruction(instruction);
+    }
+    function
+}
 
 /// Find the live-table slot holding `handle` (always present) and clear it.
 fn release_slot(resources: Resources, cursor: u32, handle: u32) -> Vec<I<'static>> {
@@ -732,33 +1191,43 @@ impl<'a> Emitter<'a> {
         }
         self.pack_value(frame::FRAME_BYTES);
         self.code.push(I::LocalSet(self.string_temporary));
-        // Register before the next allocation so the frame is always rooted.
-        self.code.extend([
-            I::I32Const(resources.table as i32),
-            I::LocalSet(self.temporary),
-            I::Block(BlockType::Empty),
-            I::Loop(BlockType::Empty),
-            I::LocalGet(self.temporary),
-            I::I32Const(table_end(resources)),
-            I::I32GeU,
-            I::If(BlockType::Empty),
-            I::Unreachable,
-            I::End,
-            I::LocalGet(self.temporary),
-            I::I64Load(strings::ROOT),
-            I::I64Eqz,
-            I::BrIf(1),
-            I::LocalGet(self.temporary),
-            I::I32Const(abi::STRING_ROOT_SLOT_BYTES as i32),
-            I::I32Add,
-            I::LocalSet(self.temporary),
-            I::Br(0),
-            I::End,
-            I::End,
-            I::LocalGet(self.temporary),
-            I::LocalGet(self.string_temporary),
-            I::I64Store(strings::ROOT),
-        ]);
+        // Register before the next allocation so the frame is always rooted
+        // (a growing v38 table roots it on the root stack while it grows).
+        if resources.live.is_some() {
+            self.code.extend([
+                I::LocalGet(self.string_temporary),
+                I::I32Const(TABLE_REGISTER),
+            ]);
+            self.string_helper(strings::Helper::FrameTable)?;
+            self.code.push(I::Drop);
+        } else {
+            self.code.extend([
+                I::I32Const(resources.table as i32),
+                I::LocalSet(self.temporary),
+                I::Block(BlockType::Empty),
+                I::Loop(BlockType::Empty),
+                I::LocalGet(self.temporary),
+                I::I32Const(table_end(resources)),
+                I::I32GeU,
+                I::If(BlockType::Empty),
+                I::Unreachable,
+                I::End,
+                I::LocalGet(self.temporary),
+                I::I64Load(strings::ROOT),
+                I::I64Eqz,
+                I::BrIf(1),
+                I::LocalGet(self.temporary),
+                I::I32Const(abi::STRING_ROOT_SLOT_BYTES as i32),
+                I::I32Add,
+                I::LocalSet(self.temporary),
+                I::Br(0),
+                I::End,
+                I::End,
+                I::LocalGet(self.temporary),
+                I::LocalGet(self.string_temporary),
+                I::I64Store(strings::ROOT),
+            ]);
+        }
         let segments = layout.segments();
         if !segments.is_empty() {
             let bytes = segment_bytes(segments.len());
@@ -793,11 +1262,20 @@ impl<'a> Emitter<'a> {
             // A generator frame belongs to its generator object: the table
             // slot rooted it only while the creator allocated its cells. It
             // leaves the table, so `varta_resume` can never reach it.
-            self.code.extend(release_slot(
-                resources,
-                self.temporary,
-                self.string_temporary,
-            ));
+            if resources.live.is_some() {
+                self.code.extend([
+                    I::LocalGet(self.string_temporary),
+                    I::I32Const(TABLE_RELEASE),
+                ]);
+                self.string_helper(strings::Helper::FrameTable)?;
+                self.code.push(I::Drop);
+            } else {
+                self.code.extend(release_slot(
+                    resources,
+                    self.temporary,
+                    self.string_temporary,
+                ));
+            }
             self.end_frame();
             self.code
                 .extend([I::LocalGet(self.string_temporary), I::Return]);
@@ -902,6 +1380,8 @@ pub(super) struct Dispatch<'a> {
     pub resources: Resources,
     pub exceptions: exceptions::Globals,
     pub allocate: u32,
+    /// V38 (`data_limits`): the growable live-frame table helper.
+    pub table: Option<u32>,
     pub bindings: &'a BTreeMap<Type, u32>,
 }
 
@@ -944,31 +1424,25 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
     ]);
     trap_if(&mut code);
     // Ownership: the frame must be live in this instance's root table.
+    if let Some(table) = dispatch.table {
+        // V38: the hashed table yields the slot address, or zero if absent.
+        code.extend([
+            I::LocalGet(TOKEN),
+            I::I32Const(TABLE_FIND),
+            I::Call(table),
+            I::LocalTee(CURSOR),
+            I::I32Eqz,
+        ]);
+        trap_if(&mut code);
+        code.extend([
+            I::LocalGet(CURSOR),
+            I::I64Load(strings::ROOT),
+            I::LocalSet(HANDLE),
+        ]);
+    } else {
+        code.extend(ownership_scan(resources, CURSOR, PTR, HANDLE));
+    }
     code.extend([
-        I::I32Const(resources.table as i32),
-        I::LocalSet(CURSOR),
-        I::Block(BlockType::Empty),
-        I::Loop(BlockType::Empty),
-        I::LocalGet(CURSOR),
-        I::I32Const(table_end(resources)),
-        I::I32GeU,
-        I::If(BlockType::Empty),
-        I::Unreachable,
-        I::End,
-        I::LocalGet(CURSOR),
-        I::I64Load(strings::ROOT),
-        I::LocalTee(HANDLE),
-        I::I32WrapI64,
-        I::LocalGet(PTR),
-        I::I32Eq,
-        I::BrIf(1),
-        I::LocalGet(CURSOR),
-        I::I32Const(abi::STRING_ROOT_SLOT_BYTES as i32),
-        I::I32Add,
-        I::LocalSet(CURSOR),
-        I::Br(0),
-        I::End,
-        I::End,
         I::LocalGet(HANDLE),
         I::I64Const(i64::from(u32::BITS)),
         I::I64ShrU,
@@ -1132,9 +1606,9 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
                 I::LocalGet(PTR),
                 I::I32Const(frame::STATUS_COMPLETED as i32),
                 I::I32Store(word(frame::STATUS_FIELD, false)),
-                I::LocalGet(CURSOR),
-                I::I64Const(0),
-                I::I64Store(strings::ROOT),
+            ]);
+            code.extend(leave_table(dispatch.table, CURSOR, HANDLE));
+            code.extend([
                 I::I32Const(frame::Outcome::Returned as i32),
                 I::Return,
                 I::End,
@@ -1221,13 +1695,9 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
         I::LocalGet(PTR),
         I::I32Const(frame::STATUS_COMPLETED as i32),
         I::I32Store(word(frame::STATUS_FIELD, false)),
-        I::LocalGet(CURSOR),
-        I::I64Const(0),
-        I::I64Store(strings::ROOT),
-        I::End,
-        I::LocalGet(OUTCOME),
-        I::End,
     ]);
+    code.extend(leave_table(dispatch.table, CURSOR, HANDLE));
+    code.extend([I::End, I::LocalGet(OUTCOME), I::End]);
     let mut function =
         wasm_encoder::Function::new([(HANDLE - PTR, ValType::I32), (1, ValType::I64)]);
     for instruction in &code {

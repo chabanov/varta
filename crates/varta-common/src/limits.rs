@@ -28,6 +28,19 @@ pub const V38_MAX_STRING_BYTES: usize = 1 << 30;
 /// (the largest sparse backing included) fits, and the rounded block size
 /// with its header still fits a signed i32.
 pub const V38_MAX_ALLOCATION_BYTES: usize = (1 << 31) - (1 << 16);
+/// Smallest guest block of one live continuation frame: its heap header and
+/// the frame envelope. Every pending resume token and every pending timer
+/// names a distinct live frame, so the host tracks at most one entry per such
+/// block of the memory budget.
+pub const FRAME_BLOCK_BYTES: usize = abi::STRING_HEADER_BYTES + crate::function::frame::FRAME_BYTES;
+/// V38 host bound on pending resume tokens (queued or awaiting a promise):
+/// the memory budget divided by [`FRAME_BLOCK_BYTES`] (131072 under the
+/// production 8 MiB budget). A correct module exhausts its memory budget,
+/// which it reports as [`Resource::Memory`], before it reaches this bound.
+pub const V38_MAX_PENDING_CONTINUATIONS: usize = abi::MAX_MEMORY_BYTES / FRAME_BLOCK_BYTES;
+/// V38 host bound on pending timers: half the continuation bound, as before
+/// v38 (each timer also holds one resume token).
+pub const V38_MAX_PENDING_TIMERS: usize = V38_MAX_PENDING_CONTINUATIONS / 2;
 /// Exported mutable i32 global of v38 heap modules: zero, or the
 /// [`Resource`] code a failing guest stored before trapping.
 pub const RESOURCE_FAILURE: &str = "resource_failure";
@@ -98,6 +111,10 @@ pub struct DataLimits {
     /// Whether the guest reports exhausted resources through
     /// [`RESOURCE_FAILURE`] before trapping.
     pub reports_resources: bool,
+    /// Resume tokens the host scheduler holds at once.
+    pub pending_continuations: usize,
+    /// Timers armed or awaiting release at once.
+    pub pending_timers: usize,
 }
 impl DataLimits {
     /// The frozen ceilings of every profile before v38.
@@ -108,6 +125,8 @@ impl DataLimits {
         json_depth: value::MAX_JSON_DEPTH,
         json_nodes: value::MAX_JSON_NODES,
         reports_resources: false,
+        pending_continuations: crate::scheduler::MAX_PENDING_CONTINUATIONS,
+        pending_timers: crate::scheduler::MAX_PENDING_TIMERS,
     };
     /// Batch v38 (`data_limits`): Wasm-derived ceilings; the memory budget
     /// bounds data in practice. JSON depth and visited values are bounded by
@@ -119,6 +138,8 @@ impl DataLimits {
         json_depth: usize::MAX,
         json_nodes: usize::MAX,
         reports_resources: true,
+        pending_continuations: V38_MAX_PENDING_CONTINUATIONS,
+        pending_timers: V38_MAX_PENDING_TIMERS,
     };
     /// Presence-bitmap bytes of a sparse backing of `capacity` slots: the
     /// fixed 128-byte bitmap of value layout 12 up to 1024 slots (so every
@@ -189,6 +210,10 @@ mod tests {
         }
         assert_eq!(DataLimits::LEGACY.array_elements, 1024);
         assert_eq!(DataLimits::LEGACY.string_bytes, 1 << 20);
+        assert_eq!(DataLimits::LEGACY.pending_continuations, 64);
+        assert_eq!(DataLimits::LEGACY.pending_timers, 32);
+        assert_eq!(DataLimits::V38.pending_continuations, 131_072);
+        assert_eq!(DataLimits::V38.pending_timers, 65_536);
     }
 
     #[test]

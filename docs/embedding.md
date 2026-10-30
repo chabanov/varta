@@ -934,6 +934,8 @@ They are never delivered to the guest.
 | `UnknownSerial` | `unknown promise serial` |
 | `Outcome` | `scheduled frame reported an invalid outcome` |
 | `TimerBudget` | `execution exceeds 32 pending timers` |
+| `ContinuationLimit` | `microtask queue exceeds 131072 pending continuations` |
+| `TimerLimit` | `execution exceeds 65536 pending timers` |
 | `TimerDenied` | `<capability denied: time.timer> (setTimeout and setInterval require an exact time.timer grant)` |
 | `TimerState` | `invalid timer operation` |
 | `TimerDeadline` | `execution deadline exceeded: the next timer is due at least <due_ms> ms after the execution started, beyond the <deadline_seconds> s deadline` |
