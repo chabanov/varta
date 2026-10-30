@@ -1242,6 +1242,7 @@ values:
 | Placeholder: batch bytes / operations | 262144 / 16384 |
 | Placeholder: live nodes / listeners | 65536 / 8192 |
 | Placeholder: value bytes / stylesheet bytes / pending events | 65536 / 262144 / 64 |
+| Placeholder: pending `copy_text` requests | 16 |
 | Key filter: any key | key code 0 |
 | Key filter: modifier mask | 15 (shift, ctrl, alt, meta event flags) |
 | `listen` option `preventDefault` | bit value 1 |
@@ -1259,7 +1260,7 @@ values:
 | Event field `target` | offset 8, u32 |
 | Event field `seq` | offset 12, u32 |
 | Event field `flags` | offset 16, u32 |
-| Event field `reserved` | offset 20, u32 |
+| Event field `status` | offset 20, u32 |
 | Event field `scroll_top` | offset 24, f64 |
 | Event field `scroll_height` | offset 32, f64 |
 | Event field `client_height` | offset 40, f64 |
@@ -1287,7 +1288,7 @@ values:
 | 15 | `command` | node (u32 id), command (u16 code + 2 pad), argument (f64) |
 | 16 | `stylesheet` | sheet (u32 id), text (string) |
 | 17 | `set_title` | text (string) |
-| 18 | `copy_text` | text (string) |
+| 18 | `copy_text` | request (u32 id), text (string) |
 <!-- generated:view-opcodes:end -->
 
 **Elements.**
@@ -1459,6 +1460,7 @@ values:
 | 8 | `scroll` | yes | — |
 | 9 | `cancel` | — | — |
 | 10 | `close` | — | — |
+| 11 | `command_result` | — | — |
 <!-- generated:view-events:end -->
 
 **Commands.**
@@ -1538,7 +1540,9 @@ composition nothing matches, so Enter confirms the composition.
 absolute `https://` or `http://` `href` only when the URL matches a `ui.open_url`
 grant: URL patterns with the URL-grant rules of the manifest, `https://` admitted,
 exact authority and wildcards only after it, checked against the package request
-**and** the host ceiling. A non-matching external `href` invalidates the batch. The
+**and** the host ceiling. A non-matching external `href` invalidates the batch
+([round 5](#view-draft-v0-round-5-command-results) keeps that check for the package
+request and moves ceiling and user decisions to activation time). The
 applier learns the granted patterns from the embedder at start, never from the
 guest. Opening happens **only** inside the applier's handling of a trusted
 activation of that `a` (a click on it or within it, or Enter while it is focused),
@@ -1551,13 +1555,11 @@ round-2 grammar.
 **Clipboard (`clipboard.write`, accepted, moved into v1).** A boolean grant
 authorizes `copy_text(text)` (an operation, since it carries a string): plain text
 only, at most the value-byte limit, and only in the batch committed by a turn whose
-task was a trusted `click` or `keydown` record (a user gesture). In any other turn
-`copy_text` invalidates the batch. Without the grant, or when the platform refuses
-the write, the copy is skipped with a host diagnostic and no event (draft: no
-result is reported to the guest yet). **Superseded direction:** the accepted
-[permission model](development-plan.md#permission-model) requires that denials
-and refusals of `copy_text` and of `ui.open_url` activations reach the guest as
-recoverable results; the result records are a pending draft change. The browser applier uses
+task was a trusted `click` or `keydown` record (a user gesture). **Revised in
+[round 5](#view-draft-v0-round-5-command-results):** `copy_text` carries a request
+id, and every outcome (copied, denied, refused by the platform, or attempted
+outside a user gesture) comes back as a `command_result` record; nothing is
+silent and nothing invalidates the batch. The browser applier uses
 `navigator.clipboard.writeText` within the platform's user-activation window;
 natively the shell writes the system clipboard. `clipboard.read` stays out of v1.
 
@@ -1651,6 +1653,46 @@ subset.
 
 **Pending owner confirmation** (round 4): the dialog backdrop and default colours
 above; per-side border longhands staying out of v1; `resize` defaulting to `none`.
+
+### View draft v0 round 5: command results
+
+Decided under the [permission model](development-plan.md#permission-model)'s
+recoverable-denial rule: `copy_text` and external-link activations always report
+their outcome to the guest; a denial or refusal never traps, never invalidates a
+batch and is never silent. This revises round 3.
+
+- **`copy_text(request, text)`.** The operation now carries a guest-chosen nonzero
+  request id, unique among the guest's pending requests (at most the pending-command
+  placeholder of the layout table; more invalidates the batch, a guest bug). The
+  host answers each request with exactly one `command_result` record. Outside a
+  user-gesture turn the copy is not attempted and the result is `invalid_context`;
+  this replaces round 3's batch error.
+- **External link activation.** At patch time an external `href` must still match
+  a `ui.open_url` pattern of the **package request** (a static guest error
+  otherwise). Whether a particular activation may open the URL is the permission
+  broker's decision at that moment (host ceiling, stored decision or prompt); the
+  host then sends one `command_result` record for the activation, after the
+  `click` records of that activation.
+- **The record.** An ordinary event record of kind `command_result` with
+  `handler` 0 (it is not tied to a listener), `flags` 0, the operation name in the
+  `key` string, an empty `value` string, the identity fields below, and the
+  outcome in the header's `status` field (0 in every other record kind). It is not
+  coalescible and is one turn, like every record.
+- **Guest API.** The L1 runtime resolves `copy_text`'s promise on `ok` and rejects
+  it with a `DOMException` named `NotAllowedError` otherwise, with a message per
+  status; a failed link activation is reported to the application's link-result
+  handler with the same `DOMException`. No status ever ends the execution.
+
+<!-- generated:view-command-results:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
+| Status | Name | Operations | Meaning | Guest API |
+| --- | --- | --- | --- | --- |
+| 0 | `ok` | `copy_text`, `open_url` | Done: text copied, or URL handed to the browser | resolves |
+| 1 | `not_allowed` | `copy_text`, `open_url` | The permission broker denied it (request, ceiling or user) | `NotAllowedError` |
+| 2 | `refused_by_platform` | `copy_text`, `open_url` | Granted, but the platform refused (clipboard error, blocked window, no system browser) | `NotAllowedError` |
+| 3 | `invalid_context` | `copy_text` | `copy_text` outside a user-gesture turn | `NotAllowedError` |
+| — | identity of `copy_text` | `copy_text` | `seq` = the request id, `target` = 0 | — |
+| — | identity of `open_url` | `open_url` | `seq` = 0, `target` = the activated `a` node | — |
+<!-- generated:view-command-results:end -->
 
 ## Entry-point limits
 
