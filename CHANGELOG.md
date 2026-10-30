@@ -51,6 +51,25 @@ in [conformance/README.md](conformance/README.md).
   methods and getters with `#x in value`. No value tag, layout, host import
   or budget changes; v36 keeps its diagnostics and bytes.
 
+- Collections and binary text under opt-in v37 (selector `collections`):
+  `Map`/`Set` (insertion order, SameValueZero and identity keys, a hashed
+  index, live iteration, `forEach`, `keys`/`values`/`entries`, spreads and
+  `Array.from`, module-constant sets), tuples (`[A, B]`, `readonly`, trailing
+  optional elements; `Object.entries` returns `[string, T][]`), `padStart`,
+  `padEnd`, `toUpperCase`, `toLowerCase`, `split` with a string separator,
+  `concat`, `codePointAt`, `String.fromCharCode`/`fromCodePoint` and
+  `Array.prototype.join`, `Uint8Array` (ToUint8 writes, `set`/`slice`/`fill`/
+  `indexOf`/`includes`/`join`), UTF-8 `TextEncoder`/`TextDecoder` with
+  `fatal`, `ignoreBOM` and streaming, `btoa`/`atob`,
+  `crypto.getRandomValues`/`randomUUID` (the `Math.random` entropy path) and
+  a UTC `Date` subset (ISO-8601 and IMF-fixdate parsing, `toISOString`,
+  `getUTC*`). They are typed guest code in engine builtin preludes. Three host
+  imports with minimum host ABI 33: `string_to_upper_case16` and
+  `string_to_lower_case16` (pure) and `date_now` (exact `time.now` grant,
+  fatal denial). No value tag or layout: v37 keeps value layout 17, and
+  logging, `JSON.stringify` and `unknown` reject values holding these
+  objects. V36 keeps its bytes and diagnostics.
+
 - Opt-in v37 (pilot batch: language core, class generics, collections and
   binary text, RegExp and `net.request`, in development) is registered. It
   inherits every v36 feature, shares value ABI/layout 17 with v36 and declares

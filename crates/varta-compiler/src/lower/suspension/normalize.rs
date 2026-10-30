@@ -561,6 +561,10 @@ impl<'a> Normalizer<'a> {
                 let (prefix, args) = self.operands(args)?;
                 (prefix, E::Math(mode, args))
             }
+            E::Intrinsic(op, args) => {
+                let (prefix, args) = self.operands(args)?;
+                (prefix, E::Intrinsic(op, args))
+            }
             E::NumberPredicate(mode, args) => {
                 let (prefix, args) = self.operands(args)?;
                 (prefix, E::NumberPredicate(mode, args))

@@ -294,6 +294,17 @@ impl Lower<'_> {
         {
             return None;
         }
+        // `left ?? new Set()` (v37): the collection type of the left operand.
+        if let ast::Expr::New(new) = stmt::unparen(&binary.right)
+            && let ast::Expr::Ident(id) = stmt::unparen(&new.callee)
+            && let Some(kind) = collections::builtin(id.sym.as_ref(), self.types)
+        {
+            let mut members = unions::members(left, self.types)
+                .into_iter()
+                .filter(|ty| matches!(ty, Type::Collection(k, _) if *k == kind));
+            let member = members.next()?;
+            return members.next().is_none().then_some(member);
+        }
         let array = match stmt::unparen(&binary.right) {
             ast::Expr::Array(_) => true,
             ast::Expr::Object(_) => false,

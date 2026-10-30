@@ -96,6 +96,8 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                         || types.profile.bigint_values() && *ty == Type::BigInt
                         || types.profile.promise_values() && matches!(ty, Type::Promise(_))
                         || types.profile.function_fields() && matches!(ty, Type::Function(_))
+                        || types.profile.collections()
+                            && matches!(ty, Type::Tuple(_) | Type::Collection(..))
                         || (types.profile.errors() && ty.is_error()))
         })
     {
@@ -115,24 +117,37 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
                 | Type::Function(_)
                 | Type::Error
                 | Type::NativeError(_)
+                | Type::Tuple(_)
+                | Type::Collection(..)
         )
     });
-    // Records and class instances share the record union tag. V37
-    // (`language_core`) tells several of them apart by their layout
-    // descriptors, and several arrays by distinct element kinds.
+    // Records and class instances share the record union tag; so do map and
+    // set storage (v37). Tuples and byte arrays share the array tag. V37
+    // (`language_core`) tells several records and classes apart by their
+    // layout descriptors, and several arrays by distinct element kinds;
+    // collections and tuples take part only as the single member of their
+    // tag.
     let shared = types.profile.language_core();
-    if !shared
-        && values
-            .iter()
-            .filter(|ty| matches!(ty, Type::Record(_) | Type::Class(_)))
-            .count()
-            > 1
-        || !shared
-            && values
-                .iter()
-                .filter(|ty| matches!(ty, Type::Array(_)))
-                .count()
-                > 1
+    let byte_array = |ty: &&Type| matches!(ty, Type::Collection(ir::CollectionKind::Uint8Array, _));
+    let record_tag: Vec<&Type> = values
+        .iter()
+        .filter(|ty| {
+            matches!(ty, Type::Record(_) | Type::Class(_) | Type::Collection(..)) && !byte_array(ty)
+        })
+        .collect();
+    let array_tag: Vec<&Type> = values
+        .iter()
+        .filter(|ty| matches!(ty, Type::Array(_) | Type::Tuple(_)) || byte_array(ty))
+        .collect();
+    let crowded = |members: &[&Type]| {
+        members.len() > 1
+            && (!shared
+                || members
+                    .iter()
+                    .any(|ty| matches!(ty, Type::Collection(..) | Type::Tuple(_))))
+    };
+    if crowded(&record_tag)
+        || crowded(&array_tag)
         || values
             .iter()
             .filter(|ty| matches!(ty, Type::Dictionary(_)))
@@ -221,6 +236,21 @@ pub(super) fn widen(value: Expr, expected: Option<Type>, types: &ir::ValueTypes)
         });
     }
     let value = literals::conform(value, expected, types)?;
+    // A tuple (v37) is its physical array where that array, or `unknown`, is
+    // expected (TypeScript's tuple-to-array assignability).
+    let value = match value.ty {
+        Type::Tuple(id)
+            if expected == Some(types.tuples[id as usize].array)
+                || expected == Some(Type::Unknown) =>
+        {
+            Expr {
+                span: value.span,
+                ty: types.tuples[id as usize].array,
+                kind: E::Reinterpret(Box::new(value)),
+            }
+        }
+        _ => value,
+    };
     if expected == Some(Type::Unknown) {
         return unknown::widen(value, types);
     }

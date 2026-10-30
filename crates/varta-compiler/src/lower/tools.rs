@@ -312,7 +312,7 @@ fn expression(
                 expression(value, functions, visited, effects);
             }
         }
-        E::Math(_, args) | E::NumberPredicate(_, args) => {
+        E::Math(_, args) | E::NumberPredicate(_, args) | E::Intrinsic(_, args) => {
             for arg in args {
                 expression(arg, functions, visited, effects);
             }

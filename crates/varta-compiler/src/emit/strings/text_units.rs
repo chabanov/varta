@@ -27,8 +27,9 @@ const ABOVE_BYTE: u32 = 0x100;
 const TOKEN_SYMBOLS: &str = "!#$%&'*+-.^_`|~";
 const FORBIDDEN_VALUE: [u8; 3] = [0x00, b'\n', b'\r'];
 const UPPERCASE_FIRST: i32 = b'A' as i32;
+const LOWERCASE_FIRST: i32 = b'a' as i32;
 const ALPHABET: i32 = 26;
-const LOWERCASE_OFFSET: i32 = (b'a' - b'A') as i32;
+const CASE_OFFSET: i32 = (b'a' - b'A') as i32;
 
 /// `unit >= threshold`, or an ASCII unit whose bit is set in `low`/`high`.
 struct Matcher {
@@ -73,6 +74,11 @@ fn matcher(class: UnitClass) -> Matcher {
                 threshold: NO_THRESHOLD,
             }
         }
+        UnitClass::NonAscii => Matcher {
+            low: 0,
+            high: 0,
+            threshold: ASCII_END,
+        },
     }
 }
 
@@ -177,8 +183,14 @@ pub(super) fn index(class: UnitClass) -> Function {
     f
 }
 
-/// `(input: string) -> string`: a copy with ASCII `A`-`Z` lowercased.
-pub(super) fn lowercase(allocate: u32) -> Function {
+/// `(input: string) -> string`: a copy with ASCII `A`-`Z` lowercased, or
+/// (`upper`) with ASCII `a`-`z` uppercased.
+pub(super) fn ascii_case(allocate: u32, upper: bool) -> Function {
+    let (first, offset) = if upper {
+        (LOWERCASE_FIRST, -CASE_OFFSET)
+    } else {
+        (UPPERCASE_FIRST, CASE_OFFSET)
+    };
     let mut f = Function::new([(UNIT - BYTES + 1, ValType::I32)]);
     length(&mut f, INPUT, BYTES);
     instructions(
@@ -213,7 +225,7 @@ pub(super) fn lowercase(allocate: u32) -> Function {
             I::I32Add,
             I::I32Load16U(UNIT_MEMORY),
             I::LocalTee(UNIT),
-            I::I32Const(UPPERCASE_FIRST),
+            I::I32Const(first),
             I::I32Sub,
             I::I32Const(ALPHABET),
             I::I32LtU,
@@ -222,7 +234,7 @@ pub(super) fn lowercase(allocate: u32) -> Function {
             I::LocalGet(AT),
             I::I32Add,
             I::LocalGet(UNIT),
-            I::I32Const(LOWERCASE_OFFSET),
+            I::I32Const(offset),
             I::I32Add,
             I::I32Store16(UNIT_MEMORY),
             I::End,
@@ -270,6 +282,7 @@ mod tests {
                 matches!(unit, 0x00 | 0x0A | 0x0D),
                 "{unit:#x}"
             );
+            assert_eq!(matches(UnitClass::NonAscii, unit), unit > 0x7F, "{unit:#x}");
         }
     }
 }

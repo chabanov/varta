@@ -564,6 +564,8 @@ mod class_generic_tests;
 #[cfg(test)]
 mod class_tests;
 #[cfg(test)]
+mod collection_tests;
+#[cfg(test)]
 mod declared_field_tests;
 #[cfg(test)]
 mod dictionary_tests;

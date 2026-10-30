@@ -40,7 +40,32 @@ fn draw(
     Ok(sample(word))
 }
 
+/// The clock capability `Date.now()` (v37 `date_now`) requires.
+pub(crate) const CLOCK_CAPABILITY: &str = "time.now";
+
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
+    linker.func_wrap(
+        "varta",
+        HostOperation::DateNow.name(),
+        |mut caller: Caller<'_, RuntimeContext>| -> Result<f64, wasmtime::Error> {
+            caller.data_mut().tick()?;
+            // Checked before reading the clock; JavaScript has no failure
+            // path for Date.now(), so a denial ends the execution.
+            if !caller.data().policy.enabled(CLOCK_CAPABILITY) {
+                return Err(wasmtime::Error::new(
+                    varta_common::VartaError::CapabilityDenied {
+                        capability: CLOCK_CAPABILITY.into(),
+                        target: "Date.now".into(),
+                    },
+                ));
+            }
+            let elapsed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(wasmtime::Error::new)?;
+            // Whole milliseconds, like a JavaScript time value.
+            Ok(elapsed.as_millis() as f64)
+        },
+    )?;
     linker.func_wrap(
         "varta",
         HostOperation::MathRandom.name(),

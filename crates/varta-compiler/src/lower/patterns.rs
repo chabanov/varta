@@ -113,7 +113,7 @@ impl Lower<'_> {
             .collect();
         let ty = match present.as_slice() {
             [ty] if if array {
-                matches!(ty, Type::Array(_))
+                matches!(ty, Type::Array(_) | Type::Tuple(_))
             } else {
                 matches!(ty, Type::Record(_))
                     // V36: dictionaries and mixed records (not `object` views,

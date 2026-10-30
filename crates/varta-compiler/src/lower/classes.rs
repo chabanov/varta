@@ -115,6 +115,9 @@ pub(super) struct Class {
     state: State,
     /// Declared by an engine prelude module (v35 Web types).
     pub prelude: bool,
+    /// Declared by a v37 builtin prelude (`collections`): its instances never
+    /// enter `unknown`, so they never reach a host value reader through it.
+    pub opaque: bool,
     /// Type parameters of a generic class template (v37 `class_generics`).
     /// A template has only static members; each instantiation is a class of
     /// its own with `template` set.
@@ -194,9 +197,10 @@ impl Classes {
             .position(|class| class.prelude && class.name == name)
             .map(|id| id as u32)
     }
-    /// Whether the program loaded any engine prelude class.
+    /// Whether the program loaded any engine prelude class that may enter
+    /// `unknown` (v37 builtin classes never do).
     pub(super) fn has_prelude(&self) -> bool {
-        self.list.iter().any(|class| class.prelude)
+        self.list.iter().any(|class| class.prelude && !class.opaque)
     }
     /// The explanation for a member of an engine prelude class (or of a
     /// subclass) that the profile names but does not implement.
@@ -481,6 +485,7 @@ pub(super) fn register(
         template: None,
         frame: generics::Frame::new(),
         unallocated: Vec::new(),
+        opaque: crate::modules::engine::is_builtin_source(source),
     });
     Ok(Some((name, id)))
 }

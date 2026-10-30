@@ -119,10 +119,12 @@ pub(super) fn link_module(
     check(source, functions, &scope, &declared, types.profile)?;
     for chunk in chunks(&declared) {
         let index = *next;
-        // Function initializers (v37) lift their bodies while the chunk is
-        // lowered: reserve the initializer's index first so they do not take
-        // it.
-        let reserved = types.profile.language_core() && lifts(chunk);
+        // Function initializers (v37) lift their bodies, and collection
+        // constructors (v37) instantiate prelude functions, while the chunk
+        // is lowered: reserve the initializer's index first so they do not
+        // take it.
+        let reserved = types.profile.language_core() && lifts(chunk)
+            || types.profile.collections() && constructs_collection(chunk);
         if reserved {
             if index >= varta_common::abi::MAX_USER_FUNCTIONS {
                 return Err(source.locate(
@@ -240,6 +242,23 @@ fn lifts(chunk: &[Declared<'_>]) -> bool {
     found.0
 }
 
+/// Whether a chunk's initializers construct a `Map` or `Set` (v37).
+fn constructs_collection(chunk: &[Declared<'_>]) -> bool {
+    #[derive(Default)]
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_new_expr(&mut self, new: &ast::NewExpr) {
+            self.0 |= matches!(stmt::unparen(&new.callee), ast::Expr::Ident(id) if matches!(id.sym.as_ref(), "Set" | "Map"));
+            new.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder::default();
+    for var in chunk {
+        var.visit_with(&mut finder);
+    }
+    finder.0
+}
+
 /// Conservative upper estimate of emitted code per initializer weight unit
 /// (about four times the bytes measured for one string array element).
 const EMITTED_BYTES_PER_NODE: usize = 256;
@@ -354,6 +373,21 @@ fn initializer_form(
         // V37 (`language_core`): function values; their bodies run later and
         // may reference anything an ordinary function may.
         ast::Expr::Arrow(_) | ast::Expr::Fn(_) if profile.language_core() => return Ok(()),
+        // `new Set([...])`/`new Map([...])` of admitted values (v37): the
+        // constructor only builds the new collection.
+        ast::Expr::New(new)
+            if profile.collections()
+                && matches!(stmt::unparen(&new.callee), ast::Expr::Ident(id)
+                    if matches!(id.sym.as_ref(), "Set" | "Map") && !names.contains(id.sym.as_ref())) =>
+        {
+            for argument in new.args.iter().flatten() {
+                if argument.spread.is_some() {
+                    return Err(unsupported("spread in a module constant initializer"));
+                }
+                initializer_form(&argument.expr, names, profile)?;
+            }
+            return Ok(());
+        }
         ast::Expr::Lit(
             ast::Lit::Str(_)
             | ast::Lit::Num(_)

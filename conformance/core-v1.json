@@ -654,6 +654,25 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md"
+    },
+    {
+      "id": "tuples",
+      "title": "Tuple types, literals and destructuring",
+      "core": [
+        "CORE-01",
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md"
+    },
+    {
+      "id": "string-builtins",
+      "title": "String padding, splitting, case mapping and Array.prototype.join",
+      "core": [
+        "CORE-06"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/text-processing.html#sec-string.prototype.split"
     }
   ],
   "cases": [
@@ -1018,7 +1037,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Map allocation, key semantics and tracing are not implemented."
+        "reason": "Map allocation, key semantics and tracing are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
       }
     },
     {
@@ -1032,7 +1051,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Set allocation, key semantics and tracing are not implemented."
+        "reason": "Set allocation, key semantics and tracing are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
       }
     },
     {
@@ -1046,7 +1065,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Typed-array storage and conversion semantics are not implemented."
+        "reason": "Typed-array storage and conversion semantics are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
       }
     },
     {
@@ -1187,7 +1206,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Date construction and time semantics are not implemented."
+        "reason": "Date construction and time semantics are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
       }
     },
     {
@@ -2494,6 +2513,48 @@
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
         "reason": "Generic classes and generic bases are admitted by v37 class_generics; the inventory pins v36."
+      }
+    },
+    {
+      "id": "tuple-destructuring",
+      "feature": "tuples",
+      "path": "cases/tuple-destructuring.ts",
+      "sha256": "ac2125f7c58c672f90167e3a83a28bfdc37a36efa5085204b10c945dbad34bf0",
+      "stdout": [
+        "varta log: 3 2 n5"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Tuple types are not admitted: v36 has no positional element types. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+      }
+    },
+    {
+      "id": "string-split-pad-join",
+      "feature": "string-builtins",
+      "path": "cases/string-split-pad-join.ts",
+      "sha256": "941990c13d88c05849323df4a8d7a1545f7c32ea0979afe92376afe9b11bac65",
+      "stdout": [
+        "varta log: .a|.b|..|.c MIX!"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "String.prototype.split, padStart, toUpperCase, String.fromCharCode and Array.prototype.join are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
+      }
+    },
+    {
+      "id": "text-encoder-roundtrip",
+      "feature": "typed-arrays",
+      "path": "cases/text-encoder-roundtrip.ts",
+      "sha256": "b819d75709cadc93cc96430ea7de456e368fe59ffd77c0c8f19c75c9bbb0835c",
+      "stdout": [
+        "varta log: 3 195 hé"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "Uint8Array storage and the UTF-8 TextEncoder/TextDecoder are not implemented. checked-f64-utf16-v37 (collections) implements it; the inventory stays pinned to checked-f64-utf16-v36."
       }
     }
   ]

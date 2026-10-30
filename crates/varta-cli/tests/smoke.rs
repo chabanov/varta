@@ -14984,3 +14984,90 @@ fn class_generics_stay_rejected_by_v36_projects() {
     assert!(text.contains("unsupported generic class"), "{text}");
     assert!(!text.contains("varta log:"), "{text}");
 }
+
+/// V37 collections through `varta dev`, both artifacts, both binaries and the
+/// packaged executable: a module-constant `Set`, a `Map` with tuple entries,
+/// string built-ins, UTF-8 bytes, base64, random bytes and `Date` parsing.
+/// `Date.now()` needs the exact `time.now` grant: without it, or under a host
+/// ceiling that withholds it, the execution fails before any output.
+#[test]
+fn pilot_profile_v37_collections_run_everywhere_and_the_clock_needs_time_now() {
+    const PROFILE: &str = "checked-f64-utf16-v37";
+    let project = RegressionProject::new(
+        "const RETRYABLE=new Set([408,429,503]);\
+         export function main():void{\
+         const cache=new Map<string,[number,string]>();\
+         cache.set('a',[1,'one']).set('b',[2,'two']);\
+         const keys:string[]=[];for(const [key,[n,word]] of cache){keys.push(key+String(n)+word);}\
+         const bytes=crypto.getRandomValues(new Uint8Array(4));\
+         const hex=[...new TextEncoder().encode('é')].map((b)=>b.toString(16).padStart(2,'0')).join('');\
+         console.log(`${RETRYABLE.has(429)} ${RETRYABLE.has(200)} ${keys.join(',')} ${hex} ${bytes.length}`);\
+         console.log(`${btoa('hi')} ${'A,B'.split(',').map((s)=>s.toLowerCase()).join('')} ${Date.parse('Sun, 06 Nov 1994 08:49:37 GMT')}`);\
+         console.log(String(Date.now()>0));}",
+        serde_json::json!({"time":{"now":true}}),
+    );
+    project.language_profile(PROFILE);
+    let expected = [
+        "varta log: true false a1one,b2two c3a9 4",
+        "varta log: aGk= ab 784111777000",
+        "varta log: true",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
+    assert!(inspect.status.success(), "{}", combined(&inspect));
+    let info = String::from_utf8_lossy(&inspect.stdout).into_owned();
+    assert!(
+        info.contains("date_now") && info.contains("time.now"),
+        "{info}"
+    );
+    // The host ceiling withholds the grant the package requested.
+    project.host_policy(serde_json::json!([]));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let mut restricted = Command::new(command.get_program());
+        restricted.args(command.get_args());
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+        let output = restricted
+            .args(["--policy", "host-policy.json"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{}", combined(&output));
+        assert!(logs(&output).is_empty(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("capability denied: time.now"),
+            "{}",
+            combined(&output)
+        );
+    }
+    // Without the grant, `Date.now()` fails before any later output.
+    project.set_capabilities(serde_json::json!({}));
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success(), "{}", combined(&dev));
+    assert!(logs(&dev).is_empty(), "{}", combined(&dev));
+    assert!(
+        combined(&dev).contains("capability denied: time.now"),
+        "{}",
+        combined(&dev)
+    );
+}

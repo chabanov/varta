@@ -2794,11 +2794,12 @@ frozen, and add each stream's rules under its own heading here.
   minimum ABI in the `HostOperation` registry; do not add another host ABI
   constant in this batch. Add its `.d.ts`, linker, validation and denial tests
   in the same change.
-- The collections stream owns the batch's value-layout bump (value 18) and
-  lands it first as a foundation commit: a new `value` constant,
-  `value_abi`/`value_layout` for v37, value18 variants of every layout-bound
-  reader (minimum ABI 33) and the launcher value maximum. Value17 readers stay
-  frozen for v36. The other streams rebase onto it.
+- The collections stream owned the batch's value-layout bump and needed none
+  (its storage is private and tuples are arrays), so value 18 does not exist.
+  A later stream that needs a value tag lands it first as its own foundation
+  commit: a new `value` constant, `value_abi`/`value_layout` for v37, value18
+  variants of every layout-bound reader (minimum ABI 33) and the launcher
+  value maximum. Value17 readers stay frozen for v36.
 - `net.request` is a new exact capability operation, denied by default and
   checked before any socket is opened; never let `net.fetch`, `net.get` or
   `net.listen` grants authorize it.
@@ -2932,3 +2933,52 @@ Contract: [architecture.md](architecture.md#class-generics-class_generics).
   `class_generic_cases`, the forced-collection driver, v37 diagnostics, v36
   rejections and `v36_modules_keep_their_bytes`, and the pilot function-count
   measurement; the public API cross-module test and the CLI smoke test.
+
+### Collections (`collections()`)
+
+Contract: [collections and binary text](architecture.md#collections-and-binary-text-collections).
+
+- Implement built-ins as typed guest code in the reserved `<varta>/builtins/*`
+  preludes (`modules::engine::BUILTINS`), gated by `collections()`. A prelude
+  loads through an export, a static member (`Member`) or a load trigger
+  (`Prelude::loads`: an identifier, or `.property` for a member name); never
+  load one for v36 or earlier, so their bytes stay frozen
+  (`v36_modules_keep_their_bytes`). Call prelude functions only through
+  `lower::engine` (`engine_call`, `engine_apply`, `engine_signature`): it
+  resolves the function in the prelude module itself, instantiating generic
+  ones with explicit type arguments, so callers never depend on per-module
+  import bindings.
+- Prelude-only intrinsics (`varta.text.*`, `varta.array.get`,
+  `varta.collections.*`, `varta.bytes.*`, `varta.date.now`) are checked in
+  `lower::web_text` with `is_prelude_source`; in program modules they stay
+  unknown calls. `varta.array.get` is for densely filled prelude vectors read
+  below their length only. Prefer index appends (`a[a.length] = v`) and
+  `varta.array.get` over `push` and `a[i]!` in prelude hot paths: `push`
+  allocates its argument array and `!` reads through the hole-aware path.
+- `Type::Collection` and `Type::Tuple` are erased to their storage in
+  `literal_erasure` (with dictionaries, promises and merged function types);
+  emission never sees them. Map/Set storage is the prelude's generic
+  `MapStore`/`SetStore` instantiated in the prelude module
+  (`collections::store`); keep the prelude the single layout definition. In
+  unions a map or set counts as a record shape and a tuple or byte array as an
+  array type.
+- Never let collection storage or an `opaque` (v37 builtin) class instance
+  reach a host value reader: check `collections::reaches` before logging,
+  `JSON.stringify` and every widening to `unknown`. Keep `has_prelude`
+  excluding opaque classes.
+- A receiver whose static type is a collection is found without lowering
+  (`collection_receiver`: bindings, fields, `new`, chained `add`/`set`,
+  declared function and class-method results); string/array built-ins lower
+  the receiver once and keep class dispatch for class instances. Built-in
+  method names never shadow a user class method.
+- Module-constant chunks that construct a `Set`/`Map` reserve their
+  initializer slot before lowering (`constructs_collection`), because the
+  constructor instantiates prelude functions.
+- Host imports: `string_to_upper_case16`/`string_to_lower_case16` (pure,
+  capability-free) and `date_now` (exact `time.now`, fatal denial) take host
+  ABI 33. Keep the ASCII fast path in guest code.
+- Tests: Node-pinned runtime cases (`collection_tests`), forced collection
+  with test-only fuel, production-budget workloads, privacy and unsupported
+  diagnostics, the v36 frozen digests, the host-ABI-33 import test
+  (`collection_host_imports_require_host_abi_33`), the public API
+  cross-module test and the CLI smoke test through both binaries.

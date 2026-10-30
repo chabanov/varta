@@ -7889,14 +7889,15 @@ v36 subsection above admits a feature, layout or binding for v36 only, it
 applies to v36 and v37; v35 and earlier profiles stay frozen. V37 declares one
 version identity of its own (see the [version matrix](#version-matrix)):
 
-- **Host ABI** `abi::NET_REQUEST_VERSION` (33), for v37 alone. It adds no host
-  import yet: every v36 operation, including the value17 readers and the timer
-  operations, keeps its signature, binding and minimum ABI, and no registered
-  operation requires host ABI 33. Host imports added in this batch (the
-  asynchronous `net.request` operations behind `fetch` first) use host ABI 33
-  as their minimum.
+- **Host ABI** `abi::NET_REQUEST_VERSION` (33), for v37 alone. Every v36
+  operation, including the value17 readers and the timer operations, keeps
+  its signature, binding and minimum ABI. Host imports added in this batch use
+  host ABI 33 as their minimum: so far the collections stream's
+  `string_to_upper_case16`, `string_to_lower_case16` and `date_now`
+  ([collections](#collections-and-binary-text-collections)), and the
+  asynchronous `net.request` operations behind `fetch` next.
 - **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17),
-  shared with v36. V37 adds no value tag or layout yet;
+  shared with v36. V37 adds no value tag or layout:
   `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
   catalogs, frames and exception cells are stamped and read exactly as under
   v36.
@@ -7910,11 +7911,14 @@ or a missing value section fails validation before any guest effect.
 
 Each ABI is bumped at most once per batch. The host ABI bump is already made at
 registration and every stream adds its imports under it. The collections
-stream owns any value-layout bump (value 18: a new `value` constant,
+stream owned the batch's value-layout bump and needed none: its maps, sets,
+byte arrays and builtin classes are private storage that no host reader sees,
+and tuples are ordinary arrays. Value 18 (a new `value` constant,
 `value_abi`, `value_layout`, value18 variants of every layout-bound reader with
-their minimum host ABI 33, and the launcher maximum) and lands it as an early
-foundation commit; the other streams rebase onto it. V36 and earlier profiles
-keep their host ABI, value ABI and layouts.
+their minimum host ABI 33, and the launcher maximum) is therefore not
+introduced; a later stream that needs a value tag introduces it as its own
+early foundation commit. V36 and earlier profiles keep their host ABI, value
+ABI and layouts.
 
 Five selectors gate the batch's work streams:
 
@@ -8223,6 +8227,209 @@ A class field initialized by `new C(…)` or `new C<A>(…)` without an annotati
 (the pilot's `readonly #controller = new AbortController()`) takes that class
 type; a generic class there needs explicit type arguments. Abstract classes and
 methods stay rejected.
+
+#### Collections and binary text (`collections()`)
+
+V37 admits `Map`, `Set`, tuples, the string and array built-ins below,
+`Uint8Array`, the UTF-8 `TextEncoder`/`TextDecoder`, `btoa`/`atob`,
+`crypto.getRandomValues`/`crypto.randomUUID` and a `Date` subset. V36 and
+earlier profiles keep rejecting every form with their earlier diagnostics and
+keep their bytes: no v37 prelude loads there and no tuple or collection type
+exists (`v36_modules_keep_their_bytes` pins the digests of v36 programs
+recorded before this stream).
+
+**No value tag or layout.** The stream adds no value tag, layout, JSON schema,
+exception channel or launcher maximum: v37 keeps value ABI/layout 17. A map, a
+set and a byte array are private guest storage, like v34 promises before
+value16 tagged them. The compiler rejects, at compile time, every value that
+may hold one where a host value reader would see it: `console.log` (directly
+or through a union), `JSON.stringify` and conversion to `unknown`
+(`unsupported logging/JSON.stringify/conversion to unknown of a value holding
+a Map, Set, Uint8Array or another v37 builtin object`). Instances of the v37
+builtin classes (`TextEncoder`, `TextDecoder`, `Date` and the preludes'
+internal classes) are `opaque` the same way; unlike the v35 Web types they
+never enter `unknown`, so they do not make `JSON.stringify` of `unknown`
+conservative. A later value layout can tag them; nothing in layout 17 changes.
+
+**Engine builtin preludes.** The implementation is typed guest code in five
+reserved prelude modules compiled with the program through the shared module
+pipeline: `<varta>/builtins/text.ts` (string and array methods),
+`<varta>/builtins/collections.ts` (`Map`/`Set`), `<varta>/builtins/binary.ts`
+(`Uint8Array`, text codecs, `crypto`), `<varta>/builtins/base64.ts` and
+`<varta>/builtins/date.ts`. A prelude loads when any module of the program
+names one of its exports or static members, or one of its load triggers
+(`Prelude::loads`: `Map`, `Set`, `ReadonlyMap`, `ReadonlySet`, `Uint8Array`,
+or a member property such as `.padStart`, `.split` or `.join`); a trigger
+imports the module with no binding. The compiler calls prelude functions by
+name for receivers of the matching static type (`lower::engine`), so a module
+that only receives a set through another module's interface reaches them
+without naming `Set`. Module metadata never lists a prelude.
+
+Prelude modules alone may call these engine intrinsics (in program modules the
+names are ordinary unknown calls). None reads a capability:
+
+| Intrinsic | Lowering |
+| --- | --- |
+| `varta.text.unit(s, i)` | Guest read of one UTF-16 code unit (NaN outside the string) |
+| `varta.text.fromUnits(units)` | Guest allocation of a string from at most `MAX_ARRAY_ELEMENTS` code units |
+| `varta.text.indexNonAscii(s)`, `varta.text.asciiUppercase(s)` | Guest scans like the v35 `varta.web.*` intrinsics |
+| `varta.text.toUpperCase(s)`, `varta.text.toLowerCase(s)` | Host operations `string_to_upper_case16`/`string_to_lower_case16` |
+| `varta.text.identity(r)` | The stable address of a managed reference (the heap never moves) |
+| `varta.array.get(a, i)` | A checked dense element read that traps outside the array instead of yielding `undefined` |
+| `varta.collections.hash(k)`, `varta.collections.key(k)` | Selected by the key's static type (below) |
+| `varta.bytes.view(b)`, `varta.bytes.adopt(a)` | Reinterpret a `Uint8Array` as its `number[]` storage and back |
+| `varta.date.now()` | Host operation `date_now` |
+
+**Host operations.** Three imports, all with minimum host ABI
+`abi::NET_REQUEST_VERSION` (33), so a module that imports one fails host ABI
+validation under any older host ABI before instantiation:
+
+- `string_to_upper_case16(i32, i32) -> i32` and
+  `string_to_lower_case16(i32, i32) -> i32`: pure and capability-free, one
+  host call each; they read a bounded UTF-16 range and return the converted
+  string through the result buffer (snapshotted at once). Default Unicode
+  case conversion without locale, applied to every run of well-formed UTF-16
+  as a whole (context rules such as the final sigma see the run); lone
+  surrogates are copied unchanged. The result is bounded by the 1 MiB string
+  limit. The text prelude converts ASCII-only text with guest scans and calls
+  the host only for text above U+007F.
+- `date_now() -> f64`: whole milliseconds since the Unix epoch. It is checked
+  against the exact `time.now` grant before reading the clock, consistently
+  with `varta.time.now`. JavaScript gives `Date.now()` no failure path, so a
+  denial is fatal: the execution ends with
+  `capability denied: time.now for Date.now` (`RuntimeError::Policy`) before
+  any later guest effect, as `time.timer` denials end timer arming. `time.now`
+  never authorizes timers, and `time.timer` never authorizes the clock.
+
+**Map and Set.** `Map<K, V>`, `Set<T>`, `ReadonlyMap<K, V>` and
+`ReadonlySet<T>` (the readonly names denote the same types) are nominal types
+(`Type::Collection`) whose storage is the prelude's own generic interfaces
+`MapStore<K, V>` and `SetStore<T>`, instantiated through the generics
+pipeline so the prelude source is the single layout definition:
+`{ index: CollectionIndex; keys: K[]; values: V[] }` and
+`{ index: CollectionIndex; keys: T[] }`, with `CollectionIndex =
+{ buckets, chain, hashes, serials: number[]; size, serial: number }`. The
+types are erased to that record before emission; storage fields are exact heap
+edges, so keys, values and nested collections are traced like any record.
+
+- *Keys.* `string`, `number`, `boolean`, `bigint` and every reference type
+  (records, class instances, arrays, tuples, functions, collections) are
+  admitted; a union or `unknown` key type is rejected (`Map key type …`).
+  Literal types key as their base primitive. Keys compare by SameValueZero
+  (`NaN` equals `NaN`, `-0` is stored as `+0`); references compare by
+  identity.
+- *Hashing.* A chained hash index with a power-of-two bucket count finds a
+  key in expected constant time: strings hash by FNV-1a over their code units
+  (cost linear in the key's length), numbers by value (every `NaN` and both
+  zeros share a hash), booleans by value and references by their stable heap
+  address. BigInt keys compare by value but share one chain (a documented
+  linear cost, bounded by the entry ceiling).
+- *Order and deletion.* Entries live in insertion order in parallel vectors.
+  `delete` negates the entry's insertion serial; an insertion into full
+  vectors first compacts the deleted entries away. A collection holds at most
+  `MAX_ARRAY_ELEMENTS` (1024) entries, deleted ones included until
+  compaction; inserting into a full collection of live entries throws
+  `RangeError: Map maximum size exceeded` (`Set …`). V8's bound is 2^24.
+- *Live iteration.* A cursor remembers the serial of the last visited entry
+  and resumes after it (directly when no entry moved, by binary search after
+  compaction), so iteration visits entries added during iteration, skips
+  deleted ones, revisits a deleted and re-added key at its new position and
+  continues after `clear()` (whose new entries get later serials), as in
+  ECMAScript.
+- *Operations.* `new Map()`/`new Set()` with type arguments or a contextual
+  type (a binding annotation, a parameter, `left ?? new Set()`); `new
+  Set(array)`, `new Map(entries)` with `[K, V][]` entries (an array literal of
+  pair literals infers `K` and `V` like TypeScript) and copies of another
+  collection of the same kind; `has`, `get`, `add`/`set` (returning the
+  collection, so calls chain), `delete`, `clear`, `size`, `forEach` with a
+  `(value, key)` callback, `keys`, `values` and `entries`, `for…of` over a
+  map (`[key, value]` tuples) or a set, `[...collection]`,
+  `[...collection.keys()]` and `Array.from` of either. `keys`, `values` and
+  `entries` return the prelude's generators, so they iterate with `for…of`
+  and spread, not as `Iterator` objects with helper methods. A `forEach`
+  callback's third (collection) parameter, `thisArg`, the ES2025 set methods
+  and `Map.groupBy` are rejected with their names. Stored module constants
+  may be initialized with `new Set(…)`/`new Map(…)` of admitted values.
+
+**Tuples.** `[A, B]`, `readonly [A, B]` and trailing optional elements
+`[A, B?]` (`Type::Tuple`); rest elements and labels with rest are rejected. A
+tuple is physically the dense array of the union of its element types (plus
+`undefined` with optional elements), so logs, JSON, `unknown` and
+`Array.isArray` see an ordinary array, and the element union must be
+admissible (at most one record shape, array type and function type). A tuple
+literal needs a tuple context (an annotation, a parameter or return type, an
+element of a typed array of tuples, a union with one tuple member); without
+one an array literal stays an array. A read at a literal index and
+destructuring yield the position's own type through a checked union unbox; a
+literal index past the tuple is a type error, and other indexes read the
+physical element. `length`, `for…of`, `JSON.stringify` and the array methods
+see the physical array; a tuple is assignable to its physical array type.
+Element and property assignment through a tuple are rejected. Under v37,
+`Object.entries` returns `[string, T][]`, physically the same pair arrays as
+before.
+
+**Strings and arrays.** `padStart`/`padEnd` (ToIntegerOrInfinity of the
+length; the filler repeats and truncates), `toUpperCase`/`toLowerCase`
+(above), `split` with an optional string separator and limit (ToUint32; a
+RegExp separator belongs to the RegExp stream), `concat`, `codePointAt`,
+`String.fromCharCode` (ToUint16) and `String.fromCodePoint` (`RangeError:
+Invalid code point …`), and `Array.prototype.join` over primitive elements
+(`undefined`, `null` and holes join as empty strings; object elements are
+rejected because object-to-string conversion is not modelled). A class
+instance receiver keeps ordinary method dispatch.
+
+**Uint8Array.** A fixed-length dense `number[]` of byte values in eight-byte
+slots, at most `MAX_ARRAY_ELEMENTS` (1024) elements; a larger length throws a
+`RangeError`. `new Uint8Array()`, `new Uint8Array(length)` (`RangeError:
+Invalid typed array length` for a negative or fractional length), `new
+Uint8Array(numbers)` and `new Uint8Array(bytes)` (a copy); index reads like
+array reads (`number | undefined` outside); index writes convert with ToUint8
+and are ignored outside the array; `length`/`byteLength`; `set(source,
+offset?)`, `slice`, `fill`, `indexOf`, `includes`, `at` and `join`;
+`for…of` yields `number`; `[...bytes]` and `Array.from(bytes)` copy to
+`number[]`. `subarray` (a view sharing the buffer), `ArrayBuffer`,
+`DataView` and the other typed arrays are not modelled and are rejected.
+
+**Text codecs and base64.** `TextEncoder.encode(input?)` writes UTF-8, a lone
+surrogate as U+FFFD; output beyond the 1024-byte `Uint8Array` bound throws a
+`RangeError`. `new TextDecoder(label?, { fatal?, ignoreBOM? })` accepts the
+WHATWG UTF-8 labels only (`RangeError: The "…" encoding is not supported`
+otherwise; Node with full ICU accepts more); `decode(bytes?, { stream? })`
+runs the WHATWG UTF-8 decoder with maximal-subpart U+FFFD replacement or, when
+`fatal`, `TypeError: The encoded data was not valid for encoding utf-8`;
+streaming keeps a partial sequence across calls and a leading BOM is skipped
+unless `ignoreBOM`. `btoa`/`atob` follow the HTML standard (forgiving base64
+over Latin-1 code units) and throw a `DOMException` named
+`InvalidCharacterError`; they load the abort prelude for `DOMException`.
+
+**Random values.** `crypto.getRandomValues(bytes)` fills and returns the same
+array from the `Math.random` entropy path (fresh OS entropy per sample, no
+capability, the accepted decision): six bytes from each 48-bit slice of a
+sample, so 16 bytes cost three host calls. `crypto.randomUUID()` formats 16
+such bytes as an RFC 9562 version 4 UUID. `globalThis.crypto` and feature
+detection through `typeof crypto.randomUUID` are not modelled.
+
+**Date.** `Date` is an engine prelude class over one private time value
+(UTC milliseconds, TimeClip). `new Date()` reads the clock (`time.now`), `new
+Date(number)` clips and `new Date(string)` parses; `Date.now()` and
+`Date.parse(text)` are static members that are also function values. There is
+no time zone: `Date.parse` reads the ECMAScript date time string format
+(including V8's lowercase `t`/`z`, a space separator, any number of fraction
+digits and day overflow up to 31; a date-time without an offset is UTC, where
+V8 uses local time) and the RFC 9110 IMF-fixdate, and returns NaN for every
+other form (V8 also accepts implementation-defined legacy forms).
+`getTime`, `setTime`, `toISOString` (`RangeError: Invalid time value`,
+six-digit signed years outside 0–9999) and the `getUTC*` accessors exist;
+local-time accessors, `toString`, `toJSON` and arithmetic through `valueOf`
+are not modelled, and `JSON.stringify` of a `Date` is rejected (opaque).
+
+**Costs.** Operations run in guest code under the unchanged production
+budgets. In a debug measurement a `Set.add` of a number costs about 5 000
+fuel and a `has` about 1 400 (the 1 000 000 fuel budget runs a few hundred
+operations next to other work), string hashing adds work linear in the key,
+and no operation makes a host call except case conversion of non-ASCII text,
+`String(…)` conversions inside `join` of non-string elements, random values
+and the clock.
 
 ## Local modules
 

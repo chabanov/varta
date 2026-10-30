@@ -26,6 +26,11 @@ pub(crate) struct Prelude {
     /// A later profile's source of the same module, replacing `source` where
     /// its selector admits it; earlier profiles keep `source` unchanged.
     pub extended: Option<Extension>,
+    /// Names whose reference loads the module without binding anything
+    /// (v37 `collections`): identifiers, and member property names written
+    /// with a leading `.`. The compiler calls such a prelude's functions
+    /// through `lower::engine`, never through a source binding.
+    pub loads: &'static [&'static str],
 }
 /// A profile selector and the prelude source it selects.
 pub(crate) type Extension = (fn(LanguageProfile) -> bool, &'static str);
@@ -66,6 +71,7 @@ pub(crate) const HEADERS: Prelude = Prelude {
     members: &[],
     admitted: LanguageProfile::web_headers,
     extended: None,
+    loads: &[],
 };
 /// `AbortController`, `AbortSignal` and the `DOMException` abort reasons;
 /// v36 (`function_fields`) adds abort listeners in its own source.
@@ -83,6 +89,7 @@ pub(crate) const ABORT: Prelude = Prelude {
         LanguageProfile::function_fields,
         include_str!("../prelude/abort_listeners.ts"),
     )),
+    loads: &[],
 };
 /// `AbortSignal.timeout` (v36 `timers`): an `AbortController` aborted by an
 /// unreferenced timer; it imports the abort prelude implicitly.
@@ -97,8 +104,123 @@ pub(crate) const ABORT_TIMEOUT: Prelude = Prelude {
     }],
     admitted: LanguageProfile::timers,
     extended: None,
+    loads: &[],
 };
-pub(crate) const PRELUDES: [&Prelude; 3] = [&HEADERS, &ABORT, &ABORT_TIMEOUT];
+/// String and array methods of the v37 `collections` stream, called by
+/// `lower::engine` for receivers of the matching type.
+pub(crate) const TEXT: Prelude = Prelude {
+    path: "<varta>/builtins/text.ts",
+    source: include_str!("../prelude/text.ts"),
+    exports: &[],
+    members: &[
+        Member {
+            object: "String",
+            property: "fromCharCode",
+            function: "stringFromCharCode",
+        },
+        Member {
+            object: "String",
+            property: "fromCodePoint",
+            function: "stringFromCodePoint",
+        },
+    ],
+    admitted: LanguageProfile::collections,
+    extended: None,
+    loads: TEXT_METHODS,
+};
+/// The member property names that load [`TEXT`].
+pub(crate) const TEXT_METHODS: &[&str] = &[
+    ".padStart",
+    ".padEnd",
+    ".toUpperCase",
+    ".toLowerCase",
+    ".split",
+    ".join",
+    ".concat",
+    ".codePointAt",
+];
+/// `Map` and `Set` (v37 `collections`): generic functions over the private
+/// storage records that `lower::collections` lays out.
+pub(crate) const COLLECTIONS: Prelude = Prelude {
+    path: "<varta>/builtins/collections.ts",
+    source: include_str!("../prelude/collections.ts"),
+    exports: &[],
+    members: &[],
+    admitted: LanguageProfile::collections,
+    extended: None,
+    loads: &["Map", "Set", "ReadonlyMap", "ReadonlySet"],
+};
+/// `Uint8Array` operations, `TextEncoder`/`TextDecoder`, base64 and the
+/// `crypto` random functions (v37 `collections`).
+pub(crate) const BINARY: Prelude = Prelude {
+    path: "<varta>/builtins/binary.ts",
+    source: include_str!("../prelude/binary.ts"),
+    exports: &[
+        ("TextEncoder", Namespace::Class),
+        ("TextDecoder", Namespace::Class),
+        ("TextDecoderOptions", Namespace::Type),
+        ("TextDecodeOptions", Namespace::Type),
+    ],
+    members: &[
+        Member {
+            object: "crypto",
+            property: "getRandomValues",
+            function: "cryptoGetRandomValues",
+        },
+        Member {
+            object: "crypto",
+            property: "randomUUID",
+            function: "cryptoRandomUUID",
+        },
+    ],
+    admitted: LanguageProfile::collections,
+    extended: None,
+    loads: &["Uint8Array"],
+};
+/// `btoa` and `atob` (v37 `collections`), separate from [`BINARY`] because
+/// their `InvalidCharacterError` is a `DOMException` of the abort prelude.
+pub(crate) const BASE64: Prelude = Prelude {
+    path: "<varta>/builtins/base64.ts",
+    source: include_str!("../prelude/base64.ts"),
+    exports: &[("btoa", Namespace::Class), ("atob", Namespace::Class)],
+    members: &[],
+    admitted: LanguageProfile::collections,
+    extended: None,
+    loads: &[],
+};
+/// The `Date` subset (v37 `collections`): UTC time values, ISO-8601 and
+/// IMF-fixdate parsing, and the `time.now`-gated clock.
+pub(crate) const DATE: Prelude = Prelude {
+    path: "<varta>/builtins/date.ts",
+    source: include_str!("../prelude/date.ts"),
+    exports: &[(DATE_CLASS, Namespace::Class)],
+    members: &[
+        Member {
+            object: DATE_CLASS,
+            property: "now",
+            function: "dateNow",
+        },
+        Member {
+            object: DATE_CLASS,
+            property: "parse",
+            function: "dateParse",
+        },
+    ],
+    admitted: LanguageProfile::collections,
+    extended: None,
+    loads: &[],
+};
+pub(crate) const DATE_CLASS: &str = "Date";
+pub(crate) const PRELUDES: [&Prelude; 8] = [
+    &HEADERS,
+    &ABORT,
+    &ABORT_TIMEOUT,
+    &TEXT,
+    &COLLECTIONS,
+    &BINARY,
+    &BASE64,
+    &DATE,
+];
 /// Class names that compiler hooks recognize in their prelude modules.
 pub(crate) const HEADERS_CLASS: &str = "Headers";
 pub(crate) const ABORT_SIGNAL_CLASS: &str = "AbortSignal";
@@ -120,6 +242,17 @@ pub(crate) fn is_prelude(path: &Path) -> bool {
 /// Whether `source` is an engine prelude module.
 pub(crate) fn is_prelude_source(source: &crate::source::Source) -> bool {
     PRELUDES
+        .into_iter()
+        .any(|prelude| source.is_path(Path::new(prelude.path)))
+}
+
+/// The v37 builtin preludes (`collections`), whose class instances are
+/// private to every host value reader.
+pub(crate) const BUILTINS: [&Prelude; 5] = [&TEXT, &COLLECTIONS, &BINARY, &BASE64, &DATE];
+
+/// Whether `source` is a v37 builtin prelude module.
+pub(crate) fn is_builtin_source(source: &crate::source::Source) -> bool {
+    BUILTINS
         .into_iter()
         .any(|prelude| source.is_path(Path::new(prelude.path)))
 }
@@ -192,12 +325,19 @@ impl Visit for References {
             .or_insert(ident.span);
     }
     /// `Object.member` also records the dotted name of a static member.
+    /// Every `.member` also records its property name with a leading `.`
+    /// (v37 load triggers).
     fn visit_member_expr(&mut self, member: &ast::MemberExpr) {
         if let (ast::Expr::Ident(object), ast::MemberProp::Ident(property)) =
             (&*member.obj, &member.prop)
         {
             self.found
                 .entry(format!("{}.{}", object.sym, property.sym))
+                .or_insert(member.span);
+        }
+        if let ast::MemberProp::Ident(property) = &member.prop {
+            self.found
+                .entry(format!(".{}", property.sym))
                 .or_insert(member.span);
         }
         member.visit_children_with(self);
@@ -207,6 +347,7 @@ impl Visit for References {
 /// Implicit prelude imports of one module, in prelude order. A prelude module
 /// itself only imports what another prelude exports.
 pub(super) fn implicit_imports(
+    path: &Path,
     module: &ast::Module,
     imports: &[Dependency],
     profile: LanguageProfile,
@@ -217,7 +358,7 @@ pub(super) fn implicit_imports(
     }
     let admitted: Vec<&Prelude> = PRELUDES
         .into_iter()
-        .filter(|prelude| (prelude.admitted)(profile))
+        .filter(|prelude| (prelude.admitted)(profile) && Path::new(prelude.path) != path)
         .collect();
     if admitted.is_empty() {
         return Vec::new();
@@ -256,7 +397,13 @@ pub(super) fn implicit_imports(
                         })
                     }),
             );
-            let span = bindings.first()?.span;
+            // A load trigger imports the module without a binding.
+            let span = bindings.first().map(|binding| binding.span).or_else(|| {
+                prelude
+                    .loads
+                    .iter()
+                    .find_map(|name| references.found.get(*name).copied())
+            })?;
             Some(Dependency {
                 target: PathBuf::from(prelude.path),
                 bindings,

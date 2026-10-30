@@ -82,7 +82,20 @@ impl Lower<'_> {
             ast::Expr::Cond(branch) if self.types.profile.reference_unions() => {
                 self.conditional(branch, expected, hints)
             }
-            ast::Expr::Array(array) => self.array(array, context),
+            ast::Expr::Array(array) => match self.tuple_context(context) {
+                Some(id) => self.tuple_literal(array, id),
+                None => match self.spread_copy(array)? {
+                    Some(value) => Ok(value),
+                    None => self.array(array, context),
+                },
+            },
+            ast::Expr::New(new)
+                if let ast::Expr::Ident(id) = stmt::unparen(&new.callee)
+                    && let Some(kind) = collections::builtin(id.sym.as_ref(), self.types)
+                    && self.binding(id.sym.as_ref()).is_err() =>
+            {
+                self.collection_new(new, kind, expected)
+            }
             ast::Expr::Object(object) => self.record(object, context),
             ast::Expr::Paren(paren) => self.expr_contextual(&paren.expr, expected, hints),
             ast::Expr::TsAs(assertion) if self.types.profile.checked_assertions() => {
@@ -745,6 +758,13 @@ impl Lower<'_> {
                 return self.promise_method(call, receiver, method.sym.as_ref());
             }
         }
+        if self.types.profile.collections()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let ast::Expr::Member(member) = stmt::unparen(callee)
+            && let Some(value) = self.builtin_method(call, member, expected)?
+        {
+            return Ok(value);
+        }
         if let Some(generic) = self.generic_callee(call) {
             return self.generic_call(call, generic, expected);
         }
@@ -964,6 +984,28 @@ impl Lower<'_> {
         if let Some(value) = self.prelude_timer(call, &name)? {
             return Ok(value);
         }
+        if name == "Array.from"
+            && self.types.profile.collections()
+            && self.binding("Array").is_err()
+            && let [source] = call.args.as_slice()
+            && source.spread.is_none()
+        {
+            // `Array.from(collection)` and `Array.from(collection.keys())` (v37).
+            if self.collection_iterator(&source.expr) {
+                let value = self.expr(&source.expr)?;
+                return self.drain(value);
+            }
+            if self.collection_receiver(&source.expr, 0) {
+                let value = self.expr(&source.expr)?;
+                return self.collection_array(value);
+            }
+            return Err(self.source.locate(
+                unsupported(
+                    "Array.from of a value other than a Map, Set, Uint8Array or their iterators",
+                ),
+                call.span,
+            ));
+        }
         if name == "Array.isArray" && self.types.profile.reference_unions() {
             return self.array_is_array(call);
         }
@@ -996,6 +1038,12 @@ impl Lower<'_> {
                 return Err(invalid("JSON.stringify expects one value"));
             }
             let value = self.expr(&call.args[0].expr)?;
+            if collections::reaches(value.ty, self.types) {
+                return Err(self
+                    .source
+                    .locate(collections::opaque("JSON.stringify"), value.span));
+            }
+            let value = self.physical_array(value)?;
             if value.ty.profile_kind(self.types.profile).is_none()
                 || value.ty == Type::BigInt && !self.types.profile.bigint_values()
             {
@@ -1135,6 +1183,9 @@ impl Lower<'_> {
                     return Err(invalid("log expects one argument"));
                 }
                 let mut arg = self.expr(&call.args[0].expr)?;
+                if collections::reaches(arg.ty, self.types) {
+                    return Err(self.source.locate(collections::opaque("logging"), arg.span));
+                }
                 if arg.ty == Type::BigInt {
                     arg = self.bigint_text(arg)?;
                 }

@@ -123,7 +123,7 @@ impl Lower<'_> {
             .copied()
             .find(|ty| match expression {
                 ast::Expr::Object(_) => matches!(ty, Type::Record(_)),
-                ast::Expr::Array(_) => matches!(ty, Type::Array(_)),
+                ast::Expr::Array(_) => matches!(ty, Type::Array(_) | Type::Tuple(_)),
                 _ => false,
             })
             .or_else(|| {

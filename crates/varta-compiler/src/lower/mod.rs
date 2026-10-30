@@ -23,7 +23,7 @@ fn unsupported(kind: &str) -> CompilerError {
 }
 
 #[derive(Clone)]
-struct Signature {
+pub(crate) struct Signature {
     shape: ir::ParameterShape,
     receiver: Option<Type>,
     index: usize,
@@ -146,6 +146,29 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     }
     if let ast::TsType::TsFnOrConstructorType(ast::TsFnOrConstructorType::TsFnType(function)) = ty {
         return functions::type_annotation(function, types);
+    }
+    if types.profile.collections() {
+        // Tuples and engine collections (v37).
+        match ty {
+            ast::TsType::TsTupleType(tuple) => return tuples::annotation(tuple, false, types),
+            ast::TsType::TsTypeOperator(operator)
+                if operator.op == ast::TsTypeOperatorOp::ReadOnly
+                    && matches!(&*operator.type_ann, ast::TsType::TsTupleType(_)) =>
+            {
+                let ast::TsType::TsTupleType(tuple) = &*operator.type_ann else {
+                    return Err(invalid("missing readonly tuple"));
+                };
+                return tuples::annotation(tuple, true, types);
+            }
+            ast::TsType::TsTypeRef(reference) => {
+                if let ast::TsEntityName::Ident(id) = &reference.type_name
+                    && let Some(kind) = collections::builtin(id.sym.as_ref(), types)
+                {
+                    return collections::annotation(reference, kind, types);
+                }
+            }
+            _ => {}
+        }
     }
     if types.profile.promises()
         && let ast::TsType::TsTypeRef(reference) = ty
@@ -309,10 +332,13 @@ mod assignment_patterns;
 mod assignment_values;
 mod bigint;
 mod bigint_values;
+mod binary;
 mod bindings;
 mod bitwise;
+mod builtin_methods;
 mod callback_inference;
 pub(crate) mod classes;
+mod collections;
 mod completion;
 mod compound_assignments;
 mod core;
@@ -324,6 +350,7 @@ mod dictionaries;
 mod dictionary_helpers;
 mod dictionary_spread;
 mod dictionary_updates;
+pub(crate) mod engine;
 mod errors;
 mod exceptions;
 mod exports;
@@ -398,6 +425,7 @@ mod switches;
 mod tdz;
 mod templates;
 mod tools;
+mod tuples;
 mod type_operators;
 mod undefined;
 mod unions;

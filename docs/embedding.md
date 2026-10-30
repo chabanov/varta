@@ -241,7 +241,7 @@ profile may import.
 | `checked-f64-utf16-v34` | 30 | 15 | binary64 | UTF-16LE | no | `varta.exception.version_v6` = 6 | `varta_resume`, catalog 2 | yes | 80 |
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
-| `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
+| `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 87 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -667,6 +667,9 @@ import the operation, as contiguous runs in registry order.
 | `value_strict_equal_v10` | (i64, i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_truthy_v10` | (i64) → (i32) | 32 | none | — | — | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
 | `value_typeof_v10` | (i64) → (i32) | 32 | none | yes | yes | `checked-f64-utf16-v36` – `checked-f64-utf16-v37` |
+| `date_now` | () → (f64) | 33 | `time.now` | — | — | `checked-f64-utf16-v37` |
+| `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
+| `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
 <!-- generated:embedding-host-operations:end -->
 
 ## Status and control codes

@@ -126,6 +126,17 @@ impl Emitter<'_> {
                 self.expr(value)?;
                 self.string_helper(strings::Helper::text_units(*op))?;
             }
+            E::Intrinsic(op, args) => {
+                for arg in args {
+                    self.expr(arg)?;
+                }
+                match op {
+                    ir::Intrinsic::CodeUnit => self.string_helper(strings::Helper::CodeUnit)?,
+                    ir::Intrinsic::FromUnits => self.string_helper(strings::Helper::FromUnits)?,
+                    // The low word of every managed handle is its payload address.
+                    ir::Intrinsic::Identity => self.code.extend([I::I32WrapI64, I::F64ConvertI32U]),
+                }
+            }
             E::StringRepeat {
                 value,
                 count,
