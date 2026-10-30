@@ -835,7 +835,7 @@ fn scheduler_misuse() -> String {
         ),
         (
             "`promise_settle`",
-            "serial not issued, or settled before (a double settle)",
+            "serial not issued, including 0 (serials start at 1 and 0 is never issued), or settled before (a double settle)",
             E::UnknownSerial,
         ),
         (
@@ -857,7 +857,7 @@ fn scheduler_misuse() -> String {
         ("`timer_start`", "serial not issued", E::UnknownSerial),
         (
             "`timer_start`",
-            "serial 0, not exactly one registered reaction, or a timer already armed for it",
+            "serial 0, not exactly one registered reaction, or any timer of that serial not yet forgotten (armed, or fired or cleared and not yet taken by `timer_take`)",
             E::TimerState,
         ),
         (
@@ -965,7 +965,9 @@ fn catalog_types() -> String {
     let describe = |member: &str| match member {
         "class" => "`class`: native error class tag or `null` (may be absent)",
         "signature" => "`signature`: signature number below `function::MAX_TYPES`",
-        "fields" => "`fields`: array of `{name, ty, optional}`, sorted by `name`",
+        "fields" => {
+            "`fields`: array of `{name, ty, optional}` in strictly ascending byte order of `name` (enforced)"
+        }
         "element" => "`element`: type index",
         "value" => "`value`: type index",
         "members" => "`members`: array of type indices",

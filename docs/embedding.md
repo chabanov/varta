@@ -943,13 +943,13 @@ import; the first failing row decides. "Not issued" means not an integer, outsid
 | `promise_react` | serial already settled (and not a cleared timer's serial) | `UnknownSerial` |
 | `promise_react`, `scheduler_enqueue` | the held tokens already reach the limit | `QueueFull` |
 | `promise_react`, `scheduler_enqueue` | token already held | `DuplicateToken` |
-| `promise_settle` | serial not issued, or settled before (a double settle) | `UnknownSerial` |
+| `promise_settle` | serial not issued, including 0 (serials start at 1 and 0 is never issued), or settled before (a double settle) | `UnknownSerial` |
 | `promise_unhandled` | every rejection id is already issued | `SerialBudget` |
 | `promise_handled` | id not issued, never reported, or withdrawn before (a repeated withdrawal) | `UnknownSerial` |
 | `timer_start` | no `time.timer` grant | `TimerDenied` |
 | `timer_start` | flags outside interval and unref | `TimerState` |
 | `timer_start` | serial not issued | `UnknownSerial` |
-| `timer_start` | serial 0, not exactly one registered reaction, or a timer already armed for it | `TimerState` |
+| `timer_start` | serial 0, not exactly one registered reaction, or any timer of that serial not yet forgotten (armed, or fired or cleared and not yet taken by `timer_take`) | `TimerState` |
 | `timer_start` | the pending timers already reach the limit | `TimerBudget` |
 | `timer_start` | every timer id is already issued | `SerialBudget` |
 | `timer_take` | serial not issued | `UnknownSerial` |
@@ -1040,7 +1040,7 @@ Members of each type kind (besides `kind`), generated from the reader's type:
 | `bigInt` | none |
 | `error` | `class`: native error class tag or `null` (may be absent) |
 | `function` | `signature`: signature number below `function::MAX_TYPES` |
-| `record` | `fields`: array of `{name, ty, optional}`, sorted by `name` |
+| `record` | `fields`: array of `{name, ty, optional}` in strictly ascending byte order of `name` (enforced) |
 | `array` | `element`: type index |
 | `dictionary` | `value`: type index |
 | `primitiveUnion` | `members`: array of type indices |
@@ -1073,6 +1073,22 @@ members):
 In particular `states[].yielded` is a required binding index and is never `null`.
 The catalog's own validation then requires `capacity` in liveness layouts (version
 3) and forbids it and `saved` in cell layouts (version 2).
+
+**Ordering and uniqueness.** These rules are **enforced** by the strict reader; a
+catalog that breaks one is invalid:
+
+- `types[].fields` of a `record`: strictly ascending by the UTF-8 bytes of `name`
+  (which also makes names unique).
+- `functions[].code` and `frames[].code`: each unique within its array; their order
+  is free.
+- `members` of a union: unique, at least two; their order is free.
+- The pairing of `frames[i]` with the `i`-th distinct resume body in the
+  dispatcher's call order ([frame admission](#function-and-frame-catalogs) rule 5).
+
+Every other array order is **not** a validation rule: `types`, `bindings`,
+`functions`, `frames`, `captures`, `slots` and `saved` are read in the order given,
+which the compiler chooses. `states` order is meaningful (state *n* is the *n*-th
+suspension point) but not checked beyond the bounds above.
 
 The remaining structural rules (type graph, capture and liveness entries, binding
 classes per layout) are defined by `varta_common::function::{catalog, validate,
