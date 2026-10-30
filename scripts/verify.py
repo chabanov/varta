@@ -18,7 +18,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = (
     "varta", "varta-artifact", "varta-bigint", "varta-common", "varta-compiler",
-    "varta-conformance", "varta-launcher", "varta-project", "varta-runtime",
+    "varta-conformance", "varta-intrinsics", "varta-launcher", "varta-project",
+    "varta-runtime", "varta-view",
 )
 CORE = ["varta-common", "varta-compiler", "varta-runtime", "varta-artifact"]
 

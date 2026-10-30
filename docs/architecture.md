@@ -9530,11 +9530,12 @@ with 500 deletions costs 251M fuel). Hashing them needs an index next to
 the key vector, a value-layout change for the program-limits stream's
 value18 (a third storage slot, for example an open-addressing `number[]` of
 entry positions with tombstones and compaction, as in the `Map` prelude).
-`String(x)`, `x % y` and number templates are host calls, so loops over more
-than about 1000 elements exhaust the production host-call budget. `console.log`
-diagnostics and the primitive `String`/`Number`/BigInt conversions still read
-with the frozen string and depth limits, and the logs of a failed execution
-are not shown.
+Value conversions such as `String(x)` of a union and number templates may
+still be host calls counted against the per-turn host-call budget (`x % y` is
+guest code with a linked fallback under v38). `console.log` diagnostics and
+the primitive `String`/`Number`/BigInt conversions still read with the frozen
+string and depth limits. Output captured before a failure is reported with it
+([turn budgets](#turn-budgets-and-application-instances-turn_budgets)).
 
 
 #### Code generation v2 (`codegen_v2`)

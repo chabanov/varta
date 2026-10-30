@@ -785,7 +785,7 @@ The selectors are registered; the table records what each stream admits.
 | Selector | Work stream | State |
 | --- | --- | --- |
 | `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Implemented ([contract](architecture.md#program-limits-program_limits)): multi-page static region (host ABI 34, no value 18; the foundation), profile limits registry with the Wasm limits, table-driven `varta_resume`, unreachable async frames and unread constants removed, startup fuel independent of static size. Pending: per-type `request<T>` code (async frame and promise helpers, about 11 functions per response type) |
-| `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Implemented ([contract](architecture.md#data-limits-data_limits)): `DataLimits` registry (2^27 elements, 2^30 string bytes, JSON depth host ceiling 10000), value17 sparse backings above 1024 slots with one bit per slot, typed `RuntimeError::Resource` failures through the `resource_failure`/`resource_request` globals, geometric heap growth and a worklist mark, a hashed growable live-frame table and memory-derived scheduler bounds, `json_stringify_owned` (host ABI 34) into owned guest strings, iterative JSON parsing, lifted `Map`/`Set`/`Uint8Array` preludes and an O(n log n) `join`. Pending: dictionary and mixed-record hashing (needs a value18 storage slot from the program-limits stream), per-element host calls (`String`, `%`) against the 1024 host-call budget, frozen limits in `console.log` diagnostics and primitive conversions |
+| `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Implemented ([contract](architecture.md#data-limits-data_limits)): `DataLimits` registry (2^27 elements, 2^30 string bytes, JSON depth host ceiling 10000), value17 sparse backings above 1024 slots with one bit per slot, typed `RuntimeError::Resource` failures through the `resource_failure`/`resource_request` globals, geometric heap growth and a worklist mark, a hashed growable live-frame table and memory-derived scheduler bounds, `json_stringify_owned` (host ABI 34) into owned guest strings, iterative JSON parsing, lifted `Map`/`Set`/`Uint8Array` preludes and an O(n log n) `join`. Pending: dictionary and mixed-record hashing (needs a value18 storage slot from the program-limits stream), per-element host calls of `String(x)` against the 1024 host-call budget (`%` no longer calls the host), frozen limits in `console.log` diagnostics and primitive conversions |
 | `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Admits event turns with per-turn budgets, manifest budgets capped by the ceiling, long-lived application instances, host event sources and permission broker v1; logs before failure and `--budget-report` in `dev`/`run`/companion ([contract](architecture.md#turn-budgets-and-application-instances-turn_budgets)). Pending: per-function fuel attribution (codegen stream), per-turn UI values from measurements on the targets |
 | `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | First increment implemented ([contract](architecture.md#linked-intrinsics-linked_intrinsics)): 34 pure operations (Math, `**`/`%`, Number text and parsing, primitive-cell conversions, UTF-16 access and case mapping) are guest code from the shared `varta-intrinsics` crate, linked function by function with their data onto a private second memory; a v38 host implements 59 of 93 imports. Measured below ([linked intrinsics measurement](#linked-intrinsics-measurement-v38)). Pending: the value17 readers and conversions, JSON, `primitive_compare`/`primitive_equal` and BigInt, which need the value-layout readers in the shared crate |
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Implemented (P7): `view_commit` (host ABI 34), synthesized event export, `varta-view` headless renderer (tree, cascade, accessibility; no layout), `ui.open_url`/`clipboard.write` decided by permission broker v1 with `command_result`; every view record is a host task of an application instance and runs as its own turn |
@@ -810,6 +810,36 @@ first blockers are the resume-body compilation budget (35), the union type
 count (12), the promise type count (3), the function body budget (2), `Blob`
 (7) and one checked conversion to a union of record shapes without a literal
 discriminant.
+
+**Integration (`v38-merge`).** The eight streams are merged into one v38
+with these reconciliations: one limits registry (`LanguageProfile::limits()`
+with the data limits as its `data` field) read through one reader parameter
+(`value::ModuleBounds`); test budgets only through `budget::Budgets`; the v38
+instantiation allowance as part of turn 1; one allocator with both the
+data-limits growth and the codegen collection threshold (a full free-list scan
+before a v38 collection); the fuel profiler on the one run path across all
+turns, next to `--budget-report`; linked intrinsics within v38's Wasm limits,
+with one v38 path per operation (codegen fast path, linked fallback, no host
+import); view records as host tasks of application instances, one turn each,
+and the view capabilities decided by permission broker v1. Integrated pilot
+probe (per-file `varta check` under v38 of a scratch copy of the pinned
+0.12.0 sources, no live API call): the unmodified pilot checks 5 of 65 files
+(`core/errors.ts`, `core/json.ts`, `core/pagination.ts`, `generated/meta.ts`,
+`generated/models.ts`); the first blockers are `ReadableStream<Uint8Array>`
+in `core/sse.ts` (59) and `globalThis` in `core/util.ts` (1). With the
+structural-subtyping stream's text equivalents for byte bodies, Web types and
+`Promise.race` applied to the scratch copy, 51 of 65 files check (6 before
+integration); the rest stop at `Blob` (10) and at checked conversions to a
+union of record shapes without a literal discriminant (4).
+
+**Wave 2 (open, owned after integration).**
+
+| Stream | Scope | State |
+| --- | --- | --- |
+| (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Open |
+| (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Open |
+| (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Open; first pilot blockers |
+| (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Open |
 
 #### Code generation v2 measurements
 

@@ -66,7 +66,11 @@ crates/
   varta-common/          # engine contracts, ABI, capability model and shared types
     src/varta.d.ts       # the one owner of embedded host declarations
   varta-bigint/          # engine numeric foundation: budgeted BigInt arithmetic and transport
+  varta-intrinsics/      # engine: pure no_std intrinsics, one implementation for host imports and linked guest code
+  varta-intrinsics-wasm/ # wasm32-only guest shim of varta-intrinsics; built by scripts/build-intrinsics.py
+  varta-view/            # engine: headless L0 view renderer (common only; no Wasm, I/O or clocks)
   varta-compiler/        # explicit TS module graph (SWC) -> Wasm; no runtime dependency
+    src/link/intrinsics.wasm # checked-in linked intrinsic library (+ intrinsics.json fingerprint)
   varta-runtime/         # Wasmtime host: budgets, capability enforcement, host APIs
   varta-artifact/        # portable artifact/container I/O; common + wasmparser, no VM/compiler
   varta-launcher/        # execution-only `varta-runtime` binary; no source tooling
@@ -86,12 +90,16 @@ docs/
   verification.md        # scoped/full verification map
   history.md             # completed increment logs and superseded text
 scripts/verify.py        # scoped and full verification helper
+scripts/build-intrinsics.py # rebuilds the linked intrinsic library (offline, locked)
 .github/workflows/       # CI mirrors the commands below
 ```
 
 Placement rules:
 
-- Engine crates are `varta-common`, `varta-bigint`, `varta-compiler` and `varta-runtime`;
+- Engine crates are `varta-common`, `varta-bigint`, `varta-intrinsics`, `varta-view`,
+  `varta-compiler` and `varta-runtime`; `varta-intrinsics-wasm` is the wasm32 build of
+  `varta-intrinsics` (a workspace member only so it shares the lockfile and the
+  `intrinsics` profile; empty on host targets and not a default member);
   `varta-conformance` is development tooling. Artifact
   and launcher crates supply the independent distribution layer. They must
   not depend on project tooling/CLI, including through test dependencies. Runtime
@@ -163,7 +171,7 @@ lints. Cargo dependencies remain locked.
 - Prefer the standard library and the existing dependency set. Adding a dependency requires justification in the PR description; new dependencies use exact `=` pins in `[workspace.dependencies]` (older entries rely on the
   locked `Cargo.lock`) and are referenced with `.workspace = true`.
 - Keep functions focused; extract helpers instead of nesting match arms past three levels. Delete dead code and redundant `let _ =` bindings rather than silencing them.
-- Workspace code forbids unsafe. Never deserialize native Wasmtime payloads from package input; only validated portable Wasm is accepted.
+- Workspace code forbids unsafe, with one exception: the guest shim `varta-intrinsics-wasm` builds only for wasm32, stays out of host builds (it is not a default member, and on host targets, including workspace builds and Clippy, it compiles to an empty crate), is built by `scripts/build-intrinsics.py`, and may use `unsafe` only to read and write its arguments in linear memory (its extern accessors, exports, arena and panic handler). It runs inside the guest sandbox, never in the host. All intrinsics logic stays in the safe `varta-intrinsics` (`#![forbid(unsafe_code)]`). Never deserialize native Wasmtime payloads from package input; only validated portable Wasm is accepted.
 
 ## 6. Compiler rules (`varta-compiler`)
 
