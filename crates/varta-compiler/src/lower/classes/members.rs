@@ -62,9 +62,9 @@ impl Lower<'_> {
             .classes
             .pending_member(class, name, self.types.profile)
         {
-            Some(reason) => CompilerError::Unsupported {
+            Some((reason, detail)) => CompilerError::Unsupported {
                 kind: reason.into(),
-                detail: "not implemented by the checked-f64-utf16-v35 engine Web types".into(),
+                detail: detail.into(),
             },
             None => invalid(format!("unknown {kind}: {name}")),
         }

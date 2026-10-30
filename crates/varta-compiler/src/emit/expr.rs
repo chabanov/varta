@@ -455,6 +455,12 @@ impl Emitter<'_> {
                 }
             }
             E::Math(mode, args) => self.math_intrinsic(*mode, args)?,
+            E::RegExp(op, args) => {
+                for arg in args {
+                    self.expr(arg)?;
+                }
+                self.string_helper(strings::Helper::regexp(*op))?;
+            }
             E::NumberPredicate(mode, args) => self.number_predicate(*mode, args)?,
             E::ToBoolean(e) => self.boolean_conversion(e)?,
             E::Not(e) => {

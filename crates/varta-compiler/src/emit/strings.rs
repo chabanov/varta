@@ -13,6 +13,7 @@ mod collect;
 mod compare;
 mod concat;
 mod index_key;
+mod regexp;
 mod roots;
 mod sparse;
 mod string_index;
@@ -96,6 +97,12 @@ pub(super) enum Helper {
     AsciiLowercase,
     /// V35 Web preludes: copy without leading/trailing HTTP whitespace.
     TrimHttpWhitespace,
+    /// V37 RegExp prelude: one matcher run over a compiled program.
+    RegExpExec,
+    /// V37 RegExp prelude: one capture slot of a matcher result.
+    RegExpSlot,
+    /// V37 RegExp prelude: one code unit without a host call.
+    CodeUnit,
 }
 impl Helper {
     pub(super) fn string_search(mode: crate::ir::StringSearch) -> Self {
@@ -121,8 +128,22 @@ impl Helper {
             crate::ir::TextUnits::TrimHttpWhitespace => Self::TrimHttpWhitespace,
         }
     }
+    pub(super) fn regexp(op: crate::ir::RegExpIntrinsic) -> Self {
+        match op {
+            crate::ir::RegExpIntrinsic::Exec => Self::RegExpExec,
+            crate::ir::RegExpIntrinsic::Slot => Self::RegExpSlot,
+            crate::ir::RegExpIntrinsic::Unit => Self::CodeUnit,
+        }
+    }
     pub(super) fn signature(self) -> (Vec<ValType>, Vec<ValType>) {
         match self {
+            Self::RegExpExec => (
+                vec![ValType::I64, ValType::I64, ValType::F64, ValType::I32],
+                vec![ValType::I64],
+            ),
+            Self::RegExpSlot | Self::CodeUnit => {
+                (vec![ValType::I64, ValType::F64], vec![ValType::F64])
+            }
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
             Self::Concat => (vec![ValType::I64; 2], vec![ValType::I64]),
             Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
@@ -177,6 +198,8 @@ impl Helper {
                 | Self::ArrayStringHasOwn
                 | Self::ArrayIndexKey
                 | Self::UnitIndex(_)
+                | Self::RegExpSlot
+                | Self::CodeUnit
                 | Self::StringIncludes
                 | Self::StringStartsWith
                 | Self::StringEndsWith
@@ -240,6 +263,9 @@ impl Helper {
             }
             Self::UnitIndex(class) => text_units::index(class),
             Self::AsciiLowercase => text_units::lowercase(helpers[&Self::Allocate]),
+            Self::RegExpExec => regexp::exec(helpers[&Self::Allocate]),
+            Self::RegExpSlot => regexp::slot(),
+            Self::CodeUnit => regexp::unit(),
             Self::ArraySlice => array_slice::function(
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],

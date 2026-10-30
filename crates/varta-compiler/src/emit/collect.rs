@@ -328,6 +328,12 @@ impl<'a> Collected<'a> {
                     self.expression(arg, source);
                 }
             }
+            E::RegExp(op, args) => {
+                self.helpers.insert(strings::Helper::regexp(*op));
+                for arg in args {
+                    self.expression(arg, source);
+                }
+            }
             E::Math(mode, args) => {
                 if *mode == ir::MathIntrinsic::Random {
                     self.hosts.insert(Host::MathRandom);

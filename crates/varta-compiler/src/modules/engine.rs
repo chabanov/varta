@@ -1,4 +1,5 @@
-//! Engine-provided standard Web types (v35 `web_headers`, `abort_signals`).
+//! Engine-provided standard Web types (v35 `web_headers`, `abort_signals`)
+//! and the v37 `RegExp` prelude (`regexp`).
 //!
 //! Each type is a typed TypeScript prelude module embedded in the compiler and
 //! compiled with the program through the shared module pipeline, so it is an
@@ -22,6 +23,10 @@ pub(crate) struct Prelude {
     /// function, bound under the member's dotted name, which no source
     /// declaration can spell (v36 `AbortSignal.timeout`).
     pub members: &'static [Member],
+    /// Reference keys (see [`References`]) that load the module without
+    /// binding a name: compiler hooks reach its classes directly (v37
+    /// regular expression literals and regex string methods).
+    pub implicit: &'static [&'static str],
     pub admitted: fn(LanguageProfile) -> bool,
     /// A later profile's source of the same module, replacing `source` where
     /// its selector admits it; earlier profiles keep `source` unchanged.
@@ -64,6 +69,7 @@ pub(crate) const HEADERS: Prelude = Prelude {
         ("HeadersInit", Namespace::Type),
     ],
     members: &[],
+    implicit: &[],
     admitted: LanguageProfile::web_headers,
     extended: None,
 };
@@ -78,6 +84,7 @@ pub(crate) const ABORT: Prelude = Prelude {
         ("DOMException", Namespace::Class),
     ],
     members: &[],
+    implicit: &[],
     admitted: LanguageProfile::abort_signals,
     extended: Some((
         LanguageProfile::function_fields,
@@ -95,13 +102,43 @@ pub(crate) const ABORT_TIMEOUT: Prelude = Prelude {
         property: "timeout",
         function: "abortSignalTimeout",
     }],
+    implicit: &[],
     admitted: LanguageProfile::timers,
     extended: None,
 };
-pub(crate) const PRELUDES: [&Prelude; 3] = [&HEADERS, &ABORT, &ABORT_TIMEOUT];
+/// `RegExp`, `RegExpExecArray` and `RegExpMatchArray` (v37 `regexp`), also
+/// loaded by a regular expression literal or a regex string method call.
+pub(crate) const REGEXP: Prelude = Prelude {
+    path: "<varta>/text/regexp.ts",
+    source: include_str!("../prelude/regexp.ts"),
+    exports: &[
+        (REGEXP_CLASS, Namespace::Class),
+        (EXEC_ARRAY_CLASS, Namespace::Class),
+        (MATCH_ARRAY_CLASS, Namespace::Class),
+    ],
+    members: &[],
+    implicit: &[
+        REGEXP_LITERAL,
+        ".match",
+        ".matchAll",
+        ".replace",
+        ".replaceAll",
+        ".search",
+        ".split",
+    ],
+    admitted: LanguageProfile::regexp,
+    extended: None,
+};
+pub(crate) const PRELUDES: [&Prelude; 4] = [&HEADERS, &ABORT, &ABORT_TIMEOUT, &REGEXP];
 /// Class names that compiler hooks recognize in their prelude modules.
 pub(crate) const HEADERS_CLASS: &str = "Headers";
 pub(crate) const ABORT_SIGNAL_CLASS: &str = "AbortSignal";
+pub(crate) const REGEXP_CLASS: &str = "RegExp";
+pub(crate) const EXEC_ARRAY_CLASS: &str = "RegExpExecArray";
+pub(crate) const MATCH_ARRAY_CLASS: &str = "RegExpMatchArray";
+/// The reference key of a regular expression literal; no identifier or
+/// property can spell it.
+const REGEXP_LITERAL: &str = "/regexp/";
 /// The member name under which [`pending`] lists a constructor.
 pub(crate) const CONSTRUCTOR: &str = "constructor";
 
@@ -191,7 +228,8 @@ impl Visit for References {
             .entry(ident.sym.to_string())
             .or_insert(ident.span);
     }
-    /// `Object.member` also records the dotted name of a static member.
+    /// `Object.member` also records the dotted name of a static member, and
+    /// every member `x.name` records `.name`.
     fn visit_member_expr(&mut self, member: &ast::MemberExpr) {
         if let (ast::Expr::Ident(object), ast::MemberProp::Ident(property)) =
             (&*member.obj, &member.prop)
@@ -200,7 +238,17 @@ impl Visit for References {
                 .entry(format!("{}.{}", object.sym, property.sym))
                 .or_insert(member.span);
         }
+        if let ast::MemberProp::Ident(property) = &member.prop {
+            self.found
+                .entry(format!(".{}", property.sym))
+                .or_insert(member.span);
+        }
         member.visit_children_with(self);
+    }
+    fn visit_regex(&mut self, regex: &ast::Regex) {
+        self.found
+            .entry(REGEXP_LITERAL.into())
+            .or_insert(regex.span);
     }
 }
 
@@ -208,6 +256,7 @@ impl Visit for References {
 /// itself only imports what another prelude exports.
 pub(super) fn implicit_imports(
     module: &ast::Module,
+    path: &Path,
     imports: &[Dependency],
     profile: LanguageProfile,
 ) -> Vec<Dependency> {
@@ -217,7 +266,7 @@ pub(super) fn implicit_imports(
     }
     let admitted: Vec<&Prelude> = PRELUDES
         .into_iter()
-        .filter(|prelude| (prelude.admitted)(profile))
+        .filter(|prelude| (prelude.admitted)(profile) && Path::new(prelude.path) != path)
         .collect();
     if admitted.is_empty() {
         return Vec::new();
@@ -256,7 +305,13 @@ pub(super) fn implicit_imports(
                         })
                     }),
             );
-            let span = bindings.first()?.span;
+            let span = match bindings.first() {
+                Some(binding) => binding.span,
+                None => *prelude
+                    .implicit
+                    .iter()
+                    .find_map(|key| references.found.get(*key))?,
+            };
             Some(Dependency {
                 target: PathBuf::from(prelude.path),
                 bindings,
@@ -289,7 +344,36 @@ const PENDING: &[(&str, &[&str], &str)] = &[
         ],
         "abort event listeners (a signal cannot hold listener functions: value layout 15 has no function-valued object fields)",
     ),
+    (
+        EXEC_ARRAY_CLASS,
+        &[CONSTRUCTOR],
+        "new RegExpExecArray() (match arrays are created by RegExp.prototype.exec, String.prototype.replace callbacks and String.prototype.matchAll)",
+    ),
+    (
+        MATCH_ARRAY_CLASS,
+        &[CONSTRUCTOR],
+        "new RegExpMatchArray() (match arrays are created by String.prototype.match)",
+    ),
+    (
+        REGEXP_CLASS,
+        &["compile"],
+        "RegExp.prototype.compile (Annex B recompilation; v37 compiles every pattern ahead of time)",
+    ),
+    (
+        REGEXP_CLASS,
+        &["escape"],
+        "RegExp.escape (its result could only be compiled at run time; v37 compiles every pattern ahead of time)",
+    ),
 ];
+
+/// The diagnostic detail of a pending member of prelude class `class`.
+pub(crate) fn pending_detail(class: &str) -> &'static str {
+    if [REGEXP_CLASS, EXEC_ARRAY_CLASS, MATCH_ARRAY_CLASS].contains(&class) {
+        "not implemented by the checked-f64-utf16-v37 RegExp prelude"
+    } else {
+        "not implemented by the checked-f64-utf16-v35 engine Web types"
+    }
+}
 
 /// Members of prelude classes that v36 (`function_fields`, whose abort
 /// prelude implements the listeners) still names but does not implement;

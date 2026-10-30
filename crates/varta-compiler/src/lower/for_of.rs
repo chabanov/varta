@@ -101,6 +101,7 @@ impl Lower<'_> {
         // remain in TDZ; assignment heads do not introduce bindings.
         let value = self.expr(&statement.right)?;
         let value = self.headers_iteration(value)?;
+        let value = self.match_array_values(value)?;
         if self.types.profile.refinement_writes() {
             self.flow_for_of_effects(statement);
         }

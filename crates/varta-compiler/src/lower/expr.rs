@@ -133,6 +133,9 @@ impl Lower<'_> {
                     optional: false,
                 }));
             }
+            ast::Expr::Lit(ast::Lit::Regex(regex)) if self.types.profile.regexp() => {
+                return self.regexp_literal(regex);
+            }
             ast::Expr::Lit(ast::Lit::Num(n)) if self.types.profile.binary64() => {
                 (Type::Float64, E::Float64(n.value))
             }
@@ -351,6 +354,9 @@ impl Lower<'_> {
             }
             ast::Expr::New(new) => {
                 if let Some(class) = self.class_callee(&new.callee) {
+                    if self.regexp_constructor(class) {
+                        return self.regexp_new(new);
+                    }
                     return self.class_new(new, class);
                 }
                 return self.new_error(new);
@@ -744,6 +750,28 @@ impl Lower<'_> {
             let value = self.expr(&member.obj)?;
             return self.number_format(call, value, mode);
         }
+        if self.types.profile.regexp()
+            && let ast::Expr::Member(member) = &**callee
+            && let ast::MemberProp::Ident(method) = &member.prop
+            && regexp::STRING_METHODS.contains(&method.sym.as_ref())
+            && !self.prelude_member(callee)
+            && self.class_callee(&member.obj).is_none()
+        {
+            let value = self.expr(&member.obj)?;
+            if value.ty == Type::String {
+                return self.regexp_string_method(call, value, method.sym.as_ref());
+            }
+            if matches!(value.ty, Type::Class(_)) {
+                return self.class_method_call(call, member, Some(value));
+            }
+            return Err(self.source.locate(
+                type_error(format!(
+                    "String.prototype.{} requires a string receiver, found {}",
+                    method.sym, value.ty
+                )),
+                value.span,
+            ));
+        }
         if let ast::Expr::Member(member) = &**callee
             && let ast::MemberProp::Ident(method) = &member.prop
             && matches!(method.sym.as_ref(), "slice" | "substring")
@@ -888,6 +916,9 @@ impl Lower<'_> {
         }
         let name = callee_name(callee).ok_or_else(|| unsupported("callee"))?;
         if let Some(value) = self.web_text(call, &name)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.regexp_intrinsic(call, &name)? {
             return Ok(value);
         }
         if let Some(value) = self.prelude_timer(call, &name)? {

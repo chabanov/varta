@@ -366,6 +366,7 @@ mod record_writes;
 mod records;
 mod reduce_inference;
 mod references;
+mod regexp;
 mod results;
 mod signature;
 mod spread;

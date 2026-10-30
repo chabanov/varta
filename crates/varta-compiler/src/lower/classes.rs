@@ -159,13 +159,13 @@ impl Classes {
         mut class: u32,
         name: &str,
         profile: varta_common::language::LanguageProfile,
-    ) -> Option<&'static str> {
+    ) -> Option<(&'static str, &'static str)> {
         loop {
             let info = &self.list[class as usize];
             if info.prelude
                 && let Some(reason) = crate::modules::engine::pending(&info.name, name, profile)
             {
-                return Some(reason);
+                return Some((reason, crate::modules::engine::pending_detail(&info.name)));
             }
             class = info.parent?;
         }

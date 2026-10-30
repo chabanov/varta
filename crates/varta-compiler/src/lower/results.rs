@@ -88,6 +88,11 @@ impl Lower<'_> {
         if matches!(value.ty, Type::Dictionary(_)) {
             return self.dictionary_read(member, value);
         }
+        if self.match_array(value.ty)
+            && let ast::MemberProp::Computed(key) = &member.prop
+        {
+            return self.match_element(member, value, &key.expr);
+        }
         if matches!(value.ty, Type::Class(_)) {
             return self.class_member(member, value, true);
         }
