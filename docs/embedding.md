@@ -100,10 +100,10 @@ engine payloads from package input.
 | `entry` | Optional string, metadata only |
 | `target` | Optional; `"wasm"` or `"native"` |
 | `capabilities` | Required array of grants (`[]` denies everything) |
-| `budgets` | Optional; requires `abiVersion` 34 or later. Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, each in `1..=` its `budget::MAX_*`; in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
-| grant `required` | Optional boolean, default `true`; requires `abiVersion` 34; rejected in a host ceiling. Permission broker v1 ([architecture](architecture.md#permission-broker-v1-turn_budgets)) |
-| grant `purpose` | Optional untrusted text shown as a quote in prompts, at most `permission::MAX_PURPOSE_BYTES` bytes without control characters; requires `abiVersion` 34; rejected in a host ceiling |
-| `fsRoots` | Optional; requires `abiVersion` 34. In a package: an array of root names (`files::valid_root_name`, at most `files::MAX_FILE_ROOTS`, no duplicates); an object is rejected. In a host ceiling: an object mapping each root name to an absolute host directory (no `..`, no control characters, at most `files::MAX_PATH_BYTES` bytes, no duplicate key); an array is rejected. See [File roots](#file-roots-v38) |
+| `budgets` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, each an integer in its accepted range of the [budget table](#manifest-limits); in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
+| grant `required` | Optional boolean, default `true`; requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling. Permission broker v1 ([architecture](architecture.md#permission-broker-v1-turn_budgets)) |
+| grant `purpose` | Optional untrusted text shown as a quote in prompts, valid by the [purpose rule](#manifest-limits); requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling |
+| `fsRoots` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). In a package: an array of [root names](#root-names), no duplicates; an object is rejected. In a host ceiling: an object mapping each root name to an absolute host directory (no `..`, no control characters, at most the host root directory bytes of the [limits table](#manifest-limits), no duplicate key); an array is rejected. Either form holds at most the `fsRoots` entries of the [limits table](#manifest-limits). See [File roots](#file-roots-v38) |
 
 Unknown or duplicate fields, unknown capability ids, duplicate ids and a value of
 the wrong kind (a boolean id needs exactly `enabled`, every other id exactly
@@ -130,10 +130,49 @@ denies. A pattern is **unsafe**, and the whole manifest is rejected, when:
 | --- | --- |
 | Names, paths and URLs | Longer than 512 bytes; empty or only whitespace; only `*` and `?` characters; contains NUL |
 | `fs.*` paths (additionally) | Not absolute, or contains a `..` component |
-| `fs.*` paths of a package with `abiVersion` 34 (additionally) | The first component is not a literal root named by the package's `fsRoots`; contains `\`, a control character, or an empty or `.` component |
-| Request methods | Not an RFC 9110 token; `CONNECT`, `TRACE` or `TRACK` in any case; `delete`, `get`, `head`, `options`, `post` or `put` not in uppercase; a duplicate; more than `net::MAX_GRANT_METHODS` methods |
+| `fs.*` paths of a package whose `abiVersion` admits `fsRoots` (additionally) | The first component is not a literal root named by the package's `fsRoots`; contains `\`, a control character, or an empty or `.` component |
+| Request methods | Not an RFC 9110 token; a method never grantable, in any case; a method a grant must spell in uppercase, spelled in any other case; a duplicate; more methods than one `net.request` grant admits (the three lists and the count are in the [limits table](#manifest-limits)) |
 | URLs (additionally) | Does not start with `http://` (`net.request`: `http://` or `https://`); empty authority, or an authority containing `*`, `?`, `@` or `#`; any control or whitespace character; a path containing `#`, `%` or `\`; a `.` or `..` path segment; not parseable as a URL, without a host, with a user name or password, or with `%` in the parsed path |
 | Listen endpoints | Not a literal `IP:port` socket address, or not in canonical form (for example `[::1]:8080`); listen endpoints have no wildcards |
+
+#### Manifest limits
+
+A host validates a package manifest and a host ceiling with the values below.
+Each `budgets` member, in a request or a ceiling, is an integer in its accepted
+range. The effective budget of a v38 run is the request (the default when
+omitted) capped by the ceiling's value, or by the default when no ceiling is
+supplied ([Run lifecycle](#run-lifecycle)). A package of an earlier profile
+cannot carry `budgets`, since its `abiVersion` equals its module's host ABI, and
+runs with the fixed values once per execution.
+
+<!-- generated:embedding-manifest-budgets:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
+| `budgets` member | Accepted request or ceiling value | `checked-f64-utf16-v38`: default, and cap without a ceiling (per turn) | `checked-i32-utf8-v1` – `checked-f64-utf16-v37`: fixed (per execution) | Source constants |
+| --- | --- | --- | --- | --- |
+| `fuelPerTurn` | 1 to 1000000000 | 8000000 | 1000000 | `budget::MAX_FUEL_PER_TURN`, `budget::TURN_FUEL`, `abi::FUEL` |
+| `deadlinePerTurnMs` | 1 to 60000 | 5000 | 5000 | `budget::MAX_DEADLINE_PER_TURN_MS`, `abi::DEADLINE_SECONDS` |
+| `memoryBytes` | 1 to 1073741824 | 8388608 | 8388608 | `budget::MAX_MEMORY_BYTES`, `abi::MAX_MEMORY_BYTES` |
+| `hostCallsPerTurn` | 1 to 1048576 | 1024 | 1024 | `budget::MAX_HOST_CALLS_PER_TURN`, `abi::MAX_HOST_CALLS` |
+| `outputBytes` | 1 to 67108864 | 1048576 | 1048576 | `budget::MAX_OUTPUT_BYTES`, `abi::MAX_OUTPUT_BYTES` |
+<!-- generated:embedding-manifest-budgets:end -->
+
+**Purpose rule.** A grant `purpose` is valid when it is not empty or only white
+space (Unicode `White_Space`), is at most the grant `purpose` bytes below in
+UTF-8, and contains no control character (Unicode general category `Cc`, which
+includes line breaks and tabs).
+
+<!-- generated:embedding-manifest-limits:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
+| Limit | Value | Source constant |
+| --- | --- | --- |
+| `abiVersion` that admits `budgets`, grant `required` and `purpose`, and `fsRoots` | 34 or later | `abi::PROGRAM_LIMITS_VERSION` |
+| Grant `purpose` (UTF-8 bytes) | 256 | `permission::MAX_PURPOSE_BYTES` |
+| `fsRoots` entries (package names or host mappings) | 16 | `files::MAX_FILE_ROOTS` |
+| Root name (bytes) | 1 to 64 | `files::MAX_ROOT_NAME_BYTES` |
+| Host root directory / guest virtual path (bytes) | 4096 | `files::MAX_PATH_BYTES` |
+| Methods in one `net.request` grant | 16 | `net::MAX_GRANT_METHODS` |
+| Methods never grantable (in any case) | `CONNECT`, `TRACE`, `TRACK` | `net::FORBIDDEN_METHODS` |
+| Methods a grant must spell in uppercase | `DELETE`, `GET`, `HEAD`, `OPTIONS`, `POST`, `PUT` | `NORMALIZED_METHODS` |
+| Guest URL of `net_get*`, `net_fetch*` and `net_request_*` (bytes; a longer URL is denied) | 8192 | `net::MAX_URL_BYTES` |
+<!-- generated:embedding-manifest-limits:end -->
 
 ## Module validation
 
@@ -563,10 +602,10 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | Clock | `time_now` | Requires `time.now` enabled. Unix seconds as i32; a time outside i32 is status 2 with 0 |
 | Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most 256 bytes, no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 1 if the variable is set and 0 otherwise (status 0 either way). For an allowed name whose variable is **unset** (or whose value is not valid Unicode), `env_get` returns 0 with status 3 (I/O) and `env_print` emits nothing but the diagnostic and sets status 3; a value larger than `abi::MAX_RESULT_BYTES` is status 4. `env_get` returns the value as a string result, `env_print` emits `varta env: <name>=<value>` |
 | Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..` rejected; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it. Under v38, paths and patterns are virtual paths under host-mapped roots ([File roots](#file-roots-v38)) |
-| KV storage (v38) | `kv_open`, `kv_read`, `kv_commit`, `kv_stage`, `kv_key`, `kv_value`, `kv_entry`, `kv_text`, `kv_close` | Deno KV database files at virtual paths ([KV storage (v38)](#kv-storage-v38)); `kv_open`/`kv_read` need `kv.read`, `kv_commit` needs `kv.write`, decided before any effect, denials recoverable (`kv::FAILED` with `NotAllowedError` in `kv_text`). Open, read, commit, stage and the decoders are charged to the host-call budget. A malformed descriptor or an unknown id is fatal |
+| KV storage (v38) | `kv_open`, `kv_read`, `kv_commit`, `kv_stage`, `kv_key`, `kv_value`, `kv_entry`, `kv_text`, `kv_close` | Deno KV database files at virtual paths ([KV storage (v38)](#kv-storage-v38)); `kv_open`/`kv_read` need `kv.read`, `kv_commit` needs `kv.write`, decided before any effect, denials recoverable (`kv::FAILED` with `NotAllowedError` in `kv_text`; [codes](#status-and-control-codes), [limits](#kv-storage-v38)). Open, read, commit, stage and the decoders are charged to the host-call budget. A malformed descriptor or an unknown id is fatal |
 | Permissions and host events (v38) | `permission_query`, `permission_request`, `event_source_*`, `event_watch`, `event_take`, `event_text` | No capability, not charged to the host-call budget; broker states, descriptors and the one-shot answer source in [Permission broker v1](architecture.md#permission-broker-v1-turn_budgets); named sources, host tasks and ordering in [Host event sources](architecture.md#host-event-sources-turn_budgets). A malformed descriptor, id, watch or take is fatal. The instance and event interfaces are [unstable](#what-is-unstable) |
-| Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; bounds and descriptor in [Network requests](architecture.md#network-requests-net_request) |
-| Network | `net_get*`, `net_fetch*` | `http:` URLs only; parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
+| Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`; the URL bounded by the [limits table](#manifest-limits)); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; bounds and descriptor in [Network requests](architecture.md#network-requests-net_request) |
+| Network | `net_get*`, `net_fetch*` | `http:` URLs only, bounded by the [limits table](#manifest-limits); parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
 | Exit | `process_exit`, `process_exit_f64` | Requires `process.exit` enabled. Authorized: end the execution with the code (not the host process); no result is produced. Denied: status 1 and the guest continues. `process_exit_f64` requires a finite integral value within i32, otherwise status 2 and the guest continues |
 | HTTP | `http_service`, `http_stop` | Feature marker and owned shutdown of [HTTP service v1](architecture.md#http-service-v1) |
 | Scheduler | `promise_*`, `scheduler_enqueue` | See [Microtask checkpoint](#microtask-checkpoint) |
@@ -629,8 +668,9 @@ ceiling `fsRoots` object, or the host's own configuration). A v38 host MUST:
    guest code runs**, and keep that directory handle as the root's authority.
    A declared but unmapped root denies every path under it; a mapping for an
    undeclared root is ignored; a package root never names a host directory.
-3. Accept only canonical paths: at most `files::MAX_PATH_BYTES` bytes, a
-   leading `/`, a valid root name, then components that are nonempty, not `.`
+3. Accept only canonical paths: at most the guest virtual path bytes of the
+   [limits table](#manifest-limits), a leading `/`, a valid
+   [root name](#root-names), then components that are nonempty, not `.`
    or `..`, without NUL, control characters or `\`. Anything else, including an
    absolute host path, is a denial (status 1) before any effect.
 4. Match each pattern's literal directory prefix as a whole-component prefix
@@ -642,6 +682,35 @@ ceiling `fsRoots` object, or the host's own configuration). A v38 host MUST:
    component; a symlink anywhere below the root, a directory or a non-regular
    file is an I/O failure (status 3).
 
+#### Root names
+
+A root name, in a package's `fsRoots`, a host ceiling's `fsRoots` keys and the
+first component of every virtual path, is 1 to the root name bytes of the
+[limits table](#manifest-limits) of ASCII. Its first byte is a lowercase letter
+`a`–`z`; every later byte is a lowercase letter `a`–`z`, a digit `0`–`9`, `-` or
+`_`. Nothing else is admitted (no uppercase letter, `.`, `/`, white space or
+non-ASCII character). Names compare byte for byte, without case folding or
+normalization. These examples are checked against `files::valid_root_name`:
+
+<!-- generated:embedding-root-names:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
+| Name | Valid | Why |
+| --- | --- | --- |
+| `project` | yes | lowercase letters |
+| `a` | yes | one letter |
+| `data-2_cache` | yes | digits, `-` and `_` after the first letter |
+| `a` repeated 64 times | yes | the longest name |
+| (empty) | no | no first letter |
+| `a` repeated 65 times | no | too long |
+| `Project` | no | uppercase letter |
+| `2fa` | no | starts with a digit |
+| `_cache` | no | starts with `_` |
+| `-x` | no | starts with `-` |
+| `my.root` | no | `.` is not admitted |
+| `a/b` | no | the path separator |
+| `a b` | no | white space |
+| `café` | no | non-ASCII letter |
+<!-- generated:embedding-root-names:end -->
+
 ### KV storage (v38)
 
 A v38 module that names `varta.kv.open` imports the nine `kv_*` operations.
@@ -649,8 +718,9 @@ The file format is Deno KV's (`denokv_sqlite` 0.14.0, schema version 3); the
 normative contract, the descriptors and the V8 value subset are in
 [KV storage](architecture.md#kv-storage-kv). A host that does not offer KV
 storage MUST still link the imports and deny every `kv_open` (return
-`kv::FAILED` with `NotAllowedError\n<capability denied: kv.read> (<path>)` in
-`kv_text`), like a host without a grant. A host that does MUST:
+`kv::FAILED` ([codes](#status-and-control-codes)) with
+`NotAllowedError\n<capability denied: kv.read> (<path>)` in `kv_text`), like a
+host without a grant. A host that does MUST:
 
 1. Resolve the path exactly like a [file root](#file-roots-v38) path and check
    `kv.read` (and `kv.write` for a writable open) against the request and the
@@ -669,6 +739,30 @@ storage MUST still link the imports and deny every `kv_open` (return
    typed error and no partial value, and decode into the module's schema with
    checked-JSON strictness (a mismatch is a recoverable `TypeError` through the
    exception channel, as for `json_parse_v19`).
+
+The host enforces the limits below (the key, value, read and commit limits
+are Deno KV's defaults). Exceeding one is a recoverable failure except where the
+row says fatal.
+
+<!-- generated:embedding-kv-limits:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
+| Limit | Value | Source constant |
+| --- | --- | --- |
+| Databases open at once per instance | 8 | `kv::MAX_OPEN_DATABASES` |
+| Read or commit descriptor, or database path (UTF-16 bytes; longer is fatal) | 65536 | `kv::MAX_DESCRIPTOR_BYTES` |
+| Encoded key to write (bytes) | 2048 | `kv::MAX_WRITE_KEY_BYTES` |
+| Encoded key of a range selector (bytes) | 2049 | `kv::MAX_READ_KEY_BYTES` |
+| Encoded value (bytes) | 65536 | `kv::MAX_VALUE_BYTES` |
+| Ranges per read | 10 | `kv::MAX_READ_RANGES` |
+| Entries per read | 1000 | `kv::MAX_READ_ENTRIES` |
+| Checks per commit | 100 | `kv::MAX_CHECKS` |
+| Mutations per commit | 1000 | `kv::MAX_MUTATIONS` |
+| Mutation key and value bytes per commit | 819200 | `kv::MAX_TOTAL_MUTATION_BYTES` |
+| Key bytes per commit | 81920 | `kv::MAX_TOTAL_KEY_BYTES` |
+| Values staged at once (more is fatal) | 2100 | `kv::MAX_STAGED` |
+| Encoded bytes staged at once | 901120 | `kv::MAX_STAGED_BYTES` |
+| Commit cutoff before the turn deadline (ms) | 50 | `kv::COMMIT_RESERVE_MS` |
+| Longest wait for the write lock (ms, never past the cutoff) | 100 | `kv::LOCK_WAIT_MS` |
+<!-- generated:embedding-kv-limits:end -->
 
 The KV interface is [unstable](#what-is-unstable) until the batch closes.
 
@@ -947,6 +1041,9 @@ import the operation, as contiguous runs in registry order.
 | `varta_resume` outcome | 0 | `Suspended` | The frame suspended again |
 | `varta_resume` outcome | 1 | `Returned` | The frame completed |
 | `varta_resume` outcome | 2 | `Threw` | The frame completed by throwing |
+| `kv_open`, `kv_read`, `kv_stage`, `kv_commit` result | -1 | `kv::FAILED` | Failed, recoverably: `<ErrorName>\n<message>` in `kv_text` |
+| `kv_commit` result | 0 | `kv::CHECK_FAILED` | A check failed; nothing was written |
+| `kv_commit` result | 1 | `kv::COMMITTED` | Committed and durable; the versionstamp in `kv_text` |
 <!-- generated:embedding-codes:end -->
 
 `varta.result.capture` reads `result_status` immediately after one privileged
@@ -1008,9 +1105,8 @@ One **execution** owns one fresh store and instance and is never reused:
    execution, including instantiation and every job. **v38 (`turn_budgets`):**
    resolve the manifest's `budgets` against the host ceiling (each budget is
    the request or the v38 default, capped by the ceiling's value or by the
-   default; the v38 default per-turn fuel is `budget::TURN_FUEL` in the
-   [limits table](architecture.md#resource-limits), every other default is
-   the earlier profiles' value), and treat the run as **event turns**: turn 1 is steps 3 to 7 up
+   default; the maxima and the v38 defaults are in the
+   [budget table](#manifest-limits)), and treat the run as **event turns**: turn 1 is steps 3 to 7 up
    to the first task; every later task (a fired timer, a network completion, a
    host task) with the microtasks it queues is one turn. Fuel, host calls and
    the microtask count MUST be renewed at the start of every turn; memory and

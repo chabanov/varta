@@ -2,6 +2,8 @@
 //! facts: host operations, profile admission, memory layout, reserved names,
 //! status codes and entry-point limits. Its tables are generated here from the
 //! registries, so a registry change fails the gate until the document follows.
+#[path = "embedding_documentation/manifest.rs"]
+mod manifest;
 mod support;
 #[path = "embedding_documentation/view.rs"]
 mod view;
@@ -16,7 +18,7 @@ use varta_common::{
     function::admission,
     function::frame::{self, Completion, Outcome},
     function::{CaptureField, CaptureType},
-    http,
+    http, kv,
     language::{self, LanguageProfile},
     scheduler, value,
 };
@@ -738,6 +740,33 @@ fn codes() -> String {
             (outcome as i32).to_string(),
             format!("`{outcome:?}`"),
             outcome_meaning(outcome).to_owned(),
+        ]);
+    }
+    for (channel, code, name, meaning) in [
+        (
+            "`kv_open`, `kv_read`, `kv_stage`, `kv_commit` result",
+            kv::FAILED,
+            "kv::FAILED",
+            "Failed, recoverably: `<ErrorName>\\n<message>` in `kv_text`",
+        ),
+        (
+            "`kv_commit` result",
+            kv::CHECK_FAILED,
+            "kv::CHECK_FAILED",
+            "A check failed; nothing was written",
+        ),
+        (
+            "`kv_commit` result",
+            kv::COMMITTED,
+            "kv::COMMITTED",
+            "Committed and durable; the versionstamp in `kv_text`",
+        ),
+    ] {
+        rows.push(vec![
+            channel.to_owned(),
+            code.to_string(),
+            format!("`{name}`"),
+            meaning.to_owned(),
         ]);
     }
     table(&["Channel", "Code", "Name", "Meaning"], rows)
