@@ -211,6 +211,61 @@ impl Lower<'_> {
         let result = unions::intern(reads.iter().map(|(_, read)| read.ty).collect(), self.types)?;
         let output = self.hidden(result);
         let marker = self.hidden(Type::Number);
+        let test = |ty: Type| Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::IsUnionMember(Box::new(local(span, saved, union)), ty),
+        };
+        // A union wider than any earlier profile admits (v38) selects its
+        // member with a flat sequence of guarded tests: the IR, every pass
+        // over it and the emitted blocks nest no deeper with the member
+        // count, at the cost of one flag test per later member. Unions
+        // within the frozen bound keep the nested chain and its bytes.
+        if members.len() > varta_common::limits::FROZEN.union_members {
+            let done = self.hidden(Type::Boolean);
+            let flag = |value: bool| Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Integer(i32::from(value)),
+            };
+            let pending = || Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::Not(Box::new(local(span, done, Type::Boolean))),
+            };
+            let mut body = vec![S::Init(saved, value), S::Init(done, flag(false))];
+            let last = reads.len() - 1;
+            for (index, (ty, read)) in reads.into_iter().enumerate() {
+                let store = vec![
+                    S::Init(output, unions::widen(read, Some(result), self.types)?),
+                    S::Set(done, flag(true)),
+                ];
+                let selected = if index == last {
+                    pending()
+                } else {
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::Conditional(
+                            Box::new(pending()),
+                            Box::new(test(ty)),
+                            Box::new(flag(false)),
+                        ),
+                    }
+                };
+                body.push(S::If(selected, store, Vec::new()));
+            }
+            return Ok(Expr {
+                span,
+                ty: result,
+                kind: E::ValueBlock {
+                    output,
+                    marker,
+                    roots: vec![saved],
+                    body,
+                },
+            });
+        }
         let mut chain: Option<Vec<S>> = None;
         for (ty, read) in reads.into_iter().rev() {
             let store = vec![S::Init(
@@ -219,15 +274,7 @@ impl Lower<'_> {
             )];
             chain = Some(match chain {
                 None => store,
-                Some(otherwise) => vec![S::If(
-                    Expr {
-                        span,
-                        ty: Type::Boolean,
-                        kind: E::IsUnionMember(Box::new(local(span, saved, union)), ty),
-                    },
-                    store,
-                    otherwise,
-                )],
+                Some(otherwise) => vec![S::If(test(ty), store, otherwise)],
             });
         }
         let mut body = vec![S::Init(saved, value)];

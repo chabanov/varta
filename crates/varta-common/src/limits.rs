@@ -73,6 +73,12 @@ pub struct ProgramLimits {
     /// size.
     pub record_shapes: usize,
     pub union_types: usize,
+    /// Structural (non-literal) members of one union type; literal members
+    /// merge into constrained primitives and have their own compiler bound.
+    pub union_members: usize,
+    /// Members of one checked JSON schema union (schema 5+). Members also
+    /// need distinct JSON kinds, which bounds a valid union further.
+    pub json_union_members: usize,
     pub array_types: usize,
     /// `Promise<T>` types (v34+).
     pub promise_types: usize,
@@ -99,6 +105,8 @@ pub const FROZEN: ProgramLimits = ProgramLimits {
     function_body_bytes: abi::MAX_WASM_FUNCTION_BODY_BYTES,
     record_shapes: value::MAX_RECORD_SHAPES,
     union_types: value::MAX_UNION_TYPES,
+    union_members: MAX_UNION_MEMBERS,
+    json_union_members: json::MAX_UNION_MEMBERS,
     array_types: value::MAX_ARRAY_TYPES,
     promise_types: MAX_PROMISE_TYPES,
     generator_types: function::frame::MAX_GENERATOR_TYPES,
@@ -118,6 +126,11 @@ pub const WASM: ProgramLimits = ProgramLimits {
     function_body_bytes: WASM_FUNCTION_BODY_BYTES,
     record_shapes: ENTITIES,
     union_types: ENTITIES,
+    // A union's members are tested one by one (descriptor tests, a compare
+    // chain on a discriminant), so module size and compile time bound them
+    // long before the entity bound.
+    union_members: ENTITIES,
+    json_union_members: ENTITIES,
     array_types: ENTITIES,
     promise_types: ENTITIES,
     generator_types: ENTITIES,
@@ -130,6 +143,9 @@ pub const WASM: ProgramLimits = ProgramLimits {
 
 /// The frozen `Promise<T>` type limit (v34 to v37), formerly compiler-local.
 pub const MAX_PROMISE_TYPES: usize = 64;
+/// The frozen structural member limit of one union type (v2 to v37),
+/// formerly compiler-local.
+pub const MAX_UNION_MEMBERS: usize = 16;
 
 /// The largest limits any profile admits: readers that must bound input
 /// before they know its profile (the Wasm size before language inspection,
@@ -380,6 +396,7 @@ mod tests {
         assert_eq!(FROZEN.schema_types(true), json::MAX_SCHEMA_TYPES);
         assert_eq!(FROZEN.capture_types(), function::MAX_CAPTURE_TYPES);
         assert_eq!(FROZEN.wasm_functions, 270);
+        assert_eq!((FROZEN.union_members, FROZEN.json_union_members), (16, 7));
         for profile in crate::language::SUPPORTED_PROFILES {
             let expected = if *profile == LanguageProfile::CheckedF64Utf16V38 {
                 WASM
@@ -404,6 +421,8 @@ mod tests {
         assert!(FROZEN.function_body_bytes <= WASM.function_body_bytes);
         assert!(FROZEN.record_shapes <= WASM.record_shapes);
         assert!(FROZEN.union_types <= WASM.union_types);
+        assert!(FROZEN.union_members <= WASM.union_members);
+        assert!(FROZEN.json_union_members <= WASM.json_union_members);
         assert!(FROZEN.array_types <= WASM.array_types);
         assert!(FROZEN.promise_types <= WASM.promise_types);
         assert!(FROZEN.generator_types <= WASM.generator_types);

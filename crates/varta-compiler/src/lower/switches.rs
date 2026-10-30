@@ -155,11 +155,19 @@ impl Lower<'_> {
     /// discriminant of type `ty` (v38): its binding narrowed to `never` once
     /// every test failed, or a literal union whose values are all tested.
     fn exhausts(&mut self, statement: &ast::SwitchStmt, ty: Type, rest: &flow::Snapshot) -> bool {
-        if let ast::Expr::Ident(id) = stmt::unparen(&statement.discriminant)
-            && self
-                .binding(id.sym.as_ref())
-                .is_ok_and(|binding| rest.facts.get(&binding.slot) == Some(&Type::Never))
-        {
+        let never = |this: &mut Self, expr: &ast::Expr| {
+            matches!(stmt::unparen(expr), ast::Expr::Ident(id)
+                if this
+                    .binding(id.sym.as_ref())
+                    .is_ok_and(|binding| rest.facts.get(&binding.slot) == Some(&Type::Never)))
+        };
+        if never(self, &statement.discriminant) {
+            return true;
+        }
+        // V38 (`strict_members`): `switch (x.kind)` or `switch (e.payload.type)`
+        // whose failed clauses narrowed the record union `x` or `e.payload` to
+        // `never` by its discriminant, as in TypeScript.
+        if self.discriminated_rest(statement, rest) == Some(Type::Never) {
             return true;
         }
         let placeholder = ast::Expr::Ident(ast::Ident::new(
@@ -179,6 +187,54 @@ impl Lower<'_> {
         }
         let declared = self.peek_type(&statement.discriminant, 0).unwrap_or(ty);
         literals::exhausted_by(declared, &singles, self.types)
+    }
+    /// V38 (`strict_members`): for a `switch` over a discriminant path
+    /// (`x.kind`, `e.payload.type`), the type of its object once every
+    /// clause test failed: `never` when the clauses cover every member, the
+    /// unhandled members otherwise; `None` when no clause narrowed it.
+    fn discriminated_rest(
+        &self,
+        statement: &ast::SwitchStmt,
+        rest: &flow::Snapshot,
+    ) -> Option<Type> {
+        if !self.types.profile.strict_members() {
+            return None;
+        }
+        let ast::Expr::Member(member) = stmt::unparen(&statement.discriminant) else {
+            return None;
+        };
+        if !matches!(member.prop, ast::MemberProp::Ident(_)) {
+            return None;
+        }
+        let object = stmt::unparen(&member.obj);
+        if let ast::Expr::Ident(id) = object {
+            let binding = self.binding(id.sym.as_ref()).ok()?;
+            return rest.facts.get(&binding.slot).copied();
+        }
+        let (path, _) = self.path(object)?;
+        rest.paths.get(&path).map(|fact| fact.narrowed)
+    }
+    /// The diagnostic note of a `switch` over a discriminant path that is not
+    /// exhaustive: the record members its clauses leave unhandled.
+    fn uncovered(&self, statement: &ast::SwitchStmt, rest: &flow::Snapshot) -> Option<String> {
+        let remaining = self.discriminated_rest(statement, rest)?;
+        let members = unions::members(remaining, self.types);
+        if members.is_empty()
+            || !members
+                .iter()
+                .all(|ty| matches!(ty, Type::Record(_) | Type::Class(_)))
+        {
+            return None;
+        }
+        let names: Vec<String> = members
+            .iter()
+            .map(|ty| subtyping::describe(*ty, self.types))
+            .collect();
+        Some(format!(
+            "the switch at {} does not handle {}",
+            self.source.line_column(statement.span),
+            names.join(" | ")
+        ))
     }
     /// Whether a `switch` over `value` uses the v37 equality lowering.
     pub(super) fn equality_switch(&self, value: &Expr) -> bool {
@@ -289,11 +345,18 @@ impl Lower<'_> {
         if exhausted {
             cases.push((None, vec![S::Trap]));
         }
+        // Set after the clause bodies, whose statements clear it.
+        let uncovered = if !default && !exhausted {
+            self.uncovered(statement, &rest)
+        } else {
+            None
+        };
         let mut paths = self.flow_end(target);
         paths.extend(previous);
         if !default && !exhausted {
             paths.push(rest);
         }
+        self.core.uncovered = uncovered;
         self.flow_join(&saved, &paths)?;
         let slots: BTreeSet<u32> = self
             .scopes

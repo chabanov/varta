@@ -3098,13 +3098,14 @@ V38 has its own host ABI `abi::PROGRAM_LIMITS_VERSION` (34) and its own value
 ABI/layout 18 (`value::HASHED_DICTIONARY_VALUE_VERSION`, [dictionary
 hashing](#dictionary-hashing-dictionary_hashing)) with the value18 readers,
 exception channel v9, JSON schema 18 (`json_stringify_owned`,
-`json_parse_v19`); v37 keeps host ABI 33 and value layout 17. Eight selectors gate the streams; each
+`json_parse_v19`); v37 keeps host ABI 33 and value layout 17. Selectors gate the streams; each
 admits nothing until its stream adds its rules below: program limits (`program_limits`), data limits
 (`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
 (`linked_intrinsics`, [rules below](#v38-linked-intrinsics)), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
-(`codegen_v2`), plus the wave-2 dictionary hashing selector
-(`dictionary_hashing`, [rules below](#dictionary-hashing-dictionary_hashing));
+(`codegen_v2`), plus the wave-2 selectors dictionary hashing
+(`dictionary_hashing`, [rules below](#dictionary-hashing-dictionary_hashing)) and strict members
+(`strict_members`, [rules below](#strict-members-and-wide-unions-strict_members));
 the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
@@ -3444,6 +3445,50 @@ Contract: [architecture.md](architecture.md#structural-subtyping-structural_subt
   `subtyping_cases`, two forced-collection drivers, the deviation table,
   diagnostics and v37 rejections; the public API cross-module test and the
   CLI smoke test through both binaries.
+
+### Strict members and wide unions (`strict_members`)
+
+The [contract](architecture.md#strict-members-and-wide-unions-strict_members)
+is normative.
+
+- Every static member access of a closed owner resolves its name or fails
+  with `records::undeclared` (`property X is not declared by Owner`, a
+  `type` error at the property span, owner named by `subtyping::describe`):
+  `records::record_field` (reads, writes, compounds, updates, logical
+  assignments, optional chains and literal computed keys all go through it),
+  `patterns::objects::pattern_field` (destructuring) and
+  `classes::members::undeclared_member` (instance fields, getters and
+  method calls; a pending prelude member keeps its `unsupported` reason).
+  Never return `E::Undefined` for an undeclared name under v38; keep the
+  v3–v37 path byte for byte behind the selector.
+- Inherited `Object.prototype` names, dynamic keys, dictionaries, mixed
+  records, `unknown`/`object` and `in` tests keep their own paths; do not
+  route them through the strict check.
+- Engine preludes are ordinary v38 source: a prelude that reads an
+  undeclared name is a bug in the prelude. `engine_preludes_declare_every_name_they_read`
+  loads each of them.
+- Per-union limits come only from `LanguageProfile::limits()`
+  (`union_members`, `json_union_members`); never reintroduce a crate-local
+  member constant. Diagnostics keep the `union member count exceeds limit`
+  prefix and add the counts (`literals::member_limit`).
+- Code over a union of more than `limits::FROZEN.union_members` members must
+  not nest with the member count: `shared_unions::dispatch` uses a flat
+  guarded sequence, `declared_fields::exact_test` a balanced disjunction
+  (`any`) with one record tag test before its record members, and
+  `declared_fields::discriminant_chain` a flat literal chain with one lookup
+  per discriminant name and no reference local per member. Smaller unions
+  keep their nested chains and bytes. A new per-member chain over a union
+  needs the same treatment and a 200-member test on a 2 MiB test thread.
+- Exhaustive discriminant switches: `switches::discriminated_rest` reads the
+  object's narrowed type after every failed clause from the binding's
+  refinement or the path fact; `never` makes the switch exhaustive. A
+  non-exhaustive one records `core.uncovered`, which `link::finish_body`
+  appends to the missing-return diagnostic; `stmt::statement` clears it, so
+  only a switch the end of the function directly follows is named.
+- Tests: `varta-runtime` `strict_member_tests` (Node 24 logs of
+  `strict_member_cases`, the generated 200-member union, forced collections,
+  fuel bounds of the dispatch, v37 rejections and the relabel test) and the
+  CLI smoke test through `dev` and the single binary.
 
 ### V38 linked intrinsics
 

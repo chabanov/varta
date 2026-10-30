@@ -44,6 +44,14 @@ pub(super) const INHERITED_NAMES: &[&str] = &[
 pub(super) fn inherited(name: &str) -> bool {
     INHERITED_NAMES.contains(&name)
 }
+/// The v38 `strict_members()` diagnostic: `owner` (a record, interface, view
+/// or class instance type) does not declare `name`.
+pub(super) fn undeclared(name: &str, owner: Type, types: &ir::ValueTypes) -> CompilerError {
+    type_error(format!(
+        "property {name} is not declared by {}",
+        subtyping::describe(owner, types)
+    ))
+}
 pub(super) fn property_key(name: &ast::PropName) -> Result<String> {
     match name {
         ast::PropName::Ident(id) => key(id.sym.to_string()),
@@ -444,6 +452,12 @@ impl Lower<'_> {
             .enumerate()
             .find(|(_, field)| field.name == name);
         let Some((slot, field)) = found else {
+            // V38 (`strict_members`): TypeScript rejects the name (TS2339).
+            if self.types.profile.strict_members() && !inherited(&name) {
+                return Err(self
+                    .source
+                    .locate(undeclared(&name, value.ty, self.types), member.prop.span()));
+            }
             if read && self.types.profile.missing() && !inherited(&name) {
                 return Ok(Expr {
                     span: member.span,

@@ -14,7 +14,12 @@ pub(super) fn overdue(nodes: usize, deadline: Option<Instant>) -> bool {
 
 impl JsonSchema {
     pub fn parse_json(&self, bytes: &[u8]) -> Result<JsonValue, CheckedJsonError> {
-        self.parse_json_limited(bytes, DataLimits::LEGACY)
+        self.decode_with_limits(
+            bytes,
+            &Cell::new(None),
+            (DataLimits::LEGACY, &crate::limits::FROZEN),
+            None,
+        )
     }
     /// [`Self::parse_json`] under a profile's data limits (v38 `data_limits`).
     pub fn parse_json_limited(
@@ -22,7 +27,12 @@ impl JsonSchema {
         bytes: &[u8],
         limits: DataLimits,
     ) -> Result<JsonValue, CheckedJsonError> {
-        self.decode_with_limits(bytes, &Cell::new(None), limits, None)
+        self.decode_with_limits(
+            bytes,
+            &Cell::new(None),
+            (limits, &crate::limits::MAXIMUM),
+            None,
+        )
     }
     /// [`Self::parse_json_limited`] that stops with
     /// [`JsonInputLimit::Deadline`] once `deadline` passes: the host work of
@@ -33,16 +43,26 @@ impl JsonSchema {
         limits: DataLimits,
         deadline: Instant,
     ) -> Result<JsonValue, CheckedJsonError> {
-        self.decode_with_limits(bytes, &Cell::new(None), limits, Some(deadline))
+        self.decode_with_limits(
+            bytes,
+            &Cell::new(None),
+            (limits, &crate::limits::MAXIMUM),
+            Some(deadline),
+        )
     }
+    /// Decode within `limits`: the data limits and the structural limits the
+    /// schema is re-validated within. The legacy entry points keep the frozen
+    /// limits; the limited ones re-check only within the largest limits any
+    /// profile admits, because the reader already checked the profile's own
+    /// (`from_bytes_within`), so a v38 schema over a frozen limit decodes.
     pub(super) fn decode_with_limits(
         &self,
         bytes: &[u8],
         limit: &Cell<Option<JsonInputLimit>>,
-        limits: DataLimits,
+        (limits, structural): (DataLimits, &crate::limits::ProgramLimits),
         deadline: Option<Instant>,
     ) -> Result<JsonValue, CheckedJsonError> {
-        self.validate()?;
+        self.validate_within(structural)?;
         if bytes.len() > limits.json_input_bytes {
             limit.set(Some(JsonInputLimit::Bytes));
             return Err(CheckedJsonError::Input("byte limit".into()));

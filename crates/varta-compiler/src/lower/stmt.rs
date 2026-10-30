@@ -87,6 +87,8 @@ impl Lower<'_> {
         Ok(vec![self.statement(statement)?])
     }
     fn statement(&mut self, statement: &ast::Stmt) -> Result<S> {
+        // A later statement is what the end of the function follows.
+        self.core.uncovered = None;
         let result = self
             .statement_inner(statement)
             .map_err(|e| self.source.locate(e, statement.span()));

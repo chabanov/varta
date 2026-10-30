@@ -48,6 +48,8 @@ pub const MAX_SCHEMA_BYTES: usize = crate::abi::RESULT_BASE;
 pub const LEGACY_MAX_SCHEMA_TYPES: usize =
     4 + crate::value::MAX_RECORD_SHAPES + crate::value::MAX_ARRAY_TYPES;
 pub const MAX_SCHEMA_TYPES: usize = LEGACY_MAX_SCHEMA_TYPES + 1 + crate::value::MAX_UNION_TYPES;
+/// The frozen member limit of one schema union (schemas of v5 to v37);
+/// readers take it from `ProgramLimits::json_union_members`.
 pub const MAX_UNION_MEMBERS: usize = 7;
 
 #[derive(Debug, thiserror::Error)]

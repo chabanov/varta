@@ -687,6 +687,16 @@ impl LanguageProfile {
     pub fn dictionary_hashing(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, strict-members stream: a static read, write, compound or
+    /// update, optional chain or destructuring of a name that a closed record,
+    /// interface, view, class instance or narrowed union member does not
+    /// declare is a compile error (TypeScript's TS2339), where v3 to v37 read
+    /// it as `undefined`. Per-union structural member limits come from the
+    /// profile's [`Self::limits`] registry.
+    #[must_use]
+    pub fn strict_members(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Named interface/alias annotations and type-only module bindings (v31).
     #[must_use]
     pub fn named_types(self) -> bool {
@@ -3086,6 +3096,7 @@ mod tests {
                 profile.structural_subtyping(),
                 profile.codegen_v2(),
                 profile.dictionary_hashing(),
+                profile.strict_members(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }

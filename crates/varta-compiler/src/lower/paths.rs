@@ -146,7 +146,7 @@ fn plain(expr: &ast::Expr) -> Option<ast::Expr> {
 impl Lower<'_> {
     /// The path of `expr` with the current type of its root, when the root is
     /// a binding of this function (or one it already captured).
-    fn path(&self, expr: &ast::Expr) -> Option<(Path, Type)> {
+    pub(super) fn path(&self, expr: &ast::Expr) -> Option<(Path, Type)> {
         if !self.types.profile.language_core() {
             return None;
         }

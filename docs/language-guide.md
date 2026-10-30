@@ -5460,6 +5460,53 @@ expected takes one more job. Not supported yet: byte bodies
 Constructor parameter properties (`constructor(private readonly client:
 Transport)`) declare and assign their fields.
 
+#### Strict members and discriminated unions (opt-in v38)
+
+Under v38 a property the type does not declare is an error, as with `tsc
+--strict`, instead of reading `undefined`:
+
+```ts
+interface CallPayload { name: string }
+export function main(): void {
+  const p: CallPayload = { name: "now" };
+  console.log("plain " + p.tool_name);
+  // main.ts:4:28: property tool_name is not declared by CallPayload
+}
+```
+
+Declare the field (optional if it may be missing, `tool_name?: string`), use
+an index signature or `Record<string, T>` for open key sets, or test it with
+`"tool_name" in p`. Discriminated unions may have many members (v37 stops at
+16), parse strictly by their discriminant and switch exhaustively without a
+`default`:
+
+```ts
+interface Started { type: "started"; seq: number }
+interface Chunk { type: "chunk"; seq: number; text: string }
+interface Done { type: "done"; seq: number; reason: string | null }
+type RunEvent = Started | Chunk | Done; // any number of members
+function describe(e: RunEvent): string {
+  switch (e.type) {
+    case "started": return `started ${e.seq}`;
+    case "chunk": return e.text;
+    case "done": return e.reason ?? "ok";
+  }
+}
+export function main(): void {
+  try {
+    console.log(describe(JSON.parse('{"type":"chunk","seq":1,"text":"hi"}') as RunEvent));
+    console.log(describe(JSON.parse('{"type":"other","seq":2}') as RunEvent));
+  } catch (e) {
+    console.log(e instanceof TypeError ? "unknown event" : "other"); // unknown event
+  }
+}
+```
+
+An unknown discriminant, a missing one or a field the member does not declare
+throws a catchable `TypeError` (Node would keep the object). A `switch` that
+misses a member leaves the function without a return, and the diagnostic
+names the members it does not handle.
+
 #### View protocol and TSX (opt-in v38)
 
 A `.tsx` module renders an L0 view: an intrinsic

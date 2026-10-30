@@ -83,6 +83,17 @@ fn or(span: Span, a: Expr, b: Expr) -> Expr {
         E::Conditional(Box::new(a), Box::new(boolean(span, true)), Box::new(b)),
     )
 }
+/// The short-circuit disjunction of `tests`, in order, as a balanced tree.
+fn any(span: Span, mut tests: Vec<Expr>) -> Expr {
+    match tests.len() {
+        0 => boolean(span, false),
+        1 => tests.remove(0),
+        count => {
+            let right = tests.split_off(count / 2);
+            or(span, any(span, tests), any(span, right))
+        }
+    }
+}
 fn not(span: Span, value: Expr) -> Expr {
     test(span, E::Not(Box::new(value)))
 }
@@ -606,8 +617,40 @@ impl Lower<'_> {
         match target {
             Type::Unknown => Ok(boolean(span, true)),
             Type::Union(_) | Type::ReferenceUnion(_) => {
+                let members = unions::members(target, self.types);
+                // A union wider than any earlier profile admits (v38) joins
+                // its member tests as a balanced disjunction: the same tests
+                // in the same order, nested only logarithmically deep.
+                // Record members are tested only when the cell holds a
+                // record at all, so a JSON object (a dictionary cell) fails
+                // them with one tag test.
+                if members.len() > varta_common::limits::FROZEN.union_members {
+                    let (records, others): (Vec<Type>, Vec<Type>) = members
+                        .into_iter()
+                        .partition(|member| matches!(member, Type::Record(_)));
+                    let mut tests = others
+                        .into_iter()
+                        .map(|member| self.exact_test(span, slot, member))
+                        .collect::<Result<Vec<_>>>()?;
+                    if !records.is_empty() {
+                        let any_record = records::intern(Vec::new(), self.types)?;
+                        let held = test(
+                            span,
+                            E::IsUnionMember(
+                                Box::new(local(span, slot, Type::Unknown)),
+                                any_record,
+                            ),
+                        );
+                        let each = records
+                            .into_iter()
+                            .map(|member| self.exact_test(span, slot, member))
+                            .collect::<Result<Vec<_>>>()?;
+                        tests.push(and(span, held, any(span, each)));
+                    }
+                    return Ok(any(span, tests));
+                }
                 let mut check = boolean(span, false);
-                for member in unions::members(target, self.types).into_iter().rev() {
+                for member in members.into_iter().rev() {
                     let next = self.exact_test(span, slot, member)?;
                     check = or(span, next, check);
                 }
@@ -909,6 +952,11 @@ impl Lower<'_> {
         let graph = dictionaries::intern(Type::Unknown, self.types)?;
         let check = self.cell_test(span, saved, Type::Unknown, graph, "a JSON object")?;
         let wrong = self.conversion_error(span, message)?;
+        if self.types.profile.strict_members() {
+            return self
+                .discriminant_chain(span, saved, target, output, message, discriminants)
+                .map(|chain| vec![S::If(not(span, check), vec![wrong], chain)]);
+        }
         let mut chain = vec![self.conversion_error(span, message)?];
         for (record, name, literal) in discriminants.into_iter().rev() {
             let value = self.hidden(Type::Unknown);
@@ -929,6 +977,99 @@ impl Lower<'_> {
             chain = vec![S::Init(value, lookup), S::If(selected, store, chain)];
         }
         Ok(vec![S::If(not(span, check), vec![wrong], chain)])
+    }
+    /// V38 (`strict_members`): the selection of [`Self::discriminated_build`]
+    /// with one key lookup per distinct discriminant name (a single lookup
+    /// for a union discriminated by one field such as `type`) and then a flat
+    /// sequence of the members' literal tests in member order, the first
+    /// match building its member. A union of `n` record members costs one
+    /// lookup, at most `n` literal tests and `O(n)` code, and the lowering
+    /// nests no deeper with `n`; an object no test selects fails the
+    /// conversion with the catchable `TypeError`.
+    fn discriminant_chain(
+        &mut self,
+        span: Span,
+        saved: u32,
+        target: Type,
+        output: u32,
+        message: u32,
+        discriminants: Vec<(Type, String, Type)>,
+    ) -> Result<Vec<S>> {
+        let graph = dictionaries::intern(Type::Unknown, self.types)?;
+        let mut body = Vec::new();
+        let mut values: Vec<(String, u32)> = Vec::new();
+        for (_, name, _) in &discriminants {
+            if values.iter().any(|(known, _)| known == name) {
+                continue;
+            }
+            let value = self.hidden(Type::Unknown);
+            let key = Expr {
+                span,
+                ty: Type::String,
+                kind: E::String(self.types.profile.string_bytes(name)),
+            };
+            let lookup = self.dictionary_get(view(span, saved, graph), key)?;
+            body.push(S::Init(
+                value,
+                unions::widen(lookup, Some(Type::Unknown), self.types)?,
+            ));
+            values.push((name.clone(), value));
+        }
+        let selected = self.hidden(Type::Boolean);
+        body.push(S::Init(selected, boolean(span, false)));
+        for (record, name, literal) in discriminants {
+            let value = values
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map(|(_, slot)| *slot)
+                .ok_or_else(|| invalid("missing discriminant lookup"))?;
+            let matches = self.cell_test(span, value, Type::Unknown, literal, "a discriminant")?;
+            let mut store = if built(record, self.types) {
+                // The member's shared build function boxed straight into the
+                // union (boxing roots it first): no reference local per member,
+                // so the frame does not grow with the member count.
+                let index = self.converter(Converter::Build, record, span)?;
+                let call = Expr {
+                    span,
+                    ty: record,
+                    kind: E::Call(
+                        index,
+                        vec![
+                            local(span, saved, Type::Unknown),
+                            local(span, message, Type::String),
+                        ],
+                    ),
+                };
+                vec![S::Init(
+                    output,
+                    unions::widen(call, Some(target), self.types)?,
+                )]
+            } else {
+                let built = self.hidden(record);
+                let mut store = self.build_statements(span, saved, record, built, message)?;
+                store.push(S::Init(
+                    output,
+                    unions::widen(local(span, built, record), Some(target), self.types)?,
+                ));
+                store
+            };
+            store.push(S::Set(selected, boolean(span, true)));
+            body.push(S::If(
+                and(
+                    span,
+                    not(span, local(span, selected, Type::Boolean)),
+                    matches,
+                ),
+                store,
+                Vec::new(),
+            ));
+        }
+        body.push(S::If(
+            not(span, local(span, selected, Type::Boolean)),
+            vec![self.conversion_error(span, message)?],
+            Vec::new(),
+        ));
+        Ok(body)
     }
     /// `(cell, message) -> T` of [`Converter::Build`].
     fn build_body(&mut self, span: Span, target: Type, args: Vec<Expr>) -> Result<Vec<S>> {

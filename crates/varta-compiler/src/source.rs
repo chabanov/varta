@@ -46,6 +46,12 @@ impl Source {
             .collect();
         format!("{file}:{}:{} {snippet}", start.line, start.column)
     }
+    /// `line:column` of the start of `span`, for messages that refer to
+    /// another construct than the one they are located at.
+    pub(crate) fn line_column(&self, span: Span) -> String {
+        let start = self.position(self.clamp(span.lo()));
+        format!("{}:{}", start.line, start.column)
+    }
     pub(crate) fn text(&self, span: Span) -> Option<String> {
         swc_common::SourceMapper::span_to_snippet(&*self.map, span).ok()
     }

@@ -234,8 +234,12 @@ impl JsonSchema {
                     child_depth(*element)?
                 }
                 JsonType::PrimitiveUnion { members } | JsonType::ReferenceUnion { members } => {
-                    if members.len() < 2 || members.len() > MAX_UNION_MEMBERS {
-                        return Err(bad("union member count"));
+                    if members.len() < 2 || members.len() > limits.json_union_members {
+                        return Err(CheckedJsonError::Schema(format!(
+                            "union member count: union has {} members; limit {}",
+                            members.len(),
+                            limits.json_union_members
+                        )));
                     }
                     let mut kinds = std::collections::BTreeSet::new();
                     let mut depth = 0;

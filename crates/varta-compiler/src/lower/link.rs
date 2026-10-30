@@ -633,10 +633,13 @@ pub(super) fn finish_body(
         && !(lower.types.profile.language_core()
             && completion::exits_function_through_loops(statements))
     {
-        return Err(lower.source.locate(
-            invalid("value-returning function must return on every path"),
-            span,
-        ));
+        // V38 (`strict_members`): a final non-exhaustive discriminant
+        // `switch` names the members it leaves unhandled.
+        let message = match lower.core.uncovered.take() {
+            Some(note) => format!("value-returning function must return on every path; {note}"),
+            None => "value-returning function must return on every path".into(),
+        };
+        return Err(lower.source.locate(invalid(message), span));
     }
     Ok(())
 }
