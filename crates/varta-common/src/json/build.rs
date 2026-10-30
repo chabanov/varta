@@ -13,7 +13,7 @@
 //! reads neither, sees the record before the result is returned.
 use super::{
     JsonSchema, JsonType,
-    scan::{Node, Piece, Tape, Text, decode_text, pieces},
+    scan::{Node, Piece, Slots, Tape, Text, decode_text, pieces},
 };
 use crate::{abi::STRING_HEADER_BYTES, limits::DataLimits, value::*};
 use alloc::vec::Vec;
@@ -60,7 +60,7 @@ enum Frame {
         ptr: usize,
         ty: u32,
         remaining: u32,
-        present: u128,
+        present: Slots,
         slot: usize,
     },
     Dictionary {
@@ -136,7 +136,7 @@ impl<H: Heap> Builder<'_, H> {
                     }) = self.frames.last_mut()
                     {
                         *next = slot as usize;
-                        *present |= 1 << slot;
+                        present.insert(slot as usize);
                     }
                     continue;
                 }
@@ -207,13 +207,13 @@ impl<H: Heap> Builder<'_, H> {
                 Node::Record { ty, count } => {
                     let ptr = self.record(ty, destination)?;
                     if count == 0 {
-                        self.complete_record(ptr, ty, 0)?;
+                        self.complete_record(ptr, ty, Slots::EMPTY)?;
                     } else {
                         self.frames.push(Frame::Record {
                             ptr,
                             ty,
                             remaining: count,
-                            present: 0,
+                            present: Slots::EMPTY,
                             slot: 0,
                         });
                     }
@@ -381,15 +381,17 @@ impl<H: Heap> Builder<'_, H> {
         self.heap.word(storage + size_of::<u32>(), count as u32)?;
         self.heap
             .zero(storage + ARRAY_META_BYTES, len - ARRAY_META_BYTES)?;
-        // Presence bits of slots `0..count`, a byte at a time at the edge.
-        let full = count / u8::BITS as usize;
+        // Presence bits of slots `0..count`, a word at a time (the bitmap
+        // is a multiple of eight bytes).
+        let full = count / u64::BITS as usize;
         let at = storage + bitmap;
-        for byte in 0..full {
-            self.heap.write(at + byte, &[u8::MAX])?;
+        for word in 0..full {
+            self.heap.slot(at + word * size_of::<u64>(), u64::MAX)?;
         }
-        let rest = count % u8::BITS as usize;
+        let rest = count % u64::BITS as usize;
         if rest != 0 {
-            self.heap.write(at + full, &[(1u8 << rest) - 1])?;
+            self.heap
+                .slot(at + full * size_of::<u64>(), (1u64 << rest) - 1)?;
         }
         self.publish(
             handle(storage, len),
@@ -425,18 +427,17 @@ impl<H: Heap> Builder<'_, H> {
     }
     /// Complete a record whose fields `present` were set: `undefined` cells
     /// for its missing union fields, then its presence and order words.
-    fn complete_record(&mut self, ptr: usize, ty: u32, present: u128) -> Result<(), H::Error> {
+    fn complete_record(&mut self, ptr: usize, ty: u32, present: Slots) -> Result<(), H::Error> {
         let schema = self.schema;
         let JsonType::Record { fields, .. } = &schema.types[ty as usize] else {
             return Ok(());
         };
         let count = fields.len();
-        let all = wide_field_mask(count);
-        if present != all {
+        if present != Slots::all(count) {
             for (slot, field) in fields.iter().enumerate() {
                 // A missing field of a union type holds an `undefined` cell;
                 // one of type `undefined` keeps its zero payload.
-                if present & 1 << slot != 0
+                if present.contains(slot)
                     || matches!(schema.types[field.ty as usize], JsonType::Undefined)
                 {
                     continue;
@@ -454,14 +455,14 @@ impl<H: Heap> Builder<'_, H> {
         for word in 0..presence_words(count) {
             self.heap.word(
                 ptr + presence_offset(count) + word * size_of::<u32>(),
-                (present >> (word * PRESENCE_WORD_BITS)) as u32,
+                present.word(word),
             )?;
         }
         let order = self.order(ty, fields);
         let at = ptr + order_offset(count);
         let mut written = 0;
-        for slot in order {
-            if present & 1 << slot != 0 {
+        for &slot in &self.orders[order].1 {
+            if present.contains(slot as usize) {
                 self.heap.word(at + written * size_of::<u32>(), slot)?;
                 written += 1;
             }
@@ -470,9 +471,9 @@ impl<H: Heap> Builder<'_, H> {
         Ok(())
     }
     /// The full order words of record type `ty`.
-    fn order(&mut self, ty: u32, fields: &[super::JsonField]) -> Vec<u32> {
-        if let Some((_, order)) = self.orders.iter().find(|(known, _)| *known == ty) {
-            return order.clone();
+    fn order(&mut self, ty: u32, fields: &[super::JsonField]) -> usize {
+        if let Some(index) = self.orders.iter().position(|(known, _)| *known == ty) {
+            return index;
         }
         let mut order: Vec<u32> = (0..fields.len() as u32).collect();
         order.sort_by_key(|slot| {
@@ -480,8 +481,8 @@ impl<H: Heap> Builder<'_, H> {
             let integer = canonical_integer(name);
             (integer.is_none(), integer.unwrap_or(*slot))
         });
-        self.orders.push((ty, order.clone()));
-        order
+        self.orders.push((ty, order));
+        self.orders.len() - 1
     }
     /// A dictionary of `count` entries at `destination`: its storage record,
     /// then its key and value vectors published into it.

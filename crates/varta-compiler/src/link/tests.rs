@@ -83,6 +83,7 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/abi/static_region.rs",
     "crates/varta-common/src/bigint.rs",
     "crates/varta-common/src/exceptions.rs",
+    "crates/varta-common/src/fuel.rs",
     "crates/varta-common/src/json/mod.rs",
     "crates/varta-common/src/json/build.rs",
     "crates/varta-common/src/json/descriptor.rs",
@@ -205,11 +206,7 @@ fn intrinsic_library_exports_every_linked_operation_with_its_signature() {
         let Some(operation) = HostOperation::from_name(name) else {
             continue;
         };
-        // Checked JSON is linked only under the test switch (`json_hook`).
-        assert!(
-            operation.linked() || operation == HostOperation::JsonParseV19,
-            "{name} is exported but not linked"
-        );
+        assert!(operation.linked(), "{name} is exported but not linked");
         let (params, results) = operation.scalar_signature();
         // A pair of i32 results is exported packed into one i64.
         let expected = if results == [HostScalar::I32, HostScalar::I32] {
@@ -227,8 +224,7 @@ fn intrinsic_library_exports_every_linked_operation_with_its_signature() {
         count += 1;
     }
     let linked = every_linked_operation();
-    // The linked checked JSON parse is exported too (`json_hook`).
-    assert_eq!(count, linked.len() + 1);
+    assert_eq!(count, linked.len());
     for operation in linked {
         assert!(V38.links(operation) && !V37.links(operation));
         assert!(

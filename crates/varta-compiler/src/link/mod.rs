@@ -33,20 +33,14 @@ pub(crate) struct GuestValues {
 }
 
 /// Whether a module of `profile` links `operation`: the profile's linked
-/// intrinsics, plus (test-only, [`json_hook`]) the checked JSON parse of
-/// schema 18.
+/// intrinsics, except (test-only, [`json_hook`]) the checked JSON parse.
 pub(crate) fn links(profile: LanguageProfile, operation: HostOperation) -> bool {
-    profile.links(operation)
-        || profile.linked_intrinsics()
-            && operation == HostOperation::JsonParseV19
-            && json_hook::enabled()
+    profile.links(operation) && !(operation == HostOperation::JsonParseV19 && json_hook::enabled())
 }
 
-/// Test-only switch: while enabled on the current thread, v38 modules link
-/// `json_parse_v19` (the shared decoder in guest code) instead of importing
-/// it. Production builds never link checked JSON: its decoding work costs
-/// guest fuel the host import does not (see `docs/development-plan.md`,
-/// linked JSON measurement).
+/// Test-only switch: while enabled on the current thread, v38 modules import
+/// `json_parse_v19` from the host instead of linking it, so tests compare the
+/// linked decoder with the host import (the same shared code).
 pub(crate) mod json_hook {
     #[cfg(any(test, feature = "suspension-test-hook"))]
     use std::cell::Cell;

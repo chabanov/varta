@@ -35,6 +35,7 @@ COMMON_CORE = (
     "crates/varta-common/src/abi/static_region.rs",
     "crates/varta-common/src/bigint.rs",
     "crates/varta-common/src/exceptions.rs",
+    "crates/varta-common/src/fuel.rs",
     "crates/varta-common/src/json/mod.rs",
     "crates/varta-common/src/json/build.rs",
     "crates/varta-common/src/json/descriptor.rs",

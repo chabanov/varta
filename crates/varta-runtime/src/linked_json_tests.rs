@@ -10,10 +10,9 @@ use varta_common::{HostOperation, language::LanguageProfile as P};
 const V37: P = P::CheckedF64Utf16V37;
 const V38: P = P::CheckedF64Utf16V38;
 
-/// A v38 module whose checked JSON parse is linked guest code.
+/// A v38 module whose checked JSON parse is linked guest code (production).
 fn linked(source: &str) -> Vec<u8> {
-    let bytes = varta_compiler::linked_json_test_hook::compile_with_profile(source, V38)
-        .unwrap_or_else(|e| panic!("{e}\n{source}"));
+    let bytes = compile(source, V38);
     wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
     assert!(
         !imports(&bytes).contains(&HostOperation::JsonParseV19),
@@ -34,10 +33,24 @@ fn imports(bytes: &[u8]) -> Vec<HostOperation> {
     }
     operations
 }
+/// A v38 module that imports checked JSON parsing from the host.
+fn host(source: &str) -> Vec<u8> {
+    let bytes = varta_compiler::host_json_test_hook::compile_with_profile(source, V38)
+        .unwrap_or_else(|e| panic!("{e}\n{source}"));
+    wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
+    assert!(imports(&bytes).contains(&HostOperation::JsonParseV19));
+    crate::validate::host_json::ADMITTED.with(|admitted| admitted.set(true));
+    bytes
+}
 /// Run with test-only budgets (CLAUDE.md §11): `budgets` production fuel
 /// budgets and unbounded host calls; failures are classified as the
 /// runtime reports them (typed resources and linked JSON limits).
 fn run_test_budgets(bytes: &[u8], budgets: u64) -> Run {
+    run_rated(bytes, budgets, None)
+}
+/// [`run_test_budgets`] with host work charged at the fair rates (`true`),
+/// uncharged (`false`) or as the module's profile charges it (`None`).
+fn run_rated(bytes: &[u8], budgets: u64, rated: Option<bool>) -> Run {
     const HOST_CALLS: u32 = 1 << 20;
     let runtime = VartaRuntime::new();
     let mut execution = execution::Execution::with_test_budgets(
@@ -49,6 +62,9 @@ fn run_test_budgets(bytes: &[u8], budgets: u64) -> Run {
         },
     )
     .unwrap();
+    if let Some(rated) = rated {
+        execution.rate_host_work(rated);
+    }
     let module = runtime.prepare_module(bytes).unwrap();
     let budget = budgets * abi::FUEL;
     execution.store.set_fuel(budget).unwrap();
@@ -85,8 +101,7 @@ fn cause(error: &Option<String>) -> Option<String> {
 /// The host-import run and the linked run of `source` under `budgets`
 /// test-only fuel budgets: identical lines and failure.
 fn same(source: &str, budgets: u64) -> (Run, Run) {
-    let host_bytes = compile(source, V38);
-    assert!(imports(&host_bytes).contains(&HostOperation::JsonParseV19));
+    let host_bytes = host(source);
     let host = run_test_budgets(&host_bytes, budgets);
     let linked = run_test_budgets(&linked(source), budgets);
     assert_eq!(
@@ -120,7 +135,8 @@ fn linked_json_matches_the_host_import_on_the_case_corpus() {
         if !source.contains("JSON.parse") && !source.contains("json.parse") {
             continue;
         }
-        let Ok(host) = varta_compiler::compile_typescript_with_profile(&source, V38) else {
+        let Ok(host) = varta_compiler::host_json_test_hook::compile_with_profile(&source, V38)
+        else {
             continue;
         };
         if !imports(&host).contains(&HostOperation::JsonParseV19)
@@ -311,14 +327,33 @@ fn linked_json_fuel_measurement() {
                 }
             )
         };
-        let fuel = |bytes: &[u8]| run_test_budgets(bytes, 400).fuel;
-        let base = fuel(&compile(&program(false), V38));
-        let v37 = fuel(&compile(&program(true), V37)) - fuel(&compile(&program(false), V37));
-        let host = fuel(&compile(&program(true), V38)) - base;
-        let linked = fuel(&linked(&program(true))) - base;
-        println!("| {label} | {} | {v37} | {host} | {linked} |", text.len());
+        let fuel = |bytes: &[u8], rated| run_rated(bytes, 400, rated).fuel;
+        let delta = |profile: P, rated: Option<bool>, linked_json: bool| {
+            let build = |parse: bool| {
+                let source = program(parse);
+                if profile == V37 {
+                    compile(&source, V37)
+                } else if linked_json || !parse {
+                    linked(&source)
+                } else {
+                    host(&source)
+                }
+            };
+            fuel(&build(true), rated) - fuel(&build(false), rated)
+        };
+        let v37 = delta(V37, None, false);
+        let rated = delta(V37, Some(true), false);
+        let free = delta(V38, Some(false), false);
+        let charged = delta(V38, None, false);
+        let linked = delta(V38, None, true);
+        println!(
+            "| {label} | {} | {v37} | {rated} | {free} | {charged} | {linked} |",
+            text.len()
+        );
     };
-    println!("| workload | text units | v37 | v38 host import | v38 linked |");
+    println!(
+        "| workload | text units | v37 | v37 at fair rates | v38 import, free | v38 import, fair | v38 linked |"
+    );
     let prelude = "interface Item { id: number; name: string; tags: string[] }";
     measure("1 record", prelude, &items(1), "Item[]");
     measure("40 records (~2 KB)", prelude, &items(40), "Item[]");

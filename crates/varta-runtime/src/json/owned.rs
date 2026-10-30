@@ -37,7 +37,22 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             let deadline = caller.data().deadline;
             let encoded = stringify(memory.data(&caller), kind as u32, packed, module, deadline);
             caller.data().check_budget()?;
-            match encoded {
+            // V38 fair fuel: the values visited and the output, before the
+            // result is published.
+            if let Ok((bytes, values)) = &encoded {
+                let units = bytes.as_deref().map_or(0, |bytes| {
+                    std::str::from_utf8(bytes).map_or(0, |text| text.encode_utf16().count())
+                });
+                crate::fair_fuel::charge(
+                    &mut caller,
+                    varta_common::fuel::work(*values, varta_common::fuel::JSON_STRINGIFY_VALUE)
+                        .saturating_add(varta_common::fuel::work(
+                            units,
+                            varta_common::fuel::JSON_STRINGIFY_UNIT,
+                        )),
+                )?;
+            }
+            match encoded.map(|(bytes, _)| bytes) {
                 Ok(Some(bytes)) => {
                     let text = std::str::from_utf8(&bytes).map_err(|_| error("invalid UTF-8"))?;
                     let writer = Writer::new(&mut caller, memory)?;
@@ -65,7 +80,7 @@ pub(crate) fn stringify(
     packed: u64,
     module: ModuleBounds,
     deadline: std::time::Instant,
-) -> Result<Option<Vec<u8>>, wasmtime::Error> {
+) -> Result<(Option<Vec<u8>>, usize), wasmtime::Error> {
     let limits = module.limits.data;
     let encode = |limits: DataLimits| {
         let mut encoder = Encoder::with_version(data, HASHED_DICTIONARY_VALUE_VERSION);
@@ -79,7 +94,7 @@ pub(crate) fn stringify(
         };
         encoder.output.1 = OUTPUT_LIMIT;
         encoder.deadline = Some(deadline);
-        encoder.encode_optional(kind, packed)
+        encoder.encode_counted(kind, packed)
     };
     let shallow = DataLimits {
         json_depth: limits.json_depth.min(DataLimits::LEGACY.json_depth),

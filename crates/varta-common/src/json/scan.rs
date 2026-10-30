@@ -57,7 +57,7 @@ const ESCAPED_SURROGATE_BYTES: usize = 6;
 const MAX_TRANSCODED_BYTES: usize = ESCAPED_SURROGATE_BYTES;
 /// Units below 0x100 a string holds as themselves, the fast path of
 /// [`Input::string`]: not `"`, `\\` or a control character.
-const PLAIN: [bool; 256] = {
+static PLAIN: [bool; 256] = {
     let mut plain = [true; 256];
     let mut unit = 0;
     while unit < CONTROL_END as usize {
@@ -169,6 +169,16 @@ pub enum Node {
 pub struct Tape {
     pub nodes: Vec<Node>,
 }
+impl Tape {
+    /// The values on the tape (fields and keys only name the next one).
+    #[must_use]
+    pub fn values(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter(|node| !matches!(node, Node::Field { .. } | Node::Key(_)))
+            .count()
+    }
+}
 
 /// Stops the decoder once the host's deadline passed (checked every
 /// [`DEADLINE_STRIDE`] values); linked code is bounded by fuel instead.
@@ -232,14 +242,17 @@ pub fn scan<D: Deadline>(
             _ => Err(JsonDecodeError::Limit(limit)),
         },
         // The grammar and every whole-input budget precede the schema.
-        Stop::Decode(error) => match Checker::new(input, limits, true, deadline).run() {
-            Ok(()) => Err(error),
-            Err(Stop::Syntax(pos)) => Err(input.syntax(pos)),
-            Err(Stop::Walk(limit) | Stop::Decode(JsonDecodeError::Limit(limit))) => {
-                Err(JsonDecodeError::Limit(limit))
+        Stop::Mismatch | Stop::Counted(_) => {
+            let error = match stop {
+                Stop::Counted(limit) => JsonDecodeError::Limit(limit),
+                _ => JsonDecodeError::Type,
+            };
+            match Checker::new(input, limits, true, deadline).run() {
+                Ok(()) | Err(Stop::Mismatch) => Err(error),
+                Err(Stop::Syntax(pos)) => Err(input.syntax(pos)),
+                Err(Stop::Walk(limit) | Stop::Counted(limit)) => Err(JsonDecodeError::Limit(limit)),
             }
-            Err(Stop::Decode(error)) => Err(error),
-        },
+        }
     }
 }
 
@@ -278,17 +291,22 @@ fn transcoding(units: &[[u8; 2]], limit: usize) -> Result<(), JsonDecodeError> {
     Ok(())
 }
 
-/// Why a pass stopped.
+/// Why a pass stopped (small and `Copy`: every check returns it).
+#[derive(Clone, Copy)]
 enum Stop {
     /// The grammar failed at this unit.
     Syntax(usize),
     /// A whole-input budget.
     Walk(JsonInputLimit),
-    /// The schema (a mismatch or a decode-only budget).
-    Decode(JsonDecodeError),
+    /// The value does not match the schema.
+    Mismatch,
+    /// A budget only the schema counts (dictionary entries, the values of
+    /// missing optional fields).
+    Counted(JsonInputLimit),
 }
+#[inline]
 fn mismatch<T>() -> Result<T, Stop> {
-    Err(Stop::Decode(JsonDecodeError::Type))
+    Err(Stop::Mismatch)
 }
 
 #[derive(Clone, Copy)]
@@ -548,15 +566,20 @@ pub fn decode_text(input: &[u8], text: Text, out: &mut Vec<u16>) {
 /// A set of record slots (at most [`MAX_WIDE_RECORD_FIELDS`]) as two words:
 /// wasm32 has no native 128-bit shifts.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Slots([u64; 2]);
+pub(crate) struct Slots([u64; 2]);
 impl Slots {
-    const EMPTY: Self = Self([0; 2]);
+    pub(crate) const EMPTY: Self = Self([0; 2]);
+    /// Presence word `word` (32 slots) of a record trailer.
     #[inline]
-    fn contains(self, slot: usize) -> bool {
+    pub(crate) fn word(self, word: usize) -> u32 {
+        (self.0[word / 2] >> (32 * (word % 2))) as u32
+    }
+    #[inline]
+    pub(crate) fn contains(self, slot: usize) -> bool {
         self.0[slot / 64] & 1 << (slot % 64) != 0
     }
     #[inline]
-    fn insert(&mut self, slot: usize) {
+    pub(crate) fn insert(&mut self, slot: usize) {
         self.0[slot / 64] |= 1 << (slot % 64);
     }
     #[inline]
@@ -565,7 +588,7 @@ impl Slots {
     }
     /// Every slot of a record with `count` fields.
     #[inline]
-    fn all(count: usize) -> Self {
+    pub(crate) fn all(count: usize) -> Self {
         let word = |bits: usize| match bits {
             0 => 0,
             64.. => u64::MAX,
@@ -643,6 +666,26 @@ impl<D: Deadline> Decoder<'_, '_, D> {
         let mut pos = 0;
         loop {
             pos = input.skip(pos);
+            // Arrays of plain numbers or strings: one element after another
+            // without the general dispatch (the same checks, in order).
+            if let Some(Frame::Array { element, .. }) = self.frames.last()
+                && *element == ty
+                && matches!(
+                    self.schema.types[ty as usize],
+                    JsonType::Float64 | JsonType::String
+                )
+            {
+                let (after, done) = self.elements(ty, depth, pos)?;
+                pos = after;
+                if done {
+                    // The last element taken is complete; its separator
+                    // follows.
+                    if self.close_loop(&mut ty, &mut depth, &mut pos)? {
+                        return Ok(());
+                    }
+                    continue;
+                }
+            }
             let (next, after) = self.value(ty, depth, pos)?;
             pos = after;
             if let Next::Child(child, level) = next {
@@ -650,66 +693,127 @@ impl<D: Deadline> Decoder<'_, '_, D> {
                 continue;
             }
             // Close containers and find the next value.
-            loop {
-                pos = input.skip(pos);
-                let Some(frame) = self.frames.last_mut() else {
-                    return if pos == input.len() {
-                        Ok(())
-                    } else {
-                        Err(Stop::Syntax(pos))
-                    };
-                };
-                let unit = input.at(pos);
-                match frame {
-                    Frame::Array {
-                        node,
-                        element,
-                        count,
-                        depth: level,
-                    } => {
-                        *count += 1;
-                        if *count > self.limits.array_elements {
-                            return Err(Stop::Walk(JsonInputLimit::ArrayElements));
-                        }
-                        match unit {
-                            Some(COMMA) => {
-                                pos += 1;
-                                ty = *element;
-                                depth = *level + 1;
-                                break;
-                            }
-                            Some(CLOSE_ARRAY) => {
-                                pos += 1;
-                                let (node, count) = (*node, *count as u32);
-                                if let Some(Node::Array { count: slot, .. }) =
-                                    self.tape.nodes.get_mut(node)
-                                {
-                                    *slot = count;
-                                }
-                                self.frames.pop();
-                            }
-                            _ => return Err(Stop::Syntax(pos)),
-                        }
-                    }
-                    Frame::Record { .. } | Frame::Dictionary { .. } => match unit {
-                        Some(COMMA) => {
-                            let (child, level, after) = self.member(input.skip(pos + 1))?;
-                            (ty, depth, pos) = (child, level, after);
-                            break;
-                        }
-                        Some(CLOSE_OBJECT) => {
-                            pos += 1;
-                            self.close(pos)?;
-                        }
-                        _ => return Err(Stop::Syntax(pos)),
-                    },
-                }
+            if self.close_loop(&mut ty, &mut depth, &mut pos)? {
+                return Ok(());
             }
         }
     }
 
+    /// After a complete value at `pos`: close every finished container and
+    /// move to the next value (its type, depth and position); `true` once
+    /// the root is complete.
+    fn close_loop(
+        &mut self,
+        ty: &mut u32,
+        depth: &mut usize,
+        pos: &mut usize,
+    ) -> Result<bool, Stop> {
+        let input = self.input;
+        loop {
+            *pos = input.skip(*pos);
+            let Some(frame) = self.frames.last_mut() else {
+                return if *pos == input.len() {
+                    Ok(true)
+                } else {
+                    Err(Stop::Syntax(*pos))
+                };
+            };
+            let unit = input.at(*pos);
+            match frame {
+                Frame::Array {
+                    node,
+                    element,
+                    count,
+                    depth: level,
+                } => {
+                    *count += 1;
+                    if *count > self.limits.array_elements {
+                        return Err(Stop::Walk(JsonInputLimit::ArrayElements));
+                    }
+                    match unit {
+                        Some(COMMA) => {
+                            *pos += 1;
+                            *ty = *element;
+                            *depth = *level + 1;
+                            return Ok(false);
+                        }
+                        Some(CLOSE_ARRAY) => {
+                            *pos += 1;
+                            let (node, count) = (*node, *count as u32);
+                            if let Some(Node::Array { count: slot, .. }) =
+                                self.tape.nodes.get_mut(node)
+                            {
+                                *slot = count;
+                            }
+                            self.frames.pop();
+                        }
+                        _ => return Err(Stop::Syntax(*pos)),
+                    }
+                }
+                Frame::Record { .. } | Frame::Dictionary { .. } => match unit {
+                    Some(COMMA) => {
+                        let (child, level, after) = self.member(input.skip(*pos + 1))?;
+                        (*ty, *depth, *pos) = (child, level, after);
+                        return Ok(false);
+                    }
+                    Some(CLOSE_OBJECT) => {
+                        *pos += 1;
+                        self.close(*pos)?;
+                    }
+                    _ => return Err(Stop::Syntax(*pos)),
+                },
+            }
+        }
+    }
+
+    /// Elements of plain type `ty` (a number or a string) of the innermost
+    /// array from `pos`, with the checks of [`Self::value`] and of the
+    /// separator in the same order: the position reached, and whether an
+    /// element taken there is complete (its separator not consumed).
+    /// Anything else is left to the general path at the returned position.
+    fn elements(&mut self, ty: u32, depth: usize, mut pos: usize) -> Result<(usize, bool), Stop> {
+        let input = self.input;
+        let number = matches!(self.schema.types[ty as usize], JsonType::Float64);
+        loop {
+            let Some(unit) = input.at(pos) else {
+                return Ok((pos, false));
+            };
+            let node = if number && (unit == MINUS || is_digit(unit)) {
+                self.visit(depth)?;
+                self.counted()?;
+                let (end, integer) = input.number(pos).map_err(Stop::Syntax)?;
+                let bits = self.float(pos, end, integer)?;
+                pos = end;
+                Node::Float64(bits)
+            } else if !number && unit == QUOTE {
+                self.visit(depth)?;
+                self.counted()?;
+                let (text, next, _) = input.string(pos).map_err(Stop::Syntax)?;
+                if text.units as usize > self.limits.string_units {
+                    return Err(Stop::Walk(JsonInputLimit::StringBytes));
+                }
+                pos = next;
+                Node::String(text)
+            } else {
+                return Ok((pos, false));
+            };
+            self.tape.nodes.push(node);
+            let after = input.skip(pos);
+            if input.at(after) != Some(COMMA) {
+                return Ok((after, true));
+            }
+            if let Some(Frame::Array { count, .. }) = self.frames.last_mut() {
+                *count += 1;
+                if *count > self.limits.array_elements {
+                    return Err(Stop::Walk(JsonInputLimit::ArrayElements));
+                }
+            }
+            pos = input.skip(after + 1);
+        }
+    }
+
     /// The whole-input budget of one visited value at `depth`.
-    #[inline]
+    #[inline(always)]
     fn visit(&mut self, depth: usize) -> Result<(), Stop> {
         if depth > self.limits.depth {
             return Err(Stop::Walk(JsonInputLimit::Depth));
@@ -725,10 +829,10 @@ impl<D: Deadline> Decoder<'_, '_, D> {
     }
     /// The schema's own count of visited values (missing optional fields
     /// included).
-    #[inline]
+    #[inline(always)]
     fn counted(&self) -> Result<(), Stop> {
         if self.nodes.saturating_add(self.missing) > self.limits.nodes {
-            return Err(Stop::Decode(JsonDecodeError::Limit(JsonInputLimit::Nodes)));
+            return Err(Stop::Counted(JsonInputLimit::Nodes));
         }
         Ok(())
     }
@@ -858,9 +962,7 @@ impl<D: Deadline> Decoder<'_, '_, D> {
             _ => {
                 let (end, integer) = input.number(pos).map_err(Stop::Syntax)?;
                 let node = match expected {
-                    JsonType::I32 if integer => self
-                        .integer(pos, end)
-                        .ok_or(Stop::Decode(JsonDecodeError::Type))?,
+                    JsonType::I32 if integer => self.integer(pos, end).ok_or(Stop::Mismatch)?,
                     JsonType::Float64 => Node::Float64(self.float(pos, end, integer)?),
                     _ => return mismatch(),
                 };
@@ -897,8 +999,7 @@ impl<D: Deadline> Decoder<'_, '_, D> {
                 let JsonType::Record { fields, .. } = &schema.types[*ty as usize] else {
                     return mismatch();
                 };
-                let slot = field(input, text, fields, &mut self.decoded)
-                    .ok_or(Stop::Decode(JsonDecodeError::Type))?;
+                let slot = field(input, text, fields, &mut self.decoded).ok_or(Stop::Mismatch)?;
                 if present.contains(slot) {
                     return mismatch();
                 }
@@ -916,9 +1017,7 @@ impl<D: Deadline> Decoder<'_, '_, D> {
                     return Err(Stop::Syntax(pos));
                 };
                 if keys.entries.len() == self.limits.dictionary_entries {
-                    return Err(Stop::Decode(JsonDecodeError::Limit(
-                        JsonInputLimit::DictionaryEntries,
-                    )));
+                    return Err(Stop::Counted(JsonInputLimit::DictionaryEntries));
                 }
                 if !keys.insert(input, text, &mut self.decoded) {
                     return mismatch();
@@ -1077,7 +1176,7 @@ impl<D: Deadline> Decoder<'_, '_, D> {
             .ok()
             .and_then(|text| text.parse::<f64>().ok())
             .filter(|value| value.is_finite())
-            .ok_or(Stop::Decode(JsonDecodeError::Type))?;
+            .ok_or(Stop::Mismatch)?;
         Ok(value.to_bits())
     }
 }
@@ -1085,7 +1184,7 @@ impl<D: Deadline> Decoder<'_, '_, D> {
 /// Decimal exponents whose power of ten binary64 holds exactly.
 const EXACT_POWERS: i64 = 22;
 /// The exact powers of ten `10^0` to `10^22`.
-const POWERS: [f64; EXACT_POWERS as usize + 1] = {
+static POWERS: [f64; EXACT_POWERS as usize + 1] = {
     let mut powers = [1.0; EXACT_POWERS as usize + 1];
     let mut index = 1;
     while index < powers.len() {

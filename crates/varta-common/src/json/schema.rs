@@ -177,6 +177,21 @@ pub(super) fn decimal(out: &mut String, value: usize) {
     }
 }
 impl JsonSchema {
+    /// The record fields and union members of every type: with the types,
+    /// the schema nodes a decoder checks (v38 fair fuel).
+    #[must_use]
+    pub fn fields(&self) -> usize {
+        self.types
+            .iter()
+            .map(|ty| match ty {
+                JsonType::Record { fields, .. } => fields.len(),
+                JsonType::PrimitiveUnion { members } | JsonType::ReferenceUnion { members } => {
+                    members.len()
+                }
+                _ => 0,
+            })
+            .sum()
+    }
     pub fn validate_within(
         &self,
         limits: &crate::limits::ProgramLimits,

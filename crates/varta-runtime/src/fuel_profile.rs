@@ -195,7 +195,14 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             profile::MODULE,
             probe.name(),
             move |mut caller: Caller<'_, RuntimeContext>, id: i32| {
-                let remaining = caller.get_fuel()?.saturating_add(PROBE_FUEL);
+                // A probe refunds its own instructions and, under v38 fair
+                // fuel, the call charge of the host import it is.
+                let call = if caller.data().fair_fuel {
+                    varta_common::fuel::CALL
+                } else {
+                    0
+                };
+                let remaining = caller.get_fuel()?.saturating_add(PROBE_FUEL + call);
                 caller.set_fuel(remaining)?;
                 if let Some(profiler) = caller.data_mut().profiler.as_mut() {
                     let consumed = profiler.consumed(remaining);

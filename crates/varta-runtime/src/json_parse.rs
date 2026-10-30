@@ -5,7 +5,7 @@ pub(crate) mod heap;
 mod tree;
 use crate::RuntimeContext;
 use varta_common::{
-    HostOperation, abi,
+    HostOperation, abi, fuel,
     json::{JsonSchema, JsonType, JsonValue},
     limits::DataLimits,
     value::*,
@@ -311,6 +311,12 @@ fn decode(
                 "invalid JSON UTF-16 byte length".into(),
             )));
         }
+        // V38 fair fuel: the input and the schema, known before decoding.
+        let units = input.len() / size_of::<u16>();
+        let types = schema.types.len();
+        let charge = fuel::work(units, fuel::JSON_PARSE_UNIT)
+            .saturating_add(fuel::work(types, fuel::JSON_SCHEMA_TYPE))
+            .saturating_add(fuel::work(schema.fields(), fuel::JSON_SCHEMA_FIELD));
         // The shared decoder (one implementation with the linked v38
         // `json_parse_v19`) reads the UTF-16 text in place, iteratively.
         let mut tape = Tape::default();
@@ -321,6 +327,7 @@ fn decode(
             &mut tape,
             &mut HostDeadline(deadline),
         );
+        let values = tape.values();
         let parsed = scanned.map(|()| {
             if top_down {
                 // The shared top-down builder reads strings from the text,
@@ -331,6 +338,11 @@ fn decode(
             }
         });
         exceptions::deadline(&caller)?;
+        // The decoded values, before the first guest allocation.
+        crate::fair_fuel::charge(
+            &mut caller,
+            charge.saturating_add(fuel::work(values, fuel::JSON_PARSE_VALUE)),
+        )?;
         match parsed {
             Ok(parsed) => parsed,
             Err(JsonDecodeError::Syntax { .. }) => {

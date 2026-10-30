@@ -30,6 +30,8 @@ pub mod exceptions;
 /// Virtual file roots (v38 `file_roots`).
 #[cfg(feature = "std")]
 pub mod files;
+/// Fair host fuel rates (v38): the published charge of host work.
+pub mod fuel;
 #[cfg(feature = "std")]
 mod host;
 #[cfg(feature = "std")]

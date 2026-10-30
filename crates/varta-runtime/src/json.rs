@@ -166,9 +166,24 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 let mut encoder = Encoder::with_version(memory.data(&caller), version);
                 encoder.hide_private = private;
                 encoder.module = caller.data().module;
-                let encoded = encoder.encode_optional(kind as u32, packed);
+                let encoded = encoder.encode_counted(kind as u32, packed);
                 caller.data().check_budget()?;
-                match encoded {
+                // Fair fuel (v38 rates, charged only to a rated module): the
+                // values visited and the output, before the result transfer.
+                if let Ok((bytes, values)) = &encoded {
+                    let units = bytes.as_deref().map_or(0, |bytes| {
+                        std::str::from_utf8(bytes).map_or(0, |text| text.encode_utf16().count())
+                    });
+                    crate::fair_fuel::charge(
+                        &mut caller,
+                        varta_common::fuel::work(*values, varta_common::fuel::JSON_STRINGIFY_VALUE)
+                            .saturating_add(varta_common::fuel::work(
+                                units,
+                                varta_common::fuel::JSON_STRINGIFY_UNIT,
+                            )),
+                    )?;
+                }
+                match encoded.map(|(bytes, _)| bytes) {
                     Ok(Some(bytes)) => Ok((
                         host::result16(&mut caller, &bytes)
                             .map_err(|_| error("result transfer failed"))?,
@@ -336,6 +351,26 @@ impl<'a, 'b> Encoder<'a, 'b> {
             return Err(wasmtime::Error::new(BigIntSerialization));
         }
         Ok(self.output.0)
+    }
+    /// [`Self::encode_optional`] with the values it visited (v38 fair fuel).
+    fn encode_counted(
+        mut self,
+        kind: u32,
+        value: u64,
+    ) -> Result<(Option<Vec<u8>>, usize), wasmtime::Error> {
+        let (kind, value) = self.resolve(kind, value)?;
+        if kind == ValueKind::Undefined as u32 {
+            if !ValueKind::Undefined.supported_by(self.version) || value != 0 {
+                return Err(error("noncanonical or incompatible undefined"));
+            }
+            self.visit(0)?;
+            return Ok((None, self.nodes));
+        }
+        self.value(kind, value, 0)?;
+        if self.bigint_seen {
+            return Err(wasmtime::Error::new(BigIntSerialization));
+        }
+        Ok((Some(self.output.0), self.nodes))
     }
     fn encode_optional(
         mut self,

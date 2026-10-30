@@ -70,6 +70,8 @@ pub(crate) struct Execution {
     pub store: Store<RuntimeContext>,
     _deadline: Deadline,
     instantiation_started: bool,
+    /// Test-only: charge fair host fuel (or not) whatever the profile.
+    rated: Option<bool>,
 }
 impl Execution {
     /// A test execution with host-path filesystem rules.
@@ -125,6 +127,7 @@ impl Execution {
                 host_calls: 0,
                 http_control: None,
                 function_catalog: None,
+                fair_fuel: false,
                 module: varta_common::value::ModuleBounds::LEGACY,
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
@@ -155,6 +158,7 @@ impl Execution {
             store,
             _deadline: control,
             instantiation_started: false,
+            rated: None,
         })
     }
     #[cfg(test)]
@@ -163,6 +167,7 @@ impl Execution {
             module,
             None,
             (varta_common::value::ModuleBounds::LEGACY, false),
+            false,
         )
     }
     pub fn instantiate_prepared(
@@ -173,13 +178,23 @@ impl Execution {
             &module.module,
             module.function_catalog.clone(),
             (module.bounds(), module.profile.program_limits()),
+            self.rated.unwrap_or(module.profile.fair_fuel()),
         )
+    }
+    /// Test-only: charge the fair host fuel of v38 to a module of any
+    /// profile (`true`), so an earlier profile's host work is compared at
+    /// the published rates (the like-with-like fuel comparisons), or to none
+    /// (`false`).
+    #[cfg(test)]
+    pub(crate) fn rate_host_work(&mut self, rated: bool) {
+        self.rated = Some(rated);
     }
     fn instantiate_owned(
         &mut self,
         module: &Module,
         catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
         (bounds, uncharged_initialization): (varta_common::value::ModuleBounds, bool),
+        fair_fuel: bool,
     ) -> Result<Instance, wasmtime::Error> {
         // One instance per execution, including failed attempts. Never replace
         // metadata while an existing instance can still call host operations.
@@ -191,6 +206,10 @@ impl Execution {
         self.instantiation_started = true;
         self.store.data_mut().function_catalog = catalog;
         self.store.data_mut().module = bounds;
+        self.store.data_mut().fair_fuel = fair_fuel;
+        if fair_fuel {
+            crate::fair_fuel::install(&mut self.store);
+        }
         self.store
             .data_mut()
             .scheduler

@@ -10147,7 +10147,9 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `bigint_unary`, `bigint_width`/`_v2`, `bigint_from_number`,
   `bigint_from_string`, `bigint_from_value_v5`, `bigint_to_string`/`_v2`,
   `bigint_to_number`, `bigint_compare`, `bigint_compare_number`,
-  `bigint_compare_string`). The BigInt family is `varta_intrinsics::bigint`
+  `bigint_compare_string`), and the checked JSON parse `json_parse_v19`
+  ([shared decoder](#shared-checked-json-decoder-and-linked-json-wave-3)).
+  The BigInt family is `varta_intrinsics::bigint`
   over `varta-bigint` (both `no_std`); the host imports of v28–v37 call the
   same functions with a fuel-derived work budget and the frozen string
   limits, linked code with fuel as its only work bound (the bit capacity
@@ -10160,9 +10162,6 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `primitive_equal` (implemented by the same shared code, but on the string
   concatenation and union comparison paths a linked call costs far more fuel
   than the host call; linking them was measured and reverted),
-  `json_parse_v19` (its linked implementation exists behind a test switch
-  and costs 30 to 5,000 times the host import's fuel,
-  [shared decoder](#shared-checked-json-decoder-and-linked-json-wave-3)),
   and `json_stringify_owned` and the value18 readers (`value_*_v11`,
   `value_is_error_class_v7`, `value_log_v12`), which read layouts the
   `no_std` core does not hold yet. `bigint_from_value_v5` reads
@@ -10301,8 +10300,9 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
 
 #### Shared checked JSON decoder and linked JSON (wave 3)
 
-- **One decoder.** Every recoverable checked parse (`json_parse_v13` to
-  `json_parse_v19`, profiles v10 to v38) runs `varta_common::json::scan`, a `no_std`
+- **One decoder (implementation unified, output unchanged).** Every
+  recoverable checked parse (`json_parse_v13` to `json_parse_v19`, profiles
+  v10 to v38) runs `varta_common::json::scan`, a `no_std`
   decoder over the guest's UTF-16LE text read in place (no UTF-8
   transcoding), iterative at any depth. It produces a tape (every value in
   document order, completely checked) before any guest allocator call. Its
@@ -10335,8 +10335,8 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `validate_bounded` validates within `SchemaBounds` (`SchemaBounds::WASM`
   for v38). Neither formats through `core::fmt` (linked code cannot link the
   function tables it dispatches through).
-- **Linked JSON (test switch only).** `varta-intrinsics-wasm` exports
-  `json_parse_v19` with the host import's checks and outcomes: the input
+- **Linked JSON.** V38 links `json_parse_v19`: `varta-intrinsics-wasm`
+  exports it with the host import's checks and outcomes: the input
   byte limit, an empty and canonical exception channel (v9), the schema in
   the static region read and validated within `SchemaBounds::WASM`, schema
   version 18 and its descriptors, then the shared decoder and builder.
@@ -10347,10 +10347,11 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `limits::Resource` code) in `resource_failure` and traps, and the runtime
   reports the host import's `JsonDecodeError::Limit`, word for word; any
   other failure (a malformed schema, descriptor or channel) is a trap.
-  Production modules do not link it: `HostOperation::linked` excludes it,
-  and only the compiler's test switch (`linked_json_test_hook`) links it,
-  because its decoding work costs guest fuel the host import does not (see
-  the [measurement](development-plan.md#linked-json-measurement-v38)).
+  The runtime keeps the host import (a v38 module importing it is rejected);
+  the compiler's test switch `host_json_test_hook` compiles v38 modules
+  that import it, so tests compare both paths. The linked decoder's fuel is
+  in the [measurement](development-plan.md#linked-json-measurement-v38).
+  `json_stringify_owned` stays a host import, charged at the fair rates.
 - **Rooted scratch blocks.** Linked JSON's scratch (tape, frames, key sets)
   is not a reserved gap: the library's allocator, inside a JSON entry
   (`arena::scratch`), takes ordinary guest heap blocks from the guest
@@ -10379,6 +10380,34 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   keys ascending, then input order); value18 dictionaries are built
   unindexed (zero holes, zero table). A failed parse throws before the
   first value allocation, so no partial result exists.
+
+#### Fair host fuel (`fair_fuel`)
+
+Under v38 every host import charges the module's fuel for its work at the
+fixed rates of `varta_common::fuel`, part of the host-operation contract and
+published in the [embedding contract](embedding.md#fair-host-fuel-v38)
+(generated, drift-tested): `CALL` per call, `BYTE` per byte of a string
+argument read (through `host::input` and the UTF-16 readers) or of a string
+result written (`host::result*`), and for checked JSON `JSON_PARSE_UNIT` per
+input unit, `JSON_SCHEMA_TYPE` per schema type, `JSON_SCHEMA_FIELD` per
+record field or union member and `JSON_PARSE_VALUE` per decoded value,
+`JSON_STRINGIFY_VALUE` per value visited and `JSON_STRINGIFY_UNIT` per
+output unit. The call charge is taken by a store call hook (`CallingHost`)
+before the import runs; argument charges before the effect; result and JSON
+charges before the result is published (the parse charge before the first
+guest allocation). A charge the remaining fuel cannot cover sets the fuel to
+zero and fails with Wasmtime's out-of-fuel trap, which the turn reports as
+the ordinary typed fuel-budget error; a host failure caused by a charge is
+that error too, never a logged host status. Fuel the import's guest
+callbacks consume (allocator, retention helper) is guest fuel. Fuel-profile
+probes refund their call charge. Profiles before v38 charge nothing; a
+test-only switch (`Execution::rate_host_work`) charges an earlier profile at
+the same rates so fuel comparisons are like with like. The rates are
+calibrated against the linked equivalents
+([fair host fuel](development-plan.md#fair-host-fuel-v38)): `CALL` the
+cheapest linked call, `BYTE` Wasmtime's `memory.copy` rate, the JSON rates
+the fitted upper bound of the linked decoder's fuel per unit, value and
+schema node, so a host import never costs less than its linked equivalent.
 
 #### Web bytes (`web_bytes`)
 

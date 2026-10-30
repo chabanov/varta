@@ -17,11 +17,27 @@ fn compile(source: &str, profile: P) -> Vec<u8> {
     wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
     bytes
 }
+/// Test-only per-turn fuel (CLAUDE.md §11): the 24-member fixture parses 25
+/// events in one turn, which with JSON decoded in guest code takes about
+/// 1.1M fuel (the development plan's per-turn fuel recommendation).
+const TEST_FUEL_PER_TURN: u64 = 4 * abi::FUEL;
 fn run(source: &str, profile: P) -> Vec<String> {
-    VartaRuntime::new()
-        .run_wasm_bytes(&compile(source, profile), &[])
-        .unwrap_or_else(|e| panic!("{e}\n{source}"))
-        .lines
+    let budgets = varta_common::budget::BudgetRequest {
+        fuel_per_turn: Some(TEST_FUEL_PER_TURN),
+        ..Default::default()
+    };
+    let report = VartaRuntime::new().run_with(
+        &compile(source, profile),
+        RunOptions {
+            budgets,
+            budget_ceiling: Some(budgets),
+            ..RunOptions::default()
+        },
+    );
+    if let Some(failure) = report.failure {
+        panic!("{failure}\n{source}");
+    }
+    report.output.lines
 }
 fn logs(expected: &[&str]) -> Vec<String> {
     expected.iter().map(|l| format!("varta log: {l}")).collect()
@@ -292,6 +308,7 @@ fn the_24_member_union_survives_forced_collections() {
     let runtime = crate::VartaRuntime::new();
     let module = runtime.prepare_module(&bytes).unwrap();
     let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+    execution.store.set_fuel(TEST_FUEL_PER_TURN).unwrap();
     let instance = execution.instantiate_prepared(&module).unwrap();
     let store = &mut execution.store;
     let start = instance.get_func(&mut *store, "_start").unwrap();
@@ -543,7 +560,7 @@ fn a_v38_module_with_wide_unions_fails_as_v37_before_effects() {
     assert!(runtime.validate_module(&downgraded).is_err());
     assert!(runtime.run_wasm_bytes(&downgraded, &[]).is_err());
     assert_eq!(
-        runtime.run_wasm_bytes(&bytes, &[]).unwrap().lines,
+        run(include_str!("strict_member_cases/events.ts"), V38),
         logs(&EVENTS_LOG)
     );
 }

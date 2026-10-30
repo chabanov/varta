@@ -108,15 +108,17 @@ fn v38_static_data_beyond_one_page_runs_with_the_heap_after_the_extension() {
         })
         .unwrap();
     assert!(extension > 4 * UNITS, "{extension}");
-    let region = abi::StaticRegion::with_extension_pages(pages).unwrap();
     let memory = module
         .exports()
         .find_map(|export| export.ty().memory().cloned())
         .unwrap();
-    assert_eq!(memory.minimum(), region.minimum_pages());
     let runtime = VartaRuntime::new();
     let prepared = runtime.prepare_module(&bytes).unwrap();
-    assert_eq!(prepared.static_region(), region);
+    // The extension, then the intrinsic region of its linked JSON.
+    let region = prepared.static_region();
+    assert_eq!(region.extension_pages(), pages);
+    assert!(region.intrinsic_pages() > 0);
+    assert_eq!(memory.minimum(), region.minimum_pages());
     let run = runtime.run_wasm_bytes(&bytes, &[]).unwrap();
     assert_eq!(
         run.lines,

@@ -635,6 +635,12 @@ impl LanguageProfile {
     pub fn turn_budgets(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, wave 3: every host import charges the published fair
+    /// fuel of its work ([`crate::fuel`]); earlier profiles charge none.
+    #[must_use]
+    pub fn fair_fuel(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, linked-intrinsics stream: the pure intrinsics are linked
     /// into the guest Wasm from the `varta-intrinsics` library, so third-party
     /// hosts implement only effects. See [`Self::links`].
@@ -3043,6 +3049,7 @@ mod tests {
             H::StringToUpperCase16,
             H::BigIntBinary,
             H::BigIntFromValueV5,
+            H::JsonParseV19,
         ] {
             assert!(operation.linked() && v38.links(operation), "{operation:?}");
             assert!(operation.capability().is_none(), "{operation:?}");
@@ -3059,8 +3066,8 @@ mod tests {
             H::PromiseReact,
             H::TimerStartV2,
             H::JsonParseV18,
-            H::JsonParseV19,
             H::JsonStringifyV17,
+            H::JsonStringifyOwned,
             H::ValueTypeOfV10,
             H::ValueTypeOfV11,
             H::PrimitiveStringV5,

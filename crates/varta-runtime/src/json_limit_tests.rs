@@ -65,6 +65,13 @@ fn failure(run: Run) -> String {
 }
 
 const ROUND_TRIP: &str = include_str!("json_limit_cases/round_trip.ts");
+/// Test-only fuel budgets of the megabyte round trips: v38 decodes in guest
+/// code and charges the encoder's host work at the fair rates
+/// (`varta_common::fuel`), about 2,500 fuel per number round trip.
+const ROUND_TRIP_BUDGETS: u64 = 500;
+/// The round-trip fuel per 10,000 numbers the test pins (fair host fuel
+/// included), measured at 25.1M (`v38_json_round_trip_costs`).
+const ROUND_TRIP_FUEL_PER_10K: u64 = 30 * abi::FUEL;
 const LARGE_STRING: &str = include_str!("json_limit_cases/large_string.ts");
 const DICTIONARY: &str = include_str!("json_limit_cases/dictionary.ts");
 const DEPTH: &str = include_str!("json_limit_cases/depth.ts");
@@ -72,7 +79,7 @@ const DEPTH: &str = include_str!("json_limit_cases/depth.ts");
 #[test]
 fn v38_number_arrays_round_trip_past_1024_elements() {
     assert_eq!(
-        logs(run(ROUND_TRIP, V38, 50), ROUND_TRIP),
+        logs(run(ROUND_TRIP, V38, ROUND_TRIP_BUDGETS), ROUND_TRIP),
         lines(&["10000 10000 40003 true", "100000 100000 400003 true"])
     );
     // V37 keeps its 64 KiB JSON input ceiling (a fatal limit).
@@ -82,7 +89,7 @@ fn v38_number_arrays_round_trip_past_1024_elements() {
 #[test]
 fn v38_serializes_strings_past_the_host_result_buffer() {
     assert_eq!(
-        logs(run(LARGE_STRING, V38, 50), LARGE_STRING),
+        logs(run(LARGE_STRING, V38, ROUND_TRIP_BUDGETS), LARGE_STRING),
         lines(&["655360 786434 655360 true"])
     );
 }
@@ -223,11 +230,13 @@ fn v38_json_round_trip_costs() {
             }
         )
     };
-    for count in [10_000, 100_000] {
-        let base = run(&program(count, false), V38, 50);
+    // Linked decoding keeps its tape in guest memory: 100,000 numbers
+    // round-trip in `round_trip.ts`, this program's heap holds 50,000.
+    for count in [10_000, 50_000] {
+        let base = run(&program(count, false), V38, ROUND_TRIP_BUDGETS);
         let (base_fuel, base_pages) = (base.fuel, base.pages);
         assert!(base.result.is_ok());
-        let full = run(&program(count, true), V38, 50);
+        let full = run(&program(count, true), V38, ROUND_TRIP_BUDGETS);
         let (fuel, pages) = (full.fuel, full.pages);
         assert_eq!(
             logs(full, "round trip"),
@@ -238,10 +247,10 @@ fn v38_json_round_trip_costs() {
             fuel - base_fuel,
             fuel
         );
-        // A round trip stays far inside one production fuel budget per
-        // 10k elements and inside the 8 MiB memory budget.
+        // A round trip stays within its pinned fuel per 10k elements (guest
+        // decoding and fair host serialization) and the 8 MiB memory budget.
         assert!(
-            fuel - base_fuel < abi::FUEL * (count as u64 / 10_000),
+            fuel - base_fuel < ROUND_TRIP_FUEL_PER_10K * (count as u64 / 10_000),
             "{fuel}"
         );
         assert!(pages * abi::WASM_PAGE_BYTES as u64 <= abi::MAX_MEMORY_BYTES as u64);

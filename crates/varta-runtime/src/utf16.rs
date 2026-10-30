@@ -14,6 +14,9 @@ fn read(
     ptr: i32,
     len: i32,
 ) -> Result<Vec<u8>, wasmtime::Error> {
+    // V38 fair fuel: the argument's bytes (a negative length is rejected
+    // below).
+    crate::fair_fuel::bytes(caller, usize::try_from(len).unwrap_or(0))?;
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(wasmtime::Error::msg("missing memory"));
     };

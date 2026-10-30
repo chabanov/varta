@@ -76,11 +76,11 @@ pub mod suspension_test_hook {
     }
 }
 
-/// Test-only: compile v38 programs with checked JSON parsing linked into the
-/// guest (`json_parse_v19` as linked code) instead of imported.
+/// Test-only: compile v38 programs that import checked JSON parsing from the
+/// host (`json_parse_v19`) instead of linking it.
 #[cfg(any(test, feature = "suspension-test-hook"))]
-pub mod linked_json_test_hook {
-    /// Compile one source with linked checked JSON on this thread.
+pub mod host_json_test_hook {
+    /// Compile one source with the host's checked JSON import on this thread.
     pub fn compile_with_profile(
         source: &str,
         profile: varta_common::language::LanguageProfile,
