@@ -4705,6 +4705,80 @@ fn public_engine_shares_v35_web_types_across_modules_without_listing_preludes() 
 }
 
 #[test]
+fn public_engine_shares_the_v37_regexp_prelude_across_modules() {
+    // A text module returns match arrays and RegExps to the entry module;
+    // neither imports RegExp, both use regex literals, and one RegExp class
+    // serves both. Module metadata never lists the prelude.
+    use varta_common::language::LanguageProfile;
+    struct TextSources;
+    impl ModuleLoader for TextSources {
+        fn resolve(&self, _: &Path, name: &str) -> Result<PathBuf, CompilerError> {
+            match name {
+                "./text.ts" => Ok("text.ts".into()),
+                _ => Err(CompilerError::Module("unknown virtual dependency".into())),
+            }
+        }
+        fn load(&self, path: &Path) -> Result<String, CompilerError> {
+            match path.to_str() {
+                Some("text.ts") => Ok(
+                    "export function pair(text:string):RegExpExecArray|null{return /(\\w+)=(\\w+)/.exec(text);}\
+                     export function separator():RegExp{return /\\s*,\\s*/;}"
+                        .into(),
+                ),
+                _ => Err(CompilerError::Module("unknown virtual module".into())),
+            }
+        }
+    }
+    let compile = |profile| {
+        varta_compiler::compile_modules_with_profile(
+            ModuleSource {
+                path: "entry.ts".into(),
+                text: "import {pair,separator} from './text.ts';\
+                       export function main():void{\
+                       const m=pair('a k=v');\
+                       const sep=separator();\
+                       console.log(m===null?'none':`${m.index} ${m[1]??'-'} ${m[2]??'-'}`);\
+                       console.log(JSON.stringify('a , b,c'.split(sep))+' '+String(sep instanceof RegExp));\
+                       console.log('x1y2'.replace(/\\d/g,'#'));}"
+                    .into(),
+            },
+            &TextSources,
+            profile,
+        )
+    };
+    let compiled = compile(LanguageProfile::CheckedF64Utf16V37).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    let modules: Vec<_> = compiled
+        .modules
+        .iter()
+        .map(|module| (module.path.clone(), module.imports.clone()))
+        .collect();
+    assert_eq!(
+        modules,
+        [
+            (PathBuf::from("text.ts"), vec![]),
+            (PathBuf::from("entry.ts"), vec![PathBuf::from("text.ts")]),
+        ]
+    );
+    assert_eq!(
+        VartaRuntime::new()
+            .run_wasm_bytes(&compiled.wasm, &[])
+            .unwrap()
+            .lines,
+        [
+            "varta log: 2 k v",
+            r#"varta log: ["a","b","c"] true"#,
+            "varta log: x#y#",
+        ]
+    );
+    let frozen = compile(LanguageProfile::CheckedF64Utf16V36)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(!frozen.contains("v37"), "{frozen}");
+}
+
+#[test]
 fn public_engine_links_function_fields_and_defaulted_callbacks_across_modules_in_v36() {
     // The pilot's backoff helper (a defaulted `random: () => number =
     // Math.random` parameter) and a transport hooks interface with optional

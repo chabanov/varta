@@ -684,6 +684,19 @@ pub(crate) enum Intrinsic {
     Identity,
 }
 
+/// Engine-internal guest operations of the v37 RegExp prelude
+/// (`lower::regexp`); they make no host call and read no capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RegExpIntrinsic {
+    /// `(program, input, start, sticky)`: one matcher run; the capture slots
+    /// as a string, or the empty string without a match.
+    Exec,
+    /// `(captures, slot)`: one capture slot as a Number, -1 when unset.
+    Slot,
+    /// `(text, index)`: the code unit at `index` as a Number, -1 outside.
+    Unit,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MathIntrinsic {
     Abs,
@@ -799,6 +812,8 @@ pub(crate) enum Expression {
     NumberSameValue(Box<Expr>, Box<Expr>),
     Negative(Box<Expr>),
     Math(MathIntrinsic, Vec<Expr>),
+    /// A v37 RegExp prelude guest operation.
+    RegExp(RegExpIntrinsic, Vec<Expr>),
     NumberPredicate(NumberPredicate, Vec<Expr>),
     ToBoolean(Box<Expr>),
     Not(Box<Expr>),

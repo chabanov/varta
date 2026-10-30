@@ -12193,6 +12193,102 @@ fn function_fields_stay_rejected_by_v35_projects() {
     assert!(!text.contains("varta log:"), "{text}");
 }
 
+/// V37 RegExp through `varta dev`, both artifacts, both binaries and the
+/// packaged executable: two modules use regex literals, a constant `new
+/// RegExp`, match arrays and the regex string methods without importing
+/// anything, and no capability is granted or needed.
+#[test]
+fn pilot_profile_v37_runs_regexp_in_dev_and_source_free_artifacts() {
+    let project = RegressionProject::new(
+        "import {joinUrl,lines} from './util.ts';export function main():void{\
+         console.log(joinUrl('https://api.example.com//','/v1/models'));\
+         console.log(JSON.stringify(lines('event:a\\r\\ndata:1\\n\\n')));\
+         const m=/(?<key>\\w+)=(?<value>\\w+)/.exec('x k=v');\
+         if(m!==null){console.log(`${m.index} ${m[0]} ${m[1]??'-'} ${m.length}`);}\
+         const words=new RegExp('\\\\b\\\\w','g');\
+         console.log('one two'.replace(words,(c)=>'['+c+']')+' '+'a1b22'.split(/\\d+/).length);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/util.ts"),
+        "export function joinUrl(base:string,path:string):string{\
+         if(/^https?:\\/\\//i.test(path))return path;\
+         return base.replace(/\\/+$/,'')+'/'+path.replace(/^\\/+/,'');}\
+         export function lines(buffer:string):string[]{const found:string[]=[];\
+         let at=buffer.search(/\\r\\n|\\r|\\n/);\
+         for(;at!==-1;at=buffer.search(/\\r\\n|\\r|\\n/)){\
+         const matched=/\\r\\n|\\r|\\n/.exec(buffer.slice(at))![0];\
+         found.push(buffer.slice(0,at));buffer=buffer.slice(at+matched.length);}return found;}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v37");
+    let expected = [
+        "varta log: https://api.example.com/v1/models",
+        r#"varta log: ["event:a","data:1",""]"#,
+        "varta log: 2 k=v k 3",
+        "varta log: [o]ne [t]wo 3",
+    ];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    // `check --json` lists the program's modules, not the RegExp prelude.
+    let check = project.command(&["check", "--json"]);
+    assert!(check.status.success(), "{}", combined(&check));
+    assert!(!String::from_utf8_lossy(&check.stdout).contains("<varta>"));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn regexp_stays_rejected_by_v36_projects_and_names_v37_limits() {
+    let project = RegressionProject::new(
+        "export function main():void{console.log(String(/a+/.test('aa')));}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v36");
+    let old = project.command(&["dev"]);
+    assert!(!old.status.success());
+    let text = combined(&old);
+    assert!(!text.contains("varta log:"), "{text}");
+    assert!(!text.contains("v37"), "{text}");
+    fs::write(
+        project.0.join("src/main.ts"),
+        "export function main():void{console.log(String(/(a)\\1/.test('aa')));}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v37");
+    let backreference = project.command(&["dev"]);
+    assert!(!backreference.status.success());
+    let text = combined(&backreference);
+    assert!(
+        text.contains("unsupported RegExp backreference \\1"),
+        "{text}"
+    );
+    assert!(text.contains("src/main.ts:1:"), "{text}");
+}
+
 #[test]
 fn web_types_stay_rejected_by_v34_projects() {
     let project = RegressionProject::new(

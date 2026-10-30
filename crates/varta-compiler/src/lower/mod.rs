@@ -413,6 +413,7 @@ mod record_writes;
 mod records;
 mod reduce_inference;
 mod references;
+mod regexp;
 mod results;
 mod shared_unions;
 mod signature;

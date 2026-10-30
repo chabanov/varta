@@ -38,6 +38,7 @@ impl Lower<'_> {
         mode: Mode,
     ) -> Result<Vec<S>> {
         let span = pattern.span;
+        let value = self.match_array_values(value)?;
         let (source, ty, mut roots, mut body) = self.pattern_source(value, true)?;
         if let Type::Tuple(_) = ty {
             body.extend(self.tuple_binding_pattern(pattern, local(span, source, ty), mode)?);

@@ -133,6 +133,12 @@ The v30 deletion increment adds three cases with reviewed Node.js output. Requir
 closed fields, descriptors, object/Symbol keys and arbitrary dynamic properties
 remain outside this checked increment; the CORE ledger stays Partial.
 
+The v37 RegExp stream adds two RegExp cases next to the original `regexp-test`
+gap: grouped global `exec` with `lastIndex` and Unicode/case flags, and the
+regex string methods with templates, captures in `split` and a replacer. All
+three remain known gaps while the inventory pins v36; under v37 they produce
+exactly their manifest output, which matches Node.js v24.20.0.
+
 The v30 object-operation increment adds optional-record deletion, primitive delete
 keys and Object.entries snapshots for closed records and typed arrays. Five new
 pinned cases cover key order, side effects, sparse presence and shared child

@@ -1220,7 +1220,39 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "RegExp values and matching are not implemented."
+        "reason": "RegExp is admitted from checked-f64-utf16-v37 (ahead-of-time linear-time matcher); this inventory pins checked-f64-utf16-v36."
+      }
+    },
+    {
+      "id": "regexp-exec-groups",
+      "feature": "regexp",
+      "path": "cases/regexp-exec-groups.ts",
+      "sha256": "7fcbf0bd8f70cfbaa741b6ea0f98548c2ce46be81811aedf7113012ce2ff6656",
+      "stdout": [
+        "varta log: 0:a:1@3 4:b:@6 7:c:33@11 0",
+        "varta log: truetrue2"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "RegExp is admitted from checked-f64-utf16-v37 (ahead-of-time linear-time matcher); this inventory pins checked-f64-utf16-v36."
+      }
+    },
+    {
+      "id": "regexp-string-methods",
+      "feature": "regexp",
+      "path": "cases/regexp-string-methods.ts",
+      "sha256": "78dec3dfb57bcebead84c8380786d505e7830850669f538f2749a043b67bb24c",
+      "stdout": [
+        "varta log: Smith, John a+b+c",
+        "varta log: [\"a\",\"1\",\"b\",\"2\",\"c\"] [\"a\",\"b\"]",
+        "varta log: 1@1;22@3; 4",
+        "varta log: 3 3"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "unsupported_syntax",
+        "reason": "RegExp is admitted from checked-f64-utf16-v37 (ahead-of-time linear-time matcher); this inventory pins checked-f64-utf16-v36."
       }
     },
     {

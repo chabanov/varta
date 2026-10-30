@@ -362,6 +362,7 @@ impl Eraser {
             E::Math(_, args)
             | E::NumberPredicate(_, args)
             | E::Intrinsic(_, args)
+            | E::RegExp(_, args)
             | E::Call(_, args)
             | E::Host(_, args)
             | E::CheckedBigIntHost { args, .. } => {

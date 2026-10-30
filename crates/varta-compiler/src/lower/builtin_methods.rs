@@ -68,6 +68,7 @@ impl Lower<'_> {
                 .map(Some);
         }
         match (string, receiver.ty) {
+            (Some((_, "stringSplit")), Type::String) => self.string_split(call, receiver).map(Some),
             (Some((_, function)), Type::String) => self
                 .engine_call(
                     (&TEXT, function, &[]),
@@ -97,6 +98,37 @@ impl Lower<'_> {
                 )),
                 receiver.span,
             )),
+        }
+    }
+    /// `text.split(separator?, limit?)`, the one dispatch path of string
+    /// `split`: a RegExp separator (v37 `regexp`) splits through the RegExp
+    /// prelude, every other separator through the text prelude.
+    fn string_split(&mut self, call: &ast::CallExpr, receiver: Expr) -> Result<Expr> {
+        let Some(first) = call.args.first().filter(|arg| arg.spread.is_none()) else {
+            return self.engine_call(
+                (&TEXT, "stringSplit", &[]),
+                vec![receiver],
+                &call.args,
+                call.span,
+            );
+        };
+        if !self.types.profile.regexp() {
+            return self.engine_call(
+                (&TEXT, "stringSplit", &[]),
+                vec![receiver],
+                &call.args,
+                call.span,
+            );
+        }
+        let separator = self.expr(&first.expr)?;
+        match self.regexp_split(call, receiver, separator)? {
+            Ok(split) => Ok(split),
+            Err((receiver, separator)) => self.engine_call(
+                (&TEXT, "stringSplit", &[]),
+                vec![receiver, separator],
+                &call.args[1..],
+                call.span,
+            ),
         }
     }
     /// `array.join(separator?)` over primitive elements.

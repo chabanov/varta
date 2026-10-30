@@ -2982,3 +2982,43 @@ Contract: [collections and binary text](architecture.md#collections-and-binary-t
   diagnostics, the v36 frozen digests, the host-ABI-33 import test
   (`collection_host_imports_require_host_abi_33`), the public API
   cross-module test and the CLI smoke test through both binaries.
+
+### RegExp (`regexp`)
+
+- Gate every admission on `LanguageProfile::regexp()`; v36 and earlier must
+  keep rejecting regex literals, `new RegExp` and the regex string methods
+  with their old diagnostics and bytes (`regexp_stays_rejected_before_v37`,
+  `regexp_stays_rejected_by_v36_projects_and_names_v37_limits`).
+- Patterns compile only at compile time (`varta-compiler` `regexp`): literals
+  and `new RegExp` whose arguments are string literals or substitution-free
+  templates. Never add a host regex import or a run-time pattern compiler
+  without a new contract: the linear-time and scratch bounds are proven by
+  the compiler.
+- Keep the matcher backtracking-free: no construct may make a thread's future
+  depend on more than its instruction, its position and which enclosing
+  empty-check registers hold that position; the visited set is keyed by
+  exactly that state (`program::NESTING`, at most `MAX_NESTING` levels).
+  Every optional iteration of a nullable body with captures needs its
+  `CHECK`; differential fuzzing against Node found the cases where keying by
+  the instruction alone is wrong. Backreferences, lookaround, `\p{…}`, modifiers,
+  duplicate group names and the `d`/`v` flags stay rejected by name
+  (`RegExpError::Unsupported`); syntax errors keep V8's text.
+- Program format changes (`regexp::program`) bump `FORMAT_VERSION` and change
+  the compiler and the guest matcher together; programs are data, so their
+  limits (`MAX_PROGRAM_UNITS`, `MAX_SCRATCH_BYTES`) are compile-time errors,
+  never traps.
+- The lean program must give exactly the full program's slots 0 and 1; use it
+  only where no capture is observable.
+- Case-insensitive matching widens characters and classes at compile time
+  (`regexp::case`); the guest matcher never folds case.
+- The prelude (`prelude/regexp.ts`) may call `varta.regexp.*`; it must not
+  make host calls on any path a program reaches (`charCodeAt`, `typeof` and
+  equality on unions, Number formatting and template numbers are host
+  operations), which `regexps_need_no_capability_and_add_no_host_import`
+  checks.
+- Compiler hooks reach prelude members only by name (`RegExp` private statics,
+  match-array fields `first`/`values`); renaming a prelude member changes
+  `lower::regexp` in the same change.
+- Behaviour tests compare against pinned Node 24 output (`regexp_cases`);
+  regenerate expectations only from Node. Adversarial inputs stay small enough
+  for Node to answer, since Node backtracks exponentially on them.
