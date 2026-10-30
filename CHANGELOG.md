@@ -1021,6 +1021,11 @@ in [conformance/README.md](conformance/README.md).
   ignored, embedded fields give their value, names are flat strings and only
   ARIA "name from contents" roles take their content (a `listitem` no longer
   has a name). The headless snapshot omits empty names.
+- V38 resolves `./x.js` to `x.ts` or `x.tsx` (both existing is an ambiguous
+  import error, neither names both candidates) and `./x.jsx` to `x.tsx`, as
+  TypeScript's extension substitution does; probes use the pinned no-follow
+  root. V31–v37 keep `.js` → `.ts`.
+
 - Dispatch Array.lastIndexOf to reverse search instead of Array.indexOf. Omitted
   positions start at the final element; explicit undefined/NaN select zero,
   positive infinity clamps to the final index and positions below -length miss.

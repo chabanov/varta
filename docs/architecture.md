@@ -10104,6 +10104,25 @@ symlinks are rejected. Inputs must be bounded regular UTF-8 files. The explicitl
 configured entry retains support for legacy layouts outside the config directory;
 this does not expand the boundary for discovered dependencies.
 
+Profile v38 (`tsx()`) extends the specifier mapping, following TypeScript's
+extension substitution under `node16`/`nodenext` and `bundler` resolution
+(`./x.js` tries `x.ts`, then `x.tsx`; `./x.jsx` tries `x.tsx`; TypeScript
+then falls back to declaration and JavaScript files, which Varta never
+loads). An explicit `./x.tsx` specifier names that file. A `./x.js`
+specifier probes `x.ts` and then `x.tsx` in that order: exactly one must
+exist, and it is the module identity. Where TypeScript silently prefers
+`x.ts`, Varta rejects the import when both exist ("ambiguous import"; rename
+one or import it with its explicit `.ts`/`.tsx` extension) and reports both
+candidates when neither exists, as module errors at the import site. A
+`./x.jsx` specifier names `x.tsx` only, never `x.ts`, without probing. The
+probe is a no-follow metadata lookup through the same pinned root
+descriptor, with no-follow directory opens at every component: a symlinked
+directory on the way fails the import, and a symlinked candidate counts as
+existing, so loading it is then rejected. Probing never reads a file; only
+the resolved source is loaded, within the same path, size and graph
+budgets. Profiles v31–v37 keep `./x.js` → `x.ts` without probing and reject
+`.jsx` (and `.tsx`) specifiers.
+
 Profile v32 also adds [default exports](#default-exports-default_exports):
 `export default` declarations and bindings, `import x from` and `default` in
 export and re-export lists, linked as the name `default`.

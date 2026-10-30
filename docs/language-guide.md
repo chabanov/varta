@@ -5491,3 +5491,12 @@ this button is `button "Reasoning"`:
   <span aria-hidden="true">◇</span><span>Reasoning</span><span aria-hidden="true">▸</span>
 </button>
 ```
+
+A `.tsx` module is imported with TypeScript's ESM specifiers: `./markdown.js`
+names `markdown.ts` or `markdown.tsx` (if both exist the import is ambiguous
+and fails; write the explicit extension), and `./markdown.jsx` names
+`markdown.tsx` only:
+
+```ts
+import { renderInline } from './markdown.js'; // loads ./markdown.tsx
+```

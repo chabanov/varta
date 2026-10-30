@@ -3480,6 +3480,11 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
 
 - Parse JSX only in `.tsx` modules of a profile with `tsx()`; every other
   module, and every module of earlier profiles, keeps the TypeScript syntax.
+- The project loader maps `./x.js` to `x.ts` or `x.tsx` (exactly one may
+  exist; both or neither is a module error) and `./x.jsx` to `x.tsx` only
+  under `tsx()`. Probes walk the pinned root with no-follow at every
+  component and never read a file; v31–v37 keep `.js` → `.ts` without
+  probing. Never add index/directory lookup or JavaScript loading here.
 - Desugar JSX to ordinary checked TypeScript before scanning, so imports,
   prelude triggers and the type checker see plain calls. Generated nodes
   carry the span of their JSX element; program expressions keep their own.
