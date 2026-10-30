@@ -16134,7 +16134,7 @@ fn budget_reports_list_every_turn_in_dev_run_and_both_binaries() {
             budget[0].starts_with("varta budget: turn 1 main: fuel "),
             "{stderr}"
         );
-        assert!(budget[0].contains("/1000000, host calls "), "{stderr}");
+        assert!(budget[0].contains("/8000000, host calls "), "{stderr}");
         assert!(budget[0].contains("ms (5000 ms per execution)"), "{stderr}");
         assert!(
             budget[1].starts_with("varta budget: turn 2 timer: fuel "),
@@ -16454,7 +16454,7 @@ fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     assert!(String::from_utf8_lossy(&plain.stdout).contains("varta log: 20540 40 5"));
     let report = String::from_utf8_lossy(&profiled.stderr);
     assert!(report.contains("varta fuel profile: "), "{report}");
-    assert!(report.contains("of 1000000 fuel"), "{report}");
+    assert!(report.contains("of 8000000 fuel"), "{report}");
     let row = |name: &str| {
         report
             .lines()
