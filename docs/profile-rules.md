@@ -3618,8 +3618,11 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   platform backend (`native_math::Platform`) there, and error messages stay
   the host's.
 - The value layout has one owner: `varta-common`'s `no_std` core (`std`
-  feature off: `abi`, `memory`, `value` constants and `PrimitiveBox`,
-  `limits` constants, `text`). The intrinsics crates depend on it with
+  feature off: `abi`, `memory`, the `value` constants and readers
+  (`PrimitiveBox`, `ReferenceBox`, `Vector`, `Dictionary`, `ErrorObject`,
+  `validate_aggregate_in`, `ModuleBounds`), the closure envelope check
+  `function::check_closure_envelope`, `bigint::BigIntView::check`, the
+  `limits` constants with `limits::WASM`, `text`). The intrinsics crates depend on it with
   `default-features = false` and never restate a constant, tag or reader.
   A reader the library needs moves into that core (gate only what names
   `std`-only modules); add every newly compiled common file to
@@ -3658,11 +3661,32 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   and add an adversarial program for every new linked family (bounded
   scratch in `BOUNDED`, input-proportional scratch in `PROPORTIONAL`).
 - Before linking an operation, measure its fuel on the hot paths it serves
-  (`codegen_v2_fuel_ceilings_hold`, `every_v37_case_runs_identically_under_v38`):
-  linked code costs its instructions, a host call only its charged work.
-  `primitive_to_string_v5`, `primitive_to_number_v5`, `primitive_compare`
-  and `primitive_equal` stay host imports for this reason until a cheap
-  number and string path exists.
+  (`codegen_v2_fuel_ceilings_hold`, `every_v37_case_runs_identically_under_v38`,
+  `case_corpus_behaves_identically_under_v38`): linked code costs its
+  instructions, a host call only its charged work. Value readers linked
+  without a fast path cost thousands of fuel per call (a 3-entry dictionary
+  validated in about 17,000), so they need one.
+- Fast paths (`emit/strings/primitives.rs`, `emit/strings/readers.rs`,
+  selected by `strings::Helper::fast_path`): a helper may answer a cell only
+  where it answers exactly what the linked operation answers for a canonical
+  cell, and must call the linked operation for every other cell (a tag the
+  helper does not know included, so a noncanonical cell still traps in the
+  linked reader). `linked_value_tests` compares v37, v38 and a v38 build
+  whose helpers only call their linked operation (`linked_only`) over the
+  corpora; extend those corpora with every new fast-path case, and keep
+  `fast_paths_never_cost_more_fuel_than_host_calls` green.
+- Link only what a helper reaches: helper variants follow the kinds their
+  cells may hold (`PrimitiveText(bool)`, `PrimitiveNumber(bool)`,
+  `PrimitiveOrder(Cells)`, `PrimitiveEquals(Cells)`), the v38 lowering
+  narrows conversion, concatenation and comparison cells to those kinds
+  (`unions::cells_hold_bigint`, `unions::comparison_cells`), and a helper
+  imports (to be linked) the BigInt-free `primitive_to_string`/
+  `primitive_to_number` for Numbers and strings and the value18 operation
+  only for BigInts. Never widen a v37 cell or change a v37 import.
+- A helper that boxes a value for its linked call (`NumberText`,
+  `StringNumber`) roots a reference operand while the cell is allocated and
+  restores the root stack before the linked call (which allocates nothing in
+  the guest heap).
 - Linked code runs in memory 0. The linker places its stack and reached data
   in the module's intrinsic region (`varta.intrinsics`, sized at emission by
   `link::region_pages` before any code that depends on the heap base is
@@ -3686,10 +3710,11 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   charged fuel, not host calls, and its region pages count against the
   memory budget.
 - One v38 path per operation: where codegen v2 has an inline fast path
-  (`charAt`/`s[i]` ASCII table, integral `%`), the linked intrinsic is its
-  general fallback through the same helper (`text_codes::char_at`,
-  `remainder`); never emit a second, independent v38 implementation, and
-  never a host import for a linked operation.
+  (`charAt`/`s[i]` ASCII table, integral `%`, the primitive conversions and
+  comparisons, the value18 readers), the linked intrinsic is its general
+  fallback through the same helper (`text_codes::char_at`, `remainder`,
+  `primitives`, `readers`); never emit a second, independent v38
+  implementation, and never a host import for a linked operation.
 - A fuel-profile build is instrumented before linking; the linked library
   carries no probes and its fuel counts toward the calling function.
 

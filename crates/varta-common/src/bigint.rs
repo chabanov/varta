@@ -108,6 +108,14 @@ impl<'a> BigIntView<'a> {
         BigIntView::from_payload(&payload)?;
         Ok(payload)
     }
+    /// Validate the managed BigInt `handle` exactly as [`Self::read`] does,
+    /// in any memory (in place where it lends the payload); whether the
+    /// value is zero.
+    pub fn check<M: Memory + ?Sized>(memory: &M, handle: u64) -> Result<bool, ValueAbiError> {
+        let (pointer, length) = block(memory, handle)?;
+        let payload = memory.borrow(pointer, length).ok_or_else(invalid)?;
+        Ok(BigIntView::from_payload(&payload)?.is_zero())
+    }
     #[must_use]
     pub fn sign(self) -> Sign {
         self.sign

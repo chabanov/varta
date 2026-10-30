@@ -368,7 +368,8 @@ fn unreachable_async_functions_and_their_frames_are_removed() {
            const s = await f7();\n\
            let sum = 0;\n\
            for (const d of digits()) { sum = sum + d; }\n\
-           console.log(String(v) + s + String(sum));\n\
+           // No Number text: it links intrinsics (`linked_intrinsics`).\n\
+           console.log((v === 4 ? \"4\" : \"?\") + s + (sum === 3 ? \"3\" : \"?\"));\n\
          }\n",
     );
     let functions = |bytes: &[u8]| {

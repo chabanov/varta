@@ -18,6 +18,10 @@ export function main(): void {
   console.log((255).toString(16) + (1.5).toFixed(2) + (12345).toExponential(1) + (0.5).toPrecision(3));
   console.log(parseInt("ff", 16) + parseFloat("1.5e3"));
   console.log(String(pick(true)) + Number(pick(true)));
+  const u: unknown = pick(false);
+  const n: bigint | number = 5n;
+  console.log(typeof u + String(u === 2.5) + String(Array.isArray(u)) + String(u instanceof RangeError));
+  console.log(String(pick(true) < pick(false)) + String(pick(true) == pick(false)) + String(n < 7));
   const s = "Straße";
   console.log(s.charAt(1) + s.charCodeAt(2) + s.toUpperCase() + s.toLowerCase());
 }
@@ -88,15 +92,24 @@ const COMMON_CORE: &[&str] = &[
     "crates/varta-common/src/value.rs",
     "crates/varta-common/src/value/error.rs",
     "crates/varta-common/src/value/primitive.rs",
+    "crates/varta-common/src/value/reference.rs",
+    "crates/varta-common/src/value/vector.rs",
+    "crates/varta-common/src/value/dictionary.rs",
+    "crates/varta-common/src/function.rs",
+    "crates/varta-common/src/function/view.rs",
 ];
 
 #[test]
 fn the_fingerprint_covers_every_compiled_common_core_file() {
     // Every common module the core build compiles is fingerprinted: a module
-    // declared without `#[cfg(feature = "std")]` in lib.rs or value.rs must
-    // be listed.
+    // declared without `#[cfg(feature = "std")]` (or `#[cfg(test)]`) in
+    // lib.rs, value.rs or function.rs must be listed.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../varta-common/src");
-    for (file, prefix) in [("lib.rs", ""), ("value.rs", "value/")] {
+    for (file, prefix) in [
+        ("lib.rs", ""),
+        ("value.rs", "value/"),
+        ("function.rs", "function/"),
+    ] {
         let source = std::fs::read_to_string(root.join(file)).unwrap();
         let mut gated = false;
         for line in source.lines() {
@@ -110,7 +123,7 @@ fn the_fingerprint_covers_every_compiled_common_core_file() {
                 assert!(COMMON_CORE.contains(&module.as_str()), "{module}");
             }
             if !line.starts_with("///") {
-                gated = line == "#[cfg(feature = \"std\")]";
+                gated = matches!(line, "#[cfg(feature = \"std\")]" | "#[cfg(test)]");
             }
         }
     }
@@ -405,4 +418,42 @@ fn every_linked_stack_pointer_write_is_checked_against_the_region() {
         }
     }
     assert_eq!(checks, 1, "one checked stack-pointer setter");
+}
+
+/// Code each linked conversion, comparison and value18 reader brings into a
+/// module on its own (the measurement of the development plan):
+/// `cargo test -p varta-compiler --lib linked_closure_sizes -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn linked_closure_sizes() {
+    let library = library().unwrap();
+    for name in [
+        "primitive_to_string",
+        "primitive_to_number",
+        "primitive_to_string_v6",
+        "primitive_to_number_v6",
+        "primitive_compare",
+        "primitive_equal",
+        "value_typeof_v11",
+        "value_truthy_v11",
+        "value_nullish_v11",
+        "value_is_array_v11",
+        "value_strict_equal_v11",
+        "value_nullish_equal_v11",
+        "value_is_error_class_v7",
+    ] {
+        let root = library.export(name).unwrap();
+        let closure = library.closure(&[root]).unwrap();
+        let code: usize = closure
+            .functions
+            .iter()
+            .filter_map(|&f| library.defined(f))
+            .map(|f| f.body.range().len())
+            .sum();
+        println!(
+            "{name}: {} functions, {code} code bytes, {} segments",
+            closure.functions.len(),
+            closure.segments.len()
+        );
+    }
 }

@@ -1,8 +1,18 @@
 //! Value v8 cells may retain a canonical managed record or array. Validation is
 //! shallow and bounded; consumers such as JSON validate traversed child values.
+//!
+//! The readers are generic over [`Memory`] (`no_std` core): host readers pass
+//! the instance's memory as a byte slice, the linked value readers of a v38
+//! module guest memory itself, through the same code.
 use super::*;
-use crate::abi;
-use std::collections::BTreeSet;
+use crate::{abi, memory::Memory};
+use alloc::{borrow::Cow, vec::Vec};
+
+/// Whether `items` are pairwise distinct; sorts them.
+pub(super) fn distinct<T: Ord>(items: &mut [T]) -> bool {
+    items.sort_unstable();
+    items.windows(2).all(|pair| pair[0] != pair[1])
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ReferenceBox {
@@ -11,7 +21,11 @@ pub struct ReferenceBox {
 }
 impl ReferenceBox {
     /// Header-only inspection for a typed walker that validates the selected payload.
-    pub fn read_envelope(data: &[u8], handle: u64, version: u32) -> Result<Self, ValueAbiError> {
+    pub fn read_envelope<M: Memory + ?Sized>(
+        data: &M,
+        handle: u64,
+        version: u32,
+    ) -> Result<Self, ValueAbiError> {
         let cell = PrimitiveBox::raw(data, handle)?;
         if !cell.kind.supported_by(version)
             || matches!(
@@ -27,6 +41,7 @@ impl ReferenceBox {
         })
     }
     /// Function cells require an immutable owner catalog, not metadata from the heap.
+    #[cfg(feature = "std")]
     pub fn read_with_catalog(
         data: &[u8],
         handle: u64,
@@ -36,6 +51,7 @@ impl ReferenceBox {
         Self::read_with_catalog_in(data, handle, catalog, work_budget, ModuleBounds::LEGACY)
     }
     /// [`Self::read_with_catalog`] within a module's bounds.
+    #[cfg(feature = "std")]
     pub fn read_with_catalog_in(
         data: &[u8],
         handle: u64,
@@ -50,9 +66,11 @@ impl ReferenceBox {
         }
         Self::read_in(data, handle, catalog.value_version, module)
     }
+    #[cfg(feature = "std")]
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
         Self::read_with_version(data, handle, REFERENCE_VALUE_VERSION)
     }
+    #[cfg(feature = "std")]
     pub fn read_with_version(
         data: &[u8],
         handle: u64,
@@ -64,8 +82,8 @@ impl ReferenceBox {
     /// `module`'s bounds (v38 `program_limits`: record descriptors and keys may
     /// live in the static extension, closures follow its function limits;
     /// v38 `data_limits`: strings and arrays follow its data limits).
-    pub fn read_in(
-        data: &[u8],
+    pub fn read_in<M: Memory + ?Sized>(
+        data: &M,
         handle: u64,
         version: u32,
         module: ModuleBounds,
@@ -99,7 +117,7 @@ impl ReferenceBox {
             ) {
                 return Err(invalid());
             }
-            crate::bigint::BigIntView::read(data, cell.payload)?;
+            crate::bigint::BigIntView::check(data, cell.payload)?;
         } else if cell.kind == ValueKind::Error {
             if !matches!(
                 version,
@@ -131,11 +149,11 @@ impl ReferenceBox {
             // binding cells) is checked; captured payloads stay opaque, and
             // no value reader invokes or decodes the function. Value14 cells
             // still need their owner catalog (`read_with_catalog`).
-            crate::function::ClosureView::read_envelope_within(data, cell.payload, &module.limits)?;
+            crate::function::check_closure_envelope(data, cell.payload, &module.limits)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
             aggregate(data, cell, version, module)?;
         } else {
-            PrimitiveBox::read_in(data, handle, module)?;
+            PrimitiveBox::read_limited(data, handle, module.limits.data.string_bytes)?;
         }
         Ok(Self {
             kind: cell.kind,
@@ -146,15 +164,12 @@ impl ReferenceBox {
 fn invalid() -> ValueAbiError {
     ValueAbiError("noncanonical reference union".into())
 }
-fn word(data: &[u8], at: usize) -> Result<u32, ValueAbiError> {
-    at.checked_add(4)
-        .and_then(|end| data.get(at..end))
-        .and_then(|s| s.try_into().ok())
-        .map(u32::from_le_bytes)
-        .ok_or_else(invalid)
+fn word<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u32, ValueAbiError> {
+    data.u32_at(at).ok_or_else(invalid)
 }
 /// Validate an aggregate handle without manufacturing a temporary union cell.
 /// This is shallow: traversing consumers must still validate child payloads.
+#[cfg(feature = "std")]
 pub fn validate_aggregate(
     data: &[u8],
     kind: ValueKind,
@@ -164,8 +179,8 @@ pub fn validate_aggregate(
     validate_aggregate_in(data, kind, payload, version, ModuleBounds::LEGACY)
 }
 /// [`validate_aggregate`] within a module's bounds.
-pub fn validate_aggregate_in(
-    data: &[u8],
+pub fn validate_aggregate_in<M: Memory + ?Sized>(
+    data: &M,
     kind: ValueKind,
     payload: u64,
     version: u32,
@@ -176,8 +191,8 @@ pub fn validate_aggregate_in(
     }
     aggregate(data, PrimitiveBox { kind, payload }, version, module)
 }
-fn aggregate(
-    data: &[u8],
+fn aggregate<M: Memory + ?Sized>(
+    data: &M,
     cell: PrimitiveBox,
     version: u32,
     module: ModuleBounds,
@@ -219,7 +234,7 @@ fn aggregate(
         || size < abi::STRING_HEADER_BYTES
         || length > size - abi::STRING_HEADER_BYTES
         || !size.is_multiple_of(HEAP_ALIGNMENT)
-        || header.checked_add(size).is_none_or(|end| end > data.len())
+        || header.checked_add(size).is_none_or(|end| end > data.size())
         || word(data, header + HEAP_FLAGS_OFFSET)? != HEAP_ALLOCATED_FLAG | flag as u32
     {
         return Err(invalid());
@@ -260,7 +275,7 @@ fn aggregate(
     }
     let mut slots = 0u128;
     let mut reference_mask = 0u128;
-    let mut names = BTreeSet::new();
+    let mut names: Vec<Cow<'_, [u8]>> = Vec::with_capacity(count);
     for index in 0..count {
         let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
         let key = word(data, entry)? as usize;
@@ -272,14 +287,13 @@ fn aggregate(
             || slots & (1u128 << slot) != 0
             || len > MAX_RECORD_KEY_BYTES
             || !module.static_region.contains(key, len)
-            || key.checked_add(len).is_none_or(|end| end > data.len())
+            || key.checked_add(len).is_none_or(|end| end > data.size())
         {
             return Err(invalid());
         }
-        let name = std::str::from_utf8(&data[key..key + len]).map_err(|_| invalid())?;
-        if !names.insert(name) {
-            return Err(invalid());
-        }
+        let name = data.borrow(key, len).ok_or_else(invalid)?;
+        core::str::from_utf8(&name).map_err(|_| invalid())?;
+        names.push(name);
         let kind = word(data, entry + 12)
             .ok()
             .and_then(ValueKind::from_tag)
@@ -316,6 +330,10 @@ fn aggregate(
                 }
             }
         }
+    }
+    // Field names are distinct.
+    if !distinct(&mut names) {
+        return Err(invalid());
     }
     // A wide record's edge mask trails its descriptor; its link word is zero.
     let (link, mask) = if is_wide_record(count) {

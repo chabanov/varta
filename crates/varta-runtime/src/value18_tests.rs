@@ -87,11 +87,20 @@ fn v38_modules_import_only_value18_readers_and_channel_v9() {
     let new = imports(&compile(source, V38));
     let old = imports(&compile(source, V37));
     // Every value17 reader the v37 module uses has its value18 replacement,
-    // and no other import changes except the owned serializer.
+    // imported or linked (`linked_intrinsics`: the value18 readers other
+    // than logging and JSON parsing are linked), and no other import changes
+    // except the owned serializer.
+    let mut replaced = 0;
     for op in &old {
-        if let Some(replacement) = new.iter().find(|n| n.value17_counterpart() == Some(*op)) {
+        let replacement = V38.host_operation(*op);
+        if replacement.value17_counterpart() == Some(*op) {
             assert!(!new.contains(op), "{op:?}");
             assert_eq!(replacement.minimum_abi(), abi::PROGRAM_LIMITS_VERSION);
+            assert!(
+                new.contains(&replacement) != V38.links(replacement),
+                "{replacement:?} in {new:?}"
+            );
+            replaced += 1;
         } else if *op != H::JsonStringifyV17 {
             assert!(
                 new.contains(op) || V38.links(*op),
@@ -99,11 +108,10 @@ fn v38_modules_import_only_value18_readers_and_channel_v9() {
             );
         }
     }
+    assert!(replaced >= 6, "{old:?}");
     assert!(
         new.iter()
-            .filter(|op| op.value17_counterpart().is_some())
-            .count()
-            >= 6,
+            .all(|op| op.value17_counterpart().is_none() || !V38.links(*op)),
         "{new:?}"
     );
     assert!(old.iter().all(|op| op.value17_counterpart().is_none()));

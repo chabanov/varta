@@ -3043,12 +3043,26 @@ mod tests {
             H::StringToUpperCase16,
             H::BigIntBinary,
             H::BigIntFromValueV5,
+            // Wave 3: the value18 conversions, the primitive comparisons and
+            // the value18 readers.
+            H::PrimitiveStringV6,
+            H::PrimitiveNumberV6,
+            H::PrimitiveCompare,
+            H::PrimitiveEqual,
+            H::ValueTypeOfV11,
+            H::ValueTruthyV11,
+            H::ValueNullishV11,
+            H::ValueIsArrayV11,
+            H::ValueStrictEqualV11,
+            H::ValueNullishEqualV11,
+            H::ValueIsErrorClassV7,
         ] {
             assert!(operation.linked() && v38.links(operation), "{operation:?}");
             assert!(operation.capability().is_none(), "{operation:?}");
             assert!(!operation.scheduler() && !operation.timer() && !operation.net());
         }
-        // Effects, logging, entropy and the layout-bound readers stay imports.
+        // Effects, logging, entropy, checked JSON and value logging stay
+        // imports; the value17 forms are never v38 operations.
         for operation in [
             H::LogString16,
             H::LogFloatV2,
@@ -3061,14 +3075,20 @@ mod tests {
             H::JsonParseV18,
             H::JsonParseV19,
             H::JsonStringifyV17,
+            H::JsonStringifyOwned,
+            H::ValueLogV12,
             H::ValueTypeOfV10,
-            H::ValueTypeOfV11,
             H::PrimitiveStringV5,
-            H::PrimitiveStringV6,
             H::BigIntFromValueV4,
-            H::PrimitiveCompare,
         ] {
             assert!(!v38.links(operation), "{operation:?}");
+        }
+        // Earlier profiles import the shared comparisons.
+        for profile in [
+            LanguageProfile::CheckedF64Utf16V29,
+            LanguageProfile::CheckedF64Utf16V37,
+        ] {
+            assert!(!profile.links(H::PrimitiveCompare) && !profile.links(H::PrimitiveEqual));
         }
         for &profile in SUPPORTED_PROFILES {
             if profile != v38 {

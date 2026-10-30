@@ -73,6 +73,24 @@ const BOUNDED: &[(&str, &str)] = &[
          for (const t of ts) { console.log(parseInt(t) + parseInt(t, 2) + parseInt(t, 36) + parseFloat(t)); }",
     ),
     (
+        "primitive conversions and comparisons",
+        "const xs: (number | string | bigint)[] = [1.7976931348623157e308, 5e-324, -2.2250738585072014e-308,
+           0.1, '  -1e-7  ', '0x1F', '9'.repeat(40), 12345678901234567890n, -5n];
+         let t = 0;
+         for (const a of xs) {
+           t = t + String(a).length + Number(a);
+           for (const b of xs) { if (a < b) { t++; } if (a == b) { t++; } }
+         }
+         console.log(t);",
+    ),
+    (
+        "value readers",
+        "const vs: unknown[] = [5n, -5n, 12345678901234567890n, 0n, 'x', null, [1], { a: 1 }];
+         let t = 0;
+         for (const a of vs) { for (const b of vs) { if (a === b) { t++; } } }
+         console.log(t);",
+    ),
+    (
         "BigInt from Number",
         "console.log(BigInt(1.7976931348623157e308).toString(36).length + BigInt(-9007199254740991).toString(2).length);",
     ),

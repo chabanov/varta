@@ -70,6 +70,20 @@ fn static_section(bytes: &[u8], pages: Option<u32>, extra: Option<u32>) -> Vec<u
     })
 }
 
+fn intrinsic_pages(bytes: &[u8]) -> u32 {
+    wasmparser::Parser::new(0)
+        .parse_all(bytes)
+        .find_map(|payload| match payload.unwrap() {
+            wasmparser::Payload::CustomSection(section)
+                if section.name() == abi::INTRINSIC_SECTION =>
+            {
+                Some(u32::from_le_bytes(section.data().try_into().unwrap()))
+            }
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
 fn declared_pages(bytes: &[u8]) -> Option<u32> {
     wasmparser::Parser::new(0)
         .parse_all(bytes)
@@ -108,7 +122,11 @@ fn v38_static_data_beyond_one_page_runs_with_the_heap_after_the_extension() {
         })
         .unwrap();
     assert!(extension > 4 * UNITS, "{extension}");
-    let region = abi::StaticRegion::with_extension_pages(pages).unwrap();
+    // The conversions this program makes link intrinsics, whose region
+    // follows the extension (`linked_intrinsics`).
+    let region = abi::StaticRegion::with_extension_pages(pages)
+        .and_then(|region| region.with_intrinsic_pages(intrinsic_pages(&bytes)))
+        .unwrap();
     let memory = module
         .exports()
         .find_map(|export| export.ty().memory().cloned())

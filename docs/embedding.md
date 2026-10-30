@@ -283,7 +283,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 56 |
+| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 45 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -353,7 +353,7 @@ under [Linked intrinsics pending](#linked-intrinsics-pending).
 <!-- generated:embedding-linked-intrinsics:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Profile | Linked, never imported | Linked stack |
 | --- | --- | --- |
-| `checked-f64-utf16-v38` | `bigint_from_value_v5`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
+| `checked-f64-utf16-v38` | `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 <!-- generated:embedding-linked-intrinsics:end -->
 
 - **One memory.** A linked module has exactly one memory, so every engine
@@ -388,23 +388,24 @@ under [Linked intrinsics pending](#linked-intrinsics-pending).
 
 #### Linked intrinsics pending
 
-V38 still imports the value18 primitive conversions
-(`primitive_to_string_v6`, `primitive_to_number_v6`) and comparisons
-(`primitive_compare`, `primitive_equal`): the reference host and the linked
-library share their code (`varta_intrinsics::bigint`), but they serve string
-concatenation and union comparisons, where a linked call costs far more fuel
-than the host call. It also imports the pure operations that read value
-layouts beyond primitive and BigInt cells: `json_parse_v19` and `json_stringify_owned`
-(checked JSON over records, arrays, dictionaries and schemas; the parser also
-allocates through the guest's value ABI exports) and the value18 readers
-(`value_*_v11`, `value_is_error_class_v7`; `value_log_v12` renders and then
-logs, and logging stays a host effect). The value18 readers validate every
-dictionary's hash table against its entries
-([dictionary hashing](architecture.md#dictionary-hashing-dictionary_hashing)).
-Their contracts stay [unstable](#what-is-unstable); linking them needs the
-reference, record, array, dictionary, Error and closure-envelope readers in
-the `no_std` core and allocating linked call sites, and is the remaining work
-of the v38 linked-intrinsics stream
+V38 links the value18 primitive conversions (`primitive_to_string_v6`,
+`primitive_to_number_v6`), the comparisons (`primitive_compare`,
+`primitive_equal`) and the value18 readers (`value_typeof_v11`,
+`value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`,
+`value_strict_equal_v11`, `value_nullish_equal_v11`,
+`value_is_error_class_v7`): the compiler answers their common cases inline
+and links the shared library code behind that
+([fast paths](architecture.md#linked-intrinsics-linked_intrinsics)). Three
+imports still read value layouts beyond primitive and BigInt cells:
+`json_parse_v19` and `json_stringify_owned` (checked JSON over records,
+arrays, dictionaries and schemas; the parser also allocates through the
+guest's value ABI exports) and `value_log_v12` (logging stays a host effect,
+but its rendering of records, arrays and dictionaries is the JSON diagnostic
+renderer). A host that implements only the documented effects runs every v38
+module that imports none of the three; their contracts stay
+[unstable](#what-is-unstable). Linking them needs the JSON encoder and
+decoder in the `no_std` core and allocating linked call sites, the remaining
+work of the v38 linked-intrinsics stream
 ([development plan](development-plan.md#batch-v38-in-development)).
 
 ## Memory layout and encodings
@@ -751,8 +752,8 @@ import the operation, as contiguous runs in registry order.
 | `bigint_width_v2` | (i32, i64, i64) → (i32, i32) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v37` |
 | `json_parse_v15` | (i32, i32, i32, i32) → (i64) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
 | `json_stringify_v13` | (i32, i32, i32) → (i32, i32) | 28 | none | yes | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
-| `primitive_compare` | (i64, i64) → (f64) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v38` |
-| `primitive_equal` | (i32, i64, i64) → (i32) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v38` |
+| `primitive_compare` | (i64, i64) → (f64) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v37` |
+| `primitive_equal` | (i32, i64, i64) → (i32) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v37` |
 | `primitive_to_number_v2` | (i64) → (f64) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
 | `primitive_to_string_v2` | (i64) → (i32) | 28 | none | yes | yes | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
 | `value_is_array_v7` | (i64) → (i32) | 28 | none | — | — | `checked-f64-utf16-v29` – `checked-f64-utf16-v33` |
@@ -835,16 +836,16 @@ import the operation, as contiguous runs in registry order.
 | `net_request_start_v2` | (i32, i32) → (f64) | 34 | `net.request` | — | — | `checked-f64-utf16-v38` |
 | `permission_query` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `permission_request` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `primitive_to_number_v6` | (i64) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `primitive_to_string_v6` | (i64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
-| `value_is_array_v11` | (i64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `value_is_error_class_v7` | (i64, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `primitive_to_number_v6` | (i64) → (f64) | 34 | none | — | — | — |
+| `primitive_to_string_v6` | (i64) → (i32) | 34 | none | yes | yes | — |
+| `value_is_array_v11` | (i64) → (i32) | 34 | none | — | — | — |
+| `value_is_error_class_v7` | (i64, i32) → (i32) | 34 | none | — | — | — |
 | `value_log_v12` | (i64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `value_nullish_equal_v11` | (i64, i64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `value_nullish_v11` | (i64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `value_strict_equal_v11` | (i64, i64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `value_truthy_v11` | (i64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
-| `value_typeof_v11` | (i64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
+| `value_nullish_equal_v11` | (i64, i64) → (i32) | 34 | none | — | — | — |
+| `value_nullish_v11` | (i64) → (i32) | 34 | none | — | — | — |
+| `value_strict_equal_v11` | (i64, i64) → (i32) | 34 | none | — | — | — |
+| `value_truthy_v11` | (i64) → (i32) | 34 | none | — | — | — |
+| `value_typeof_v11` | (i64) → (i32) | 34 | none | yes | yes | — |
 | `view_commit` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 <!-- generated:embedding-host-operations:end -->
 
@@ -2243,8 +2244,10 @@ accepts that the format may change in a later profile:
 
 - value layouts of records, arrays, dictionaries, unions, errors, promises,
   functions and frames (value ABI 2 and later), and therefore every layout-bound
-  pure import: `json_*`, `value_*`, `union_*`, `primitive_*`, `bigint_*` and the
-  exception renderers;
+  pure import of the profiles that import them: `json_*`, `value_*`,
+  `union_*`, `primitive_*`, `bigint_*` and the exception renderers (v38 links
+  all of them except `json_parse_v19`, `json_stringify_owned` and
+  `value_log_v12`);
 - the exact text of `number_to_*` formatting and parsing beyond the ECMAScript
   algorithms the profile sections cite;
 - the structural rules of `varta.functions` beyond the

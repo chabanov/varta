@@ -10124,9 +10124,18 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   feature; without it the crate is a `no_std` + `alloc` core: the ABI
   constants and static region (`abi`), bounded guest-memory reads
   (`memory::Memory`, implemented for byte slices), the value tags, layout
-  constants and the primitive-cell reader `value::PrimitiveBox` (generic over
-  `Memory`, with the caller's string limit), the data-limit constants
-  (`limits`) and the UTF-16 helpers (`text`). `varta-intrinsics` and the shim
+  constants and the cell readers (`value::PrimitiveBox`,
+  `value::ReferenceBox`, `value::Vector`, `value::Dictionary` with the full
+  value18 hash-table validation, `value::ErrorObject`, the record check
+  `value::validate_aggregate_in`, the BigInt leaf check
+  `bigint::BigIntView::check` and the closure envelope check
+  `function::check_closure_envelope`, every one generic over `Memory`), the
+  module bounds `value::ModuleBounds` (with the v38 bounds
+  `ModuleBounds::v38`), the data and v38 program limits (`limits`, including
+  `limits::WASM` and `DataLimits::V38`) and the UTF-16 helpers (`text`).
+  Uniqueness checks sort borrowed keys and field names instead of building
+  sets, and array backings and presence bitmaps are checked a word at a
+  time. `varta-intrinsics` and the shim
   depend on it with `default-features = false` (checked by the boundary test
   `engine_dependencies_cannot_point_back_to_project_tooling_or_cli`), so host
   imports and linked code read cells with the same code; the profile tables
@@ -10141,7 +10150,13 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `number_remainder`, Number text (`number_to_string`, `number_to_fixed`,
   `number_to_exponential`, `number_to_precision`), `number_parse_int`,
   `number_parse_float`, the primitive-cell conversions `primitive_to_string`
-  and `primitive_to_number`, the UTF-16 operations `string_char_at16`,
+  and `primitive_to_number` and their value18 forms `primitive_to_string_v6`
+  and `primitive_to_number_v6`, the primitive comparisons `primitive_compare`
+  and `primitive_equal`, the value18 readers `value_typeof_v11`,
+  `value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`,
+  `value_strict_equal_v11`, `value_nullish_equal_v11` and
+  `value_is_error_class_v7` (`varta_intrinsics::value`, which the value8 to
+  value17 host readers call too), the UTF-16 operations `string_char_at16`,
   `string_char_code_at16`, `string_to_upper_case16` and
   `string_to_lower_case16`, every BigInt operation (`bigint_binary`,
   `bigint_unary`, `bigint_width`/`_v2`, `bigint_from_number`,
@@ -10154,18 +10169,55 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   still applies). An operation whose registry signature returns two i32
   values is exported returning one i64 (low word first) and the linker
   synthesizes an adapter of the registry signature that unpacks it. Still
-  host imports (see [pending](embedding.md#linked-intrinsics-pending)): the
-  value18 primitive conversions `primitive_to_string_v6`/
-  `primitive_to_number_v6` and the comparisons `primitive_compare`/
-  `primitive_equal` (implemented by the same shared code, but on the string
-  concatenation and union comparison paths a linked call costs far more fuel
-  than the host call; linking them was measured and reverted), and
-  `json_parse_v19`, `json_stringify_owned` and the value18 readers
-  (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12`), which read
-  layouts the `no_std` core does not hold yet. `bigint_from_value_v5` reads
-  only primitive and BigInt cells, whose value18 layout is value17's, so the
-  value18 BigInt conversion is linked like the other BigInt operations
-  (`bigint_from_value_v4` stays a v36/v37 host import).
+  host imports (see [pending](embedding.md#linked-intrinsics-pending)):
+  `json_parse_v19` and `json_stringify_owned` (checked JSON) and
+  `value_log_v12`, whose rendering of records, arrays and dictionaries is the
+  JSON diagnostic renderer; logging itself stays a host effect.
+  `bigint_from_value_v5` reads only primitive and BigInt cells, whose value18
+  layout is value17's, so the value18 BigInt conversion is linked like the
+  other BigInt operations (`bigint_from_value_v4` stays a v36/v37 host
+  import).
+- **Fast paths in front of linked conversions, comparisons and readers.**
+  Under codegen v2 each linked conversion, comparison and value18 reader is
+  called through a compiler helper that answers the common cases from the
+  cell's tag and payload and calls the linked operation for the rest
+  (`emit/strings/primitives.rs`, `emit/strings/readers.rs`). The guest
+  builds its cells itself, so a helper answers exactly what the linked code
+  answers for a canonical cell:
+  - `String(x)`: a string cell's own string (no copy; strings are
+    immutable), static spellings of booleans, `null` and `undefined`, and the
+    decimal digits of an integral Number below 2^53 in magnitude (`-0` is
+    `"0"`; every such integer is its shortest round-trip text), written two
+    digits at a time from a static digit-pair table; any other Number is the
+    BigInt-free `primitive_to_string`, a BigInt `primitive_to_string_v6`.
+    `String(n)` and `"…" + n` of a Number boxed only for the conversion take
+    the Number unboxed (`NumberText`) and box it only for the linked call.
+  - `Number(x)`: Numbers, booleans, `null`, `undefined` and strings of 1 to
+    15 ASCII decimal digits inline; other strings `primitive_to_number`, a
+    BigInt `primitive_to_number_v6`. A string boxed only for the conversion
+    is read unboxed (`StringNumber`) and boxed, rooted while it is allocated,
+    only for the linked parser.
+  - Comparisons (`<`, `<=`, `>`, `>=`, `==`, `===`): two strings by UTF-16
+    code units (`Compare`, `StringEquals`), same kinds by value, different
+    kinds unequal under `===` and nullish under `==` as ECMAScript defines
+    them, and every other pair numerically: Number-like kinds inline, digit
+    strings by the digit reader, other strings by `primitive_to_number` and
+    BigInts below 2^32 in magnitude exactly. Only a BigInt with a string
+    (`StringToBigInt`) or a larger BigInt reaches `primitive_compare` or
+    `primitive_equal`.
+  - Readers: `typeof` is a static spelling, truthiness, nullishness, array
+    tests, `===` and `instanceof` of the built-in error classes come from the
+    tag (and an Error object's class word); a BigInt's value (truthiness,
+    `===`) and any tag that is no value18 reference-cell kind (the linked
+    reader then validates the cell and its children and traps) go to the
+    linked reader.
+
+  V38 lowering builds the primitive cells of comparisons from the kinds the
+  operands may hold, and admits the BigInt kind in conversion and
+  concatenation cells only where a source may be a BigInt, so a helper
+  emits (and links) only the paths its cells reach: a program that never
+  converts or compares a BigInt or a string links no BigInt code or string
+  parser. Earlier profiles keep their cells and imports byte for byte.
 - **Linking.** After emission the compiler replaces each `varta.<name>` import
   of a linked operation by the library export of the same name, whose
   signature must equal `HostOperation::scalar_signature`, and appends exactly
@@ -10263,7 +10315,10 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   only through synthesized accessors: bounds-checked `memory.copy` within
   memory 0 in each direction, setting the exported `env_result_len`,
   `arena_base`, the reserved arena's bounds (`arena_reserved`,
-  `arena_reserved_end`) and `resource_failure`; string results are written at
+  `arena_reserved_end`), `resource_failure` and the module's static
+  extension pages (`static_pages`, a constant: the static region of the
+  linked value readers, whose other bounds are the v38 limits); words and
+  ranges outside the result buffer are read in place; string results are written at
   `abi::RESULT_BASE` exactly as a host writes them. Each allocating export
   resets the arena on entry and traps on a nested entry, so no pointer or
   state survives a call; linked code never allocates in, roots or retains
@@ -10292,9 +10347,17 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   arguments below 2^53 take an exact integer-digit path instead of the
   big-integer interval search. Production budgets are unchanged. Linked
   string intrinsics read strings within the v38 data limit; a result above
-  the 1 MiB result buffer (case mapping or `String(x)` of a longer string)
-  traps, as the host's result transfer fails. Delivering such results as
-  owned guest strings needs allocating call sites and is open.
+  the 1 MiB result buffer (case mapping) traps, as the host's result transfer
+  fails. `String(x)` of a string cell is that string itself (the fast path),
+  so it no longer passes through the result buffer, nor traps on a longer
+  string. Delivering the remaining results as owned guest strings needs
+  allocating call sites and is open. Linked conversions read string cells
+  within the v38 data limit (the host imports of earlier profiles keep the
+  frozen 1 MiB), so `Number(s)` of a longer string parses. The fuel of the
+  general linked paths (fractional Number text, parsing a non-digit string,
+  comparisons with a large BigInt) is their instructions: several thousand
+  per call where the host import charged none
+  ([measurements](development-plan.md#wave-3-conversions-and-readers-measurement-v38)).
 
 #### Web bytes (`web_bytes`)
 

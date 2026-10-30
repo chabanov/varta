@@ -139,9 +139,16 @@ pub const DICTIONARY_HASH_OFFSET: u32 = 0x811c_9dc5;
 pub const DICTIONARY_HASH_PRIME: u32 = 0x0100_0193;
 #[must_use]
 pub fn dictionary_hash(units: &[u16]) -> u32 {
-    units.iter().fold(DICTIONARY_HASH_OFFSET, |hash, unit| {
-        (hash ^ u32::from(*unit)).wrapping_mul(DICTIONARY_HASH_PRIME)
-    })
+    dictionary_hash_units(units.iter().copied())
+}
+/// [`dictionary_hash`] of a sequence of UTF-16 code units.
+#[must_use]
+pub fn dictionary_hash_units(units: impl IntoIterator<Item = u16>) -> u32 {
+    units
+        .into_iter()
+        .fold(DICTIONARY_HASH_OFFSET, |hash, unit| {
+            (hash ^ u32::from(unit)).wrapping_mul(DICTIONARY_HASH_PRIME)
+        })
 }
 /// Canonical storage fields of a dictionary of value layout `version`.
 #[must_use]
@@ -163,16 +170,12 @@ pub fn dictionary_entry_limit(version: u32, limits: crate::limits::DataLimits) -
         limits.array_elements
     }
 }
-#[cfg(feature = "std")]
 mod dictionary;
-#[cfg(feature = "std")]
-pub use dictionary::{Dictionary, array_index, dictionary_storage};
+pub use dictionary::{Dictionary, array_index, array_index_bytes, dictionary_storage};
 pub const HEAP_VECTOR_FLAG: i32 = 32;
 pub const VECTOR_BYTES: usize = 16;
 pub const VECTOR_STORAGE_OFFSET: u64 = 8;
-#[cfg(feature = "std")]
 mod vector;
-#[cfg(feature = "std")]
 pub use vector::Vector;
 #[must_use]
 pub fn array_capacity(length: usize) -> usize {
@@ -255,15 +258,18 @@ pub fn wide_field_mask(count: usize) -> u128 {
 /// Read `words` consecutive little-endian presence or mask words at `at` as one
 /// slot-indexed set; `None` if the range is outside `data`.
 #[must_use]
-pub fn read_slot_set(data: &[u8], at: usize, words: usize) -> Option<u128> {
+pub fn read_slot_set<M: crate::memory::Memory + ?Sized>(
+    data: &M,
+    at: usize,
+    words: usize,
+) -> Option<u128> {
     if words > MAX_WIDE_RECORD_FIELDS / PRESENCE_WORD_BITS {
         return None;
     }
     let mut set = 0u128;
     for index in 0..words {
         let start = at.checked_add(index * size_of::<u32>())?;
-        let bytes: [u8; 4] = data.get(start..start.checked_add(4)?)?.try_into().ok()?;
-        set |= u128::from(u32::from_le_bytes(bytes)) << (index * PRESENCE_WORD_BITS);
+        set |= u128::from(data.u32_at(start)?) << (index * PRESENCE_WORD_BITS);
     }
     Some(set)
 }
@@ -308,21 +314,31 @@ pub const UNION_BYTES: usize = UNION_META_BYTES + RECORD_SLOT_BYTES;
 pub const MAX_UNION_TYPES: usize = 128;
 mod primitive;
 pub use primitive::{PrimitiveBox, string_range};
-#[cfg(feature = "std")]
 mod reference;
 #[cfg(feature = "std")]
-pub use reference::{ReferenceBox, validate_aggregate, validate_aggregate_in};
+pub use reference::validate_aggregate;
+pub use reference::{ReferenceBox, validate_aggregate_in};
 
 /// What a module's layout-bound readers may accept (v38 `program_limits`
 /// foundation): the static region holding its descriptors, keys and schemas,
 /// and its profile's structural limits (closure codes and signatures). Every
 /// module before v38 reads with [`ModuleBounds::LEGACY`]. Comes from validated
 /// module metadata, never from guest memory.
-#[cfg(feature = "std")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModuleBounds {
     pub static_region: crate::abi::StaticRegion,
     pub limits: crate::limits::ProgramLimits,
+}
+impl ModuleBounds {
+    /// The bounds of a v38 (`program_limits`) module whose static region is
+    /// `static_region`: the linked readers of a v38 module use these, and
+    /// they equal [`Self::new`] for that profile.
+    pub const fn v38(static_region: crate::abi::StaticRegion) -> Self {
+        Self {
+            static_region,
+            limits: crate::limits::WASM,
+        }
+    }
 }
 #[cfg(feature = "std")]
 impl ModuleBounds {

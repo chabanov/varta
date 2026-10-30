@@ -10,8 +10,14 @@
 //! every read, so a corrupt table is rejected and never trusted. An indexed
 //! dictionary's vectors may hold holes (deleted entries) at the same
 //! positions.
+//!
+//! The reader is generic over [`Memory`] (`no_std` core): keys are borrowed
+//! in place where the memory lends them, and their distinctness is checked by
+//! sorting the borrowed keys, so the host and the linked readers of a v38
+//! module validate a dictionary with the same code.
 use super::*;
-use std::collections::BTreeSet;
+use crate::memory::Memory;
+use alloc::{borrow::Cow, vec, vec::Vec};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Dictionary {
@@ -26,14 +32,10 @@ fn invalid() -> ValueAbiError {
 fn invalid_table() -> ValueAbiError {
     ValueAbiError("noncanonical dictionary table".into())
 }
-fn word(data: &[u8], at: usize) -> Result<u32, ValueAbiError> {
-    at.checked_add(4)
-        .and_then(|end| data.get(at..end))
-        .and_then(|s| s.try_into().ok())
-        .map(u32::from_le_bytes)
-        .ok_or_else(invalid)
+fn word<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u32, ValueAbiError> {
+    data.u32_at(at).ok_or_else(invalid)
 }
-fn wide(data: &[u8], at: usize) -> Result<u64, ValueAbiError> {
+fn wide<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u64, ValueAbiError> {
     Ok(u64::from(word(data, at)?) | (u64::from(word(data, at + 4)?) << i32::BITS))
 }
 /// The canonical array index named by UTF-16 `units`, if any: `0` or a decimal
@@ -41,12 +43,31 @@ fn wide(data: &[u8], at: usize) -> Result<u64, ValueAbiError> {
 /// restricted to array indices).
 #[must_use]
 pub fn array_index(units: &[u16]) -> Option<u64> {
+    index_of(units.iter().copied())
+}
+/// [`array_index`] of UTF-16LE `bytes` (an even length).
+#[must_use]
+pub fn array_index_bytes(bytes: &[u8]) -> Option<u64> {
+    index_of(le_units(bytes))
+}
+fn le_units(bytes: &[u8]) -> impl ExactSizeIterator<Item = u16> + '_ {
+    bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
+}
+fn index_of(units: impl ExactSizeIterator<Item = u16>) -> Option<u64> {
     const DIGITS: usize = 10;
-    if units.is_empty() || units.len() > DIGITS || units.len() > 1 && units[0] == u16::from(b'0') {
+    let length = units.len();
+    if length == 0 || length > DIGITS {
         return None;
     }
     let mut value = 0u64;
-    for unit in units {
+    for (position, unit) in units.enumerate() {
+        if position == 0 && length > 1 && unit == u16::from(b'0') {
+            return None;
+        }
         let digit = unit.checked_sub(u16::from(b'0')).filter(|d| *d <= 9)?;
         value = value * 10 + u64::from(digit);
     }
@@ -84,12 +105,13 @@ fn table_reference(bits: u64, length: usize) -> Result<Option<usize>, ValueAbiEr
     Ok(reference.checked_sub(1))
 }
 impl Dictionary {
+    #[cfg(feature = "std")]
     pub fn read(data: &[u8], handle: u64, version: u32) -> Result<Self, ValueAbiError> {
         Self::read_in(data, handle, version, ModuleBounds::LEGACY)
     }
     /// [`Self::read`] within a module's bounds.
-    pub fn read_in(
-        data: &[u8],
+    pub fn read_in<M: Memory + ?Sized>(
+        data: &M,
         handle: u64,
         version: u32,
         module: ModuleBounds,
@@ -117,13 +139,11 @@ impl Dictionary {
                 ) else {
                     return false;
                 };
-                let key = key as usize;
                 raw as usize == slot
                     && kind == *expected as u32
-                    && key
-                        .checked_add(len as usize)
-                        .and_then(|end| data.get(key..end))
-                        == Some(name.as_bytes())
+                    && data
+                        .borrow(key as usize, len as usize)
+                        .is_some_and(|bytes| *bytes == *name.as_bytes())
             });
             if !found {
                 return Err(invalid());
@@ -153,7 +173,8 @@ impl Dictionary {
         if keys.kind != ValueKind::String || keys.length != values.length || keys.length > limit {
             return Err(invalid());
         }
-        let mut seen = BTreeSet::new();
+        // Keys borrowed in place, sorted afterwards to check distinctness.
+        let mut seen: Vec<Cow<'_, [u8]>> = Vec::with_capacity(keys.length);
         let mut previous = None;
         let mut named = false;
         // Key hashes by entry position (`None` for a hole), for the table.
@@ -180,22 +201,19 @@ impl Dictionary {
             if len > module.limits.data.string_bytes || !len.is_multiple_of(2) {
                 return Err(invalid());
             }
-            let bytes = start
-                .checked_add(len)
-                .and_then(|end| data.get(start..end))
-                .ok_or_else(invalid)?;
-            let units = crate::text::units(bytes).map_err(|_| invalid())?;
-            match array_index(&units) {
+            let bytes = data.borrow(start, len).ok_or_else(invalid)?;
+            match array_index_bytes(&bytes) {
                 Some(n) if !named && previous.is_none_or(|p| p < n) => previous = Some(n),
                 Some(_) => return Err(invalid()),
                 None => named = true,
             }
             if table.is_some() {
-                hashes.push(Some(dictionary_hash(&units)));
+                hashes.push(Some(dictionary_hash_units(le_units(&bytes))));
             }
-            if !seen.insert(units) {
-                return Err(invalid());
-            }
+            seen.push(bytes);
+        }
+        if !super::reference::distinct(&mut seen) {
+            return Err(invalid());
         }
         // Only an indexed value18 dictionary has holes, and it counts them.
         if holes != 0 && table.is_none()
@@ -214,7 +232,11 @@ impl Dictionary {
     }
     /// The packed key and value of entry position `index` in own-key order,
     /// or `None` for a hole (a deleted entry of an indexed value18 dictionary).
-    pub fn entry(&self, data: &[u8], index: usize) -> Result<Option<(u64, u64)>, ValueAbiError> {
+    pub fn entry<M: Memory + ?Sized>(
+        &self,
+        data: &M,
+        index: usize,
+    ) -> Result<Option<(u64, u64)>, ValueAbiError> {
         if index >= self.keys.length {
             return Err(invalid());
         }
@@ -241,8 +263,8 @@ impl Dictionary {
 /// exactly once from a slot reached by linear probing from its home slot
 /// without crossing an empty slot; and the tombstones and references
 /// together as many as the entries. Extra host memory is one flag per entry.
-fn validate_table(
-    data: &[u8],
+fn validate_table<M: Memory + ?Sized>(
+    data: &M,
     table: Vector,
     hashes: &[Option<u32>],
     module: ModuleBounds,

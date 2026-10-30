@@ -11,9 +11,7 @@ use value::ValueAbiError;
 
 /// Heap flag of a continuation frame; never combined with closure flags.
 pub const FRAME_FLAG: i32 = 4096;
-/// Physical fields after the `[layout-id:u32, field-count:u32]` header.
-pub const FRAME_FIELDS: usize = 5;
-pub const FRAME_BYTES: usize = value::RECORD_META_BYTES + FRAME_FIELDS * value::RECORD_SLOT_BYTES;
+pub use super::{FRAME_BYTES, FRAME_FIELDS};
 /// `resume-code:u32 | state:u32`; never a reference.
 pub const CONTROL_FIELD: u32 = 0;
 /// `status:u32 | generation:u32`; never a reference.

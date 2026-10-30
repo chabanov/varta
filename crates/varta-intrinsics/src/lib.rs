@@ -23,6 +23,7 @@ pub mod parse;
 pub mod primitive;
 pub mod radix;
 pub mod string;
+pub mod value;
 
 pub use error::IntrinsicError;
 pub use varta_common::memory::Memory;

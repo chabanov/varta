@@ -627,6 +627,33 @@ impl Emitter<'_> {
                 }
                 self.code.extend([I::Else, I::I64Const(0), I::End]);
             }
+            E::Host(host, args)
+                if strings::Helper::fast_path(self.profile, *host, args, self.unions).is_some() =>
+            {
+                // V38: cell operands go to the fast-path helper, which calls
+                // the linked operation for the cases it does not answer; a
+                // boxed Number goes unboxed.
+                let helper = strings::Helper::fast_path(self.profile, *host, args, self.unions);
+                for arg in args {
+                    match &arg.kind {
+                        E::BoxUnion(inner)
+                            if matches!(
+                                helper,
+                                Some(strings::Helper::NumberText | strings::Helper::StringNumber)
+                            ) =>
+                        {
+                            self.expr(inner)?;
+                        }
+                        _ => self.expr(arg)?,
+                    }
+                }
+                if let Some(helper) = helper {
+                    self.string_helper(helper)?;
+                    if expr.ty == Type::Float64 && helper.signature().1 == [ValType::I32] {
+                        self.code.push(I::F64ConvertI32S);
+                    }
+                }
+            }
             E::Host(host, args) => {
                 for arg in args {
                     self.expr(arg)?;
