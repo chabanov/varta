@@ -41,6 +41,11 @@ pub const V38_MAX_PENDING_CONTINUATIONS: usize = abi::MAX_MEMORY_BYTES / FRAME_B
 /// V38 host bound on pending timers: half the continuation bound, as before
 /// v38 (each timer also holds one resume token).
 pub const V38_MAX_PENDING_TIMERS: usize = V38_MAX_PENDING_CONTINUATIONS / 2;
+/// Nesting depth of one v38 JSON value the host serializes or parses: a host
+/// ceiling, as a JavaScript engine's native stack bounds its recursive
+/// `JSON.stringify`. The host traverses such values on a dedicated JSON
+/// stack sized for this depth; exceeding it is a reported JSON limit error.
+pub const V38_MAX_JSON_DEPTH: usize = 10_000;
 /// Exported mutable i32 global of v38 heap modules: zero, or the
 /// [`Resource`] code a failing guest stored before trapping.
 pub const RESOURCE_FAILURE: &str = "resource_failure";
@@ -108,6 +113,8 @@ pub struct DataLimits {
     pub json_depth: usize,
     /// Values visited by one JSON operation (aliases counted again).
     pub json_nodes: usize,
+    /// Bytes of UTF-8 JSON source one checked parse accepts.
+    pub json_input_bytes: usize,
     /// Whether the guest reports exhausted resources through
     /// [`RESOURCE_FAILURE`] before trapping.
     pub reports_resources: bool,
@@ -124,19 +131,24 @@ impl DataLimits {
         allocation_bytes: abi::MAX_STRING_BYTES,
         json_depth: value::MAX_JSON_DEPTH,
         json_nodes: value::MAX_JSON_NODES,
+        json_input_bytes: abi::MAX_INPUT_BYTES,
         reports_resources: false,
         pending_continuations: crate::scheduler::MAX_PENDING_CONTINUATIONS,
         pending_timers: crate::scheduler::MAX_PENDING_TIMERS,
     };
     /// Batch v38 (`data_limits`): Wasm-derived ceilings; the memory budget
-    /// bounds data in practice. JSON depth and visited values are bounded by
-    /// the encoded size, which the memory budget bounds.
+    /// bounds data in practice. Visited JSON values are bounded by the
+    /// encoded size, which the memory budget bounds; JSON nesting by the
+    /// host's JSON depth ceiling [`V38_MAX_JSON_DEPTH`].
     pub const V38: Self = Self {
         array_elements: V38_MAX_ARRAY_ELEMENTS,
         string_bytes: V38_MAX_STRING_BYTES,
         allocation_bytes: V38_MAX_ALLOCATION_BYTES,
-        json_depth: usize::MAX,
+        json_depth: V38_MAX_JSON_DEPTH,
         json_nodes: usize::MAX,
+        // A guest string is bounded by the memory budget; its UTF-8 form by
+        // one and a half times its UTF-16 bytes.
+        json_input_bytes: V38_MAX_STRING_BYTES,
         reports_resources: true,
         pending_continuations: V38_MAX_PENDING_CONTINUATIONS,
         pending_timers: V38_MAX_PENDING_TIMERS,

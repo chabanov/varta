@@ -2,7 +2,10 @@ use super::*;
 use varta_common::json::JsonValue;
 use wasmtime::{Memory, TypedFunc};
 
-pub(super) struct Writer {
+/// Bytes of UTF-16 text converted per copy into an owned string.
+const TEXT_CHUNK_BYTES: usize = 64 * 1024;
+
+pub(crate) struct Writer {
     memory: Memory,
     allocate: TypedFunc<i32, i32>,
     retain: TypedFunc<i64, i64>,
@@ -23,6 +26,139 @@ impl Writer {
             allocate: allocate.typed(&*caller)?,
             retain: retain.typed(&*caller)?,
         })
+    }
+    /// Allocate a guest block of `len` payload bytes through the module's
+    /// host-free allocator and check what it returned.
+    fn block(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        len: usize,
+    ) -> Result<usize, wasmtime::Error> {
+        if std::time::Instant::now() >= caller.data().deadline {
+            return Err(error("execution deadline"));
+        }
+        let request = i32::try_from(len).map_err(|_| error("allocation size"))?;
+        let ptr = self.allocate.call(&mut *caller, request)? as u32 as usize;
+        if ptr < abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES
+            || !ptr.is_multiple_of(HEAP_ALIGNMENT)
+        {
+            return Err(error("allocator returned an invalid pointer"));
+        }
+        let header = ptr - abi::STRING_HEADER_BYTES;
+        let memory = self.memory.data(&*caller);
+        let [size, flags, _, _] = words::<4>(memory, header)?;
+        if flags != HEAP_ALLOCATED_FLAG
+            || (size as usize) < abi::STRING_HEADER_BYTES + len
+            || !size.is_multiple_of(HEAP_ALIGNMENT as u32)
+            || header
+                .checked_add(size as usize)
+                .is_none_or(|end| end > memory.len())
+        {
+            return Err(error("allocator returned an invalid block"));
+        }
+        bytes(memory, ptr, len)?;
+        Ok(ptr)
+    }
+    /// An owned UTF-16 string holding `text` (v38 `json_stringify_owned`),
+    /// converted and copied in bounded chunks, then retained. The empty
+    /// string is the static zero handle.
+    pub(crate) fn owned_text(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        text: &str,
+        limits: varta_common::limits::DataLimits,
+    ) -> Result<u64, wasmtime::Error> {
+        let len = text
+            .encode_utf16()
+            .count()
+            .checked_mul(size_of::<u16>())
+            .ok_or_else(|| error("string byte limit"))?;
+        if len > limits.string_bytes {
+            return Err(error("string byte limit"));
+        }
+        if len == 0 {
+            return Ok(0);
+        }
+        let ptr = self.block(caller, len)?;
+        let mut at = ptr;
+        let mut chunk = Vec::with_capacity(TEXT_CHUNK_BYTES + size_of::<u16>());
+        for unit in text.encode_utf16() {
+            chunk.extend(unit.to_le_bytes());
+            if chunk.len() >= TEXT_CHUNK_BYTES {
+                self.memory.write(&mut *caller, at, &chunk)?;
+                at += chunk.len();
+                chunk.clear();
+            }
+        }
+        self.memory.write(&mut *caller, at, &chunk)?;
+        self.publish(caller, ptr, len, 0, 0)
+    }
+    /// A stamped block holding `data` that is not retained: the caller
+    /// stores its handle into a reachable slot before anything else
+    /// allocates (v38 top-down construction, `tree`).
+    pub(super) fn unretained(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        data: &[u8],
+        flag: i32,
+        link: u32,
+    ) -> Result<u64, wasmtime::Error> {
+        let ptr = self.block(caller, data.len())?;
+        self.memory.write(&mut *caller, ptr, data)?;
+        self.stamp(caller, ptr, flag, link)?;
+        Ok(((data.len() as u64) << i32::BITS) | ptr as u64)
+    }
+    /// Write one payload slot of a published container.
+    pub(super) fn store(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        at: usize,
+        payload: u64,
+    ) -> Result<(), wasmtime::Error> {
+        self.memory
+            .write(&mut *caller, at, &payload.to_le_bytes())
+            .map_err(wasmtime::Error::new)
+    }
+    fn stamp(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        ptr: usize,
+        flag: i32,
+        link: u32,
+    ) -> Result<(), wasmtime::Error> {
+        let header = ptr - abi::STRING_HEADER_BYTES;
+        self.memory.write(
+            &mut *caller,
+            header + HEAP_FLAGS_OFFSET,
+            &(HEAP_ALLOCATED_FLAG | flag as u32).to_le_bytes(),
+        )?;
+        self.memory
+            .write(&mut *caller, header + HEAP_LINK_OFFSET, &link.to_le_bytes())?;
+        Ok(())
+    }
+    /// Stamp the block's kind flag and edge word, then retain its handle.
+    fn publish(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        ptr: usize,
+        len: usize,
+        flag: i32,
+        link: u32,
+    ) -> Result<u64, wasmtime::Error> {
+        let header = ptr - abi::STRING_HEADER_BYTES;
+        self.memory.write(
+            &mut *caller,
+            header + HEAP_FLAGS_OFFSET,
+            &(HEAP_ALLOCATED_FLAG | flag as u32).to_le_bytes(),
+        )?;
+        self.memory
+            .write(&mut *caller, header + HEAP_LINK_OFFSET, &link.to_le_bytes())?;
+        let value = ((len as u64) << i32::BITS) | ptr as u64;
+        let retained = self.retain.call(&mut *caller, value as i64)?;
+        if retained as u64 != value {
+            return Err(error("retention helper changed the value"));
+        }
+        Ok(value)
     }
     pub(super) fn owned(
         &self,

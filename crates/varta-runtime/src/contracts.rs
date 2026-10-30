@@ -94,6 +94,8 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
                     | varta_common::HostOperation::JsonParseV16
                     | varta_common::HostOperation::JsonParseV17
                     | varta_common::HostOperation::JsonParseV18
+                    // V38: the owned serializer allocates through the same helpers.
+                    | varta_common::HostOperation::JsonStringifyOwned
             )
         )
     });

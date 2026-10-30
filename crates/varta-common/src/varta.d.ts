@@ -1,3 +1,9 @@
+// checked-f64-utf16-v38 (batch, unreleased) data limits: JSON.stringify uses the
+// internal import json_stringify_owned (i32 kind, i32 low, i32 high)->(i64
+// handle, i32 error class), host ABI34 minimum, pure, no capability. The host
+// serializes into a buffer bounded by the memory budget and returns an owned
+// string it allocated and retained through varta.value_abi.allocate/retain
+// (zero for undefined); no source-level host declaration is added.
 // checked-f64-utf16-v37 (pilot batch, unreleased) collections: Map, Set, tuples,
 // Uint8Array, TextEncoder/TextDecoder (UTF-8), btoa/atob, crypto.getRandomValues/
 // randomUUID, a UTC Date subset and the string/array built-ins (padStart, split,

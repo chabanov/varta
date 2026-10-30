@@ -23,7 +23,7 @@ rust-version = "1.95.0"
 clap = { version = "4.6", features = ["derive"] }
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["float_roundtrip", "raw_value"] }
+serde_json = { version = "1.0", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
 ryu-js = "=1.0.3"
 # OS entropy for bounded Math.random samples; no guest seed or ambient file access.
 getrandom = "=0.3.4"

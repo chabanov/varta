@@ -1,11 +1,13 @@
 //! Checked JSON decoding followed by allocation through the guest's own bounded
 //! collector. Complete input validation precedes the first guest helper call.
 mod exceptions;
-mod heap;
+pub(crate) mod heap;
+mod tree;
 use crate::RuntimeContext;
 use varta_common::{
     HostOperation, abi,
-    json::{JsonSchema, JsonType},
+    json::{JsonSchema, JsonType, JsonValue},
+    limits::DataLimits,
     value::*,
 };
 use wasmtime::{Caller, Extern, Linker, Val};
@@ -273,6 +275,67 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     }
     Ok(())
 }
+/// Nesting depth of JSON source text, scanned iteratively (strings skipped).
+fn source_depth(input: &[u8]) -> usize {
+    let (mut depth, mut deepest, mut quoted, mut escaped) = (0usize, 0, false, false);
+    for byte in input {
+        if quoted {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => quoted = true,
+            b'[' | b'{' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
+}
+/// Nesting depth of a checked tree, measured iteratively.
+fn nesting(value: &JsonValue) -> usize {
+    let mut deepest = 0;
+    let mut pending = vec![(value, 0usize)];
+    while let Some((value, depth)) = pending.pop() {
+        deepest = deepest.max(depth);
+        match value {
+            JsonValue::Union { value, .. } => pending.push((value, depth)),
+            JsonValue::Record { fields: values, .. } | JsonValue::Array { values, .. } => {
+                pending.extend(values.iter().map(|value| (value, depth + 1)));
+            }
+            JsonValue::Dictionary { entries, .. } => {
+                pending.extend(entries.iter().map(|(_, value)| (value, depth + 1)));
+            }
+            _ => {}
+        }
+    }
+    deepest
+}
+/// Decode on the calling thread when the source nests no deeper than the
+/// legacy depth, which every host stack sustains; a deeper v38 source is
+/// decoded on the JSON host stack (its recursive validation and the drop of
+/// a failed partial tree included).
+fn deep_decode<T: Send>(
+    input: &[u8],
+    limits: DataLimits,
+    decode: impl FnOnce(&[u8]) -> T + Send,
+) -> Result<T, wasmtime::Error> {
+    if limits.json_depth > DataLimits::LEGACY.json_depth
+        && source_depth(input) > DataLimits::LEGACY.json_depth
+    {
+        crate::json::deep(|| decode(input))
+    } else {
+        Ok(decode(input))
+    }
+}
 fn decode(
     mut caller: Caller<'_, RuntimeContext>,
     ptr: i32,
@@ -283,12 +346,23 @@ fn decode(
     recoverable: bool,
 ) -> Result<u64, wasmtime::Error> {
     caller.data_mut().tick()?;
-    if recoverable && len >= 0 && len as usize > abi::MAX_INPUT_BYTES {
+    let limits = caller.data().data;
+    // V38 (`data_limits`) keeps its trees out of host recursion and the root
+    // stack (`tree`); earlier profiles keep the child-first builder.
+    let top_down = limits.json_input_bytes > abi::MAX_INPUT_BYTES;
+    // V38 host decoding stops at the execution deadline; earlier profiles
+    // keep their bounded decoder unchanged.
+    let deadline = top_down.then(|| caller.data().deadline);
+    if recoverable && len >= 0 && len as usize > limits.json_input_bytes {
         return Err(wasmtime::Error::new(
             varta_common::json::JsonDecodeError::Limit(varta_common::json::JsonInputLimit::Bytes),
         ));
     }
-    if ptr < 0 || len < 0 || len as usize > abi::MAX_INPUT_BYTES || schema_ptr < 0 || schema_len < 0
+    if ptr < 0
+        || len < 0
+        || len as usize > limits.json_input_bytes
+        || schema_ptr < 0
+        || schema_len < 0
     {
         return Err(error("input range or byte limit"));
     }
@@ -315,8 +389,11 @@ fn decode(
             json::{JsonDecodeError, JsonInputLimit},
             text::JsonTextError,
         };
-        let parsed = match varta_common::text::json_input_classified(input) {
-            Ok(encoded) => schema.parse_json_classified(&encoded),
+        let parsed = match varta_common::text::json_input_limited(input, limits.json_input_bytes) {
+            Ok(encoded) => deep_decode(&encoded, limits, |encoded| match deadline {
+                Some(deadline) => schema.parse_json_classified_until(encoded, limits, deadline),
+                None => schema.parse_json_classified(encoded),
+            })?,
             Err(JsonTextError::Syntax) => Err(JsonDecodeError::Syntax { line: 1, column: 1 }),
             Err(JsonTextError::Limit) => Err(JsonDecodeError::Limit(JsonInputLimit::Bytes)),
             Err(JsonTextError::Encoding) => {
@@ -339,15 +416,29 @@ fn decode(
     } else {
         let encoded;
         let input = if expected_schema >= varta_common::json::UTF16_SCHEMA_VERSION {
-            encoded = varta_common::text::json_input(input).map_err(error)?;
+            encoded = varta_common::text::json_input_limited(input, limits.json_input_bytes)
+                .map_err(error)?;
             &encoded
         } else {
             input
         };
-        schema.parse_json(input).map_err(error)?
+        deep_decode(input, limits, |input| match deadline {
+            Some(deadline) => schema.parse_json_until(input, limits, deadline),
+            None => schema.parse_json(input),
+        })?
+        .map_err(error)?
     };
     let writer = heap::Writer::new(&mut caller, memory)?;
-    let value = writer.build(&mut caller, &schema, &value)?;
+    let built = if top_down {
+        tree::build(&writer, &mut caller, &schema, &value, limits)
+    } else {
+        writer.build(&mut caller, &schema, &value)
+    };
+    // A deep tree is dropped on the JSON host stack, never by host recursion here.
+    if top_down && nesting(&value) > DataLimits::LEGACY.json_depth {
+        crate::json::deep(move || drop(value))?;
+    }
+    let value = built?;
     if recoverable {
         exceptions::ready(&mut caller)?;
         exceptions::deadline(&caller)?;
