@@ -4,8 +4,8 @@
 use super::DOCUMENT;
 use crate::support::{assert_block, table};
 use varta_common::view::{
-    self, Attribute, Command, CssProperty, CssValue, EventFlag, EventKind, ListenOption, Opcode,
-    Tag, Tags,
+    self, Attribute, Command, CssProperty, CssValue, DraftCapability, DraftGrant, EventFlag,
+    EventKind, Key, ListenOption, Opcode, Tag, Tags,
 };
 
 fn codes(rows: impl Iterator<Item = (u32, &'static str)>) -> String {
@@ -105,6 +105,17 @@ fn layout() -> String {
                 view::DRAFT_MAX_VALUE_BYTES,
                 view::DRAFT_MAX_STYLESHEET_BYTES,
                 view::DRAFT_MAX_PENDING_EVENTS
+            ),
+        ),
+        (
+            "Key filter: any key".into(),
+            format!("key code {}", view::ANY_KEY),
+        ),
+        (
+            "Key filter: modifier mask".into(),
+            format!(
+                "{} (shift, ctrl, alt, meta event flags)",
+                view::MODIFIER_MASK
             ),
         ),
     ];
@@ -243,6 +254,36 @@ fn commands() -> String {
     )
 }
 
+fn keys() -> String {
+    table(
+        &["Code", "Key", "DOM `KeyboardEvent.key`"],
+        Key::ALL.iter().map(|&key| {
+            vec![
+                key.code().to_string(),
+                format!("`{}`", key.name()),
+                format!("`{}`", key.dom_key()),
+            ]
+        }),
+    )
+}
+
+fn capabilities() -> String {
+    table(
+        &["Capability", "Grant", "Authorizes (user gesture only)"],
+        DraftCapability::ALL.iter().map(|&capability| {
+            let grant = match capability.grant() {
+                DraftGrant::Boolean => "boolean `enabled`",
+                DraftGrant::Urls => "URL `patterns` (`https://` admitted)",
+            };
+            vec![
+                format!("`{}`", capability.id()),
+                grant.to_owned(),
+                capability.use_site().to_owned(),
+            ]
+        }),
+    )
+}
+
 #[test]
 fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-layout", &layout());
@@ -258,4 +299,6 @@ fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-stylesheet-tokens", &stylesheet_tokens());
     assert_block(DOCUMENT, "view-events", &events());
     assert_block(DOCUMENT, "view-commands", &commands());
+    assert_block(DOCUMENT, "view-keys", &keys());
+    assert_block(DOCUMENT, "view-capabilities", &capabilities());
 }

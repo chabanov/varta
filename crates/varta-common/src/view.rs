@@ -92,6 +92,7 @@ coded! {
         Command = 15 => "command",
         Stylesheet = 16 => "stylesheet",
         SetTitle = 17 => "set_title",
+        CopyText = 18 => "copy_text",
     }
 }
 
@@ -162,6 +163,7 @@ coded! {
         AriaBusy = 25 => "aria-busy",
         AriaInvalid = 26 => "aria-invalid",
         AriaHidden = 27 => "aria-hidden",
+        Rows = 28 => "rows",
     }
 }
 
@@ -236,6 +238,7 @@ coded! {
         TransitionDuration = 66 => "transition-duration",
         TransitionTimingFunction = 67 => "transition-timing-function",
         TransitionDelay = 68 => "transition-delay",
+        FieldSizing = 69 => "field-sizing",
     }
 }
 
@@ -267,6 +270,45 @@ coded! {
         Close = 7 => "close",
     }
 }
+
+coded! {
+    /// Keys a `keydown` listener filter may name; the name is the DOM
+    /// `KeyboardEvent.key` value (`Space` is the key `" "`).
+    Key: u16 {
+        Enter = 1 => "Enter",
+        Escape = 2 => "Escape",
+        Tab = 3 => "Tab",
+        Space = 4 => "Space",
+        Backspace = 5 => "Backspace",
+        Delete = 6 => "Delete",
+        ArrowUp = 7 => "ArrowUp",
+        ArrowDown = 8 => "ArrowDown",
+        ArrowLeft = 9 => "ArrowLeft",
+        ArrowRight = 10 => "ArrowRight",
+        Home = 11 => "Home",
+        End = 12 => "End",
+        PageUp = 13 => "PageUp",
+        PageDown = 14 => "PageDown",
+    }
+}
+impl Key {
+    /// The DOM `KeyboardEvent.key` value the filter compares with.
+    #[must_use]
+    pub fn dom_key(self) -> &'static str {
+        match self {
+            Self::Space => " ",
+            other => other.name(),
+        }
+    }
+}
+/// Filter key code that matches every key (a filter on modifiers only, or none).
+pub const ANY_KEY: u16 = 0;
+/// Modifier bits a filter may require or forbid: the shift, ctrl, alt and meta
+/// bits of [`EventFlag`], with the same values.
+pub const MODIFIER_MASK: u32 = EventFlag::Shift as u32
+    | EventFlag::Ctrl as u32
+    | EventFlag::Alt as u32
+    | EventFlag::Meta as u32;
 
 /// One operand of a patch operation, in wire order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -301,16 +343,29 @@ pub enum Operand {
     Argument,
     /// UTF-16LE string.
     Text,
+    /// `u16` [`Key`] code or [`ANY_KEY`], padded to 4 bytes.
+    Key,
+    /// `u32` modifier bits (within [`MODIFIER_MASK`]) that must all be held.
+    RequiredModifiers,
+    /// `u32` modifier bits (within [`MODIFIER_MASK`]) that must all be released.
+    ForbiddenModifiers,
 }
 impl Operand {
     #[must_use]
     pub fn wire(self) -> &'static str {
         match self {
             Self::Node | Self::Parent | Self::Before | Self::Handler | Self::Sheet => "u32 id",
-            Self::Tag | Self::Attribute | Self::Property | Self::Event | Self::Command => {
-                "u16 code + 2 pad"
-            }
-            Self::Options | Self::BaseSeq | Self::Checked => "u32",
+            Self::Tag
+            | Self::Attribute
+            | Self::Property
+            | Self::Event
+            | Self::Command
+            | Self::Key => "u16 code + 2 pad",
+            Self::Options
+            | Self::BaseSeq
+            | Self::Checked
+            | Self::RequiredModifiers
+            | Self::ForbiddenModifiers => "u32",
             Self::Argument => "f64",
             Self::Text => "string",
         }
@@ -333,6 +388,9 @@ impl Operand {
             Self::Sheet => "sheet",
             Self::Argument => "argument",
             Self::Text => "text",
+            Self::Key => "key",
+            Self::RequiredModifiers => "required_modifiers",
+            Self::ForbiddenModifiers => "forbidden_modifiers",
         }
     }
 }
@@ -350,13 +408,21 @@ impl Opcode {
             Self::RemoveStyle => &[O::Node, O::Property],
             Self::Insert => &[O::Parent, O::Node, O::Before],
             Self::Remove => &[O::Node],
-            Self::Listen => &[O::Node, O::Event, O::Handler, O::Options],
-            Self::Unlisten => &[O::Node, O::Event],
+            Self::Listen => &[
+                O::Node,
+                O::Event,
+                O::Handler,
+                O::Options,
+                O::Key,
+                O::RequiredModifiers,
+                O::ForbiddenModifiers,
+            ],
+            Self::Unlisten => &[O::Node, O::Event, O::Handler],
             Self::SetValue => &[O::Node, O::Text, O::BaseSeq],
             Self::SetChecked => &[O::Node, O::Checked, O::BaseSeq],
             Self::Command => &[O::Node, O::Command, O::Argument],
             Self::Stylesheet => &[O::Sheet, O::Text],
-            Self::SetTitle => &[O::Text],
+            Self::SetTitle | Self::CopyText => &[O::Text],
         }
     }
 }
@@ -367,14 +433,21 @@ impl Opcode {
 pub enum ListenOption {
     PreventDefault = 1,
     StopPropagation = 1 << 1,
+    /// Key filter: never match while an IME composition is active.
+    NotComposing = 1 << 2,
 }
 impl ListenOption {
-    pub const ALL: &[Self] = &[Self::PreventDefault, Self::StopPropagation];
+    pub const ALL: &[Self] = &[
+        Self::PreventDefault,
+        Self::StopPropagation,
+        Self::NotComposing,
+    ];
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::PreventDefault => "preventDefault",
             Self::StopPropagation => "stopPropagation",
+            Self::NotComposing => "notComposing",
         }
     }
 }
@@ -551,13 +624,16 @@ pub enum AttributeValue {
     Count,
     /// A finite nonnegative decimal number.
     Number,
+    /// A positive decimal integer without sign or leading zeros.
+    PositiveCount,
     /// One of the listed keywords, exactly.
     Keywords(&'static [&'static str]),
     /// `input`: [`INPUT_TYPES`]; `button`: [`BUTTON_TYPES`].
     ElementType,
     /// Internal route: `#fragment`, or `/path` (not `//`) with optional `?query`
-    /// and `#fragment`; never a scheme or authority.
-    InternalHref,
+    /// and `#fragment`; or an absolute `https://`/`http://` URL that matches a
+    /// [`OPEN_URL_CAPABILITY`] grant (an external link).
+    Href,
     /// A path of a bundled artifact resource, resolved against the asset base.
     Resource,
 }
@@ -571,6 +647,7 @@ impl AttributeValue {
             Self::Boolean => "boolean: present with an empty value; remove to make false".into(),
             Self::Count => "count: `0` or a positive integer without sign or leading zeros".into(),
             Self::Number => "finite nonnegative number".into(),
+            Self::PositiveCount => "positive integer without sign or leading zeros".into(),
             Self::Keywords(words) => words
                 .iter()
                 .map(|word| format!("`{word}`"))
@@ -589,9 +666,9 @@ impl AttributeValue {
                     .collect::<Vec<_>>()
                     .join(" | ")
             ),
-            Self::InternalHref => {
-                "internal route: `#fragment` or `/path[?query][#fragment]`, never `//`".into()
-            }
+            Self::Href => format!(
+                "internal route: `#fragment` or `/path[?query][#fragment]`, never `//`; or an absolute `https://`/`http://` URL matching a `{OPEN_URL_CAPABILITY}` grant"
+            ),
             Self::Resource => "bundled resource path".into(),
         }
     }
@@ -634,6 +711,7 @@ impl Attribute {
             Self::Href => Tags::Only(&[T::A]),
             Self::Src | Self::Alt => Tags::Only(&[T::Img]),
             Self::Max => Tags::Only(&[T::Progress]),
+            Self::Rows => Tags::Only(&[T::Textarea]),
         }
     }
     #[must_use]
@@ -647,7 +725,8 @@ impl Attribute {
             Self::Disabled | Self::Readonly | Self::Autofocus | Self::Selected => V::Boolean,
             Self::Maxlength => V::Count,
             Self::Max => V::Number,
-            Self::Href => V::InternalHref,
+            Self::Rows => V::PositiveCount,
+            Self::Href => V::Href,
             Self::Src => V::Resource,
             Self::Tabindex => V::Keywords(TABINDEX),
             Self::Role => V::Keywords(ROLES),
@@ -824,6 +903,7 @@ impl CssProperty {
             }
             Self::TransitionDuration | Self::TransitionDelay => "<time>#",
             Self::TransitionTimingFunction => "[linear | ease | ease-in | ease-out | ease-in-out]#",
+            Self::FieldSizing => "fixed | content (textarea only)",
         }
     }
 }
@@ -853,6 +933,54 @@ pub const FORBIDDEN_CSS: &[&str] = &[
 ];
 /// Characters that are structural in stylesheets and invalid in `set_style` values.
 pub const FORBIDDEN_STYLE_VALUE: &[&str] = &[";", "{", "}"];
+
+/// The capability an external link needs (draft v0, not registered).
+pub const OPEN_URL_CAPABILITY: &str = "ui.open_url";
+/// The capability `copy_text` needs (draft v0, not registered).
+pub const CLIPBOARD_WRITE_CAPABILITY: &str = "clipboard.write";
+
+/// The grant shape of a draft view capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftGrant {
+    /// `"enabled": true | false`.
+    Boolean,
+    /// `"patterns": [...]` with the URL pattern rules, `https://` admitted.
+    Urls,
+}
+
+/// View capabilities of draft v0. None is in the capability registry: the
+/// runtime and every manifest validator reject these ids until a profile
+/// registers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftCapability {
+    OpenUrl,
+    ClipboardWrite,
+}
+impl DraftCapability {
+    pub const ALL: &[Self] = &[Self::OpenUrl, Self::ClipboardWrite];
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::OpenUrl => OPEN_URL_CAPABILITY,
+            Self::ClipboardWrite => CLIPBOARD_WRITE_CAPABILITY,
+        }
+    }
+    #[must_use]
+    pub fn grant(self) -> DraftGrant {
+        match self {
+            Self::OpenUrl => DraftGrant::Urls,
+            Self::ClipboardWrite => DraftGrant::Boolean,
+        }
+    }
+    /// What the capability authorizes, always only during a user gesture.
+    #[must_use]
+    pub fn use_site(self) -> &'static str {
+        match self {
+            Self::OpenUrl => "activating an `a` whose `href` is an external URL",
+            Self::ClipboardWrite => "a `copy_text` operation in the batch of a user-gesture turn",
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -987,6 +1115,30 @@ mod tests {
         for forbidden in FORBIDDEN_CSS.iter().chain(FORBIDDEN_STYLE_VALUE) {
             assert!(!forbidden.is_empty());
         }
+    }
+
+    #[test]
+    fn key_filters_and_draft_capabilities_are_consistent() {
+        contiguous(Key::ALL, |v| u32::from(v.code()));
+        unique_names(Key::ALL.iter().map(|key| key.dom_key()));
+        assert!(Key::from_code(ANY_KEY).is_none());
+        assert_eq!(MODIFIER_MASK & (EventFlag::Composing as u32), 0);
+        assert_eq!(MODIFIER_MASK.count_ones(), 4);
+        let listen = Opcode::Listen.operands();
+        assert!(listen.contains(&Operand::Key) && listen.contains(&Operand::ForbiddenModifiers));
+        assert!(Opcode::Unlisten.operands().contains(&Operand::Handler));
+        unique_names(
+            DraftCapability::ALL
+                .iter()
+                .map(|capability| capability.id()),
+        );
+        for &capability in DraftCapability::ALL {
+            assert!(
+                crate::capability_kind(capability.id()).is_none(),
+                "draft ids stay unregistered"
+            );
+        }
+        assert_eq!(Attribute::Rows.tags(), Tags::Only(&[Tag::Textarea]));
     }
 
     #[test]
