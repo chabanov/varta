@@ -1,0 +1,18 @@
+[package]
+name = "varta-intrinsics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# One `no_std` + `alloc` implementation of the pure intrinsics: the native
+# runtime calls it for host imports of earlier profiles, and the v38 guest
+# library (`varta-intrinsics-wasm`) links the same code into guest Wasm.
+# Default features stay off so the wasm32 build never needs `std`; in a
+# workspace build the runtime's `std` features unify as before.
+[dependencies]
+# Portable binary64 Math (already locked through Cranelift): bit-identical
+# results on every host, unlike the platform `f64` library.
+libm = "=0.2.16"
+ryu-js.workspace = true
+num-bigint = { version = "=0.4.8", default-features = false }
+thiserror = { version = "2.0", default-features = false }

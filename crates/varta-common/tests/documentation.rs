@@ -58,6 +58,11 @@ fn limits() -> String {
             "abi::MAX_MEMORY_BYTES",
         ),
         (
+            "Private intrinsic memory (v38 `linked_intrinsics`)",
+            mib(abi::MAX_INTRINSIC_MEMORY_BYTES),
+            "abi::MAX_INTRINSIC_MEMORY_BYTES",
+        ),
+        (
             "Guest instructions (fuel)",
             abi::FUEL.to_string(),
             "abi::FUEL",

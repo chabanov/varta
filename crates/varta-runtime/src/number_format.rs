@@ -1,129 +1,19 @@
-//! Decimal formatting: fixed uses pinned Ryū; exact ratios round significant digits.
-use crate::{RuntimeContext, host, number};
-use num_bigint::BigUint;
+//! Decimal formatting host imports over the shared `varta-intrinsics`
+//! implementation (also linked into v38 guests).
+use crate::{RuntimeContext, host};
 use varta_common::number_format::NumberFormat;
+use varta_intrinsics::format::Mode;
 use wasmtime::{Caller, Linker};
-const MAX_TEXT_BYTES: usize = 123;
-fn significant(value: f64, precision: u32) -> (String, i32) {
-    if value == 0.0 {
-        return ("0".repeat(precision as usize), 0);
+fn mode(format: NumberFormat) -> Mode {
+    match format {
+        NumberFormat::Fixed => Mode::Fixed,
+        NumberFormat::Exponential => Mode::Exponential,
+        NumberFormat::Precision => Mode::Precision,
     }
-    let mut numerator = crate::number_radix::scaled(value.abs().to_bits());
-    let mut denominator = BigUint::from(1_u8) << 1075_usize;
-    let mut exponent = 0;
-    while numerator < denominator {
-        numerator *= 10_u8;
-        exponent -= 1;
-    }
-    while numerator >= &denominator * 10_u8 {
-        denominator *= 10_u8;
-        exponent += 1;
-    }
-    numerator *= BigUint::from(10_u8).pow(precision - 1);
-    let mut rounded = &numerator / &denominator;
-    if (&numerator % &denominator) << 1_usize >= denominator {
-        rounded += 1_u8;
-    }
-    if rounded >= BigUint::from(10_u8).pow(precision) {
-        rounded /= 10_u8;
-        exponent += 1;
-    }
-    (rounded.to_str_radix(10), exponent)
 }
-fn exponential(digits: &str, exponent: i32, negative: bool) -> String {
-    let mut text = String::new();
-    if negative {
-        text.push('-');
-    }
-    text.push_str(&digits[..1]);
-    if digits.len() > 1 {
-        text.push('.');
-        text.push_str(&digits[1..]);
-    }
-    text.push('e');
-    if exponent >= 0 {
-        text.push('+');
-    }
-    text.push_str(&exponent.to_string());
-    text
-}
-fn shortest_exponential(value: f64) -> String {
-    if value == 0.0 {
-        return "0e+0".into();
-    }
-    let text = number::canonical_display(value.abs());
-    let (mantissa, exponent) = text.split_once('e').map_or((text.as_str(), 0), |(m, e)| {
-        (m, e.parse::<i32>().expect("canonical decimal exponent"))
-    });
-    let point = mantissa.find('.').unwrap_or(mantissa.len());
-    let all = mantissa.replace('.', "");
-    let digits = all.trim_start_matches('0');
-    let exponent = exponent + point as i32 - 1 - (all.len() - digits.len()) as i32;
-    exponential(digits.trim_end_matches('0'), exponent, value < 0.0)
-}
-fn precision_text(value: f64, precision: u32) -> String {
-    let (digits, exponent) = significant(value, precision);
-    if exponent < -6 || exponent >= precision as i32 {
-        return exponential(&digits, exponent, value < 0.0);
-    }
-    let mut text = String::new();
-    if value < 0.0 {
-        text.push('-');
-    }
-    let point = exponent + 1;
-    if point <= 0 {
-        text.push_str("0.");
-        text.extend(std::iter::repeat_n('0', (-point) as usize));
-        text.push_str(&digits);
-    } else {
-        let point = point as usize;
-        text.push_str(&digits[..point]);
-        if point < digits.len() {
-            text.push('.');
-            text.push_str(&digits[point..]);
-        }
-    }
-    text
-}
-fn format(mode: NumberFormat, value: f64, digits: f64) -> Result<String, wasmtime::Error> {
-    if digits.is_nan() || (digits.is_finite() && digits.fract() != 0.0) {
-        return Err(wasmtime::Error::msg("noncanonical decimal precision"));
-    }
-    let text = if mode == NumberFormat::Fixed {
-        if !(0.0..=100.0).contains(&digits) {
-            return Err(wasmtime::Error::msg("invalid fixed precision"));
-        }
-        ryu_js::Buffer::new()
-            .format_to_fixed(value, digits as u8)
-            .to_owned()
-    } else if !value.is_finite() {
-        number::canonical_display(value)
-    } else if digits == -1.0 {
-        if mode == NumberFormat::Precision {
-            number::canonical_display(value)
-        } else {
-            shortest_exponential(value)
-        }
-    } else {
-        let minimum = if mode == NumberFormat::Precision {
-            1.0
-        } else {
-            0.0
-        };
-        if !(minimum..=100.0).contains(&digits) {
-            return Err(wasmtime::Error::msg("invalid decimal precision"));
-        }
-        if mode == NumberFormat::Precision {
-            precision_text(value, digits as u32)
-        } else {
-            let (text, exponent) = significant(value, digits as u32 + 1);
-            exponential(&text, exponent, value < 0.0)
-        }
-    };
-    if text.len() > MAX_TEXT_BYTES {
-        return Err(wasmtime::Error::msg("decimal text bound exceeded"));
-    }
-    Ok(text)
+fn format(format: NumberFormat, value: f64, digits: f64) -> Result<String, wasmtime::Error> {
+    varta_intrinsics::format::format(mode(format), value, digits)
+        .map_err(|error| wasmtime::Error::msg(error.to_string()))
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     for &mode in NumberFormat::ALL {
@@ -148,6 +38,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use varta_intrinsics::format::MAX_TEXT_BYTES;
     #[test]
     fn number_format_known_rounding_defaults_and_negative_zero() {
         use NumberFormat::*;

@@ -130,6 +130,24 @@ in [conformance/README.md](conformance/README.md).
   `encodeURI` and `URIError` in a new prelude. No host import, value tag or
   layout changes; v37 keeps its bytes.
 
+- V38 links pure intrinsics into the guest module (`linked_intrinsics`, first
+  increment): Math and `**`/`%`, Number text and parsing, primitive-cell
+  conversions and UTF-16 character access and case mapping are compiled from
+  the new `no_std` `varta-intrinsics` crate, which the native runtime also uses
+  for the host imports of earlier profiles. The compiler links only the
+  reachable library functions and data from a checked-in wasm32 artifact
+  (`scripts/build-intrinsics.py`) onto a private, bounded second memory; a v38
+  module that imports one of these operations is rejected, so a v38 host
+  implements 59 instead of 93 admissible imports. V38 Math is bit-identical on
+  every host (portable `libm`); JSON, the value17 readers and conversions,
+  primitive comparisons and BigInt remain host imports. With code generation
+  v2 each operation keeps one v38 path: `charAt` and `s[i]` serve ASCII units
+  from static data and other units through the linked `string_char_at16`,
+  `%` falls back from its integral fast path to the linked remainder, and an
+  integral `toString(radix)` takes an exact integer-digit path. Linked code
+  counts against v38's Wasm structural limits, and its private memory's image
+  is covered by the v38 instantiation allowance.
+
 - Opt-in v38 (batch: program and data limits, turn budgets, linked
   intrinsics, view protocol and TSX, structural subtyping and code generation
   v2, in development) is registered. It inherits every v37 feature, shares

@@ -1,225 +1,110 @@
-//! ABI19 pure native math: exact required edge cases, approximated finite values.
+//! ABI19 pure native math: the shared exact edge cases of `varta-intrinsics`
+//! over the platform library's approximated finite values.
 use crate::RuntimeContext;
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 use varta_common::native_math::NativeMath;
+use varta_intrinsics::math::{self, Elementary, Unary};
 use wasmtime::{Caller, Linker};
 
-fn logarithm(x: f64, operation: fn(f64) -> f64) -> f64 {
-    if x == 0.0 {
-        f64::NEG_INFINITY
-    } else if x < 0.0 {
-        f64::NAN
-    } else if x == 1.0 {
-        0.0
-    } else if x == f64::INFINITY {
-        x
-    } else {
-        operation(x)
+/// The platform `f64` library: earlier profiles keep its approximated finite
+/// results; v38 links the portable `libm` backend instead.
+pub(crate) struct Platform;
+impl Elementary for Platform {
+    fn acos(x: f64) -> f64 {
+        x.acos()
+    }
+    fn acosh(x: f64) -> f64 {
+        x.acosh()
+    }
+    fn asin(x: f64) -> f64 {
+        x.asin()
+    }
+    fn asinh(x: f64) -> f64 {
+        x.asinh()
+    }
+    fn atan(x: f64) -> f64 {
+        x.atan()
+    }
+    fn atanh(x: f64) -> f64 {
+        x.atanh()
+    }
+    fn atan2(y: f64, x: f64) -> f64 {
+        y.atan2(x)
+    }
+    fn cbrt(x: f64) -> f64 {
+        x.cbrt()
+    }
+    fn cos(x: f64) -> f64 {
+        x.cos()
+    }
+    fn cosh(x: f64) -> f64 {
+        x.cosh()
+    }
+    fn exp(x: f64) -> f64 {
+        x.exp()
+    }
+    fn expm1(x: f64) -> f64 {
+        x.exp_m1()
+    }
+    fn ln(x: f64) -> f64 {
+        x.ln()
+    }
+    fn log10(x: f64) -> f64 {
+        x.log10()
+    }
+    fn log2(x: f64) -> f64 {
+        x.log2()
+    }
+    fn ln_1p(x: f64) -> f64 {
+        x.ln_1p()
+    }
+    fn sin(x: f64) -> f64 {
+        x.sin()
+    }
+    fn sinh(x: f64) -> f64 {
+        x.sinh()
+    }
+    fn tan(x: f64) -> f64 {
+        x.tan()
+    }
+    fn tanh(x: f64) -> f64 {
+        x.tanh()
+    }
+    fn pow(x: f64, y: f64) -> f64 {
+        x.powf(y)
     }
 }
 fn unary(operation: NativeMath, x: f64) -> Result<f64, wasmtime::Error> {
-    if x.is_nan() {
-        return Ok(x);
-    }
     use NativeMath::*;
-    let result = match operation {
-        Acos => {
-            if x.abs() > 1.0 {
-                f64::NAN
-            } else if x == 0.0 {
-                FRAC_PI_2
-            } else if x == 1.0 {
-                0.0
-            } else if x == -1.0 {
-                PI
-            } else {
-                x.acos()
-            }
-        }
-        Acosh => {
-            if x < 1.0 {
-                f64::NAN
-            } else if x == 1.0 {
-                0.0
-            } else if x.is_infinite() {
-                x
-            } else {
-                x.acosh()
-            }
-        }
-        Asin => {
-            if x.abs() > 1.0 {
-                f64::NAN
-            } else if x == 0.0 {
-                x
-            } else if x.abs() == 1.0 {
-                FRAC_PI_2.copysign(x)
-            } else {
-                x.asin()
-            }
-        }
-        Asinh => {
-            if x == 0.0 || x.is_infinite() {
-                x
-            } else {
-                x.asinh()
-            }
-        }
-        Atan => {
-            if x == 0.0 {
-                x
-            } else if x.is_infinite() {
-                FRAC_PI_2.copysign(x)
-            } else {
-                x.atan()
-            }
-        }
-        Atanh => {
-            if x.abs() > 1.0 {
-                f64::NAN
-            } else if x == 0.0 {
-                x
-            } else if x.abs() == 1.0 {
-                f64::INFINITY.copysign(x)
-            } else {
-                x.atanh()
-            }
-        }
-        Cbrt => {
-            if x == 0.0 || x.is_infinite() {
-                x
-            } else {
-                x.cbrt()
-            }
-        }
-        Cos => {
-            if x.is_infinite() {
-                f64::NAN
-            } else if x == 0.0 {
-                1.0
-            } else {
-                x.cos()
-            }
-        }
-        Cosh => {
-            if x.is_infinite() {
-                f64::INFINITY
-            } else if x == 0.0 {
-                1.0
-            } else {
-                x.cosh()
-            }
-        }
-        Exp => {
-            if x == f64::NEG_INFINITY {
-                0.0
-            } else if x == f64::INFINITY {
-                x
-            } else if x == 0.0 {
-                1.0
-            } else {
-                x.exp()
-            }
-        }
-        Expm1 => {
-            if x == f64::NEG_INFINITY {
-                -1.0
-            } else if x == 0.0 || x == f64::INFINITY {
-                x
-            } else {
-                x.exp_m1()
-            }
-        }
-        Log => logarithm(x, f64::ln),
-        Log10 => logarithm(x, f64::log10),
-        Log2 => logarithm(x, f64::log2),
-        Log1p => {
-            if x < -1.0 {
-                f64::NAN
-            } else if x == -1.0 {
-                f64::NEG_INFINITY
-            } else if x == 0.0 || x == f64::INFINITY {
-                x
-            } else {
-                x.ln_1p()
-            }
-        }
-        Sin => {
-            if x.is_infinite() {
-                f64::NAN
-            } else if x == 0.0 {
-                x
-            } else {
-                x.sin()
-            }
-        }
-        Sinh => {
-            if x == 0.0 || x.is_infinite() {
-                x
-            } else {
-                x.sinh()
-            }
-        }
-        Tan => {
-            if x.is_infinite() {
-                f64::NAN
-            } else if x == 0.0 {
-                x
-            } else {
-                x.tan()
-            }
-        }
-        Tanh => {
-            if x == 0.0 {
-                x
-            } else if x.is_infinite() {
-                1.0_f64.copysign(x)
-            } else {
-                x.tanh()
-            }
-        }
+    let operation = match operation {
+        Acos => Unary::Acos,
+        Acosh => Unary::Acosh,
+        Asin => Unary::Asin,
+        Asinh => Unary::Asinh,
+        Atan => Unary::Atan,
+        Atanh => Unary::Atanh,
+        Cbrt => Unary::Cbrt,
+        Cos => Unary::Cos,
+        Cosh => Unary::Cosh,
+        Exp => Unary::Exp,
+        Expm1 => Unary::Expm1,
+        Log => Unary::Log,
+        Log10 => Unary::Log10,
+        Log2 => Unary::Log2,
+        Log1p => Unary::Log1p,
+        Sin => Unary::Sin,
+        Sinh => Unary::Sinh,
+        Tan => Unary::Tan,
+        Tanh => Unary::Tanh,
         Atan2 => {
             return Err(wasmtime::Error::msg(
                 "binary native Math operation used as unary",
             ));
         }
     };
-    Ok(result)
+    Ok(math::unary::<Platform>(operation, x))
 }
 fn atan2(y: f64, x: f64) -> f64 {
-    if y.is_nan() || x.is_nan() {
-        return f64::NAN;
-    }
-    if y == 0.0 {
-        return if x.is_sign_negative() {
-            PI.copysign(y)
-        } else {
-            y
-        };
-    }
-    if x == 0.0 {
-        return FRAC_PI_2.copysign(y);
-    }
-    if y.is_infinite() {
-        let magnitude = if x.is_infinite() {
-            if x.is_sign_negative() {
-                3.0 * FRAC_PI_4
-            } else {
-                FRAC_PI_4
-            }
-        } else {
-            FRAC_PI_2
-        };
-        return magnitude.copysign(y);
-    }
-    if x.is_infinite() {
-        return if x.is_sign_negative() {
-            PI.copysign(y)
-        } else {
-            0.0_f64.copysign(y)
-        };
-    }
-    y.atan2(x)
+    math::atan2::<Platform>(y, x)
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     for &operation in NativeMath::ALL {

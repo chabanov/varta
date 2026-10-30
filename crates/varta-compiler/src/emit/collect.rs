@@ -43,6 +43,17 @@ impl<'a> Collected<'a> {
         }
         result
     }
+    /// V38 `charAt` and string index reads: the ASCII fast path in static
+    /// data and the general path, the linked `string_char_at16` intrinsic
+    /// with its snapshot.
+    fn char_at(&mut self, span: swc_common::Span, source: &'a crate::source::Source) {
+        self.helpers
+            .extend([strings::Helper::CharAt, strings::Helper::Snapshot]);
+        self.hosts.insert(Host::StringCharAt16);
+        self.strings
+            .entry(strings::ascii_units())
+            .or_insert((span, source));
+    }
     fn expression(&mut self, expr: &Expr, source: &'a crate::source::Source) {
         if expr.ty.is_cell() {
             self.unions = true;
@@ -266,8 +277,12 @@ impl<'a> Collected<'a> {
                     self.helpers.insert(strings::Helper::Allocate);
                 }
                 if base.ty == Type::String {
-                    self.hosts.insert(Host::StringCharAt16);
-                    self.helpers.insert(strings::Helper::Snapshot);
+                    if crate::codegen_v2(self.types.profile) {
+                        self.char_at(expr.span, source);
+                    } else {
+                        self.hosts.insert(Host::StringCharAt16);
+                        self.helpers.insert(strings::Helper::Snapshot);
+                    }
                 }
                 self.expression(base, source);
                 self.expression(index, source);
@@ -364,12 +379,7 @@ impl<'a> Collected<'a> {
                         self.helpers.insert(strings::Helper::FromUnits);
                     }
                     ir::Intrinsic::Identity => {}
-                    ir::Intrinsic::CharAt => {
-                        self.helpers.insert(strings::Helper::CharAt);
-                        self.strings
-                            .entry(strings::ascii_units())
-                            .or_insert((expr.span, source));
-                    }
+                    ir::Intrinsic::CharAt => self.char_at(expr.span, source),
                     ir::Intrinsic::CharCodeAt => {
                         self.helpers.insert(strings::Helper::CharCodeAt);
                     }

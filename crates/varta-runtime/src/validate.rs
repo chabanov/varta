@@ -63,6 +63,13 @@ pub(crate) fn module_with(
                 varta_common::HostScalar::F64 => matches!(actual, wasmtime::ValType::F64),
                 varta_common::HostScalar::I64 => matches!(actual, wasmtime::ValType::I64),
             };
+        if language.profile.is_some_and(|p| p.links(host)) {
+            return Err(wasmtime::Error::msg(format!(
+                "pure intrinsic must be linked into the module, not imported: {}",
+                import.name()
+            ))
+            .into());
+        }
         if language
             .profile
             .is_some_and(|p| p.host_operation(host) != host)
@@ -98,6 +105,9 @@ pub(crate) fn module_with(
         tools,
     ))
 }
+
+/// Index of v38's private intrinsic memory (after guest memory 0).
+const INTRINSIC_MEMORY: usize = 1;
 
 fn error(message: &str) -> RuntimeError {
     wasmtime::Error::msg(message.to_owned()).into()
@@ -141,6 +151,7 @@ fn preflight(
         return Err(error("Wasm exceeds size limit"));
     }
     let mut imports = 0usize;
+    let linked = language.profile.is_some_and(|p| p.linked_intrinsics());
     let mut values = 0;
     let mut function_catalog = None;
     let mut union_imports = false;
@@ -255,10 +266,10 @@ fn preflight(
                 return Err(error("too many functions"));
             }
             Payload::MemorySection(reader) => {
-                if reader.count() > 1 {
+                if reader.count() > 1 + u32::from(linked) {
                     return Err(error("only one memory is supported"));
                 }
-                for memory in reader {
+                for (index, memory) in reader.into_iter().enumerate() {
                     let memory = memory.map_err(|e| error(&e.to_string()))?;
                     if memory.memory64
                         || memory.shared
@@ -266,15 +277,46 @@ fn preflight(
                     {
                         return Err(error("unsupported memory type or initial size"));
                     }
-                    memory_initial = Some(memory.initial);
+                    if index == 0 {
+                        memory_initial = Some(memory.initial);
+                    }
+                    // V38's second memory is the private intrinsic memory,
+                    // bounded by its own declared maximum.
+                    if index == INTRINSIC_MEMORY
+                        && memory.maximum.is_none_or(|maximum| {
+                            maximum
+                                > (abi::MAX_INTRINSIC_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64
+                                || memory.initial > maximum
+                        })
+                    {
+                        return Err(error("unbounded or oversized intrinsic memory"));
+                    }
+                }
+            }
+            Payload::ExportSection(reader) if linked => {
+                for export in reader {
+                    let export = export.map_err(|e| error(&e.to_string()))?;
+                    if export.kind == wasmparser::ExternalKind::Memory
+                        && export.index as usize == INTRINSIC_MEMORY
+                    {
+                        return Err(error("the intrinsic memory must not be exported"));
+                    }
                 }
             }
             Payload::DataSection(reader)
                 if language.profile.is_some_and(|p| p.program_limits()) =>
             {
                 for segment in reader {
-                    data_segments
-                        .push(active_segment(segment.map_err(|e| error(&e.to_string()))?)?);
+                    let (memory, offset, len) =
+                        active_segment(segment.map_err(|e| error(&e.to_string()))?)?;
+                    match memory {
+                        0 => data_segments.push((offset, len)),
+                        // V38 (`linked_intrinsics`): the linked library's
+                        // static data initializes its private memory, which
+                        // Wasmtime bounds at instantiation.
+                        INTRINSIC_MEMORY if linked => {}
+                        _ => return Err(error("static data must be active in memory 0")),
+                    }
                 }
             }
             Payload::CustomSection(section) if section.name() == abi::STATIC_SECTION => {
@@ -393,9 +435,10 @@ fn preflight(
 
 /// A `program_limits` (v38) data segment: active, in memory 0, at a constant
 /// i32 offset. Earlier profiles keep their unchecked data sections.
-fn active_segment(segment: wasmparser::Data<'_>) -> Result<(usize, usize), RuntimeError> {
+/// The memory index, offset and length of an active data segment.
+fn active_segment(segment: wasmparser::Data<'_>) -> Result<(usize, usize, usize), RuntimeError> {
     let wasmparser::DataKind::Active {
-        memory_index: 0,
+        memory_index,
         offset_expr,
     } = segment.kind
     else {
@@ -406,7 +449,11 @@ fn active_segment(segment: wasmparser::Data<'_>) -> Result<(usize, usize), Runti
         (Ok(wasmparser::Operator::I32Const { value }), Ok(wasmparser::Operator::End))
             if operators.eof() =>
         {
-            Ok((value as u32 as usize, segment.data.len()))
+            Ok((
+                memory_index as usize,
+                value as u32 as usize,
+                segment.data.len(),
+            ))
         }
         _ => Err(error("static data offset must be an i32 constant")),
     }

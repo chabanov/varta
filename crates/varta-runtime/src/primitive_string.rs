@@ -1,29 +1,11 @@
-//! ABI22 primitive String conversion; checked UTF-16 input is copied before transfer.
-use crate::{RuntimeContext, host, number};
-use varta_common::{
-    HostOperation,
-    value::{PrimitiveBox, ValueKind},
-};
+//! ABI22 primitive String conversion host import over the shared
+//! `varta-intrinsics` implementation (also linked into v38 guests).
+use crate::{RuntimeContext, host};
+use varta_common::HostOperation;
 use wasmtime::{Caller, Extern, Linker};
 pub(super) fn convert(bytes: &[u8], cell: i64) -> Result<Vec<u8>, wasmtime::Error> {
-    let value = PrimitiveBox::read(bytes, cell as u64).map_err(wasmtime::Error::new)?;
-    let text = match value.kind {
-        ValueKind::Float64 => number::canonical_display(f64::from_bits(value.payload)),
-        ValueKind::Boolean => if value.payload == 0 { "false" } else { "true" }.into(),
-        ValueKind::Null => "null".into(),
-        ValueKind::Undefined => "undefined".into(),
-        ValueKind::String => {
-            let start = value.payload as u32 as usize;
-            let length = (value.payload >> 32) as usize;
-            return Ok(bytes[start..start + length].to_vec());
-        }
-        _ => {
-            return Err(wasmtime::Error::msg(
-                "String conversion requires a primitive value cell",
-            ));
-        }
-    };
-    Ok(varta_common::text::encode(&text))
+    varta_intrinsics::primitive::to_string(bytes, cell as u64)
+        .map_err(|error| wasmtime::Error::msg(error.to_string()))
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
@@ -43,10 +25,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     )?;
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use varta_common::value::ValueKind;
     use varta_common::{abi, value};
     #[test]
     fn primitive_string_copies_every_utf16_unit_and_rejects_noncanonical_cells() {

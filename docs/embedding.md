@@ -12,6 +12,10 @@ application instances, host event sources and permission broker v1 exist in
 the reference host ([architecture](architecture.md#turn-budgets-and-application-instances-turn_budgets));
 their per-turn budgets are normative below, the instance and event interfaces
 are [unstable](#what-is-unstable).
+Profile `checked-f64-utf16-v38` implements the accepted thin-host decision in
+part: its modules carry their own copies of the
+[linked intrinsics](#linked-intrinsics-v38), so a host implements only the
+imports that remain.
 
 The reference host is `varta-runtime` (Wasmtime). Where this document and the
 reference host disagree, the disagreement is a bug in one of them; report it rather
@@ -160,20 +164,26 @@ Passing validation is not proof of provenance or authorization.
    function types, each with at most `abi::MAX_WASM_PARAMETERS` parameters and 2
    results; at most 64 imports; at most one memory, 32-bit and not shared, with
    an initial size of at most `abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES`
-   pages; at most one table with at most 1024 initial elements; at most 128
-   globals; every function body at most `function_body_bytes`; at most the
-   profile's **Max defined functions** from the [acceptance table](#profiles):
-   for v1–v37 `abi::MAX_USER_FUNCTIONS` plus its helper allowance plus
+   pages, except that a profile that [links intrinsics](#linked-intrinsics-v38)
+   admits a second, private intrinsic memory (32-bit, not shared, with a
+   declared maximum of at most `abi::MAX_INTRINSIC_MEMORY_BYTES /
+   abi::WASM_PAGE_BYTES` pages and an initial size within it, never exported);
+   at most one table with at most 1024 initial elements; at most 128 globals;
+   every function body at most `function_body_bytes`; at most the profile's
+   **Max defined functions** from the [acceptance table](#profiles): for v1–v37
+   `abi::MAX_USER_FUNCTIONS` plus its helper allowance plus
    `abi::MAX_HTTP_HANDLERS` defined functions, for v38 `wasm_functions` defined
-   and imported functions together. Unspecified generic Wasm uses the
+   and imported functions together, linked intrinsic code included. Unspecified generic Wasm uses the
    `checked-i32-utf8-v1` row.
    A v38 module may also declare its static extension in one `varta.static`
    section (a little-endian `u32` page count from 1 to
    `abi::MAX_STATIC_EXTENSION_PAGES`; any other profile, a duplicate, zero or
    another length is rejected). Every data segment of a v38 module is active in
    memory 0 at an `i32.const` offset and lies wholly in the first page or wholly
-   in the declared extension, and a declared extension lies within the initial
-   memory ([memory layout](#memory-layout-and-encodings)).
+   in the declared extension, except the linked intrinsic library's own static
+   data, which is active in the private intrinsic memory (memory 1); a declared
+   extension lies within the initial memory
+   ([memory layout](#memory-layout-and-encodings)).
 4. **Memory maximum (third-party hosts).** The reference host caps growth with a
    store limiter. Hosts without one, including every JavaScript host, MUST parse
    the memory section and reject a memory whose maximum is absent or above
@@ -183,7 +193,9 @@ Passing validation is not proof of provenance or authorization.
 5. **Imports.** Every import is a function in module `varta` whose name is in the
    [host operation table](#host-operations); its parameter and result types equal
    the **Signature** column exactly; its minimum host ABI is at most the declared
-   host ABI; and the declared profile admits it (**Admitted under**). A JSON import
+   host ABI; and the declared profile admits it (**Admitted under**). A linking
+   profile never admits an operation it [links](#linked-intrinsics-v38): such an
+   import is rejected even though the host could implement it. A JSON import
    must be the profile's own parse/stringify pair. Unspecified generic Wasm may
    import only operations with minimum host ABI 1. A JavaScript host MUST parse
    the type and import sections to compare signatures:
@@ -266,7 +278,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 100 |
+| `checked-f64-utf16-v38` | 34 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 66 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -319,6 +331,59 @@ Acceptance details per profile (used by validation steps 3, 7 and 9):
 
 Numbers are signed i32 in `checked-i32-utf8-v1` (wrapping arithmetic, truncating
 division) and IEEE 754 binary64 in every other profile. Booleans are i32 `0`/`1`.
+
+### Linked intrinsics (v38)
+
+A profile that links intrinsics (`LanguageProfile::linked_intrinsics`) compiles
+the pure operations below into the module itself: the compiler links the
+functions of one pure-Rust library (`varta-intrinsics`, the same code the
+reference host runs for earlier profiles) that the program uses. A host
+implements **none** of them and MUST reject a module of such a profile that
+imports one (validation step 5). What remains for a host is the
+**Admitted under** column of the [host operation table](#host-operation-table):
+logging, the clock and entropy, the capability-checked environment, file,
+network and exit operations, timers, the scheduler and the operations listed
+under [Linked intrinsics pending](#linked-intrinsics-pending).
+
+<!-- generated:embedding-linked-intrinsics:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
+| Profile | Linked, never imported | Private memory maximum |
+| --- | --- | --- |
+| `checked-f64-utf16-v38` | `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 128 pages (`abi::MAX_INTRINSIC_MEMORY_BYTES`) |
+<!-- generated:embedding-linked-intrinsics:end -->
+
+- **Private memory.** Linked code runs on the module's second memory, which
+  holds only its shadow stack, static tables and a per-call arena. It is never
+  exported, a host never reads or writes it, and the module's own declared
+  maximum bounds it (a host without a store limiter MUST still check that
+  maximum, as for memory 0). Memory 0 keeps its layout; linked code reaches it
+  only through compiler-generated `memory.copy` accessors and writes results
+  exactly where a host would (string results at `abi::RESULT_BASE`, with
+  `env_result_len`). Nothing survives a call: the arena is reset on entry and a
+  nested entry traps. The engine MUST support multi-memory (Wasmtime, Node and
+  Chromium/V8, Firefox); an engine without it, such as some Safari releases,
+  cannot run a module that links an intrinsic.
+- **Budgets.** Linked operations are guest code: they consume fuel instead of a
+  host call, and their failures (a noncanonical argument, an exhausted private
+  memory) are traps, where the reference host reports a fatal error for the
+  same calls. Their data segments are part of the module and are charged like
+  any other data segment at instantiation.
+- **Determinism.** Every host computes the same bits, including the finite
+  results of Math and `**` that are [approximated](#numeric-intrinsics) in
+  earlier profiles: v38 uses the portable `libm` backend everywhere. Those
+  results are faithful but not always correctly rounded (`2 ** -0.5` is one
+  unit below the correctly rounded value), and they may differ from a
+  v37 module on the same host.
+
+#### Linked intrinsics pending
+
+V38 still imports the value-layout-bound pure operations: `json_parse_v18`,
+`json_stringify_v17`, the value17 readers (`value_*_v10`,
+`value_is_error_class_v6`, `value_log_v11`), the value17 primitive conversions
+(`primitive_to_string_v5`, `primitive_to_number_v5`), `primitive_compare`,
+`primitive_equal` and the `bigint_*` operations. Their contracts stay
+[unstable](#what-is-unstable); linking them needs the value-layout readers in
+the shared library and is the remaining work of the v38 linked-intrinsics
+stream ([development plan](development-plan.md#batch-v38-in-development)).
 
 ## Memory layout and encodings
 
@@ -438,7 +503,7 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | Exit | `process_exit`, `process_exit_f64` | Requires `process.exit` enabled. Authorized: end the execution with the code (not the host process); no result is produced. Denied: status 1 and the guest continues. `process_exit_f64` requires a finite integral value within i32, otherwise status 2 and the guest continues |
 | HTTP | `http_service`, `http_stop` | Feature marker and owned shutdown of [HTTP service v1](architecture.md#http-service-v1) |
 | Scheduler | `promise_*`, `scheduler_enqueue` | See [Microtask checkpoint](#microtask-checkpoint) |
-| Pure intrinsics | `number_*`, `string_char_*16`, `primitive_*`, `json_*`, `value_*`, `union_*`, `bigint_*` | Capability-free; semantics are the profile contracts in [architecture.md](architecture.md); numeric exactness in [Numeric intrinsics](#numeric-intrinsics); layout-bound ones are [unstable](#what-is-unstable) |
+| Pure intrinsics | `number_*`, `string_char_*16`, `string_to_*_case16`, `primitive_*`, `json_*`, `value_*`, `union_*`, `bigint_*` | Capability-free; semantics are the profile contracts in [architecture.md](architecture.md); numeric exactness in [Numeric intrinsics](#numeric-intrinsics); layout-bound ones are [unstable](#what-is-unstable). Under v38 the [linked](#linked-intrinsics-v38) ones are guest code, not imports |
 
 ### Logging
 
@@ -469,8 +534,8 @@ Logging never resets `result_status`, and display text never authorizes anything
   systems in the last bits. A host MAY use any faithful implementation, including
   JavaScript's `Math`; it MUST NOT claim last-bit equality, and conformance cases
   MUST NOT depend on the last bits of these results. Programs that need
-  cross-host determinism (record/replay) cannot rely on them today; see
-  [Proposed changes](#proposed-changes).
+  cross-host determinism (record/replay) cannot rely on them before v38, which
+  [links](#linked-intrinsics-v38) one portable implementation instead.
 - `number_random` is entropy, not deterministic, and needs no grant.
 
 ### Pattern matching
@@ -512,7 +577,7 @@ import the operation, as contiguous runs in registry order.
 | `json_parse_v3` | (i32, i32, i32, i32) → (i64) | 2 | none | yes | — | `checked-f64-utf8-v1` |
 | `json_stringify_v3` | (i32, i32, i32) → (i32) | 2 | none | yes | yes | `checked-f64-utf8-v1` |
 | `log_f64` | (f64) → () | 2 | none | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v17` |
-| `number_remainder` | (f64, f64) → (f64) | 2 | none | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v38` |
+| `number_remainder` | (f64, f64) → (f64) | 2 | none | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v37` |
 | `process_exit_f64` | (f64) → () | 2 | `process.exit` | — | — | `checked-f64-utf8-v1` – `checked-f64-utf16-v38` |
 | `json_parse_v4` | (i32, i32, i32, i32) → (i64) | 3 | none | yes | — | `checked-f64-utf8-v2` |
 | `json_stringify_v4` | (i32, i32, i32) → (i32) | 3 | none | yes | yes | `checked-f64-utf8-v2` |
@@ -527,8 +592,8 @@ import the operation, as contiguous runs in registry order.
 | `log_string16` | (i32, i32) → () | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
 | `net_fetch16` | (i32, i32) → (i32) | 4 | `net.fetch` | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
 | `net_get16` | (i32, i32) → (i32) | 4 | `net.get` | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
-| `string_char_at16` | (i32, i32, f64) → (i32) | 4 | none | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
-| `string_char_code_at16` | (i32, i32, f64) → (f64) | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v38` |
+| `string_char_at16` | (i32, i32, f64) → (i32) | 4 | none | yes | yes | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
+| `string_char_code_at16` | (i32, i32, f64) → (f64) | 4 | none | — | — | `checked-f64-utf16-v1` – `checked-f64-utf16-v37` |
 | `json_parse_v6` | (i32, i32, i32, i32) → (i64) | 5 | none | yes | — | `checked-f64-utf16-v2` |
 | `json_stringify_v6` | (i32, i32, i32) → (i32) | 5 | none | yes | yes | `checked-f64-utf16-v2` |
 | `union_log` | (i64) → () | 5 | none | — | — | `checked-f64-utf16-v2` – `checked-f64-utf16-v3` |
@@ -589,38 +654,38 @@ import the operation, as contiguous runs in registry order.
 | `value_strict_equal_v6` | (i64, i64) → (i32) | 16 | none | — | — | `checked-f64-utf16-v13` – `checked-f64-utf16-v28` |
 | `value_truthy_v6` | (i64) → (i32) | 16 | none | — | — | `checked-f64-utf16-v13` – `checked-f64-utf16-v28` |
 | `value_typeof_v6` | (i64) → (i32) | 16 | none | yes | yes | `checked-f64-utf16-v13` – `checked-f64-utf16-v28` |
-| `number_power` | (f64, f64) → (f64) | 18 | none | — | — | `checked-f64-utf16-v15` – `checked-f64-utf16-v38` |
-| `number_acos` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_acosh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_asin` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_asinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_atan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_atan2` | (f64, f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_atanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_cbrt` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_cos` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_cosh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_exp` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_expm1` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_log` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_log10` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_log1p` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_log2` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_sin` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_sinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_tan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
-| `number_tanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v38` |
+| `number_power` | (f64, f64) → (f64) | 18 | none | — | — | `checked-f64-utf16-v15` – `checked-f64-utf16-v37` |
+| `number_acos` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_acosh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_asin` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_asinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_atan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_atan2` | (f64, f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_atanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_cbrt` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_cos` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_cosh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_exp` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_expm1` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_log` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_log10` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_log1p` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_log2` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_sin` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_sinh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_tan` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
+| `number_tanh` | (f64) → (f64) | 19 | none | — | — | `checked-f64-utf16-v16` – `checked-f64-utf16-v37` |
 | `number_random` | () → (f64) | 20 | none | — | — | `checked-f64-utf16-v17` – `checked-f64-utf16-v38` |
 | `log_f64_v2` | (f64) → () | 21 | none | — | — | `checked-f64-utf16-v18` – `checked-f64-utf16-v38` |
 | `value_log_v7` | (i64) → () | 21 | none | — | — | `checked-f64-utf16-v18` – `checked-f64-utf16-v28` |
-| `primitive_to_string` | (i64) → (i32) | 22 | none | yes | yes | `checked-f64-utf16-v19` – `checked-f64-utf16-v38` |
-| `primitive_to_number` | (i64) → (f64) | 23 | none | — | — | `checked-f64-utf16-v20` – `checked-f64-utf16-v38` |
-| `number_to_string` | (f64, f64) → (i32) | 24 | none | yes | yes | `checked-f64-utf16-v21` – `checked-f64-utf16-v38` |
-| `number_to_exponential` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v38` |
-| `number_to_fixed` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v38` |
-| `number_to_precision` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v38` |
-| `number_parse_float` | (i64) → (f64) | 26 | none | — | — | `checked-f64-utf16-v23` – `checked-f64-utf16-v38` |
-| `number_parse_int` | (i64, i64) → (f64) | 26 | none | — | — | `checked-f64-utf16-v23` – `checked-f64-utf16-v38` |
+| `primitive_to_string` | (i64) → (i32) | 22 | none | yes | yes | `checked-f64-utf16-v19` – `checked-f64-utf16-v37` |
+| `primitive_to_number` | (i64) → (f64) | 23 | none | — | — | `checked-f64-utf16-v20` – `checked-f64-utf16-v37` |
+| `number_to_string` | (f64, f64) → (i32) | 24 | none | yes | yes | `checked-f64-utf16-v21` – `checked-f64-utf16-v37` |
+| `number_to_exponential` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v37` |
+| `number_to_fixed` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v37` |
+| `number_to_precision` | (f64, f64) → (i32) | 25 | none | yes | yes | `checked-f64-utf16-v22` – `checked-f64-utf16-v37` |
+| `number_parse_float` | (i64) → (f64) | 26 | none | — | — | `checked-f64-utf16-v23` – `checked-f64-utf16-v37` |
+| `number_parse_int` | (i64, i64) → (f64) | 26 | none | — | — | `checked-f64-utf16-v23` – `checked-f64-utf16-v37` |
 | `bigint_binary` | (i32, i64, i64) → (i32, i32) | 27 | none | yes | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
 | `bigint_compare` | (i64, i64) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
 | `bigint_compare_number` | (i64, f64) → (f64) | 27 | none | — | — | `checked-f64-utf16-v28` – `checked-f64-utf16-v38` |
@@ -704,8 +769,8 @@ import the operation, as contiguous runs in registry order.
 | `net_request_take` | (f64) → (i32) | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `net_request_text` | (f64) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `net_request_watch` | (f64, f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
-| `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
-| `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `string_to_lower_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
+| `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
 | `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `event_source_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_source_open` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
@@ -2125,7 +2190,7 @@ Not normative yet; each needs its own change to the engine, CLI or contract.
 | Output budget | Charged on the reference line text, including prefixes and diagnostics | Charge guest bytes only (UTF-8 bytes of the guest's text plus one per line); bound diagnostics by a separate host budget | The runtime's output accounting and its tests; exhaustion points of existing programs would move, so it applies to a new profile or envelope version |
 | Runtime companion failure envelope | No `diagnostics` member | Same envelope as the development CLI, with `"diagnostics":[]` | `varta-launcher` JSON error output and its tests |
 | `varta.functions` structure | Normative minimum here; full rules only in code | Publish the full catalog schema and structural rules in this document, generated from the registry | Documentation and a drift test only |
-| Approximated Math results | Platform `f64` library, last bits host-dependent | Bit-identical results on every host by linking one pure-Rust implementation into the guest (the accepted thin-host decision) | A new profile whose Math imports are guest code |
+| Approximated Math results | Platform `f64` library, last bits host-dependent, before v38 | Adopted by v38 ([linked intrinsics](#linked-intrinsics-v38)): bit-identical results on every host from one pure-Rust implementation linked into the guest | Earlier profiles keep their imports and meaning |
 | Denial targets | Runtime constants (`clock`, `process`, otherwise the guest input), documented by hand | Move each operation's denial target into the `HostOperation` registry so the target table is generated | `varta-common` registry data read by the runtime handlers; no observable change |
 | Logs in failure envelopes | `run_with` keeps the lines of a failed run and the CLI and companion print them before the diagnostic (adopted); failure envelopes carry no `logs` | A `logs` member in failure envelopes | JSON failure envelopes of the CLI and the companion; they would need a new envelope version |
 | Denied `timer_start` | Fatal for the execution | Keep it fatal, or reject the timer's promise so the guest can recover; needs a decision | Runtime scheduler and the timer prelude, in a new profile if changed |

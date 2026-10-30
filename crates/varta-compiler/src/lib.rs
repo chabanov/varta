@@ -3,6 +3,7 @@
 mod emit;
 mod error;
 mod ir;
+mod link;
 mod lower;
 mod modules;
 pub use modules::{Compilation, ModuleLoader, ModuleSource};
@@ -164,11 +165,14 @@ fn compile_graph(
     let graph = modules::Graph::load_with_profile(entry, loader, profile)?;
     let root = &graph.units[&graph.entry];
     let program = lower::lower(&graph, profile)?;
+    // A fuel-profile build instruments the emitted bodies before linking,
+    // so the linked intrinsic library itself carries no probes.
     let bytes = if fuel_profile {
         emit::emit_profiled(&program)
     } else {
         emit::emit(&program)
     }
+    .and_then(|bytes| link::link(bytes, profile))
     .map_err(|e| root.source.locate(e, root.ast.span()))?;
     wasmparser::Validator::new()
         .validate_all(&bytes)

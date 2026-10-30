@@ -8,8 +8,9 @@ license.workspace = true
 varta-bigint = { path = "../varta-bigint" }
 varta-common = { path = "../varta-common" }
 thiserror.workspace = true
-# `wasmparser` enables `reencode` for fuel-profile instrumentation; it adds
-# no crate (wasmparser is already a dependency).
+# `wasmparser` enables `reencode`, used for fuel-profile instrumentation and
+# to link the v38 intrinsic library (no new crate: wasm-encoder already
+# depends on the locked wasmparser).
 wasm-encoder = { workspace = true, features = ["wasmparser"] }
 wasmparser.workspace = true
 swc_common = "26.0.0"

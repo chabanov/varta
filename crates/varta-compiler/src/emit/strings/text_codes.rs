@@ -159,8 +159,16 @@ fn position(f: &mut Function, [input, index, bytes, at]: [u32; 4], outside: I<'s
     instructions(
         f,
         [
+            // NaN selects position 0 before the range check, so it is
+            // outside an empty string.
             I::LocalGet(index),
             I::F64Trunc,
+            I::LocalTee(index),
+            I::F64Const(0.0.into()),
+            I::LocalGet(index),
+            I::LocalGet(index),
+            I::F64Eq,
+            I::Select,
             I::LocalTee(index),
             I::F64Const(0.0.into()),
             I::F64Lt,
@@ -175,7 +183,7 @@ fn position(f: &mut Function, [input, index, bytes, at]: [u32; 4], outside: I<'s
             outside,
             I::Return,
             I::End,
-            // Saturation maps NaN to 0, which ToIntegerOrInfinity selects.
+            // An in-range, non-negative integral position.
             I::LocalGet(index),
             I::I32TruncSatF64U,
             I::I32Const(UNIT_BYTES),
@@ -212,17 +220,28 @@ pub(super) fn char_code_at() -> Function {
     f
 }
 
-/// V38 `(input: string, index: f64) -> string`: `charAt`. An ASCII unit is a
-/// static slice of the `ascii` table; any other unit is copied into a fresh
-/// one-unit string. The input stays rooted by its caller.
-pub(super) fn char_at(allocate: u32, ascii: u32) -> Function {
+/// The general path of v38 `charAt`: the `string_char_at16` import (linked
+/// into the module from the intrinsic library, `linked_intrinsics`), the
+/// result-length global it sets and the snapshot helper that owns its result.
+#[derive(Clone, Copy)]
+pub(super) struct CharAtFallback {
+    pub char_at: u32,
+    pub result_len: u32,
+    pub snapshot: u32,
+}
+
+/// V38 `(input: string, index: f64) -> string`: `charAt` and string index
+/// reads. The fast path serves an ASCII unit as a static slice of the `ascii`
+/// table; any other unit takes the general path, the linked
+/// `string_char_at16` intrinsic, whose result is snapshotted. The input stays
+/// rooted by its caller.
+pub(super) fn char_at(ascii: u32, fallback: CharAtFallback) -> Function {
     const INPUT: u32 = 0;
     const INDEX: u32 = 1;
     const BYTES: u32 = 2;
     const AT: u32 = 3;
     const UNIT: u32 = 4;
-    const DEST: u32 = 5;
-    let mut f = Function::new([(DEST - BYTES + 1, ValType::I32)]);
+    let mut f = Function::new([(UNIT - BYTES + 1, ValType::I32)]);
     position(&mut f, [INPUT, INDEX, BYTES, AT], I::I64Const(0));
     let one_unit = i64::from(UNIT_BYTES) << LENGTH_SHIFT;
     instructions(
@@ -244,15 +263,13 @@ pub(super) fn char_at(allocate: u32, ascii: u32) -> Function {
             I::I64Or,
             I::Return,
             I::End,
-            I::I32Const(UNIT_BYTES),
-            I::Call(allocate),
-            I::LocalTee(DEST),
-            I::LocalGet(UNIT),
-            I::I32Store16(UNIT_MEMORY),
-            I::LocalGet(DEST),
-            I::I64ExtendI32U,
-            I::I64Const(one_unit),
-            I::I64Or,
+            I::LocalGet(INPUT),
+            I::I32WrapI64,
+            I::LocalGet(BYTES),
+            I::LocalGet(INDEX),
+            I::Call(fallback.char_at),
+            I::GlobalGet(fallback.result_len),
+            I::Call(fallback.snapshot),
             I::End,
         ],
     );

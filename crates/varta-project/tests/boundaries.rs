@@ -36,7 +36,12 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             "varta-compiler",
             ["varta-common", "varta-bigint"].as_slice(),
         ),
-        ("varta-runtime", ["varta-common", "varta-bigint"].as_slice()),
+        (
+            "varta-runtime",
+            ["varta-common", "varta-bigint", "varta-intrinsics"].as_slice(),
+        ),
+        ("varta-intrinsics", [].as_slice()),
+        ("varta-intrinsics-wasm", ["varta-intrinsics"].as_slice()),
         (
             "varta-project",
             [
@@ -72,6 +77,8 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                     name,
                     "varta-common"
                         | "varta-bigint"
+                        | "varta-intrinsics"
+                        | "varta-intrinsics-wasm"
                         | "varta-compiler"
                         | "varta-runtime"
                         | "varta-artifact"
@@ -82,6 +89,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                             target,
                             "varta-common"
                                 | "varta-bigint"
+                                | "varta-intrinsics"
                                 | "varta-compiler"
                                 | "varta-runtime"
                                 | "varta-artifact"

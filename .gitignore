@@ -2,3 +2,5 @@
 /dist/
 *.wasm
 *.cwasm
+# The checked-in v38 guest intrinsic library (`scripts/build-intrinsics.py`).
+!/crates/varta-compiler/src/link/intrinsics.wasm

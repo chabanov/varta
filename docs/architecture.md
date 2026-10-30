@@ -9592,13 +9592,17 @@ which the case-corpus parity test checks; only its fuel use is lower.
   (including scope exit and a catch binding) resets both locals, so the bytes in
   `[tail, cap)` belong to no other value. A total above the per-value limit traps
   in the allocator as concatenation does.
-- **Code units and remainders.** `charAt` and `charCodeAt` run in the guest with
-  `ToIntegerOrInfinity` positions (NaN and `-0` select 0; outside the string,
-  `""` and NaN) and consume no host call; `charAt` of an ASCII unit returns a
-  static one-unit slice of a 256-byte table in static data, any other unit a
-  fresh one-unit string. Number `%` is exact in the guest for integral operands
-  below 2^53 in magnitude with a nonzero divisor (a zero result takes the
-  dividend's sign); every other operand pair calls the host remainder as before.
+- **Code units and remainders.** Each operation has exactly one v38 path: an
+  inline fast path with the [linked intrinsic](#linked-intrinsics-linked_intrinsics)
+  as its general fallback, and no host import. `charAt`, string index reads
+  (`s[i]`) and `charCodeAt` take `ToIntegerOrInfinity` positions in the guest
+  (NaN and `-0` select 0; outside the string, `""`, `undefined` and NaN);
+  `charCodeAt` reads the unit in place, and `charAt` of an ASCII unit returns a
+  static one-unit slice of a 256-byte table in static data while any other unit
+  takes the linked `string_char_at16` and a snapshot of its result. Number `%`
+  is exact in the guest for integral operands below 2^53 in magnitude with a
+  nonzero divisor (a zero result takes the dividend's sign); every other
+  operand pair calls the linked `number_remainder`.
 - **Allocator.** The first free-list scan of a request examines at most eight
   blocks before taking fresh heap space, and the heap grows without a
   collection while its end stays below twice the heap left by the previous
@@ -9781,6 +9785,89 @@ Not yet admitted: Web byte bodies (`ReadableStream<Uint8Array>`,
 element types, `instanceof Map/Set/
 Uint8Array`, unions mixing collections with other objects, exhaustive switches
 over discriminant paths, and record spreads that keep JavaScript's key order.
+
+#### Linked intrinsics (`linked_intrinsics`)
+
+V38 links pure intrinsics into the guest module instead of importing them, so
+every host computes the same bits and a third-party host implements only
+effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
+
+- **One implementation.** The pure algorithms live in `varta-intrinsics`
+  (`no_std` + `alloc`, no `unsafe`, no dependency on `varta-common`). The
+  native runtime calls it for the host imports of earlier profiles; the
+  `varta-intrinsics-wasm` shim compiles the same code to one core wasm32
+  module (`scripts/build-intrinsics.py`), which the compiler embeds as a
+  checked-in artifact (`crates/varta-compiler/src/link/intrinsics.wasm`, with
+  its source fingerprint in `intrinsics.json`). The compiler test
+  `intrinsic_library_matches_its_sources` fails while the artifact is stale.
+  The layout constants the library reads are restated in
+  `varta_intrinsics::layout` and checked equal to `abi`/`value` by the runtime
+  test `intrinsic_layout_matches_common`; its primitive-cell reader, which the
+  runtime's linked-family host imports now use, is checked against
+  `value::PrimitiveBox` on valid and corrupted cells
+  (`shared_primitive_cell_reader_agrees_with_common`) until the value readers
+  have one owner.
+- **Linked set.** `HostOperation::linked` names the operations with a linked
+  implementation; `LanguageProfile::links` is true for them under v38 only.
+  Today they are Math (the unary functions and `atan2`), `number_power`,
+  `number_remainder`, Number text (`number_to_string`, `number_to_fixed`,
+  `number_to_exponential`, `number_to_precision`), `number_parse_int`,
+  `number_parse_float`, the primitive-cell conversions `primitive_to_string`
+  and `primitive_to_number`, and the UTF-16 operations `string_char_at16`,
+  `string_char_code_at16`, `string_to_upper_case16` and
+  `string_to_lower_case16`. The value-layout-bound operations (JSON, value17
+  readers and conversions, `primitive_compare`/`primitive_equal`, BigInt) stay
+  host imports until the value readers move into the shared library.
+- **Linking.** After emission the compiler replaces each `varta.<name>` import
+  of a linked operation by the library export of the same name, whose
+  signature must equal `HostOperation::scalar_signature`, and appends exactly
+  the library functions, globals and data segments reachable from those exports
+  (wasm-ld relocations, kept with `--emit-relocs`, attribute data to
+  functions). Kept imports keep their order; guest-defined functions keep their
+  relative order and indices after the imports, so `varta.functions` codes are
+  unchanged; linked functions and the synthesized accessors follow them; library
+  types are deduplicated against the guest's. A library function that uses a
+  table, an indirect call, a passive segment or a start function is not
+  linkable. Linking is deterministic, and a program without a linked import is
+  emitted byte for byte as before.
+- **Memory.** The library runs on a second, private memory: its shadow stack,
+  static data and a per-call bump arena, bounded by its declared maximum
+  `abi::MAX_INTRINSIC_MEMORY_BYTES` and never exported. Guest memory 0 and its
+  layout are unchanged. The library reaches memory 0 and the result globals
+  only through five synthesized accessors (`memory.size`/`memory.grow` of
+  memory 0, bounds-checked `memory.copy` in each direction, and setting the
+  exported `env_result_len`); string results are written at
+  `abi::RESULT_BASE` exactly as a host writes them. Each allocating export
+  resets the arena on entry and traps on a nested entry, so no pointer or state
+  survives a call; linked code never allocates in, roots or retains guest heap
+  values, and guest values it reads are copied first. A v38 module that links
+  an intrinsic therefore needs an engine with multi-memory (Wasmtime, V8,
+  SpiderMonkey); the single-memory alternative, a reserved library region in
+  memory 0, is a layout change for the program-limits stream.
+- **Validation.** A v38 module that imports a linked operation is rejected
+  before instantiation ("pure intrinsic must be linked"). V38 admits a second
+  memory only as the private intrinsic memory (32-bit, unshared, declared
+  maximum within `abi::MAX_INTRINSIC_MEMORY_BYTES`, not exported); linked
+  functions and signatures count against v38's own structural limits (the Wasm
+  limits of [program limits](#program-limits-program_limits)), and the
+  library's data segments are the only ones a v38 module may place outside its
+  static region (in the private memory). The runtime raises the store's memory
+  count to two only for such a module, and the v38 instantiation allowance
+  covers the private memory's image as well. Earlier profiles keep one memory
+  and their limits.
+- **Semantics and budgets.** Results equal the host implementation's on the
+  same inputs, with two documented differences: Math and `**` use the portable
+  `libm` backend (bit-identical on every host, faithful but not always
+  correctly rounded; earlier profiles keep the platform library), and a fatal
+  failure (a noncanonical argument, an exhausted private memory) is a trap
+  instead of a host error message. Linked calls consume fuel and no host-call
+  budget; their data segments are covered by the v38 instantiation allowance
+  like every v38 data segment. Integral `Number.prototype.toString(radix)`
+  arguments below 2^53 take an exact integer-digit path instead of the
+  big-integer interval search. Production budgets are unchanged. Linked
+  string intrinsics still read and return strings within the frozen 1 MiB
+  string and result-buffer limits (open with the move of the library into a
+  reserved region of memory 0).
 
 ## Local modules
 
@@ -10440,6 +10527,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Resource | Limit | Source constant |
 | --- | --- | --- |
 | Guest linear memory | 8 MiB | `abi::MAX_MEMORY_BYTES` |
+| Private intrinsic memory (v38 `linked_intrinsics`) | 8 MiB | `abi::MAX_INTRINSIC_MEMORY_BYTES` |
 | Guest instructions (fuel) | 1000000 | `abi::FUEL` |
 | Execution/HTTP deadline | 5 s | `abi::DEADLINE_SECONDS` |
 | Host calls per execution | 1024 | `abi::MAX_HOST_CALLS` |

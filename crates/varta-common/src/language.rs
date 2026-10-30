@@ -635,11 +635,19 @@ impl LanguageProfile {
     pub fn turn_budgets(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
-    /// Batch v38, linked-intrinsics stream: Rust pure intrinsics linked into
-    /// the guest Wasm so third-party hosts stay thin. Admits nothing yet.
+    /// Batch v38, linked-intrinsics stream: the pure intrinsics are linked
+    /// into the guest Wasm from the `varta-intrinsics` library, so third-party
+    /// hosts implement only effects. See [`Self::links`].
     #[must_use]
     pub fn linked_intrinsics(self) -> bool {
         self == Self::CheckedF64Utf16V38
+    }
+    /// Whether this profile links `operation` into the guest module instead of
+    /// importing it: a v38 module never imports a [`crate::HostOperation::linked`]
+    /// operation, and runtime validation rejects one that does.
+    #[must_use]
+    pub fn links(self, operation: crate::HostOperation) -> bool {
+        self.linked_intrinsics() && operation.linked()
     }
     /// Batch v38, view-protocol stream: the L0 `view_commit` protocol, event
     /// delivery and a headless renderer. Admits nothing yet.
@@ -2940,6 +2948,48 @@ mod tests {
         assert!(launcher.validate_current().is_err());
     }
 
+    #[test]
+    fn v38_links_exactly_the_registered_pure_intrinsics() {
+        use crate::HostOperation as H;
+        let v38 = LanguageProfile::CheckedF64Utf16V38;
+        for operation in [
+            H::MathSin,
+            H::MathAtan2,
+            H::FloatPower,
+            H::FloatRemainder,
+            H::NumberToFixed,
+            H::NumberParseInt,
+            H::PrimitiveString,
+            H::StringToUpperCase16,
+        ] {
+            assert!(operation.linked() && v38.links(operation), "{operation:?}");
+            assert!(operation.capability().is_none(), "{operation:?}");
+            assert!(!operation.scheduler() && !operation.timer() && !operation.net());
+        }
+        // Effects, logging, entropy and the layout-bound readers stay imports.
+        for operation in [
+            H::LogString16,
+            H::LogFloatV2,
+            H::MathRandom,
+            H::Time,
+            H::DateNow,
+            H::EnvGet16,
+            H::PromiseReact,
+            H::TimerStartV2,
+            H::JsonParseV18,
+            H::JsonStringifyV17,
+            H::ValueTypeOfV10,
+            H::PrimitiveStringV5,
+            H::BigIntBinary,
+        ] {
+            assert!(!v38.links(operation), "{operation:?}");
+        }
+        for &profile in SUPPORTED_PROFILES {
+            if profile != v38 {
+                assert!(!profile.links(H::MathSin), "{profile:?}");
+            }
+        }
+    }
     #[test]
     fn pilot_v38_inherits_v37_with_host_abi_34_and_admits_nothing_yet() {
         use crate::HostOperation as H;

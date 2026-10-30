@@ -1,165 +1,17 @@
-//! ABI23 primitive Number conversion, with strict ECMAScript numeric-string grammar.
+//! ABI23 primitive Number conversion host import over the shared
+//! `varta-intrinsics` implementation (also linked into v38 guests).
 use crate::RuntimeContext;
-use varta_common::{
-    HostOperation,
-    value::{PrimitiveBox, ValueKind},
-};
+use varta_common::HostOperation;
+#[cfg(test)]
+use varta_intrinsics::parse::string_number;
 use wasmtime::{Caller, Extern, Linker};
+#[cfg(test)]
 pub(super) fn whitespace(unit: u16) -> bool {
-    varta_common::text::ecmascript_whitespace(unit)
-}
-fn decimal(bytes: &[u8]) -> f64 {
-    let unsigned = if matches!(bytes.first(), Some(b'+' | b'-')) {
-        &bytes[1..]
-    } else {
-        bytes
-    };
-    if unsigned == b"Infinity" {
-        return if bytes.first() == Some(&b'-') {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
-        };
-    }
-    let mut at = 0;
-    while unsigned.get(at).is_some_and(u8::is_ascii_digit) {
-        at += 1;
-    }
-    let mut digits = at;
-    if unsigned.get(at) == Some(&b'.') {
-        at += 1;
-        let start = at;
-        while unsigned.get(at).is_some_and(u8::is_ascii_digit) {
-            at += 1;
-        }
-        digits += at - start;
-    }
-    if digits == 0 {
-        return f64::NAN;
-    }
-    if matches!(unsigned.get(at), Some(b'e' | b'E')) {
-        at += 1;
-        if matches!(unsigned.get(at), Some(b'+' | b'-')) {
-            at += 1;
-        }
-        let start = at;
-        while unsigned.get(at).is_some_and(u8::is_ascii_digit) {
-            at += 1;
-        }
-        if at == start {
-            return f64::NAN;
-        }
-    }
-    if at != unsigned.len() {
-        return f64::NAN;
-    }
-    // Grammar is checked first: Rust's additional inf/NaN spellings are not admitted.
-    std::str::from_utf8(bytes)
-        .ok()
-        .and_then(|text| text.parse::<f64>().ok())
-        .unwrap_or(f64::NAN)
-}
-fn prefixed(bytes: &[u8], width: u32) -> f64 {
-    if bytes.is_empty() {
-        return f64::NAN;
-    }
-    let mut bits = 0_u32;
-    let mut leading = 0_u64;
-    let mut guard = false;
-    let mut sticky = false;
-    for &ch in bytes {
-        let digit = match ch {
-            b'0'..=b'9' => u32::from(ch - b'0'),
-            b'a'..=b'f' => u32::from(ch - b'a') + 10,
-            b'A'..=b'F' => u32::from(ch - b'A') + 10,
-            _ => return f64::NAN,
-        };
-        if digit >= 1 << width {
-            return f64::NAN;
-        }
-        for shift in (0..width).rev() {
-            let bit = (digit >> shift) & 1;
-            if bits == 0 && bit == 0 {
-                continue;
-            }
-            bits += 1;
-            if bits <= 53 {
-                leading = (leading << 1) | u64::from(bit);
-            } else if bits == 54 {
-                guard = bit != 0;
-            } else {
-                sticky |= bit != 0;
-            }
-        }
-    }
-    if bits <= 53 {
-        return leading as f64;
-    }
-    if guard && (sticky || leading & 1 != 0) {
-        leading += 1;
-    }
-    if leading == 1 << 53 {
-        leading >>= 1;
-        bits += 1;
-    }
-    let exponent = bits - 1;
-    if exponent > 1023 {
-        return f64::INFINITY;
-    }
-    f64::from_bits((u64::from(exponent + 1023) << 52) | (leading & 0x000f_ffff_ffff_ffff))
-}
-fn string_number(bytes: &[u8]) -> f64 {
-    let unit = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
-    let mut start = 0;
-    let mut end = bytes.len();
-    while start < end && whitespace(unit(start)) {
-        start += 2;
-    }
-    while end > start && whitespace(unit(end - 2)) {
-        end -= 2;
-    }
-    if start == end {
-        return 0.0;
-    }
-    let mut ascii = Vec::with_capacity((end - start) / 2);
-    for at in (start..end).step_by(2) {
-        let ch = unit(at);
-        if ch > 127 {
-            return f64::NAN;
-        }
-        ascii.push(ch as u8);
-    }
-    if ascii.first() == Some(&b'0') && ascii.len() >= 2 {
-        let width = match ascii[1] {
-            b'x' | b'X' => Some(4),
-            b'o' | b'O' => Some(3),
-            b'b' | b'B' => Some(1),
-            _ => None,
-        };
-        if let Some(width) = width {
-            return prefixed(&ascii[2..], width);
-        }
-    }
-    decimal(&ascii)
+    varta_intrinsics::text::ecmascript_whitespace(unit)
 }
 pub(super) fn convert(bytes: &[u8], cell: i64) -> Result<f64, wasmtime::Error> {
-    let value = PrimitiveBox::read(bytes, cell as u64).map_err(wasmtime::Error::new)?;
-    Ok(match value.kind {
-        ValueKind::Float64 => f64::from_bits(value.payload),
-        ValueKind::Boolean => value.payload as f64,
-        ValueKind::Null => 0.0,
-        ValueKind::Undefined => f64::NAN,
-        ValueKind::String => {
-            let start = value.payload as u32 as usize;
-            let length = (value.payload >> 32) as usize;
-            string_number(&bytes[start..start + length])
-        }
-        _ => {
-            return Err(wasmtime::Error::msg(
-                "Number conversion requires a primitive cell",
-            ));
-        }
-    })
+    varta_intrinsics::primitive::to_number(bytes, cell as u64)
+        .map_err(|error| wasmtime::Error::msg(error.to_string()))
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
@@ -177,7 +29,6 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     )?;
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

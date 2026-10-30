@@ -824,6 +824,8 @@ impl RunReport {
 }
 
 #[cfg(test)]
+mod linked_intrinsic_tests;
+#[cfg(test)]
 mod reclamation_tests;
 #[cfg(test)]
 mod result_tests;

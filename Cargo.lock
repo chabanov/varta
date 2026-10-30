@@ -2218,6 +2218,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "varta-intrinsics"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "num-bigint",
+ "ryu-js",
+ "thiserror",
+]
+
+[[package]]
+name = "varta-intrinsics-wasm"
+version = "0.1.0"
+dependencies = [
+ "varta-intrinsics",
+]
+
+[[package]]
 name = "varta-launcher"
 version = "0.1.0"
 dependencies = [
@@ -2268,6 +2285,7 @@ dependencies = [
  "varta-bigint",
  "varta-common",
  "varta-compiler",
+ "varta-intrinsics",
  "wasmparser 0.241.2",
  "wasmtime",
  "webpki-roots",

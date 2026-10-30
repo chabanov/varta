@@ -1,8 +1,8 @@
 //! One bounded store shared by normal startup and named tool invocation.
 use crate::{RunOutput, RuntimeContext, RuntimeError, host, policy};
 use std::time::Instant;
-use varta_common::CapabilityGrant;
 use varta_common::budget::{Budgets, CappedBudget};
+use varta_common::{CapabilityGrant, abi};
 use wasmtime::{Engine, Instance, Module, Store, StoreLimitsBuilder};
 
 /// How an instance is driven.
@@ -48,6 +48,23 @@ impl<'a> Setup<'a> {
     }
 }
 
+/// Guest memory 0; a v38 module (`linked_intrinsics`) adds its private
+/// intrinsic memory, whose maximum validation bounds by
+/// `abi::MAX_INTRINSIC_MEMORY_BYTES`.
+const GUEST_MEMORIES: usize = 1;
+/// Store limits of an instance with `memories` memories, each bounded by the
+/// instance's memory budget (the intrinsic memory also by its declared
+/// maximum).
+fn limits(memories: usize, memory_bytes: usize) -> wasmtime::StoreLimits {
+    StoreLimitsBuilder::new()
+        .memory_size(memory_bytes)
+        .memories(memories)
+        .tables(1)
+        .table_elements(1024)
+        .instances(1)
+        .build()
+}
+
 pub(crate) struct Execution {
     pub store: Store<RuntimeContext>,
     _deadline: Deadline,
@@ -91,13 +108,7 @@ impl Execution {
             engine,
             RuntimeContext {
                 policy,
-                limits: StoreLimitsBuilder::new()
-                    .memory_size(budgets.memory_bytes)
-                    .memories(1)
-                    .tables(1)
-                    .table_elements(1024)
-                    .instances(1)
-                    .build(),
+                limits: limits(GUEST_MEMORIES, budgets.memory_bytes),
                 output: RunOutput::default(),
                 output_bytes: 0,
                 host_calls: 0,
@@ -173,6 +184,16 @@ impl Execution {
             .scheduler
             .set_bounds(bounds.limits.data);
         let result = (|| {
+            // Validation admitted a second memory only as v38's private
+            // intrinsic memory; every other module keeps the limits it has.
+            let memories = module.resources_required().num_memories as usize;
+            if memories > GUEST_MEMORIES {
+                let memory_bytes = self.store.data().budgets.memory_bytes;
+                self.store.data_mut().limits = limits(memories, memory_bytes);
+                // Wasmtime reads the instance, memory and table counts when
+                // the limiter is installed; install it again with the count.
+                self.store.limiter(|context| &mut context.limits);
+            }
             let mut linker = wasmtime::Linker::new(self.store.engine());
             host::register(&mut linker)?;
             if self.store.data().profiler.is_some() {
@@ -180,13 +201,19 @@ impl Execution {
             }
             // Wasmtime meters the data-segment copy of instantiation per byte
             // of the initialized image. Under v38 that copy, bounded by the
-            // initial memory and so by the instance's memory budget, gets its
+            // initial memories (the instance's memory budget, plus the
+            // private intrinsic memory's maximum when it is linked), gets its
             // own allowance and the guest keeps its whole fuel budget: the
             // first turn (instantiation, `_start` and its microtasks) is
             // charged only for guest code.
             let fuel = self.store.get_fuel()?;
             if uncharged_initialization {
-                let allowance = self.store.data().budgets.memory_bytes as u64;
+                let intrinsic = if memories > GUEST_MEMORIES {
+                    abi::MAX_INTRINSIC_MEMORY_BYTES
+                } else {
+                    0
+                };
+                let allowance = (self.store.data().budgets.memory_bytes + intrinsic) as u64;
                 self.store.set_fuel(fuel.saturating_add(allowance))?;
             }
             let instance = linker.instantiate(&mut self.store, module)?;

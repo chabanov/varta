@@ -277,7 +277,16 @@ impl Emitter<'_> {
             self.box_union(Type::Undefined)?;
         }
         self.code.push(I::Else);
-        if base.ty == Type::String {
+        if base.ty == Type::String && self.codegen_v2() {
+            // V38: the one `charAt` path (ASCII fast path, then the linked
+            // intrinsic).
+            self.code.extend([
+                I::LocalGet(self.string_temporary),
+                I::LocalGet(self.float_temporary),
+            ]);
+            self.string_helper(strings::Helper::CharAt)?;
+            self.box_union(Type::String)?;
+        } else if base.ty == Type::String {
             self.code.extend([
                 I::LocalGet(self.string_temporary),
                 I::I32WrapI64,
