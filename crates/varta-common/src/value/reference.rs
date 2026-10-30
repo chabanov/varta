@@ -2,6 +2,7 @@
 //! shallow and bounded; consumers such as JSON validate traversed child values.
 use super::*;
 use crate::abi;
+use crate::limits::DataLimits;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +41,21 @@ impl ReferenceBox {
         }
         Self::read_with_version(data, handle, catalog.value_version)
     }
+    /// [`Self::read_with_catalog`] under a profile's data limits.
+    pub fn read_with_catalog_limited(
+        data: &[u8],
+        handle: u64,
+        catalog: &crate::function::FunctionCatalog,
+        work_budget: u64,
+        limits: DataLimits,
+    ) -> Result<Self, ValueAbiError> {
+        let cell = Self::read_envelope(data, handle, catalog.value_version)?;
+        if cell.kind == ValueKind::Function {
+            catalog.validate_closure(data, cell.payload, work_budget)?;
+            return Ok(cell);
+        }
+        Self::read_limited(data, handle, catalog.value_version, limits)
+    }
     pub fn read(data: &[u8], handle: u64) -> Result<Self, ValueAbiError> {
         Self::read_with_version(data, handle, REFERENCE_VALUE_VERSION)
     }
@@ -47,6 +63,15 @@ impl ReferenceBox {
         data: &[u8],
         handle: u64,
         version: u32,
+    ) -> Result<Self, ValueAbiError> {
+        Self::read_limited(data, handle, version, DataLimits::LEGACY)
+    }
+    /// Read under a profile's data limits (v38 `data_limits`).
+    pub fn read_limited(
+        data: &[u8],
+        handle: u64,
+        version: u32,
+        limits: DataLimits,
     ) -> Result<Self, ValueAbiError> {
         if !matches!(
             version,
@@ -90,16 +115,16 @@ impl ReferenceBox {
             ) {
                 return Err(invalid());
             }
-            ErrorObject::read_with_version(data, cell.payload, version)?;
+            ErrorObject::read_limited(data, cell.payload, version, limits)?;
         } else if cell.kind == ValueKind::Dictionary {
-            Dictionary::read(data, cell.payload, version)?;
+            Dictionary::read_limited(data, cell.payload, version, limits)?;
         } else if cell.kind == ValueKind::Promise {
             // A promise is its private record block; consumers that read its
             // state check the record's descriptor (see `promise_state`).
             if !cell.kind.supported_by(version) {
                 return Err(invalid());
             }
-            validate_aggregate(data, ValueKind::Record, cell.payload, version)?;
+            validate_aggregate_limited(data, ValueKind::Record, cell.payload, version, limits)?;
         } else if cell.kind == ValueKind::Function && version == FUNCTION_FIELD_VALUE_VERSION {
             // Value17 function fields: the payload is a v12+ closure whose
             // envelope (block, signature/reserved words, environment edge and
@@ -108,9 +133,9 @@ impl ReferenceBox {
             // still need their owner catalog (`read_with_catalog`).
             crate::function::ClosureView::read_envelope(data, cell.payload)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
-            aggregate(data, cell, version)?;
+            aggregate(data, cell, version, limits)?;
         } else {
-            PrimitiveBox::read(data, handle)?;
+            PrimitiveBox::read_limited(data, handle, limits)?;
         }
         Ok(Self {
             kind: cell.kind,
@@ -136,12 +161,27 @@ pub fn validate_aggregate(
     payload: u64,
     version: u32,
 ) -> Result<(), ValueAbiError> {
+    validate_aggregate_limited(data, kind, payload, version, DataLimits::LEGACY)
+}
+/// [`validate_aggregate`] under a profile's data limits.
+pub fn validate_aggregate_limited(
+    data: &[u8],
+    kind: ValueKind,
+    payload: u64,
+    version: u32,
+    limits: DataLimits,
+) -> Result<(), ValueAbiError> {
     if !matches!(kind, ValueKind::Record | ValueKind::Array) || !kind.supported_by(version) {
         return Err(invalid());
     }
-    aggregate(data, PrimitiveBox { kind, payload }, version)
+    aggregate(data, PrimitiveBox { kind, payload }, version, limits)
 }
-fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueAbiError> {
+fn aggregate(
+    data: &[u8],
+    cell: PrimitiveBox,
+    version: u32,
+    limits: DataLimits,
+) -> Result<(), ValueAbiError> {
     if cell.kind == ValueKind::Array
         && matches!(
             version,
@@ -156,7 +196,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
                 | FUNCTION_FIELD_VALUE_VERSION
         )
     {
-        Vector::read_with_version(data, cell.payload, version)?;
+        Vector::read_limited(data, cell.payload, version, limits)?;
         return Ok(());
     }
     let ptr = cell.payload as u32 as usize;
@@ -186,7 +226,7 @@ fn aggregate(data: &[u8], cell: PrimitiveBox, version: u32) -> Result<(), ValueA
     let meta = word(data, ptr)?;
     let count = word(data, ptr + 4)? as usize;
     if is_array {
-        if count > MAX_ARRAY_ELEMENTS || length != ARRAY_META_BYTES + count * ARRAY_SLOT_BYTES {
+        if count > limits.array_elements || length != ARRAY_META_BYTES + count * ARRAY_SLOT_BYTES {
             return Err(invalid());
         }
         let kind = ValueKind::from_tag(meta)

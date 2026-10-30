@@ -1,6 +1,7 @@
 //! Stable v9-v11 dense vectors and v12 backing storage with exact presence bits.
 use super::*;
 use crate::abi;
+use crate::limits::DataLimits;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Vector {
@@ -65,6 +66,17 @@ impl Vector {
         handle: u64,
         version: u32,
     ) -> Result<Self, ValueAbiError> {
+        Self::read_limited(data, handle, version, DataLimits::LEGACY)
+    }
+    /// Read under a profile's data limits: v38 (`data_limits`) admits
+    /// capacities up to its Wasm-derived element limit, with one presence
+    /// bit per slot beyond the fixed 1024-slot bitmap.
+    pub fn read_limited(
+        data: &[u8],
+        handle: u64,
+        version: u32,
+        limits: DataLimits,
+    ) -> Result<Self, ValueAbiError> {
         if !matches!(
             version,
             VECTOR_VALUE_VERSION
@@ -105,15 +117,23 @@ impl Vector {
             storage_handle,
             HEAP_ARRAY_FLAG | if sparse { HEAP_SPARSE_FLAG } else { 0 },
         )?;
-        let bitmap_bytes = if sparse { SPARSE_BITMAP_BYTES } else { 0 };
-        let payload_bytes = bytes.checked_sub(bitmap_bytes).ok_or_else(invalid)?;
-        if !(ARRAY_META_BYTES..=ARRAY_META_BYTES + MAX_ARRAY_ELEMENTS * ARRAY_SLOT_BYTES)
-            .contains(&payload_bytes)
-            || !(payload_bytes - ARRAY_META_BYTES).is_multiple_of(ARRAY_SLOT_BYTES)
-        {
-            return Err(invalid());
-        }
-        let capacity = (payload_bytes - ARRAY_META_BYTES) / ARRAY_SLOT_BYTES;
+        let capacity = if sparse {
+            limits.sparse_capacity(bytes).ok_or_else(invalid)?
+        } else {
+            if !(ARRAY_META_BYTES..=ARRAY_META_BYTES + limits.array_elements * ARRAY_SLOT_BYTES)
+                .contains(&bytes)
+                || !(bytes - ARRAY_META_BYTES).is_multiple_of(ARRAY_SLOT_BYTES)
+            {
+                return Err(invalid());
+            }
+            (bytes - ARRAY_META_BYTES) / ARRAY_SLOT_BYTES
+        };
+        let bitmap_bytes = if sparse {
+            DataLimits::sparse_bitmap_bytes(capacity)
+        } else {
+            0
+        };
+        let payload_bytes = ARRAY_META_BYTES + capacity * ARRAY_SLOT_BYTES;
         if length > capacity
             || (capacity != 0 && !capacity.is_power_of_two())
             || word(data, storage)? != kind as u32
@@ -129,7 +149,7 @@ impl Vector {
         }
         let presence = sparse.then_some(storage + payload_bytes);
         if let Some(presence) = presence {
-            for index in 0..MAX_ARRAY_ELEMENTS {
+            for index in 0..bitmap_bytes * u8::BITS as usize {
                 let present = data[presence + index / u8::BITS as usize]
                     & (1 << (index % u8::BITS as usize))
                     != 0;

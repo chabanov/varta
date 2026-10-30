@@ -224,7 +224,7 @@ pub const MAX_UNION_TYPES: usize = 128;
 mod primitive;
 pub use primitive::PrimitiveBox;
 mod reference;
-pub use reference::{ReferenceBox, validate_aggregate};
+pub use reference::{ReferenceBox, validate_aggregate, validate_aggregate_limited};
 pub const LEGACY_VALUE_VERSION: u32 = 1;
 /// Version 2 adds dense arrays; existing scalar/record layouts retain their meaning.
 #[must_use]

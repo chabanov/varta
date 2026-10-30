@@ -135,6 +135,32 @@ impl DataLimits {
     }
 }
 
+impl DataLimits {
+    /// Slot capacity of a sparse backing whose packed byte length is `bytes`
+    /// (metadata, slots and the bitmap of [`Self::sparse_bitmap_bytes`]),
+    /// when it is a valid power of two (or zero) within these limits.
+    #[must_use]
+    pub fn sparse_capacity(self, bytes: usize) -> Option<usize> {
+        // Beyond 1024 slots each slot takes eight payload bytes and one bit.
+        const SLOT_BITS: usize = value::ARRAY_SLOT_BYTES * u8::BITS as usize + 1;
+        let fixed = value::ARRAY_META_BYTES + value::SPARSE_BITMAP_BYTES;
+        let small = bytes
+            .checked_sub(fixed)
+            .filter(|slots| slots.is_multiple_of(value::ARRAY_SLOT_BYTES))
+            .map(|slots| slots / value::ARRAY_SLOT_BYTES)
+            .filter(|capacity| *capacity <= value::MAX_ARRAY_ELEMENTS);
+        let large = bytes
+            .checked_sub(value::ARRAY_META_BYTES)
+            .filter(|rest| rest.is_multiple_of(SLOT_BITS))
+            .map(|rest| rest / SLOT_BITS * u8::BITS as usize)
+            .filter(|capacity| *capacity > value::MAX_ARRAY_ELEMENTS);
+        small
+            .or(large)
+            .filter(|capacity| *capacity == 0 || capacity.is_power_of_two())
+            .filter(|capacity| *capacity <= self.array_elements)
+    }
+}
+
 // The largest v38 sparse backing and its header fit the allocation limit.
 const _: () = assert!(
     abi::STRING_HEADER_BYTES
@@ -175,6 +201,35 @@ mod tests {
             DataLimits::sparse_bitmap_bytes(V38_MAX_ARRAY_ELEMENTS),
             V38_MAX_ARRAY_ELEMENTS / 8
         );
+    }
+
+    #[test]
+    fn sparse_capacities_invert_the_backing_size_within_each_profile() {
+        let bytes = |capacity: usize| {
+            value::ARRAY_META_BYTES
+                + capacity * value::ARRAY_SLOT_BYTES
+                + DataLimits::sparse_bitmap_bytes(capacity)
+        };
+        for capacity in [0, 1, 2, 64, 1024] {
+            assert_eq!(
+                DataLimits::LEGACY.sparse_capacity(bytes(capacity)),
+                Some(capacity)
+            );
+            assert_eq!(
+                DataLimits::V38.sparse_capacity(bytes(capacity)),
+                Some(capacity)
+            );
+        }
+        for capacity in [2048, 1 << 20, V38_MAX_ARRAY_ELEMENTS] {
+            assert_eq!(DataLimits::LEGACY.sparse_capacity(bytes(capacity)), None);
+            assert_eq!(
+                DataLimits::V38.sparse_capacity(bytes(capacity)),
+                Some(capacity)
+            );
+        }
+        for bad in [0, 7, bytes(3), bytes(2048) + 65, bytes(1024) + 8] {
+            assert_eq!(DataLimits::V38.sparse_capacity(bad), None, "{bad}");
+        }
     }
 
     #[test]

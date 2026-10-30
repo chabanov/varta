@@ -16,6 +16,15 @@ impl ErrorObject {
         handle: u64,
         version: u32,
     ) -> Result<Self, ValueAbiError> {
+        Self::read_limited(data, handle, version, crate::limits::DataLimits::LEGACY)
+    }
+    /// Read under a profile's data limits (v38 admits longer messages).
+    pub fn read_limited(
+        data: &[u8],
+        handle: u64,
+        version: u32,
+        limits: crate::limits::DataLimits,
+    ) -> Result<Self, ValueAbiError> {
         let invalid = || ValueAbiError("noncanonical Error object".into());
         let ptr = handle as u32 as usize;
         if (handle >> i32::BITS) as usize != ERROR_BYTES
@@ -65,7 +74,7 @@ impl ErrorObject {
             .ok_or_else(invalid)?;
         let start = message as u32 as usize;
         let len = (message >> i32::BITS) as usize;
-        if len > abi::MAX_STRING_BYTES
+        if len > limits.string_bytes
             || !len.is_multiple_of(2)
             || start.checked_add(len).is_none_or(|end| end > data.len())
             || (own == 0 && message != 0)

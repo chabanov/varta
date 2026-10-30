@@ -3,7 +3,7 @@
 //! values (consumers that traverse them validate each child) and complete for
 //! keys: distinct, and in own-key order (array indices ascending, then the rest).
 use super::*;
-use crate::abi;
+use crate::limits::DataLimits;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy)]
@@ -42,10 +42,20 @@ pub fn array_index(units: &[u16]) -> Option<u64> {
 }
 impl Dictionary {
     pub fn read(data: &[u8], handle: u64, version: u32) -> Result<Self, ValueAbiError> {
+        Self::read_limited(data, handle, version, DataLimits::LEGACY)
+    }
+    /// Read under a profile's data limits (v38 lifts the entry and key-size
+    /// ceilings to its array and string limits).
+    pub fn read_limited(
+        data: &[u8],
+        handle: u64,
+        version: u32,
+        limits: DataLimits,
+    ) -> Result<Self, ValueAbiError> {
         if !ValueKind::Dictionary.supported_by(version) {
             return Err(invalid());
         }
-        validate_aggregate(data, ValueKind::Record, handle, version)?;
+        validate_aggregate_limited(data, ValueKind::Record, handle, version, limits)?;
         let ptr = handle as u32 as usize;
         let descriptor = word(data, ptr)? as usize;
         if word(data, ptr + 4)? as usize != DICTIONARY_FIELDS {
@@ -80,11 +90,11 @@ impl Dictionary {
             }
         }
         let field = |slot: usize| wide(data, ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES);
-        let keys = Vector::read_with_version(data, field(0)?, version)?;
-        let values = Vector::read_with_version(data, field(1)?, version)?;
+        let keys = Vector::read_limited(data, field(0)?, version, limits)?;
+        let values = Vector::read_limited(data, field(1)?, version, limits)?;
         if keys.kind != ValueKind::String
             || keys.length != values.length
-            || keys.length > MAX_DICTIONARY_ENTRIES
+            || keys.length > limits.array_elements
         {
             return Err(invalid());
         }
@@ -101,7 +111,7 @@ impl Dictionary {
             )?;
             let start = key as u32 as usize;
             let len = (key >> i32::BITS) as usize;
-            if len > abi::MAX_STRING_BYTES || !len.is_multiple_of(2) {
+            if len > limits.string_bytes || !len.is_multiple_of(2) {
                 return Err(invalid());
             }
             let bytes = start

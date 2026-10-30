@@ -17,7 +17,8 @@ fn read(
     value: i64,
     version: u32,
 ) -> Result<ReferenceBox, wasmtime::Error> {
-    ReferenceBox::read_with_version(data(caller)?, value as u64, version)
+    let limits = caller.data().data;
+    ReferenceBox::read_limited(data(caller)?, value as u64, version, limits)
         .map_err(wasmtime::Error::new)
 }
 fn nullish(value: ReferenceBox) -> bool {
