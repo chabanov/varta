@@ -55,7 +55,9 @@ fn string_integer<M: Memory + ?Sized>(
     if length > limits.string_bytes || !length.is_multiple_of(2) {
         return Err(Error::InvalidPayload);
     }
-    let bytes = memory.bytes(pointer, length).ok_or(Error::InvalidPayload)?;
+    let bytes = memory
+        .borrow(pointer, length)
+        .ok_or(Error::InvalidPayload)?;
     if (length / 2) as u64 > budget.remaining_work() {
         return Err(Error::WorkBudget);
     }
@@ -342,7 +344,7 @@ pub fn primitive_to_string<M: Memory + ?Sized>(
     let bytes = primitive::to_string(memory, cell, limits.string_bytes)
         .map_err(|_| Error::InvalidPayload)?;
     budget.consume_work(bytes.len() as u64)?;
-    Ok(bytes)
+    Ok(bytes.into_owned())
 }
 /// `Number(value)` of a primitive or BigInt cell (`primitive_to_number_v2`
 /// to `_v5`).

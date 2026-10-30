@@ -350,7 +350,7 @@ under [Linked intrinsics pending](#linked-intrinsics-pending).
 <!-- generated:embedding-linked-intrinsics:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Profile | Linked, never imported | Linked stack |
 | --- | --- | --- |
-| `checked-f64-utf16-v38` | `bigint_from_value_v4`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 65536 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
+| `checked-f64-utf16-v38` | `bigint_from_value_v4`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 <!-- generated:embedding-linked-intrinsics:end -->
 
 - **One memory.** A linked module has exactly one memory, so every engine
@@ -369,9 +369,12 @@ under [Linked intrinsics pending](#linked-intrinsics-pending).
   `env_result_len`). Nothing survives a call: the arena is reset on entry and
   a nested entry traps.
 - **Budgets.** Linked operations are guest code: they consume fuel instead of a
-  host call, and their failures (a noncanonical argument, an exhausted memory
-  budget) are traps, where the reference host reports a fatal error for the
-  same calls. Their data segments are part of the module and are charged like
+  host call, and their failures (a noncanonical argument) are traps, where
+  the reference host reports a fatal error for the same calls. An exhausted
+  memory budget sets `resource_failure` to the memory resource and
+  `resource_request` to the requested bytes before the trap, exactly as the
+  guest allocator does, so a host reports it as the typed resource failure.
+  Their data segments are part of the module and are charged like
   any other data segment at instantiation.
 - **Determinism.** Every host computes the same bits, including the finite
   results of Math and `**` that are [approximated](#numeric-intrinsics) in
@@ -410,7 +413,7 @@ linked-intrinsics stream
 | Exception root slot (start of the root stack) | [1114112, 1114120) | `exceptions::ROOT`, `exceptions::RESERVED_ROOT_BYTES` |
 | Managed string/record/array heap | [1179648, 8388608) | `abi::OWNED_STRING_BASE`, `abi::MAX_MEMORY_BYTES` |
 | V38 static extension of `n` pages (`varta.static`), heap after it | [1179648, 1179648 + n·65536), n ≤ 65518 | `abi::StaticRegion`, `abi::MAX_STATIC_EXTENSION_PAGES` |
-| V38 intrinsic region of `m` pages (`varta.intrinsics`) after the extension: linked stack, linked data, then the reserved arena; heap after it | [1179648 + n·65536, 1179648 + (n + m)·65536), stack 65536 bytes, arena 32768 bytes, n + m ≤ 65518 | `abi::StaticRegion::intrinsic_base`, `abi::INTRINSIC_STACK_BYTES`, `abi::INTRINSIC_ARENA_BYTES` |
+| V38 intrinsic region of `m` pages (`varta.intrinsics`) after the extension: linked stack, linked data, then the reserved arena; heap after it | [1179648 + n·65536, 1179648 + (n + m)·65536), stack 16384 bytes, arena 16384 bytes, n + m ≤ 65518 | `abi::StaticRegion::intrinsic_base`, `abi::INTRINSIC_STACK_BYTES`, `abi::INTRINSIC_ARENA_BYTES` |
 | Wasm page | 65536 | `abi::WASM_PAGE_BYTES` |
 | Root slot | 8 | `abi::STRING_ROOT_SLOT_BYTES` |
 | Heap block header / alignment | 16 / 8 | `abi::STRING_HEADER_BYTES`, `value::HEAP_ALIGNMENT` |

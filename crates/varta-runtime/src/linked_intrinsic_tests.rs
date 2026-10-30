@@ -586,6 +586,83 @@ fn custom(data: &[u8], name: &str) -> bool {
         && data.get(1..1 + name.len()) == Some(name.as_bytes())
 }
 
+/// Run `bytes` with a memory budget of `pages` and test-only fuel, returning
+/// the logs and the typed failure.
+fn run_with_memory(bytes: &[u8], pages: u64) -> (Vec<String>, Result<(), RuntimeError>) {
+    let runtime = VartaRuntime::new();
+    let module = runtime.prepare_module(bytes).unwrap();
+    let budgets = varta_common::budget::Budgets {
+        fuel_per_turn: 1000 * abi::FUEL,
+        host_calls_per_turn: u32::MAX,
+        memory_bytes: pages as usize * abi::WASM_PAGE_BYTES,
+        ..varta_common::budget::Budgets::PRODUCTION
+    };
+    let mut execution =
+        crate::execution::Execution::with_test_budgets(&runtime.engine, budgets).unwrap();
+    execution.allow_test_wall_clock(std::time::Duration::from_secs(120));
+    let instance = execution.instantiate_prepared(&module).unwrap();
+    let store = &mut execution.store;
+    let result = (|| {
+        let start = instance.get_func(&mut *store, "_start").unwrap();
+        start.call(&mut *store, &[], &mut [])?;
+        Ok::<(), RuntimeError>(())
+    })()
+    .map_err(|error| crate::resources::classify(&instance, store, error));
+    (std::mem::take(&mut store.data_mut().output.lines), result)
+}
+
+#[test]
+fn an_exhausted_linked_arena_is_a_typed_memory_failure() {
+    // Upper-casing 65536 "ﬃ" units maps each to "FFI": the linked call needs
+    // about 18 bytes of scratch per input unit (the UTF-8 run, its mapping
+    // and the UTF-16 output), far beyond the reserved arena and the guest's
+    // own footprint, so sweeping the memory budget page by page reaches
+    // budgets where the input fits but the arena cannot grow. Every failure
+    // is the typed memory resource, never a bare trap. A failure after
+    // "built" whose request is not the guest's snapshot of the 393216-byte
+    // result (its heap block) is the linked arena's.
+    let source = r#"
+export function main(): void {
+  let t = "ﬃ";
+  for (let i = 0; i < 16; i++) { t = t + t; }
+  console.log("built");
+  console.log(t.toUpperCase().length);
+}
+"#;
+    let result_bytes = 3 * 65536 * 2;
+    let snapshot = (result_bytes + abi::STRING_HEADER_BYTES)
+        .next_multiple_of(varta_common::value::HEAP_ALIGNMENT) as u32;
+    let bytes = compile(source, V38);
+    let mut initial = 0;
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        if let wasmparser::Payload::MemorySection(reader) = payload.unwrap() {
+            initial = reader.into_iter().next().unwrap().unwrap().initial;
+        }
+    }
+    let mut linked_failures = 0;
+    let mut succeeded = false;
+    for pages in initial..=(abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64 {
+        let (lines, result) = run_with_memory(&bytes, pages);
+        match result {
+            Ok(()) => {
+                assert_eq!(lines, ["varta log: built", "varta log: 196608"]);
+                succeeded = true;
+                break;
+            }
+            Err(RuntimeError::Resource(failure)) => {
+                assert_eq!(failure.resource, varta_common::limits::Resource::Memory);
+                assert!(failure.requested > 0);
+                if lines == ["varta log: built"] && failure.requested != snapshot {
+                    linked_failures += 1;
+                }
+            }
+            Err(other) => panic!("{pages} pages: {other:?}, after {lines:?}"),
+        }
+    }
+    assert!(succeeded, "the mapping runs once memory suffices");
+    assert!(linked_failures > 0, "a budget exhausts the linked arena");
+}
+
 #[test]
 fn linked_calls_with_small_scratch_run_when_memory_cannot_grow() {
     // A memory budget of exactly the initial memory: the guest cannot grow
@@ -651,6 +728,73 @@ export function main(): void {
     assert_eq!(execute(&compile(source, V38), 1000).0, host);
 }
 
+/// Linked string and text operations on long non-ASCII strings. Each reads
+/// its argument in place in guest memory and copies only its result, so an
+/// operation that inspects a bounded prefix (code-unit access, a parse that
+/// stops at the first unit) costs the same on 1024 and 2048 units, and case
+/// mapping pays once per unit it maps. A per-call copy of the input costs
+/// about 20 fuel per unit (measured: `charAt` 24,533 fuel on 1024 units
+/// before, 645 after) and breaks these checks.
+const IN_PLACE: &[(&str, &str, Cost)] = &[
+    ("charCodeAt", "t.charCodeAt(500)", Cost::Constant(600)),
+    ("charAt", "t.charAt(501).length", Cost::Constant(900)),
+    ("parseInt", "parseInt(t)", Cost::Constant(3_000)),
+    ("parseFloat", "parseFloat(t)", Cost::Constant(2_000)),
+    // Measured 824 and 594 per unit; a copy of the input adds about 23.
+    ("toUpperCase", "t.toUpperCase().length", Cost::PerUnit(835)),
+    ("toLowerCase", "t.toLowerCase().length", Cost::PerUnit(605)),
+];
+#[derive(Clone, Copy)]
+enum Cost {
+    /// At most this fuel per call, independent of the input length.
+    Constant(u64),
+    /// At most this fuel per input unit and call.
+    PerUnit(u64),
+}
+
+/// Marginal fuel of one call of `operation` on a string of `2^(doublings+1)`
+/// units.
+fn in_place_fuel(operation: &str, doublings: u32) -> u64 {
+    let program = |calls: usize| {
+        format!(
+            "export function main(): void {{ let t = \"ßẞ\"; \
+             for (let i = 0; i < {doublings}; i++) {{ t = t + t; }} let r = 0; \
+             for (let i = 0; i < {calls}; i++) {{ r = r + {operation}; }} console.log(r); }}"
+        )
+    };
+    let one = execute(&compile(&program(1), V38), 100).1;
+    let eleven = execute(&compile(&program(11), V38), 100).1;
+    (eleven - one) / 10
+}
+
+#[test]
+fn linked_string_operations_read_their_input_in_place() {
+    let mut over = Vec::new();
+    for &(name, operation, cost) in IN_PLACE {
+        let short = in_place_fuel(operation, 9);
+        let long = in_place_fuel(operation, 10);
+        println!("{name}: {short} fuel per call on 1024 units, {long} on 2048");
+        let fits = match cost {
+            // The longer input may cost no more than a tenth extra.
+            Cost::Constant(ceiling) => long <= ceiling && long * 10 <= short * 11,
+            Cost::PerUnit(ceiling) => long <= ceiling * 2048,
+        };
+        if !fits {
+            over.push(format!(
+                "{name}: {short} / {long} fuel exceeds {:?}",
+                cost_text(cost)
+            ));
+        }
+    }
+    assert!(over.is_empty(), "{over:#?}");
+}
+fn cost_text(cost: Cost) -> String {
+    match cost {
+        Cost::Constant(ceiling) => format!("{ceiling} per call"),
+        Cost::PerUnit(ceiling) => format!("{ceiling} per unit"),
+    }
+}
+
 /// Size, compile-time and fuel measurements for the documentation; run with
 /// `cargo test -p varta-runtime --lib linked_intrinsic_measurements -- --ignored --nocapture`.
 #[test]
@@ -704,8 +848,10 @@ fn linked_intrinsic_measurements() {
         ),
     ];
     let engine = wasmtime::Engine::default();
-    println!("| Family | v37 bytes | v38 bytes | growth | v38 compile ms | fuel v37 | fuel v38 |");
-    println!("| --- | --- | --- | --- | --- | --- | --- |");
+    println!(
+        "| Family | v37 bytes | v38 bytes | growth | v38 compile ms | fuel v37 | fuel v38 | region pages |"
+    );
+    println!("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (name, source) in families {
         let v37 = compile(source, V37);
         let v38 = compile(source, V38);
@@ -717,10 +863,11 @@ fn linked_intrinsic_measurements() {
         let (_, fuel37) = execute(&v37, 1);
         let (_, fuel38) = execute(&v38, 1);
         println!(
-            "| {name} | {} | {} | {:+} | {compile_ms:.1} | {fuel37} | {fuel38} |",
+            "| {name} | {} | {} | {:+} | {compile_ms:.1} | {fuel37} | {fuel38} | {} |",
             v37.len(),
             v38.len(),
-            v38.len() as i64 - v37.len() as i64
+            v38.len() as i64 - v37.len() as i64,
+            intrinsic_pages(&v38)
         );
         // Modules for an external cold-start measurement (for example Node).
         for (profile, bytes) in [("v37", &v37), ("v38", &v38)] {
@@ -731,4 +878,16 @@ fn linked_intrinsic_measurements() {
             std::fs::write(path, bytes).unwrap();
         }
     }
+}
+
+/// The intrinsic region pages a module declares (0 without linked code).
+fn intrinsic_pages(bytes: &[u8]) -> u32 {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::CustomSection(section) = payload.unwrap()
+            && section.name() == abi::INTRINSIC_SECTION
+        {
+            return u32::from_le_bytes(section.data().try_into().unwrap());
+        }
+    }
+    0
 }

@@ -3422,6 +3422,20 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   exports of the BigInt family both call `varta_intrinsics::bigint`: the host
   with a fuel-derived `Budget` and the frozen string limits, linked code with
   `Budget::new(MAX_BITS, u64::MAX)` (fuel bounds the work) and the v38 limits.
+- Read string arguments and string cells in place through
+  `Memory::borrow` after the bounds, limit and length checks; copy only
+  results. `linked_string_operations_read_their_input_in_place` pins the
+  per-call fuel of every linked string and text operation.
+- The arena's allocation failure is typed: `arena::exhausted` stores
+  `limits::Resource::Memory` and the request through the `resource_failure`
+  accessor before trapping (emission exports the resource globals for every
+  module with an intrinsic region). Never let an allocation failure reach
+  the panic handler as a bare trap.
+- `abi::INTRINSIC_STACK_BYTES` and `abi::INTRINSIC_ARENA_BYTES` are measured
+  maxima with a margin of at least 2×; after changing the library, run
+  `linked_operations_fit_the_region_stack_and_reserved_arena_with_margin`,
+  and add an adversarial program for every new linked family (bounded
+  scratch in `BOUNDED`, input-proportional scratch in `PROPORTIONAL`).
 - Before linking an operation, measure its fuel on the hot paths it serves
   (`codegen_v2_fuel_ceilings_hold`, `every_v37_case_runs_identically_under_v38`):
   linked code costs its instructions, a host call only its charged work.

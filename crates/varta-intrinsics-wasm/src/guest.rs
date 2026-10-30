@@ -6,6 +6,7 @@
 //! `varta_link` functions the compiler's linker synthesizes as
 //! `memory.copy` within memory 0. Copies are bounds-checked here before the
 //! accessor runs, and `memory.copy` traps on any range a check missed.
+use alloc::borrow::Cow;
 use varta_common::abi::{MAX_RESULT_BYTES, RESULT_BASE, WASM_PAGE_BYTES};
 use varta_intrinsics::{IntrinsicError, Memory};
 
@@ -39,6 +40,28 @@ impl Memory for Guest {
         // bytes and the guest range was checked against memory 0's size.
         unsafe { memory_read(out.as_mut_ptr(), at, out.len()) };
         true
+    }
+    /// A guest argument range in place: no per-call copy of a string
+    /// argument. A range at address 0 (a Rust slice may not start at null)
+    /// or overlapping the result buffer (which linked code writes during
+    /// the call) is copied instead.
+    fn borrow(&self, at: usize, len: usize) -> Option<Cow<'_, [u8]>> {
+        let end = at.checked_add(len).filter(|end| *end <= self.size())?;
+        if len == 0 {
+            return Some(Cow::Borrowed(&[]));
+        }
+        let result_buffer = RESULT_BASE..RESULT_BASE + MAX_RESULT_BYTES;
+        if at == 0 || (at < result_buffer.end && end > result_buffer.start) {
+            return self.bytes(at, len).map(Cow::Owned);
+        }
+        // SAFETY: `[at, end)` is a nonnull, in-bounds range of memory 0,
+        // which never shrinks. Linked code writes guest memory only in the
+        // result buffer (excluded above), its own region and the arena above
+        // the guest heap's end, which no guest value reaches, so the bytes
+        // stay unchanged while the borrow lives (within one call).
+        Some(Cow::Borrowed(unsafe {
+            core::slice::from_raw_parts(at as *const u8, len)
+        }))
     }
 }
 

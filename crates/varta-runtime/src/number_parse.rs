@@ -11,6 +11,7 @@ fn fatal(error: varta_intrinsics::IntrinsicError) -> wasmtime::Error {
 #[cfg(test)]
 fn text(bytes: &[u8], cell: i64) -> Result<Vec<u8>, wasmtime::Error> {
     varta_intrinsics::primitive::parse_input(bytes, cell as u64, abi::MAX_STRING_BYTES)
+        .map(std::borrow::Cow::into_owned)
         .map_err(fatal)
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {

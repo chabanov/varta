@@ -13,11 +13,14 @@ fn read(
     caller: &mut Caller<'_, RuntimeContext>,
     ptr: i32,
     len: i32,
-) -> Result<Vec<u16>, wasmtime::Error> {
+) -> Result<Vec<u8>, wasmtime::Error> {
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(wasmtime::Error::msg("missing memory"));
     };
-    string::read(memory.data(&*caller), ptr, len, abi::MAX_STRING_BYTES).map_err(fatal)
+    // The host copies: the result transfer needs the caller mutably.
+    string::read(memory.data(&*caller), ptr, len, abi::MAX_STRING_BYTES)
+        .map(std::borrow::Cow::into_owned)
+        .map_err(fatal)
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
@@ -27,9 +30,10 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             caller.data_mut().tick()?;
             let units = read(&mut caller, ptr, len)?;
             // Diagnostic output is Unicode text, never a round-trippable resource identifier.
-            caller
-                .data_mut()
-                .emit(format!("varta log: {}", String::from_utf16_lossy(&units)))
+            caller.data_mut().emit(format!(
+                "varta log: {}",
+                String::from_utf16_lossy(&string::units(&units).collect::<Vec<_>>())
+            ))
         },
     )?;
     linker.func_wrap(

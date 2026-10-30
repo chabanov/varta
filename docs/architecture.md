@@ -9892,6 +9892,21 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
     included);
   - then, 16-byte aligned, the reserved arena of `abi::INTRINSIC_ARENA_BYTES`
     that ends the region. Nothing else is placed there.
+
+  Both sizes are measured (`linked_footprint_tests`): the stack and reserved
+  arena are painted before `_start` and scanned afterwards, over adversarial
+  inputs of every linked family (every Math function at extreme arguments,
+  Number text of the largest, smallest-normal and subnormal Numbers with 100
+  digits and every radix, long parse prefixes, `BigInt(Number.MAX_VALUE)`,
+  case mapping of 2^16 expanding units, 100,000-digit parses and BigInt
+  multiplication, division, widths and text of 300,000-bit operands). The
+  maximum stack depth is 5,016 bytes and the largest bounded scratch (the
+  operations whose inputs are Numbers or bounded prefixes) 6,984 bytes; both
+  constants are 16 KiB, at least twice the measurement, and the test fails
+  when a rebuilt library needs more than half of either or when bounded
+  scratch leaves the reserved arena. A region is one page for every measured
+  closure (two to three pages with the earlier 64 KiB stack and 32 KiB
+  arena).
 - **Relocation.** The library is linked once, at its own placeholder
   addresses, with relocations kept (`--emit-relocs`, one data segment per
   input section). Linking moves each reached segment to its region address
@@ -9906,24 +9921,45 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   relocation names, or linking fails. No absolute address is assumed.
 - **Arena and accessors.** The per-call arena of an allocating export starts
   in the region's reserved arena (committed with the region, so a call with
-  small scratch needs no memory growth, even when the guest heap fills the
+  bounded scratch needs no memory growth, even when the guest heap fills the
   memory budget). An allocation that no longer fits continues at the guest
   heap's end (the allocator's bump pointer, read by the synthesized
   `arena_base` accessor; the heap base for a module without a managed heap)
-  and grows memory 0 within its maximum and the memory budget, so a call with
-  large scratch near the budget traps where the host import would not.
-  Linked code never calls the guest allocator or collector, so nothing else
-  writes above the heap end during the call; afterwards the guest allocator
-  uses those bytes as fresh heap space (it initializes every block it hands
-  out, as it does for reused blocks). The library reaches guest values and
-  the result globals only through synthesized accessors: bounds-checked
-  `memory.copy` within memory 0 in each direction, setting the exported
-  `env_result_len`, `arena_base` and the reserved arena's bounds
-  (`arena_reserved`, `arena_reserved_end`); string results are written at
+  and grows memory 0 within its maximum and the memory budget. The arena is
+  a bump allocator that returns the newest block to the bump pointer and
+  keeps other freed blocks in size-class free lists (first fit within a
+  class, else the smallest larger nonempty class), so the out-of-order
+  temporaries of big-integer text and arithmetic reuse their bytes within a
+  call. When the memory budget cannot hold an allocation, linked code stores
+  `limits::Resource::Memory` and the requested bytes in the module's
+  `resource_failure`/`resource_request` exports (every module with an
+  intrinsic region exports them) and traps, so the runtime reports the typed
+  `RuntimeError::Resource` (memory budget exhausted, with the request) of the
+  [data limits](#data-limits-data_limits), never a bare trap. The arena's
+  memory, reserved or grown, counts against the memory budget like any guest
+  memory. Linked code never calls the guest allocator or collector, so
+  nothing else writes above the heap end during the call; afterwards the
+  guest allocator uses those bytes as fresh heap space (it initializes every
+  block it hands out, as it does for reused blocks).
+- **Arguments in place.** String arguments and string cells are read in
+  place in guest memory after their bounds, limit and UTF-16 length checks
+  (`memory::Memory::borrow`), so an operation never copies its input per
+  call; only results are copied (`charAt` on 1,024 non-ASCII units: 24,533
+  fuel per call with the earlier copy, 738 now, and the same on 2,048
+  units). A range at address 0 (a Rust slice cannot start at null) or
+  overlapping the result buffer (which linked code writes) is copied. The
+  pinned fuel checks (`linked_string_operations_read_their_input_in_place`)
+  fail when an operation that reads a bounded prefix costs more on a longer
+  input or case mapping exceeds its measured cost per unit.
+- **Accessors.** The library reaches guest values and the result globals
+  only through synthesized accessors: bounds-checked `memory.copy` within
+  memory 0 in each direction, setting the exported `env_result_len`,
+  `arena_base`, the reserved arena's bounds (`arena_reserved`,
+  `arena_reserved_end`) and `resource_failure`; string results are written at
   `abi::RESULT_BASE` exactly as a host writes them. Each allocating export
   resets the arena on entry and traps on a nested entry, so no pointer or
   state survives a call; linked code never allocates in, roots or retains
-  guest heap values, and guest values it reads are copied first.
+  guest heap values.
 - **Validation.** A v38 module that imports a linked operation is rejected
   before instantiation ("pure intrinsic must be linked"). Every module has at
   most one memory. The library's data segments are the only ones a v38 module
@@ -9937,8 +9973,11 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   same inputs, with two documented differences: Math and `**` use the portable
   `libm` backend (bit-identical on every host, faithful but not always
   correctly rounded; earlier profiles keep the platform library), and a fatal
-  failure (a noncanonical argument, an exhausted memory budget, a linked
-  stack overflow) is a trap instead of a host error message. Linked calls
+  failure (a noncanonical argument, a linked stack overflow) is a trap
+  instead of a host error message, and an exhausted memory budget is the
+  typed resource failure above. Linked BigInt multiplication and decimal
+  text of operands near a million bits exhaust the 8 MiB budget in linked
+  code where the host import (native allocator) succeeds. Linked calls
   consume fuel and no host-call budget; their data segments are covered by
   the v38 instantiation allowance like every v38 data segment, and the region
   takes `m` pages of the memory budget. Integral `Number.prototype.toString(radix)`
@@ -10743,7 +10782,7 @@ a denied exit returns a failed `VartaResult<void>`.
 | Resource | Limit | Source constant |
 | --- | --- | --- |
 | Guest linear memory | 8 MiB | `abi::MAX_MEMORY_BYTES` |
-| Linked intrinsic stack in memory 0 (v38 `linked_intrinsics`) | 64 KiB | `abi::INTRINSIC_STACK_BYTES` |
+| Linked intrinsic stack in memory 0 (v38 `linked_intrinsics`) | 16 KiB | `abi::INTRINSIC_STACK_BYTES` |
 | Guest instructions (fuel) | 1000000 | `abi::FUEL` |
 | Execution/HTTP deadline | 5 s | `abi::DEADLINE_SECONDS` |
 | Host calls per execution | 1024 | `abi::MAX_HOST_CALLS` |

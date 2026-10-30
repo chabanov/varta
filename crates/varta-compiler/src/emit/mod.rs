@@ -543,7 +543,10 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     );
     // V38 (`data_limits`) heap modules report exhausted resources through
     // two exported globals (failure code, then request) before trapping.
-    let reports = needs_arena && program.types.profile.data().reports_resources;
+    // A module that links intrinsics (v38) reports an exhausted linked arena
+    // the same way, with or without a managed heap.
+    let reports = (needs_arena || static_region.intrinsic_pages() > 0)
+        && program.types.profile.data().reports_resources;
     let collect_policy = crate::codegen_v2(program.types.profile);
     let mut memory_globals = strings::Globals {
         heap: globals.len(),

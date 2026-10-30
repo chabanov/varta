@@ -5,7 +5,7 @@ use super::*;
 fn units<M: Memory + ?Sized>(memory: &M, value: PrimitiveBox) -> Result<Vec<u16>, Error> {
     let (start, length) = string_range(value.payload);
     // The checked cell proved the complete even-length range.
-    let bytes = memory.bytes(start, length).ok_or(Error::InvalidPayload)?;
+    let bytes = memory.borrow(start, length).ok_or(Error::InvalidPayload)?;
     text::units(&bytes).map_err(|_| Error::InvalidPayload)
 }
 fn text_order<M: Memory + ?Sized>(

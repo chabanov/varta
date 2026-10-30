@@ -46,6 +46,7 @@ pub(super) struct Guest<'a> {
     memories: u32,
     globals: u32,
     result_len: Option<u32>,
+    resource: (Option<u32>, Option<u32>),
     /// The module's declared layout (`varta.static`, `varta.intrinsics`).
     pub region: abi::StaticRegion,
 }
@@ -58,6 +59,7 @@ impl<'a> Guest<'a> {
             memories: 0,
             globals: 0,
             result_len: None,
+            resource: (None, None),
             region: abi::StaticRegion::SINGLE_PAGE,
         };
         let mut intrinsic_section = None;
@@ -89,6 +91,16 @@ impl<'a> Guest<'a> {
                 Payload::ExportSection(reader) => {
                     for export in reader {
                         let export = export.map_err(|e| e.to_string())?;
+                        if export.kind == ExternalKind::Global
+                            && export.name == varta_common::limits::RESOURCE_FAILURE
+                        {
+                            guest.resource.0 = Some(export.index);
+                        }
+                        if export.kind == ExternalKind::Global
+                            && export.name == varta_common::limits::RESOURCE_REQUEST
+                        {
+                            guest.resource.1 = Some(export.index);
+                        }
                         if export.kind == ExternalKind::Global && export.name == abi::RESULT_LEN {
                             guest.result_len = Some(export.index);
                         }
@@ -140,6 +152,8 @@ enum Accessor {
     ArenaBase,
     /// `() -> i32`: start of the reserved arena in the intrinsic region.
     ArenaReserved,
+    /// `(code, request)`: store a `limits::Resource` failure before trapping.
+    ResourceFailure,
     /// `() -> i32`: end of the reserved arena.
     ArenaReservedEnd,
 }
@@ -147,6 +161,8 @@ enum Accessor {
 #[derive(Debug, Clone, Copy)]
 struct AccessorTargets {
     result_len: Option<u32>,
+    /// The exported `resource_failure` and `resource_request` globals.
+    resource: (Option<u32>, Option<u32>),
     /// The guest allocator's heap-end global, when the module has a heap.
     heap: Option<u32>,
     heap_base: usize,
@@ -162,6 +178,7 @@ impl Accessor {
             "arena_base" => Self::ArenaBase,
             "arena_reserved" => Self::ArenaReserved,
             "arena_reserved_end" => Self::ArenaReservedEnd,
+            "resource_failure" => Self::ResourceFailure,
             _ => return None,
         })
     }
@@ -171,6 +188,7 @@ impl Accessor {
             Self::MemoryRead | Self::MemoryWrite => (&[I32, I32, I32], &[]),
             Self::ResultLen => (&[I32], &[]),
             Self::ArenaBase | Self::ArenaReserved | Self::ArenaReservedEnd => (&[], &[I32]),
+            Self::ResourceFailure => (&[I32, I32], &[]),
         }
     }
     fn body(self, targets: AccessorTargets) -> Result<encoder::Function, String> {
@@ -185,6 +203,20 @@ impl Accessor {
                     src_mem: GUEST_MEMORY,
                     dst_mem: GUEST_MEMORY,
                 });
+            }
+            Self::ResourceFailure => {
+                // A v38 module with an intrinsic region exports both
+                // globals; the runtime reports the trap as typed.
+                for (local, global) in [targets.resource.0, targets.resource.1]
+                    .into_iter()
+                    .enumerate()
+                {
+                    if let Some(global) = global {
+                        function
+                            .instruction(&I::LocalGet(local as u32))
+                            .instruction(&I::GlobalSet(global));
+                    }
+                }
             }
             Self::ResultLen => {
                 // Hosts set the global only when the module exports it.
@@ -652,6 +684,7 @@ impl<'a> Plan<'a> {
         let stack = linked_stack.then_some((library.stack_pointer, check));
         let targets = AccessorTargets {
             result_len: guest.result_len,
+            resource: guest.resource,
             heap,
             heap_base: guest.region.heap_base(),
             arena: placement.arena,

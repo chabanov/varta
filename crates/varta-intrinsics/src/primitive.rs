@@ -6,7 +6,7 @@
 //! `abi::MAX_STRING_BYTES` for host imports of earlier profiles, the v38 data
 //! limit for linked code.
 use crate::{IntrinsicError, Memory, number::canonical_display, parse};
-use alloc::vec::Vec;
+use alloc::{borrow::Cow, vec::Vec};
 use varta_common::{
     text,
     value::{PrimitiveBox, ValueKind as Kind, string_range},
@@ -21,11 +21,15 @@ fn cell<M: Memory + ?Sized>(
     PrimitiveBox::read_limited(memory, handle, string_bytes)
         .map_err(|_| IntrinsicError::PrimitiveCell)
 }
-/// The UTF-16LE bytes of a string cell's payload.
-fn string_bytes<M: Memory + ?Sized>(memory: &M, payload: u64) -> Result<Vec<u8>, IntrinsicError> {
+/// The UTF-16LE bytes of a string cell's payload, in place where the memory
+/// lends them.
+fn string_bytes<M: Memory + ?Sized>(
+    memory: &M,
+    payload: u64,
+) -> Result<Cow<'_, [u8]>, IntrinsicError> {
     let (ptr, len) = string_range(payload);
     // `PrimitiveBox::read_limited` already proved the range is inside memory.
-    memory.bytes(ptr, len).ok_or(IntrinsicError::PrimitiveCell)
+    memory.borrow(ptr, len).ok_or(IntrinsicError::PrimitiveCell)
 }
 /// The ECMAScript spelling of a non-string primitive, if `kind` is one.
 fn spelling(cell: PrimitiveBox) -> Option<Vec<u8>> {
@@ -44,12 +48,14 @@ pub fn to_string<M: Memory + ?Sized>(
     memory: &M,
     handle: u64,
     limit: usize,
-) -> Result<Vec<u8>, IntrinsicError> {
+) -> Result<Cow<'_, [u8]>, IntrinsicError> {
     let cell = cell(memory, handle, limit)?;
     if cell.kind == Kind::String {
         return string_bytes(memory, cell.payload);
     }
-    spelling(cell).ok_or(IntrinsicError::StringCell)
+    spelling(cell)
+        .map(Cow::Owned)
+        .ok_or(IntrinsicError::StringCell)
 }
 /// `ToNumber` of a primitive cell (`primitive_to_number*`).
 pub fn to_number<M: Memory + ?Sized>(
@@ -72,12 +78,14 @@ pub fn parse_input<M: Memory + ?Sized>(
     memory: &M,
     handle: u64,
     limit: usize,
-) -> Result<Vec<u8>, IntrinsicError> {
+) -> Result<Cow<'_, [u8]>, IntrinsicError> {
     let cell = cell(memory, handle, limit)?;
     if cell.kind == Kind::String {
         return string_bytes(memory, cell.payload);
     }
-    spelling(cell).ok_or(IntrinsicError::ParseCell)
+    spelling(cell)
+        .map(Cow::Owned)
+        .ok_or(IntrinsicError::ParseCell)
 }
 /// `parseInt(input, radix)` of two primitive cells (`number_parse_int`).
 pub fn parse_int<M: Memory + ?Sized>(
