@@ -1621,6 +1621,12 @@ impl Lower<'_> {
                 statement.span,
             ));
         }
+        if let Type::Class(class) = value.ty
+            && self.types.profile.net_request()
+        {
+            let value = self.async_iterator(class, value)?;
+            return self.for_await_generator(statement, pattern, mode, value);
+        }
         match value.ty {
             Type::Generator(id) if self.types.generators[id as usize].asynchronous.is_some() => {
                 self.for_await_generator(statement, pattern, mode, value)
@@ -1628,6 +1634,53 @@ impl Lower<'_> {
             Type::Generator(_) => self.for_await_sync(statement, pattern, mode, value),
             _ => self.for_await_array(statement, pattern, mode, value),
         }
+    }
+    /// `source[Symbol.asyncIterator]()` for a class instance (v37
+    /// `net_request`): the class must declare the method as an async
+    /// generator without parameters, which is how `ReadableStream` and
+    /// program classes become async iterables. Other iterator objects with a
+    /// `next` method are not modelled.
+    fn async_iterator(&mut self, class: u32, value: Expr) -> Result<Expr> {
+        let span = value.span;
+        let rejected = |detail: &str| CompilerError::Unsupported {
+            kind: "for await...of over a class instance".into(),
+            detail: detail.into(),
+        };
+        let Some(method) = self
+            .types
+            .classes
+            .get(class)
+            .methods
+            .get(classes::ASYNC_ITERATOR_METHOD)
+            .cloned()
+        else {
+            return Err(self.source.locate(
+                rejected("the class declares no [Symbol.asyncIterator]() method"),
+                span,
+            ));
+        };
+        let asynchronous = matches!(
+            method.signature.result,
+            Type::Generator(id) if self.types.generators[id as usize].asynchronous.is_some()
+        );
+        if !asynchronous || !method.signature.params.is_empty() || method.getter {
+            return Err(self.source.locate(
+                rejected(
+                    "[Symbol.asyncIterator]() must be an async generator method without parameters",
+                ),
+                span,
+            ));
+        }
+        let (target, receiver) = method.target();
+        let receiver = Expr {
+            ty: Type::Class(receiver),
+            ..value
+        };
+        Ok(Expr {
+            span,
+            ty: method.signature.result,
+            kind: E::Call(target, vec![receiver]),
+        })
     }
     /// The loop shared by every `for await` source. `step` runs at the top of
     /// each iteration and either breaks out of the loop (the source is done)

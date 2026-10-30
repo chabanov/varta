@@ -526,6 +526,7 @@ impl Emitter<'_> {
                     self.string_helper(strings::Helper::Snapshot)?;
                 }
             }
+            E::TextUnitAt(text, index) => self.text_unit_at(text, index)?,
             E::NumberSameValue(left, right) => {
                 // Lowering supplies only cached locals or unboxed cached locals.
                 // NaNs compare equal regardless of payload, while raw bits split +/-0.
@@ -648,6 +649,59 @@ impl Emitter<'_> {
             .get(&helper)
             .ok_or_else(|| CompilerError::Internal("missing string helper".into()))?;
         self.code.push(I::Call(*index));
+        Ok(())
+    }
+}
+
+impl Emitter<'_> {
+    /// `varta.web.unitAt(text, index)` (v37 preludes): the UTF-16 code unit at
+    /// an integer index inside the string as a number, else NaN. Both operands
+    /// are locals or literals (lowering checks), so evaluating them neither
+    /// allocates nor uses the temporaries.
+    fn text_unit_at(&mut self, text: &Expr, index: &Expr) -> Result<()> {
+        const UNIT_BYTES: i32 = size_of::<u16>() as i32;
+        const UNIT: wasm_encoder::MemArg = wasm_encoder::MemArg {
+            offset: 0,
+            align: 1,
+            memory_index: strings::MEMORY,
+        };
+        self.expr(index)?;
+        self.code.push(I::LocalSet(self.float_temporary));
+        self.expr(text)?;
+        self.code.extend([
+            I::LocalSet(self.string_temporary),
+            // 0 <= index, index is an integer, index < length in units.
+            I::LocalGet(self.float_temporary),
+            I::F64Const(0.0.into()),
+            I::F64Ge,
+            I::LocalGet(self.float_temporary),
+            I::LocalGet(self.float_temporary),
+            I::F64Trunc,
+            I::F64Eq,
+            I::I32And,
+            I::LocalGet(self.float_temporary),
+            I::LocalGet(self.string_temporary),
+            I::I64Const(strings::LENGTH_SHIFT as i64),
+            I::I64ShrU,
+            I::F64ConvertI64U,
+            I::F64Const(f64::from(UNIT_BYTES).into()),
+            I::F64Div,
+            I::F64Lt,
+            I::I32And,
+            I::If(BlockType::Result(ValType::F64)),
+            I::LocalGet(self.string_temporary),
+            I::I32WrapI64,
+            I::LocalGet(self.float_temporary),
+            I::I32TruncF64U,
+            I::I32Const(UNIT_BYTES),
+            I::I32Mul,
+            I::I32Add,
+            I::I32Load16U(UNIT),
+            I::F64ConvertI32U,
+            I::Else,
+            I::F64Const(f64::NAN.into()),
+            I::End,
+        ]);
         Ok(())
     }
 }

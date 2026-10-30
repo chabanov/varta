@@ -38,7 +38,14 @@ pub(super) enum TimerKind {
     Timeout,
     /// After every firing until cleared (`setInterval`).
     Interval,
+    /// Once, when a v37 network request's armed operation completes
+    /// (`varta.net.watch`); a completion is never cleared, so the frame
+    /// calls the callback without asking the runtime.
+    Completion,
 }
+
+/// The engine-prelude intrinsic that waits for a network completion (v37).
+const NET_WATCH: &str = "varta.net.watch";
 
 impl Lower<'_> {
     /// Whether `name` is an unshadowed timer global of a timers profile.
@@ -102,6 +109,82 @@ impl Lower<'_> {
         }
         self.set_timer(call, TimerKind::Timeout, TIMER_UNREF, SET_TIMEOUT)
             .map(Some)
+    }
+    /// `varta.net.watch(id, callback)`, the `fetch` prelude's wait for the
+    /// armed operation of request `id` (v37 `net_request`): a scheduled
+    /// frame awaits an engine-internal pending promise whose one reaction
+    /// `net_request_watch` registers, then calls `callback()` (a `resolve`).
+    /// The frame roots the callback while the request is in flight; the
+    /// runtime keeps only the id and the serial. Program modules cannot call
+    /// it.
+    pub(in crate::lower) fn prelude_net_watch(
+        &mut self,
+        call: &ast::CallExpr,
+        name: &str,
+    ) -> Result<Option<Expr>> {
+        if name != NET_WATCH
+            || !self.types.profile.net_request()
+            || !crate::modules::engine::is_prelude_source(self.source)
+        {
+            return Ok(None);
+        }
+        let span = call.span;
+        let [id, callback] = call.args.as_slice() else {
+            return Err(invalid(format!("{NET_WATCH} expects an id and a callback")));
+        };
+        if id.spread.is_some() || callback.spread.is_some() || call.type_args.is_some() {
+            return Err(invalid(format!("{NET_WATCH} expects an id and a callback")));
+        }
+        let id = self.expr(&id.expr)?;
+        if id.ty != Type::Float64 {
+            return Err(type_error(format!("{NET_WATCH} requires a request id")));
+        }
+        let callback = self.timer_callback(&callback.expr, &[], NET_WATCH)?;
+        let promise = intern(Type::Void, self.types).map_err(|e| self.source.locate(e, span))?;
+        let Type::Promise(promise_id) = promise else {
+            return Err(CompilerError::Internal("missing network promise".into()));
+        };
+        let callback_ty = callback.ty;
+        let frame = self.timer_frame(span, TimerKind::Completion, promise, callback_ty, &[])?;
+        let id_slot = self.hidden(Type::Float64);
+        let callback_slot = self.hidden(callback_ty);
+        let promise_slot = self.hidden(promise);
+        let output = self.hidden(Type::Float64);
+        let body = vec![
+            S::Init(id_slot, id),
+            S::Init(callback_slot, callback),
+            S::Init(promise_slot, self.promise_object(span, promise_id, None)?),
+            schedule(
+                span,
+                frame,
+                vec![
+                    local(span, promise_slot, promise),
+                    local(span, callback_slot, callback_ty),
+                ],
+                ScheduleMode::Start,
+            ),
+            host(
+                span,
+                Host::NetRequestWatch,
+                vec![
+                    self.read_promise(local(span, promise_slot, promise), SERIAL)?,
+                    local(span, id_slot, Type::Float64),
+                ],
+            ),
+            S::Init(output, float(span, 0.0)),
+        ];
+        // The callback runs in a later task and may write captured bindings.
+        self.flow_reentry();
+        Ok(Some(Expr {
+            span,
+            ty: Type::Float64,
+            kind: E::ValueBlock {
+                output,
+                marker: self.hidden(Type::Number),
+                roots: vec![callback_slot, promise_slot],
+                body,
+            },
+        }))
     }
     fn set_timer(
         &mut self,
@@ -223,6 +306,9 @@ impl Lower<'_> {
                 ),
             },
         ));
+        if self.types.profile.net_request() {
+            body.push(self.timer_denial(span, output, name)?);
+        }
         // The callback runs in a later task and may write captured bindings.
         self.flow_reentry();
         Ok(Expr {
@@ -235,6 +321,45 @@ impl Lower<'_> {
                 body,
             },
         })
+    }
+    /// V37: `timer_start_v2` returns 0 when the broker denied `time.timer`
+    /// (the frame is already released); the call then throws the
+    /// `NotAllowedError` `DOMException` of the permission prelude, which the
+    /// timer globals load implicitly.
+    fn timer_denial(&mut self, span: swc_common::Span, id: u32, name: &str) -> Result<S> {
+        let Some(signature) = self
+            .functions
+            .get(crate::modules::engine::PERMISSION_DENIED)
+            .cloned()
+        else {
+            return Err(CompilerError::Internal("missing permission prelude".into()));
+        };
+        let text = |lower: &Self, text: &str| Expr {
+            span,
+            ty: Type::String,
+            kind: E::String(lower.types.profile.string_bytes(text)),
+        };
+        let error = Expr {
+            span,
+            ty: signature.result,
+            kind: E::Call(
+                signature.index,
+                vec![
+                    text(self, varta_common::scheduler::TIMER_CAPABILITY),
+                    text(self, name),
+                ],
+            ),
+        };
+        let denied = Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::Binary(
+                ast::BinaryOp::EqEqEq,
+                Box::new(local(span, id, Type::Float64)),
+                Box::new(float(span, 0.0)),
+            ),
+        };
+        Ok(S::If(denied, vec![S::Throw(self.thrown(error)?)], vec![]))
     }
     /// The callback: a contextually typed arrow or function expression, or a
     /// typed function value. Its leading parameters must accept the extra
@@ -356,6 +481,7 @@ impl Lower<'_> {
                     };
                     let first = child.await_promise(span, local(span, p, promise))?;
                     Ok(match kind {
+                        TimerKind::Completion => vec![S::Expr(first), guarded],
                         TimerKind::Timeout => {
                             vec![S::Expr(first), S::If(take, vec![guarded], vec![])]
                         }

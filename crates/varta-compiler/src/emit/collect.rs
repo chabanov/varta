@@ -347,7 +347,7 @@ impl<'a> Collected<'a> {
                     self.expression(arg, source);
                 }
             }
-            E::NumberSameValue(a, b) => {
+            E::NumberSameValue(a, b) | E::TextUnitAt(a, b) => {
                 self.expression(a, source);
                 self.expression(b, source);
             }

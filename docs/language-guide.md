@@ -4742,3 +4742,91 @@ generator's values (and its `return()` and `throw()`). Not supported yet:
 `yield*` over arrays or synchronous generators, async generator function
 expressions, `[Symbol.asyncIterator]` methods and other async iterables, and
 `await` inside an intrinsic call or template (bind it to a `const` first). `for await` costs a few microtasks per value, like Node.
+
+### `checked-f64-utf16-v37`
+
+Profile v37 (in development) runs every v36 program unchanged. Its network
+stream adds `fetch` with `Request`, `Response`, streamed bodies, `URL` and
+`URLSearchParams` over the `net.request` capability, `[Symbol.asyncIterator]`
+async generator methods for `for await`, and recoverable permission denials
+for requests and timers.
+
+#### Network requests (opt-in v37)
+
+Grant the origins (and optionally the methods) a program may call in
+`varta.config.json`:
+
+```json
+{
+  "languageProfile": "checked-f64-utf16-v37",
+  "capabilities": {
+    "net": { "request": { "urls": ["https://api.example.com/v1/**"], "methods": ["GET", "POST"] } },
+    "time": { "timer": true }
+  }
+}
+```
+
+```ts
+interface Item { id: string; title: string }
+
+async function create(title: string, signal: AbortSignal): Promise<Item> {
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+  const response = await fetch('https://api.example.com/v1/items', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ title }),
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as Item;
+}
+
+async function events(): Promise<void> {
+  const response = await fetch('https://api.example.com/v1/events', {
+    signal: AbortSignal.timeout(4000),
+  });
+  const body = response.body;
+  if (body === null) return;
+  let buffer = '';
+  for await (const chunk of body) {
+    buffer += chunk; // decoded text; SSE frames end with a blank line
+  }
+  console.log(buffer.length);
+}
+
+export async function main(): Promise<void> {
+  try {
+    const item = await create('first', new AbortController().signal);
+    console.log(item.id);
+    await events();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      console.log('not permitted: ' + error.message);
+    } else {
+      throw error;
+    }
+  }
+}
+```
+
+A request outside the grant rejects with a catchable `NotAllowedError` before
+any connection is made, and so does a timer without `time.timer` (thrown by
+`setTimeout`). Redirects are refused unless `redirect: 'follow'` (each hop is
+checked against the grant again) or `'manual'` is given. Body chunks are
+strings (bytes and `ReadableStream<Uint8Array>` come later), `read()` gives
+`{ done, value }` with `value === ''` once done, and `fetch` takes a string or
+a `Request` (pass `url.href` for a `URL`).
+
+```ts
+const url = new URL('/v1/search', 'https://api.example.com');
+url.searchParams.append('q', 'two words');
+console.log(url.href); // https://api.example.com/v1/search?q=two+words
+const form = new URLSearchParams({ name: 'Ada Lovelace' });
+console.log(form.toString()); // name=Ada+Lovelace
+```
+
+A class can be an async iterable by declaring
+`async *[Symbol.asyncIterator]()`; `for await` over an instance calls it.

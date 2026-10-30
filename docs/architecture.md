@@ -7888,12 +7888,13 @@ v36 subsection above admits a feature, layout or binding for v36 only, it
 applies to v36 and v37; v35 and earlier profiles stay frozen. V37 declares one
 version identity of its own (see the [version matrix](#version-matrix)):
 
-- **Host ABI** `abi::NET_REQUEST_VERSION` (33), for v37 alone. It adds no host
-  import yet: every v36 operation, including the value17 readers and the timer
-  operations, keeps its signature, binding and minimum ABI, and no registered
-  operation requires host ABI 33. Host imports added in this batch (the
-  asynchronous `net.request` operations behind `fetch` first) use host ABI 33
-  as their minimum.
+- **Host ABI** `abi::NET_REQUEST_VERSION` (33), for v37 alone. Every host
+  import added in this batch uses host ABI 33 as its minimum: the six
+  `net.request` operations behind `fetch` and `timer_start_v2`, which v37
+  binds instead of `timer_start` for its recoverable denial
+  ([permission broker](#permission-broker-v37)). Every other v36 operation,
+  including the value17 readers and the other timer operations, keeps its
+  signature, binding and minimum ABI.
 - **Value ABI and layout** `value::FUNCTION_FIELD_VALUE_VERSION` (value17),
   shared with v36. V37 adds no value tag or layout yet;
   `LanguageProfile::value_layout` equals `value_abi`, so descriptors,
@@ -7915,7 +7916,9 @@ their minimum host ABI 33, and the launcher maximum) and lands it as an early
 foundation commit; the other streams rebase onto it. V36 and earlier profiles
 keep their host ABI, value ABI and layouts.
 
-Five selectors gate the batch's work streams, and all admit nothing yet:
+Five selectors gate the batch's work streams; `net_request()` is implemented
+([network requests](#network-requests-net_request)) and the others admit
+nothing yet:
 
 - language-core stream: `language_core()` (TDZ-safe closure capture before
   declaration, deferred `let x: T;` initialization, dense `for…of` typing,
@@ -7934,6 +7937,201 @@ Five selectors gate the batch's work streams, and all admit nothing yet:
 Until a stream adds its subsection here, a v37 module compiles and runs exactly
 like a v36 module apart from its declared profile and host ABI, and production
 budgets of every profile are unchanged.
+
+#### Network requests (`net_request`)
+
+V37 adds asynchronous HTTP(S) requests behind the WHATWG `fetch` API, over one
+exact capability, `net.request`, which replaces `net.get`/`net.fetch` for new
+code (those keep their v1–v36 contracts and stay importable only by the
+profiles that already had them). V36 and earlier profiles keep rejecting
+`fetch`, `Request`, `Response`, `ReadableStream`, `URL` and `URLSearchParams`
+as unknown names and keep their bytes and diagnostics.
+
+- **Capability.** `net.request` is a URL-scoped grant with an optional method
+  list. Project form: `"net": {"request": ["https://api.example.com/v1/**"]}`
+  (every method) or `"net": {"request": {"urls": [...], "methods": ["GET",
+  "POST"]}}`; manifest form: `{"id": "net.request", "patterns": [...],
+  "methods": [...]}`, where `methods` is accepted for `net.request` only and
+  absent means every method. Patterns follow the [network rules](#network)
+  with `http://` and `https://`: exact scheme, normalized host and effective
+  port, wildcards only after the authority, no credentials, fragments, control
+  characters, whitespace or encoded paths, at most `net::MAX_URL_BYTES` per
+  URL. Methods are RFC 9110 tokens matched exactly; the six methods `fetch`
+  normalizes (`DELETE GET HEAD OPTIONS POST PUT`) must be written in uppercase,
+  `CONNECT`, `TRACE` and `TRACK` are never grantable, duplicates are errors and
+  at most `net::MAX_GRANT_METHODS` are listed. An empty URL list or an empty
+  method list denies every request. With a host ceiling, the URL and method of
+  every request must satisfy both sides; a ceiling never adds a request. The
+  operation is distinct from `net.fetch`, `net.get` and `net.listen` (exact
+  operation ids; none authorizes another). Inspection and `validate` list
+  `net_request_start` with `net.request` through the shared registry.
+- **Check before effect.** `net_request_start` parses the URL and asks the
+  [permission broker](#permission-broker-v37) before anything is resolved or
+  connected; transfers run only while the event loop waits, so no socket
+  exists before the decision. A denial is recoverable: the request completes at
+  once as denied, the runtime logs `varta log: <capability denied:
+  net.request> (METHOD URL)`, and `fetch` rejects with a catchable
+  `DOMException` whose `name` is `NotAllowedError` and whose message is that
+  text. The program continues.
+- **Async model.** The runtime holds request ids, completions and promise
+  serials, never a guest reference. `fetch` starts a request and waits on
+  `varta.net.watch(id, resolve)`, a prelude-only intrinsic that schedules a
+  frame awaiting an engine-internal pending `Promise<void>` (exactly like a
+  timer frame) and registers its one reaction with `net_request_watch`. Each
+  armed operation (the response head, then one body chunk per `net_body_read`)
+  completes once; its completion wakes the frame, which reads the kind
+  (`net_request_take`, `net::CompletionKind`) and text (`net_request_text`).
+  The waiting frame roots the callback, the promise and everything the caller
+  captured while the request is in flight. After the microtask checkpoint the
+  event loop fires a due timer first (Node's timers phase precedes its poll
+  phase), otherwise drives the transfers until a completion arrives, the next
+  timer is due or the deadline passes, and delivers one completion per turn
+  (in completion order) before draining microtasks again. Loop time follows the
+  wall clock after a completion, so later timers are due relative to it; an
+  execution whose only timers are unreferenced stays alive while a request is
+  in flight. A request in flight at the deadline ends the execution with
+  `execution deadline exceeded`, like a timer.
+- **Imports.** Six host ABI 33 imports: `net_request_start (ptr:i32,
+  len:i32) -> f64` (the request descriptor below; capability `net.request`,
+  charged to the host-call budget), and the bookkeeping operations
+  `net_request_watch (serial:f64, id:f64) -> ()`, `net_request_take (id:f64)
+  -> i32`, `net_request_text (id:f64) -> i32` (a string in the host result
+  buffer), `net_body_read (id:f64) -> ()` and `net_request_abort (id:f64) ->
+  ()`, which take no capability and are not charged to the host-call budget but
+  observe the deadline. The descriptor is UTF-16 text of at most
+  `net::MAX_REQUEST_BYTES`: the line `net::DESCRIPTOR_VERSION`, the method, the
+  URL, the header count, each header name and value, the body flag, then the
+  body as the rest (lone surrogates become U+FFFD; the body is sent as UTF-8).
+  A malformed descriptor, an operation on an unknown or released id, a second
+  waiter, a read while an operation is armed, and starting more than
+  `net::MAX_PENDING_REQUESTS` requests are fatal `NetError`s, because only a
+  tampered module can cause them.
+- **Transport.** HTTP/1.1 through hyper's client on a current-thread Tokio
+  runtime created by the first request; HTTPS through rustls (ring provider,
+  TLS 1.2 and 1.3, ALPN `http/1.1`) verifying the server against the
+  compiled-in Mozilla roots (`webpki-roots`), never an ambient trust store. One
+  connection per request, no proxies, no cookies, no ambient credentials, no
+  automatic redirects and no decompression. The runtime sets `host` and the
+  framing headers; a request that sets one of `net::RUNTIME_HEADERS` fails.
+  Name resolution, connect, TLS, the request and every body read share the
+  remaining execution deadline. Response heads are bounded by
+  `net::MAX_RESPONSE_HEADERS` fields and `net::MAX_RESPONSE_HEADER_BYTES`;
+  request headers by `net::MAX_REQUEST_HEADERS` and
+  `net::MAX_REQUEST_HEADER_BYTES`. A body chunk carries every frame already
+  received up to `net::MAX_CHUNK_BYTES` without waiting for more (so SSE events
+  arrive as soon as they are sent) and is decoded as UTF-8 across chunk
+  boundaries (U+FFFD for invalid bytes, as a non-fatal `TextDecoder`). A body
+  beyond `net::MAX_RESPONSE_BODY_BYTES` fails the read. Each body read costs
+  guest fuel proportional to its text (about 2.6 fuel per byte measured), and
+  a request head about 65 000 fuel, so under the production budget an
+  execution makes roughly ten requests or reads a few hundred kilobytes;
+  budgets are unchanged.
+- **Guest API.** Engine preludes (`<varta>/web/fetch.ts`, `url.ts`,
+  `permission.ts`), loaded only when a module names one of their exports, so
+  other programs keep their bytes: `fetch(input: string | Request, init?)`;
+  `Request` (`method` normalized and validated like Node, `url`, `headers`,
+  `signal`, `redirect`); `Response` (`status`, `statusText`, `ok`, `headers`,
+  `url`, `redirected`, `type`, `body`, `bodyUsed`, `text()`, `json()` →
+  `unknown`, and `new Response(body?, init?)` with a text or stream body);
+  `ReadableStream` (`getReader()`, `cancel()`, `locked`, `values()` and
+  `[Symbol.asyncIterator]`), `ReadableStreamDefaultReader` (`read()` in call
+  order, `cancel()`, `releaseLock()`), a stream constructed from an
+  `UnderlyingSource` with `start`, `pull` (returning `Promise<void>`) and
+  `cancel` function fields and a controller with `enqueue`, `close` and
+  `error`; `URL` and `URLSearchParams` (below). `RequestInit` has `method`,
+  `headers` (`HeadersInit`), `body` (a string or `URLSearchParams`, which sets
+  `text/plain;charset=UTF-8` or `application/x-www-form-urlencoded;
+  charset=UTF-8` unless a content type is given), `signal` and `redirect`.
+  Under `net_request` a class may declare `async *[Symbol.asyncIterator]()`
+  (an async generator method without parameters, registered under a name no
+  string key can spell), and `for await` over an instance of such a class
+  calls it; other iterator objects are not modelled.
+- **Cancellation.** A request follows its `signal` with an abort listener: an
+  already aborted signal rejects with its reason before anything starts;
+  aborting while the head is pending cancels the transfer (its connection
+  closes at once) and rejects with the signal's reason; aborting during the
+  body rejects the pending or next `read()` with the reason; `cancel()` on
+  the body releases the request. `AbortSignal.timeout(ms)` therefore bounds a
+  request, as in Node.
+- **Redirects** default to `"error"`, as the accepted platform design
+  requires (WHATWG and Node default to `"follow"`): a 3xx response with a
+  `Location` rejects with `TypeError: fetch failed` (cause `unexpected
+  redirect`). `"manual"` returns the 3xx response itself (as Node does, not an
+  opaque response); `"follow"` issues a new request for the resolved location,
+  checked against the grant again, changing `303` (and `301`/`302` after a
+  `POST`) to a bodiless `GET`, at most 20 times; `redirected` and `url` report
+  it.
+- **Errors.** Name resolution, connection, TLS and protocol failures reject
+  with `TypeError: fetch failed` whose `cause` is an `Error` with the
+  runtime's reason; a failure while reading the body rejects the read with
+  `TypeError: terminated` (Node's messages). An unparseable or relative URL
+  rejects with `TypeError: fetch failed` (cause `Invalid URL: …`).
+- **Deviations from Node and WHATWG.** Bodies are text: response chunks are
+  decoded strings rather than `Uint8Array` bytes, `ReadableStream` is not
+  generic (`ReadableStream<Uint8Array>` is rejected until generic classes and
+  `Uint8Array` land in the class-generics and collections streams; the body
+  type is the seam), and `read()` returns `{ done, value }` with `value` the
+  empty string once `done`. `fetch` takes a string or a `Request` (not a
+  `URL`, because a union of two classes is not admitted: pass `url.href`), and
+  `new Response` takes a string, a stream or `null`. `JSON.stringify` of
+  `unknown` is rejected in programs that load engine Web types (a v35 rule),
+  so parsed bodies are typically narrowed with a checked `as`. There are no
+  `clone()`, `blob()`, `arrayBuffer()`, `formData()`, `Response.json()`,
+  `Response.error()`, `Response.redirect()`, `keepalive`, `mode`,
+  `credentials`, `cache`, `referrer` or `integrity`; request headers are sent
+  as given, without Node's default `accept`, `accept-language`, `user-agent`
+  and `accept-encoding`.
+- **URL subset** (pure guest code; `varta.web.unitAt` reads one code unit in
+  place): the special schemes `http`, `https`, `ws` and `wss` (other schemes
+  throw `TypeError: Invalid URL`), lowercased ASCII hosts (IPv6 literals kept
+  as written; no IDNA, no IPv4 number normalization, forbidden host code
+  points rejected), ports with defaults dropped, dot segments, backslashes as
+  slashes, relative references (scheme-relative, path-absolute, path-relative,
+  query-only, fragment-only) and the WHATWG path, query, fragment and userinfo
+  percent-encode sets, with non-ASCII text encoded as UTF-8. `URL` exposes
+  `href`, `origin`, `protocol`, `username`, `password`, `host`, `hostname`,
+  `port`, `pathname`, `search`, `hash`, `searchParams` (live: its mutations
+  rewrite the query), `toString()` and `URL.canParse`; setters are not
+  admitted (class setters are not in the subset). `URLSearchParams` takes a
+  query string, a `Record<string, string>` or `string[][]`, and offers
+  `append`, `delete`, `get`, `getAll`, `has`, `set`, `forEach`, `size`,
+  snapshot `entries`/`keys`/`values` and `toString()` with
+  `application/x-www-form-urlencoded` serialization; decoding turns `+` into a
+  space and decodes percent escapes of printable ASCII, keeping other escapes
+  as written until a code-unit constructor exists.
+- **Tests** never use the network beyond 127.0.0.1: a loopback server with an
+  ephemeral port (HTTPS with a test-generated certificate and a test-only
+  trust anchor compiled only into the runtime tests), with expectations
+  produced by Node.js v24.20.0 against a mirror server.
+
+#### Permission broker (v37)
+
+V37 routes the capability decisions of operations that complete
+asynchronously (`net.request` and `time.timer`) through one broker in the
+runtime. Today it answers synchronously from the package's requests
+intersected with the host ceiling, before the operation has any effect, and a
+denial is recoverable rather than fatal:
+
+- a denied request rejects `fetch` with a `NotAllowedError` `DOMException`
+  (above);
+- a denied timer start (`timer_start_v2`, the v37 form of `timer_start` with
+  the same signature and minimum host ABI 33) arms nothing, releases the timer
+  frame as if it were cleared, logs `varta log: <capability denied:
+  time.timer> (timer)` and returns 0, and the guest throws the
+  `NotAllowedError` of the permission prelude synchronously from `setTimeout`,
+  `setInterval` or `AbortSignal.timeout`, so the sleep pattern
+  `new Promise<void>((resolve) => setTimeout(resolve, ms))` rejects. V36 keeps
+  its fatal `TimerDenied` (`timer_start` is frozen); v37 imports
+  `timer_start_v2` only, so a v37 module relabelled as v36 fails at its host
+  ABI section.
+
+The broker is the seam for a later consent prompt: a third answer, "pending
+until the user decides", would leave the operation in its slot without an
+effect (a request with no transfer, a timer not yet armed) while its frame
+waits on its engine-internal promise through the scheduler; the user's answer
+would then complete it as granted or denied. A user grant is checked against
+the host ceiling like any grant, so a prompt can never exceed the ceiling.
+No prompt or user interface exists yet.
 
 ## Local modules
 
@@ -8193,7 +8391,9 @@ made cancellable by the guest's fuel budget.
 
 ### Network
 
-HTTP only is implemented. HTTPS grants and unsupported schemes are rejected.
+`net.get` and `net.fetch` implement HTTP only: HTTPS grants and unsupported
+schemes are rejected for them. V37's `net.request` admits `http` and `https`
+under the same URL rules ([network requests](#network-requests-net_request)).
 URLs are parsed before authorization; scheme, normalized hostname and effective
 port must match exactly. Wildcards are permitted only after the authority; `*`
 can match path/query characters and `?` retains its URL query-separator meaning.

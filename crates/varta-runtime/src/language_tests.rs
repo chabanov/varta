@@ -10,7 +10,7 @@ fn custom(data: &[u8], name: &str) -> bool {
     data.first() == Some(&(name.len() as u8))
         && data.get(1..1 + name.len()) == Some(name.as_bytes())
 }
-fn replace(bytes: &[u8], metadata: &[u8]) -> Vec<u8> {
+pub(super) fn replace(bytes: &[u8], metadata: &[u8]) -> Vec<u8> {
     rewrite(bytes, |id, data| {
         if id == 0 && custom(data, language::SECTION) {
             let mut section = data[..1 + language::SECTION.len()].to_vec();
@@ -180,7 +180,7 @@ fn legacy_invalid_integer_division_keeps_trapping_instead_of_producing_js_number
     }
 }
 
-fn host_abi(bytes: &[u8], version: Option<u32>) -> Vec<u8> {
+pub(super) fn host_abi(bytes: &[u8], version: Option<u32>) -> Vec<u8> {
     rewrite(bytes, |id, data| {
         if id == 0 && custom(data, abi::SECTION) {
             version.map_or_else(Vec::new, |version| {

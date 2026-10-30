@@ -711,6 +711,10 @@ pub(crate) enum Expression {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     /// Cached numeric operands: SameValue distinguishes signed zero and joins NaNs.
     NumberSameValue(Box<Expr>, Box<Expr>),
+    /// The UTF-16 code unit of a string at an index, or NaN outside it (v37
+    /// `varta.web.unitAt`, engine preludes only; both operands are locals or
+    /// literals, so no allocation runs between them).
+    TextUnitAt(Box<Expr>, Box<Expr>),
     Negative(Box<Expr>),
     Math(MathIntrinsic, Vec<Expr>),
     NumberPredicate(NumberPredicate, Vec<Expr>),

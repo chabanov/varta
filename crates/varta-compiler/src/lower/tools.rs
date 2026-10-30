@@ -348,6 +348,7 @@ fn expression(
         | E::ArrayPush(a, b)
         | E::MaybeIndex(a, b)
         | E::NumberSameValue(a, b)
+        | E::TextUnitAt(a, b)
         | E::Binary(_, a, b)
         | E::Index(a, b)
         | E::Sequence(a, b) => {

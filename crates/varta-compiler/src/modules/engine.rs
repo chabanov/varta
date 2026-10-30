@@ -22,6 +22,10 @@ pub(crate) struct Prelude {
     /// function, bound under the member's dotted name, which no source
     /// declaration can spell (v36 `AbortSignal.timeout`).
     pub members: &'static [Member],
+    /// Referenced names (identifiers or dotted member chains) that load the
+    /// prelude and bind one export under an unspellable dotted name (v37
+    /// `permissionDenied` for the timer globals).
+    pub triggers: &'static [Trigger],
     pub admitted: fn(LanguageProfile) -> bool,
     /// A later profile's source of the same module, replacing `source` where
     /// its selector admits it; earlier profiles keep `source` unchanged.
@@ -39,6 +43,13 @@ impl Prelude {
     }
 }
 
+/// Names whose reference binds the prelude export `function` as `local`.
+pub(crate) struct Trigger {
+    pub names: &'static [&'static str],
+    pub function: &'static str,
+    pub local: &'static str,
+}
+
 /// A static member `object.property` implemented by the prelude export
 /// `function`.
 pub(crate) struct Member {
@@ -51,6 +62,8 @@ pub(crate) struct Member {
 pub(crate) enum Namespace {
     /// A class: its type and its value.
     Class,
+    /// A function value only (`fetch`).
+    Value,
     /// A type alias only.
     Type,
 }
@@ -64,6 +77,7 @@ pub(crate) const HEADERS: Prelude = Prelude {
         ("HeadersInit", Namespace::Type),
     ],
     members: &[],
+    triggers: &[],
     admitted: LanguageProfile::web_headers,
     extended: None,
 };
@@ -78,6 +92,7 @@ pub(crate) const ABORT: Prelude = Prelude {
         ("DOMException", Namespace::Class),
     ],
     members: &[],
+    triggers: &[],
     admitted: LanguageProfile::abort_signals,
     extended: Some((
         LanguageProfile::function_fields,
@@ -95,10 +110,79 @@ pub(crate) const ABORT_TIMEOUT: Prelude = Prelude {
         property: "timeout",
         function: "abortSignalTimeout",
     }],
+    triggers: &[],
     admitted: LanguageProfile::timers,
     extended: None,
 };
-pub(crate) const PRELUDES: [&Prelude; 3] = [&HEADERS, &ABORT, &ABORT_TIMEOUT];
+/// `fetch`, `Request`, `Response` and the `ReadableStream` subset (v37
+/// `net_request`) over the `net.request` host operations; it imports the
+/// headers and abort preludes implicitly.
+pub(crate) const FETCH: Prelude = Prelude {
+    path: "<varta>/web/fetch.ts",
+    source: include_str!("../prelude/fetch.ts"),
+    exports: &[
+        ("fetch", Namespace::Value),
+        ("Request", Namespace::Class),
+        ("Response", Namespace::Class),
+        (READABLE_STREAM_CLASS, Namespace::Class),
+        ("ReadableStreamDefaultReader", Namespace::Class),
+        ("RequestInit", Namespace::Type),
+        ("ResponseInit", Namespace::Type),
+        ("BodyInit", Namespace::Type),
+        ("RequestRedirect", Namespace::Type),
+        ("ReadableStreamReadResult", Namespace::Type),
+        ("ReadableStreamDefaultController", Namespace::Type),
+        ("UnderlyingSource", Namespace::Type),
+    ],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::net_request,
+    extended: None,
+};
+/// `URL` and `URLSearchParams` (v37 `net_request`), a WHATWG subset in
+/// guest code with no host import.
+pub(crate) const URL: Prelude = Prelude {
+    path: "<varta>/web/url.ts",
+    source: include_str!("../prelude/url.ts"),
+    exports: &[
+        ("URL", Namespace::Class),
+        ("URLSearchParams", Namespace::Class),
+    ],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::net_request,
+    extended: None,
+};
+/// The recoverable denial of v37 timer starts (`permissionDenied`, a
+/// `NotAllowedError` `DOMException`); it imports the abort prelude.
+pub(crate) const PERMISSION: Prelude = Prelude {
+    path: "<varta>/web/permission.ts",
+    source: include_str!("../prelude/permission.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[Trigger {
+        names: &["setTimeout", "setInterval", "varta.web.unrefTimeout"],
+        function: "permissionDenied",
+        local: PERMISSION_DENIED,
+    }],
+    admitted: LanguageProfile::net_request,
+    extended: None,
+};
+/// The dotted name the timer lowering calls for a denied timer start.
+pub(crate) const PERMISSION_DENIED: &str = "varta.permission.denied";
+pub(crate) const PRELUDES: [&Prelude; 6] =
+    [&HEADERS, &ABORT, &ABORT_TIMEOUT, &FETCH, &PERMISSION, &URL];
+/// The `fetch` prelude's stream class and its engine-internal members, which
+/// only engine prelude modules may call.
+pub(crate) const READABLE_STREAM_CLASS: &str = "ReadableStream";
+pub(crate) const INTERNAL_MEMBERS: &[(&str, &str)] = &[
+    (READABLE_STREAM_CLASS, "stateOf"),
+    ("Request", "bodyText"),
+    ("Request", "signalOf"),
+    ("URLSearchParams", "parse"),
+    ("URLSearchParams", "attach"),
+    ("URL", "adoptQuery"),
+];
 /// Class names that compiler hooks recognize in their prelude modules.
 pub(crate) const HEADERS_CLASS: &str = "Headers";
 pub(crate) const ABORT_SIGNAL_CLASS: &str = "AbortSignal";
@@ -191,17 +275,27 @@ impl Visit for References {
             .entry(ident.sym.to_string())
             .or_insert(ident.span);
     }
-    /// `Object.member` also records the dotted name of a static member.
+    /// `Object.member` (and a longer chain of identifiers) also records its
+    /// dotted name.
     fn visit_member_expr(&mut self, member: &ast::MemberExpr) {
-        if let (ast::Expr::Ident(object), ast::MemberProp::Ident(property)) =
-            (&*member.obj, &member.prop)
-        {
-            self.found
-                .entry(format!("{}.{}", object.sym, property.sym))
-                .or_insert(member.span);
+        if let Some(name) = dotted(member) {
+            self.found.entry(name).or_insert(member.span);
         }
         member.visit_children_with(self);
     }
+}
+
+/// `a.b.c` for a member chain of identifiers.
+fn dotted(member: &ast::MemberExpr) -> Option<String> {
+    let ast::MemberProp::Ident(property) = &member.prop else {
+        return None;
+    };
+    let object = match &*member.obj {
+        ast::Expr::Ident(object) => object.sym.to_string(),
+        ast::Expr::Member(inner) => dotted(inner)?,
+        _ => return None,
+    };
+    Some(format!("{object}.{}", property.sym))
 }
 
 /// Implicit prelude imports of one module, in prelude order. A prelude module
@@ -256,6 +350,19 @@ pub(super) fn implicit_imports(
                         })
                     }),
             );
+            bindings.extend(prelude.triggers.iter().filter_map(|trigger| {
+                trigger
+                    .names
+                    .iter()
+                    .filter(|name| !bound.contains(**name))
+                    .find_map(|name| references.found.get(*name))
+                    .map(|span| ImportBinding {
+                        imported: trigger.function.into(),
+                        local: trigger.local.into(),
+                        span: *span,
+                        type_only: false,
+                    })
+            }));
             let span = bindings.first()?.span;
             Some(Dependency {
                 target: PathBuf::from(prelude.path),

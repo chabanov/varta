@@ -69,6 +69,10 @@ fn enabled(grant: &CapabilityGrant) -> bool {
         CapabilityValue::PathGlobs(patterns)
         | CapabilityValue::UrlGlobs(patterns)
         | CapabilityValue::ListenEndpoints(patterns) => !patterns.is_empty(),
+        // An empty method list denies every request, like an empty URL list.
+        CapabilityValue::Requests(scope) => {
+            !scope.urls.is_empty() && scope.methods.as_ref().is_none_or(|m| !m.is_empty())
+        }
     }
 }
 

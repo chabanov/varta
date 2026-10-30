@@ -30,6 +30,102 @@ declare function setInterval<A extends unknown[]>(
 ): number;
 declare function clearTimeout(id?: number | null): void;
 declare function clearInterval(id?: number | null): void;
+// checked-f64-utf16-v37 (pilot batch, unreleased) network requests: `fetch`,
+// `Request`, `Response`, `ReadableStream`, `URL` and `URLSearchParams` are
+// engine preludes (typed guest code) loaded only when a module names them.
+// Every request needs the exact `net.request` grant ("net": {"request":
+// ["https://api.example.com/v1/**"]} or {"urls": [...], "methods": [...]});
+// a denied request rejects with a catchable DOMException `NotAllowedError`
+// before any name resolution or socket, and the denial is logged. A denied
+// v37 timer start throws the same error synchronously (v36 stays fatal).
+// Redirects default to "error" ("follow" re-checks every hop against the
+// grant, "manual" returns the 3xx); there are no cookies or credentials.
+// Bodies are text: response chunks are UTF-8 decoded strings (bytes wait for
+// Uint8Array) and ReadableStream is not generic. Internal imports, host ABI33
+// minimum: net_request_start (i32 ptr, i32 len)->f64 id [net.request,
+// host-call budget], net_request_watch (f64 serial, f64 id)->(),
+// net_request_take (f64 id)->i32 kind, net_request_text (f64 id)->i32 ptr,
+// net_body_read (f64 id)->(), net_request_abort (f64 id)->(), and
+// timer_start_v2 (f64 serial, f64 delay, i32 flags)->f64 id [time.timer].
+type RequestRedirect = 'error' | 'follow' | 'manual';
+type BodyInit = string | URLSearchParams;
+interface RequestInit {
+  method?: string;
+  headers?: HeadersInit;
+  body?: BodyInit | null;
+  signal?: AbortSignal | null;
+  redirect?: RequestRedirect;
+}
+interface ResponseInit {
+  status?: number;
+  statusText?: string;
+  headers?: HeadersInit;
+}
+interface ReadableStreamReadResult {
+  done: boolean;
+  /** The empty string once done (WHATWG: undefined). */
+  value: string;
+}
+declare class ReadableStreamDefaultReader {
+  read(): Promise<ReadableStreamReadResult>;
+  cancel(reason?: unknown): Promise<void>;
+  releaseLock(): void;
+}
+declare class ReadableStream {
+  readonly locked: boolean;
+  getReader(): ReadableStreamDefaultReader;
+  cancel(reason?: unknown): Promise<void>;
+  values(): AsyncGenerator<string, void, undefined>;
+  [Symbol.asyncIterator](): AsyncGenerator<string, void, undefined>;
+}
+declare class Request {
+  constructor(input: string | Request, init?: RequestInit);
+  readonly method: string;
+  readonly url: string;
+  readonly headers: Headers;
+  readonly signal: AbortSignal;
+  readonly redirect: RequestRedirect;
+}
+declare class Response {
+  constructor(body?: string | ReadableStream | null, init?: ResponseInit);
+  readonly status: number;
+  readonly statusText: string;
+  readonly headers: Headers;
+  readonly ok: boolean;
+  readonly url: string;
+  readonly redirected: boolean;
+  readonly body: ReadableStream | null;
+  readonly bodyUsed: boolean;
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+}
+declare function fetch(input: string | Request, init?: RequestInit): Promise<Response>;
+declare class URLSearchParams {
+  constructor(init?: string | Record<string, string> | string[][]);
+  readonly size: number;
+  append(name: string, value: string): void;
+  delete(name: string): void;
+  get(name: string): string | null;
+  getAll(name: string): string[];
+  has(name: string): boolean;
+  set(name: string, value: string): void;
+  toString(): string;
+}
+declare class URL {
+  constructor(url: string, base?: string | URL);
+  static canParse(url: string, base?: string): boolean;
+  readonly href: string;
+  readonly origin: string;
+  readonly protocol: string;
+  readonly host: string;
+  readonly hostname: string;
+  readonly port: string;
+  readonly pathname: string;
+  readonly search: string;
+  readonly hash: string;
+  readonly searchParams: URLSearchParams;
+  toString(): string;
+}
 // checked-f64-utf16-v32 (pilot batch, unreleased) inherits v31 and its ABIs with
 // no new host declaration: module constants and `as const`, string/number/boolean
 // literal types, top-level classes, `export ... from`/`export *` re-exports,

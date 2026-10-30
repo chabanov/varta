@@ -533,6 +533,7 @@ impl<'a> Normalizer<'a> {
             }
             E::Binary(op, a, b) => self.pair(*a, *b, |a, b| E::Binary(op, a, b))?,
             E::NumberSameValue(a, b) => self.pair(*a, *b, E::NumberSameValue)?,
+            E::TextUnitAt(a, b) => self.pair(*a, *b, E::TextUnitAt)?,
             E::Index(a, b) => self.pair(*a, *b, E::Index)?,
             E::ArrayPush(a, b) => self.pair(*a, *b, E::ArrayPush)?,
             E::StringSearch(mode, a, b, c) => {

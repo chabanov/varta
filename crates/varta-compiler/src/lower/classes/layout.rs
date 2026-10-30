@@ -392,7 +392,9 @@ fn method(
     if let Some(kind) = unsupported_kind {
         return Err(source.locate(unsupported(kind), method.span));
     }
-    let name = member_name(&method.key).map_err(|e| source.locate(e, method.key.span()))?;
+    let prelude = crate::modules::engine::is_prelude_source(source);
+    let name = method_name(&method.key, types.profile, prelude)
+        .map_err(|e| source.locate(e, method.key.span()))?;
     if name == "toJSON" {
         return Err(source.locate(
             unsupported("class toJSON method; JSON serialization uses own fields"),

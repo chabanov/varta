@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 62 feature rows and 110 cases:
-101 pass, 9 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 63 feature rows and 111 cases:
+101 pass, 10 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -262,3 +262,12 @@ their pinned hashes and expected output, which matches Node.js v24.20.0 type
 stripping, and were promoted. The timer case was observed as a denied runtime
 failure without a grant, and passes with its reviewed grant. Earlier-profile
 rejections stay covered by the compiler/runtime/CLI regression tests.
+
+The v37 net-request stream adds the `url` row (CORE-11, a Varta contract) with
+`url-search-params` (relative resolution with scheme/host lowercasing and the
+default port dropped, and an `application/x-www-form-urlencoded` list), a
+reviewed `unsupported_syntax` gap under the v36 pin (`URL` is a v37 prelude).
+`fetch` has no inventory case: it needs a `net.request` grant and a loopback
+server, and the reviewed per-case `grants` field admits only `time.timer`.
+That stays a recorded gap; the runtime tests compare `fetch` with Node.js
+v24.20.0 against a loopback server instead.

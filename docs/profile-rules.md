@@ -2805,3 +2805,38 @@ frozen, and add each stream's rules under its own heading here.
   (`pilot_v37_inherits_v36_…` in `varta-common` `language`, the v37 runtime
   language test and the v37 CLI smoke test) change in the stream that
   introduces the difference.
+
+### Network requests (`net_request`)
+
+See the [contract](architecture.md#network-requests-net_request).
+
+- `fetch`, `Request`, `Response`, `ReadableStream`, `URL` and
+  `URLSearchParams` are engine preludes (`prelude/fetch.ts`, `url.ts`,
+  `permission.ts`). Keep them loaded only when named, so programs that do not
+  name them keep their bytes. Their `varta.net.*` and `varta.web.unitAt`
+  intrinsics work only inside prelude modules; engine-internal members
+  (`engine::INTERNAL_MEMBERS`) are unknown members to program modules. Mirror
+  every shared constant of `varta_common::net` in `fetch.ts` by name; the
+  `lower::net` test keeps them in step.
+- The runtime keeps request ids, completions and serials only. A completion
+  wakes the one reaction of the waiting frame (`varta.net.watch`, the timer
+  frame shape); never resolve a guest promise from the host and never retain
+  a guest reference.
+- Every capability decision of an asynchronous operation goes through
+  `runtime::permission` before any effect, and a v37 denial is recoverable
+  (`NotAllowedError`) and logged. Keep v36's fatal timer denial unchanged;
+  v37 binds `timer_start_v2`. A future "pending" broker answer must keep the
+  operation without effect until decided, and a user grant must still satisfy
+  the host ceiling.
+- `net.request` matches the full operation id, URL scopes and exact methods of
+  both the package and the host ceiling; never let `net.fetch`, `net.get` or
+  `net.listen` grant it, never resolve names or connect before the decision,
+  and keep redirects manual in the transport (the prelude re-checks each
+  followed hop).
+- Transfers run only inside the event loop's wait on the execution's
+  current-thread Tokio runtime; bound every phase by the remaining deadline and
+  the `net` limits. Body text is decoded per chunk with a UTF-8 carry; bytes
+  wait for `Uint8Array` (the body element type is the seam).
+- Tests use only 127.0.0.1 with ephemeral ports (`net_loopback.rs`, a
+  test-only HTTPS trust anchor) and pin Node 24 output from
+  `net_cases/server.mjs`; never contact another host.

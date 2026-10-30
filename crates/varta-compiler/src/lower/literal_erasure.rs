@@ -310,6 +310,7 @@ impl Eraser {
             | E::Sequence(a, b)
             | E::Binary(_, a, b)
             | E::NumberSameValue(a, b)
+            | E::TextUnitAt(a, b)
             | E::MaybeIndex(a, b)
             | E::ArrayHasOwn(a, b)
             | E::ArrayStringHasOwn(a, b)

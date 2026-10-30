@@ -95,7 +95,8 @@ pub(in crate::lower) fn bodies(
                     .find_map(|member| match member {
                         ast::ClassMember::Method(m)
                             if m.is_static == is_static
-                                && member_name(&m.key).is_ok_and(|n| &n == name) =>
+                                && method_name(&m.key, types.profile, true)
+                                    .is_ok_and(|n| &n == name) =>
                         {
                             Some(m)
                         }

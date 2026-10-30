@@ -655,7 +655,7 @@ All selectors are registered and admit nothing yet.
 | `class_generics()` | Classes: generic methods and classes, interface method signatures, `implements`, `#private` | M4, M5 | Registered, admits nothing |
 | `collections()` | Collections and binary text: `Map`/`Set`, tuples, `Array.join`, `String.fromCharCode`, `Date` subset, `Uint8Array`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, base64 (owns any value18 bump) | M4, M6 | Registered, admits nothing |
 | `regexp()` | RegExp: `RegExp` and the regex string methods | M4, M6 | Registered, admits nothing |
-| `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Registered, admits nothing |
+| `net_request()` | Network: async `fetch`/`Request`/`Response`/`Headers`/`URL`/`ReadableStream` over `net.request`, `Symbol.asyncIterator` for async iterables (host ABI 33 imports) | M5, M6 | Implemented ([contract](architecture.md#network-requests-net_request)): `net.request` with URL scopes and methods, hyper + rustls transport, streamed text bodies, abort and timeouts, redirects `error`/`manual`/`follow`, `URL`/`URLSearchParams` subset, `[Symbol.asyncIterator]` async generator methods, a recoverable denial through the [permission broker](architecture.md#permission-broker-v37) for requests and v37 timers; bytes bodies wait for `Uint8Array`, generic `ReadableStream<T>` for class generics |
 
 ### Platform targets and application model
 
