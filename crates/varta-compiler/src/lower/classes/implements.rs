@@ -30,6 +30,30 @@ pub(super) fn check(
         let ty = keyword_type(&reference, types).map_err(|e| source.locate(e, clause.span))?;
         let fields = match ty {
             Type::Record(record) => types.records[record as usize].fields.clone(),
+            // `implements AsyncIterable<T>` (v37 with `net_request`): the
+            // class declares `[Symbol.asyncIterator]()` returning that async
+            // generator type (as the SDK's event streams do).
+            Type::Generator(generator)
+                if types.generators[generator as usize].asynchronous.is_some() =>
+            {
+                let method = types
+                    .classes
+                    .get(id)
+                    .methods
+                    .get(ASYNC_ITERATOR_METHOD)
+                    .map(|method| method.signature.result);
+                if method != Some(ty) {
+                    return Err(source.locate(
+                        type_error(format!(
+                            "class {} incorrectly implements {}: it needs a [Symbol.asyncIterator]() method returning {ty}",
+                            types.classes.get(id).name,
+                            name.sym
+                        )),
+                        clause.span,
+                    ));
+                }
+                continue;
+            }
             Type::Class(_) => {
                 return Err(source.locate(
                     unsupported(&format!(

@@ -156,6 +156,20 @@ fn split_has_one_dispatch_path_for_string_and_regexp_separators() {
 }
 
 #[test]
+fn classes_implement_async_iterable_through_their_async_iterator() {
+    run(
+        include_str!("v37_integration_cases/async_iterable.ts"),
+        &["60"],
+    );
+    let error = rejected(
+        "class Empty implements AsyncIterable<number>{n=1;}\
+         export function main():void{console.log(String(new Empty().n));}",
+        V37,
+    );
+    assert!(error.contains("[Symbol.asyncIterator]() method"), "{error}");
+}
+
+#[test]
 fn temporal_dead_zones_private_state_and_generic_methods_match_node() {
     run(
         include_str!("v37_integration_cases/tdz_private_generic.ts"),
