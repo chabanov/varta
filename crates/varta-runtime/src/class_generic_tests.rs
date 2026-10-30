@@ -507,3 +507,27 @@ fn constructed_field_initializers_infer_their_class_like_node() {
     );
     assert!(error.contains("requires a type annotation"), "{error}");
 }
+
+/// A generic class whose instance first appears in a generic method's
+/// result type is iterated by `for await` before anything else allocates its
+/// members (found by the v38 KV list iterator; it used to panic the
+/// compiler). Node 24 prints the same lines.
+#[test]
+fn generic_iterables_returned_by_generic_methods_iterate() {
+    run(
+        "class Pages<T> {\n\
+           #items: T[];\n\
+           constructor(items: T[]) { this.#items = items; }\n\
+           async *[Symbol.asyncIterator](): AsyncGenerator<T> { for (const item of this.#items) { yield item; } }\n\
+         }\n\
+         class Store {\n\
+           list<T>(items: T[]): Pages<T> { return new Pages<T>(items); }\n\
+         }\n\
+         export async function main(): Promise<void> {\n\
+           const store = new Store();\n\
+           for await (const text of store.list<string>(['a', 'b'])) { console.log(text); }\n\
+           for await (const n of store.list<number>([3])) { console.log(n); }\n\
+         }",
+        &["a", "b", "3"],
+    );
+}
