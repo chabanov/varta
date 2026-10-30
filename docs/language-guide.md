@@ -5513,3 +5513,21 @@ and fails; write the explicit extension), and `./markdown.jsx` names
 ```ts
 import { renderInline } from './markdown.js'; // loads ./markdown.tsx
 ```
+
+A stylesheet or any other UTF-8 file is imported as a `string` with the
+`type: "text"` attribute. When it goes straight into `View.stylesheet`,
+`varta check` validates it against the L0 stylesheet grammar and points at
+the line and column inside the `.css` file:
+
+```ts
+import css from './console.css' with { type: 'text' };
+
+export function main(): void {
+  View.stylesheet(1, css);
+}
+```
+
+Only a default import is allowed, the file must be inside the project
+directory and is never transformed (a byte order mark is an error). An
+editor's TypeScript needs an ambient `declare module '*.css' { const text:
+string; export default text; }` for the import.

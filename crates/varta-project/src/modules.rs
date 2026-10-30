@@ -30,6 +30,8 @@ pub(crate) struct SourceLoader {
     /// V38 (`tsx()`): `./x.tsx` names a TSX module, `./x.js` names `./x.ts`
     /// or `./x.tsx` (both existing is an error) and `./x.jsx` names `./x.tsx`.
     tsx_specifiers: bool,
+    /// V38 (`text_imports()`): `with { type: "text" }` imports of any file.
+    text_resources: bool,
 }
 impl SourceLoader {
     pub(crate) fn new(
@@ -43,6 +45,7 @@ impl SourceLoader {
             directory,
             js_specifiers: profile.named_types(),
             tsx_specifiers: profile.tsx(),
+            text_resources: profile.text_imports(),
         })
     }
     pub(crate) fn entry(&self, path: &Path) -> Result<ModuleSource> {
@@ -232,7 +235,7 @@ impl ModuleLoader for SourceLoader {
         {
             return Err(CompilerError::Module(
                 if self.tsx_specifiers {
-                    "imports require explicit relative .ts, .tsx, .js or .jsx paths without URL/query syntax"
+                    "imports require explicit relative .ts, .tsx, .js or .jsx paths without URL/query syntax; import another file as text with `with { type: \"text\" }`"
                 } else if self.js_specifiers {
                     "imports require explicit relative .ts or .js paths without URL/query syntax"
                 } else {
@@ -257,6 +260,36 @@ impl ModuleLoader for SourceLoader {
                 self.pick(specifier, candidate(first)?, candidate(second)?)
             }
         }
+    }
+    /// A text resource resolves like a module specifier, without the
+    /// extension rule: relative, without URL/query syntax, normalized
+    /// lexically inside the project root; it is then loaded with `load`
+    /// through the pinned no-follow root like every module.
+    fn resolve_text(
+        &self,
+        importer: &Path,
+        specifier: &str,
+    ) -> std::result::Result<PathBuf, CompilerError> {
+        if !self.text_resources {
+            return Err(CompilerError::Module(
+                "text resource imports require profile checked-f64-utf16-v38".into(),
+            ));
+        }
+        if specifier.len() > MAX_SPECIFIER_BYTES
+            || !(specifier.starts_with("./") || specifier.starts_with("../"))
+            || specifier.chars().any(|c| c.is_control())
+            || specifier.contains(['\\', '?', '#'])
+            || specifier.ends_with('/')
+        {
+            return Err(CompilerError::Module(
+                "text resource imports require explicit relative file paths without URL/query syntax"
+                    .into(),
+            ));
+        }
+        let parent = importer
+            .parent()
+            .ok_or_else(|| CompilerError::Module("importer directory is missing".into()))?;
+        self.normalize(&parent.join(specifier))
     }
     fn load(&self, path: &Path) -> std::result::Result<String, CompilerError> {
         self.read(path).map_err(|e| {

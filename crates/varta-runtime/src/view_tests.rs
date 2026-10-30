@@ -142,6 +142,13 @@ impl varta_compiler::ModuleLoader for Modules {
             .map(|(_, text)| (*text).to_owned())
             .ok_or_else(|| varta_compiler::CompilerError::Module(format!("{}", path.display())))
     }
+    fn resolve_text(
+        &self,
+        importer: &std::path::Path,
+        specifier: &str,
+    ) -> Result<std::path::PathBuf, varta_compiler::CompilerError> {
+        self.resolve(importer, specifier)
+    }
 }
 
 pub(crate) const APP: &str = include_str!("view_cases/app.tsx");
@@ -890,4 +897,27 @@ export function main(): void {
         ),
         "{error}"
     );
+}
+
+const STYLED: &str = r#"import css from './console.css' with { type: 'text' };
+export function main(): void {
+  View.stylesheet(1, css);
+  console.log(`${css.length} ${css.startsWith(':root')}`);
+  View.mount(<main id="app" class="card">hi</main>);
+}"#;
+const CONSOLE_CSS: &str =
+    ":root { --accent: #0a84ff }\n.card { color: var(--accent); padding: 8px }\n";
+
+#[test]
+fn text_imports_reach_the_view_verbatim() {
+    let sheet = CONSOLE_CSS;
+    let bytes = compile_tsx(STYLED, &[("console.css", CONSOLE_CSS)]);
+    let run = run_view(&bytes, &[], None, &script(NO_INPUTS)).unwrap();
+    assert_eq!(
+        run.output.lines,
+        [format!("varta log: {} true", sheet.encode_utf16().count())]
+    );
+    assert_eq!(run.snapshot["stylesheets"][0]["text"], sheet);
+    let app = by_id(&run.snapshot["tree"], "app").unwrap();
+    assert_eq!(app["style"]["color"], "#0a84ff");
 }

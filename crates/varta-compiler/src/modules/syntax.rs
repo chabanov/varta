@@ -43,6 +43,11 @@ pub(super) fn scan(
         };
         let result = (|| {
             match declaration {
+                ast::ModuleDecl::Import(import)
+                    if import.with.is_some() && profile.text_imports() =>
+                {
+                    imports.push(text_import(import, source, path, loader)?)
+                }
                 ast::ModuleDecl::Import(import) => imports.push(import_declaration(
                     import,
                     source,
@@ -134,6 +139,7 @@ pub(super) fn scan(
                                 target: target.clone(),
                                 bindings: Vec::new(),
                                 span: src.span,
+                                text: false,
                             });
                             Some(target)
                         }
@@ -172,6 +178,7 @@ pub(super) fn scan(
                         target: target.clone(),
                         bindings: Vec::new(),
                         span: all.src.span,
+                        text: false,
                     });
                     stars.push(target);
                 }
@@ -275,5 +282,36 @@ fn import_declaration(
         target: dependency(&import.src, source, path, loader)?,
         bindings,
         span: import.src.span,
+        text: false,
+    })
+}
+
+/// `import x from "./x.css" with { type: "text" }` (v38 `text_imports()`).
+fn text_import(
+    import: &ast::ImportDecl,
+    source: &Source,
+    path: &Path,
+    loader: &dyn ModuleLoader,
+) -> Result<Dependency, CompilerError> {
+    if let Some(with) = &import.with {
+        super::text::attributes(with)?;
+    }
+    if import.phase != ast::ImportPhase::Evaluation {
+        return Err(unsupported("deferred or source-phase import"));
+    }
+    let bindings = super::text::bindings(import)?;
+    let specifier = import
+        .src
+        .value
+        .as_str()
+        .ok_or_else(|| unsupported("non-UTF-8 import path"))?;
+    let target = loader
+        .resolve_text(path, specifier)
+        .map_err(|e| source.locate(e, import.src.span))?;
+    Ok(Dependency {
+        target,
+        bindings,
+        span: import.src.span,
+        text: true,
     })
 }

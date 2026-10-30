@@ -25,6 +25,9 @@ impl ModuleLoader for MemoryLoader {
             .cloned()
             .ok_or_else(|| module_error("unknown virtual module"))
     }
+    fn resolve_text(&self, importer: &Path, specifier: &str) -> Result<PathBuf, CompilerError> {
+        self.resolve(importer, specifier)
+    }
 }
 fn entry(source: String) -> ModuleSource {
     ModuleSource {
@@ -639,4 +642,190 @@ fn programs_that_do_not_name_web_types_compile_as_without_preludes() {
         "export function main():void{const h=new Headers();console.log(String(h.has('a')));}";
     assert!(compile(named).is_ok());
     assert!(engine::without_preludes(|| compile(named)).is_err());
+}
+
+const V38: varta_common::language::LanguageProfile =
+    varta_common::language::LanguageProfile::CheckedF64Utf16V38;
+
+fn text_program(main: &str, files: &[(&str, &str)]) -> (MemoryLoader, ModuleSource) {
+    let mut loader = MemoryLoader::default();
+    for (name, text) in files {
+        loader.insert(name, (*text).into());
+    }
+    (loader, entry(main.into()))
+}
+
+fn compile_text(main: &str, files: &[(&str, &str)]) -> Result<Compilation, CompilerError> {
+    let (loader, entry) = text_program(main, files);
+    crate::compile_modules_with_profile(entry, &loader, V38)
+}
+
+#[test]
+fn text_imports_bind_a_verbatim_string_once_and_instantiate() {
+    // More than one 64 KiB static page, read once although imported twice.
+    let sheet = format!(".a {{ color: #fff }}\n/*{}*/", "x".repeat(70 * 1024));
+    let large = sheet.replace("/*", "  ").replace("*/", "  ");
+    let main = r#"import css from './console.css' with { type: "text" };
+import again from "./console.css" with { 'type': 'text' };
+import {size} from './other.ts';
+export function main(): void {
+  console.log(String(css.length + again.length + size()));
+}"#;
+    let other = r#"import css from './console.css' with { type: 'text' };
+export function size(): number { return css.length; }"#;
+    let (loader, source) = text_program(main, &[("console.css", &large), ("other.ts", other)]);
+    let compiled = crate::compile_modules_with_profile(source, &loader, V38).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &compiled.wasm).unwrap();
+    assert_eq!(
+        loader
+            .loads
+            .borrow()
+            .iter()
+            .filter(|path| path.ends_with("console.css"))
+            .count(),
+        1
+    );
+    let paths: Vec<_> = compiled.modules.iter().map(|m| m.path.clone()).collect();
+    assert_eq!(
+        paths,
+        [
+            PathBuf::from("console.css"),
+            PathBuf::from("other.ts"),
+            PathBuf::from("main.ts")
+        ]
+    );
+    assert_eq!(
+        compiled.modules[2].imports,
+        [PathBuf::from("console.css"), PathBuf::from("other.ts")]
+    );
+    // The text is stored once in the data section.
+    let marker = large.as_bytes();
+    let utf16: Vec<u8> = large.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let occurrences = |haystack: &[u8], needle: &[u8]| {
+        haystack
+            .windows(needle.len())
+            .filter(|w| *w == needle)
+            .count()
+    };
+    assert_eq!(
+        occurrences(&compiled.wasm, &utf16[..256]) + occurrences(&compiled.wasm, &marker[..256]),
+        1
+    );
+}
+
+#[test]
+fn text_import_forms_and_attributes_fail_clearly() {
+    let css = [("a.css", ".a { color: #fff }")];
+    for (main, expected) in [
+        (
+            "import {x} from './a.css' with { type: 'text' }; export function main():void{}",
+            "only a default import",
+        ),
+        (
+            "import * as x from './a.css' with { type: 'text' }; export function main():void{}",
+            "only a default import",
+        ),
+        (
+            "import x from './a.css' with { type: 'json' }; export function main():void{}",
+            "unsupported import type",
+        ),
+        (
+            "import x from './a.css' with { kind: 'text' }; export function main():void{}",
+            "unknown import attribute",
+        ),
+        (
+            "import x from './a.css' with { type: 'text', type: 'text' }; export function main():void{}",
+            "duplicate import attribute",
+        ),
+        (
+            "import x from './a.css' with {}; export function main():void{}",
+            "needs `with { type: \"text\" }`",
+        ),
+        (
+            "import type x from './a.css' with { type: 'text' }; export function main():void{}",
+            "type-only",
+        ),
+        (
+            "import x from './a.css' with { type: 'text' }; import {f} from './a.css'; export function main():void{}",
+            "both as a module and as a text resource",
+        ),
+    ] {
+        let error = compile_text(main, &css).err().unwrap().to_string();
+        assert!(error.contains(expected), "{main}: {error}");
+    }
+    // A byte order mark is rejected, never stripped.
+    let error = compile_text(
+        "import x from './a.css' with { type: 'text' }; export function main():void{}",
+        &[("a.css", "\u{feff}.a { color: #fff }")],
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("byte order mark"), "{error}");
+    // V37 keeps rejecting attributed imports.
+    let (loader, source) = text_program(
+        "import x from './a.css' with { type: 'text' }; export function main():void{}",
+        &css,
+    );
+    let error = crate::compile_modules_with_profile(
+        source,
+        &loader,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V37,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("attributed import"), "{error}");
+    // A loader without text support refuses with its default.
+    let error = Graph::load_with_profile(
+        entry(
+            "import x from './a.css' with { type: 'text' }; export function main():void{}".into(),
+        ),
+        &NoImports,
+        V38,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("admits them"), "{error}");
+}
+
+#[test]
+fn stylesheet_text_imports_are_checked_with_locations_inside_the_resource() {
+    let sheet = ":root { --gap: 8px }\n.é-card { padding: 4px }\n.row { colour: #fff }\n";
+    let main = "import css from './console.css' with { type: 'text' };\n\
+                export function main(): void { View.stylesheet(1, css); }";
+    let error = compile_text(main, &[("console.css", sheet)]).err().unwrap();
+    let diagnostic = error.diagnostic().unwrap();
+    assert_eq!(diagnostic.file, "console.css");
+    assert_eq!(diagnostic.code, varta_common::DiagnosticCode::TypeError);
+    // `.é-card` is not a subset class name: line 2, column 2 (after `.`),
+    // byte offset 22 (the `é` is two bytes but one column).
+    assert_eq!(diagnostic.range.start.line, 2, "{diagnostic:?}");
+    assert_eq!(diagnostic.range.start.column, 2);
+    assert_eq!(diagnostic.range.start.byte_offset, 22);
+    assert!(
+        diagnostic.message.contains("selector"),
+        "{}",
+        diagnostic.message
+    );
+    let fixed = sheet.replace(".é-card", ".card");
+    let error = compile_text(main, &[("console.css", &fixed)])
+        .err()
+        .unwrap();
+    let diagnostic = error.diagnostic().unwrap();
+    assert_eq!(diagnostic.range.start.line, 3);
+    assert_eq!(diagnostic.range.start.column, 8);
+    assert_eq!(diagnostic.range.start.byte_offset, 51);
+    assert!(diagnostic.message.contains("invalid declaration"));
+    // Not a direct argument, or a shadowing name: the host validates it.
+    for unchecked in [
+        "import css from './console.css' with { type: 'text' };\n\
+         export function main(): void { const text = css; View.stylesheet(1, text); }",
+        "import css from './console.css' with { type: 'text' };\n\
+         function apply(css: string): void { View.stylesheet(1, css); }\n\
+         export function main(): void { apply(css + ''); }",
+    ] {
+        compile_text(unchecked, &[("console.css", sheet)]).unwrap();
+    }
 }

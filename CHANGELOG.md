@@ -11,6 +11,16 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 text resources: `import css from "./console.css" with { type: "text" }`
+  binds the file's verbatim UTF-8 text as a default-imported `string`,
+  resolved and loaded like a module (relative, inside the configuration
+  directory, pinned no-follow descriptors, graph budgets, read once), stored
+  once in the static data and recorded in the module graph. A text passed
+  directly to `View.stylesheet` is checked at build time against the L0
+  stylesheet grammar, now shared as `varta_common::view::stylesheet`, with
+  diagnostics inside the `.css` file. Earlier profiles reject attributed
+  imports.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of

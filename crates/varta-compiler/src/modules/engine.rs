@@ -863,6 +863,7 @@ pub(super) fn implicit_imports(
                 target: PathBuf::from(prelude.path),
                 bindings,
                 span,
+                text: false,
             })
         })
         .collect()

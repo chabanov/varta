@@ -3492,6 +3492,14 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   under `tsx()`. Probes walk the pinned root with no-follow at every
   component and never read a file; v31–v37 keep `.js` → `.ts` without
   probing. Never add index/directory lookup or JavaScript loading here.
+- Text resources (`text_imports()`): only `with { type: "text" }`, only a
+  default import, verbatim UTF-8 without a BOM, resolved by
+  `ModuleLoader::resolve_text` under the module path policy and loaded
+  through the pinned no-follow root. Keep them graph units (budgets, order,
+  metadata, one identity per path) whose AST is the one `default: string`
+  constant; never transform the text. The build-time stylesheet check uses
+  `varta_common::view::stylesheet`, the renderer's parser, never a second
+  grammar, and only for a direct, unshadowed `View.stylesheet` argument.
 - Desugar JSX to ordinary checked TypeScript before scanning, so imports,
   prelude triggers and the type checker see plain calls. Generated nodes
   carry the span of their JSX element; program expressions keep their own.

@@ -10194,6 +10194,50 @@ the resolved source is loaded, within the same path, size and graph
 budgets. Profiles v31–v37 keep `./x.js` → `x.ts` without probing and reject
 `.jsx` (and `.tsx`) specifiers.
 
+Profile v38 (`text_imports()`) adds **text resources**, in the TC39 import
+attributes syntax that Deno, Bun and the Import Text proposal use:
+
+```ts
+import css from "./console.css" with { type: "text" };
+View.stylesheet(1, css);
+```
+
+- **Attributes.** Exactly one attribute, `type: "text"` (an identifier or
+  string key, a string value). No attribute list (`with {}`), another key, a
+  duplicate key or another type (`"json"`) is a module error at the import;
+  every earlier profile keeps rejecting attributed imports as unsupported
+  syntax. Re-exports with attributes stay unsupported.
+- **Binding.** Only a default import, of type `string`; named, namespace and
+  type-only imports of a text resource are module errors. The text is
+  verbatim: nothing is transformed, decoded or normalized.
+- **Resolution and loading.** `ModuleLoader::resolve_text` resolves the
+  specifier with the module rules except the extension rule (relative only,
+  no URL/query/fragment syntax or backslashes, no trailing `/`, normalized
+  lexically inside the configuration directory), and `load` reads it
+  through the same pinned root descriptor with no-follow at every component
+  as a bounded regular UTF-8 file; a symlinked file or directory, invalid
+  UTF-8 or a file over 1 MiB fails. A leading byte order mark (U+FEFF) is
+  rejected rather than stripped. The trait's default `resolve_text` refuses,
+  so an embedder's loader admits text resources only by implementing it.
+- **Graph.** A resource is a unit of the module graph: read once per
+  resolved identity, it counts against the module, import and aggregate
+  source budgets, is visited in the sorted dependency order and appears in
+  the dependency metadata (`check --json` `modules`) with no imports of its
+  own. One path cannot be both a module and a text resource. Its unit holds
+  the text as the module constant `default: string`, so it is stored once
+  in the static data like any string literal (the v38 multi-page static
+  region admits more than 64 KiB) and linked into the artifact, which never
+  reads it at run time: `build --single` is reproducible from the same
+  inputs.
+- **Stylesheet check.** When the default binding is passed directly as the
+  text argument of `View.stylesheet(id, text)` and the module declares no
+  other binding of that name, the compiler checks the text against the L0
+  stylesheet grammar (`varta_common::view::stylesheet`, the parser the
+  headless renderer applies) and reports the first violation as a
+  `type_error` inside the resource file, with one-based Unicode-scalar
+  columns and zero-based UTF-8 byte offsets like every diagnostic. Any other
+  use is validated by the host when the batch is applied.
+
 Profile v32 also adds [default exports](#default-exports-default_exports):
 `export default` declarations and bindings, `import x from` and `default` in
 export and re-export lists, linked as the name `default`.
@@ -10210,6 +10254,7 @@ resolve and validate their dependency.
 Embeddings use `compile_modules(ModuleSource, &dyn ModuleLoader)`. The loader
 separates stable identity resolution from bounded text loading and owns its
 source-access policy; the compiler performs no filesystem or network I/O.
+`resolve_text` (v38 text resources) has a refusing default implementation.
 Single-source `compile_typescript[_with_path]` remains available and requires an
 explicit loader when source imports dependencies. Parse-only helpers do not link.
 The result returns Wasm plus dependency metadata. `CheckedProject.modules` and
