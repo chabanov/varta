@@ -76,6 +76,9 @@ pub(super) enum TimerKind {
 
 /// The engine-prelude intrinsic that waits for a network completion (v37).
 const NET_WATCH: &str = "varta.net.watch";
+/// The engine-prelude intrinsic that waits for a host event source's next
+/// record (v38 `turn_budgets`): the same scheduled completion frame.
+const EVENTS_WATCH: &str = "varta.events.watch";
 
 impl Lower<'_> {
     /// Whether `name` is an unshadowed timer global of a timers profile.
@@ -152,24 +155,26 @@ impl Lower<'_> {
         call: &ast::CallExpr,
         name: &str,
     ) -> Result<Option<Expr>> {
-        if name != NET_WATCH
-            || !self.types.profile.net_request()
-            || !crate::modules::engine::is_prelude_source(self.source)
-        {
+        let watch = match name {
+            NET_WATCH if self.types.profile.net_request() => Host::NetRequestWatch,
+            EVENTS_WATCH if self.types.profile.turn_budgets() => Host::EventWatch,
+            _ => return Ok(None),
+        };
+        if !crate::modules::engine::is_prelude_source(self.source) {
             return Ok(None);
         }
         let span = call.span;
         let [id, callback] = call.args.as_slice() else {
-            return Err(invalid(format!("{NET_WATCH} expects an id and a callback")));
+            return Err(invalid(format!("{name} expects an id and a callback")));
         };
         if id.spread.is_some() || callback.spread.is_some() || call.type_args.is_some() {
-            return Err(invalid(format!("{NET_WATCH} expects an id and a callback")));
+            return Err(invalid(format!("{name} expects an id and a callback")));
         }
         let id = self.expr(&id.expr)?;
         if id.ty != Type::Float64 {
-            return Err(type_error(format!("{NET_WATCH} requires a request id")));
+            return Err(type_error(format!("{name} requires a request id")));
         }
-        let callback = self.timer_callback(&callback.expr, &[], NET_WATCH)?;
+        let callback = self.timer_callback(&callback.expr, &[], name)?;
         let promise = intern(Type::Void, self.types).map_err(|e| self.source.locate(e, span))?;
         let Type::Promise(promise_id) = promise else {
             return Err(CompilerError::Internal("missing network promise".into()));
@@ -195,7 +200,7 @@ impl Lower<'_> {
             ),
             host(
                 span,
-                Host::NetRequestWatch,
+                watch,
                 vec![
                     self.read_promise(local(span, promise_slot, promise), SERIAL)?,
                     local(span, id_slot, Type::Float64),

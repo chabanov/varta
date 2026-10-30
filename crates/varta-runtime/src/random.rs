@@ -50,9 +50,8 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             // recoverable (v37): it is logged and returns NaN, which no
             // clock reading produces, and the `Date` prelude throws a
             // `NotAllowedError` for it.
-            if let crate::permission::Decision::Denied =
-                crate::permission::clock(&caller.data().policy)
-            {
+            let context = caller.data_mut();
+            if let crate::permission::Decision::Denied = context.broker.clock(&context.policy) {
                 let capability = crate::permission::CLOCK_CAPABILITY;
                 caller.data_mut().emit(format!(
                     "varta log: <capability denied: {capability}> (Date.now)"

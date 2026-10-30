@@ -1,8 +1,12 @@
 #![forbid(unsafe_code)]
 pub mod abi;
 pub mod bigint;
+/// Per-turn and per-instance budgets (v38 `turn_budgets`).
+pub mod budget;
 mod capability;
 mod diagnostic;
+/// Host event sources and host tasks (v38 `turn_budgets`).
+pub mod events;
 pub mod exceptions;
 mod host;
 pub mod http;
@@ -14,6 +18,8 @@ mod manifest;
 mod module;
 /// Asynchronous network requests (v37 `net_request`).
 pub mod net;
+/// Permission broker v1 (v38 `turn_budgets`).
+pub mod permission;
 pub mod scheduler;
 pub mod text;
 mod tool;

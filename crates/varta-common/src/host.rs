@@ -1,6 +1,26 @@
 //! Canonical operation names and Wasm signatures shared by compiler and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostOperation {
+    /// v38 permission broker v1 (`crate::permission`): the state code of a
+    /// permission descriptor; never prompts. No capability.
+    PermissionQuery,
+    /// v38: ask for a permission; returns the id of the one-shot event
+    /// source its answer arrives on (prompting only in a user-gesture turn of
+    /// an application instance with a prompt seam). No capability.
+    PermissionRequest,
+    /// v38 host event sources (`crate::events`): open a named source;
+    /// returns its id. No capability.
+    EventSourceOpen,
+    /// v38: wake the one reaction of an engine-internal pending promise when
+    /// the source's next task is delivered.
+    EventWatch,
+    /// v38: take the delivered task; returns its `events::TakeKind`.
+    EventTake,
+    /// v38: the record of the taken task, in the host result buffer.
+    EventText,
+    /// v38: close a source; its waiting frame takes `Closed`. Unknown ids
+    /// are a no-op.
+    EventSourceClose,
     /// v37 network requests (`crate::net`): start a request after the exact
     /// `net.request` grant check; returns its id. Capability `net.request`.
     NetRequestStart,
@@ -366,6 +386,7 @@ impl HostOperation {
                 | Self::FsRead16
                 | Self::NetGet16
                 | Self::NetRequestText
+                | Self::EventText
                 | Self::JsonStringifyV5
                 | Self::StringCharAt16
                 | Self::StringToUpperCase16
@@ -443,6 +464,13 @@ impl HostOperation {
             Self::PrimitiveNumberV5 => "primitive_to_number_v5",
             Self::BigIntFromValueV4 => "bigint_from_value_v4",
 
+            Self::PermissionQuery => "permission_query",
+            Self::PermissionRequest => "permission_request",
+            Self::EventSourceOpen => "event_source_open",
+            Self::EventWatch => "event_watch",
+            Self::EventTake => "event_take",
+            Self::EventText => "event_text",
+            Self::EventSourceClose => "event_source_close",
             Self::NetRequestStart => "net_request_start",
             Self::NetRequestWatch => "net_request_watch",
             Self::NetRequestTake => "net_request_take",
@@ -693,12 +721,32 @@ impl HostOperation {
                 | Self::NetRequestAbort
         )
     }
+    /// The v38 permission and host event operations (`turn_budgets`). None
+    /// takes a capability or is charged to the host-call budget: querying or
+    /// requesting a permission is a broker decision, not an effect, and
+    /// event bookkeeping is like the timer bookkeeping.
+    #[must_use]
+    pub fn instance_events(self) -> bool {
+        matches!(
+            self,
+            Self::PermissionQuery
+                | Self::PermissionRequest
+                | Self::EventSourceOpen
+                | Self::EventWatch
+                | Self::EventTake
+                | Self::EventText
+                | Self::EventSourceClose
+        )
+    }
     pub fn signature(self) -> (usize, usize) {
         let (params, results) = self.scalar_signature();
         (params.len(), results.len())
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
+        if self.instance_events() {
+            return crate::abi::PROGRAM_LIMITS_VERSION;
+        }
         if self.text_case()
             || self.net()
             || matches!(
@@ -980,6 +1028,11 @@ impl HostOperation {
         use HostScalar::{F64, I32, I64};
         match self {
             Self::PrimitiveCompare => (&[I64, I64], &[F64]),
+            Self::PermissionQuery => (&[I32, I32], &[I32]),
+            Self::PermissionRequest | Self::EventSourceOpen => (&[I32, I32], &[F64]),
+            Self::EventWatch => (&[F64, F64], &[]),
+            Self::EventTake | Self::EventText => (&[F64], &[I32]),
+            Self::EventSourceClose => (&[F64], &[]),
             Self::NetRequestStart => (&[I32, I32], &[F64]),
             Self::NetRequestWatch => (&[F64, F64], &[]),
             Self::NetRequestTake => (&[F64], &[I32]),
@@ -1211,6 +1264,13 @@ impl HostOperation {
             "primitive_to_number_v5" => Self::PrimitiveNumberV5,
             "bigint_from_value_v4" => Self::BigIntFromValueV4,
 
+            "permission_query" => Self::PermissionQuery,
+            "permission_request" => Self::PermissionRequest,
+            "event_source_open" => Self::EventSourceOpen,
+            "event_watch" => Self::EventWatch,
+            "event_take" => Self::EventTake,
+            "event_text" => Self::EventText,
+            "event_source_close" => Self::EventSourceClose,
             "net_request_start" => Self::NetRequestStart,
             "net_request_watch" => Self::NetRequestWatch,
             "net_request_take" => Self::NetRequestTake,
@@ -1466,6 +1526,13 @@ impl HostOperation {
             | Self::NetRequestText
             | Self::NetBodyRead
             | Self::NetRequestAbort
+            | Self::PermissionQuery
+            | Self::PermissionRequest
+            | Self::EventSourceOpen
+            | Self::EventWatch
+            | Self::EventTake
+            | Self::EventText
+            | Self::EventSourceClose
             | Self::PrimitiveCompare
             | Self::PrimitiveEqual
             | Self::BigIntWidthV2
