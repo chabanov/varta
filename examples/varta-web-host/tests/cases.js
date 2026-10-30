@@ -47,6 +47,42 @@ export const runCases = [
   { label: "R2 v38 host calls renew per turn", fixture: "turn-budget-v38", env: {} },
 ];
 
+// v38 manifest members: the same module runs with an edited sidecar manifest in the
+// native runtime and in the JS host; both must accept it, refuse the manifest, or
+// accept it and fail the run (a denied optional grant), alike.
+const withTimer = (grant) => (m) => ({ ...m, capabilities: [{ id: "time.timer", enabled: true, ...grant }] });
+const without = (m, key) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== key));
+export const MANIFEST_FIXTURE = "timers-v38";
+export const manifestCases = [
+  { label: "v38 manifest: budgets within range", edit: (m) => ({ ...m, budgets: { hostCallsPerTurn: 2048, deadlinePerTurnMs: 4000 } }) },
+  { label: "v38 manifest: budgets out of range", edit: (m) => ({ ...m, budgets: { hostCallsPerTurn: 0 } }) },
+  { label: "v38 manifest: budgets above the maximum", edit: (m) => ({ ...m, budgets: { deadlinePerTurnMs: 60001 } }) },
+  { label: "v38 manifest: unknown budget member", edit: (m) => ({ ...m, budgets: { fuel: 5 } }) },
+  { label: "v38 manifest: budgets below abiVersion 34", edit: (m) => ({ ...m, abiVersion: 33, budgets: { hostCallsPerTurn: 5 } }) },
+  { label: "v38 manifest: required false", edit: withTimer({ required: false }) },
+  { label: "v38 manifest: required not a boolean", edit: withTimer({ required: "no" }) },
+  { label: "v38 manifest: purpose", edit: withTimer({ purpose: "Відкладені нагадування" }) },
+  { label: "v38 manifest: purpose blank", edit: withTimer({ purpose: "  " }) },
+  { label: "v38 manifest: purpose with a line break", edit: withTimer({ grant: { purpose: "a\nb" } }) },
+  { label: "v38 manifest: purpose of 257 bytes", edit: withTimer({ purpose: "x".repeat(257) }) },
+  { label: "v38 manifest: fsRoots names", edit: (m) => ({ ...m, fsRoots: ["project", "data-2_cache"] }) },
+  { label: "v38 manifest: fsRoots invalid name", edit: (m) => ({ ...m, fsRoots: ["Project"] }) },
+  { label: "v38 manifest: fsRoots duplicate", edit: (m) => ({ ...m, fsRoots: ["a", "a"] }) },
+  { label: "v38 manifest: fsRoots as an object in a package", edit: (m) => ({ ...m, fsRoots: { project: "/tmp" } }) },
+  { label: "v38 manifest: fs.read under a declared root", edit: (m) => ({ ...m, fsRoots: ["project"], capabilities: [...m.capabilities, { id: "fs.read", patterns: ["/project/fixtures/**"] }] }) },
+  { label: "v38 manifest: fs.read under an undeclared root", edit: (m) => ({ ...m, fsRoots: ["project"], capabilities: [...m.capabilities, { id: "fs.read", patterns: ["/data/**"] }] }) },
+  { label: "v38 manifest: net.request methods", edit: (m) => ({ ...m, capabilities: [...m.capabilities, { id: "net.request", patterns: ["https://api.example.com/**"], methods: ["GET", "POST", "PATCH"] }] }) },
+  { label: "v38 manifest: net.request lowercase get", edit: (m) => ({ ...m, capabilities: [...m.capabilities, { id: "net.request", patterns: ["https://api.example.com/**"], methods: ["get"] }] }) },
+  { label: "v38 manifest: net.request TRACE", edit: (m) => ({ ...m, capabilities: [...m.capabilities, { id: "net.request", patterns: ["https://api.example.com/**"], methods: ["trace"] }] }) },
+  { label: "v38 manifest: methods on another id", edit: (m) => ({ ...m, capabilities: [...m.capabilities, { id: "net.fetch", patterns: ["http://example.com/**"], methods: ["GET"] }] }) },
+  { label: "v38 manifest: ui.open_url any HTTPS link", edit: (m) => ({ ...m, capabilities: [...m.capabilities, { id: "ui.open_url", patterns: ["https://*"] }] }) },
+  { label: "v38 manifest: ui.open_url over http (admitted)", edit: (m) => ({ ...m, capabilities: [...m.capabilities, { id: "ui.open_url", patterns: ["http://example.com/*"] }] }) },
+  { label: "v38 manifest: no budgets member at all", edit: (m) => without(m, "budgets") },
+  { label: "v38 manifest: hostCallsPerTurn 500 stops a 600-call turn", fixture: "turn-budget-v38", edit: (m) => ({ ...m, budgets: { hostCallsPerTurn: 500 } }) },
+  { label: "v38 manifest: hostCallsPerTurn 700 admits a 600-call turn", fixture: "turn-budget-v38", edit: (m) => ({ ...m, budgets: { hostCallsPerTurn: 700 } }) },
+  { label: "v38 manifest: ui.open_url over ftp", edit: (m) => ({ ...m, capabilities: [...m.capabilities, { id: "ui.open_url", patterns: ["ftp://example.com/*"] }] }) },
+];
+
 // `expect` defaults to "refused". Catalog cases are contract checks of the JS host
 // (tampered sections the native compiler never emits), not native comparisons.
 export const refusalCases = [
@@ -216,5 +252,17 @@ export async function runJsCases(host, load, contract) {
     results.push({ label: c.label, observed });
   }
   for (const c of schedulerCases) results.push({ label: `contract check, scheduler misuse: ${c.label}`, observed: schedulerOutcome(host, contract, c) });
+  for (const c of manifestCases) {
+    const manifestFixture = await load(c.fixture ?? MANIFEST_FIXTURE);
+    const manifest = JSON.stringify(c.edit(JSON.parse(manifestFixture.manifest)));
+    let observed;
+    try {
+      const r = await host.run(manifestFixture.bytes, { manifest, env: new Map() });
+      observed = r.status === "ok" ? "accepted" : "run failed";
+    } catch (error) {
+      observed = error.constructor.name === "ValidationError" ? "refused" : `threw ${error.message}`;
+    }
+    results.push({ label: c.label, observed });
+  }
   return results;
 }

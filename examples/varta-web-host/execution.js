@@ -69,16 +69,41 @@ function encodeUtf16(text) {
   return bytes;
 }
 
+// Profiles whose package may request budgets that the host ceiling caps (v38 `turn_budgets`).
+const BUDGET_PROFILES = new Set(["checked-f64-utf16-v38"]);
+
+/**
+ * Effective budgets (architecture.md "Turn budgets"): each is the package request,
+ * or the default, capped by the ceiling's value, or by the default when the ceiling
+ * sets none. Earlier profiles keep the fixed per-execution values.
+ */
+function effectiveBudgets(ctx, info, policies) {
+  const { C } = ctx;
+  const fixed = { hostCalls: C.maxHostCalls, outputBytes: C.maxOutputBytes, deadlineMs: C.deadlineMs, memoryBytes: C.maxMemoryBytes };
+  if (!info.profile || !BUDGET_PROFILES.has(info.profile.name)) return fixed;
+  const table = ctx.contract.manifestBudgets;
+  const pick = (member) => {
+    const fallback = table[member].turnDefault;
+    const requested = policies.package.budgets?.[member] ?? fallback;
+    const cap = policies.ceiling?.budgets?.[member] ?? fallback;
+    return Math.min(requested, cap);
+  };
+  return { hostCalls: pick("hostCallsPerTurn"), outputBytes: pick("outputBytes"), deadlineMs: pick("deadlinePerTurnMs"), memoryBytes: pick("memoryBytes") };
+}
+
 /** A fresh execution and its `varta` import object; `exec.instance` is set by the caller. */
 export function createExecution(ctx, info, policies, options) {
   const { C } = ctx;
+  const budgets = effectiveBudgets(ctx, info, policies);
+  const deadlineMs = options.deadlineMs ?? budgets.deadlineMs;
   const exec = {
     instance: null,
     logs: [],
     hostCalls: 0,
     outputBytes: 0,
-    deadline: now() + (options.deadlineMs ?? C.deadlineMs),
-    ...schedulerState(options.deadlineMs ?? C.deadlineMs),
+    budgets,
+    deadline: now() + deadlineMs,
+    ...schedulerState(deadlineMs),
   };
   const utf16 = info.profile?.strings === "UTF-16LE";
   const memory = () => exec.instance.exports.memory;
@@ -90,7 +115,7 @@ export function createExecution(ctx, info, policies, options) {
   /** Emits one reference line; the budget is charged on its full text. */
   function emit(line) {
     exec.outputBytes += utf8.encode(line).length + 1;
-    if (exec.outputBytes > C.maxOutputBytes) throw new ExecutionFailure("output budget exhausted");
+    if (exec.outputBytes > exec.budgets.outputBytes) throw new ExecutionFailure("output budget exhausted");
     exec.logs.push(line);
     options.onLog?.(line);
   }
@@ -233,7 +258,7 @@ export function createExecution(ctx, info, policies, options) {
     return (...args) => {
       if (!op.scheduler && !TIMER_BOOKKEEPING.has(op.name)) {
         exec.hostCalls += 1;
-        if (exec.hostCalls > C.maxHostCalls) throw new ExecutionFailure("host call budget exhausted");
+        if (exec.hostCalls > exec.budgets.hostCalls) throw new ExecutionFailure("host call budget exhausted");
       }
       if (now() > exec.deadline) throw new ExecutionFailure("execution deadline exceeded");
       if (op.capability) {

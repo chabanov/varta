@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHost } from "../host.js";
-import { invokeCases, runCases, refusalCases, schedulerCases, comparableInvoke, comparableRun, runJsCases } from "./cases.js";
+import { invokeCases, runCases, refusalCases, schedulerCases, manifestCases, MANIFEST_FIXTURE, comparableInvoke, comparableRun, runJsCases } from "./cases.js";
 
 const varta = process.env.VARTA_BIN;
 if (!varta) throw new Error("set VARTA_BIN to the native varta binary");
@@ -22,6 +22,7 @@ const scratch = mkdtempSync(join(tmpdir(), "varta-host-compare-"));
 const REFERENCE_PREFIXES = ["varta log: ", "varta env: "];
 const COMPLETED = "varta run: completed";
 const FAILED = "varta failed: ";
+const MANIFEST_REFUSAL = "invalid capability manifest";
 
 const built = new Map();
 function build(name) {
@@ -65,6 +66,18 @@ for (const c of refusalCases) {
   expected.push({ label: c.label, expected: c.expect ?? "refused" });
 }
 for (const c of schedulerCases) expected.push({ label: `contract check, scheduler misuse: ${c.label}`, expected: c.expect });
+// Manifest cases: the native runtime reads the sidecar next to the module.
+for (const c of manifestCases) {
+  const manifestFixture = build(c.fixture ?? MANIFEST_FIXTURE);
+  const dir = mkdtempSync(join(scratch, "manifest-"));
+  const wasm = join(dir, "app.wasm");
+  writeFileSync(wasm, manifestFixture.bytes);
+  writeFileSync(join(dir, "app.manifest.json"), JSON.stringify(c.edit(JSON.parse(manifestFixture.manifest))));
+  const out = spawnSync(varta, ["run", wasm], { env: { PATH: process.env.PATH }, encoding: "utf8" });
+  const error = `${out.stdout}${out.stderr}`.split("\n").find((l) => l.startsWith(FAILED)) ?? null;
+  const outcome = out.status === 0 ? "accepted" : error?.startsWith(`${FAILED}${MANIFEST_REFUSAL}`) ? "refused" : "run failed";
+  expected.push({ label: c.label, expected: outcome, nativeError: error });
+}
 mkdirSync(join(here, "out"), { recursive: true });
 writeFileSync(join(here, "out", "expected.json"), JSON.stringify(expected, null, 2) + "\n");
 
@@ -74,7 +87,8 @@ expected.forEach(({ label, expected: want }, i) => {
   const got = observed[i].observed;
   const ok = JSON.stringify(want) === JSON.stringify(got);
   if (!ok) failures += 1;
-  console.log(ok ? `ok   ${label}` : `FAIL ${label}\n  native: ${JSON.stringify(want)}\n  js:     ${JSON.stringify(got)}`);
+  const note = expected[i].nativeError ? `\n  native error: ${expected[i].nativeError}` : "";
+  console.log(ok ? `ok   ${label}` : `FAIL ${label}\n  native: ${JSON.stringify(want)}\n  js:     ${JSON.stringify(got)}${note}`);
 });
 
 rmSync(scratch, { recursive: true, force: true });

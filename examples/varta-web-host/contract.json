@@ -7168,6 +7168,21 @@
       "channel": "varta_resume outcome",
       "code": 2,
       "name": "Threw"
+    },
+    {
+      "channel": "kv_open, kv_read, kv_stage, kv_commit result",
+      "code": -1,
+      "name": "kv::FAILED"
+    },
+    {
+      "channel": "kv_commit result",
+      "code": 0,
+      "name": "kv::CHECK_FAILED"
+    },
+    {
+      "channel": "kv_commit result",
+      "code": 1,
+      "name": "kv::COMMITTED"
     }
   ],
   "reservedNames": [
@@ -8920,5 +8935,120 @@
         "argument": "must be 0"
       }
     }
-  }
+  },
+  "manifestBudgets": {
+    "fuelPerTurn": {
+      "min": 1,
+      "max": 1000000000,
+      "turnDefault": 8000000,
+      "executionValue": 1000000
+    },
+    "deadlinePerTurnMs": {
+      "min": 1,
+      "max": 60000,
+      "turnDefault": 5000,
+      "executionValue": 5000
+    },
+    "memoryBytes": {
+      "min": 1,
+      "max": 1073741824,
+      "turnDefault": 8388608,
+      "executionValue": 8388608
+    },
+    "hostCallsPerTurn": {
+      "min": 1,
+      "max": 1048576,
+      "turnDefault": 1024,
+      "executionValue": 1024
+    },
+    "outputBytes": {
+      "min": 1,
+      "max": 67108864,
+      "turnDefault": 1048576,
+      "executionValue": 1048576
+    }
+  },
+  "manifestLimits": {
+    "turnBudgetsAbi": 34,
+    "maxPurposeBytes": 256,
+    "maxFileRoots": 16,
+    "rootNameBytes": {
+      "min": 1,
+      "max": 64
+    },
+    "maxPathBytes": 4096,
+    "maxGrantMethods": 16,
+    "forbiddenMethods": [
+      "CONNECT",
+      "TRACE",
+      "TRACK"
+    ],
+    "normalizedMethods": [
+      "DELETE",
+      "GET",
+      "HEAD",
+      "OPTIONS",
+      "POST",
+      "PUT"
+    ],
+    "maxUrlBytes": 8192
+  },
+  "rootNameExamples": [
+    {
+      "name": "project",
+      "valid": true
+    },
+    {
+      "name": "a",
+      "valid": true
+    },
+    {
+      "name": "data-2_cache",
+      "valid": true
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": true
+    },
+    {
+      "name": "",
+      "valid": false
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false
+    },
+    {
+      "name": "Project",
+      "valid": false
+    },
+    {
+      "name": "2fa",
+      "valid": false
+    },
+    {
+      "name": "_cache",
+      "valid": false
+    },
+    {
+      "name": "-x",
+      "valid": false
+    },
+    {
+      "name": "my.root",
+      "valid": false
+    },
+    {
+      "name": "a/b",
+      "valid": false
+    },
+    {
+      "name": "a b",
+      "valid": false
+    },
+    {
+      "name": "café",
+      "valid": false
+    }
+  ]
 }

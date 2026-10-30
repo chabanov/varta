@@ -251,7 +251,43 @@ view.commandRules = Object.fromEntries(detailRows("view-commands").filter((r) =>
   { elements: r[2] === "all" ? "all" : r[2] === "focusable elements" ? "focusable" : codesIn(r[2]), argument: r[3] },
 ]));
 
+// Manifest budgets and limits (v38 contract round of `bc4e104`).
+const manifestBudgets = {};
+for (const r of detailRows("embedding-manifest-budgets")) {
+  const range = /^(\d+) to (\d+)$/.exec(r[1]);
+  if (!range) throw new Error(`bad budget range ${r[1]}`);
+  manifestBudgets[code(r[0])] = { min: Number(range[1]), max: Number(range[2]), turnDefault: Number(r[2]), executionValue: Number(r[3]) };
+}
+const MANIFEST_LIMIT_KEYS = {
+  "`abiVersion` that admits `budgets`, grant `required` and `purpose`, and `fsRoots`": "turnBudgetsAbi",
+  "Grant `purpose` (UTF-8 bytes)": "maxPurposeBytes",
+  "`fsRoots` entries (package names or host mappings)": "maxFileRoots",
+  "Root name (bytes)": "rootNameBytes",
+  "Host root directory / guest virtual path (bytes)": "maxPathBytes",
+  "Methods in one `net.request` grant": "maxGrantMethods",
+  "Methods never grantable (in any case)": "forbiddenMethods",
+  "Methods a grant must spell in uppercase": "normalizedMethods",
+  "Guest URL of `net_get*`, `net_fetch*` and `net_request_*` (bytes; a longer URL is denied)": "maxUrlBytes",
+};
+const manifestLimits = {};
+for (const r of detailRows("embedding-manifest-limits")) {
+  const key = MANIFEST_LIMIT_KEYS[r[0]];
+  if (!key) throw new Error(`unknown manifest limit ${r[0]}`);
+  const range = /^(\d+) to (\d+)$/.exec(r[1]);
+  const atLeast = /^(\d+) or later$/.exec(r[1]);
+  if (range) manifestLimits[key] = { min: Number(range[1]), max: Number(range[2]) };
+  else if (atLeast) manifestLimits[key] = Number(atLeast[1]);
+  else if (r[1].startsWith("`")) manifestLimits[key] = codesIn(r[1]);
+  else manifestLimits[key] = Number(r[1]);
+}
+// Normative examples of the root name grammar; the host checks its grammar against them.
+const rootNameExamples = detailRows("embedding-root-names").map((r) => {
+  const repeated = /^`(.)` repeated (\d+) times$/.exec(r[0]);
+  const name = r[0] === "(empty)" ? "" : repeated ? repeated[1].repeat(Number(repeated[2])) : code(r[0]);
+  return { name, valid: r[1] === "yes" };
+});
+
 writeFileSync(
   outPath,
-  JSON.stringify({ profiles, acceptance, operations, layout, codes, reservedNames, limits, entryLimits, grantKinds, timers, schedulerErrors, schedulerMisuse, catalogTypes, toolCatalogExample, view }, null, 2) + "\n",
+  JSON.stringify({ profiles, acceptance, operations, layout, codes, reservedNames, limits, entryLimits, grantKinds, timers, schedulerErrors, schedulerMisuse, catalogTypes, toolCatalogExample, view, manifestBudgets, manifestLimits, rootNameExamples }, null, 2) + "\n",
 );
