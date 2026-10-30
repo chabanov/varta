@@ -914,6 +914,47 @@ before). `typeof Blob` in `binaryContentType` folds to `"function"` and
 | (g) Network wait in scripted sessions | A bounded, explicit network-wait step for `--view-script` sessions, so scripted views that await responses stay deterministic on virtual time | Open |
 | (h) Linked value18 readers | Link the value18 readers (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12` as linked rendering plus the `log_string16` effect, `json_parse_v19`, `primitive_to_string_v6`/`primitive_to_number_v6` with (a)); `bigint_from_value_v5` is already linked at the integration, since it reads only primitive and BigInt cells | Open |
 | (i) L0 open choices | The L0 view protocol's open choices, including `role="separator"` and `role="group"` | Open |
+| (j) Deno KV storage | Owner decision: a native KV host capability file-compatible with Deno KV, so the UARP API's Deno KV file (SQLite, `denokv_sqlite` schema 3) opens in Varta without a migration and Deno reads what Varta writes | Implemented on `v38-kv` under `kv()` ([contract](architecture.md#kv-storage-kv)): `kv.read`/`kv.write` path grants over virtual roots, nine host ABI 34 imports, pinned no-follow open verified against SQLite's descriptor, exact schema check, lock probe, a strict V8 serializer codec, Deno-shaped `Kv`/`AtomicOperation`/`KvListIterator`/`KvU64` with strict checked-JSON decoding. Open: below |
+
+**KV storage dependencies (v38 `kv`, 2026-10-30).** Evidence: Deno v2.9.4's
+`Cargo.lock` (tag `v2.9.4`, `github.com/denoland/deno`) locks `denokv_sqlite`
+0.14.0 (checksum `9cedc50f…5c8c31`), `denokv_proto` 0.14.0 (`540b7d96…1243f6`),
+`rusqlite` 0.40.1 (`11438310…a43323`) and `libsqlite3-sys` 0.38.1
+(`f6c19a05…a61db`), and its `Cargo.toml` enables rusqlite's `bundled`
+feature; v2.9.7 locks the same four with the same checksums (only `v8` moves,
+150.2.0 to 150.4.0, both V8 15.0, serializer version 16). Varta pins them
+exactly (`=`), with `bundled` and denokv's required `fallible_uint`, plus the
+two crates its connection factory names: `deno_error` =0.7.1 (Deno's lock) and
+`chrono` =0.4.42 (Deno's lock, `std` only, no clock feature); `rand` stays at
+the already locked 0.8.8 for the versionstamp generator. The new transitive
+crates (async-stream, async-trait, futures, hex, log, prost, tokio-stream,
+uuid, v8_valueserializer, wtf8, parking_lot, hashlink and their small
+dependencies) come from denokv's own manifests; denokv requires Tokio's
+`full` feature set, which the existing Tokio 1.54.1 pin satisfies (its worker
+threads run their own current-thread runtimes; the runtime's waiting runtime
+is separate from the `net.request` one). No existing lock entry changed
+version. All of these are dependencies of `varta-runtime` only; the boundary
+test checks that no engine contract, compiler, artifact or intrinsic crate
+reaches SQLite. Rejected: a hand-written SQLite schema or V8 engine, and
+`v8_valueserializer` as the codec (owner requirement: Varta's own strict
+codec; denokv uses that crate only for its V8 `sum`, which Varta does not
+call).
+
+**KV storage open items.** `watch` (three uses in the UARP API) and queues
+(not used); asynchronous completions through the event loop like
+`net.request` instead of a synchronous wait (owner choice: the synchronous
+wait was taken because SQLite is local, it keeps commit order deterministic
+and denokv's single worker serializes writes anyway); `Date`, `Map`, `Set`,
+BigInt and nested `Uint8Array` values in both directions (the codec reads and
+writes them; the guest mappings are missing); key parts other than strings
+and numbers; reading a property holding `undefined` as present; a browser
+backend; measuring the serializer header versions in the production file (the
+reader accepts 13 to 16; Deno 2.9 writes 16) and whether it holds `Date`/`Map`
+values; a fixture written by Deno 2.9.4 under its own Varta-written
+counterpart in CI, which needs Deno in CI. The fixtures are synthetic: Deno
+2.9.4 (x86_64-linux, the owner's API developer) and Deno 2.9.7
+(aarch64-darwin) write byte-identical `v` and `v_encoding` for all 48 rows;
+versionstamps differ by design (random steps).
 
 #### Code generation v2 measurements
 
@@ -1859,9 +1900,9 @@ HTTP v1 keep their meaning; v2 is a new contract version under a new profile.
 
 Later increments, each its own capability or capability-free contract:
 
-- `kv.get`/`kv.set`/`kv.delete`/`kv.list` with namespace patterns; native backend a
-  file under a pinned root, browser backend IndexedDB; bounded keys, values and
-  total bytes.
+- KV storage: implemented natively under v38 as Deno KV file compatibility
+  (owner decision, wave 3; [contract](architecture.md#kv-storage-kv)); a
+  browser backend (IndexedDB) with the same guest API remains open.
 - `Uint8Array`/`ArrayBuffer`/`DataView` (CORE-05), `TextEncoder`/`TextDecoder`,
   base64: guest code, no host imports.
 - Crypto random: `crypto.getRandomValues`/`randomUUID` as an ungated,

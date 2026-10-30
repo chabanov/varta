@@ -21,6 +21,27 @@ in [conformance/README.md](conformance/README.md).
   narrows, and unknown names stay compile errors. Unmodified uarp-sdk
   0.13.1 checks 65 of 65 files per file under v38 (7 before).
 
+- V38 Deno KV storage (`kv()`): `varta.kv.open("/data/app.kv")` opens a Deno
+  KV database file under a virtual root with Deno's own SQLite backend
+  (`denokv_sqlite` 0.14.0, rusqlite 0.40.1 with bundled SQLite, pinned to Deno
+  2.9.4's lock), so Deno and Varta share the file without a migration. New
+  exact grants `kv.read` (open, read) and `kv.write` (write; makes an open
+  writable), nine host ABI 34 imports (`kv_open`, `kv_read`, `kv_commit`,
+  `kv_stage`, `kv_key`, `kv_value`, `kv_entry`, `kv_text`, `kv_close`), a pinned
+  no-follow open verified against the descriptor SQLite opened, an exact
+  schema-version-3 check before any write, a lock probe, and a strict V8
+  serializer codec that re-encodes every Deno-written fixture value
+  byte-identically. `Kv.get/getMany/list/set/delete/atomic` with
+  `check/set/delete/sum/min/max/commit`, `KvU64` and `KvListIterator` with
+  cursors; reads decode strictly into `T` like `varta.json.parse<T>`. Denials
+  are recoverable `NotAllowedError`s. Synthetic fixtures written by Deno 2.9.4
+  and 2.9.7 are in `crates/varta-runtime/src/kv_cases`. `watch` and queues are
+  not available.
+
+- `for await` over a generic class instance first created inside a generic
+  method (its instance members were not allocated yet) no longer panics the
+  compiler.
+
 - V38 links every BigInt operation: a v38 host implements 54 imports instead
   of 67. `varta-bigint` builds without `std`, and the BigInt operations, the
   value13+ primitive conversions and the abstract comparisons are

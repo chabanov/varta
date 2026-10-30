@@ -282,9 +282,11 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     let layouts = collected.layouts;
     let schemas = collected.schemas;
     // The owned JSON serializer (v38) allocates through the same value ABI
-    // helpers as the checked parser.
+    // helpers as the checked parser, and so do the KV decoders (v38 `kv`).
     let has_parser = hosts.contains(&program.types.profile.json_parse())
-        || hosts.contains(&Host::JsonStringifyOwned);
+        || hosts.contains(&Host::JsonStringifyOwned)
+        || hosts.contains(&Host::KvKey)
+        || hosts.contains(&Host::KvValue);
     let trace_values = !layouts.is_empty()
         || collected.arrays
         || collected.unions

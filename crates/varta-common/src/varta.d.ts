@@ -1234,7 +1234,71 @@ declare const varta: {
     /** Close a source opened by `listen`; unknown ids are ignored. */
     close(id: number): void;
   };
+  /** checked-f64-utf16-v38: Deno KV compatible storage. */
+  kv: {
+    /** Open the Deno KV database file at a virtual path `/<root>/...`.
+     * Needs `kv.read` on the path; the database is writable (and a missing
+     * file is created) only when `kv.write` covers it too. Rejects with a
+     * `NotAllowedError` DOMException when denied, `NotFoundError` for a
+     * missing file opened read-only, and `TypeError` for a file that is not a
+     * Deno KV database of schema version 3, a locked file or a path that
+     * changed while it was opened. */
+    open(path: string): Promise<Kv>;
+  };
 };
+
+// checked-f64-utf16-v38 KV storage (`varta.kv.open`), file-compatible with
+// Deno KV (denokv_sqlite 0.14.0). Keys are arrays of strings and numbers.
+// Values are checked JSON types (records, dictionaries, arrays without holes,
+// unions, unknown, strings, numbers including -0/NaN/Infinity, booleans, null,
+// undefined), stored as Deno's V8 serializer bytes; a top-level `KvU64` and a
+// top-level `Uint8Array` use Deno's u64 and bytes encodings. `get<T>`,
+// `getMany<T>` and `list<T>` decode strictly into `T` like
+// `varta.json.parse<T>` (unknown fields, a missing required field or a wrong
+// kind throw TypeError). Every operation completes within its call; watch and
+// queues are not available. Internal imports, host ABI 34: kv_open, kv_read
+// (capability kv.read), kv_commit (kv.write), kv_stage, kv_key, kv_value
+// (host-call budget), kv_entry, kv_text, kv_close (bookkeeping).
+type KvKeyPart = string | number;
+type KvKey = KvKeyPart[];
+interface KvEntry<T> { key: KvKey; value: T; versionstamp: string }
+/** Deno's missing entry is `{ key, value: null, versionstamp: null }`. */
+interface KvEntryMaybe<T> { key: KvKey; value: T | null; versionstamp: string | null }
+interface KvListSelector { prefix?: KvKey; start?: KvKey; end?: KvKey }
+interface KvListOptions { limit?: number; cursor?: string; reverse?: boolean; batchSize?: number }
+interface KvSetOptions { expireIn?: number }
+interface AtomicCheck { key: KvKey; versionstamp: string | null }
+interface KvCommitResult { ok: true; versionstamp: string }
+interface KvCommitError { ok: false }
+declare class KvU64 {
+  constructor(value: bigint);
+  readonly value: bigint;
+  toString(): string;
+}
+declare class KvListIterator<T> {
+  /** The cursor after the last yielded entry ("" once done). */
+  readonly cursor: string;
+  [Symbol.asyncIterator](): AsyncGenerator<KvEntry<T>>;
+}
+declare class AtomicOperation {
+  check(...checks: AtomicCheck[]): AtomicOperation;
+  set<T>(key: KvKey, value: T, options?: KvSetOptions): AtomicOperation;
+  delete(key: KvKey): AtomicOperation;
+  sum(key: KvKey, n: bigint): AtomicOperation;
+  min(key: KvKey, n: bigint): AtomicOperation;
+  max(key: KvKey, n: bigint): AtomicOperation;
+  /** Narrow the result with `result.ok === true`. */
+  commit(): Promise<KvCommitResult | KvCommitError>;
+}
+declare class Kv {
+  get<T>(key: KvKey): Promise<KvEntryMaybe<T>>;
+  getMany<T>(keys: KvKey[]): Promise<KvEntryMaybe<T>[]>;
+  list<T>(selector: KvListSelector, options?: KvListOptions): KvListIterator<T>;
+  set<T>(key: KvKey, value: T, options?: KvSetOptions): Promise<KvCommitResult>;
+  delete(key: KvKey): Promise<void>;
+  atomic(): AtomicOperation;
+  close(): void;
+}
 
 // checked-f64-utf16-v38 (batch, in development) turn budgets: an instance runs
 // as event turns (main with its microtasks, then one timer, network

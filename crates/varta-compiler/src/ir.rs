@@ -993,6 +993,13 @@ pub(crate) enum Expression {
     Field(Box<Expr>, u32),
     Json(Box<Expr>, Option<u32>),
     ParseJson(Box<Expr>),
+    /// V38 (`kv`): hand a value to the host in a `kv::StageMode`
+    /// (`kv_stage`); the result is its stage id.
+    KvStage(i32, Box<Expr>),
+    /// V38 (`kv`): decode an entry of the last KV read (`kv_key` or
+    /// `kv_value`, the f64 entry index) into the checked schema of the
+    /// expression's type, like `ParseJson`.
+    KvDecode(varta_common::HostOperation, Box<Expr>),
     Array(Vec<Option<Expr>>),
     ArrayEnumerate {
         value: Box<Expr>,

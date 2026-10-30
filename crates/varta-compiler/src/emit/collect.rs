@@ -323,6 +323,17 @@ impl<'a> Collected<'a> {
                     self.expression(value, source);
                 }
             }
+            E::KvStage(_, value) => {
+                self.hosts.insert(Host::KvStage);
+                self.expression(value, source);
+            }
+            E::KvDecode(host, index) => {
+                self.hosts.insert(*host);
+                self.helpers.insert(strings::Helper::Allocate);
+                self.schemas.entry(expr.ty).or_insert((expr.span, source));
+                self.schema_type(expr.ty, (expr.span, source));
+                self.expression(index, source);
+            }
             E::Json(value, _) => {
                 let host = self.types.profile.json_stringify();
                 self.hosts.insert(host);

@@ -464,6 +464,41 @@ pub(crate) const EVENTS: Prelude = Prelude {
     loads: &[],
     lifted: None,
 };
+/// Deno KV compatible storage (v38 `kv`): `varta.kv.open`, bound under its
+/// dotted name, the `Kv`, `AtomicOperation`, `KvListIterator` and `KvU64`
+/// classes and the Deno-shaped entry, selector and commit types.
+pub(crate) const KV: Prelude = Prelude {
+    path: "<varta>/app/kv.ts",
+    source: include_str!("../prelude/kv.ts"),
+    exports: &[
+        (KV_U64_CLASS, Namespace::Class),
+        ("Kv", Namespace::Type),
+        ("AtomicOperation", Namespace::Type),
+        ("KvListIterator", Namespace::Type),
+        ("KvKey", Namespace::Type),
+        ("KvKeyPart", Namespace::Type),
+        ("KvEntry", Namespace::Type),
+        ("KvEntryMaybe", Namespace::Type),
+        ("KvListSelector", Namespace::Type),
+        ("KvListOptions", Namespace::Type),
+        ("KvSetOptions", Namespace::Type),
+        ("AtomicCheck", Namespace::Type),
+        ("KvCommitResult", Namespace::Type),
+        ("KvCommitError", Namespace::Type),
+    ],
+    members: &[],
+    triggers: &[Trigger {
+        names: &["varta.kv.open"],
+        function: "kvOpen",
+        local: "varta.kv.open",
+    }],
+    admitted: LanguageProfile::kv,
+    extended: None,
+    loads: &[],
+    lifted: None,
+};
+/// The KV prelude's `KvU64` class, stored as Deno's `v_encoding` 2.
+pub(crate) const KV_U64_CLASS: &str = "KvU64";
 /// The L0 view protocol (v38 `view_protocol`): the batch encoder, the event
 /// dispatcher and the template bindings, reached through `View.*` members
 /// (also what TSX templates compile to) and the `ViewEvent` class.
@@ -645,7 +680,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 18] = [
+pub(crate) const PRELUDES: [&Prelude; 19] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -662,6 +697,7 @@ pub(crate) const PRELUDES: [&Prelude; 18] = [
     &URL,
     &PERMISSIONS,
     &EVENTS,
+    &KV,
     &URI,
     &VIEW,
 ];

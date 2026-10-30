@@ -93,6 +93,7 @@ mod json_parse;
 mod json_parse_abi_tests;
 #[cfg(test)]
 mod json_parse_tests;
+mod kv;
 mod language;
 #[cfg(test)]
 mod language_tests;
@@ -290,6 +291,8 @@ pub(crate) struct RuntimeContext {
     scheduler: scheduler::Scheduler,
     /// V37 network requests: ids, completions and transfer tasks.
     net: net::Net,
+    /// V38 Deno KV databases, staged values and the last read.
+    kv: kv::Kv,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
     /// The instantiated module's bounds (v38 `program_limits`): where its
     /// record descriptors, keys and JSON schemas may lie, and its profile's

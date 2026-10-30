@@ -346,6 +346,22 @@ impl Broker {
     }
 
     /// One `copy_text` (v38 `clipboard.write`, an exact boolean grant).
+    /// A KV database operation (v38 `kv`) on virtual `path`: `kv.read` to
+    /// open and read, `kv.write` to open writable and to commit. A granted
+    /// decision carries the pinned target; nothing is opened before it.
+    pub fn database(
+        &mut self,
+        policy: &Policy,
+        id: &str,
+        path: &str,
+    ) -> Decision<crate::policy::DatabaseTarget> {
+        let decision = match policy.database(id, path) {
+            Some(target) => Decision::Granted(target),
+            None => Decision::Denied,
+        };
+        self.operation(id, path, decision)
+    }
+
     pub fn clipboard_write(&mut self, policy: &Policy) -> Access {
         let id = varta_common::view::CLIPBOARD_WRITE_CAPABILITY;
         if policy.enabled(id) {

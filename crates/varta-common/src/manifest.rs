@@ -128,11 +128,19 @@ impl Manifest {
             ));
         }
         if self.abi_version < crate::abi::PROGRAM_LIMITS_VERSION {
+            // `kv.*` (v38) exists only with virtual file roots.
+            if let Some(grant) = grants.iter().find(|grant| grant.id.starts_with("kv.")) {
+                return Err(VartaError::InvalidManifest(format!(
+                    "{} requires abiVersion {} or later (checked-f64-utf16-v38)",
+                    grant.id,
+                    crate::abi::PROGRAM_LIMITS_VERSION
+                )));
+            }
             return Ok(());
         }
         for grant in &grants {
             if let (true, CapabilityValue::PathGlobs(patterns)) =
-                (grant.id.starts_with("fs."), &grant.value)
+                (crate::is_path_grant(&grant.id), &grant.value)
             {
                 for pattern in patterns {
                     crate::files::validate_virtual_pattern(&grant.id, pattern, self.root_names())?;

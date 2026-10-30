@@ -129,6 +129,7 @@ impl Execution {
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
                 net: crate::net::Net::default(),
+                kv: crate::kv::Kv::default(),
                 deadline,
                 started,
                 lifetime,

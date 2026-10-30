@@ -443,11 +443,69 @@ fn decode(
         })?
         .map_err(error)?
     };
-    let writer = heap::Writer::new(&mut caller, memory)?;
+    materialize(&mut caller, memory, &schema, value, recoverable)
+}
+
+/// The v38 checked schema at `schema_ptr` in the static region (schema 18,
+/// the one `json_parse_v19` reads), with its record and dictionary
+/// descriptors checked: the target of a KV decode (`kv_key`, `kv_value`).
+pub(crate) fn checked_schema(
+    caller: &mut Caller<'_, RuntimeContext>,
+    memory: wasmtime::Memory,
+    schema_ptr: i32,
+    schema_len: i32,
+) -> Result<JsonSchema, wasmtime::Error> {
+    if schema_ptr < 0 || schema_len < 0 {
+        return Err(error("schema range"));
+    }
+    let module = caller.data().module;
+    let data = memory.data(&*caller);
+    let schema = JsonSchema::from_bytes_within(
+        static_bytes(
+            data,
+            module.static_region,
+            schema_ptr as usize,
+            schema_len as usize,
+        )?,
+        &module.limits,
+    )
+    .map_err(error)?;
+    if schema.version != varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION {
+        return Err(error("schema version does not match the KV import"));
+    }
+    descriptors(&schema, data, module.static_region)?;
+    exceptions::ready(caller)?;
+    Ok(schema)
+}
+
+/// Publish a recoverable `TypeError` with `message` from a v38 KV decode.
+pub(crate) fn type_error(
+    caller: &mut Caller<'_, RuntimeContext>,
+    memory: wasmtime::Memory,
+    schema: &JsonSchema,
+    message: &str,
+) -> Result<u64, wasmtime::Error> {
+    exceptions::publish_message(caller, memory, schema, ErrorClass::TypeError, message)
+}
+
+/// Allocate a completely checked tree through the guest's own collector,
+/// then check the module's metadata again and publish the handle.
+pub(crate) fn materialize(
+    caller: &mut Caller<'_, RuntimeContext>,
+    memory: wasmtime::Memory,
+    schema: &JsonSchema,
+    value: JsonValue,
+    recoverable: bool,
+) -> Result<u64, wasmtime::Error> {
+    let limits = caller.data().module.limits.data;
+    // V38 (`data_limits`) keeps its trees out of host recursion and the root
+    // stack (`tree`); earlier profiles keep the child-first builder.
+    let top_down = limits.json_input_bytes > abi::MAX_INPUT_BYTES;
+    let writer = heap::Writer::new(caller, memory)?;
     let built = if top_down {
-        tree::build(&writer, &mut caller, &schema, &value, limits)
+        tree::build(&writer, caller, schema, &value, limits)
     } else {
-        writer.build(&mut caller, &schema, &value)
+        writer.build(caller, schema, &value)
     };
     // A deep tree is dropped on the JSON host stack, never by host recursion here.
     if top_down && nesting(&value) > DataLimits::LEGACY.json_depth {
@@ -455,12 +513,12 @@ fn decode(
     }
     let value = built?;
     if recoverable {
-        exceptions::ready(&mut caller)?;
-        exceptions::deadline(&caller)?;
+        exceptions::ready(caller)?;
+        exceptions::deadline(caller)?;
     }
     descriptors(
-        &schema,
-        memory.data(&caller),
+        schema,
+        memory.data(&*caller),
         caller.data().module.static_region,
     )?;
     let Some(Extern::Global(length)) = caller.get_export(abi::RESULT_LEN) else {
@@ -473,7 +531,7 @@ fn decode(
     } else {
         0
     };
-    length.set(&mut caller, Val::I32(high))?;
+    length.set(&mut *caller, Val::I32(high))?;
     // The value is already owned/rooted; this is not a borrowed result buffer.
     Ok(value)
 }

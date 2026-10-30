@@ -37,6 +37,9 @@ pub mod http;
 mod invocation;
 #[cfg(feature = "std")]
 pub mod json;
+/// Deno KV compatible storage (v38 `kv`).
+#[cfg(feature = "std")]
+pub mod kv;
 #[cfg(feature = "std")]
 pub mod language;
 #[cfg(feature = "std")]

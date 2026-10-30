@@ -394,6 +394,8 @@ fn expression(expr: &mut Expr, visit: &mut dyn FnMut(&mut Expr)) {
         | E::Field(value, _)
         | E::Json(value, _)
         | E::ParseJson(value)
+        | E::KvStage(_, value)
+        | E::KvDecode(_, value)
         | E::ArrayPop(value)
         | E::ArrayReverse(value)
         | E::IndexKey(value)

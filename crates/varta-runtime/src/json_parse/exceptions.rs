@@ -75,12 +75,26 @@ pub(super) fn publish(
     schema: &JsonSchema,
     class: ErrorClass,
 ) -> Result<u64, wasmtime::Error> {
-    ready(caller)?;
     let message = match class {
         ErrorClass::SyntaxError => "Invalid JSON syntax",
         ErrorClass::TypeError => "JSON value does not match the checked schema",
         _ => return Err(invalid()),
     };
+    publish_message(caller, memory, schema, class, message)
+}
+/// Publish a recoverable `class` error with `message` (the checked JSON
+/// messages above; v38 KV decodes name what did not match).
+pub(super) fn publish_message(
+    caller: &mut Caller<'_, RuntimeContext>,
+    memory: wasmtime::Memory,
+    schema: &JsonSchema,
+    class: ErrorClass,
+    message: &str,
+) -> Result<u64, wasmtime::Error> {
+    if !matches!(class, ErrorClass::SyntaxError | ErrorClass::TypeError) {
+        return Err(invalid());
+    }
+    ready(caller)?;
     let writer = heap::Writer::new(caller, memory)?;
     let message = writer.owned(caller, &varta_common::text::encode(message), 0, 0)?;
     let mut object = Vec::with_capacity(ERROR_BYTES);

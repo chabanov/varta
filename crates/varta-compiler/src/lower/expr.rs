@@ -778,6 +778,14 @@ impl Lower<'_> {
             }
             return self.parse_json(call);
         }
+        // V38 (`kv`): the typed decode intrinsics of the KV prelude.
+        if call.type_args.is_some()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let Some(name) = callee_name(callee)
+            && let Some(value) = self.prelude_kv(call, &name)?
+        {
+            return Ok(value);
+        }
         if let ast::Callee::Expr(callee) = &call.callee
             && self.function_field_callee(callee)
         {
@@ -1116,6 +1124,9 @@ impl Lower<'_> {
                 ),
                 call.span,
             ));
+        }
+        if let Some(value) = self.prelude_kv(call, &name)? {
+            return Ok(value);
         }
         if let Some(value) = self.prelude_net(call, &name)? {
             return Ok(value);
