@@ -10,6 +10,7 @@ mod construct;
 #[cfg(any(test, feature = "suspension-test-hook"))]
 pub(crate) mod hook;
 mod liveness;
+pub(in crate::lower) use liveness::{expression_counts, mention_counts};
 mod normalize;
 mod states;
 #[cfg(test)]

@@ -55,6 +55,10 @@ impl Emitter<'_> {
         if ir::is_number_bitwise(op) {
             return self.float_bitwise(op);
         }
+        if op == BinaryOp::Mod && self.codegen_v2() {
+            // V38: safe integers in the guest, every other operand on the host.
+            return self.string_helper(strings::Helper::FloatRemainder);
+        }
         self.code.push(match op {
             BinaryOp::Add => I::F64Add,
             BinaryOp::Sub => I::F64Sub,

@@ -18,6 +18,9 @@ mod contract_tests;
 mod contracts;
 mod exceptions;
 mod execution;
+mod fuel_profile;
+#[cfg(test)]
+mod fuel_profile_tests;
 mod prepared;
 #[cfg(test)]
 mod prepared_tests;
@@ -221,6 +224,18 @@ pub(crate) struct RuntimeContext {
     /// V37 network requests: ids, completions and transfer tasks.
     net: net::Net,
     function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+    /// Present only in a fuel-profiling execution (`fuel_profile`).
+    profiler: Option<Box<fuel_profile::Profiler>>,
+}
+
+/// A fuel-profiled execution ([`VartaRuntime::run_fuel_profile`]). A trap or
+/// an exhausted budget keeps the output and the profile up to that point.
+#[derive(Debug)]
+pub struct FuelProfileRun {
+    pub output: RunOutput,
+    pub profile: varta_common::profile::FuelProfile,
+    /// Why the execution stopped early; a guest exit is not an error.
+    pub error: Option<RuntimeError>,
 }
 
 impl RuntimeContext {
@@ -394,6 +409,60 @@ impl VartaRuntime {
         observer: RuntimeObserver,
     ) -> Result<RunOutput, RuntimeError> {
         self.execute(bytes, requested, ceiling, Some(observer))
+    }
+
+    /// Run a fuel-profile build (`varta dev --profile-fuel`) with the same
+    /// grants, ceiling and budgets as [`Self::run_wasm_bytes_with_policy`] and
+    /// report the fuel of every guest function. The probes refund their own
+    /// cost, so the run consumes the fuel of the uninstrumented program. An
+    /// HTTP service's startup is profiled; its server is not started.
+    pub fn run_fuel_profile(
+        &self,
+        bytes: &[u8],
+        requested: &[CapabilityGrant],
+        ceiling: Option<&[CapabilityGrant]>,
+    ) -> Result<FuelProfileRun, RuntimeError> {
+        let names = fuel_profile::names(bytes)?;
+        let (module, _) = validate::module_with(&self.engine, bytes, true)?;
+        let mut execution = execution::Execution::new(&self.engine, requested, ceiling)?;
+        let budget = execution.store.get_fuel()?;
+        execution.store.data_mut().profiler =
+            Some(Box::new(fuel_profile::Profiler::new(budget, names)));
+        let result = (|| {
+            let instance = execution.instantiate_prepared(&module)?;
+            let store = &mut execution.store;
+            if let Some(start) = instance.get_func(&mut *store, "_start") {
+                start.call(&mut *store, &[], &mut [])?;
+            }
+            exceptions::finish(&instance, store)?;
+            scheduler::checkpoint(&instance, store)?;
+            Ok::<(), RuntimeError>(())
+        })();
+        let store = &mut execution.store;
+        let remaining = store.get_fuel()?;
+        let profiler = store
+            .data_mut()
+            .profiler
+            .take()
+            .ok_or_else(|| wasmtime::Error::msg("missing fuel profiler"))?;
+        let mut failure = None;
+        if let Err(error) = result.map_err(scheduler::typed) {
+            let exit = match &error {
+                RuntimeError::Execution(source) => {
+                    source.downcast_ref::<GuestExit>().map(|exit| exit.0)
+                }
+                _ => None,
+            };
+            match exit {
+                Some(code) => store.data_mut().output.exit_code = code,
+                None => failure = Some(error),
+            }
+        }
+        Ok(FuelProfileRun {
+            output: std::mem::take(&mut store.data_mut().output),
+            profile: profiler.finish(remaining)?,
+            error: failure,
+        })
     }
 
     fn execute(
@@ -657,3 +726,5 @@ pub fn encode_value_graph_with_functions(
         function_work,
     )?)
 }
+#[cfg(test)]
+mod codegen_v2_tests;

@@ -103,6 +103,7 @@ impl Emitter<'_> {
                 self.write_binding(slot, ty, true)?;
             } else {
                 self.code.push(I::LocalSet(self.local_slots[slot as usize]));
+                self.reset_builder(slot);
                 self.store_root(slot);
             }
         }

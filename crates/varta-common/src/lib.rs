@@ -14,6 +14,8 @@ mod manifest;
 mod module;
 /// Asynchronous network requests (v37 `net_request`).
 pub mod net;
+/// Development fuel profiling (`varta dev --profile-fuel`).
+pub mod profile;
 pub mod scheduler;
 pub mod text;
 mod tool;

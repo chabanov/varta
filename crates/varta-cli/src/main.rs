@@ -29,9 +29,22 @@ enum Commands {
         json: bool,
     },
     /// Check, compile and execute portable Wasm with resource budgets.
+    ///
+    /// With --profile-fuel, also compile an instrumented profile build, run it
+    /// instead of the ordinary build (same grants, policy and budgets; the
+    /// probes refund their own fuel) and print the fuel of every guest
+    /// function, engine prelude and compiler helper to stderr, by descending
+    /// self fuel. A trap or an exhausted budget still prints the profile up to
+    /// that point. Profile builds are never written or packaged.
     Dev {
         #[arg(long, default_value = "varta.config.json")]
         config: PathBuf,
+        /// Print per-function fuel (self, total, calls) of this run to stderr.
+        #[arg(long)]
+        profile_fuel: bool,
+        /// With --profile-fuel, print the profile as one JSON object instead.
+        #[arg(long, requires = "profile_fuel")]
+        json: bool,
     },
     /// Build validated Wasm; --single embeds portable Wasm in a native launcher.
     Build {
@@ -105,7 +118,22 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
                 println!("varta check: ok ({})", config.display());
             }
         }
-        Some(Commands::Dev { config }) => {
+        Some(Commands::Dev {
+            config,
+            profile_fuel: true,
+            json,
+        }) => {
+            let project = CheckedProject::load(&config)?;
+            let run = project.profile_fuel(&config, policy.as_ref())?;
+            let code = output(run.output);
+            report_profile(&run.profile, json)?;
+            if let Some(error) = run.error {
+                return Err(error.into());
+            }
+            println!("varta dev: completed");
+            return Ok(code);
+        }
+        Some(Commands::Dev { config, .. }) => {
             let project = CheckedProject::load(&config)?;
             let result = run(&project.artifact, policy.as_ref())?;
             let code = output(result);
@@ -202,6 +230,37 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
         }
     }
     Ok(0)
+}
+
+/// The fuel profile table (or JSON object) on stderr, keeping stdout for the
+/// program's own output.
+fn report_profile(profile: &varta_project::FuelProfile, json: bool) -> Result<(), ProjectError> {
+    if json {
+        eprintln!(
+            "{}",
+            serde_json::to_string(profile).map_err(|e| ProjectError::Usage(e.to_string()))?
+        );
+        return Ok(());
+    }
+    eprintln!(
+        "varta fuel profile: {} of {} fuel ({} outside guest functions{})",
+        profile.consumed,
+        profile.budget,
+        profile.outside,
+        if profile.unfinished > 0 {
+            format!(", {} activations unfinished", profile.unfinished)
+        } else {
+            String::new()
+        }
+    );
+    eprintln!("{:>10} {:>10} {:>8}  function", "self", "total", "calls");
+    for row in &profile.functions {
+        eprintln!(
+            "{:>10} {:>10} {:>8}  {}",
+            row.self_fuel, row.total_fuel, row.calls, row.name
+        );
+    }
+    Ok(())
 }
 
 fn run(

@@ -41,6 +41,7 @@ impl Execution {
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
                 net: crate::net::Net::default(),
+                profiler: None,
                 deadline: Instant::now() + Duration::from_secs(abi::DEADLINE_SECONDS),
             },
         );
@@ -88,6 +89,9 @@ impl Execution {
         let result = (|| {
             let mut linker = wasmtime::Linker::new(self.store.engine());
             host::register(&mut linker)?;
+            if self.store.data().profiler.is_some() {
+                crate::fuel_profile::register(&mut linker)?;
+            }
             let instance = linker.instantiate(&mut self.store, module)?;
             crate::exceptions::initial(&instance, &mut self.store)?;
             Ok(instance)

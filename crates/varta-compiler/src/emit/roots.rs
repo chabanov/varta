@@ -33,24 +33,31 @@ impl Emitter<'_> {
                 function.span,
             ));
         }
-        self.code.extend([
-            I::GlobalGet(memory.roots),
-            I::LocalTee(self.frame_base),
-            I::I32Const(bytes as i32),
-            I::I32Add,
-            I::LocalTee(self.frame_end),
-            I::I32Const(abi::STRING_ROOT_END as i32),
-            I::I32GtU,
-            I::If(BlockType::Empty),
-            I::Unreachable,
-            I::End,
-            I::LocalGet(self.frame_base),
-            I::I32Const(0),
-            I::I32Const(bytes as i32),
-            I::MemoryFill(strings::MEMORY),
-            I::LocalGet(self.frame_end),
-            I::GlobalSet(memory.roots),
-        ]);
+        if self.codegen_v2() && bytes == 0 {
+            // V38: an empty reference frame needs neither a bound check nor
+            // zeroing; its base and end are the incoming root pointer.
+            self.code.extend([
+                I::GlobalGet(memory.roots),
+                I::LocalTee(self.frame_base),
+                I::LocalSet(self.frame_end),
+            ]);
+        } else {
+            self.code.extend([
+                I::GlobalGet(memory.roots),
+                I::LocalTee(self.frame_base),
+                I::I32Const(bytes as i32),
+                I::I32Add,
+                I::LocalTee(self.frame_end),
+                I::I32Const(abi::STRING_ROOT_END as i32),
+                I::I32GtU,
+                I::If(BlockType::Empty),
+                I::Unreachable,
+                I::End,
+            ]);
+            self.zero_frame(bytes);
+            self.code
+                .extend([I::LocalGet(self.frame_end), I::GlobalSet(memory.roots)]);
+        }
         for slot in 0..function.params.len() {
             // Boxed parameters still hold their incoming payload here. Root it
             // until every captured parameter has been copied into its own cell.
@@ -61,6 +68,31 @@ impl Emitter<'_> {
             }
         }
         Ok(())
+    }
+    /// Zero the reference frame. V38 stores small frames slot by slot, since
+    /// `memory.fill` is charged per byte.
+    fn zero_frame(&mut self, bytes: usize) {
+        const STORED_SLOTS: usize = 8;
+        let slots = bytes / abi::STRING_ROOT_SLOT_BYTES;
+        if self.codegen_v2() && slots <= STORED_SLOTS {
+            for slot in 0..slots {
+                self.code.extend([
+                    I::LocalGet(self.frame_base),
+                    I::I64Const(0),
+                    I::I64Store(wasm_encoder::MemArg {
+                        offset: (slot * abi::STRING_ROOT_SLOT_BYTES) as u64,
+                        ..strings::ROOT
+                    }),
+                ]);
+            }
+        } else {
+            self.code.extend([
+                I::LocalGet(self.frame_base),
+                I::I32Const(0),
+                I::I32Const(bytes as i32),
+                I::MemoryFill(strings::MEMORY),
+            ]);
+        }
     }
     pub(super) fn end_frame(&mut self) {
         if let Some(memory) = self.memory {
@@ -119,6 +151,7 @@ impl Emitter<'_> {
                             .unwrap_or(self.local_slots[slot as usize]),
                     ),
                 ]);
+                self.reset_builder(slot);
             }
         }
     }

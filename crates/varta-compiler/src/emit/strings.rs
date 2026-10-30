@@ -14,6 +14,7 @@ mod compare;
 mod concat;
 mod index_key;
 mod regexp;
+mod remainder;
 mod roots;
 mod sparse;
 mod string_index;
@@ -57,12 +58,27 @@ pub(super) struct Globals {
     pub heap: u32,
     pub free: u32,
     pub roots: u32,
+    /// V38 (`codegen_v2`): the heap end up to which memory grows without a
+    /// collection (`allocate`).
+    pub collect_at: Option<u32>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Helper {
     Snapshot,
     Concat,
+    /// V38 (`codegen_v2`): a builder block with doubled capacity holding
+    /// both operands (`string_builder`).
+    StringGrow,
+    /// V38 (`codegen_v2`): content equality of two strings, 1 or 0.
+    StringEquals,
+    /// V38 (`codegen_v2`): `charAt` without a host call.
+    CharAt,
+    /// V38 (`codegen_v2`): `charCodeAt` without a host call.
+    CharCodeAt,
+    /// V38 (`codegen_v2`): Number `%`, exact in the guest for safe integers
+    /// and delegated to the host remainder otherwise.
+    FloatRemainder,
     Compare,
     StringIncludes,
     StringStartsWith,
@@ -143,6 +159,15 @@ impl Helper {
             crate::ir::RegExpIntrinsic::Unit => Self::RegExpUnit,
         }
     }
+    /// The content-equality helper of array searches: v38 uses
+    /// [`Self::StringEquals`], earlier profiles the ordering comparison.
+    pub(super) fn equality(profile: varta_common::language::LanguageProfile) -> Self {
+        if crate::codegen_v2(profile) {
+            Self::StringEquals
+        } else {
+            Self::Compare
+        }
+    }
     pub(super) fn signature(self) -> (Vec<ValType>, Vec<ValType>) {
         match self {
             Self::RegExpExec => (
@@ -153,11 +178,16 @@ impl Helper {
                 (vec![ValType::I64, ValType::F64], vec![ValType::F64])
             }
             Self::Snapshot => (vec![ValType::I32; 2], vec![ValType::I64]),
-            Self::Concat => (vec![ValType::I64; 2], vec![ValType::I64]),
+            Self::Concat | Self::StringGrow => (vec![ValType::I64; 2], vec![ValType::I64]),
+            Self::StringEquals => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
             Self::ArrayIndexKey | Self::UnitIndex(_) => (vec![ValType::I64], vec![ValType::F64]),
-            Self::CodeUnit => (vec![ValType::I64, ValType::F64], vec![ValType::F64]),
+            Self::CodeUnit | Self::CharCodeAt => {
+                (vec![ValType::I64, ValType::F64], vec![ValType::F64])
+            }
+            Self::CharAt => (vec![ValType::I64, ValType::F64], vec![ValType::I64]),
+            Self::FloatRemainder => (vec![ValType::F64; 2], vec![ValType::F64]),
             Self::FromUnits => (vec![ValType::I64], vec![ValType::I64]),
             Self::Collect => (vec![], vec![]),
             Self::RootPush => (vec![ValType::I64], vec![ValType::I64]),
@@ -206,12 +236,15 @@ impl Helper {
         !matches!(
             self,
             Self::Compare
+                | Self::StringEquals
                 | Self::ArrayStringHasOwn
                 | Self::ArrayIndexKey
                 | Self::UnitIndex(_)
                 | Self::RegExpSlot
                 | Self::RegExpUnit
                 | Self::CodeUnit
+                | Self::CharCodeAt
+                | Self::FloatRemainder
                 | Self::StringIncludes
                 | Self::StringStartsWith
                 | Self::StringEndsWith
@@ -226,12 +259,16 @@ impl Helper {
         trace_values: bool,
         profile: varta_common::language::LanguageProfile,
         frames: bool,
+        linked: Linked,
     ) -> Function {
+        let Linked { ascii, remainder } = linked;
         // Emission adds the complete allocator dependency set before indexing.
         match self {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
             Self::Concat => concat::function(helpers[&Self::Allocate]),
-            Self::Compare => compare::function(profile.utf16()),
+            Self::StringGrow => concat::grow(helpers[&Self::Allocate]),
+            Self::StringEquals => compare::equals(profile.utf16()),
+            Self::Compare => compare::function(profile.utf16(), crate::codegen_v2(profile)),
             Self::Allocate => allocate::function(globals, helpers[&Self::Collect]),
             Self::Collect => collect::function(
                 globals,
@@ -242,13 +279,15 @@ impl Helper {
             ),
             Self::RootPush => roots::function(globals.roots),
             Self::ArraySearch => array_search::function(
-                helpers[&Self::Compare],
+                helpers[&Self::equality(profile)],
+                crate::codegen_v2(profile),
                 profile.sparse_arrays(),
                 false,
                 profile.bigint_values(),
             ),
             Self::ArrayLastIndex => array_search::function(
-                helpers[&Self::Compare],
+                helpers[&Self::equality(profile)],
+                crate::codegen_v2(profile),
                 profile.sparse_arrays(),
                 true,
                 profile.bigint_values(),
@@ -277,6 +316,9 @@ impl Helper {
             Self::AsciiLowercase => text_units::ascii_case(helpers[&Self::Allocate], false),
             Self::AsciiUppercase => text_units::ascii_case(helpers[&Self::Allocate], true),
             Self::CodeUnit => text_codes::code_unit(),
+            Self::CharCodeAt => text_codes::char_code_at(),
+            Self::FloatRemainder => remainder::function(remainder.unwrap_or(0)),
+            Self::CharAt => text_codes::char_at(helpers[&Self::Allocate], ascii.unwrap_or(0)),
             Self::FromUnits => {
                 text_codes::from_units(helpers[&Self::Allocate], profile.resizable_arrays())
             }
@@ -309,6 +351,13 @@ impl Helper {
         }
     }
 }
+/// V38 (`codegen_v2`) targets some helpers embed: the static ASCII unit table
+/// of `charAt` and the host remainder import of `%`.
+#[derive(Clone, Copy)]
+pub(super) struct Linked {
+    pub ascii: Option<u32>,
+    pub remainder: Option<u32>,
+}
 /// The code units a trimming helper removes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Whitespace {
@@ -316,6 +365,13 @@ pub(super) enum Whitespace {
     Script,
     /// HTTP whitespace: TAB, LF, CR and SP (Fetch header value normalization).
     Http,
+}
+/// The UTF-16 code units 0..128 in static data: v38 `charAt` of an ASCII
+/// unit returns a static one-unit slice of this table.
+pub(super) fn ascii_units() -> Vec<u8> {
+    (0..text_codes::ASCII_UNITS)
+        .flat_map(u16::to_le_bytes)
+        .collect()
 }
 fn instructions(function: &mut Function, code: impl IntoIterator<Item = I<'static>>) {
     for instruction in code {

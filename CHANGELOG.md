@@ -11,6 +11,23 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 code generation v2 (`codegen_v2`) and the fuel profiler. Quiet
+  expressions skip root marks and operand roots, quiet statements skip their
+  temporary reset, direct calls with quiet arguments and frames without
+  references lose their bookkeeping, operand caches of plain reads collapse,
+  statement-level `x++`/`x op= e` become plain assignments, string equality
+  uses a chunked content-equality helper (inline against literals of up to 16
+  bytes), local `s += t` appends in place into amortized builder blocks,
+  `charAt`/`charCodeAt` and safe-integer `%` run in the guest without host
+  calls, and the allocator bounds its first free-list scan and grows below a
+  collection threshold. Measured workloads use 1.2× to 15× less fuel (a
+  `x = x + i` loop 6.8×, 3-char string `===` 3.5×, `s = s + "x"` 15×, a
+  100-row list render 5.8×); v37 and earlier keep their bytes and every case
+  program behaves identically under v38. `varta dev --profile-fuel [--json]`
+  runs an instrumented profile build with exact probe refunds and prints self
+  fuel, total fuel and calls of every function, prelude member and compiler
+  helper to stderr; profile builds are never packaged.
+
 - Opt-in v38 (batch: program and data limits, turn budgets, linked
   intrinsics, view protocol and TSX, structural subtyping and code generation
   v2, in development) is registered. It inherits every v37 feature, shares

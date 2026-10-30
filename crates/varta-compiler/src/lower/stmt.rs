@@ -114,7 +114,9 @@ impl Lower<'_> {
             }
             ast::Stmt::Block(block) => S::Block(self.block(&block.stmts, true)?),
             ast::Stmt::Expr(statement) => {
-                if let ast::Expr::Assign(assign) = unparen(&statement.expr) {
+                if let Some(assign) = self.plain_update(&statement.expr) {
+                    self.assignment(&assign)?
+                } else if let ast::Expr::Assign(assign) = unparen(&statement.expr) {
                     self.assignment(assign)?
                 } else {
                     S::Expr(self.expr(&statement.expr)?)
@@ -330,13 +332,86 @@ impl Lower<'_> {
         })
     }
     pub(super) fn expression_statement(&mut self, expression: &ast::Expr) -> Result<Vec<S>> {
-        Ok(vec![
-            if let ast::Expr::Assign(assign) = unparen(expression) {
-                self.assignment(assign)?
-            } else {
-                S::Expr(self.expr(expression)?)
-            },
-        ])
+        Ok(vec![if let Some(assign) = self.plain_update(expression) {
+            self.assignment(&assign)?
+        } else if let ast::Expr::Assign(assign) = unparen(expression) {
+            self.assignment(assign)?
+        } else {
+            S::Expr(self.expr(expression)?)
+        }])
+    }
+    /// V38 (`codegen_v2`): a statement-level `x++`, `x--` or `x op= e` on a
+    /// mutable, initialized Number binding of this function, or `s += e` on
+    /// such a String binding, is the plain assignment `x = x op e`: both read
+    /// the old value before evaluating `e`, and the statement discards the
+    /// expression value. Other targets keep their update lowering.
+    fn plain_update(&self, expression: &ast::Expr) -> Option<ast::AssignExpr> {
+        if !crate::codegen_v2(self.types.profile) {
+            return None;
+        }
+        let (name, op, right, span, compound) = match unparen(expression) {
+            ast::Expr::Update(update) => {
+                let ast::Expr::Ident(name) = unparen(&update.arg) else {
+                    return None;
+                };
+                let op = match update.op {
+                    ast::UpdateOp::PlusPlus => ast::BinaryOp::Add,
+                    ast::UpdateOp::MinusMinus => ast::BinaryOp::Sub,
+                };
+                let one = ast::Expr::Lit(ast::Lit::Num(ast::Number {
+                    span: update.span,
+                    value: 1.0,
+                    raw: None,
+                }));
+                (name.clone(), op, Box::new(one), update.span, false)
+            }
+            ast::Expr::Assign(assign) => {
+                let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(name)) = &assign.left
+                else {
+                    return None;
+                };
+                let op = match assign.op {
+                    ast::AssignOp::AddAssign => ast::BinaryOp::Add,
+                    ast::AssignOp::SubAssign => ast::BinaryOp::Sub,
+                    ast::AssignOp::MulAssign => ast::BinaryOp::Mul,
+                    ast::AssignOp::DivAssign => ast::BinaryOp::Div,
+                    _ => return None,
+                };
+                (name.id.clone(), op, assign.right.clone(), assign.span, true)
+            }
+            _ => return None,
+        };
+        let binding = self
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name.sym.as_ref()))?;
+        let eligible = self.types.profile.closures()
+            && binding.mutable
+            && binding.initialized
+            && !binding.readonly
+            && binding.global.is_none()
+            && binding.tdz.is_none()
+            && binding.identity.0 == self.index
+            && match binding.ty {
+                Some(Type::Float64) => true,
+                Some(Type::String) => compound && op == ast::BinaryOp::Add,
+                _ => false,
+            };
+        eligible.then(|| ast::AssignExpr {
+            span,
+            op: ast::AssignOp::Assign,
+            left: ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(ast::BindingIdent {
+                id: name.clone(),
+                type_ann: None,
+            })),
+            right: Box::new(ast::Expr::Bin(ast::BinExpr {
+                span,
+                op,
+                left: Box::new(ast::Expr::Ident(name)),
+                right,
+            })),
+        })
     }
     fn assignment(&mut self, assign: &ast::AssignExpr) -> Result<S> {
         let statement = self

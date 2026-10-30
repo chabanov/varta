@@ -18,7 +18,15 @@ const BITMAP: u32 = 12;
 const AGAIN: u32 = 0;
 const DONE: u32 = 1;
 const NOT_FOUND: i32 = -1;
-pub(super) fn function(compare: u32, sparse: bool, last: bool, bigint: bool) -> Function {
+/// `compare` is the ordering helper (equal at 0) or, with `equals`, the v38
+/// equality helper (equal at 1).
+pub(super) fn function(
+    compare: u32,
+    equals: bool,
+    sparse: bool,
+    last: bool,
+    bigint: bool,
+) -> Function {
     let mut f = Function::new([
         (6, ValType::I32),
         (1, ValType::I64),
@@ -113,7 +121,7 @@ pub(super) fn function(compare: u32, sparse: bool, last: bool, bigint: bool) -> 
             I::If(BlockType::Empty),
         ],
     );
-    equal(&mut f, compare, bigint);
+    equal(&mut f, compare, equals, bigint);
     instructions(
         &mut f,
         [
@@ -268,7 +276,7 @@ fn resolve(f: &mut Function, kind: u32, payload: u32) {
         ],
     );
 }
-fn equal(f: &mut Function, compare: u32, bigint: bool) {
+fn equal(f: &mut Function, compare: u32, equals: bool, bigint: bool) {
     instructions(
         f,
         [
@@ -319,7 +327,14 @@ fn equal(f: &mut Function, compare: u32, bigint: bool) {
             I::LocalGet(VALUE),
             I::LocalGet(NEEDLE),
             I::Call(compare),
-            I::I32Eqz,
+        ],
+    );
+    if !equals {
+        f.instruction(&I::I32Eqz);
+    }
+    instructions(
+        f,
+        [
             I::Else,
             I::LocalGet(VALUE),
             I::LocalGet(NEEDLE),

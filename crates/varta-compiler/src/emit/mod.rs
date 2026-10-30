@@ -10,6 +10,7 @@ mod expr;
 mod finally;
 mod frame_slots;
 mod frames;
+mod fuel_profile;
 mod function_catalog;
 mod functions;
 mod labels;
@@ -21,11 +22,13 @@ mod numbers;
 mod object_enumeration;
 mod patterns;
 mod primitive_builtins;
+mod quiet;
 mod records;
 mod repeat;
 mod roots;
 mod schemas;
 mod shared_members;
+mod string_builder;
 mod strings;
 mod unions;
 use crate::{
@@ -112,9 +115,32 @@ struct Emitter<'a> {
     /// members, and the descriptor shapes that identify each record or class
     /// member (`shared_members`).
     shared: &'a SharedMembers,
+    /// V38 (`codegen_v2`): emitting a quiet subtree (`quiet`).
+    quiet_mode: bool,
+    /// V38 (`codegen_v2`): builder bindings and their `(tail, cap)` locals
+    /// (`string_builder`).
+    builders: BTreeMap<u32, (u32, u32)>,
 }
 
 pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
+    emit_named(program, None)
+}
+
+/// A fuel-profile build: the emitted module with probes and function names
+/// (`fuel_profile`).
+pub(crate) fn emit_profiled(program: &ir::Program) -> Result<Vec<u8>> {
+    let mut names = Vec::new();
+    let module = emit_named(program, Some(&mut names))?;
+    fuel_profile::instrument(&module, &names)
+}
+
+/// `names`, when present, receives one label per code-section body.
+fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Result<Vec<u8>> {
+    let mut name = |label: &dyn Fn() -> String| {
+        if let Some(names) = names.as_deref_mut() {
+            names.push(label());
+        }
+    };
     let collected = collect::Collected::gather(program);
     let reserved_roots = if program.types.profile.exceptions() {
         varta_common::exceptions::RESERVED_ROOT_BYTES
@@ -441,17 +467,23 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         },
         &wasm_encoder::ConstExpr::i32_const(0),
     );
+    let collect_policy = crate::codegen_v2(program.types.profile);
     let memory_globals = strings::Globals {
         heap: globals.len(),
         free: globals.len() + 1,
         roots: globals.len() + 2,
+        collect_at: collect_policy.then_some(globals.len() + 3),
     };
     if needs_arena {
         for initial in [
             varta_common::abi::OWNED_STRING_BASE,
             0,
             varta_common::abi::STRING_ROOT_BASE + reserved_roots,
-        ] {
+        ]
+        .into_iter()
+        // V38: no growth without a collection until the first one.
+        .chain(collect_policy.then_some(varta_common::abi::OWNED_STRING_BASE))
+        {
             globals.global(
                 wasm_encoder::GlobalType {
                     val_type: ValType::I32,
@@ -663,6 +695,23 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
                 (*slot, physical)
             })
             .collect();
+        // V38 builder bindings own two i32 locals after the cells.
+        let builders: BTreeMap<_, _> = if crate::codegen_v2(program.types.profile)
+            && needs_arena
+            && !program.suspendable.contains_key(&index)
+        {
+            string_builder::candidates(function)
+                .into_iter()
+                .map(|slot| {
+                    let locals = (temporary, temporary + 1);
+                    temporary += 2;
+                    (slot, locals)
+                })
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+        let builder_locals = 2 * builders.len();
         let mut emitter = Emitter {
             binary64: program.types.profile.binary64(),
             profile: program.types.profile,
@@ -722,6 +771,8 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             frame_resources,
             promises: &program.types.promises,
             shared: &shared,
+            quiet_mode: false,
+            builders,
         };
         let frame_layout = frame_layouts.iter().find(|layout| layout.function == index);
         if let (Some(layout), Some(resources)) = (frame_layout, frame_resources) {
@@ -740,6 +791,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             .copied()
             .flat_map(wasm_types)
             .chain(std::iter::repeat_n(ValType::I64, function.cells.len()))
+            .chain(std::iter::repeat_n(ValType::I32, builder_locals))
             .chain([ValType::I32, ValType::I64, ValType::F64])
             .chain(std::iter::repeat_n(
                 ValType::I32,
@@ -764,6 +816,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
             ));
         }
         code.function(&body);
+        name(&|| function.source.label(function.span));
         if let Some(layout) = frame_layout {
             let resume = frames::Resume {
                 layout,
@@ -773,18 +826,26 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
         }
     }
     for helper in helpers.keys() {
+        name(&|| format!("<helper {helper:?}>"));
         code.function(&helper.body(
             memory_globals,
             &helpers,
             trace_values,
             program.types.profile,
             frame_resources.is_some(),
+            strings::Linked {
+                ascii: offsets.get(&strings::ascii_units()).copied(),
+                remainder: hosts.get(&Host::FloatRemainder).copied(),
+            },
         ));
     }
-    for body in &resume_code {
+    for (body, layout) in resume_code.iter().zip(&frame_layouts) {
+        let function = &program.functions[layout.function];
+        name(&|| format!("<resume {}>", function.source.label(function.span)));
         code.function(body);
     }
     if let (Some(resources), Some(exceptions)) = (frame_resources, exception_globals) {
+        name(&|| "<frame dispatcher>".into());
         code.function(&frames::dispatcher(&frames::Dispatch {
             layouts: &frame_layouts,
             machines: &program.suspendable,
@@ -797,6 +858,7 @@ pub(crate) fn emit(program: &ir::Program) -> Result<Vec<u8>> {
     }
     if let Some(exceptions) = exception_globals {
         for id in 0..generator_types as u32 {
+            name(&|| format!("<generator step {id}>"));
             code.function(&frames::step_function(
                 id,
                 &frame_layouts,
@@ -987,6 +1049,27 @@ impl Emitter<'_> {
     }
     fn statements(&mut self, statements: &[S]) -> Result<()> {
         for statement in statements {
+            // V38: a quiet leaf statement is emitted without expression root
+            // marks, operand roots or a temporary reset (`quiet`).
+            let quiet = self.codegen_v2()
+                && !self.quiet_mode
+                && self.memory.is_some()
+                && matches!(
+                    statement,
+                    S::Init(..) | S::Set(..) | S::Expr(_) | S::SetField(..)
+                )
+                && self.quiet_statement(statement);
+            self.quiet_mode |= quiet;
+            let emitted = self.statement(statement);
+            if quiet {
+                self.quiet_mode = false;
+            }
+            emitted?;
+        }
+        Ok(())
+    }
+    fn statement(&mut self, statement: &S) -> Result<()> {
+        {
             match statement {
                 S::Trap => self.code.push(I::Unreachable),
                 S::InitModuleConstant(index, value) => {
@@ -1057,7 +1140,7 @@ impl Emitter<'_> {
                     if self.profile.array_mutations() {
                         self.array_set_index(array, index, value, *slots)?;
                         self.end_temporaries();
-                        continue;
+                        return Ok(());
                     }
                     self.expr(array)?;
                     self.index(index)?;
@@ -1097,12 +1180,20 @@ impl Emitter<'_> {
                     if self.profile.missing() {
                         self.mark_present(object.ty, *index);
                     }
-                    self.end_temporaries();
+                    self.end_statement();
                 }
                 S::Init(slot, value) | S::Set(slot, value) => {
-                    self.expr(value)?;
-                    self.write_binding(*slot, value.ty, matches!(statement, S::Init(..)))?;
-                    self.end_temporaries();
+                    let initialize = matches!(statement, S::Init(..));
+                    if initialize && self.cell_slots.contains_key(slot) {
+                        // The new cell is allocated after the value is evaluated.
+                        self.expr(value)?;
+                    } else if !initialize && self.string_builder(*slot, value)? {
+                        return Ok(());
+                    } else {
+                        self.expr_unrooted(value)?;
+                    }
+                    self.write_binding(*slot, value.ty, initialize)?;
+                    self.end_statement();
                 }
                 S::Rebind(slots) => {
                     for slot in slots {
@@ -1123,11 +1214,11 @@ impl Emitter<'_> {
                     }
                 }
                 S::Expr(value) => {
-                    self.expr(value)?;
+                    self.expr_unrooted(value)?;
                     for _ in 0..value.ty.width() {
                         self.code.push(I::Drop);
                     }
-                    self.end_temporaries();
+                    self.end_statement();
                 }
                 S::Return(value) => {
                     if let Some(value) = value {
@@ -1143,8 +1234,7 @@ impl Emitter<'_> {
                     self.scopes.pop();
                 }
                 S::If(test, yes, no) => {
-                    self.expr(test)?;
-                    self.truthy(test.ty);
+                    self.test(test)?;
                     self.push_label(I::If(BlockType::Empty), false, false);
                     self.statements(yes)?;
                     if !no.is_empty() {
@@ -1163,8 +1253,7 @@ impl Emitter<'_> {
                     self.bind_continues(&names, continuing);
                     self.statements(body)?;
                     self.end();
-                    self.expr(test)?;
-                    self.truthy(test.ty);
+                    self.test(test)?;
                     self.end_temporaries();
                     self.code.push(I::BrIf(self.depth(again)));
                     self.end();
@@ -1176,8 +1265,7 @@ impl Emitter<'_> {
                     self.push_label(I::Block(BlockType::Empty), true, false);
                     let again = self.push_label(I::Loop(BlockType::Empty), false, true);
                     self.bind_continues(&names, again);
-                    self.expr(test)?;
-                    self.truthy(test.ty);
+                    self.test(test)?;
                     self.code.push(I::I32Eqz);
                     self.code.push(I::BrIf(self.target(false)?));
                     self.statements(body)?;
@@ -1192,8 +1280,7 @@ impl Emitter<'_> {
                     self.push_label(I::Block(BlockType::Empty), true, false);
                     let again = self.push_label(I::Loop(BlockType::Empty), false, false);
                     if let Some(test) = test {
-                        self.expr(test)?;
-                        self.truthy(test.ty);
+                        self.test(test)?;
                         self.code.push(I::I32Eqz);
                         self.code.push(I::BrIf(self.target(false)?));
                     }
@@ -1254,6 +1341,11 @@ impl Emitter<'_> {
                     self.code
                         .push(I::LocalSet(self.local_slots[*selected as usize]));
                     self.code.push(I::End);
+                    if self.codegen_v2() {
+                        // Case bodies start without the discriminant and case
+                        // test roots, so quiet bodies cannot accumulate them.
+                        self.end_temporaries();
+                    }
                     self.push_label(I::Block(BlockType::Empty), true, false);
                     for (index, (_, body)) in cases.iter().enumerate() {
                         self.code

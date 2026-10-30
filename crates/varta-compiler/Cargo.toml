@@ -8,7 +8,9 @@ license.workspace = true
 varta-bigint = { path = "../varta-bigint" }
 varta-common = { path = "../varta-common" }
 thiserror.workspace = true
-wasm-encoder.workspace = true
+# `wasmparser` enables `reencode` for fuel-profile instrumentation; it adds
+# no crate (wasmparser is already a dependency).
+wasm-encoder = { workspace = true, features = ["wasmparser"] }
 wasmparser.workspace = true
 swc_common = "26.0.0"
 swc_ecma_parser = "46.1.2"
@@ -20,6 +22,10 @@ swc_ecma_visit = "=29.0.0"
 # to other crates' tests (runtime admission). Production dependents never
 # enable it, and it is inert unless a test enables the hook on its thread.
 suspension-test-hook = []
+# Test-only: emit every profile with the v38 code generator (`codegen_v2`) so
+# the existing runtime suites run against it. Changes the bytes of earlier
+# profiles; production dependents never enable it.
+codegen-v2-all-profiles = []
 
 [dev-dependencies]
 # Suspension-foundation tests drive frames and the dispatcher directly.
