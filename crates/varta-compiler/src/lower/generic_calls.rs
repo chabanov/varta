@@ -456,7 +456,7 @@ impl Lower<'_> {
         }
         let function = generics::function(self.types, id);
         let inferred = call.type_args.is_none();
-        let (args, mut values) = if let Some(explicit) = &call.type_args {
+        let (args, values) = if let Some(explicit) = &call.type_args {
             let explicit = generics::arguments(explicit, self.types)
                 .map_err(|e| self.source.locate(e, explicit.span))?;
             (explicit.into_iter().map(Some).collect(), Vec::new())
@@ -465,6 +465,27 @@ impl Lower<'_> {
         };
         let signature = generics::instantiate(id, &args, self.next_function, self.types)
             .map_err(|e| self.source.locate(e, span))?;
+        // An object literal typed on its own while it determined the value
+        // type of a `Record<string, T>` parameter (v35) is copied into the
+        // instantiated dictionary, keeping its key order.
+        let values = self.instance_arguments(call, values, &signature)?;
+        let args = self.bind_instance_arguments(values, &signature, &function, inferred, span)?;
+        Ok(Expr {
+            span,
+            ty: signature.result,
+            kind: E::Call(signature.index, args),
+        })
+    }
+    /// Lower the arguments the inference left unlowered against the
+    /// instantiated parameters and bind them; v35 dictionary parameters copy
+    /// an object literal typed on its own.
+    pub(super) fn instance_arguments(
+        &mut self,
+        call: &ast::CallExpr,
+        mut values: Vec<Expr>,
+        signature: &Signature,
+    ) -> Result<Vec<Expr>> {
+        let span = call.span;
         arguments::count(call.args.len(), &signature.shape)
             .map_err(|e| self.source.locate(e, span))?;
         for (index, arg) in call.args.iter().enumerate().skip(values.len()) {
@@ -472,9 +493,6 @@ impl Lower<'_> {
                 arguments::context(index, &signature.params, &signature.shape, self.types);
             values.push(self.expr_expected(&arg.expr, context)?);
         }
-        // An object literal typed on its own while it determined the value
-        // type of a `Record<string, T>` parameter (v35) is copied into the
-        // instantiated dictionary, keeping its key order.
         if self.types.profile.mixed_index_records() {
             for (value, &param) in values.iter_mut().zip(&signature.params) {
                 if matches!(param, Type::Dictionary(_)) && matches!(value.ty, Type::Record(_)) {
@@ -490,31 +508,37 @@ impl Lower<'_> {
                 }
             }
         }
-        let args = self
-            .bind_arguments(values, &signature.params, &signature.shape, span)
+        Ok(values)
+    }
+    /// Bind instantiated arguments; when the type arguments were inferred, a
+    /// mismatch says so.
+    pub(super) fn bind_instance_arguments(
+        &mut self,
+        values: Vec<Expr>,
+        signature: &Signature,
+        function: &generics::Function,
+        inferred: bool,
+        span: swc_common::Span,
+    ) -> Result<Vec<Expr>> {
+        self.bind_arguments(values, &signature.params, &signature.shape, span)
             .map_err(|error| match error.diagnostic() {
                 // An argument typed on its own (without context) fixed the
                 // instantiation; say so instead of only reporting the mismatch.
                 Some(diagnostic) if inferred => self.source.locate(
                     type_error(format!(
-                        "{} (type arguments of function {} were inferred from the arguments \
+                        "{} (type arguments of {} {} were inferred from the arguments \
                          without contextual typing; provide explicit type arguments)",
-                        diagnostic.message, function.name
+                        diagnostic.message, function.kind, function.name
                     )),
                     span,
                 ),
                 _ => error,
-            })?;
-        Ok(Expr {
-            span,
-            ty: signature.result,
-            kind: E::Call(signature.index, args),
-        })
+            })
     }
     /// Lower every argument in source order: against its parameter type when
     /// that type is already determined, otherwise on its own (or against the
     /// constraint of a bare type parameter) and unify the result.
-    fn infer(
+    pub(super) fn infer(
         &mut self,
         function: &generics::Function,
         call: &ast::CallExpr,
@@ -522,7 +546,7 @@ impl Lower<'_> {
     ) -> Result<(Vec<Option<Type>>, Vec<Expr>)> {
         let mut inference = Inference {
             module: function.module,
-            owner: format!("function {}", function.name),
+            owner: format!("{} {}", function.kind, function.name),
             names: function
                 .params
                 .params

@@ -21,6 +21,9 @@ pub(super) type Frame = BTreeMap<String, Type>;
 /// list, lowered once per instantiation in its defining module.
 pub(super) struct Function {
     pub(super) module: usize,
+    /// `function` for a top-level function, `method` for a generic class
+    /// method (v37 `class_generics`); diagnostics name the declaration so.
+    pub(super) kind: &'static str,
     pub(super) name: String,
     pub(super) declaration: ast::FnDecl,
     pub(super) params: ast::TsTypeParamDecl,
@@ -269,6 +272,7 @@ pub(super) fn declare(
     }
     types.generics.functions.push(Rc::new(Function {
         module,
+        kind: "function",
         name,
         declaration: stripped,
         params: *params,
@@ -277,7 +281,7 @@ pub(super) fn declare(
     Ok(())
 }
 
-fn explicit_any(declaration: &ast::FnDecl) -> Option<swc_common::Span> {
+pub(super) fn explicit_any(declaration: &ast::FnDecl) -> Option<swc_common::Span> {
     use swc_ecma_visit::{Visit, VisitWith};
     struct Any(Option<swc_common::Span>);
     impl Visit for Any {
@@ -337,6 +341,11 @@ pub(super) fn function(types: &ir::ValueTypes, id: usize) -> Rc<Function> {
     Rc::clone(&types.generics.functions[id])
 }
 
+/// The instantiation depth of the body being lowered (0 outside instances).
+pub(super) fn depth(types: &ir::ValueTypes) -> usize {
+    types.generics.depth
+}
+
 /// Signature of the instantiation of generic function `id` with `args`
 /// (missing entries use defaults), allocating its function slot on first use.
 pub(super) fn instantiate(
@@ -360,7 +369,7 @@ fn instance(
     next_function: &mut usize,
     types: &mut ir::ValueTypes,
 ) -> Result<Signature> {
-    let what = format!("function {}", function.name);
+    let what = format!("{} {}", function.kind, function.name);
     let frame = bind(
         &function.params,
         args,
@@ -423,7 +432,42 @@ pub(super) fn bodies(
 ) -> Result<()> {
     let (generated, next, call_effects) = synthesized;
     let empty = module_constants::Scope::new();
-    while let Some(key) = types.generics.pending.pop_front() {
+    loop {
+        // Generic method instances (v37 `class_generics`) and function
+        // instances may request each other; lower both queues to a fixpoint.
+        let Some(key) = types.generics.pending.pop_front() else {
+            // Generic class instance members (v37) are lowered in the
+            // template's module with the instance's type arguments.
+            if let Some(member) = classes::next_member(types) {
+                let path = &graph.order[member.module];
+                let visible = constants.get(path).unwrap_or(&empty);
+                let index = member.index;
+                let body = classes::member_body(
+                    member,
+                    (&scopes[path], visible),
+                    entry,
+                    types,
+                    (&mut *generated, &mut *next, &mut *call_effects),
+                );
+                generated.insert(index, body?);
+                continue;
+            }
+            let Some(method) = classes::next_generic_method(types) else {
+                break;
+            };
+            let path = &graph.order[method.module];
+            let visible = constants.get(path).unwrap_or(&empty);
+            let index = method.signature.index;
+            let body = classes::generic_method_body(
+                method,
+                (&scopes[path], visible),
+                entry,
+                types,
+                (&mut *generated, &mut *next, &mut *call_effects),
+            );
+            generated.insert(index, body?);
+            continue;
+        };
         let instance = types.generics.instances[&key].clone();
         let function = function(types, key.0);
         let path = &graph.order[function.module];
@@ -444,5 +488,20 @@ pub(super) fn bodies(
         types.generics.depth = 0;
         generated.insert(instance.signature.index, body?);
     }
-    Ok(())
+    if types.profile.class_generics() {
+        classes::late_dispatch_bodies(types, generated)?;
+    }
+    classes::generic_dispatch_bodies(types, generated)
+}
+
+/// Run `lower` with the instantiation depth of a generic body.
+pub(super) fn at_depth<R>(
+    types: &mut ir::ValueTypes,
+    depth: usize,
+    lower: impl FnOnce(&mut ir::ValueTypes) -> R,
+) -> R {
+    types.generics.depth = depth;
+    let result = lower(types);
+    types.generics.depth = 0;
+    result
 }

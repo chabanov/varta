@@ -78,6 +78,7 @@ const SLEEP: &str = include_str!("language_core_cases/sleep.ts");
 const DEFERRED: &str = include_str!("language_core_cases/deferred.ts");
 const DENSE: &str = include_str!("language_core_cases/dense.ts");
 const DENSE_DEVIATIONS: &str = include_str!("language_core_cases/dense_deviations.ts");
+const OPTIONAL_INDEX: &str = include_str!("language_core_cases/optional_index.ts");
 const SWITCHES: &str = include_str!("language_core_cases/switches.ts");
 const VOID_FUNCTIONS: &str = include_str!("language_core_cases/void_functions.ts");
 const PATHS: &str = include_str!("language_core_cases/paths.ts");
@@ -153,6 +154,16 @@ fn dense_element_reads_match_node() {
             "lit!",
             "eral!",
         ],
+    );
+}
+
+#[test]
+fn index_reads_in_undefined_contexts_match_node() {
+    // A `T | undefined` return, parameter or binding and the left operand of
+    // `??` read holes and missing indices as `undefined` without a check.
+    run(
+        OPTIONAL_INDEX,
+        &["undefined a", "undefined -1 1", "none b z", "3 0"],
     );
 }
 

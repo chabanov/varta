@@ -14907,3 +14907,80 @@ fn property_deletion_v30_runs_modules_and_source_free_artifacts() {
         );
     }
 }
+
+#[test]
+fn pilot_profile_v37_runs_class_generics_in_dev_and_artifacts() {
+    // The pilot's transport across two modules: a generic page class, a
+    // client with `#private` state and a generic async `request<T>` whose
+    // `T` comes from the resource method's declared `Promise<R>`, an
+    // interface with method signatures satisfied by an object literal, and
+    // `implements`; no capability is granted.
+    let project = RegressionProject::new(
+        "import {Client,Page} from './client.ts';import type {Body} from './client.ts';\
+         class Users{readonly client:Client;constructor(client:Client){this.client=client;}\
+         list():Promise<Page<string>>{return this.client.request('/users',(t:string):Page<string>=>new Page([t,t+'!']));}}\
+         export async function main():Promise<void>{\
+         const client=new Client(async(path:string):Promise<Body>=>({async text():Promise<string>{return path;}}));\
+         const page=await new Users(client).list();const sizes=page.map((s:string):number=>s.length);\
+         console.log(`${page.size()} ${sizes.items[1]} ${client.calls} ${client.has(client)}`);}",
+        serde_json::json!({}),
+    );
+    fs::write(
+        project.0.join("src/client.ts"),
+        "export interface Body{text():Promise<string>;close?():void}\
+         interface Sized{size():number}\
+         export class Page<T> implements Sized{items:T[];constructor(items:T[]){this.items=items;}\
+         size():number{return this.items.length;}\
+         map<U>(f:(item:T)=>U):Page<U>{const out:U[]=[];for(let i=0;i<this.items.length;i++){out.push(f(this.items[i]!));}return new Page(out);}}\
+         export class Client{#calls=0;readonly #fetch:(path:string)=>Promise<Body>;\
+         constructor(fetch:(path:string)=>Promise<Body>){this.#fetch=fetch;}\
+         async request<T>(path:string,decode:(text:string)=>T):Promise<T>{this.#calls+=1;\
+         const body=await this.#fetch(path);const text=await body.text();body.close?.();return decode(text);}\
+         get calls():number{return this.#calls;}\
+         has(value:Client):boolean{return #calls in value;}}",
+    )
+    .unwrap();
+    project.language_profile("checked-f64-utf16-v37");
+    let expected = ["varta log: 2 7 1 true"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    fs::remove_dir_all(project.0.join("src")).unwrap();
+    fs::remove_file(project.0.join("varta.config.json")).unwrap();
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+}
+
+#[test]
+fn class_generics_stay_rejected_by_v36_projects() {
+    let project = RegressionProject::new(
+        "class Page<T>{items:T[]=[];}export function main():void{const p=new Page<number>();}",
+        serde_json::json!({}),
+    );
+    project.language_profile("checked-f64-utf16-v36");
+    let dev = project.command(&["dev"]);
+    assert!(!dev.status.success());
+    let text = combined(&dev);
+    assert!(text.contains("unsupported generic class"), "{text}");
+    assert!(!text.contains("varta log:"), "{text}");
+}

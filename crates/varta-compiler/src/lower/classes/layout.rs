@@ -10,8 +10,12 @@ pub(in crate::lower) fn layout_module(
     types: &mut ir::ValueTypes,
     next: &mut usize,
 ) -> Result<()> {
+    // Generic class instances (v37) are laid out when they are created.
     let ids: Vec<u32> = (0..types.classes.list.len() as u32)
-        .filter(|id| types.classes.list[*id as usize].module == module)
+        .filter(|id| {
+            let class = &types.classes.list[*id as usize];
+            class.module == module && class.template.is_none()
+        })
         .collect();
     for id in ids {
         let class = &types.classes.list[id as usize];
@@ -21,12 +25,15 @@ pub(in crate::lower) fn layout_module(
                 class.span,
             ));
         }
-        layout(id, types, next)?;
+        layout(id, types, Some(&mut *next))?;
     }
     Ok(())
 }
 
-fn layout(id: u32, types: &mut ir::ValueTypes, next: &mut usize) -> Result<()> {
+/// Lay out one class. `next` allocates the member functions of declared
+/// classes; it is `None` only once every declared class is laid out (generic
+/// class instances never allocate here, see [`generic_classes::materialize`]).
+pub(super) fn layout(id: u32, types: &mut ir::ValueTypes, next: Option<&mut usize>) -> Result<()> {
     let class = &types.classes.list[id as usize];
     match class.state {
         State::Ready => return Ok(()),
@@ -43,24 +50,60 @@ fn layout(id: u32, types: &mut ir::ValueTypes, next: &mut usize) -> Result<()> {
     types.classes.list[id as usize].state = State::Laying;
     let caller = named::current(types);
     named::enter(types, module);
-    let result = layout_members(id, &declaration, &source, types, next);
+    let frame = types.classes.list[id as usize].frame.clone();
+    let result = if types.classes.list[id as usize].template.is_some() {
+        generics::with_frame(types, frame, |types| {
+            layout_members(id, &declaration, &source, types, next)
+        })
+    } else {
+        layout_members(id, &declaration, &source, types, next)
+    };
     named::enter(types, caller);
     result?;
     types.classes.list[id as usize].state = State::Ready;
     Ok(())
 }
 
-fn check_class_header(class: &ast::Class) -> Result<()> {
+/// The function index of a member: allocated now for a declared class, and
+/// left for [`generic_classes::materialize`] for a generic class instance.
+fn allocate(
+    types: &mut ir::ValueTypes,
+    next: Option<&mut usize>,
+    id: u32,
+    member: Member,
+) -> Result<usize> {
+    if types.classes.list[id as usize].template.is_some() {
+        types.classes.list[id as usize].unallocated.push(member);
+        return Ok(generic_classes::UNALLOCATED);
+    }
+    let next = next.ok_or_else(|| CompilerError::Internal("class layout without slots".into()))?;
+    types.classes.allocate(next, id, member)
+}
+
+/// A subclass may not redeclare an inherited private name: in JavaScript the
+/// two would be distinct members, which one shared table cannot represent.
+fn private_shadow(name: &str, source: &Source, span: Span) -> CompilerError {
+    source.locate(
+        unsupported(&format!("#private name {name} redeclared by a subclass")),
+        span,
+    )
+}
+
+fn check_class_header(class: &ast::Class, types: &ir::ValueTypes) -> Result<()> {
     if !class.decorators.is_empty() {
         return Err(unsupported("class decorator"));
     }
-    if class.type_params.is_some() || class.super_type_params.is_some() {
+    // Generic classes and generic bases (v37) are instantiated per argument list.
+    if !types.profile.class_generics()
+        && (class.type_params.is_some() || class.super_type_params.is_some())
+    {
         return Err(unsupported("generic class"));
     }
     if class.is_abstract {
         return Err(unsupported("abstract class"));
     }
-    if !class.implements.is_empty() {
+    // `implements` is a checked conformance (v37 `class_generics`).
+    if !class.implements.is_empty() && !types.profile.class_generics() {
         return Err(unsupported("class implements clause"));
     }
     Ok(())
@@ -70,7 +113,7 @@ fn parent_class(
     class: &ast::Class,
     source: &Source,
     types: &mut ir::ValueTypes,
-    next: &mut usize,
+    next: Option<&mut usize>,
 ) -> Result<Option<u32>> {
     let Some(parent) = &class.super_class else {
         return Ok(None);
@@ -79,6 +122,13 @@ fn parent_class(
         return Err(source.locate(unsupported("class extends expression"), parent.span()));
     };
     if let Some(parent) = named::class(types, name.sym.as_ref()) {
+        // `extends Base<A>` or a generic base with defaults (v37).
+        let parent = if types.classes.get(parent).is_template() || class.super_type_params.is_some()
+        {
+            generic_classes::base(parent, class, source, types)?
+        } else {
+            parent
+        };
         layout(parent, types, next)?;
         return Ok(Some(parent));
     }
@@ -99,10 +149,14 @@ fn layout_members(
     class: &ast::Class,
     source: &Source,
     types: &mut ir::ValueTypes,
-    next: &mut usize,
+    mut next: Option<&mut usize>,
 ) -> Result<()> {
-    check_class_header(class).map_err(|e| source.locate(e, class.span))?;
-    let parent = parent_class(class, source, types, next)?;
+    check_class_header(class, types).map_err(|e| source.locate(e, class.span))?;
+    if types.classes.list[id as usize].is_template() {
+        return generic_classes::layout_template(id, class, source, types, next);
+    }
+    let instance = types.classes.list[id as usize].template.is_some();
+    let parent = parent_class(class, source, types, next.as_deref_mut())?;
     let (mut fields, mut methods, mut statics) = match parent {
         Some(parent) => {
             let parent = &types.classes.list[parent as usize];
@@ -114,6 +168,16 @@ fn layout_members(
         }
         None => (Vec::new(), BTreeMap::new(), BTreeMap::new()),
     };
+    let mut generic = match parent {
+        Some(parent) => {
+            let parent = &types.classes.list[parent as usize];
+            (
+                parent.generic_methods.clone(),
+                parent.generic_statics.clone(),
+            )
+        }
+        None => Default::default(),
+    };
     let mut initializers = Vec::new();
     let mut constructor = None;
     for member in &class.body {
@@ -121,6 +185,9 @@ fn layout_members(
             ast::ClassMember::ClassProp(property) => {
                 let (field, initializer) =
                     field(id, property, types).map_err(|e| source.locate(e, property.span))?;
+                if is_private_name(&field.name) && fields.iter().any(|f| f.name == field.name) {
+                    return Err(private_shadow(&field.name, source, property.span));
+                }
                 if types.profile.mixed_index_records()
                     && let Some(inherited) = fields
                         .iter_mut()
@@ -141,7 +208,9 @@ fn layout_members(
                 if property.declare {
                     return Err(source.locate(unsupported("ambient class field"), property.span));
                 }
-                if fields.iter().any(|f| f.name == field.name) || methods.contains_key(&field.name)
+                if fields.iter().any(|f| f.name == field.name)
+                    || methods.contains_key(&field.name)
+                    || generic.0.contains_key(&field.name)
                 {
                     return Err(source.locate(
                         invalid(format!("duplicate class member: {}", field.name)),
@@ -162,27 +231,104 @@ fn layout_members(
                 }
                 fields.push(field);
             }
+            // Generic methods (v37) are instantiated per type-argument list.
+            ast::ClassMember::Method(method)
+                if method.function.type_params.is_some() && types.profile.class_generics() =>
+            {
+                if instance
+                    && !method.is_static
+                    && generic
+                        .0
+                        .contains_key(&member_name(&method.key).unwrap_or_default())
+                {
+                    let name = member_name(&method.key).unwrap_or_default();
+                    return Err(generic_classes::override_rejected(
+                        id,
+                        &name,
+                        source,
+                        method.span,
+                        types,
+                    ));
+                }
+                if instance && method.is_static {
+                    continue;
+                }
+                let (name, entry) = generic_methods::declare(id, method, &generic, source, types)?;
+                let owner = if entry.is_static {
+                    statics.get(&name).map(|m| m.owner)
+                } else {
+                    fields
+                        .iter()
+                        .find(|f| f.name == name)
+                        .map(|f| f.owner)
+                        .or_else(|| methods.get(&name).map(|m| m.owner))
+                };
+                match owner {
+                    Some(owner) if owner == id => {
+                        return Err(source.locate(
+                            invalid(format!("duplicate class member: {name}")),
+                            method.span,
+                        ));
+                    }
+                    Some(_) => {
+                        return Err(source.locate(
+                            type_error(format!(
+                                "override of {name} must keep the inherited method signature"
+                            )),
+                            method.key.span(),
+                        ));
+                    }
+                    None => {}
+                }
+                if entry.is_static {
+                    generic.1.insert(name, Rc::new(entry));
+                } else {
+                    types.classes.method_names.insert(name.clone());
+                    generic.0.insert(name, Rc::new(entry));
+                }
+            }
+            // Static members belong to the template of a generic class (v37).
+            ast::ClassMember::Method(method) if method.is_static && instance => {}
             ast::ClassMember::Method(method) if method.is_static => {
                 let (name, mut entry) = static_method(id, method, &statics, source, types)?;
-                entry.signature.index = types
-                    .classes
-                    .allocate(next, id, Member::Static(name.clone()))
-                    .map_err(|e| source.locate(e, method.span))?;
+                if let Some(other) = generic.1.get(&name) {
+                    return Err(generic_methods::collision(id, other, &name, method, source));
+                }
+                entry.signature.index =
+                    allocate(types, next.as_deref_mut(), id, Member::Static(name.clone()))
+                        .map_err(|e| source.locate(e, method.span))?;
                 statics.insert(name, entry);
             }
             ast::ClassMember::Method(method) => {
+                if let Ok(name) = member_name(&method.key)
+                    && is_private_name(&name)
+                    && methods.get(&name).is_some_and(|m| m.owner != id)
+                {
+                    return Err(private_shadow(&name, source, method.span));
+                }
                 let (name, entry) = self::method(id, method, &methods, source, types)?;
+                if let Some(other) = generic.0.get(&name) {
+                    return Err(generic_methods::collision(id, other, &name, method, source));
+                }
                 if fields.iter().any(|f| f.name == name) {
                     return Err(source.locate(
                         invalid(format!("duplicate class member: {name}")),
                         method.span,
                     ));
                 }
+                if instance && methods.contains_key(&name) {
+                    return Err(generic_classes::override_rejected(
+                        id,
+                        &name,
+                        source,
+                        method.span,
+                        types,
+                    ));
+                }
                 let mut entry = entry;
-                entry.signature.index = types
-                    .classes
-                    .allocate(next, id, Member::Method(name.clone()))
-                    .map_err(|e| source.locate(e, method.span))?;
+                entry.signature.index =
+                    allocate(types, next.as_deref_mut(), id, Member::Method(name.clone()))
+                        .map_err(|e| source.locate(e, method.span))?;
                 types.classes.method_names.insert(name.clone());
                 methods.insert(name, entry);
             }
@@ -217,10 +363,8 @@ fn layout_members(
     }
     let init = initializer(id, constructor, parent, source, types)?;
     let mut init = init;
-    init.index = types
-        .classes
-        .allocate(next, id, Member::Init)
-        .map_err(|e| source.locate(e, class.span))?;
+    init.index =
+        allocate(types, next, id, Member::Init).map_err(|e| source.locate(e, class.span))?;
     if types.records.len() >= MAX_RECORD_SHAPES {
         return Err(source.locate(invalid("object shape count exceeds limit"), class.span));
     }
@@ -242,9 +386,10 @@ fn layout_members(
     entry.fields = fields;
     entry.methods = methods;
     entry.statics = statics;
+    (entry.generic_methods, entry.generic_statics) = generic;
     entry.init = Some(init);
     entry.initializers = initializers;
-    Ok(())
+    implements::check(id, class, source, types)
 }
 
 fn field(
@@ -280,9 +425,15 @@ fn field(
         None => property
             .value
             .as_deref()
-            .and_then(|value| {
-                parameters::literal(value, types).or_else(|| constructed(value, types))
+            .and_then(|value| parameters::literal(value, types))
+            .map(Ok)
+            .or_else(|| {
+                property
+                    .value
+                    .as_deref()
+                    .and_then(|value| constructed_type(value, types).transpose())
             })
+            .transpose()?
             .ok_or_else(|| {
                 invalid(format!(
                     "class field {name} requires a type annotation or a literal initializer"
@@ -314,6 +465,36 @@ fn field(
         },
         property.value.clone(),
     ))
+}
+
+/// The class type of a `new C(...)` (or `new C<A>(...)`) field initializer
+/// (v37 `class_generics`, as in the pilot's `#controller = new
+/// AbortController()`); a generic class needs explicit type arguments here.
+fn constructed_type(value: &ast::Expr, types: &mut ir::ValueTypes) -> Result<Option<Type>> {
+    if !types.profile.class_generics() {
+        return Ok(None);
+    }
+    let ast::Expr::New(new) = stmt::unparen(value) else {
+        return Ok(None);
+    };
+    let ast::Expr::Ident(name) = &*new.callee else {
+        return Ok(None);
+    };
+    let Some(class) = named::class(types, name.sym.as_ref()) else {
+        return Ok(None);
+    };
+    if !types.classes.get(class).is_template() {
+        return Ok(Some(Type::Class(class)));
+    }
+    let Some(args) = &new.type_args else {
+        return Ok(None);
+    };
+    let args: Vec<Option<Type>> = generics::arguments(args, types)?
+        .into_iter()
+        .map(Some)
+        .collect();
+    generic_classes::instantiate_class(class, &args, generics::Missing::Reference, types)
+        .map(|id| Some(Type::Class(id)))
 }
 
 /// Check a subclass redeclaration of an inherited field (v35): TypeScript
@@ -358,24 +539,6 @@ fn redeclare(inherited: &mut Field, own: &Field) -> Result<()> {
 }
 
 /// The initializer of a field definition: its own, or `undefined`.
-/// V37 (`language_core`): a field initialized by `new C(...)` of a declared
-/// class without type arguments has the type `C`, as TypeScript infers it.
-fn constructed(value: &ast::Expr, types: &ir::ValueTypes) -> Option<Type> {
-    if !types.profile.language_core() {
-        return None;
-    }
-    let ast::Expr::New(new) = stmt::unparen(value) else {
-        return None;
-    };
-    let ast::Expr::Ident(name) = &*new.callee else {
-        return None;
-    };
-    if new.type_args.is_some() {
-        return None;
-    }
-    named::class(types, name.sym.as_ref()).map(Type::Class)
-}
-
 fn initializer_or_undefined(
     initializer: Option<Box<ast::Expr>>,
     property: &ast::ClassProp,
@@ -492,7 +655,7 @@ fn method(
 
 /// A static method: a receiver-free function named through its class. A
 /// subclass may redeclare an inherited static; calls resolve statically.
-fn static_method(
+pub(super) fn static_method(
     owner: u32,
     method: &ast::ClassMethod,
     inherited: &BTreeMap<String, Method>,

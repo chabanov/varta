@@ -253,8 +253,9 @@ impl Lower<'_> {
             ty,
             kind: E::MaybeIndex(Box::new(value), Box::new(index)),
         };
-        // V37: `xs[i]` has the element type, read checked (`dense`).
-        if self.types.profile.language_core() {
+        // V37: `xs[i]` has the element type, read checked (`dense`), unless
+        // its context admits `undefined`.
+        if self.types.profile.language_core() && !self.take_optional_index(member.span) {
             let message = if string {
                 dense::MISSING_UNIT
             } else {

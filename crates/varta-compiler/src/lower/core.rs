@@ -14,4 +14,7 @@ pub(super) struct State {
     pub(super) paths: BTreeMap<super::paths::Path, super::paths::Fact>,
     /// Set while guarding a test that may write properties or run code.
     pub(super) impure_guard: bool,
+    /// The span of an index read whose context admits `undefined` (`dense`):
+    /// it reads `T | undefined` as in JavaScript instead of a checked `T`.
+    pub(super) optional_index: Option<swc_common::Span>,
 }

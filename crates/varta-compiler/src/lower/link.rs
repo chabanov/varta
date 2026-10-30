@@ -166,7 +166,8 @@ pub(crate) fn lower(
             )?;
         }
     }
-    if profile.classes() {
+    // V37 synthesizes dispatchers after every generic class instance exists.
+    if profile.classes() && !profile.class_generics() {
         classes::dispatch_bodies(&types, &mut functions)?;
     }
     if profile.generics() {

@@ -5607,7 +5607,8 @@ generated resource classes; classes extending the native errors follow the
   catalog](#typed-private-capture-catalog); its fields are compile-time checked,
   so class field cycles never become catalog cycles.
 - **Rejected with diagnostics.** Generic, abstract, decorated (parser) and
-  `implements` classes; index signatures; `static` fields, blocks and
+  `implements` classes (generic classes, `implements` and `#private` members
+  are admitted by v37 [class generics](#class-generics-class_generics)); index signatures; `static` fields, blocks and
   accessors; static method values without a call; setters; `#private` fields and methods; auto-accessors; constructor parameter
   properties; optional, definite (`!`), `declare` and overriding fields;
   function-valued fields; `toJSON` methods; explicit `this` parameters on methods;
@@ -7923,7 +7924,8 @@ Five selectors gate the batch's work streams:
   typing, property-path narrowing, `switch` on strings and function
   assignability fixes;
 - class-generics stream: `class_generics()` (generic methods and classes,
-  interface method signatures, `implements` and `#private` members);
+  interface method signatures, `implements` and `#private` members;
+  [implemented](#class-generics-class_generics));
 - collections stream: `collections()` (`Map`/`Set`, tuples, `Array.join`,
   `String.fromCharCode`, a `Date` subset, `Uint8Array`,
   `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` and base64);
@@ -7995,7 +7997,10 @@ by digest in `varta-runtime` `language_core_tests`).
   index out of range`) where Node reads `undefined`; this is a documented
   deviation, so a value of type `T` is never missing. Element types that
   admit `undefined` read as before, without a test, and `at` keeps
-  `T | undefined`. Comparing a function value with `null` or `undefined` is the
+  `T | undefined`. A read whose context admits `undefined` (an expected type
+  with an `undefined` member, such as a `T | undefined` return, parameter or
+  annotated binding, or the left operand of `??`) reads `T | undefined`
+  unchecked, as Node does. Comparing a function value with `null` or `undefined` is the
   constant TypeScript admits (`f !== undefined` is `true`).
 - **Property-path narrowing.** A guard on a property path (an identifier or
   `this`, then data fields of records and class instances; a getter is never
@@ -8106,6 +8111,118 @@ by digest in `varta-runtime` `language_core_tests`).
   `ReturnType<typeof setInterval>` (the built-in timers, unless a type named
   `ReturnType` is declared) are `number`, the handle type of these timers;
   other `ReturnType` queries stay unsupported.
+
+#### Class generics (`class_generics`)
+
+V37 admits generic methods, generic classes, method signatures in object
+types, `implements` and ES private names. Everything is resolved at compile
+time: no value tag, layout, host import, helper, catalog entry or budget is
+added, an instantiation is indistinguishable from the hand-written specialized
+method or class, and v36 and earlier profiles keep rejecting every construct
+below with their diagnostics and compile to unchanged bytes.
+
+- **Generic methods.** Instance, static, `async` and async generator methods
+  (synchronous generator methods stay rejected for every class) may declare
+  type parameters with constraints and defaults
+  (`async request<T>(spec: RequestSpec): Promise<T>`). They follow the
+  [generic function](#generics-generics) rules per call: explicit type
+  arguments, or inference from the arguments (lowered once, in source order,
+  after the receiver) and then from the contextual result type, so
+  `return this.client.request(spec)` in a method declared
+  `(): Promise<User>` instantiates `request<User>`. Calls through `this`, any
+  class-typed receiver, `super.m<T>()` (a direct call) and `C.m<T>()` are
+  admitted. Each distinct type-argument list is one method function of the
+  declaring class with the class receiver, lowered in that class's module and
+  member context, and counts against `abi::MAX_USER_FUNCTIONS`;
+  instantiations requested from instance bodies nest at most
+  `MAX_INSTANTIATION_DEPTH` deep. A subclass may override an inherited generic
+  method with a generic method of the same accessibility and number of type
+  parameters. An overridden generic method is called through one dispatcher
+  per root class and type-argument list, synthesized after every body; every
+  overriding implementation is instantiated with the same arguments and must
+  then have the root's parameter, shape and result types (the override is
+  checked per instantiation, not once generically as in TypeScript). A generic
+  method may not override or be overridden by a non-generic member. Rejected:
+  generic methods used as values, spread arguments to them, and type-parameter
+  defaults or constraints of a method that name the class's own parameters.
+- **Generic classes.** `class Page<T> { … }` is a template; every distinct
+  argument list (`Page<number>`, from an annotation, `new Page<number>(…)`,
+  `new Page(items)` inferred from the constructor's parameters, a contextual
+  `const p: Page<number> = new Page(…)`, or `extends Page<T>`) is an ordinary
+  nominal class with its own record shape, descriptor, initializer and
+  methods, laid out in the declaring module with the arguments bound and
+  memoized by (template, arguments). `Page<number>` and `Page<string>` are
+  unrelated classes; instances are admitted wherever class instances are
+  (fields, arrays, unions, `unknown`, `JSON.stringify`). A reference must
+  supply every parameter without a default (`class P requires a type argument
+  for T`). Generic classes may extend declared or generic classes
+  (`class CursorPage<T> extends Page<T>`), and declared classes may extend
+  instances (`class Numbers extends Page<number>`, which may override its
+  methods). Static members belong to the template (`Page.empty()`); as in
+  TypeScript they cannot name the class's type parameters. Generic methods of
+  a generic class see the class's arguments. Because instances can be created
+  while bodies are lowered, their member functions are allocated after every
+  declared class and dispatcher and lowered into the generated function table;
+  dispatchers are synthesized after the last body, so instance shapes created
+  late join the descriptor tests of the methods they inherit. Members of an
+  instance are checked when the instance is created; a template that is never
+  instantiated is only checked for its static members. `value instanceof Page`
+  tests the instantiation the static type holds (or descends from) and narrows
+  like a class test. Rejected: overriding an inherited method in a generic
+  class (its instances are created after dispatch is fixed), generic Error
+  subclasses, `instanceof` of a generic class on a value not typed as one of
+  its instantiations (including `unknown`: instantiations may still appear in
+  later bodies), and inference without the class's own constructor.
+- **Method signatures.** In an interface or object type, `m(params): R` and
+  `m?(params): R` are the function fields `m: (params) => R` and
+  `m?: ((params) => R) | undefined` of the [function fields](#function-fields-function_fields)
+  rules, so `interface Body { text(): Promise<string>; close?(): void }` is
+  satisfied by object literals, arrows and async functions, and
+  `body.close?.()` works. A method signature needs a return annotation.
+  Object literals admit method shorthand (`{ async text(): Promise<string> { … } }`),
+  lowered as a function expression stored in the field. **`this` binding:**
+  calls through a function field never pass a receiver (JavaScript passes the
+  object), so an object-literal method whose body (or a nested arrow) uses
+  `this` or `super` is rejected; methods that do not use `this` behave
+  exactly as in JavaScript. Generic method signatures (`json<T>(): T`) and
+  generic object-literal methods are rejected: a generic method has no
+  function value. Class instances stay nominal: assigning one to an
+  interface-typed binding remains a type error.
+- **`implements`.** `class C implements I, J<T>` checks, when the class (or
+  instance) is laid out, that every member of each clause, resolved like the
+  annotation in the class's module, is provided by a public field (of an
+  assignable type), getter (of an assignable result) or method (matching the
+  function type: same shape and parameter count, interface arguments
+  assignable to the method's parameters, result assignable to the
+  interface's) of the class or its ancestors; optional members may be
+  missing. It has no runtime effect and makes no instance assignable to the
+  interface. Clauses that name classes, built-in iteration protocols
+  (`AsyncIterable<T>`) or anything other than a closed object type are
+  rejected.
+- **`#private` members.** Instance fields (`#count = 0`, `readonly #fetch:
+  Fetcher`), methods (`#send()`, `async #send()`, `#m<T>()`) and getters
+  (`get #size()`) are admitted. Before layout every `#x` member and every
+  `obj.#x` inside the class body becomes a `private` member named `#x`, so
+  private names never collide with public members (`#count` and `count`
+  coexist) and their scope is the class body, including nested closures,
+  with the class-scoped `private` check (another instance of the class may be
+  read: `other.#step`). A private field is an ordinary slot, initialized and
+  checked by the constructor discipline like any field. `#x in value` tests
+  the brand of the class whose body declares `#x` (exactly `value
+  instanceof C`, so subclass instances pass) and narrows like it; its operand
+  must have an object type (TypeScript rule; JavaScript throws for
+  primitives). Private fields are not properties in JavaScript, while host
+  readers see every slot, so a value whose type may reach an instance of a
+  class with private fields is rejected by `JSON.stringify` and cannot become
+  `unknown`. Rejected: static private members, private setters, a subclass
+  redeclaring an inherited private name (in JavaScript a distinct member),
+  quoted members named like private names (`'#x'`) and computed `obj['#x']`
+  accesses of class members.
+
+A class field initialized by `new C(…)` or `new C<A>(…)` without an annotation
+(the pilot's `readonly #controller = new AbortController()`) takes that class
+type; a generic class there needs explicit type arguments. Abstract classes and
+methods stay rejected.
 
 ## Local modules
 

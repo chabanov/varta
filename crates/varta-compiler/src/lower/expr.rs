@@ -56,6 +56,11 @@ impl Lower<'_> {
         } else {
             hints.and_then(|h| h.select(expression))
         };
+        if let Some(expected) = expected
+            && unions::members(expected, self.types).contains(&Type::Undefined)
+        {
+            self.optional_index(expression);
+        }
         let result = match expression {
             ast::Expr::Arrow(arrow) => self.arrow(arrow, expected),
             ast::Expr::Fn(function) => self.function_expression(function, expected),
@@ -93,6 +98,18 @@ impl Lower<'_> {
                 if self.types.profile.promises() && self.promise_builtin(&new.callee) =>
             {
                 self.new_promise(new, expected)
+            }
+            // A generic class (v37) may take its type arguments from context.
+            ast::Expr::New(new)
+                if self.types.profile.class_generics()
+                    && self
+                        .class_callee(&new.callee)
+                        .is_some_and(|class| self.types.classes.get(class).is_template()) =>
+            {
+                match self.class_callee(&new.callee) {
+                    Some(template) => self.generic_class_new(new, template, expected),
+                    None => Err(CompilerError::Internal("missing generic class".into())),
+                }
             }
             ast::Expr::Await(expression) if self.types.profile.async_functions() => {
                 self.await_expression(expression)
@@ -396,6 +413,16 @@ impl Lower<'_> {
                 ));
             }
             ast::Expr::Bin(binary) => {
+                // `#x in value` (v37 `class_generics`): a class brand test.
+                if binary.op == ast::BinaryOp::In
+                    && self.types.profile.class_generics()
+                    && let ast::Expr::PrivateName(name) = &*binary.left
+                {
+                    return self.private_in(name, &binary.right, expression.span());
+                }
+                if binary.op == ast::BinaryOp::NullishCoalescing {
+                    self.optional_index(&binary.left);
+                }
                 let left = self.expr(&binary.left)?;
                 if self.types.profile.primitive_builtins()
                     && matches!(
@@ -673,25 +700,25 @@ impl Lower<'_> {
             }
             if let ast::Callee::Expr(callee) = &call.callee {
                 if let ast::Expr::SuperProp(property) = stmt::unparen(callee) {
-                    return self.super_method_call(call, property);
+                    return self.super_method_call(call, property, expected);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && let Some(class) = self.class_callee(&member.obj)
                     && !self.prelude_member(callee)
                 {
-                    return self.class_static_call(call, member, class);
+                    return self.class_static_call(call, member, class, expected);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && self
                         .peek_type(&member.obj, 0)
                         .is_some_and(|ty| self.shared_classes(ty))
                 {
-                    return self.shared_method_call(call, member);
+                    return self.shared_method_call(call, member, expected);
                 }
                 if let ast::Expr::Member(member) = stmt::unparen(callee)
                     && self.class_receiver(&member.obj, 0).is_some()
                 {
-                    return self.class_method_call(call, member, None);
+                    return self.class_method_call(call, member, None, expected);
                 }
             }
         }
@@ -923,7 +950,7 @@ impl Lower<'_> {
             && !self.prelude_member(callee)
         {
             let value = self.expr(&member.obj)?;
-            return self.class_method_call(call, member, Some(value));
+            return self.class_method_call(call, member, Some(value), expected);
         }
         if let ast::Expr::Member(member) = &**callee
             && matches!(&member.prop,ast::MemberProp::Ident(id) if id.sym=="toString")
@@ -983,6 +1010,12 @@ impl Lower<'_> {
             if classes::reaches_instance(value.ty, self.types) {
                 return Err(self.source.locate(
                     unsupported("JSON.stringify of an Error subclass instance; own-property enumerability is not modelled"),
+                    value.span,
+                ));
+            }
+            if classes::reaches_private(value.ty, self.types) {
+                return Err(self.source.locate(
+                    unsupported("JSON.stringify of a class instance with #private fields; private names are not properties"),
                     value.span,
                 ));
             }

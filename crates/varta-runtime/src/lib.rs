@@ -560,6 +560,8 @@ mod abort_signal_tests;
 #[cfg(test)]
 mod catch_pattern_tests;
 #[cfg(test)]
+mod class_generic_tests;
+#[cfg(test)]
 mod class_tests;
 #[cfg(test)]
 mod declared_field_tests;

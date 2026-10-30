@@ -2882,3 +2882,53 @@ Contract: [architecture.md](architecture.md#language-core-language_core).
   closures, deviation and diagnostic tables, v36 rejections and frozen v36
   digests, the public API and CLI smoke tests, and the v36-pinned conformance
   gaps.
+
+### Class generics (`class_generics`)
+
+Contract: [architecture.md](architecture.md#class-generics-class_generics).
+
+- Monomorphization only, as for [generics](#generics-generics): never emit a
+  generic body. Generic methods live in `Class::generic_methods` /
+  `generic_statics` (`lower/classes/generic_methods.rs`), get no slot at
+  layout and are instantiated per (owner, name, static, arguments) in
+  `Classes::method_instances`; their bodies queue in `pending_methods` and are
+  lowered by the `generics::bodies` fixpoint with the class context and the
+  merged class + method frame. Reuse `Lower::infer`, `instance_arguments` and
+  `bind_instance_arguments`; never re-lower an argument for inference, and
+  lower the receiver first.
+- An overridden generic method dispatches through `generic_dispatchers`
+  (root, name, arguments), instantiating every implementation with the same
+  arguments when the dispatcher is created and synthesizing its body in
+  `generic_dispatch_bodies` after the last body. `super.m<T>()` and statics
+  are direct calls.
+- Generic class templates (`Class::is_template`) own statics only; instances
+  (`Class::template`, `frame`) are created by `instantiate_class` (memoized in
+  `Classes::instances` before layout so self-references resolve), laid out at
+  once when `Classes::ready` and otherwise at `lay_out_deferred` (start of
+  `dispatchers`). Instance members are allocated `UNALLOCATED` and get their
+  slots in `materialize` (end of `dispatchers`, and `Lower::class_functions`
+  before any member call, `new`, getter or `super` use), which also rewrites
+  the inherited entries of descendants; their bodies queue in
+  `pending_members`. Never let an instance member index reach emission
+  unallocated, and never put instance members in `Classes::order`.
+- V37 synthesizes the declared dispatchers late (`late_dispatch_bodies`) so
+  instance shapes created by later bodies join the descriptor tests. Keep
+  `dispatch_bodies` at its v36 position for every earlier profile
+  (`v36_modules_keep_their_bytes`). Instances may not override inherited
+  methods (`override_rejected`): a dispatcher decided before the instance
+  existed would miss the override.
+- Method signatures are function fields (`records::method_signature`); object
+  literal methods are function expressions that may not use `this`/`super`
+  (`uses_receiver`). Never bind a receiver for a function field call.
+- `implements` is a check only (`classes/implements.rs`) after the class (or
+  instance) is laid out; never widen a class instance to a record.
+- Private names are a pre-layout AST rewrite (`classes/private_names.rs`):
+  `#x` becomes a `private` member named `#x`. Keep quoted `'#x'` members and
+  computed `obj['#x']` member accesses rejected under the selector, keep
+  `reaches_private` gating `JSON.stringify` and `unknown::widen`, and keep a
+  subclass from redeclaring an inherited private name. `#x in v` is
+  `class_test` of the declaring class.
+- Tests: `varta-runtime` `class_generic_tests` with Node 24 logs of
+  `class_generic_cases`, the forced-collection driver, v37 diagnostics, v36
+  rejections and `v36_modules_keep_their_bytes`, and the pilot function-count
+  measurement; the public API cross-module test and the CLI smoke test.

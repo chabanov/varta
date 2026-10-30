@@ -169,14 +169,15 @@ impl Lower<'_> {
         &mut self,
         call: &ast::CallExpr,
         member: &ast::MemberExpr,
+        expected: Option<Type>,
     ) -> Result<Expr> {
         let value = self.expr(&member.obj)?;
         if !self.shared_classes(value.ty) {
-            return self.class_method_call(call, member, Some(value));
+            return self.class_method_call(call, member, Some(value), expected);
         }
         let span = call.span;
         let result = self.dispatch(span, value, |this, _, unboxed| {
-            this.class_method_call(call, member, Some(unboxed))
+            this.class_method_call(call, member, Some(unboxed), expected)
         })?;
         // A method may run any code (v37 `paths`).
         self.drop_paths();

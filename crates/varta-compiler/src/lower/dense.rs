@@ -20,6 +20,28 @@ pub(super) const MISSING_UNIT: &str = "string index out of range";
 pub(super) const ITERATED_HOLE: &str = "array element is a hole";
 
 impl Lower<'_> {
+    /// Marks `expression`, when it is an index read `xs[i]`/`s[i]` lowered
+    /// next in a context that admits `undefined` (an expected type with an
+    /// `undefined` member, or the left operand of `??`), to read
+    /// `T | undefined` without the check, as JavaScript does.
+    pub(super) fn optional_index(&mut self, expression: &ast::Expr) {
+        if !self.types.profile.language_core() {
+            return;
+        }
+        if let ast::Expr::Member(member) = stmt::unparen(expression)
+            && matches!(member.prop, ast::MemberProp::Computed(_))
+        {
+            self.core.optional_index = Some(member.span);
+        }
+    }
+    /// Whether the index read at `span` was marked by `optional_index`.
+    pub(super) fn take_optional_index(&mut self, span: swc_common::Span) -> bool {
+        if self.core.optional_index == Some(span) {
+            self.core.optional_index = None;
+            return true;
+        }
+        false
+    }
     /// `maybe` (of type `element | undefined`) as `element`, throwing
     /// `TypeError(message)` when it is `undefined`.
     pub(super) fn dense_read(&mut self, maybe: Expr, element: Type, message: &str) -> Result<Expr> {

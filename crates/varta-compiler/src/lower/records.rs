@@ -117,6 +117,13 @@ pub(super) fn type_fields(
     }
     let mut fields = Vec::new();
     for member in members {
+        // Method signatures (v37 `class_generics`) are function fields.
+        if types.profile.class_generics()
+            && let ast::TsTypeElement::TsMethodSignature(method) = member
+        {
+            fields.push(method_signature(method, types)?);
+            continue;
+        }
         let ast::TsTypeElement::TsPropertySignature(field) = member else {
             return Err(unsupported("object type member"));
         };
@@ -143,7 +150,95 @@ pub(super) fn type_fields(
     Ok(fields)
 }
 
+/// `m(params): R` and `m?(params): R` in an object type (v37): the function
+/// field `m: (params) => R` (optional: `| undefined`). Calls through it never
+/// bind `this`, so the values admitted for it (arrows, function expressions
+/// and object literal methods) may not use their own `this`.
+fn method_signature(
+    method: &ast::TsMethodSignature,
+    types: &mut ir::ValueTypes,
+) -> Result<RecordField> {
+    if method.computed {
+        return Err(unsupported("computed method signature"));
+    }
+    if method.type_params.is_some() {
+        return Err(unsupported(
+            "generic method signature in an object type; a generic method has no function value",
+        ));
+    }
+    let name = expression_key(&method.key)?;
+    if method.optional && inherited(&name) {
+        return Err(unsupported(
+            "optional inherited property requires prototype semantics",
+        ));
+    }
+    let result = method.type_ann.clone().ok_or_else(|| {
+        invalid(format!(
+            "method signature {name} requires a return type annotation"
+        ))
+    })?;
+    let function = ast::TsFnType {
+        span: method.span,
+        params: method.params.clone(),
+        type_params: None,
+        type_ann: result,
+    };
+    let mut ty = functions::type_annotation(&function, types)?;
+    if method.optional {
+        ty = unions::intern(vec![ty, Type::Undefined], types)?;
+    }
+    Ok(RecordField {
+        name,
+        ty,
+        optional: method.optional,
+    })
+}
+
+/// Whether a method body uses its own `this` or `super` (arrows inherit it).
+fn uses_receiver(function: &ast::Function) -> bool {
+    use swc_ecma_visit::{Visit, VisitWith};
+    struct Receiver(bool);
+    impl Visit for Receiver {
+        fn visit_this_expr(&mut self, _: &ast::ThisExpr) {
+            self.0 = true;
+        }
+        fn visit_super(&mut self, _: &ast::Super) {
+            self.0 = true;
+        }
+        // A nested non-arrow function or class has its own `this`.
+        fn visit_function(&mut self, _: &ast::Function) {}
+        fn visit_class(&mut self, _: &ast::Class) {}
+    }
+    let mut visitor = Receiver(false);
+    function.params.visit_with(&mut visitor);
+    function.body.visit_with(&mut visitor);
+    visitor.0
+}
+
 impl Lower<'_> {
+    /// An object literal method `m(params) { … }` (v37): a function
+    /// expression stored in the field `m`. Its `this` would be the object in
+    /// JavaScript, but function fields are called without a receiver, so a
+    /// method that uses `this` is rejected rather than bound differently.
+    fn object_method(&mut self, method: &ast::MethodProp, expected: Option<Type>) -> Result<Expr> {
+        if method.function.type_params.is_some() {
+            return Err(self.source.locate(
+                unsupported("generic object literal method"),
+                method.function.span,
+            ));
+        }
+        if uses_receiver(&method.function) {
+            return Err(self.source.locate(
+                unsupported("this or super in an object literal method; function fields are called without a receiver"),
+                method.function.span,
+            ));
+        }
+        let expression = ast::Expr::Fn(ast::FnExpr {
+            ident: None,
+            function: method.function.clone(),
+        });
+        self.expr_expected(&expression, expected)
+    }
     pub(super) fn record(
         &mut self,
         object: &ast::ObjectLit,
@@ -184,6 +279,18 @@ impl Lower<'_> {
                         _ => None,
                     };
                     (name, self.expr_expected(&ast::Expr::Ident(id.clone()), ty)?)
+                }
+                ast::Prop::Method(method) if self.types.profile.class_generics() => {
+                    let name = property_key(&method.key)?;
+                    let ty = match expected {
+                        Some(Type::Record(id)) => self.types.records[id as usize]
+                            .fields
+                            .iter()
+                            .find(|f| f.name == name)
+                            .map(|f| f.ty),
+                        _ => None,
+                    };
+                    (name, self.object_method(method, ty)?)
                 }
                 _ => return Err(unsupported("object method, getter or setter")),
             };
