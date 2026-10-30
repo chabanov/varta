@@ -1469,9 +1469,35 @@ distinguishes `denied` from `prompt`; the result records of `copy_text` and
 `ui.open_url` are the engine's choice and are specified in
 [round 5](embedding.md#view-draft-v0-round-5-command-results).
 
+Also accepted on 2026-10-29: `ui.open_url` admits the grant form `https://*`
+for arbitrary external links (never for other capabilities); every such activation
+prompts with the full URL and no decision is stored
+([details](embedding.md#view-draft-v0-round-6-gestures-and-platform-refusals)).
+
 **Open questions.** Whether "allow for this session" is offered; the exact identity
 key before C3; how a required permission refused at first run is presented on each
 target; the rate-limit values.
+
+#### Evolving JSON: unknown fields and variants (pending owner decision)
+
+**Status: pending owner decision (conflicting answers).** Two answers from the
+owner disagree, so neither option below is accepted. Nothing changes until one is
+chosen; current profiles keep strict checked JSON either way, and any change would
+apply only to a new profile.
+
+Context: the UARP API evolves additively (new response fields, new event and
+resource kinds), and uarp-sdk keeps unknown fields in its own types.
+
+| Question | Option A (tolerant) | Option B (strict only) |
+| --- | --- | --- |
+| Unknown fields when parsing into closed records (`varta.json.parse<T>`, `JSON.parse(text) as T`, `unknown as T`) | Ignored; known fields stay strictly typed. Each ignored field gives a bounded host diagnostic (not guest output), for example `varta json: ignored unknown field "<name>" of <type>` with at most a fixed number of lines per execution and a final count. Strict rejection as an explicit opt-in (for example an options argument such as `{ unknownFields: "reject" }`, or a type-level marker) | Rejected, as today. Applications that must accept additions declare them, for example with `[key: string]: unknown` on the record type |
+| A discriminant value that matches no literal member of a discriminated union | Routed to an explicit fallback member, a member whose discriminant is a non-literal `string` (for example `{ kind: string; [k: string]: unknown }`): literal members are preferred, then the fallback; a `switch` on `kind` reaches the fallback through `default`; a bounded host diagnostic names the value; without a fallback member, a typed catchable error | Rejected, as today (a catchable checked-JSON error in profiles with recoverable JSON). Applications model open sets explicitly, for example by parsing the discriminant as `string` and narrowing by hand |
+| Types with `[key: string]: unknown` | Keep preserving unknown fields | Keep preserving unknown fields |
+| Earlier profiles | Unchanged (strict) | Unchanged (strict) |
+
+Either way the decision belongs to a new profile with its own contract in
+[architecture.md](architecture.md), positive and negative tests, and the uarp-sdk
+pilot as the acceptance case.
 
 #### Increments and acceptance
 
