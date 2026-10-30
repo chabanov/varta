@@ -394,7 +394,7 @@ impl Lower<'_> {
             }
             _ => Type::Void,
         };
-        let outer_narrows = self.capture_narrows();
+        let (outer_narrows, stable) = self.capture_narrows(arrow.span.lo);
         let mut child = Lower {
             source: self.source,
             types: self.types,
@@ -439,7 +439,15 @@ impl Lower<'_> {
             generator: None,
             // An unknown promise type until inference fixes it.
             asynchronous: asynchronous.then_some(promise.unwrap_or(u32::MAX)),
-            core: Default::default(),
+            core: core::State {
+                stable,
+                assignments: Some(closure_narrowing::scan(|scan| {
+                    use swc_ecma_visit::VisitWith;
+                    arrow.params.visit_with(scan);
+                    arrow.body.visit_with(scan);
+                })),
+                ..Default::default()
+            },
         };
         if let Some(ty) = receiver {
             child.declare("this", Some(ty), true, false)?;
@@ -685,7 +693,7 @@ impl Lower<'_> {
         }
         self.cells.insert(slot);
         if self.types.profile.refinement_writes()
-            && !binding.mutable
+            && (!binding.mutable || self.stable(binding))
             && let Some(&ty) = self.outer_narrows.get(&binding.identity)
         {
             self.refinements.insert(slot, ty);

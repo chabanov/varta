@@ -10534,6 +10534,36 @@ declared profile (`LanguageProfile::file_roots`), never from the manifest.
   invocation. The older grant-only entry points run a v38 module with no
   roots, so every `fs.*` path is denied.
 
+### V38 closure narrowing (`closure_narrowing()`)
+
+Profile v38 adopts TypeScript 5.4's preserved narrowing in closures created
+after the last assignment, for every closure: arrows, function expressions
+and the getter holes of TSX templates. A `const` binding's narrowing reaches
+every closure since v24. A parameter or `let` binding B of a function F
+keeps its narrowing (union members, literal and `unknown` refinements of
+the write-aware flow analysis) inside a closure C created at position P
+when, by the syntactic scan of F's parameters and body:
+
+1. no function, arrow, function expression or class nested in F assigns the
+   name of B (an assignment in another closure, called or not, withholds it);
+2. every assignment to the name in F (`=`, compound and logical assignment,
+   `++`/`--`, a destructuring target, a `for…in`/`for…of` head) lies before
+   P, where an assignment inside a loop of F counts at the end of the
+   outermost such loop (a later iteration may run it after C was created);
+3. C is not a hoisted function declaration (it can run before P).
+
+Assignments are matched by name, so a shadowing binding of the same name
+counts and only ever withholds narrowing; TypeScript also exempts a loop
+that contains B's own declaration, which this rule does not. Such a binding
+is never written after C is created, so inside C, and in closures created
+inside C, the narrowing is a fact: a call inside C does not invalidate it
+(the binding is excluded from the mutable cells an unknown call may write).
+Reads keep the checks of the current narrowing model; the closure captures
+the binding's cell as before, so the emitted capture layout is unchanged,
+and v1–v37 keep narrowing only `const` bindings into closures. A binding
+that fails the rule keeps the existing diagnostic (`… is not declared by
+every member of the union; narrow it first`).
+
 ### V38 view protocol and TSX (`view_protocol()`, `tsx()`)
 
 The view-protocol and TSX streams implement increment P7 and the start of P8
@@ -10584,12 +10614,82 @@ same listener under the queue's coalescing rule; at most
 be pending, a full queue drops a coalescible record, and any other overflow is
 `ViewError::QueueOverflow`. Platform inputs are host work between turns
 (`Application::view_input`; `VartaRuntime::run_view` and `varta dev
---view-script` perform a script's inputs whenever no task is ready) and run
+--view-script` perform a script's inputs on virtual time, below) and run
 no guest code. A committed view keeps the instance alive like an open event
 source. A bounded execution (`run`, `dev` without `--app` or a script)
 renders but has no event delivery: its records are discarded. `Session` in
 `varta-runtime/src/view.rs` owns the renderer and the one-commit rule;
 `turns::begin` renews the commit allowance.
+
+**Scripted sessions and virtual time.** `VartaRuntime::run_view` (`varta
+dev --view-script`) runs the application instance on a virtual clock: loop
+time starts at 0 with the instance, a fired timer sets it to its due time,
+as in every execution, and only a script step advances it otherwise; no
+timer ever waits for the wall clock and a network completion does not move
+loop time. A script's `inputs` are steps in order, each an input (the
+trusted platform inputs above, and `prompts`) or a wait,
+`{"input":"wait","ms":N}` with N a number of milliseconds in
+`0..=TIMER_MAX_DELAY_MS`.
+
+- **Settling.** Before an input the session runs every runnable task, each
+  as its own turn with its own budgets: host tasks (view records and host
+  events) by arrival first, then timers, then network completions that have
+  already arrived. A timer is runnable when its due time is at most the loop
+  time, and, while any timer armed with Node's minimum delay
+  (`TIMER_MIN_DELAY_MS`: a zero, omitted or sub-millisecond delay, including
+  an interval's re-arm) is pending, the earliest timer in (due time,
+  sequence) order is runnable too. A zero-delay timer and every zero-delay
+  timer it arms therefore fire before the input, keeping Node's 1 ms minimum
+  and order: a chain interleaves with a 2 ms timer exactly as in Node, and a
+  timer due within the minimum delay of a pending zero-delay timer fires
+  before it. The input is performed only when nothing is runnable. It takes
+  no virtual time.
+- **Wait.** A wait of N ms from loop time V runs every runnable task whose
+  timers are due at or before V + N (records and completions as above), in
+  order, then sets loop time to V + N. A zero-delay timer armed during the
+  wait fires within it when due by V + N, otherwise in the next step's
+  settling.
+- **End.** After the last step the session settles once more and reports.
+  A timer that no wait reaches never fires; requests still in flight are not
+  waited for.
+- **Bounds.** One step (its settling, or a wait) runs at most
+  `Script::MAX_STEP_TURNS` turns; a task that keeps re-arming with the
+  minimum delay (`setInterval(f, 0)`) ends the session with
+  `ApplicationError::Unsettled` naming the step (the final settling is the
+  step after the last). Production budgets are unchanged.
+- **Network.** Pending requests are never waited for implicitly: a
+  completion that has arrived when the session settles runs in Node's order
+  after timers, otherwise it runs at a later settling or not at all. Its
+  arrival follows the wall clock, so only a script without network requests
+  in flight is deterministic; an explicit bounded network wait step is open
+  ([development plan](development-plan.md#view-layer-l0l3)).
+- `Date.now()` and `performance.now()` keep reading the clock their
+  `time.now` grant authorizes; virtual time governs timers only.
+
+**Determinism guarantee.** For a scripted session without network requests
+in flight, the same artifact, script, grants and host policy give the same
+sequence of turns (kinds and order, and the fuel, host calls and
+microtasks of each), the same output and the same final snapshot on every
+run and every host speed. No wall-clock read decides whether a timer is
+due, how tasks are ordered or when a step is performed: host tasks keep
+their queue order, timers their (due time, sequence) key, and the wall
+clock bounds only the per-turn deadline and the optional lifetime, whose
+exhaustion fails the session instead of reordering it. The guarantee does
+not cover the `wall` and memory fields of the budget report, `Date.now()`
+and `performance.now()`, the audit log's timestamps, or the arrival of
+network completions. (Before this rule, `run_view` compared each timer's
+wall-clock target, `started` + due time, with `Instant::now()` after every
+turn, so a `setTimeout(…, 0)` due at 1 ms fired before or after the next
+input depending on how long the previous turns took.)
+
+**Live applications.** An embedder that drives `Application::step` itself
+(a native or browser shell) keeps the wall clock: timers are due by
+`Instant::now()` and real inputs arrive whenever the user acts, so the
+order of an input and a timer due at about the same moment, of network
+completions and timers, and the number of interval firings before an input
+are inherently racy and are not guaranteed. What every host guarantees is
+the turn model itself: one task per turn, microtasks drained in the turn,
+timers in (due time, sequence) order, host tasks in arrival order.
 
 **Capabilities.** `ui.open_url` (`GrantKind::OpenUrls`: URL patterns under
 the network URL rules over `https://` and `http://`, plus the exact
@@ -10633,6 +10733,56 @@ styles win; custom properties inherit and `var()` is substituted; other
 properties report their cascaded value. Layout rectangles are not computed:
 Taffy and Parley are not dependencies yet.
 
+**Accessible names.** The accessibility tree names a node by the steps of
+[accname 1.2](https://www.w3.org/TR/accname-1.2/) that the L0 v1 subset
+admits (`varta-view/src/name.rs`). An element is *hidden* when it has
+`aria-hidden="true"`, a computed `display: none`, or is a `dialog` that is not
+open; a hidden element and its subtree are absent from the accessibility tree.
+The name of an element E with role R is computed by visiting nodes, starting
+at E (the root step):
+
+1. **2A, hidden.** A hidden element contributes the empty string, unless the
+   relation (`aria-labelledby` or `label`) that reached it started at a hidden
+   node (the referenced node or an ancestor is hidden): then its hidden
+   descendants take part.
+2. **2B, `aria-labelledby`.** Outside an `aria-labelledby` traversal, the
+   attribute's ASCII-whitespace-separated ids that name attached elements are
+   visited in order, each as a referenced node of a traversal that does not
+   apply 2B again, and the results are joined with one space. A blank result,
+   or no id that resolves, falls through to 2C.
+3. **2C, embedded control.** Below the root step, a text field gives its
+   live value (a `password` field its masked value) and a `select` the text of
+   the `option` whose `value` equals its value.
+4. **2D, `aria-label`.** A value that is not blank after trimming ASCII
+   whitespace.
+5. **2E, host language label.** An `img` gives its `alt` when present. At the
+   root step only, an `input`, `textarea`, `select` or `progress` with an `id`
+   gives the names of the attached `label` elements whose `for` equals that
+   id, in document order, each visited as a referenced node and joined with
+   one space, when not blank. Below the root step the `label` relation is not
+   followed (a field already gave its value at 2C), so every traversal is
+   finite.
+6. **2F and 2H, name from content.** At the root step when R is one of
+   `button`, `link`, `heading`, `option`, `cell`, `columnheader`, `row`,
+   `tab`, `checkbox` or `radio` (ARIA 1.2 "name from contents"), and at every
+   step below the root, the results of visiting the children in order are
+   concatenated without separators; at the root step a blank result falls
+   through. A text node (2G) gives its text. E met again below the root step
+   (a field inside its own label, for example) gives the empty string.
+7. **HTML-AAM last resort.** A text field gives its `placeholder`.
+
+The name is the result as a flat string: every run of ASCII whitespace
+becomes one space and the ends are trimmed. A node whose name is empty has
+no `name` member. Every other role (`list`, `listitem`, `dialog`,
+`navigation` and the other landmarks, `alert`, `status`, `table`, `tablist`,
+`tabpanel`, `paragraph`, `progressbar`, `image`, the fields) is named only by
+its author through 2B–2E. The subset has no `title` attribute (2I), no
+`presentation`/`none` role, no generated content (`::before`/`::after`) and
+no layout, so a block-level child adds no separating space; these parts of
+accname do not apply. Example: `<button><span aria-hidden="true">◇</span>
+<span>Reasoning</span><span aria-hidden="true">▸</span></button>` is
+`button "Reasoning"`.
+
 **View prelude.** `<varta>/view/view.ts`, loaded when a module names a
 `View.*` member or `ViewEvent` (TSX compiles to `View.*` calls). It encodes
 operations into a string whose UTF-16 code units are the batch bytes, packing
@@ -10668,7 +10818,8 @@ starting with `__vartaJsx` are reserved. `varta.d.ts` carries the typed
 operations, live nodes and listeners, value and stylesheet bytes, pending
 events and pending `copy_text` requests; `view::css::MAX_VALUE_TOKENS` bounds
 one CSS value; a headless script is at most `Script::MAX_BYTES` bytes and
-`Script::MAX_INPUTS` inputs.
+`Script::MAX_INPUTS` steps (inputs and waits), and one step settles within
+`Script::MAX_STEP_TURNS` turns.
 
 ## Local modules
 
@@ -10716,6 +10867,72 @@ symlinks are rejected. Inputs must be bounded regular UTF-8 files. The explicitl
 configured entry retains support for legacy layouts outside the config directory;
 this does not expand the boundary for discovered dependencies.
 
+Profile v38 (`tsx()`) extends the specifier mapping, following TypeScript's
+extension substitution under `node16`/`nodenext` and `bundler` resolution
+(`./x.js` tries `x.ts`, then `x.tsx`; `./x.jsx` tries `x.tsx`; TypeScript
+then falls back to declaration and JavaScript files, which Varta never
+loads). An explicit `./x.tsx` specifier names that file. A `./x.js`
+specifier probes `x.ts` and then `x.tsx` in that order: exactly one must
+exist, and it is the module identity. Where TypeScript silently prefers
+`x.ts`, Varta rejects the import when both exist ("ambiguous import"; rename
+one or import it with its explicit `.ts`/`.tsx` extension) and reports both
+candidates when neither exists, as module errors at the import site. A
+`./x.jsx` specifier names `x.tsx` only, never `x.ts`, without probing. The
+probe is a no-follow metadata lookup through the same pinned root
+descriptor, with no-follow directory opens at every component: a symlinked
+directory on the way fails the import, and a symlinked candidate counts as
+existing, so loading it is then rejected. Probing never reads a file; only
+the resolved source is loaded, within the same path, size and graph
+budgets. Profiles v31–v37 keep `./x.js` → `x.ts` without probing and reject
+`.jsx` (and `.tsx`) specifiers.
+
+Profile v38 (`text_imports()`) adds **text resources**, in the TC39 import
+attributes syntax that Deno, Bun and the Import Text proposal use:
+
+```ts
+import css from "./console.css" with { type: "text" };
+View.stylesheet(1, css);
+```
+
+- **Attributes.** Exactly one attribute, `type: "text"` (an identifier or
+  string key, a string value). No attribute list (`with {}`), another key, a
+  duplicate key or another type (`"json"`) is a module error at the import;
+  every earlier profile keeps rejecting attributed imports as unsupported
+  syntax. Re-exports with attributes stay unsupported. The host declarations
+  (`varta.d.ts`) declare ambient `*.css`, `*.txt` and `*.md` modules with a
+  `string` default export for editor typing only; they admit nothing, and
+  the attribute rule here is authoritative for every extension.
+- **Binding.** Only a default import, of type `string`; named, namespace and
+  type-only imports of a text resource are module errors. The text is
+  verbatim: nothing is transformed, decoded or normalized.
+- **Resolution and loading.** `ModuleLoader::resolve_text` resolves the
+  specifier with the module rules except the extension rule (relative only,
+  no URL/query/fragment syntax or backslashes, no trailing `/`, normalized
+  lexically inside the configuration directory), and `load` reads it
+  through the same pinned root descriptor with no-follow at every component
+  as a bounded regular UTF-8 file; a symlinked file or directory, invalid
+  UTF-8 or a file over 1 MiB fails. A leading byte order mark (U+FEFF) is
+  rejected rather than stripped. The trait's default `resolve_text` refuses,
+  so an embedder's loader admits text resources only by implementing it.
+- **Graph.** A resource is a unit of the module graph: read once per
+  resolved identity, it counts against the module, import and aggregate
+  source budgets, is visited in the sorted dependency order and appears in
+  the dependency metadata (`check --json` `modules`) with no imports of its
+  own. One path cannot be both a module and a text resource. Its unit holds
+  the text as the module constant `default: string`, so it is stored once
+  in the static data like any string literal (the v38 multi-page static
+  region admits more than 64 KiB) and linked into the artifact, which never
+  reads it at run time: `build --single` is reproducible from the same
+  inputs.
+- **Stylesheet check.** When the default binding is passed directly as the
+  text argument of `View.stylesheet(id, text)` and the module declares no
+  other binding of that name, the compiler checks the text against the L0
+  stylesheet grammar (`varta_common::view::stylesheet`, the parser the
+  headless renderer applies) and reports the first violation as a
+  `type_error` inside the resource file, with one-based Unicode-scalar
+  columns and zero-based UTF-8 byte offsets like every diagnostic. Any other
+  use is validated by the host when the batch is applied.
+
 Profile v32 also adds [default exports](#default-exports-default_exports):
 `export default` declarations and bindings, `import x from` and `default` in
 export and re-export lists, linked as the name `default`.
@@ -10732,6 +10949,7 @@ resolve and validate their dependency.
 Embeddings use `compile_modules(ModuleSource, &dyn ModuleLoader)`. The loader
 separates stable identity resolution from bounded text loading and owns its
 source-access policy; the compiler performs no filesystem or network I/O.
+`resolve_text` (v38 text resources) has a refusing default implementation.
 Single-source `compile_typescript[_with_path]` remains available and requires an
 explicit loader when source imports dependencies. Parse-only helpers do not link.
 The result returns Wasm plus dependency metadata. `CheckedProject.modules` and

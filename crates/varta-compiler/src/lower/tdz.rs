@@ -310,9 +310,10 @@ impl Lower<'_> {
                 ident,
                 function: function.function.clone(),
             };
-            let value = self
-                .function_expression(&expression, old.ty)
-                .map_err(|e| self.source.locate(e, function.span()))?;
+            let hoisting = std::mem::replace(&mut self.core.hoisting, true);
+            let value = self.function_expression(&expression, old.ty);
+            self.core.hoisting = hoisting;
+            let value = value.map_err(|e| self.source.locate(e, function.span()))?;
             if old.ty.is_some_and(|ty| ty != value.ty) {
                 return Err(self.source.locate(
                     type_error(format!(

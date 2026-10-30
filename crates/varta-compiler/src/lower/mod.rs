@@ -343,6 +343,7 @@ mod bitwise;
 mod builtin_methods;
 mod callback_inference;
 pub(crate) mod classes;
+mod closure_narrowing;
 mod collections;
 mod completion;
 mod compound_assignments;

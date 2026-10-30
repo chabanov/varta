@@ -142,6 +142,13 @@ impl varta_compiler::ModuleLoader for Modules {
             .map(|(_, text)| (*text).to_owned())
             .ok_or_else(|| varta_compiler::CompilerError::Module(format!("{}", path.display())))
     }
+    fn resolve_text(
+        &self,
+        importer: &std::path::Path,
+        specifier: &str,
+    ) -> Result<std::path::PathBuf, varta_compiler::CompilerError> {
+        self.resolve(importer, specifier)
+    }
 }
 
 pub(crate) const APP: &str = include_str!("view_cases/app.tsx");
@@ -625,4 +632,325 @@ fn bounded_runs_render_without_event_delivery() {
         .run_wasm_bytes(&compile(COPY), &[clipboard(true)])
         .unwrap();
     assert!(output.lines.is_empty(), "{:?}", output.lines);
+}
+
+fn timers() -> CapabilityGrant {
+    CapabilityGrant {
+        id: varta_common::scheduler::TIMER_CAPABILITY.into(),
+        value: CapabilityValue::Boolean(true),
+    }
+}
+
+/// Nodes appear in timer turns: a zero-delay timer, its zero-delay chain,
+/// a 50 ms timer and a 10 s timer no script waits for; every click arms a
+/// zero-delay timer of its own.
+const TIMED: &str = r#"
+export function main(): void {
+  const root = View.node();
+  View.createElement(root, 1);
+  View.mount(root);
+  const add = (id: string): void => {
+    const node = View.node();
+    View.createElement(node, 1);
+    View.setAttribute(node, 1, id);
+    View.on(node, 1, (event: ViewEvent): void => {
+      console.log(`click ${id}`);
+      setTimeout(() => console.log(`after ${id}`), 0);
+    }, 0, 0, 0, 0);
+    View.insert(root, node, 0);
+    View.commit();
+  };
+  setTimeout(() => {
+    add('late');
+    setTimeout(() => {
+      add('chained');
+      setTimeout(() => add('third'), 0);
+    }, 0);
+  }, 0);
+  setTimeout(() => add('delayed'), 50);
+  setTimeout(() => console.log('never'), 10000);
+  console.log('main');
+}
+"#;
+
+fn turn_kinds(run: &ViewRun) -> Vec<crate::TurnKind> {
+    run.report
+        .budget
+        .as_ref()
+        .map(|report| report.turns.iter().map(|turn| turn.kind).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn scripted_inputs_wait_for_zero_delay_timers_and_their_chains() {
+    let started = std::time::Instant::now();
+    let run = run(
+        TIMED,
+        r##"{"inputs":[
+            {"input":"click","target":"#late"},
+            {"input":"click","target":"#third"},
+            {"input":"click","target":"#chained"}
+        ]}"##,
+        &[timers()],
+    );
+    // A click's zero-delay timer fires before the next input.
+    assert_eq!(
+        run.output.lines,
+        [
+            "varta log: main",
+            "varta log: click late",
+            "varta log: after late",
+            "varta log: click third",
+            "varta log: after third",
+            "varta log: click chained",
+            "varta log: after chained",
+        ]
+    );
+    let ids: Vec<_> = run.snapshot["tree"]["children"][0]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["attributes"]["id"].clone())
+        .collect();
+    assert_eq!(ids, ["late", "chained", "third"]);
+    // main, three chained timers, then per click a view turn and a timer.
+    use crate::TurnKind::{Main, Timer, View};
+    assert_eq!(
+        turn_kinds(&run),
+        [
+            Main, Timer, Timer, Timer, View, Timer, View, Timer, View, Timer
+        ]
+    );
+    // Virtual time: the 50 ms and 10 s timers never fire and nothing waited
+    // for the wall clock.
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+pub(crate) const TIMERS: &str = include_str!("view_cases/timers.ts");
+pub(crate) const TIMERS_SCRIPT: &str = r##"{"inputs":[
+    {"input":"type","target":"#box","text":"a"},
+    {"input":"key","target":"#box","key":"Enter"},
+    {"input":"click","target":"#later"},
+    {"input":"wait","ms":30},
+    {"input":"type","target":"#box","text":"b"}
+]}"##;
+/// Runs of the determinism cases; at least 20.
+const DETERMINISM_RUNS: usize = 25;
+
+/// A scripted session is a function of the artifact and the script: the
+/// same turns, output and final tree on every run, however fast the host
+/// is (cb6795d decided the input/timer boundary by the wall clock).
+#[test]
+fn scripted_sessions_are_deterministic_across_runs() {
+    let bytes = compile(TIMERS);
+    let grants = [timers()];
+    let first = run_view(&bytes, &grants, None, &script(TIMERS_SCRIPT)).unwrap();
+    use crate::TurnKind::{Main, Timer, View};
+    assert_eq!(
+        turn_kinds(&first),
+        [
+            Main, Timer, Timer, Timer, // the m chain
+            View, Timer, Timer, Timer, // type a: the i chain
+            // Enter: keydown and the newline's input, then the k chain, the
+            // button and the i chain interleaved in timer order.
+            View, View, Timer, Timer, Timer, Timer, Timer, Timer, Timer, Timer, Timer, View, Timer,
+            Timer, Timer, Timer, // click: the c chain
+            Timer, // wait 30: delayed
+            View, Timer, Timer, Timer, // type b
+        ]
+    );
+    assert_eq!(
+        first.output.lines,
+        [
+            "varta log: input a",
+            "varta log: key Enter",
+            "varta log: input a\n",
+            "varta log: click later",
+            "varta log: input a\nb"
+        ]
+    );
+    let log = text_of(by_id(&first.snapshot["tree"], "log").unwrap());
+    assert_eq!(
+        log,
+        "1:m3;2:m2;3:m1;4:i3;5:i2;6:i1;7:k5;8:i3;9:k4;10:i2;11:k3;12:i1;13:k2;14:k1;\
+         15:c4;16:c3;17:c2;18:c1;19:delayed;20:i3;21:i2;22:i1;"
+    );
+    for _ in 1..DETERMINISM_RUNS {
+        let again = run_view(&bytes, &grants, None, &script(TIMERS_SCRIPT)).unwrap();
+        assert_eq!(turn_kinds(&first), turn_kinds(&again));
+        assert_eq!(first.output.lines, again.output.lines);
+        assert_eq!(first.snapshot, again.snapshot);
+    }
+}
+
+/// Zero-delay timers keep Node's 1 ms minimum on the virtual clock: a chain
+/// interleaves with a 2 ms timer in Node's order (Node 24 prints
+/// `c0 a c1 c2 b`), all before the input; the 50 ms timer needs a wait.
+#[test]
+fn zero_delay_chains_keep_node_order_with_delayed_timers() {
+    let source = r#"
+export function main(): void {
+  const root = View.node();
+  View.createElement(root, 1);
+  View.mount(root);
+  setTimeout(() => console.log('a'), 2);
+  setTimeout(() => {
+    console.log('c0');
+    setTimeout(() => {
+      console.log('c1');
+      setTimeout(() => console.log('c2'), 0);
+    }, 0);
+  }, 0);
+  setTimeout(() => console.log('b'), 50);
+}
+"#;
+    let run = run(
+        source,
+        r#"{"inputs":[{"input":"prompts","answer":"allow"}]}"#,
+        &[timers()],
+    );
+    assert_eq!(
+        run.output.lines,
+        [
+            "varta log: c0",
+            "varta log: a",
+            "varta log: c1",
+            "varta log: c2"
+        ]
+    );
+}
+
+#[test]
+fn wait_steps_advance_virtual_time_to_fire_delayed_timers() {
+    let bytes = compile(TIMED);
+    let grants = [timers()];
+    // 49 ms is not enough for the 50 ms timer.
+    let early = run_view(
+        &bytes,
+        &grants,
+        None,
+        &script(r##"{"inputs":[{"input":"wait","ms":49},{"input":"click","target":"#delayed"}]}"##),
+    )
+    .err()
+    .unwrap();
+    assert!(early.to_string().contains("attached"), "{early}");
+    // Two waits add up; the timer fires in its own turn before the input.
+    let session = r##"{"inputs":[
+        {"input":"wait","ms":20},
+        {"input":"wait","ms":30},
+        {"input":"click","target":"#delayed"},
+        {"input":"wait","ms":0}
+    ]}"##;
+    let first = run_view(&bytes, &grants, None, &script(session)).unwrap();
+    assert_eq!(
+        first.output.lines,
+        [
+            "varta log: main",
+            "varta log: click delayed",
+            "varta log: after delayed"
+        ]
+    );
+    // Deterministic across runs: the same output, snapshot and turns.
+    for _ in 0..3 {
+        let again = run_view(&bytes, &grants, None, &script(session)).unwrap();
+        assert_eq!(first.output.lines, again.output.lines);
+        assert_eq!(first.snapshot, again.snapshot);
+        assert_eq!(turn_kinds(&first), turn_kinds(&again));
+    }
+}
+
+#[test]
+fn wait_steps_are_bounded_and_endless_zero_delay_timers_fail_the_step() {
+    for invalid in [
+        r#"{"inputs":[{"input":"wait","ms":-1}]}"#,
+        r#"{"inputs":[{"input":"wait","ms":2147483648}]}"#,
+        r#"{"inputs":[{"input":"wait"}]}"#,
+        r##"{"inputs":[{"input":"wait","ms":1,"target":"#x"}]}"##,
+    ] {
+        assert!(
+            crate::ViewScript::parse(invalid.as_bytes()).is_err(),
+            "{invalid}"
+        );
+    }
+    let source = r#"
+export function main(): void {
+  const root = View.node();
+  View.createElement(root, 1);
+  View.mount(root);
+  setInterval(() => {}, 0);
+}
+"#;
+    let error = run_view(
+        &compile(source),
+        &[timers()],
+        None,
+        &script(r#"{"inputs":[{"input":"wait","ms":0},{"input":"prompts","answer":"allow"}]}"#),
+    )
+    .err()
+    .unwrap();
+    // The wait reaches nothing (the interval is due at 1 ms); the input's
+    // settling never ends.
+    assert!(
+        matches!(
+            error,
+            crate::RuntimeError::Application(crate::ApplicationError::Unsettled { step: 2 })
+        ),
+        "{error}"
+    );
+}
+
+const STYLED: &str = r#"import css from './console.css' with { type: 'text' };
+export function main(): void {
+  View.stylesheet(1, css);
+  console.log(`${css.length} ${css.startsWith(':root')}`);
+  View.mount(<main id="app" class="card">hi</main>);
+}"#;
+const CONSOLE_CSS: &str =
+    ":root { --accent: #0a84ff }\n.card { color: var(--accent); padding: 8px }\n";
+
+#[test]
+fn text_imports_reach_the_view_verbatim() {
+    let sheet = CONSOLE_CSS;
+    let bytes = compile_tsx(STYLED, &[("console.css", CONSOLE_CSS)]);
+    let run = run_view(&bytes, &[], None, &script(NO_INPUTS)).unwrap();
+    assert_eq!(
+        run.output.lines,
+        [format!("varta log: {} true", sheet.encode_utf16().count())]
+    );
+    assert_eq!(run.snapshot["stylesheets"][0]["text"], sheet);
+    let app = by_id(&run.snapshot["tree"], "app").unwrap();
+    assert_eq!(app["style"]["color"], "#0a84ff");
+}
+
+/// TSX holes are getter closures: a parameter narrowed by a `switch` keeps
+/// its narrowing inside them (v38 `closure_narrowing`).
+const NARROWED_HOLES: &str = r#"type Inline = { kind: 'text'; text: string } | { kind: 'code'; text: string; lang: string };
+function render(n: Inline): number {
+  switch (n.kind) {
+    case 'code':
+      return <code class={n.lang}>{n.text}</code>;
+    default:
+      return <span>{n.text}</span>;
+  }
+}
+function Item(props: { n: Inline }): number {
+  return render(props.n);
+}
+export function main(): void {
+  const code: Inline = { kind: 'code', text: 'let x', lang: 'ts' };
+  const plain: Inline = { kind: 'text', text: 'plain' };
+  View.mount(<main id="app"><Item n={code} /><Item n={plain} /></main>);
+}"#;
+
+#[test]
+fn narrowing_reaches_tsx_holes() {
+    let bytes = compile_tsx(NARROWED_HOLES, &[]);
+    let run = run_view(&bytes, &[], None, &script(NO_INPUTS)).unwrap();
+    let app = by_id(&run.snapshot["tree"], "app").unwrap();
+    let children = app["children"].as_array().unwrap();
+    assert_eq!(children[0]["tag"], "code");
+    assert_eq!(children[0]["class"], "ts");
+    assert_eq!(text_of(&children[0]), "let x");
+    assert_eq!(children[1]["tag"], "span");
+    assert_eq!(text_of(&children[1]), "plain");
 }

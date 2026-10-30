@@ -798,6 +798,8 @@ The selectors are registered; the table records what each stream admits.
 | `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Implemented in part ([contract](architecture.md#linked-intrinsics-linked_intrinsics)): 47 pure operations (Math, `**`/`%`, Number text and parsing, primitive-cell conversions, UTF-16 access and case mapping; since wave 2 every BigInt operation) are guest code from the shared `varta-intrinsics` crate, linked function by function into the module's intrinsic region of memory 0 (one memory); a v38 host implements 54 imports. Measured below ([linked intrinsics measurement](#linked-intrinsics-measurement-v38)). Pending: the value18 conversions and comparisons (shared code, fuel-bound on hot paths), JSON and the value18 readers, which need the reference, aggregate and closure-envelope readers in the `no_std` core |
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Implemented (P7): `view_commit` (host ABI 34), synthesized event export, `varta-view` headless renderer (tree, cascade, accessibility; no layout), `ui.open_url`/`clipboard.write` decided by permission broker v1 with `command_result`; every view record is a host task of an application instance and runs as its own turn |
 | `tsx()` | TSX: TSX parsing and template compilation | Implemented (start of P8): `.tsx` parsing, AOT templates with getter holes, typed `JSX` namespace; L1 stays a package outside the engine |
+| `closure_narrowing()` | Narrowing in closures (TypeScript 5.4) | Implemented ([contract](architecture.md#v38-closure-narrowing-closure_narrowing)): parameters and `let` bindings keep their narrowing in arrows, function expressions and TSX holes created after their last assignment; raised by the UARP console chat screen |
+| `text_imports()` | Text resources: `import x from "./x.css" with { type: "text" }` | Implemented ([contract](architecture.md#local-modules)): verbatim UTF-8 default imports resolved and loaded like modules, build-time stylesheet check for direct `View.stylesheet` arguments; owner-approved 2026-10-30 |
 | `structural_subtyping()` | Structural subtyping: width and structural subtyping of records, interfaces and classes, remaining pilot language items | Implemented in part ([contract](architecture.md#structural-subtyping-structural_subtyping)): width subtyping of records, interfaces and class instances through views (one accessor call plus one descriptor test per source layout; direct slots for shapes without wider sources), identity-preserving comparisons and `instanceof`, diagnostics naming both types and the missing/mismatched/extra members, erased generic method signatures with checked results, `object` annotations, `Array.isArray` narrowing of `unknown`, record and optional spreads, `obj.m?.()` on class methods, property narrowing kept across calls and getters with checked reads, `JSON.stringify` typed `string` and of `never`, literal `??` fallbacks, record-to-dictionary assertions and records held by `unknown` read as JSON objects, `Promise<unknown>` arrow contexts, `as void`, string `for...of`, exhaustive literal `switch`, constructor parameter properties, `encodeURIComponent`/`encodeURI`. Pending: Web byte bodies (`ReadableStream<Uint8Array>`, `arrayBuffer()`, `Blob`, `FormData`), typed `globalThis`/`process.env`, `Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views. Pilot probe below |
 | `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionary call sites; fuel profiler | Implemented for codegen ([contract](architecture.md#code-generation-v2-codegen_v2)): quiet expressions without root traffic, call and frame fast paths, operand-cache collapse, plain updates, content-equality and inline literal comparisons, amortized string builders, guest `charAt`/`charCodeAt`/`%`, bounded first allocation scans and a collection threshold; `varta dev --profile-fuel` ([profile builds](architecture.md#fuel-profile-builds-varta-dev---profile-fuel)). Admits no syntax; v37 bytes frozen |
 | `strict_members()` | Strict members: undeclared member access rejected, per-union member limits from the registry, discriminant dispatch, exhaustive discriminant switches | Implemented ([contract](architecture.md#strict-members-and-wide-unions-strict_members)): `property X is not declared by Owner` for every static access form; `union_members`/`json_union_members` in `ProgramLimits` (frozen 16/7, v38 the entity bound); one discriminant lookup and a flat literal chain (about 55 fuel per member before the match, 9 after); flat or balanced lowering above 16 members; exhaustive `switch` over `x.kind` and nested paths with a diagnostic naming unhandled members. Pending: `varta dev --profile-fuel` of programs with checked conversions fails (`value ABI helpers cannot call host imports`), pre-existing |
@@ -1359,7 +1361,25 @@ web-developer peer.
   `aria-label`, `aria-labelledby`, `aria-describedby`, `aria-live`,
   `aria-expanded`, `aria-selected`, `aria-current`, `aria-busy`, `aria-invalid`,
   `aria-hidden`. A visible focus outline is mandatory. The headless renderer outputs
-  the accessibility tree.
+  the accessibility tree; names follow the accname 1.2 steps the subset admits
+  ([contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)).
+- **Open L0 v0/v1 choices (owner decision).** Raised by the first UARP console
+  chat screen (2026-10-30) and not part of the subset until decided:
+  `role="separator"` (a divider between message groups; ARIA gives it an
+  orientation and, when focusable, a value) and `role="group"` (a set of
+  related controls such as a message's action buttons, named by its author).
+  Either needs a registry entry in `view::ROLES`, its accname step, the
+  AccessKit mapping and a browser/native conformance page; until then the
+  application uses `div` without a role.
+- **Headless scripts and network requests (open).** `varta dev --view-script`
+  runs on virtual time ([contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)):
+  inputs wait for every runnable task, `{"input":"wait","ms":N}` fires delayed
+  timers, and network requests in flight are not waited for. An explicit
+  bounded step that waits for completions (for example
+  `{"input":"wait","network":true,"ms":N}` on the wall clock) is open: it
+  mixes the wall clock into a virtual-time session, so a scripted network
+  session stays nondeterministic until a recorded or simulated network
+  host exists.
 - **Window (native targets).** Title, initial and minimum size, DPI handled by the
   renderer, the OS colour scheme, system copy/paste shortcuts.
 - **Freeze criterion for L0 v1.** A set of conformance pages where the same patch

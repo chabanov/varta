@@ -237,7 +237,7 @@ impl Lower<'_> {
             .iter()
             .flat_map(|s| s.values())
             .chain(self.captures.values())
-            .filter(|b| b.mutable && writes.contains(&b.identity))
+            .filter(|b| b.mutable && !self.stable(b) && writes.contains(&b.identity))
             .map(|b| b.slot)
             .collect()
     }

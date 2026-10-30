@@ -4,6 +4,7 @@
 use crate::tree::{Element, focus_records, uncheck_group};
 use crate::{Access, Broker, EventRecord, InputError, View, ViewError};
 use serde::Deserialize;
+use varta_common::scheduler::TIMER_MAX_DELAY_MS;
 use varta_common::view::{
     ANY_KEY, Attribute, CommandStatus, EventFlag, EventKind, Key, ListenOption, MODIFIER_MASK,
     ResultOperation, Tag,
@@ -126,6 +127,41 @@ pub enum Input {
     },
 }
 
+/// One step of a headless script: a trusted platform input, or a `wait`
+/// that advances the session's virtual clock (`{"input":"wait","ms":N}`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScriptStep {
+    Input(Input),
+    /// Advance virtual loop time by `ms` milliseconds, firing every timer due
+    /// by then, each as its own turn.
+    Wait {
+        ms: f64,
+    },
+}
+
+/// The control steps that share the `input` tag with [`Input`].
+#[derive(Deserialize)]
+#[serde(tag = "input", rename_all = "snake_case", deny_unknown_fields)]
+enum Control {
+    Wait { ms: f64 },
+}
+/// The `input` tag of a wait step.
+const WAIT_STEP: &str = "wait";
+
+impl<'de> Deserialize<'de> for ScriptStep {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.get("input").and_then(serde_json::Value::as_str) == Some(WAIT_STEP) {
+            let Control::Wait { ms } = Control::deserialize(value).map_err(D::Error::custom)?;
+            return Ok(Self::Wait { ms });
+        }
+        Input::deserialize(value)
+            .map(Self::Input)
+            .map_err(D::Error::custom)
+    }
+}
+
 /// Why a headless script was rejected.
 #[derive(Debug, thiserror::Error)]
 pub enum ScriptError {
@@ -133,11 +169,17 @@ pub enum ScriptError {
     TooLarge,
     #[error("view script has more than {} inputs", Script::MAX_INPUTS)]
     TooManyInputs,
+    #[error(
+        "view script step {step} waits {ms} ms; a wait is a number of milliseconds in 0..={}",
+        TIMER_MAX_DELAY_MS
+    )]
+    Wait { step: usize, ms: f64 },
     #[error("invalid view script: {0}")]
     Json(serde_json::Error),
 }
 
-/// A headless script: viewport, platform behaviour and inputs in order.
+/// A headless script: viewport, platform behaviour and its steps (inputs
+/// and waits) in order.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Script {
@@ -146,7 +188,7 @@ pub struct Script {
     #[serde(default)]
     pub platform: Platform,
     #[serde(default)]
-    pub inputs: Vec<Input>,
+    pub inputs: Vec<ScriptStep>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -156,9 +198,13 @@ pub struct Viewport {
     pub dark: bool,
 }
 impl Script {
-    /// Limits of a script file and of its inputs.
+    /// Limits of a script file and of its steps (inputs and waits).
     pub const MAX_BYTES: usize = 1024 * 1024;
     pub const MAX_INPUTS: usize = 4096;
+    /// The most turns one step may take to settle (the tasks runnable before
+    /// an input, or the timers a wait reaches); more fails the session, so a
+    /// timer that keeps re-arming with the minimum delay cannot hang it.
+    pub const MAX_STEP_TURNS: u64 = 100_000;
     /// Parse a bounded script.
     pub fn parse(bytes: &[u8]) -> Result<Self, ScriptError> {
         if bytes.len() > Self::MAX_BYTES {
@@ -167,6 +213,13 @@ impl Script {
         let script: Self = serde_json::from_slice(bytes).map_err(ScriptError::Json)?;
         if script.inputs.len() > Self::MAX_INPUTS {
             return Err(ScriptError::TooManyInputs);
+        }
+        for (step, entry) in script.inputs.iter().enumerate() {
+            if let ScriptStep::Wait { ms } = *entry
+                && !(0.0..=TIMER_MAX_DELAY_MS).contains(&ms)
+            {
+                return Err(ScriptError::Wait { step: step + 1, ms });
+            }
         }
         Ok(script)
     }

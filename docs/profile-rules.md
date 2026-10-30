@@ -3700,6 +3700,13 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   (`Application::view_input`); never deliver a record inside another turn
   and never add a second event loop. A bounded execution renders but
   delivers no records.
+- A scripted session (`run_view`) runs on virtual time
+  (`Application::horizon`): an input waits until nothing is runnable (host
+  tasks, due timers, timers while a minimum-delay timer is armed, arrived
+  completions), `wait` steps alone advance loop time, and nothing sleeps or
+  observes the wall clock. Keep Node's timer order: never let a zero-delay
+  timer overtake an earlier (due, sequence) key, and never wait for network
+  completions implicitly. Every step stays within `Script::MAX_STEP_TURNS`.
 - The event export is synthesized only when the view prelude is loaded; it
   copies the record with the snapshot helper before any other operation and
   calls the prelude dispatcher, a pruning root. Validation rejects the export
@@ -3713,6 +3720,15 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   other host denies. A denial or refusal is a `command_result`, never a trap
   or a batch error (except the patch-time check of an external `href`
   against the package request).
+- Accessible names follow the accname 1.2 steps of the
+  [architecture contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)
+  in `varta-view/src/name.rs`: hidden nodes (`aria-hidden="true"`, computed
+  `display: none`, a closed `dialog`) never contribute unless the relation
+  started at a hidden node; name from content only for the listed roles at
+  the root; the `label` relation only at the root so every traversal stays
+  finite. A new element, attribute or role decides its step there and in the
+  contract in the same change. `role` values stay within `view::ROLES`:
+  `separator` and `group` are open L0 decisions, not additions.
 - The headless renderer (`varta-view`) stays free of Wasm, I/O and clocks;
   host decisions reach it through `Broker`. Production budgets never change
   for views; every view turn has its own per-turn allowance.
@@ -3720,10 +3736,35 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   `varta.view.units`, append strings as themselves, never loop per code unit
   in guest code (`the_initial_render_of_the_example_app_stays_inside_production_fuel`).
 
+### Closure narrowing (`closure_narrowing()`)
+
+- The rule lives in `lower/closure_narrowing.rs`: a per-function name scan
+  of assignments (loop-extended, nested functions flagged) decides at each
+  closure's position which mutable bindings are stable; the child inherits
+  them in `core::State::stable`. Never mark such a binding immutable or
+  change its capture: it stays a cell, only its flow facts are kept.
+- A stable binding is excluded from `mutable_cells` and call write sets, so
+  an unknown call in the closure keeps its narrowing. Any new assignment form
+  must be added to the scan in the same change, or narrowing becomes
+  unsound. Hoisted declarations (`core.hoisting`) never take it.
+
 ### TSX stream (`tsx()`)
 
 - Parse JSX only in `.tsx` modules of a profile with `tsx()`; every other
   module, and every module of earlier profiles, keeps the TypeScript syntax.
+- The project loader maps `./x.js` to `x.ts` or `x.tsx` (exactly one may
+  exist; both or neither is a module error) and `./x.jsx` to `x.tsx` only
+  under `tsx()`. Probes walk the pinned root with no-follow at every
+  component and never read a file; v31–v37 keep `.js` → `.ts` without
+  probing. Never add index/directory lookup or JavaScript loading here.
+- Text resources (`text_imports()`): only `with { type: "text" }`, only a
+  default import, verbatim UTF-8 without a BOM, resolved by
+  `ModuleLoader::resolve_text` under the module path policy and loaded
+  through the pinned no-follow root. Keep them graph units (budgets, order,
+  metadata, one identity per path) whose AST is the one `default: string`
+  constant; never transform the text. The build-time stylesheet check uses
+  `varta_common::view::stylesheet`, the renderer's parser, never a second
+  grammar, and only for a direct, unshadowed `View.stylesheet` argument.
 - Desugar JSX to ordinary checked TypeScript before scanning, so imports,
   prelude triggers and the type checker see plain calls. Generated nodes
   carry the span of their JSX element; program expressions keep their own.

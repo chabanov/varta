@@ -5689,7 +5689,20 @@ lists trusted inputs (`{"input":"click","target":"#inc"}`, `type`, `key` with
 `shift`/`ctrl`/`alt`/`meta`/`composing`, `focus`, `select`, `scroll`,
 `prompts`) performed between turns of an application instance, every event
 record runs as its own turn, and the command prints the final tree and
-accessibility snapshot (`--budget-report` shows the turns).
+accessibility snapshot (`--budget-report` shows the turns). The session runs
+on virtual time: an input is performed only after every pending record and
+zero-delay timer (and the zero-delay timers those arm) has run, so a node
+created in `setTimeout(…, 0)` can be clicked by the next step. A delayed
+timer fires only when a `wait` step reaches it; nothing depends on the wall
+clock:
+
+```json
+{"inputs":[
+  {"input":"click","target":"#reasoning"},
+  {"input":"wait","ms":300},
+  {"input":"click","target":"#retry"}
+]}
+```
 `View.copyText` needs `"clipboard": {"write": true}` and runs only in a
 click, key or submit turn; an external `<a href>` needs a matching
 `"ui": {"open_url": [...]}` pattern (`"https://*"` admits any HTTPS link and
@@ -5697,3 +5710,58 @@ prompts on every activation). Denials arrive as statuses, never as failures.
 Unknown elements or attributes, invalid static values (`rows="0"`,
 `style="color: red"`), unknown filters, fragments, spreads and component
 children are compile errors.
+
+A narrowed parameter or `let` binding stays narrowed inside closures and
+TSX holes created after its last assignment, as in TypeScript 5.4:
+
+```tsx
+function render(n: Inline): number {
+  switch (n.kind) {
+    case 'code':
+      return <code>{n.text}</code>; // the hole `() => n.text` sees the code member
+    default:
+      return <span>{n.text}</span>;
+  }
+}
+```
+
+Reassigning the binding after the closure is created, inside any other
+closure, or anywhere in a loop around the closure withdraws it (the read
+then needs its own narrowing).
+
+Accessible names follow accname 1.2: `aria-hidden="true"` content (and
+`display: none` or a closed dialog) is left out of a name from content, so
+this button is `button "Reasoning"`:
+
+```tsx
+<button type="button">
+  <span aria-hidden="true">◇</span><span>Reasoning</span><span aria-hidden="true">▸</span>
+</button>
+```
+
+A `.tsx` module is imported with TypeScript's ESM specifiers: `./markdown.js`
+names `markdown.ts` or `markdown.tsx` (if both exist the import is ambiguous
+and fails; write the explicit extension), and `./markdown.jsx` names
+`markdown.tsx` only:
+
+```ts
+import { renderInline } from './markdown.js'; // loads ./markdown.tsx
+```
+
+A stylesheet or any other UTF-8 file is imported as a `string` with the
+`type: "text"` attribute. When it goes straight into `View.stylesheet`,
+`varta check` validates it against the L0 stylesheet grammar and points at
+the line and column inside the `.css` file:
+
+```ts
+import css from './console.css' with { type: 'text' };
+
+export function main(): void {
+  View.stylesheet(1, css);
+}
+```
+
+Only a default import is allowed, the file must be inside the project
+directory and is never transformed (a byte order mark is an error). An
+editor's TypeScript needs an ambient `declare module '*.css' { const text:
+string; export default text; }` for the import.

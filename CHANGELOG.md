@@ -122,6 +122,16 @@ in [conformance/README.md](conformance/README.md).
   outside the request or ceiling, traversal, a symlink below the root and any
   absolute host path are denied. V1–v37 keep absolute host paths unchanged.
 
+- V38 text resources: `import css from "./console.css" with { type: "text" }`
+  binds the file's verbatim UTF-8 text as a default-imported `string`,
+  resolved and loaded like a module (relative, inside the configuration
+  directory, pinned no-follow descriptors, graph budgets, read once), stored
+  once in the static data and recorded in the module graph. A text passed
+  directly to `View.stylesheet` is checked at build time against the L0
+  stylesheet grammar, now shared as `varta_common::view::stylesheet`, with
+  diagnostics inside the `.css` file. Earlier profiles reject attributed
+  imports.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of
@@ -1135,6 +1145,39 @@ in [conformance/README.md](conformance/README.md).
   stay uninstrumented (validation rejected their probes as host imports), and
   their fuel counts toward the caller, so the profile still equals the
   ordinary run's fuel.
+- V38 keeps the narrowing of parameters and `let` bindings inside closures
+  created after their last assignment (TypeScript 5.4), for arrows,
+  function expressions and TSX hole getters: `case "code": return
+  <code>{n.text}</code>` now compiles. An assignment after the closure, in
+  any nested function or in a loop around the closure withholds it; hoisted
+  function declarations never take it. V1–v37 are unchanged.
+
+- V38 `varta dev --view-script` runs on virtual time: a scripted input is
+  performed only when no task is runnable (records, arrived completions, due
+  timers, and zero-delay timers with their chains in Node's order), so a node
+  created in a `setTimeout(…, 0)` turn can be clicked by the next step. The
+  new `{"input":"wait","ms":N}` step advances virtual time and fires the
+  timers due by then; nothing waits for the wall clock, a timer no wait
+  reaches never fires, and one step settles within `Script::MAX_STEP_TURNS`
+  turns. Root cause of the run-to-run differences: `run_view` decided each
+  timer's dueness by comparing its wall-clock target with `Instant::now()`
+  after every turn, so a 1 ms timer fired before or after the next input
+  depending on host speed. Scripted sessions are now deterministic (25-run
+  runtime and 20-run CLI tests compare turns, output and snapshot).
+
+- V38 accessible names follow the accname 1.2 steps the L0 subset admits:
+  `aria-hidden="true"`, `display: none` and closed-dialog descendants no
+  longer enter a name from content (`button "Reasoning"`, not
+  `"◇Reasoning▸"`), `aria-labelledby` and `label` traversals include hidden
+  content only when the referenced node is hidden, blank `aria-label` is
+  ignored, embedded fields give their value, names are flat strings and only
+  ARIA "name from contents" roles take their content (a `listitem` no longer
+  has a name). The headless snapshot omits empty names.
+- V38 resolves `./x.js` to `x.ts` or `x.tsx` (both existing is an ambiguous
+  import error, neither names both candidates) and `./x.jsx` to `x.tsx`, as
+  TypeScript's extension substitution does; probes use the pinned no-follow
+  root. V31–v37 keep `.js` → `.ts`.
+
 - Dispatch Array.lastIndexOf to reverse search instead of Array.indexOf. Omitted
   positions start at the final element; explicit undefined/NaN select zero,
   positive infinity clamps to the final index and positions below -length miss.

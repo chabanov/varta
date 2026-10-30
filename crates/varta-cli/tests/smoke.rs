@@ -17143,3 +17143,126 @@ fn web_bytes_env_snapshots_and_byte_bodies_follow_exact_grants() {
     assert!(!output.contains("hidden"), "{output}");
     let _ = fs::remove_dir_all(&project);
 }
+
+const VIEW_TIMER_CASE: &str = include_str!("../../varta-runtime/src/view_cases/timers.ts");
+
+/// The per-turn budget lines without their wall-clock part: label, fuel,
+/// host calls and microtasks of every turn, then the totals.
+fn turn_lines(output: &std::process::Output) -> Vec<String> {
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .chain(String::from_utf8_lossy(&output.stdout).lines())
+        .filter(|line| line.starts_with("varta budget: turn"))
+        .map(|line| line.split(", wall").next().unwrap_or(line).to_owned())
+        .collect()
+}
+
+/// `varta dev --view-script` is a function of the artifact and the script:
+/// typing, Enter, a click, zero-delay chains and a waited-for timer give the
+/// same turns, output and snapshot on every one of 20 runs.
+#[test]
+fn view_script_sessions_are_deterministic_across_runs() {
+    let project = RegressionProject::new(
+        VIEW_TIMER_CASE,
+        serde_json::json!({"time": {"timer": true}}),
+    );
+    project.language_profile("checked-f64-utf16-v38");
+    fs::write(
+        project.0.join("script.json"),
+        r##"{"inputs":[
+  {"input":"type","target":"#box","text":"a"},
+  {"input":"key","target":"#box","key":"Enter"},
+  {"input":"click","target":"#later"},
+  {"input":"wait","ms":30},
+  {"input":"type","target":"#box","text":"b"}
+]}"##,
+    )
+    .unwrap();
+    let args = ["dev", "--view-script", "script.json", "--budget-report"];
+    let first = project.command(&args);
+    assert!(first.status.success(), "{}", combined(&first));
+    let turns = turn_lines(&first);
+    assert_eq!(turns.len(), 29, "{}", combined(&first));
+    assert!(turns[0].contains(" main:"), "{turns:?}");
+    let snapshot = view_snapshot(&first);
+    assert!(view_text(view_node(&snapshot, "log")).ends_with("19:delayed;20:i3;21:i2;22:i1;"));
+    for _ in 1..20 {
+        let again = project.command(&args);
+        assert!(again.status.success(), "{}", combined(&again));
+        assert_eq!(turns, turn_lines(&again));
+        assert_eq!(first.stdout, again.stdout);
+    }
+}
+
+/// A node that appears in a zero-delay timer turn, and one after 200 ms.
+const VIEW_TIMERS: &str = r#"
+export function main(): void {
+  const root = View.node();
+  View.createElement(root, 1);
+  View.mount(root);
+  const add = (id: string): void => {
+    const node = View.node();
+    View.createElement(node, 1);
+    View.setAttribute(node, 1, id);
+    View.on(node, 1, (event: ViewEvent): void => console.log(`click ${id}`), 0, 0, 0, 0);
+    View.insert(root, node, 0);
+    View.commit();
+  };
+  setTimeout(() => add('late'), 0);
+  setTimeout(() => add('delayed'), 200);
+  setTimeout(() => console.log('never'), 60000);
+}
+"#;
+
+#[test]
+fn view_scripts_run_on_virtual_time_with_wait_steps() {
+    let project = RegressionProject::new(VIEW_TIMERS, serde_json::json!({"time": {"timer": true}}));
+    project.language_profile("checked-f64-utf16-v38");
+    fs::write(
+        project.0.join("script.json"),
+        r##"{"inputs":[
+  {"input":"click","target":"#late"},
+  {"input":"wait","ms":200},
+  {"input":"click","target":"#delayed"}
+]}"##,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let first = project.command(&["dev", "--view-script", "script.json"]);
+    assert!(first.status.success(), "{}", combined(&first));
+    let logs: Vec<_> = String::from_utf8_lossy(&first.stdout)
+        .lines()
+        .filter(|line| line.starts_with("varta log:"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(logs, ["varta log: click late", "varta log: click delayed"]);
+    // Virtual time: the 60 s timer never fires, nothing waited for it, and
+    // the session is identical across runs.
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    let second = project.command(&["dev", "--view-script", "script.json"]);
+    assert_eq!(first.stdout, second.stdout);
+    // Without the wait the delayed node is not attached yet.
+    fs::write(
+        project.0.join("early.json"),
+        r##"{"inputs":[{"input":"click","target":"#delayed"}]}"##,
+    )
+    .unwrap();
+    let early = project.command(&["dev", "--view-script", "early.json"]);
+    assert!(!early.status.success());
+    assert!(
+        combined(&early).contains("#delayed"),
+        "{}",
+        combined(&early)
+    );
+    // A wait outside 0..=2^31-1 ms is an invalid script.
+    fs::write(
+        project.0.join("bad.json"),
+        r#"{"inputs":[{"input":"wait","ms":-5}]}"#,
+    )
+    .unwrap();
+    let bad = project.command(&["dev", "--view-script", "bad.json"]);
+    assert!(!bad.status.success());
+    assert!(combined(&bad).contains("wait"), "{}", combined(&bad));
+    let help = varta().args(["dev", "--help"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&help.stdout).contains("\"input\":\"wait\""));
+}

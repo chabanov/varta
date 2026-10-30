@@ -269,7 +269,7 @@ impl Tree {
             .flat_map(|sheet| sheet.rules.iter())
             .enumerate()
         {
-            if !rule.applies(environment) {
+            if !style::applies(rule, environment) {
                 continue;
             }
             if let Some(specificity) = rule.matching(&subject) {

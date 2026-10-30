@@ -6,6 +6,7 @@ mod global_members;
 mod syntax;
 #[cfg(test)]
 mod tests;
+mod text;
 use crate::{
     CompilerError, parse,
     source::{self, Source},
@@ -21,6 +22,16 @@ pub trait ModuleLoader {
     /// Return one stable identity for each module. The host enforces path policy.
     fn resolve(&self, importer: &Path, specifier: &str) -> Result<PathBuf, CompilerError>;
     fn load(&self, path: &Path) -> Result<String, CompilerError>;
+    /// Return the identity of a text resource (v38 `text_imports()`:
+    /// `import x from "./x.css" with { type: "text" }`), loaded with
+    /// [`Self::load`] like a module. The host enforces the same path policy;
+    /// a loader that does not admit text resources keeps this default.
+    fn resolve_text(&self, importer: &Path, specifier: &str) -> Result<PathBuf, CompilerError> {
+        let _ = (importer, specifier);
+        Err(module_error(
+            "text resource imports require a module loader that admits them",
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +59,8 @@ pub(crate) struct Dependency {
     pub target: PathBuf,
     pub bindings: Vec<ImportBinding>,
     pub span: Span,
+    /// A text resource (`with { type: "text" }`, v38), not a module.
+    pub text: bool,
 }
 pub(crate) struct Export {
     pub local: String,
@@ -67,6 +80,9 @@ pub(crate) struct Unit {
     pub exports: Vec<Export>,
     /// `export * from` sources (v32), in source order.
     pub stars: Vec<PathBuf>,
+    /// A text resource (v38): its source is the resource text and its AST
+    /// the one constant `default`.
+    pub text: bool,
 }
 pub(crate) struct Graph {
     pub entry: PathBuf,
@@ -202,11 +218,22 @@ impl Builder<'_> {
                         .join(" -> ");
                     return Err(module_error(format!("cyclic module dependency: {chain}")));
                 }
+                if let Some(unit) = self.graph.units.get(&import.target)
+                    && unit.text != import.text
+                {
+                    return Err(module_error(format!(
+                        "{} is imported both as a module and as a text resource",
+                        import.target.display()
+                    )));
+                }
                 if !self.graph.units.contains_key(&import.target) {
                     if self.graph.units.len() + self.visiting.len() >= MAX_MODULES
                         || self.visiting.len() >= MAX_DEPTH
                     {
                         return Err(module_error("module graph exceeds module/depth limits"));
+                    }
+                    if import.text {
+                        return self.text(&import.target);
                     }
                     let text = match engine::prelude(&import.target) {
                         Some(prelude) => prelude.text(self.profile).to_owned(),
@@ -222,6 +249,7 @@ impl Builder<'_> {
             visit.map_err(|e| source.locate(e, import.span))?;
         }
         self.visiting.pop();
+        text::check_stylesheets(&ast, &imports, &self.graph.units)?;
         self.graph.order.push(input.path.clone());
         self.graph.units.insert(
             input.path,
@@ -231,8 +259,21 @@ impl Builder<'_> {
                 imports,
                 exports,
                 stars,
+                text: false,
             },
         );
+        Ok(())
+    }
+    /// Load a text resource once, within the graph's module and byte budgets.
+    fn text(&mut self, path: &Path) -> Result<(), CompilerError> {
+        let text = self.loader.load(path)?;
+        self.bytes += text.len();
+        if self.bytes > MAX_SOURCE_BYTES {
+            return Err(module_error("module graph exceeds total source budget"));
+        }
+        let unit = text::unit(path, text)?;
+        self.graph.order.push(path.to_owned());
+        self.graph.units.insert(path.to_owned(), unit);
         Ok(())
     }
 }

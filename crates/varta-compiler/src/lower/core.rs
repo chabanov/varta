@@ -25,4 +25,13 @@ pub(super) struct State {
     /// recently completed `switch` over a discriminant left unhandled, when
     /// no statement followed it; named by a missing-return diagnostic.
     pub(super) uncovered: Option<String>,
+    /// V38 (`closure_narrowing`): where this function body assigns each
+    /// name, for the closures it creates.
+    pub(super) assignments: Option<std::rc::Rc<super::closure_narrowing::Assignments>>,
+    /// V38 (`closure_narrowing`): mutable bindings of enclosing functions
+    /// that are never written after this closure was created.
+    pub(super) stable: BTreeSet<(usize, u32)>,
+    /// Set while a hoisted function declaration is lowered: it never keeps
+    /// the narrowing of a mutable binding.
+    pub(super) hoisting: bool,
 }

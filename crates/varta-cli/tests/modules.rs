@@ -363,6 +363,319 @@ fn dependency_symlinks_are_rejected_at_every_component() {
     }
 }
 
+const V38_CONFIG: &str = r#"{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-v38","capabilities":{}}"#;
+const V37_CONFIG: &str = r#"{"entry":"src/main.ts","target":"native","out":"dist/app","languageProfile":"checked-f64-utf16-v37","capabilities":{}}"#;
+
+#[test]
+fn js_and_jsx_specifiers_name_tsx_sources_in_v38() {
+    let main = r#"import {heading} from "./markdown.js";
+import {plain} from "./text.js";
+import {badge} from "./badge.jsx";
+export function main():void{console.log(heading()+plain()+badge());}"#;
+    let project = Project::new(main);
+    project.write("varta.config.json", V38_CONFIG);
+    project.write(
+        "src/markdown.tsx",
+        r#"export function heading():string{return "md/";}"#,
+    );
+    project.write(
+        "src/text.ts",
+        r#"export function plain():string{return "ts/";}"#,
+    );
+    project.write(
+        "src/badge.tsx",
+        r#"export function badge():string{return "jsx";}"#,
+    );
+    // JavaScript files are never read.
+    project.write("src/markdown.js", "PRIVATE_JS_MUST_NOT_BE_READ");
+    project.write("src/badge.jsx", "PRIVATE_JS_MUST_NOT_BE_READ");
+    assert!(success(project.command(&["dev"])).contains("varta log: md/ts/jsx"));
+    let check = project.command(&["check", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let imports = json["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|module| module["path"].as_str().unwrap().ends_with("main.ts"))
+        .unwrap()["imports"]
+        .clone();
+    let names: Vec<_> = imports
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| {
+            Path::new(path.as_str().unwrap())
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(names, ["badge.tsx", "markdown.tsx", "text.ts"]);
+
+    // Both sources existing is ambiguous; an explicit extension still works.
+    project.write(
+        "src/markdown.ts",
+        r#"export function heading():string{return "ts";}"#,
+    );
+    let diagnostic = project.diagnostic();
+    assert_eq!(diagnostic["code"], "module_error", "{diagnostic}");
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(
+        message.contains("ambiguous import ./markdown.js"),
+        "{message}"
+    );
+    assert!(message.contains("markdown.ts") && message.contains("markdown.tsx"));
+    assert_eq!(diagnostic["range"]["start"]["line"], 1, "{diagnostic}");
+    project.write(
+        "src/main.ts",
+        &main.replace("./markdown.js", "./markdown.tsx"),
+    );
+    assert!(success(project.command(&["dev"])).contains("varta log: md/ts/jsx"));
+
+    // Neither source existing names both candidates.
+    project.write("src/main.ts", &main.replace("./markdown.js", "./absent.js"));
+    let message = project.diagnostic()["message"].as_str().unwrap().to_owned();
+    assert!(
+        message.contains("neither")
+            && message.contains("absent.ts")
+            && message.contains("absent.tsx"),
+        "{message}"
+    );
+    // `.jsx` names only `.tsx`, never `.ts`.
+    project.write(
+        "src/plain.ts",
+        "export function badge():string{return \"x\";}",
+    );
+    project.write("src/main.ts", &main.replace("./badge.jsx", "./plain.jsx"));
+    assert_eq!(project.diagnostic()["code"], "module_error");
+
+    // V37 keeps `.js` → `.ts` only and rejects `.jsx`.
+    let old = Project::new(
+        r#"import {heading} from "./markdown.js";export function main():void{console.log(heading());}"#,
+    );
+    old.write("varta.config.json", V37_CONFIG);
+    old.write(
+        "src/markdown.tsx",
+        r#"export function heading():string{return "md";}"#,
+    );
+    let message = old.diagnostic()["message"].as_str().unwrap().to_owned();
+    assert!(
+        message.contains("cannot load module") && message.contains("markdown.ts:"),
+        "{message}"
+    );
+    old.write(
+        "src/main.ts",
+        r#"import {heading} from "./markdown.jsx";export function main():void{}"#,
+    );
+    let message = old.diagnostic()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains(".ts or .js paths"), "{message}");
+}
+
+const TEXT_MAIN: &str = r#"import css from "./styles/console.css" with { type: "text" };
+export function main():void{View.stylesheet(1, css);console.log(`${css.length}:${css.split("\n")[0]}`);}"#;
+const CONSOLE_CSS: &str = ":root { --gap: 8px }\n.card { padding: var(--gap) }\n";
+
+#[test]
+fn text_resources_link_into_dev_and_reproducible_single_binaries_in_v38() {
+    let project = Project::new(TEXT_MAIN);
+    project.write("varta.config.json", V38_CONFIG);
+    project.write("src/styles/console.css", CONSOLE_CSS);
+    let expected = format!(
+        "varta log: {}::root {{ --gap: 8px }}",
+        CONSOLE_CSS.encode_utf16().count()
+    );
+    assert!(success(project.command(&["dev"])).contains(&expected));
+    let check = project.command(&["check", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let paths: Vec<_> = json["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|module| module["path"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(paths[0].ends_with("console.css"), "{paths:?}");
+    success(project.command(&["build", "--single"]));
+    let first = fs::read(project.root.join("dist/app")).unwrap();
+    success(project.command(&["build", "--single"]));
+    assert_eq!(first, fs::read(project.root.join("dist/app")).unwrap());
+    // The artifact carries the text: no source is read when it runs.
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    let native = Command::new(project.root.join("dist/app"))
+        .current_dir(&project.root)
+        .output()
+        .unwrap();
+    assert!(text(&native).contains(&expected), "{}", text(&native));
+
+    // V37 keeps rejecting attributed imports.
+    let old = Project::new(TEXT_MAIN);
+    old.write("varta.config.json", V37_CONFIG);
+    old.write("src/styles/console.css", CONSOLE_CSS);
+    let diagnostic = old.diagnostic();
+    assert_eq!(diagnostic["code"], "unsupported_syntax", "{diagnostic}");
+}
+
+#[test]
+fn stylesheet_resources_report_grammar_errors_inside_the_css_file() {
+    let project = Project::new(TEXT_MAIN);
+    project.write("varta.config.json", V38_CONFIG);
+    project.write(
+        "src/styles/console.css",
+        ":root { --gap: 8px }\n.card { padding: var(--gap); colour: red }\n",
+    );
+    let diagnostic = project.diagnostic();
+    assert_eq!(diagnostic["code"], "type_error", "{diagnostic}");
+    assert!(
+        diagnostic["file"]
+            .as_str()
+            .unwrap()
+            .ends_with("styles/console.css"),
+        "{diagnostic}"
+    );
+    assert_eq!(diagnostic["range"]["start"]["line"], 2, "{diagnostic}");
+    assert_eq!(diagnostic["range"]["start"]["column"], 30, "{diagnostic}");
+    assert_eq!(
+        diagnostic["range"]["start"]["byte_offset"], 50,
+        "{diagnostic}"
+    );
+    assert!(!project.root.join("dist").exists());
+}
+
+#[test]
+fn text_resources_keep_the_loader_boundary_and_utf8() {
+    let project = Project::new(TEXT_MAIN);
+    project.write("varta.config.json", V38_CONFIG);
+    fs::write(
+        project.workspace.join("outside.css"),
+        "PRIVATE_SOURCE_MUST_NOT_BE_READ",
+    )
+    .unwrap();
+    for specifier in [
+        "../../outside.css",
+        "/outside.css",
+        "https://example.com/a.css",
+        "./a.css?x=1",
+        "./styles/",
+    ] {
+        project.write(
+            "src/main.ts",
+            &format!(
+                "import css from {specifier:?} with {{ type: \"text\" }}; export function main():void{{console.log(css);}}"
+            ),
+        );
+        let error = project.diagnostic();
+        assert_eq!(error["code"], "module_error", "{specifier}: {error}");
+        assert!(
+            !error
+                .to_string()
+                .contains("PRIVATE_SOURCE_MUST_NOT_BE_READ")
+        );
+    }
+    // Invalid UTF-8 is rejected.
+    project.write("src/main.ts", TEXT_MAIN);
+    fs::create_dir_all(project.root.join("src/styles")).unwrap();
+    fs::write(
+        project.root.join("src/styles/console.css"),
+        b".a { color: #fff }\xff",
+    )
+    .unwrap();
+    let error = project.diagnostic();
+    assert_eq!(error["code"], "module_error", "{error}");
+    assert!(
+        error["message"].as_str().unwrap().contains("utf-8"),
+        "{error}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn text_resource_symlinks_are_rejected_at_every_component() {
+    use std::os::unix::fs::symlink;
+    let project = Project::new(TEXT_MAIN);
+    project.write("varta.config.json", V38_CONFIG);
+    fs::create_dir_all(project.workspace.join("outside")).unwrap();
+    fs::write(
+        project.workspace.join("outside/console.css"),
+        "PRIVATE_SOURCE_MUST_NOT_BE_READ",
+    )
+    .unwrap();
+    symlink(
+        project.workspace.join("outside"),
+        project.root.join("src/styles"),
+    )
+    .unwrap();
+    let error = project.diagnostic();
+    assert_eq!(error["code"], "module_error", "{error}");
+    assert!(
+        !error
+            .to_string()
+            .contains("PRIVATE_SOURCE_MUST_NOT_BE_READ")
+    );
+    fs::remove_file(project.root.join("src/styles")).unwrap();
+    fs::create_dir_all(project.root.join("src/styles")).unwrap();
+    symlink(
+        project.workspace.join("outside/console.css"),
+        project.root.join("src/styles/console.css"),
+    )
+    .unwrap();
+    let error = project.diagnostic();
+    assert_eq!(error["code"], "module_error", "{error}");
+    assert!(
+        !error
+            .to_string()
+            .contains("PRIVATE_SOURCE_MUST_NOT_BE_READ")
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn js_specifier_probing_never_follows_symlinks() {
+    use std::os::unix::fs::symlink;
+    let project = Project::new(
+        r#"import {f} from "./linked.js";import {g} from "./nested/inner.js";export function main():void{console.log(f()+g());}"#,
+    );
+    project.write("varta.config.json", V38_CONFIG);
+    fs::create_dir(project.workspace.join("outside")).unwrap();
+    fs::write(
+        project.workspace.join("outside/inner.tsx"),
+        "PRIVATE_SOURCE_MUST_NOT_BE_READ",
+    )
+    .unwrap();
+    // A symlinked `.tsx` candidate exists (so `.ts` would be ambiguous) and
+    // is rejected when loaded; a symlinked directory is never traversed.
+    symlink(
+        project.workspace.join("outside/inner.tsx"),
+        project.root.join("src/linked.tsx"),
+    )
+    .unwrap();
+    symlink(
+        project.workspace.join("outside"),
+        project.root.join("src/nested"),
+    )
+    .unwrap();
+    let error = project.diagnostic();
+    assert_eq!(error["code"], "module_error", "{error}");
+    assert!(
+        !error
+            .to_string()
+            .contains("PRIVATE_SOURCE_MUST_NOT_BE_READ")
+    );
+    project.write("src/linked.ts", "export function f():number{return 1;}");
+    let error = project.diagnostic();
+    assert!(
+        error["message"].as_str().unwrap().contains("ambiguous"),
+        "{error}"
+    );
+    fs::remove_file(project.root.join("src/linked.tsx")).unwrap();
+    let error = project.diagnostic();
+    assert_eq!(error["code"], "module_error", "{error}");
+    assert!(
+        !error
+            .to_string()
+            .contains("PRIVATE_SOURCE_MUST_NOT_BE_READ")
+    );
+}
+
 #[test]
 fn named_types_and_js_specifiers_link_typescript_sources_in_v31() {
     let main = r#"import type {Tag} from "./types.js";

@@ -817,3 +817,165 @@ fn checkboxes_dialogs_and_focus_follow_the_platform() {
     assert!(cancel < close);
     assert_eq!(view.snapshot()["tree"]["children"][1]["open"], false);
 }
+
+/// Commits `build` into a fresh view and returns the top-level accessible
+/// nodes with a role other than `text`.
+fn accessible(build: impl FnOnce(&mut BatchWriter)) -> Vec<serde_json::Value> {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    build(&mut batch);
+    commit(&mut view, &batch).unwrap();
+    let snapshot = view.snapshot();
+    snapshot["accessibility"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["role"] != "text")
+        .cloned()
+        .collect()
+}
+
+/// Appends a `span` (`node`) holding `text` (`node + 1`) to `parent`.
+fn span(batch: &mut BatchWriter, parent: u32, node: u32, text: &str, hidden: bool) {
+    batch
+        .create_element(node, Tag::Span)
+        .create_text(node + 1, text)
+        .insert(node, node + 1, 0)
+        .insert(parent, node, 0);
+    if hidden {
+        batch.set_attribute(node, Attribute::AriaHidden, "true");
+    }
+}
+
+#[test]
+fn accessible_names_exclude_hidden_descendants() {
+    let nodes = accessible(|batch| {
+        batch
+            .create_element(2, Tag::Button)
+            .set_attribute(2, Attribute::Type, "button")
+            .set_class(2, "event toggle")
+            .insert(1, 2, 0);
+        span(batch, 2, 10, "◇", true);
+        span(batch, 2, 20, "Reasoning", false);
+        span(batch, 2, 30, "▸", true);
+    });
+    assert_eq!(nodes[0]["role"], "button");
+    assert_eq!(nodes[0]["name"], "Reasoning");
+
+    // Nested and mixed: a hidden span inside a visible one, `display: none`,
+    // a closed dialog, `aria-hidden="false"` and flat-string whitespace.
+    let nodes = accessible(|batch| {
+        batch.create_element(2, Tag::A).insert(1, 2, 0);
+        span(batch, 2, 10, " Open ", false);
+        span(batch, 10, 12, "(icon)", true);
+        span(batch, 2, 20, "the\n  file", false);
+        batch.set_attribute(20, Attribute::AriaHidden, "false");
+        span(batch, 2, 30, "secret", false);
+        batch.set_style(30, CssProperty::Display, "none");
+        batch.create_element(40, Tag::Dialog).insert(2, 40, 0);
+        span(batch, 40, 41, "dialog text", false);
+        // A button whose whole content is hidden has no name.
+        batch.create_element(50, Tag::Button).insert(1, 50, 0);
+        span(batch, 50, 51, "×", true);
+    });
+    assert_eq!(nodes[0]["role"], "link");
+    assert_eq!(nodes[0]["name"], "Open the file");
+    assert_eq!(nodes[1]["role"], "button");
+    assert!(nodes[1].get("name").is_none());
+}
+
+#[test]
+fn accessible_names_follow_labelledby_labels_and_roles() {
+    let nodes = accessible(|batch| {
+        // aria-labelledby over a visible node excludes its hidden part, skips
+        // an unknown id, and a hidden referenced node contributes its subtree.
+        batch
+            .create_element(2, Tag::Button)
+            .set_attribute(2, Attribute::AriaLabelledby, "a missing b")
+            .create_text(3, "ignored content")
+            .insert(2, 3, 0)
+            .insert(1, 2, 0);
+        span(batch, 1, 10, "Send", false);
+        batch.set_attribute(10, Attribute::Id, "a");
+        span(batch, 10, 12, "*", true);
+        span(batch, 1, 20, "now", true);
+        batch.set_attribute(20, Attribute::Id, "b");
+        // A blank aria-label is ignored; name from content applies.
+        batch
+            .create_element(30, Tag::Button)
+            .set_attribute(30, Attribute::AriaLabel, "  ")
+            .create_text(31, "Go")
+            .insert(30, 31, 0)
+            .insert(1, 30, 0);
+        // A label with a hidden part, around its own field.
+        batch
+            .create_element(40, Tag::Label)
+            .set_attribute(40, Attribute::For, "q")
+            .insert(1, 40, 0);
+        span(batch, 40, 41, "Query", false);
+        span(batch, 40, 43, "!", true);
+        batch
+            .create_element(45, Tag::Input)
+            .set_attribute(45, Attribute::Id, "q")
+            .insert(40, 45, 0)
+            .set_value(45, "typed", 0);
+        // A textarea named only by its placeholder.
+        batch
+            .create_element(50, Tag::Textarea)
+            .set_attribute(50, Attribute::Placeholder, "Message")
+            .insert(1, 50, 0);
+        // A listitem is named by its author only; a cell by its content.
+        batch
+            .create_element(60, Tag::Li)
+            .create_text(61, "item")
+            .insert(60, 61, 0)
+            .insert(1, 60, 0)
+            .create_element(70, Tag::Div)
+            .set_attribute(70, Attribute::Role, "cell")
+            .insert(1, 70, 0);
+        span(batch, 70, 71, "cell", false);
+    });
+    let roles: Vec<_> = nodes.iter().map(|node| node["role"].clone()).collect();
+    assert_eq!(
+        roles,
+        ["button", "button", "textbox", "textbox", "listitem", "cell"]
+    );
+    assert_eq!(nodes[0]["name"], "Send now");
+    assert_eq!(nodes[1]["name"], "Go");
+    // The field inside its own label is not "another widget".
+    assert_eq!(nodes[2]["name"], "Query");
+    assert_eq!(nodes[3]["name"], "Message");
+    assert!(nodes[4].get("name").is_none());
+    assert_eq!(nodes[5]["name"], "cell");
+}
+
+#[test]
+fn embedded_controls_give_their_value_inside_another_name() {
+    let nodes = accessible(|batch| {
+        batch
+            .create_element(2, Tag::Button)
+            .set_attribute(2, Attribute::AriaLabelledby, "pre field choice")
+            .insert(1, 2, 0);
+        span(batch, 1, 10, "Retry in", false);
+        batch.set_attribute(10, Attribute::Id, "pre");
+        batch
+            .create_element(20, Tag::Input)
+            .set_attribute(20, Attribute::Id, "field")
+            .set_attribute(20, Attribute::AriaLabel, "Delay")
+            .insert(1, 20, 0)
+            .set_value(20, "5", 0);
+        batch
+            .create_element(30, Tag::Select)
+            .set_attribute(30, Attribute::Id, "choice")
+            .insert(1, 30, 0)
+            .create_element(31, Tag::Option)
+            .set_attribute(31, Attribute::Value, "s")
+            .create_text(32, "seconds")
+            .insert(31, 32, 0)
+            .insert(30, 31, 0)
+            .set_value(30, "s", 0);
+    });
+    // In recursion the field's value replaces its aria-label (2C before 2D).
+    assert_eq!(nodes[0]["name"], "Retry in 5 seconds");
+    assert_eq!(nodes[1]["name"], "Delay");
+}

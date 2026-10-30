@@ -183,6 +183,23 @@ declare namespace JSX {
   }
 }
 // generated:jsx-namespace:end
+// checked-f64-utf16-v38 text resources: editor typing only. These ambient
+// modules let an editor type `import css from "./console.css" with { type:
+// "text" }` as a `string`. The compiler's rule is authoritative: it admits a
+// text resource of any extension only with exactly the `type: "text"`
+// attribute and rejects the import without it, whatever these declarations say.
+declare module "*.css" {
+  const text: string;
+  export default text;
+}
+declare module "*.txt" {
+  const text: string;
+  export default text;
+}
+declare module "*.md" {
+  const text: string;
+  export default text;
+}
 // checked-f64-utf16-v38 (batch, unreleased) data limits: JSON.stringify uses the
 // internal import json_stringify_owned (i32 kind, i32 low, i32 high)->(i64
 // handle, i32 error class), host ABI34 minimum, pure, no capability. The host

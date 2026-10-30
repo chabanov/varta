@@ -4,7 +4,7 @@ use crate::events::Effects;
 use crate::style::Environment;
 use crate::tree::{Content, Element, Tree};
 use serde_json::{Map, Value, json};
-use varta_common::view::{Attribute, CssProperty, ROOT_NODE, Tag};
+use varta_common::view::{Attribute, ROOT_NODE, Tag};
 
 pub(crate) fn snapshot(tree: &Tree, environment: &Environment, platform: &Effects) -> Value {
     json!({
@@ -140,60 +140,13 @@ fn implicit_role(element: &Element) -> Option<&'static str> {
     })
 }
 
-fn hidden(tree: &Tree, id: u32, element: &Element, environment: &Environment) -> bool {
+/// The role of an element: its `role` attribute, or else its implicit role.
+pub(crate) fn role(element: &Element) -> Option<&str> {
     element
         .attributes
-        .get(&Attribute::AriaHidden)
+        .get(&Attribute::Role)
         .map(String::as_str)
-        == Some("true")
-        || tree
-            .computed(id, environment)
-            .get(&CssProperty::Display)
-            .is_some_and(|display| display == "none")
-        || (element.tag == Tag::Dialog && !element.open)
-}
-
-fn name(tree: &Tree, id: u32, element: &Element) -> Option<String> {
-    if let Some(label) = element.attributes.get(&Attribute::AriaLabel) {
-        return Some(label.clone());
-    }
-    if let Some(ids) = element.attributes.get(&Attribute::AriaLabelledby) {
-        let text: Vec<String> = ids
-            .split(' ')
-            .filter_map(|ident| tree.by_ident(ident))
-            .map(|labelled| tree.text_content(labelled))
-            .collect();
-        return Some(text.join(" "));
-    }
-    if element.tag == Tag::Img {
-        return element.attributes.get(&Attribute::Alt).cloned();
-    }
-    if matches!(
-        element.tag,
-        Tag::Input | Tag::Textarea | Tag::Select | Tag::Progress
-    ) {
-        let ident = element.attributes.get(&Attribute::Id)?;
-        let label = tree
-            .nodes
-            .iter()
-            .find_map(|(label, node)| match &node.content {
-                Content::Element(candidate)
-                    if candidate.tag == Tag::Label
-                        && candidate.attributes.get(&Attribute::For) == Some(ident) =>
-                {
-                    Some(*label)
-                }
-                _ => None,
-            })?;
-        return Some(tree.text_content(label));
-    }
-    if matches!(
-        element.tag,
-        Tag::Button | Tag::A | Tag::H1 | Tag::H2 | Tag::H3 | Tag::Option | Tag::Li
-    ) {
-        return Some(tree.text_content(id));
-    }
-    None
+        .or_else(|| implicit_role(element))
 }
 
 fn accessibility_root(tree: &Tree, environment: &Environment) -> Value {
@@ -225,20 +178,16 @@ fn accessible(tree: &Tree, id: u32, environment: &Environment) -> Vec<Value> {
         Content::Text(text) => return vec![json!({ "role": "text", "name": text })],
         Content::Element(element) => element,
     };
-    if hidden(tree, id, element, environment) {
+    if crate::name::hidden_element(tree, id, element, environment) {
         return Vec::new();
     }
-    let role = element
-        .attributes
-        .get(&Attribute::Role)
-        .map(String::as_str)
-        .or_else(|| implicit_role(element));
-    let Some(role) = role else {
+    let Some(role) = role(element) else {
         return children(tree, id, environment);
     };
     let mut out = Map::new();
     out.insert("role".into(), json!(role));
-    if let Some(name) = name(tree, id, element) {
+    let name = crate::name::accessible_name(tree, id, role, environment);
+    if !name.is_empty() {
         out.insert("name".into(), json!(name));
     }
     if let Some(level) = match element.tag {

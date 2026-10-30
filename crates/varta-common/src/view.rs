@@ -13,6 +13,7 @@ use crate::HostScalar;
 
 pub mod attributes;
 pub mod css;
+pub mod stylesheet;
 
 /// Draft protocol version carried in every batch and event record header.
 pub const DRAFT_VERSION: u16 = 0;
