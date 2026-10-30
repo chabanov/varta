@@ -317,11 +317,7 @@ impl Helper {
         frames: Option<super::frames::Resources>,
         linked: Linked,
     ) -> Function {
-        let Linked {
-            ascii,
-            remainder,
-            char_at,
-        } = linked;
+        let Linked { ascii, remainder } = linked;
         // Emission adds the complete allocator dependency set before indexing.
         match self {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
@@ -391,17 +387,7 @@ impl Helper {
             Self::CodeUnit => text_codes::code_unit(),
             Self::CharCodeAt => text_codes::char_code_at(),
             Self::FloatRemainder => remainder::function(remainder.unwrap_or(0)),
-            Self::CharAt => {
-                let (char_at, result_len) = char_at.unwrap_or_default();
-                text_codes::char_at(
-                    ascii.unwrap_or(0),
-                    text_codes::CharAtFallback {
-                        char_at,
-                        result_len,
-                        snapshot: helpers[&Self::Snapshot],
-                    },
-                )
-            }
+            Self::CharAt => text_codes::char_at(ascii.unwrap_or(0), helpers[&Self::Allocate]),
             Self::FromUnits => {
                 text_codes::from_units(helpers[&Self::Allocate], profile.resizable_arrays())
             }
@@ -457,9 +443,6 @@ impl Helper {
 pub(super) struct Linked {
     pub ascii: Option<u32>,
     pub remainder: Option<u32>,
-    /// V38 `charAt`'s general path: the `string_char_at16` import and the
-    /// result-length global.
-    pub char_at: Option<(u32, u32)>,
 }
 /// The code units a trimming helper removes.
 #[derive(Clone, Copy, PartialEq, Eq)]

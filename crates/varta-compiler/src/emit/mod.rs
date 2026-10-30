@@ -950,22 +950,17 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     }
     for helper in helpers.keys() {
         name(&|| format!("<helper {helper:?}>"));
-        code.function(
-            &helper.body(
-                memory_globals,
-                &helpers,
-                trace_values,
-                program.types.profile,
-                frame_resources,
-                strings::Linked {
-                    ascii: offsets.get(&strings::ascii_units()).copied(),
-                    remainder: hosts.get(&Host::FloatRemainder).copied(),
-                    char_at: hosts
-                        .get(&Host::StringCharAt16)
-                        .map(|host| (*host, result_len)),
-                },
-            ),
-        );
+        code.function(&helper.body(
+            memory_globals,
+            &helpers,
+            trace_values,
+            program.types.profile,
+            frame_resources,
+            strings::Linked {
+                ascii: offsets.get(&strings::ascii_units()).copied(),
+                remainder: hosts.get(&Host::FloatRemainder).copied(),
+            },
+        ));
     }
     for (body, layout) in resume_code.iter().zip(&frame_layouts) {
         let function = &program.functions[layout.function];

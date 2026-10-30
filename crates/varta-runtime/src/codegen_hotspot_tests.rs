@@ -225,6 +225,37 @@ export function main(): void {
     assert!(collections >= 3, "{collections} collections");
 }
 
+/// `charAt` and string index reads copy a non-ASCII unit (BMP or a lone
+/// surrogate half) into a fresh one-unit string in constant time, like v37's
+/// host results, also on long strings and across collections; before, the
+/// linked fallback copied the whole string per call (more fuel than v37).
+#[test]
+fn char_reads_copy_non_ascii_units_in_constant_time() {
+    let source = r#"export function main(): void {
+  let s = "aé—😀";
+  for (let i = 0; i < 1000; i++) { s += "b"; }
+  let joined = "";
+  let pairs = 0;
+  for (let round = 0; round < 40; round++) {
+    let g = "g";
+    for (let j = 0; j < 9; j++) { g = g + g; }
+    for (let i = 0; i < 6; i++) {
+      const c = s.charAt(i);
+      const d = s[i];
+      if (c === d && c.length === 1) { pairs++; }
+      if (round === 0) { joined += c + "|"; }
+    }
+  }
+  const high = s.charAt(3);
+  const low = s.charAt(4);
+  console.log(joined + " " + String(pairs) + " " + String(high + low === "😀") + String(high.charCodeAt(0)) + String(low.charCodeAt(0)) + String(s.charAt(1) === "é"));
+}"#;
+    assert_eq!(
+        same_as_v37(source, 20),
+        lines(&["a|é|—|\u{fffd}|\u{fffd}|b| 240 true5535756832true"])
+    );
+}
+
 /// Literal backings stored word by word read like filled ones: holes, spare
 /// capacity, presence across the first bitmap word and the largest stored
 /// literal, then a backing above the stored size.

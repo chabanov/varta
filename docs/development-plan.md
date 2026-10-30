@@ -839,7 +839,7 @@ union of record shapes without a literal discriminant (4).
 | (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Open |
 | (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Open |
 | (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Open; first pilot blockers |
-| (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Implemented on `v38-codegen-hotspots` ([contract](architecture.md#code-generation-v2-codegen_v2), [measurements](#code-generation-v2-measurements)): appended `push`, checked element reads without union cells, word-stored literal and grown backings, concatenation chains, quiet function-value calls, exact-size free lists. Pending: the 100-row keyed diff under 1M fuel needs (b); cheaper closure entry checks need an owner decision; incremental collection |
+| (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Implemented on `v38-codegen-hotspots` ([contract](architecture.md#code-generation-v2-codegen_v2), [measurements](#code-generation-v2-measurements)): appended `push`, checked element reads without union cells, word-stored literal and grown backings, concatenation chains, quiet function-value calls, exact-size free lists. `charAt` of non-ASCII units in constant time; `--profile-fuel` of programs with checked JSON fixed. Pending: the 100-row keyed diff under 1M fuel needs (b); closure entry checks stay as decided; incremental collection deferred (open) |
 
 #### Code generation v2 measurements
 
@@ -871,6 +871,7 @@ them, reverses their order and changes every row's text.
 | list render (rows) | 100 | 2,928,606 | 292,803 | 160,137 | 18.29× | 50,624.7 | 1,582.6 | 74 → 341 → 511 |
 | keyed-list diff (rows) | 100 | 4,969,154 | 1,785,586 | 1,445,572 | 3.44× | 73,483.8 | 19,708.1 | 45 → 68 → 80 |
 | keyed-list diff (rows) | 500 | > 40,000,000 | 30,048,681 | 27,131,549 | — | — | 80,568.3 | as above |
+| Markdown blocks (chat replies) | 1 | 218,887 | 104,367 | 59,276 | 3.69× | 195,850.0 | 54,727.0 | 3 → — → 18 |
 | keyed view mount (rows) | 10 | 179,358 | 146,005 | 82,809 | 2.17× | 15,170.0 | 7,760.4 | 19 → 74 → 129 |
 | keyed view update (rows) | 10 | 891,462 | 278,593 | 159,116 | 5.60× | 141,673.8 | 15,774.6 | 11 → 35 → 51 |
 
@@ -885,7 +886,17 @@ operands per allocation; calls of function values with quiet operands take no
 roots; and small blocks come from exact-size free lists (about 42 instead of
 70 fuel per allocation in the list workloads, constant time after
 collections). List render now stops at the 1024 host calls of a turn
-(`String(i)` twice per row), not at fuel.
+(`String(i)` twice per row), not at fuel. `charAt` and `s[i]` of a non-ASCII
+unit copy the unit in the guest: the linked `string_char_at16` they called
+before copied the whole string per call (about 670 fuel on a 4-unit string,
+23,600 on a 1002-unit one, more than v37's host call), so a Markdown-like
+block parser (`codegen_v2_fixtures/markdown.ts`: heading, list, fence, table
+and paragraph with a few non-ASCII characters) spent 30,376 fuel in 215
+`CharAt` calls (141 each) and now 9,876 (46 each, about 100 for a non-ASCII
+unit). The per-call copy-in of whole strings is a cost of the linked
+library's private memory, for wave-2 stream (a). Fuel profiles of programs
+with checked JSON, tools or HTTP work again: the host-free ABI helpers stay
+uninstrumented and their fuel counts toward the caller.
 
 What remains: the 100-row keyed diff spends 1,052,379 of its 1,445,572 fuel
 (73%) in the dictionary's linear key search (`ArraySearch` and `StringEquals`,
@@ -893,15 +904,21 @@ What remains: the 100-row keyed diff spends 1,052,379 of its 1,445,572 fuel
 of the workload is about 0.39M fuel, so the 1M target needs that stream. A
 closure call still validates the function cell at the call site and its
 environment and each captured binding cell at entry (about 70 fuel per object,
-the v12 entry-check contract and its malformed-environment tests). Cutting it
-further is an owner decision: for example, validate captured cells when the
-environment is built and check only the function cell and the environment
-block per call, which would stop detecting a binding cell corrupted after
-creation. A collection marks the live heap once through the
-worklist and sweeps the whole heap (about 300k fuel at 6000 live and 9000 dead
-blocks), so one turn of a large live heap can still exhaust its fuel in a
-collection; an incremental or generational collector needs write barriers on
-every reference store.
+the v12 entry-check contract and its malformed-environment tests). Decision
+(2026-10-30): the full v12 entry checks stay, so a binding cell corrupted after
+creation is still detected; closure calls are not made cheaper by trusting
+guest-built environments.
+
+**Open: incremental or generational collection (deferred, 2026-10-30).** A
+v38 collection marks the live heap once through the worklist and then sweeps
+the whole heap: about 300k fuel per collection at 6000 live and 9000 dead
+blocks (a 3000-node linked list built while dropping small arrays; two
+collections took 619k fuel), so one turn with a large live heap can still
+exhaust its fuel in a single collection. Bounding that per turn needs an
+incremental (or generational, remembered-set) collector, which needs a write
+barrier on every reference store (record and class fields, array elements,
+binding cells, environments, frames, promise and timer state) with exact
+rooting kept provable. Not scheduled.
 
 #### Linked intrinsics measurement (v38)
 

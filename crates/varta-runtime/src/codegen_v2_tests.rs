@@ -184,6 +184,13 @@ fn keyed_view(rows: usize, update: bool) -> String {
             &format!("const UPDATE = {update};"),
         )
 }
+/// A Markdown-like block parser over `replies` copies of a chat reply with a
+/// heading, a list, a fenced block, a table and a paragraph, mostly ASCII with
+/// a few non-ASCII characters (`codegen_v2_fixtures/markdown.ts`).
+fn markdown_blocks(replies: usize) -> String {
+    include_str!("codegen_v2_fixtures/markdown.ts")
+        .replace("const REPEAT = 1;", &format!("const REPEAT = {replies};"))
+}
 fn view_mount(rows: usize) -> String {
     keyed_view(rows, false)
 }
@@ -289,6 +296,13 @@ const PATTERNS: &[Pattern] = &[
         size: 500,
         ceiling: 30_000_000,
         speedup: 0.0,
+    },
+    Pattern {
+        name: "Markdown blocks (replies)",
+        source: markdown_blocks,
+        size: 1,
+        ceiling: 66_000,
+        speedup: 3.3,
     },
     Pattern {
         name: "keyed view mount 10 rows",

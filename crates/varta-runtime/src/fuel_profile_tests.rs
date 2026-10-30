@@ -118,6 +118,73 @@ fn probes_refund_their_cost_and_attribute_every_unit() {
     }
 }
 
+/// Programs with checked JSON export the host-free value ABI helpers, whose
+/// call graph (allocator, collector, root push) stays uninstrumented so the
+/// profile build passes validation; their fuel counts toward the caller and
+/// the profile still sums to the uninstrumented run's fuel.
+#[test]
+fn json_programs_profile_without_probes_in_host_free_helpers() {
+    const JSON: &str = r#"
+interface Item { id: number; name: string; tags: string[] }
+function total(items: Item[]): number {
+  let t = 0;
+  for (const item of items) { t = t + item.id + item.tags.length; }
+  return t;
+}
+export function main(): void {
+  let text = "[";
+  for (let i = 0; i < 30; i++) {
+    if (i > 0) { text += ","; }
+    text += "{\"id\":" + String(i) + ",\"name\":\"item\",\"tags\":[\"a\",\"b\"]}";
+  }
+  text += "]";
+  const items = JSON.parse(text) as Item[];
+  console.log(String(total(items)) + " " + JSON.stringify(items[1]));
+}
+"#;
+    // Serialization alone also exports the value ABI helpers.
+    const STRINGIFY: &str = "export function main(): void { console.log(JSON.stringify(\"x\")); }";
+    for profile in [V38, P::CheckedF64Utf16V37] {
+        let run = VartaRuntime::new()
+            .run_fuel_profile(&profiled(STRINGIFY, profile), &[], None)
+            .unwrap();
+        assert!(run.error.is_none(), "{profile:?}: {:?}", run.error);
+        assert_eq!(run.output.lines, [r#"varta log: "x""#]);
+        assert_eq!(run.profile.consumed, consumed(&plain(STRINGIFY, profile)));
+        let attributed: u64 = run.profile.functions.iter().map(|f| f.self_fuel).sum();
+        assert_eq!(attributed + run.profile.outside, run.profile.consumed);
+    }
+    for profile in [V38, P::CheckedF64Utf16V37] {
+        // The profile run validates the build with every ordinary rule,
+        // including the host-free value ABI call graph.
+        let bytes = profiled(JSON, profile);
+        let run = VartaRuntime::new()
+            .run_fuel_profile(&bytes, &[], None)
+            .unwrap();
+        assert!(run.error.is_none(), "{profile:?}: {:?}", run.error);
+        assert_eq!(
+            run.output.lines,
+            [r#"varta log: 495 {"id":1,"name":"item","tags":["a","b"]}"#]
+        );
+        let profile_fuel = &run.profile;
+        assert_eq!(profile_fuel.consumed, consumed(&plain(JSON, profile)));
+        assert_eq!(profile_fuel.unfinished, 0);
+        let attributed: u64 = profile_fuel.functions.iter().map(|f| f.self_fuel).sum();
+        assert_eq!(attributed + profile_fuel.outside, profile_fuel.consumed);
+        let names: Vec<_> = profile_fuel.functions.iter().map(|f| &f.name).collect();
+        assert!(
+            names.iter().any(|name| name.contains("function total")),
+            "{names:?}"
+        );
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.as_str() == "<helper Allocate>"),
+            "{names:?}"
+        );
+    }
+}
+
 #[test]
 fn exhausted_budgets_stop_at_the_same_point_and_keep_the_profile() {
     let text = "function spin(n: number): number { let t = 0; while (true) { t = t + n; } return t; }\nexport function main(): void { console.log(\"start\"); console.log(String(spin(1))); }";

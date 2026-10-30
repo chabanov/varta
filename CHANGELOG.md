@@ -1027,6 +1027,17 @@ in [conformance/README.md](conformance/README.md).
 
 ### Fixed
 
+- V38 `charAt` and string index reads of a non-ASCII unit copy the unit into a
+  one-unit string in the guest instead of calling the linked
+  `string_char_at16`, which copied the whole string per call (about 670 fuel
+  on a 4-unit string, 23,600 on a 1002-unit one, more than v37's host call).
+  A non-ASCII read now costs about 100 fuel at any length; a Markdown-like
+  block parser of one chat reply fell from 80,042 to 59,276 fuel.
+- `varta dev --profile-fuel` profiles programs with checked JSON, tools or
+  HTTP: the host-free value, tool and HTTP ABI helpers and their call graph
+  stay uninstrumented (validation rejected their probes as host imports), and
+  their fuel counts toward the caller, so the profile still equals the
+  ordinary run's fuel.
 - Dispatch Array.lastIndexOf to reverse search instead of Array.indexOf. Omitted
   positions start at the final element; explicit undefined/NaN select zero,
   positive infinity clamps to the final index and positions below -length miss.

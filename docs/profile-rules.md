@@ -3345,7 +3345,10 @@ lists what changes; these rules keep it sound.
   two); they must still zero every absent and spare slot and every presence
   bit at or beyond the length.
 - Fuel probes: `fuel_profile` instruments only profile builds and never the
-  frame dispatcher (frame admission forbids its calls to imports). Probe
+  frame dispatcher (frame admission forbids its calls to imports) or the call
+  graph of `varta_common::HOST_FREE_EXPORTS` (validation forbids host imports
+  there; never relax that rule for profile builds). A new host-free export
+  joins that one list, which validation and instrumentation share. Probe
   imports stay outside the `varta` namespace, are accepted only by a run with
   `RunOptions::fuel_profile` (the ordinary `run_with`/`run_application` path),
   refund exactly `PROBE_FUEL`, and never count as host calls. Turn renewal

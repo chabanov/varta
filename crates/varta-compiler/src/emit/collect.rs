@@ -48,8 +48,7 @@ impl<'a> Collected<'a> {
     /// with its snapshot.
     fn char_at(&mut self, span: swc_common::Span, source: &'a crate::source::Source) {
         self.helpers
-            .extend([strings::Helper::CharAt, strings::Helper::Snapshot]);
-        self.hosts.insert(Host::StringCharAt16);
+            .extend([strings::Helper::CharAt, strings::Helper::Allocate]);
         self.strings
             .entry(strings::ascii_units())
             .or_insert((span, source));

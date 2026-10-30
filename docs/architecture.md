@@ -9595,14 +9595,19 @@ which the case-corpus parity test checks; only its fuel use is lower.
   (including scope exit and a catch binding) resets both locals, so the bytes in
   `[tail, cap)` belong to no other value. A total above the per-value limit traps
   in the allocator as concatenation does.
-- **Code units and remainders.** Each operation has exactly one v38 path: an
-  inline fast path with the [linked intrinsic](#linked-intrinsics-linked_intrinsics)
-  as its general fallback, and no host import. `charAt`, string index reads
+- **Code units and remainders.** Each operation has exactly one v38 path and
+  no host import: guest code only (`charAt`, string index reads,
+  `charCodeAt`), or an inline fast path with the
+  [linked intrinsic](#linked-intrinsics-linked_intrinsics) as its general
+  fallback (`%`). `charAt`, string index reads
   (`s[i]`) and `charCodeAt` take `ToIntegerOrInfinity` positions in the guest
   (NaN and `-0` select 0; outside the string, `""`, `undefined` and NaN);
   `charCodeAt` reads the unit in place, and `charAt` of an ASCII unit returns a
   static one-unit slice of a 256-byte table in static data while any other unit
-  takes the linked `string_char_at16` and a snapshot of its result. Number `%`
+  (a lone surrogate half included) is copied into a fresh one-unit string, in
+  constant time. (The linked `string_char_at16`, the earlier general path,
+  copied the whole string per call: about 670 fuel on a 4-unit string and
+  23,600 on a 1002-unit one.) Number `%`
   is exact in the guest for integral operands below 2^53 in magnitude with a
   nonzero divisor (a zero result takes the dividend's sign); every other
   operand pair calls the linked `number_remainder`.
@@ -9679,7 +9684,15 @@ calls `enter(id)` first and `exit(id)` before every `return` and its final
 bodies, the frame dispatcher and generator steps. The frame dispatcher
 (`varta_resume`) is named but not instrumented: frame admission requires that
 it calls only defined functions, and its fuel counts as outside guest
-functions.
+functions. The host-free ABI exports (`varta_common::HOST_FREE_EXPORTS`: the
+value, tool and HTTP copy and retain helpers) and every function they reach
+through direct calls (in practice the allocator, the collector and the root
+push of a module with checked JSON, tools or HTTP) are named but not
+instrumented either, since validation rejects any host import, probes
+included, in that call graph; their fuel counts toward the innermost open
+activation (the caller of the allocator or of the host operation that called
+the export), so the profile still sums to the consumed fuel. Validation of
+profile builds is otherwise the ordinary validation.
 
 Only a run with `RunOptions::fuel_profile` (`VartaRuntime::run_with`,
 `run_application`, and the `run_fuel_profile` shorthand) links the probes; it
