@@ -145,6 +145,9 @@ impl Artifact {
         if self.manifest.abi_version != host_abi(&self.wasm)? {
             return Err(invalid("manifest and Wasm host ABI versions differ"));
         }
+        // A package names its file roots and, under v38, requests virtual
+        // paths under them; it never maps a root to a host directory.
+        self.manifest.validate_package()?;
         // The resumable-frame surface needs a profile that admits it.
         frames::validate(&self.wasm)
     }

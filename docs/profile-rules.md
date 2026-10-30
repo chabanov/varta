@@ -3102,7 +3102,8 @@ admits nothing until its stream adds its rules below: program limits (`program_l
 (`data_limits`), turn budgets (`turn_budgets`), linked intrinsics
 (`linked_intrinsics`, [rules below](#v38-linked-intrinsics)), the view protocol (`view_protocol`), TSX (`tsx`),
 structural subtyping (`structural_subtyping`) and code generation v2
-(`codegen_v2`); the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
+(`codegen_v2`), and the wave-2 virtual-roots selector `file_roots`
+([rules below](#virtual-file-roots-file_roots)); the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
 - A v37 rule or binding stated "for v37 only" (prelude pruning, private JSON
@@ -3278,6 +3279,37 @@ Normative contract: [architecture](architecture.md#turn-budgets-and-application-
   failure in `RunReport`; the earlier `Result` entry points still return only
   the error. The CLI and the companion print the lines, then the
   `--budget-report` lines, then the diagnostic.
+
+### Virtual file roots (`file_roots`)
+
+Normative contract: [architecture](architecture.md#virtual-file-roots-file_roots).
+
+- The `fs.*` mode comes only from the module's declared profile
+  (`policy::FileMode::of`): v1–v37 keep the frozen host-path rules of
+  `FilePolicy` byte for byte, v38 reads virtual paths. Never decide the mode
+  from the manifest, a ceiling or the presence of roots, and never let a v38
+  module fall back to host paths: an execution without roots denies every
+  `fs.*` path. Production executions are built with `Execution::with_files`;
+  `Execution::new` (host paths) is test-only.
+- Root authority is pinned once, before guest code: from the project
+  configuration through `roots::pin` (pinned no-follow from the configuration
+  directory, the source loader's discipline), or from a host mapping through
+  `FileRoots::open`/`FileRoots::from_manifests`. Never open a root lazily,
+  per call, or from a package-supplied directory.
+- Only the package names roots and only the host maps them: keep
+  `Manifest::validate_package` (rejects a mapping and v38 patterns outside a
+  declared literal root) on every package path (artifact read, configuration,
+  `RunOptions::from_manifests`) and `validate_ceiling` (rejects a name list) on
+  every host-policy path. A mapping for an undeclared root is ignored.
+- Parse guest paths with `files::parse_virtual_path` and match patterns with
+  the whole-component prefix plus the shared glob; check the request, the
+  ceiling and the mapped root before opening anything, then walk with
+  `read_below` (no-follow at every component). Do not add a second parser or
+  matcher, and do not normalize (`.`/`..`/`//`) a guest path instead of
+  denying it.
+- Every new entry point that runs or invokes a module threads `FileRoots`
+  (run, application, view, HTTP request stores, tool invocation); the
+  grant-only APIs stay as they are and run v38 modules with no roots.
 
 ### Code generation v2 (`codegen_v2`)
 

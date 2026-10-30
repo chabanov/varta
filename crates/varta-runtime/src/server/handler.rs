@@ -6,8 +6,12 @@ pub(super) fn execute(
     shared: &Shared,
     request: Vec<u8>,
 ) -> Result<(HttpResponse, Vec<String>), RuntimeError> {
-    let mut execution =
-        Execution::new(&shared.engine, &shared.requested, shared.ceiling.as_deref())?;
+    let mut execution = Execution::with_files(
+        &shared.engine,
+        &shared.requested,
+        shared.ceiling.as_deref(),
+        shared.files.clone(),
+    )?;
     execution.store.data_mut().http_control =
         Some((shared.contract.bind.clone(), shared.stop.clone()));
     let instance = execution.instantiate_prepared(&shared.module)?;

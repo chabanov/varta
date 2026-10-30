@@ -11,6 +11,18 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 virtual file roots (`file_roots`): `fs.read`/`fs.print` paths and
+  their grants are virtual paths `/<root>/...`. The configuration declares
+  roots inside the project (`"fs": {"roots": {"project": "."}}`, pinned
+  no-follow when the project loads) and grants on them
+  (`"fs": {"read": ["/project/fixtures/**"]}`), so committed configurations no
+  longer carry machine paths. Packages name their roots (manifest
+  `"fsRoots": ["project"]`, host ABI 34) and the host policy maps each one to
+  an absolute directory (`"fsRoots": {"project": "/srv/app"}`) for `run`, the
+  companion, packaged applications and `invoke`; an unmapped root, a path
+  outside the request or ceiling, traversal, a symlink below the root and any
+  absolute host path are denied. V1–v37 keep absolute host paths unchanged.
+
 - V38 removes unreachable async functions and methods with their frame
   layouts (v37 roots every suspendable function); generator bodies stay. A
   minimal use of the 1900-model pilot mimic keeps 79 functions instead of

@@ -1133,6 +1133,10 @@ declare const varta: {
   };
   time: { now(): number };
   env: { has(name: string): boolean; print(name: string): void; get(name: string): string };
+  /** Absolute host paths through checked-f64-utf16-v37. In
+   * checked-f64-utf16-v38 a path is virtual, `/<root>/dir/file`, under a
+   * root the configuration declares (`"fs": {"roots": {...}}`) and the host
+   * maps; any other path, including an absolute host path, is denied. */
   fs: { print(path: string): void; read(path: string): string };
   /** Exit requires an exact finite i32 code in either numeric profile. */
   process: { exit(code: number): void };

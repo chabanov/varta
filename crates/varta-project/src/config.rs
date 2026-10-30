@@ -41,6 +41,19 @@ pub struct VartaConfig {
     /// (checked-f64-utf16-v38): `required` and `purpose`.
     #[serde(default)]
     pub permissions: std::collections::BTreeMap<String, PermissionSpec>,
+    /// Virtual filesystem roots (checked-f64-utf16-v38 `file_roots`):
+    /// `"fs": {"roots": {"project": "."}}`.
+    #[serde(default)]
+    pub fs: Option<FsConfig>,
+}
+
+/// `"fs": {"roots": {...}}`: each root name mapped to a directory inside the
+/// configuration directory. The manifest carries only the names; `varta
+/// dev` pins the directories, a host policy maps them for every other run.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FsConfig {
+    pub roots: varta_common::files::ProjectRoots,
 }
 
 /// `"permissions": { "net.request": { "required": false, "purpose": "..." } }`.
@@ -75,6 +88,14 @@ impl VartaConfig {
         }
         let grants = self.normalized_capabilities();
         varta_common::validate_grants(&grants)?;
+        if let Some(fs) = &self.fs {
+            if !self.language_profile.file_roots() {
+                return Err(VartaError::InvalidManifest(
+                    "fs.roots requires languageProfile checked-f64-utf16-v38".into(),
+                ));
+            }
+            fs.roots.validate()?;
+        }
         for id in self.permissions.keys() {
             if !grants.iter().any(|grant| &grant.id == id) {
                 return Err(VartaError::InvalidManifest(format!(
@@ -82,7 +103,13 @@ impl VartaConfig {
                 )));
             }
         }
-        self.manifest().grants().map(|_| ())
+        self.manifest().validate_package()
+    }
+
+    /// The configured file roots (none outside v38).
+    #[must_use]
+    pub fn roots(&self) -> &[varta_common::files::RootDirectory] {
+        self.fs.as_ref().map_or(&[], |fs| fs.roots.0.as_slice())
     }
 
     /// The package manifest of this configuration (host ABI, grants, budgets
@@ -95,6 +122,11 @@ impl VartaConfig {
         manifest.entry = Some(self.entry.clone());
         manifest.target = Some(self.target.clone());
         manifest.budgets = self.budgets;
+        if !self.roots().is_empty() {
+            manifest.fs_roots = Some(varta_common::files::FsRoots::Names(
+                self.roots().iter().map(|root| root.name.clone()).collect(),
+            ));
+        }
         for wire in &mut manifest.capabilities {
             if let Some(spec) = self.permissions.get(&wire.id) {
                 wire.required = spec.required;
@@ -354,6 +386,82 @@ mod tests {
             config(
                 "checked-f64-utf16-v38",
                 serde_json::json!({"permissions":{"time.timer":{"optional":true}}})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn file_roots_need_v38_and_virtual_patterns_under_declared_roots() {
+        let config = |profile: &str, extra: serde_json::Value| {
+            let mut value = serde_json::json!({"languageProfile":profile,"entry":"src/main.ts",
+                "target":"native","out":"dist/app"});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<VartaConfig>(value)
+        };
+        let v38 = config(
+            "checked-f64-utf16-v38",
+            serde_json::json!({"fs":{"roots":{"project":".","fixtures":"tests/fixtures"}},
+                "capabilities":{"fs":{"read":["/project/data/**","/fixtures/*.json"]}}}),
+        )
+        .unwrap();
+        v38.validate().unwrap();
+        // The manifest names the roots; it never carries their directories.
+        let manifest = v38.manifest();
+        let mut names = manifest.root_names().to_vec();
+        names.sort();
+        assert_eq!(names, ["fixtures", "project"]);
+        let text = String::from_utf8(manifest.to_bytes().unwrap()).unwrap();
+        assert!(!text.contains("tests/fixtures"), "{text}");
+        for (profile, extra) in [
+            // Roots need v38; v37 keeps absolute host paths.
+            (
+                "checked-f64-utf16-v37",
+                serde_json::json!({"fs":{"roots":{"project":"."}}}),
+            ),
+            // V38 patterns are virtual paths under a declared root.
+            (
+                "checked-f64-utf16-v38",
+                serde_json::json!({"capabilities":{"fs":{"read":["/data/**"]}}}),
+            ),
+            (
+                "checked-f64-utf16-v38",
+                serde_json::json!({"fs":{"roots":{"project":"."}},
+                    "capabilities":{"fs":{"read":["/project-x/**"]}}}),
+            ),
+            // Root directories stay inside the configuration directory.
+            (
+                "checked-f64-utf16-v38",
+                serde_json::json!({"fs":{"roots":{"project":".."}}}),
+            ),
+            (
+                "checked-f64-utf16-v38",
+                serde_json::json!({"fs":{"roots":{"project":"/tmp"}}}),
+            ),
+            (
+                "checked-f64-utf16-v38",
+                serde_json::json!({"fs":{"roots":{"Project":"."}}}),
+            ),
+        ] {
+            assert!(
+                config(profile, extra.clone()).unwrap().validate().is_err(),
+                "{profile} {extra}"
+            );
+        }
+        config(
+            "checked-f64-utf16-v37",
+            serde_json::json!({"capabilities":{"fs":{"read":["/data/**"]}}}),
+        )
+        .unwrap()
+        .validate()
+        .unwrap();
+        assert!(
+            config(
+                "checked-f64-utf16-v38",
+                serde_json::json!({"fs":{"roots":{"project":"."},"extra":1}})
             )
             .is_err()
         );

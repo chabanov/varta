@@ -1,6 +1,8 @@
 mod files;
 mod glob;
+pub(crate) use files::FileMode;
 use files::FilePolicy;
+pub use files::FileRoots;
 use glob::{glob, wildcard};
 use varta_common::{CapabilityGrant, CapabilityValue};
 
@@ -15,6 +17,7 @@ pub(crate) struct Policy {
 }
 
 impl Policy {
+    #[cfg(test)]
     pub(crate) fn new(grants: &[CapabilityGrant]) -> Self {
         Self::with_ceiling(grants, None)
     }
@@ -23,10 +26,20 @@ impl Policy {
         requested: &[CapabilityGrant],
         ceiling: Option<&[CapabilityGrant]>,
     ) -> Self {
+        Self::with_files(requested, ceiling, &FileMode::HostPaths)
+    }
+
+    /// The policy of an execution whose `fs.*` paths follow `files`: the
+    /// module profile's host paths, or v38 virtual roots.
+    pub(crate) fn with_files(
+        requested: &[CapabilityGrant],
+        ceiling: Option<&[CapabilityGrant]>,
+        files: &FileMode,
+    ) -> Self {
         Self {
             requested: requested.to_vec(),
             ceiling: ceiling.map(ToOwned::to_owned),
-            files: FilePolicy::new(requested, ceiling.unwrap_or(requested)),
+            files: FilePolicy::new(requested, ceiling, files),
             withheld: std::collections::BTreeSet::new(),
         }
     }

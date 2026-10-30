@@ -72,7 +72,8 @@ formatting, BigInt) are not specified here at the bit level; see
   `abiVersion`, when present, must be a supported host ABI but is **not** compared
   with the module's; `entry` and `target` are ignored metadata; the reference CLI
   reads at most 256 KiB. A missing, unreadable or malformed ceiling is an error,
-  never a fallback to the package's grants.
+  never a fallback to the package's grants. Under v38 it is also the only source
+  of the [file-root mapping](#file-roots-v38) for a packaged application.
 
 Hosts MUST reject native machine code and MUST NOT cache or accept precompiled
 engine payloads from package input.
@@ -102,6 +103,7 @@ engine payloads from package input.
 | `budgets` | Optional; requires `abiVersion` 34 or later. Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, each in `1..=` its `budget::MAX_*`; in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
 | grant `required` | Optional boolean, default `true`; requires `abiVersion` 34; rejected in a host ceiling. Permission broker v1 ([architecture](architecture.md#permission-broker-v1-turn_budgets)) |
 | grant `purpose` | Optional untrusted text shown as a quote in prompts, at most `permission::MAX_PURPOSE_BYTES` bytes without control characters; requires `abiVersion` 34; rejected in a host ceiling |
+| `fsRoots` | Optional; requires `abiVersion` 34. In a package: an array of root names (`files::valid_root_name`, at most `files::MAX_FILE_ROOTS`, no duplicates); an object is rejected. In a host ceiling: an object mapping each root name to an absolute host directory (no `..`, no control characters, at most `files::MAX_PATH_BYTES` bytes, no duplicate key); an array is rejected. See [File roots](#file-roots-v38) |
 
 Unknown or duplicate fields, unknown capability ids, duplicate ids and a value of
 the wrong kind (a boolean id needs exactly `enabled`, every other id exactly
@@ -128,6 +130,7 @@ denies. A pattern is **unsafe**, and the whole manifest is rejected, when:
 | --- | --- |
 | Names, paths and URLs | Longer than 512 bytes; empty or only whitespace; only `*` and `?` characters; contains NUL |
 | `fs.*` paths (additionally) | Not absolute, or contains a `..` component |
+| `fs.*` paths of a package with `abiVersion` 34 (additionally) | The first component is not a literal root named by the package's `fsRoots`; contains `\`, a control character, or an empty or `.` component |
 | Request methods | Not an RFC 9110 token; `CONNECT`, `TRACE` or `TRACK` in any case; `delete`, `get`, `head`, `options`, `post` or `put` not in uppercase; a duplicate; more than `net::MAX_GRANT_METHODS` methods |
 | URLs (additionally) | Does not start with `http://` (`net.request`: `http://` or `https://`); empty authority, or an authority containing `*`, `?`, `@` or `#`; any control or whitespace character; a path containing `#`, `%` or `\`; a `.` or `..` path segment; not parseable as a URL, without a host, with a user name or password, or with `%` in the parsed path |
 | Listen endpoints | Not a literal `IP:port` socket address, or not in canonical form (for example `[::1]:8080`); listen endpoints have no wildcards |
@@ -497,7 +500,7 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | Logging | `log_i32`, `log_string`, `log_string16`, `log_f64*`, `log_undefined` | Emit one line, no capability; see [Logging](#logging) |
 | Clock | `time_now` | Requires `time.now` enabled. Unix seconds as i32; a time outside i32 is status 2 with 0 |
 | Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most 256 bytes, no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 1 if the variable is set and 0 otherwise (status 0 either way). For an allowed name whose variable is **unset** (or whose value is not valid Unicode), `env_get` returns 0 with status 3 (I/O) and `env_print` emits nothing but the diagnostic and sets status 3; a value larger than `abi::MAX_RESULT_BYTES` is status 4. `env_get` returns the value as a string result, `env_print` emits `varta env: <name>=<value>` |
-| Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..` rejected; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it |
+| Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..` rejected; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it. Under v38, paths and patterns are virtual paths under host-mapped roots ([File roots](#file-roots-v38)) |
 | Permissions and host events (v38) | `permission_query`, `permission_request`, `event_source_*`, `event_watch`, `event_take`, `event_text` | No capability, not charged to the host-call budget; broker states, descriptors and the one-shot answer source in [Permission broker v1](architecture.md#permission-broker-v1-turn_budgets); named sources, host tasks and ordering in [Host event sources](architecture.md#host-event-sources-turn_budgets). A malformed descriptor, id, watch or take is fatal. The instance and event interfaces are [unstable](#what-is-unstable) |
 | Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; bounds and descriptor in [Network requests](architecture.md#network-requests-net_request) |
 | Network | `net_get*`, `net_fetch*` | `http:` URLs only; parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
@@ -548,6 +551,33 @@ fails closed when pattern bytes × input bytes exceeds 65,536. URL patterns allo
 wildcards only after the authority; scheme, normalized host and effective port
 must match exactly, and `?` keeps its query-separator meaning there. Listen
 endpoints are canonical `IP:port` strings matched exactly.
+
+### File roots (v38)
+
+A v38 module (`checked-f64-utf16-v38`, `LanguageProfile::file_roots`) never
+passes a host path. Its `fs.*` paths and its package's `fs.*` patterns are
+virtual paths `/<root>/<component>/...`; the package names its roots
+(manifest `fsRoots` array) and the host maps each one to a directory (host
+ceiling `fsRoots` object, or the host's own configuration). A v38 host MUST:
+
+1. Choose the mode from the module's declared profile, never from the
+   manifest; v1–v37 modules keep absolute host paths exactly.
+2. Open each root the package declares and the host maps **once, before any
+   guest code runs**, and keep that directory handle as the root's authority.
+   A declared but unmapped root denies every path under it; a mapping for an
+   undeclared root is ignored; a package root never names a host directory.
+3. Accept only canonical paths: at most `files::MAX_PATH_BYTES` bytes, a
+   leading `/`, a valid root name, then components that are nonempty, not `.`
+   or `..`, without NUL, control characters or `\`. Anything else, including an
+   absolute host path, is a denial (status 1) before any effect.
+4. Match each pattern's literal directory prefix as a whole-component prefix
+   of the path and the rest with the [filesystem rules](#pattern-matching); the
+   exact operation id; the package request and the ceiling (when supplied)
+   both; then require the root to be mapped. Decide all of this before opening
+   anything.
+5. Open the remaining components from the root's handle with no-follow at every
+   component; a symlink anywhere below the root, a directory or a non-regular
+   file is an I/O failure (status 3).
 
 ### Host operation table
 
@@ -2149,7 +2179,8 @@ A host that runs Varta modules MUST:
    ceiling must accept each concrete resource; an empty ceiling denies.
 5. **Validate all guest-derived input.** Bounds-check every pointer/length pair,
    cap lengths, validate encodings, reject traversal and resolve paths through
-   pinned roots without following links.
+   pinned roots without following links (under v38, only the host-mapped
+   [file roots](#file-roots-v38)).
 6. **Treat guest integers as data.** No pointer, handle, token or serial from the
    guest is ever authority.
 7. **Enforce budgets** and report honestly which ones it cannot enforce (below).

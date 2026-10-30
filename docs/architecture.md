@@ -8951,8 +8951,8 @@ or any change to the static-region ABI lands as an early, separate foundation
 commit, and the other streams rebase onto it. V37 and earlier profiles keep
 their host ABI, value ABI, static region and layouts.
 
-Eight selectors gate the batch's work streams; each admits nothing until its
-stream adds a subsection below:
+Eight selectors gate the batch's work streams, and a wave-2 stream adds a
+ninth; each admits nothing until its stream adds a subsection below:
 
 - program-limits stream: `program_limits()` (profile-dependent structural
   limits up to the Wasm limits, a shared descriptor-driven checked decoder,
@@ -8976,7 +8976,10 @@ stream adds a subsection below:
   language items);
 - codegen-v2 stream: `codegen_v2()` (cheaper code generation for loops, string
   comparison and concatenation, and dictionary call sites; it changes code, not
-  the admitted language).
+  the admitted language);
+- virtual-roots stream (wave 2): `file_roots()` (`fs.*` paths and grants are
+  virtual paths under named roots that the host maps;
+  [implemented](#virtual-file-roots-file_roots)).
 
 The view-protocol and TSX streams add
 [their subsection](#v38-view-protocol-and-tsx-view_protocol-tsx). Until a
@@ -9872,6 +9875,81 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   string and result-buffer limits (open with the move of the library into a
   reserved region of memory 0).
 
+#### Virtual file roots (`file_roots`)
+
+Under v38 a guest never sees or names a host path. Every `fs.read`/`fs.print`
+path and every `fs.*` grant pattern is a **virtual path** `/<root>/...` whose
+first component names a root; the host maps each root to a directory it pins
+once, before any guest code runs. The same package then runs unchanged on any
+host layout (desktop, a Raspberry Pi, a browser host). No host import, value
+layout or ABI changes: the guest calls the same `fs_read16`/`fs_print16`, and
+the manifest and host-policy schemas gain one member under host ABI 34
+([Filesystem](#filesystem) has the rules). V1–v37 keep absolute host paths
+with their exact behaviour; the runtime chooses the mode from the module's
+declared profile (`LanguageProfile::file_roots`), never from the manifest.
+
+- **Roots and names.** A root name is 1 to `files::MAX_ROOT_NAME_BYTES` bytes of
+  lowercase ASCII letters, digits, `-` and `_`, starting with a letter, and
+  compares exactly. At most `files::MAX_FILE_ROOTS` roots appear in a
+  configuration, manifest or host policy; a duplicate is an error, including
+  a repeated JSON object key.
+- **Project configuration.** `"fs": {"roots": {"project": "."}}` maps each
+  name to a directory inside the configuration directory: a relative
+  `/`-separated path of ordinary components (no empty, `.` or `..` component,
+  no `\`), or `.` for the directory itself. It requires
+  `checked-f64-utf16-v38`. `check`, `dev` and `build` open every root when the
+  project loads, from the configuration directory with no-follow at every
+  component (a symlinked root is an error); `varta dev` reads under those
+  descriptors. Every v38 `fs.*` pattern must start with `/<declared root>`,
+  with a literal root component (`/proj*/x` and `/**` are rejected).
+- **Package manifest.** The build writes only the names:
+  `"fsRoots": ["project"]` (requires `abiVersion` 34; a manifest of an earlier
+  host ABI that carries `fsRoots` is rejected). A package never maps a root to
+  a directory: an `fsRoots` object in a package manifest is rejected, and so
+  is, under host ABI 34, an `fs.*` pattern outside a declared root.
+- **Host policy.** The host maps names to absolute host directories:
+  `"fsRoots": {"project": "/srv/app/data"}` (requires `abiVersion` 34; each
+  directory absolute, at most `files::MAX_PATH_BYTES` bytes, no `..` component
+  and no control character). A host policy that lists names instead is
+  rejected. For `run`, the companion, a packaged application and `invoke`, the
+  host policy is the only mapping: each root the package declares and the host
+  maps is opened once at startup (a mapped directory that cannot be opened is
+  an error before any guest code runs); a declared root the host does not map
+  stays absent and denies every path under it, and a mapping for a root the
+  package does not declare is ignored. Without a host policy no root is
+  mapped. `varta dev --policy` uses the policy's mapping when it has one and
+  the configuration's roots otherwise.
+- **Paths.** A guest path is accepted only in canonical form: at most
+  `files::MAX_PATH_BYTES` bytes, starting with `/`, a valid root name, then
+  ordinary components (no empty, `.` or `..` component, so no doubled or
+  trailing `/`), no NUL, control character or `\`. Anything else, including
+  every absolute host path that does not happen to start with a declared and
+  mapped root name, is a denial.
+- **Matching.** A pattern's literal directory prefix must be a whole-component
+  prefix of the path (`/project/**` never matches `/project-x/a` or
+  `/project` itself) and the rest is matched by the component-aware glob
+  (`*` within one component, `**` across components, `?` one non-separator
+  character). The operation id is exact. The package request and, when
+  supplied, the host ceiling must each have a matching pattern for that id,
+  and the root must be mapped; all of this is decided before anything is
+  opened. A ceiling never adds a pattern or an operation.
+- **Opening.** The path's components below the root are opened from the
+  root's pinned descriptor with no-follow at every component; a symlink below
+  the root (to a file or directory, inside or outside the root) fails with the
+  I/O status, as do directories and other non-regular files. Reads are capped
+  as for every profile.
+- **Review.** `inspect` reports the manifest's `fsRoots`; the authorization
+  review lists each declared root as `mapped` or `denied` under a host policy
+  and `declared` without one. The permission broker's `fs.*` descriptors
+  ([broker v1](#permission-broker-v1-turn_budgets)) use the same virtual
+  matching.
+- **Embedding.** A third-party host builds `RunOptions::file_roots` from
+  `FileRoots::open` (a trusted absolute host directory) or `FileRoots::insert`
+  (a directory handle it opened itself), or from the manifests with
+  `FileRoots::from_manifests`; `invoke_tool_with_roots` does the same for tool
+  invocation. The older grant-only entry points run a v38 module with no
+  roots, so every `fs.*` path is denied.
+
 ### V38 view protocol and TSX (`view_protocol()`, `tsx()`)
 
 The view-protocol and TSX streams implement increment P7 and the start of P8
@@ -10149,7 +10227,8 @@ trap) and adds permission states, a host permission broker and user consent as a
 grant source bounded by the host ceiling. V38 adopts its first part
 ([permission broker v1](#permission-broker-v1-turn_budgets)): a manifest with
 `abiVersion` 34 may mark a grant `"required": false` and give it a `"purpose"`,
-and may request `"budgets"` ([turn budgets](#turn-budgets-and-application-instances-turn_budgets));
+and may request `"budgets"` ([turn budgets](#turn-budgets-and-application-instances-turn_budgets))
+and name its file roots (`"fsRoots"`, [virtual file roots](#virtual-file-roots-file_roots));
 a host policy may cap budgets but never carries `required` or `purpose`; and
 `--decisions PATH` supplies stored decisions keyed by the artifact's identity
 for `run`, `dev` and packaged applications. Everything below holds for every
@@ -10213,7 +10292,9 @@ not request.
 The CLI preserves declared-manifest behavior when `--policy` is absent. Supply
 `--policy host-policy.json` to constrain `run`, `dev`, `inspect`, `validate` or the
 packaged application's own invocation. The host file uses the same strict
-manifest schema. An explicit `{"capabilities":[]}` denies all privileged access;
+manifest schema; with `abiVersion` 34 it may map v38 file roots (`fsRoots`, an
+object of root names to absolute host directories, see [Filesystem](#filesystem)),
+which a package manifest only names. An explicit `{"capabilities":[]}` denies all privileged access;
 a missing, unreadable or malformed policy is an error, never a fallback to the
 package's permissions. Policy paths are resolved relative to the invocation's
 working directory. Host policy is local execution input and is never embedded or
@@ -10255,10 +10336,52 @@ the portable artifact format and ABI are unchanged.
 
 ### Filesystem
 
+Through v37 guest paths and `fs.*` patterns are absolute **host** paths. Under
+v38 they are **virtual** paths `/<root>/...` under roots that the host maps
+(below, and [virtual file roots](#virtual-file-roots-file_roots)); an absolute
+host path that is not under a declared and mapped root is denied. The
+pattern language and the descriptor rules are the same in both modes.
+
 Patterns must be absolute and cannot contain traversal. `*` matches within a
 single path component, `**` can span separators, and `?` matches one non-separator
 character. Root/component boundaries remain intact: `/data/**` cannot match
 `/data-secret/file`.
+
+A v38 project names its roots and requests virtual paths; the directories are
+relative to the configuration directory and stay inside it:
+
+```json
+{
+  "languageProfile": "checked-f64-utf16-v38",
+  "entry": "src/main.ts",
+  "target": "native",
+  "out": "dist/app",
+  "fs": { "roots": { "project": "." } },
+  "capabilities": { "fs": { "read": ["/project/fixtures/**"] } }
+}
+```
+
+The built manifest carries `"fsRoots": ["project"]` and the virtual patterns,
+never a directory. `varta dev` reads under the configuration's roots; every
+other run maps them through the host policy, whose `fsRoots` object names an
+absolute host directory per root (a root the host does not map denies):
+
+```json
+{
+  "schemaVersion": 1,
+  "abiVersion": 34,
+  "fsRoots": { "project": "/srv/app" },
+  "capabilities": [{ "id": "fs.read", "patterns": ["/project/fixtures/**"] }]
+}
+```
+
+Under v38 the pinned descriptor is the root's (from the configuration or the
+host mapping), not the static prefix of a pattern: the request and the
+ceiling are matched lexically against the whole virtual path, and the file is
+opened below the root descriptor with no-follow at every component.
+
+The rest of this section describes the host-path mode of v1–v37; its
+descriptor and read rules hold for v38 roots as well.
 
 At execution setup, explicitly granted directory roots are opened and pinned as
 capability descriptors. With a host ceiling, these descriptors come from the

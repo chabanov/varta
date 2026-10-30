@@ -5248,6 +5248,58 @@ the memory budget fails with a reported resource error, for example
 anonymous trap. Indices at or beyond 2^27 still trap, and the same program
 under v37 still fails at its 1024-element ceiling.
 
+#### Virtual file roots (opt-in v38)
+
+A v38 program never names a host path. Its configuration declares **roots**,
+each a directory inside the project, and grants file reads on virtual paths
+under them:
+
+```json
+{
+  "languageProfile": "checked-f64-utf16-v38",
+  "entry": "src/main.ts",
+  "target": "native",
+  "out": "dist/app",
+  "fs": { "roots": { "project": "." } },
+  "capabilities": { "fs": { "read": ["/project/fixtures/**"] } }
+}
+```
+
+```typescript
+export function main(): void {
+  const fixture = varta.result.capture(varta.fs.read("/project/fixtures/user.json"));
+  if (fixture.ok) {
+    console.log(fixture.value);
+  } else {
+    console.log(`not readable: ${fixture.status}`);
+  }
+}
+```
+
+`varta dev` prints the content of `fixtures/user.json` next to the
+configuration, on any machine and wherever the project is checked out. The
+built package keeps only the root name (`"fsRoots": ["project"]` in its
+manifest); `varta run`, the `varta-runtime` companion and a packaged
+executable read files only where a host policy maps the root:
+
+```json
+{
+  "abiVersion": 34,
+  "fsRoots": { "project": "/srv/my-app" },
+  "capabilities": [{ "id": "fs.read", "patterns": ["/project/fixtures/**"] }]
+}
+```
+
+```sh
+./dist/app --policy host-policy.json
+```
+
+Without such a mapping the root is unmapped and every read fails with status
+1, as does a path outside the grant (`/project/secret.txt`), a sibling root
+(`/project-x/...`), traversal (`/project/fixtures/../x`) and any absolute host
+path. A symlink below the root fails with status 3. Under v37 the same
+program reads absolute host paths with absolute grants, unchanged.
+
 #### Turn budgets and application instances (opt-in v38)
 
 The turn-budgets stream admits event turns with per-turn budgets, long-lived

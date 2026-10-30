@@ -7,6 +7,7 @@ mod launcher;
 pub use launcher::companion as runtime_launcher;
 mod modules;
 mod policy;
+mod roots;
 pub use artifact::Artifact;
 pub use config::{CapabilitySpec, VartaConfig};
 pub use invoke::{invoke_tool, invoke_tool_with_policy};
@@ -19,7 +20,7 @@ pub use varta_common::permission::DecisionFile;
 pub use varta_common::profile::{FuelProfile, FunctionFuel};
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
 pub use varta_runtime::{
-    RunOutput, RunReport, RuntimeEvent, RuntimeObserver, ViewReport, ViewScript,
+    FileRoots, RunOutput, RunReport, RuntimeEvent, RuntimeObserver, ViewReport, ViewScript,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +37,8 @@ pub enum ProjectError {
     Runtime(#[from] varta_runtime::RuntimeError),
     #[error(transparent)]
     Permission(#[from] varta_common::permission::PermissionError),
+    #[error(transparent)]
+    FileRoot(#[from] varta_common::files::FileRootError),
     #[error(transparent)]
     ViewScript(#[from] varta_runtime::ViewScriptError),
     #[error("invalid artifact: {0}")]
@@ -70,6 +73,9 @@ pub struct CheckedProject {
     pub artifact: Artifact,
     pub output: PathBuf,
     pub modules: Vec<varta_common::ModuleInfo>,
+    /// The configuration's v38 file roots, pinned when the project loads
+    /// (`file_roots`); `varta dev` reads under them.
+    pub roots: FileRoots,
 }
 
 impl CheckedProject {
@@ -80,11 +86,13 @@ impl CheckedProject {
         VartaRuntime::new().validate_module(&wasm)?;
         let manifest = config.manifest();
         let output = base.join(&config.out);
+        let roots = roots::pin(&base, &config)?;
         Ok(Self {
             config,
             artifact: Artifact { wasm, manifest },
             output,
             modules: compilation.modules,
+            roots,
         })
     }
 
@@ -105,6 +113,14 @@ impl CheckedProject {
 
     pub fn run(&self) -> Result<RunOutput> {
         run(&self.artifact)
+    }
+
+    /// How `varta dev` runs this project: `settings` with the project's
+    /// pinned file roots.
+    #[must_use]
+    pub fn dev_settings(&self, mut settings: RunSettings) -> RunSettings {
+        settings.file_roots = Some(self.roots.clone());
+        settings
     }
 
     pub fn run_with_policy(&self, policy: &HostPolicy) -> Result<RunOutput> {
@@ -168,18 +184,19 @@ pub fn run(artifact: &Artifact) -> Result<RunOutput> {
     Ok(VartaRuntime::new().run_wasm_bytes(&artifact.wasm, &artifact.grants()?)?)
 }
 
-/// Stream runtime events while preserving the same validated artifact/policy path.
+/// Stream runtime events while preserving the same validated artifact/policy
+/// path, with the file roots the host policy maps.
 pub fn run_observed(
     artifact: &Artifact,
     host: Option<&HostPolicy>,
     observer: RuntimeObserver,
 ) -> Result<RunOutput> {
-    Ok(VartaRuntime::new().run_observed(
-        &artifact.wasm,
-        &artifact.grants()?,
-        host.map(HostPolicy::grants),
-        observer,
-    )?)
+    artifact.grants()?;
+    let mut options = options(&artifact.manifest, host, &RunSettings::default())?;
+    options.observer = Some(observer);
+    Ok(VartaRuntime::new()
+        .run_with(&artifact.wasm, options)
+        .into_result()?)
 }
 
 /// How `run`, `dev` and a packaged application execute.
@@ -191,6 +208,10 @@ pub struct RunSettings {
     /// Stored permission decisions (the headless policy file).
     pub decisions: Option<DecisionFile>,
     pub observer: Option<RuntimeObserver>,
+    /// Development file roots (the project configuration's, pinned at load)
+    /// for a v38 module; a host policy that maps `fsRoots` replaces them.
+    /// Without them, only the host policy maps roots.
+    pub file_roots: Option<FileRoots>,
 }
 
 /// Read a bounded headless decision file.
@@ -211,6 +232,23 @@ pub fn run_report(
     execute_report(&artifact.wasm, &artifact.manifest, host, settings, false)
 }
 
+/// The run options of a package under an optional host policy. The host
+/// policy's `fsRoots` mapping decides the file roots; without one, the
+/// development roots of `settings` apply.
+fn options(
+    manifest: &varta_common::Manifest,
+    host: Option<&HostPolicy>,
+    settings: &RunSettings,
+) -> Result<RunOptions> {
+    let host_manifest = host.map(HostPolicy::manifest);
+    let mut options = RunOptions::from_manifests(manifest, host_manifest)?;
+    let host_maps = host_manifest.is_some_and(|host| host.fs_roots.is_some());
+    if let (Some(roots), false) = (&settings.file_roots, host_maps) {
+        options.file_roots = roots.clone();
+    }
+    Ok(options)
+}
+
 /// The one run path of `run`, `dev` and `dev --profile-fuel`.
 fn execute_report(
     wasm: &[u8],
@@ -219,7 +257,7 @@ fn execute_report(
     settings: RunSettings,
     fuel_profile: bool,
 ) -> Result<RunReport> {
-    let mut options = RunOptions::from_manifests(manifest, host.map(HostPolicy::manifest))?;
+    let mut options = options(manifest, host, &settings)?;
     options.decisions = settings.decisions;
     options.observer = settings.observer;
     options.fuel_profile = fuel_profile;
@@ -248,8 +286,7 @@ pub fn run_view(
     settings: RunSettings,
     script: &ViewScript,
 ) -> Result<ViewReport> {
-    let mut options =
-        RunOptions::from_manifests(&artifact.manifest, host.map(HostPolicy::manifest))?;
+    let mut options = options(&artifact.manifest, host, &settings)?;
     options.decisions = settings.decisions;
     options.observer = settings.observer;
     Ok(VartaRuntime::new().run_view(
@@ -311,7 +348,7 @@ pub fn inspect_with_policy(
         "schemaVersion": artifact.manifest.schema_version, "abiVersion": artifact.manifest.abi_version, "language":module.language, "valueAbiVersion":module.value_abi_version,
         "policy": artifact.manifest.policy,
         "capabilities": grants.iter().map(|g| &g.id).collect::<Vec<_>>(),
-        "grants": artifact.manifest.capabilities, "budgets": artifact.manifest.budgets, "identity": varta_runtime::artifact_identity(&artifact.wasm), "imports": imports, "exports": module.exports, "memories": module.memories,
+        "grants": artifact.manifest.capabilities, "budgets": artifact.manifest.budgets, "fsRoots": artifact.manifest.fs_roots, "identity": varta_runtime::artifact_identity(&artifact.wasm), "imports": imports, "exports": module.exports, "memories": module.memories,
         "toolCatalog": module.tool_catalog.map(|catalog| catalog.discovery()), "httpService": module.http_service,
         "authorization": authorization(&artifact.manifest, policy)? }),
     )

@@ -8,6 +8,7 @@ mod diagnostic;
 /// Host event sources and host tasks (v38 `turn_budgets`).
 pub mod events;
 pub mod exceptions;
+pub mod files;
 mod host;
 pub mod http;
 mod invocation;
