@@ -11,6 +11,16 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 `typeof` of engine globals (`web_bytes`): `typeof NAME` of a global
+  the engine provides and the program does not shadow is its constant
+  JavaScript `typeof` (`"function"` for classes and functions such as
+  `Blob`, `Headers`, `Map`, `fetch`, `setTimeout`; `"object"` for `Math`,
+  `JSON`, `console`, `crypto`, `process`, `globalThis`), derived from the
+  prelude and intrinsic registries and pinned against Node 24. The operand
+  loads no prelude, `typeof Blob !== 'undefined' && body instanceof Blob`
+  narrows, and unknown names stay compile errors. Unmodified uarp-sdk
+  0.13.1 checks 65 of 65 files per file under v38 (7 before).
+
 - V38 links every BigInt operation: a v38 host implements 54 imports instead
   of 67. `varta-bigint` builds without `std`, and the BigInt operations, the
   value13+ primitive conversions and the abstract comparisons are

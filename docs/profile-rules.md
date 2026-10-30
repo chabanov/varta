@@ -3567,6 +3567,18 @@ Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
   structural check. Keep the discipline unchanged; one call only.
 - A `Uint8Array` held by `unknown` stays a compile error (owner decision);
   do not box it until the planned increment.
+- `typeof NAME` of an engine global folds in `Lower::global_typeof`; the set
+  is `modules::engine_globals::kind`, derived from the admitted preludes'
+  `Class`/`Value` exports, `GLOBAL_OBJECT_MEMBERS` (the getters of
+  `GlobalObject`), `ErrorClass`, `CollectionKind` and `INTRINSIC_GLOBALS`
+  (globals the compiler lowers itself). Never add a hand-written fallback
+  list or an `undefined` result: a prelude class no global binds is
+  `Namespace::Instance`, and a new intrinsic global goes into
+  `INTRINSIC_GLOBALS` with its Node 24 `typeof` in `NODE_24`. The scanner
+  (`References::folded`) skips the operand only where the module binds the
+  name nowhere, so a folded operand loads no prelude; the lowering folds
+  only where no binding, function or generic function shadows it. Keep the
+  two conditions no wider in the scanner than in the lowering.
 - `globalThis` lowers to the global prelude's `GlobalObject`; function
   globals reach through it only by the scanner rewrite
   (`modules::global_members::FUNCTION_GLOBALS`). Add a member as a getter of
@@ -3584,12 +3596,15 @@ Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
   without other private builtins (`reaches_private`) and their JSON-object
   view throws for the bytes (`Views::bytes_error`).
 - Tests: `varta-runtime` `web_bytes_tests` (Node 24 logs of
-  `web_bytes_cases`), `net_tests` byte bodies against the loopback server and
+  `web_bytes_cases`, including `typeof_globals.ts`, the folded-bytes and
+  rejection tests), the compiler's `engine_globals` tests (the set against
+  Node 24, the prelude names outside it, the `GlobalObject` getters),
+  `net_tests` byte bodies against the loopback server and
   `net_cases/server.mjs` (`node_runner.mjs --bytes`), ABI 34 import and
   relabelling tests, the denial test, the runtime descriptor unit tests, and
-  the CLI smoke test of `process.env` grants and byte-body denials through
-  `dev` and `build --single`. V37 cases that read text chunks are listed in
-  `V38_DEVIATIONS`.
+  the CLI smoke tests of `process.env` grants and byte-body denials and of
+  `typeof` of engine globals through `dev` and `build --single`. V37 cases
+  that read text chunks are listed in `V38_DEVIATIONS`.
 
 ### V38 linked intrinsics
 

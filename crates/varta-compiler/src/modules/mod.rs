@@ -2,6 +2,7 @@
 //! concatenated and the compiler never performs ambient filesystem/network I/O.
 mod defaults;
 pub(crate) mod engine;
+pub(crate) mod engine_globals;
 mod global_members;
 mod syntax;
 #[cfg(test)]

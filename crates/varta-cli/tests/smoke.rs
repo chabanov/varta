@@ -17144,6 +17144,48 @@ fn web_bytes_env_snapshots_and_byte_bodies_follow_exact_grants() {
     let _ = fs::remove_dir_all(&project);
 }
 
+const TYPEOF_GLOBALS_CASE: &str =
+    include_str!("../../varta-runtime/src/web_bytes_cases/typeof_globals.ts");
+
+/// V38 `typeof` of engine globals (`web_bytes`): the folded constants and the
+/// SDK-shaped `typeof Blob` guard through `dev` and the single binary; v37
+/// keeps rejecting the program, which names `Blob`.
+#[test]
+fn v38_typeof_engine_globals_run_through_dev_and_the_single_binary() {
+    let project = RegressionProject::new(TYPEOF_GLOBALS_CASE, serde_json::json!({}));
+    project.language_profile("checked-f64-utf16-v38");
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let expected = [
+        "varta log: function function function function function function function",
+        "varta log: function function function function function",
+        "varta log: object object object object object object",
+        "varta log: image/png",
+        "varta log: image/*",
+        "varta log: application/octet-stream",
+        "varta log: true /x",
+        "varta log: string number function",
+    ];
+    for output in [
+        project.command(&["dev"]),
+        Command::new(project.0.join("dist/app"))
+            .current_dir(&project.0)
+            .output()
+            .unwrap(),
+    ] {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(stdout_lines(&output), expected);
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success());
+    assert!(
+        combined(&check).contains("unsupported type reference Blob"),
+        "{}",
+        combined(&check)
+    );
+}
+
 const VIEW_TIMER_CASE: &str = include_str!("../../varta-runtime/src/view_cases/timers.ts");
 
 /// The per-turn budget lines without their wall-clock part: label, fuel,

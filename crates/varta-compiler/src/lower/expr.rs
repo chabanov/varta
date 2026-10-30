@@ -314,6 +314,9 @@ impl Lower<'_> {
                 if unary.op == ast::UnaryOp::Delete {
                     return self.array_delete(&unary.arg, unary.span);
                 }
+                if let Some(value) = self.global_typeof(unary) {
+                    return Ok(value);
+                }
                 if let Some(value) = self.method_typeof(unary)? {
                     return Ok(value);
                 }

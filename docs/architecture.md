@@ -10370,6 +10370,20 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   scanner rewrites the member into the name before implicit imports, unless
   the module binds it). `typeof x.m` of a class method is `"function"`, so
   `typeof c.randomUUID === 'function'` feature detection compiles.
+  `typeof NAME` of an *engine global* that no binding, function or generic
+  function of the program shadows is a constant string that evaluates
+  nothing and loads no prelude for the operand (`instanceof` and other uses load
+  as usual): `"function"` for the class and function exports of the preludes
+  the profile admits (except `RegExpExecArray`, `RegExpMatchArray` and
+  `ViewEvent`, whose instances only engine APIs create), the error classes,
+  `Map`/`Set`/`Uint8Array`, `Number`, `String`, `Boolean`, `BigInt`,
+  `Object`, `Array`, `Promise`, `parseInt`, `parseFloat`, `isNaN`,
+  `isFinite` and the timers; `"object"` for `Math`, `JSON`, `console` and
+  the members of `GlobalObject` (`globalThis`, `crypto`, `process`), the
+  values Node 24 reports. A shadowed name keeps its binding's `typeof`; any
+  other identifier stays `unknown identifier`, never `"undefined"`. The
+  folded `typeof process` does not make a bare `process` readable: the
+  environment is still `globalThis.process`.
   `globalThis as T` (any `x as T` to a wider object type) is the structural
   view an assignment makes, and `f as F` (or `F | undefined`) of a named
   function whose parameters accept `F`'s is a fresh adapter function of `F`'s

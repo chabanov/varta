@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. `v36-merge` with the declared-fields, function-fields, timers and async-generator streams: commit `765743e` (2026-10-29), 2196 tests, 0 failures, conformance 101 passed and 9 known gaps. `v38-wave2-merge` with the seven wave-2 streams: code at commit `911e9ed` (2026-10-30), 2662 tests, 0 failures, 3 ignored, conformance 123 passed and 4 known gaps, baseline matched, including the `no_std` core check. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.13.1](#pilot-acceptance-package-uarp-sdk) (0.13.0 for the wave-2 streams, 0.12.0 until the v38 integration); wave-2 integration probe under v38: 7 of 65 files check unmodified, 65 of 65 with the one `typeof Blob` guard of `core/transport.ts` removed in a scratch copy ([probe](#pilot-acceptance-package-uarp-sdk)); earlier: M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.13.1](#pilot-acceptance-package-uarp-sdk) (0.13.0 for the wave-2 streams, 0.12.0 until the v38 integration); `typeof` engine-globals probe under v38: **65 of 65** files check unmodified (wave-2 integration: 7, stopped at the `typeof Blob` guard of `core/transport.ts`) ([probe](#pilot-acceptance-package-uarp-sdk)); earlier: M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 | Platform targets | Third-party embedding contract published in [embedding.md](embedding.md); browser, desktop and Raspberry Pi 5 targets, application lifecycle and view layer follow the [accepted design](#platform-targets-and-application-model) (2026-10-29), not implemented yet |
 
 Next work, in order:
@@ -876,9 +876,18 @@ Unmodified: **7 of 65** files check (`core/errors.ts`, `core/json.ts`,
 reads the prelude class `Blob` as a value, which v38 does not admit. With
 that guard reduced to `body instanceof Blob` in a scratch copy, **65 of 65**
 files check: the 0.13.0 generator bug (a `Uint8Array` held by `unknown`) is
-gone. Owner decision pending: admit `typeof` of an engine prelude class (a
-constant `"function"`) under v38, or keep it rejected and drop the guard in
-the SDK.
+gone. Owner decision (2026-10-30): admit `typeof` of engine globals under
+v38.
+
+**`typeof` engine-globals pilot probe (`v38-typeof-globals`, uarp-sdk
+0.13.1, 2026-10-30).** Same per-file probe (`varta check` under v38, each
+file the only `export *` source of a probe entry, default-imported when it
+has a default export) of a scratch copy of the pinned **0.13.1** sources
+(`npm pack uarp-sdk@0.13.1`, integrity verified), production budgets, debug
+build, no live API call, sources unmodified: **65 of 65** files check (7
+before). `typeof Blob` in `binaryContentType` folds to `"function"` and
+`body instanceof Blob` narrows as before
+([contract](architecture.md#web-bytes-web_bytes)).
 
 **Wave 2 (integrated on `v38-wave2-merge`, 2026-10-30).**
 

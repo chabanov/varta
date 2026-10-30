@@ -80,6 +80,7 @@ pub(crate) enum CollectionKind {
     Uint8Array,
 }
 impl CollectionKind {
+    pub(crate) const ALL: [Self; 3] = [Self::Map, Self::Set, Self::Uint8Array];
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Map => "Map",

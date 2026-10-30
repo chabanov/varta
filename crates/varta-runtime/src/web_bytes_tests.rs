@@ -85,6 +85,109 @@ fn the_typed_global_object_matches_node() {
     );
 }
 
+#[test]
+fn typeof_of_engine_globals_matches_node() {
+    run(
+        include_str!("web_bytes_cases/typeof_globals.ts"),
+        &[],
+        &[
+            "function function function function function function function",
+            "function function function function function",
+            "object object object object object object",
+            "image/png",
+            "image/*",
+            "application/octet-stream",
+            "true /x",
+            "string number function",
+        ],
+    );
+}
+
+/// A module binding of a global's name is the module's own value, as in
+/// JavaScript (Node 24 prints the same lines).
+#[test]
+fn module_bindings_shadow_engine_globals_in_typeof() {
+    run(
+        "const Headers = 3;
+         function fetch(): string { return 'mine'; }
+         export function main(): void {
+           console.log(`${typeof Headers} ${typeof fetch} ${fetch()}`);
+         }",
+        &[],
+        &["number function mine"],
+    );
+}
+
+/// The folded `typeof` evaluates nothing and loads no prelude for its
+/// operand: a prelude class, a prelude function and a compiler intrinsic of
+/// the same kind compile to the same bytes.
+#[test]
+fn folded_typeof_loads_no_prelude() {
+    let program = |name: &str| {
+        compile(&format!(
+            "export function main(): void {{ console.log(typeof {name}); }}"
+        ))
+    };
+    let intrinsic = program("Promise");
+    for name in ["Blob", "Headers", "fetch", "Map", "Uint8Array", "URL"] {
+        assert_eq!(program(name), intrinsic, "{name}");
+    }
+    let object = program("Math");
+    for name in ["globalThis", "crypto", "process"] {
+        assert_eq!(program(name), object, "{name}");
+    }
+    // `instanceof` still needs the class, which loads its prelude as usual.
+    assert_ne!(
+        compile(
+            "export function main(): void {
+               const body: string | Blob = 'x';
+               console.log(String(typeof Blob !== 'undefined' && body instanceof Blob));
+             }"
+        )
+        .len(),
+        intrinsic.len()
+    );
+}
+
+/// Only engine globals fold: an unknown identifier, a type-only name, an
+/// engine-created class with no global binding (Node 24: `undefined`) and a
+/// global v38 does not provide stay compile errors, and v37 keeps rejecting
+/// `typeof` of a prelude class.
+#[test]
+fn typeof_of_other_identifiers_stays_rejected() {
+    let source =
+        |name: &str| format!("export function main(): void {{ console.log(typeof {name}); }}");
+    for name in [
+        "NotAGlobal",
+        "HeadersInit",
+        "ReadonlyMap",
+        "RegExpExecArray",
+        "ViewEvent",
+        "Symbol",
+        "window",
+    ] {
+        let error = varta_compiler::compile_typescript_with_profile(&source(name), V38)
+            .expect_err(name)
+            .to_string();
+        assert!(
+            error.contains(&format!("unknown identifier: {name}")),
+            "{error}"
+        );
+    }
+    for name in ["Blob", "Headers", "Map", "Math", "crypto"] {
+        let error = varta_compiler::compile_typescript_with_profile(
+            &source(name),
+            LanguageProfile::CheckedF64Utf16V37,
+        )
+        .expect_err(name)
+        .to_string();
+        assert!(
+            error.contains(&format!("unknown identifier: {name}")),
+            "{error}"
+        );
+    }
+}
+
 /// `globalThis` members are typed: an unknown member is a compile error,
 /// never `any`; earlier profiles do not know `globalThis` at all.
 #[test]

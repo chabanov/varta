@@ -1,13 +1,15 @@
 //! The language items of the v38 web-bytes stream (`web_bytes`): the typed
-//! global object, `typeof` of a class method, `new Uint8Array(buffer)` over
-//! an `ArrayBuffer`, and type assertions that are structural upcasts. The Web
-//! types themselves are the `fetch`, blob and global engine preludes.
+//! global object, `typeof` of an engine global or a class method,
+//! `new Uint8Array(buffer)` over an `ArrayBuffer`, and type assertions that
+//! are structural upcasts. The Web types themselves are the `fetch`, blob and
+//! global engine preludes.
 use super::*;
 use crate::lower::expr::callee_name;
 use crate::modules::engine::{
     ARRAY_BUFFER_CLASS, BLOB, BLOB_VIEW, ENVIRONMENT_VALUE, GLOBAL, GLOBAL_OBJECT, GLOBAL_THIS,
     PROCESS_CLASS,
 };
+use crate::modules::engine_globals;
 
 impl Lower<'_> {
     /// `globalThis`, unless the module binds the name: the global prelude's
@@ -26,6 +28,34 @@ impl Lower<'_> {
         }
         self.engine_apply((&GLOBAL, GLOBAL_OBJECT, &[]), vec![], span)
             .map(Some)
+    }
+    /// `typeof NAME` of an engine global identifier that no binding, function
+    /// or generic function of the program shadows: the global's constant
+    /// JavaScript `typeof` string (`"function"` for a class or function,
+    /// `"object"` for a namespace or object), so feature detection such as
+    /// `typeof Blob !== 'undefined'` compiles. Nothing is evaluated and no
+    /// prelude is loaded for the operand. A shadowed name keeps the ordinary
+    /// `typeof` of its binding; any other identifier stays unknown.
+    pub(super) fn global_typeof(&mut self, unary: &ast::UnaryExpr) -> Option<Expr> {
+        if unary.op != ast::UnaryOp::TypeOf {
+            return None;
+        }
+        let ast::Expr::Ident(name) = stmt::unparen(&unary.arg) else {
+            return None;
+        };
+        let name = name.sym.as_ref();
+        if self.binding(name).is_ok()
+            || self.functions.contains_key(name)
+            || self.generic_name(name).is_some()
+        {
+            return None;
+        }
+        let kind = engine_globals::kind(name, self.types.profile)?;
+        Some(Expr {
+            span: unary.span,
+            ty: Type::String,
+            kind: E::String(self.types.profile.string_bytes(kind.type_of())),
+        })
     }
     /// `typeof x.m` of a class method `m`: always `"function"`, as a method is
     /// never an absent member (feature detection such as

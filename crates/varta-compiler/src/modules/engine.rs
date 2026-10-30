@@ -8,6 +8,7 @@
 //! receives an implicit import of it; a program that names none of them never
 //! loads a prelude, so its Wasm bytes are unchanged. Prelude paths are reserved:
 //! a host loader can never supply or shadow them.
+use super::engine_globals;
 use super::*;
 use swc_ecma_visit::{Visit, VisitWith};
 use varta_common::language::LanguageProfile;
@@ -82,6 +83,11 @@ pub(crate) enum Namespace {
     Value,
     /// A type alias only.
     Type,
+    /// A class whose instances only engine APIs create (`RegExpExecArray`,
+    /// the view prelude's `ViewEvent`): imported like [`Self::Class`], but no
+    /// JavaScript global binds it, so it is no engine global value
+    /// ([`super::engine_globals`]).
+    Instance,
 }
 
 /// The `Headers` class and `HeadersInit` alias (WHATWG Fetch).
@@ -258,8 +264,8 @@ pub(crate) const REGEXP: Prelude = Prelude {
     source: include_str!("../prelude/regexp.ts"),
     exports: &[
         (REGEXP_CLASS, Namespace::Class),
-        (EXEC_ARRAY_CLASS, Namespace::Class),
-        (MATCH_ARRAY_CLASS, Namespace::Class),
+        (EXEC_ARRAY_CLASS, Namespace::Instance),
+        (MATCH_ARRAY_CLASS, Namespace::Instance),
     ],
     members: &[],
     triggers: &[],
@@ -464,7 +470,7 @@ pub(crate) const EVENTS: Prelude = Prelude {
 pub(crate) const VIEW: Prelude = Prelude {
     path: VIEW_PATH,
     source: include_str!("../prelude/view.ts"),
-    exports: &[(VIEW_EVENT_CLASS, Namespace::Class)],
+    exports: &[(VIEW_EVENT_CLASS, Namespace::Instance)],
     members: &[
         Member {
             object: VIEW_OBJECT,
@@ -795,11 +801,27 @@ fn top_level(module: &ast::Module, imports: &[Dependency]) -> BTreeSet<String> {
 
 /// Identifier references (values and type names) of a module, with the span of
 /// their first occurrence. Property names are not identifiers and never match.
-#[derive(Default)]
-struct References {
+struct References<'a> {
     found: BTreeMap<String, swc_common::Span>,
+    /// Whether `typeof NAME` of an identifier folds to a constant (v38, see
+    /// [`super::engine_globals`]): such an operand references nothing, so it
+    /// loads no prelude.
+    folded: &'a dyn Fn(&str) -> bool,
 }
-impl Visit for References {
+impl Visit for References<'_> {
+    fn visit_unary_expr(&mut self, unary: &ast::UnaryExpr) {
+        let mut operand = &*unary.arg;
+        while let ast::Expr::Paren(paren) = operand {
+            operand = &paren.expr;
+        }
+        if unary.op == ast::UnaryOp::TypeOf
+            && let ast::Expr::Ident(name) = operand
+            && (self.folded)(name.sym.as_ref())
+        {
+            return;
+        }
+        unary.visit_children_with(self);
+    }
     fn visit_ident(&mut self, ident: &ast::Ident) {
         self.found
             .entry(ident.sym.to_string())
@@ -858,10 +880,20 @@ pub(super) fn implicit_imports(
     if admitted.is_empty() {
         return Vec::new();
     }
-    let mut references = References::default();
-    module.visit_with(&mut references);
     let bound = top_level(module, imports);
     let locals = local_bindings(module);
+    // A name the module binds anywhere keeps its references: its `typeof`
+    // may read the binding.
+    let folded = |name: &str| {
+        engine_globals::kind(name, profile).is_some()
+            && !bound.contains(name)
+            && !locals.contains(name)
+    };
+    let mut references = References {
+        found: BTreeMap::new(),
+        folded: &folded,
+    };
+    module.visit_with(&mut references);
     admitted
         .into_iter()
         .filter_map(|prelude| {

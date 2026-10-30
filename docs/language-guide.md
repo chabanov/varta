@@ -5607,6 +5607,23 @@ const env = (globalThis as { process?: { env?: Record<string, string | undefined
 const key = env?.['APP_KEY']; // set only with "env": {"get": ["APP_KEY"]}
 ```
 
+`typeof` of a global the engine provides is its constant JavaScript
+`typeof`: `"function"` for classes and functions (`Blob`, `Headers`, `Map`,
+`Promise`, `fetch`, `setTimeout`, …), `"object"` for `Math`, `JSON`,
+`console`, `crypto`, `process` and `globalThis`. So the usual feature
+detection compiles and narrows:
+
+```ts
+function contentType(body: string | Blob | Uint8Array, declared: string): string {
+  const own = typeof Blob !== 'undefined' && body instanceof Blob ? body.type : '';
+  return own || declared;
+}
+```
+
+A name you bind yourself keeps its own `typeof`; a name the engine does not
+provide (`typeof window`, `typeof Symbol`, a type such as `HeadersInit`)
+is still a compile error, never `"undefined"`.
+
 `process.env` lists only the variables your `env.get` grant names exactly
 (and the host allows); `process.env.APP_KEY` with a fixed name also works
 with a wildcard grant such as `"APP_*"`, reading that one variable when it
