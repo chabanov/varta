@@ -175,6 +175,8 @@ Passing validation is not proof of provenance or authorization.
      `number_remainder`, `process_exit`, `process_exit_f64` and `time_now`;
    - `env_result_len` and `result_status` MUST be exported mutable i32 globals when
      any import has **Result globals** = yes; when exported they MUST have that type;
+   - `resource_failure` and `resource_request`, when exported, MUST be mutable i32
+     globals (v38 `data_limits`; see [Run lifecycle](#run-lifecycle));
    - `_start`, when exported, MUST be a `() -> ()` function;
    - exception, tool, HTTP, value-ABI and frame exports are checked as described in
      their sections; an unlisted export with the `varta.exception.`,
@@ -721,6 +723,8 @@ from any later pure operation.
 | `varta.functions` | custom section, binary | Function capture and frame catalog (v13+ closures, v33+ frames) | `function::CATALOG_SECTION` |
 | `env_result_len` | export, mutable i32 global | Required when any import needs result globals | `abi::RESULT_LEN` |
 | `result_status` | export, mutable i32 global | Required when any import needs result globals | `abi::RESULT_STATUS` |
+| `resource_failure` | export, mutable i32 global | V38 heap modules: the exhausted resource code before a trap, else 0 | `limits::RESOURCE_FAILURE` |
+| `resource_request` | export, mutable i32 global | V38 heap modules: the requested amount of a resource failure | `limits::RESOURCE_REQUEST` |
 | `varta_resume` | export, function | Closed resume dispatcher of frame profiles | `frame::RESUME_EXPORT` |
 | `varta.tool.<name>` | export, function | One handler per catalog entry | `TOOL_EXPORT_PREFIX` |
 | `varta.tool_abi.copy_string` | export, function | Tool string transfer (any string parameter or result) | `TOOL_COPY_STRING` |
@@ -768,7 +772,17 @@ One **execution** owns one fresh store and instance and is never reused:
 8. Drop the instance. Authorized effects are not rolled back.
 
 A trap, a fuel/deadline/host-call/output exhaustion or a scheduler error ends the
-execution as a failure. An authorized exit ends it with its exit code (which may
+execution as a failure. **Resource failures (v38 `data_limits`).** A v38 module
+with a managed heap stores a nonzero `limits::Resource` code in its
+`resource_failure` export (1 memory budget, 2 value size, 3 root stack, 4 live
+frames) and the requested bytes or entries in `resource_request` immediately
+before an `unreachable` trap. A host SHOULD report such a trap, and only an
+`unreachable` trap, as the named resource failure (the reference host returns
+`RuntimeError::Resource`: `resource limit: <resource> (requested <n>)`); the
+globals carry no authority and the failure is never delivered to the guest.
+`json_stringify_owned` (v38) calls back the module's validated host-free
+`varta.value_abi.allocate`/`retain` exports to place its result in an owned
+guest string; the host buffer it uses is bounded by the memory budget. An authorized exit ends it with its exit code (which may
 be 0) and is not an exception. Neither is ever delivered to the guest as a
 catchable value.
 

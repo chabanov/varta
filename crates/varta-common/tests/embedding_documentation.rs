@@ -399,6 +399,18 @@ fn names() -> String {
             "`abi::RESULT_STATUS`",
         ),
         (
+            varta_common::limits::RESOURCE_FAILURE.into(),
+            "export, mutable i32 global",
+            "V38 heap modules: the exhausted resource code before a trap, else 0",
+            "`limits::RESOURCE_FAILURE`",
+        ),
+        (
+            varta_common::limits::RESOURCE_REQUEST.into(),
+            "export, mutable i32 global",
+            "V38 heap modules: the requested amount of a resource failure",
+            "`limits::RESOURCE_REQUEST`",
+        ),
+        (
             frame::RESUME_EXPORT.into(),
             "export, function",
             "Closed resume dispatcher of frame profiles",

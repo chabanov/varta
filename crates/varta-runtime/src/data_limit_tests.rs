@@ -277,3 +277,10 @@ fn v38_marking_overflows_its_worklist_exactly_and_marks_deep_chains_linearly() {
     println!("deep marking fuel {used}");
     assert_eq!(result.unwrap(), lines(&["12497500"]));
 }
+
+/// The language-guide example of v38 (docs/language-guide.md), Node 24 output.
+#[test]
+fn v38_language_guide_example_matches_node() {
+    let (result, _) = run_budgeted(include_str!("data_limit_cases/guide.ts"), V38, 200);
+    assert_eq!(result.unwrap(), lines(&["5000 5000 4998,4999"]));
+}
