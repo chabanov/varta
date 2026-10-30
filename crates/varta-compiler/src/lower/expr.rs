@@ -278,6 +278,13 @@ impl Lower<'_> {
                         ty,
                         kind: E::Local(binding.slot),
                     };
+                    // `Array.isArray` on an `unknown` cell (v38).
+                    if ty.is_cell()
+                        && self.types.profile.structural_subtyping()
+                        && narrow == Self::unknown_array_type(self.types)?
+                    {
+                        return self.unknown_array(local);
+                    }
                     // A literal guard may refine a non-union local in place.
                     let retag =
                         narrow.is_cell() || self.types.profile.literal_types() && !ty.is_cell();
@@ -442,7 +449,17 @@ impl Lower<'_> {
                 if binary.op == ast::BinaryOp::NullishCoalescing {
                     self.optional_index(&binary.left);
                 }
-                let left = self.expr(&binary.left)?;
+                // V38 keeps the literal type of a `??`/`||` operand, as
+                // TypeScript does for `mode ?? "json"`.
+                let left = if self.types.profile.structural_subtyping()
+                    && matches!(
+                        binary.op,
+                        ast::BinaryOp::NullishCoalescing | ast::BinaryOp::LogicalOr
+                    ) {
+                    self.expr_preserving(&binary.left)?
+                } else {
+                    self.expr(&binary.left)?
+                };
                 if self.types.profile.primitive_builtins()
                     && matches!(
                         binary.op,
@@ -463,6 +480,29 @@ impl Lower<'_> {
                         }
                         match context {
                             Some(context) => self.expr_expected(&binary.right, Some(context)),
+                            // A literal fallback of a literal-typed value
+                            // (v38) keeps its literal type, so `mode ?? "json"`
+                            // stays the literal union.
+                            None if self.types.profile.structural_subtyping()
+                                && matches!(
+                                    stmt::unparen(&binary.right),
+                                    ast::Expr::Lit(ast::Lit::Str(_) | ast::Lit::Num(_))
+                                ) =>
+                            {
+                                let literal = unions::members(left.ty, self.types)
+                                    .into_iter()
+                                    .find(|ty| matches!(ty, Type::Literal(..)));
+                                let plain = self.expr(&binary.right)?;
+                                match literal {
+                                    Some(member) => {
+                                        match literals::conform(plain, Some(member), self.types) {
+                                            Ok(value) => Ok(value),
+                                            Err(_) => self.expr(&binary.right),
+                                        }
+                                    }
+                                    None => Ok(plain),
+                                }
+                            }
                             None => self.expr(&binary.right),
                         }
                     })();
@@ -585,10 +625,23 @@ impl Lower<'_> {
                     let name = name.to_owned();
                     return self.shared_in(&name, right, expression.span());
                 }
+                // `"key" in object` as a value (v38): the own-field presence
+                // of a record (through its view accessors), an instance member.
+                if binary.op == ast::BinaryOp::In
+                    && self.types.profile.structural_subtyping()
+                    && matches!(right.ty, Type::Record(_) | Type::Class(_))
+                    && let ast::Expr::Lit(ast::Lit::Str(text)) = stmt::unparen(&binary.left)
+                    && let Some(name) = text.value.as_str()
+                {
+                    let name = name.to_owned();
+                    return self.object_in(&name, right, expression.span());
+                }
                 if left.ty.is_cell() || right.ty.is_cell() {
                     return self.union_binary(binary.op, left, right, expression.span());
                 }
                 let (left, right) = classes::common_operands(left, right, self.types);
+                let (left, right) =
+                    subtyping::identity_operands(binary.op, left, right, self.types);
                 let (left, right) = if self.types.profile.has_undefined() {
                     match super::undefined::binary(
                         binary.op,
@@ -1085,6 +1138,21 @@ impl Lower<'_> {
                 return Err(invalid("JSON.stringify expects one value"));
             }
             let value = self.expr(&call.args[0].expr)?;
+            // `JSON.stringify(x)` with `x: never` (v38) is unreachable.
+            if value.ty == Type::Never && self.types.profile.structural_subtyping() {
+                return Ok(Expr {
+                    span: call.span,
+                    ty: Type::String,
+                    kind: E::Sequence(
+                        Box::new(value),
+                        Box::new(Expr {
+                            span: call.span,
+                            ty: Type::String,
+                            kind: E::Zero,
+                        }),
+                    ),
+                });
+            }
             if collections::reaches(value.ty, self.types) {
                 return Err(self
                     .source
@@ -1153,11 +1221,24 @@ impl Lower<'_> {
                 ty,
                 kind: E::Json(Box::new(value), status),
             };
-            return if let Some(status) = status {
-                self.bigint_checked_result(result, status)
+            let result = if let Some(status) = status {
+                self.bigint_checked_result(result, status)?
             } else {
-                Ok(result)
+                result
             };
+            // V38 types the result `string`, as TypeScript does; a value
+            // without a JSON form (`undefined`, a function) throws instead.
+            if self.types.profile.structural_subtyping() && result.ty.is_union() {
+                let span = call.span;
+                return self.assert_value(
+                    result,
+                    Type::String,
+                    "string",
+                    "JSON.stringify produced undefined: the value has no JSON form",
+                    span,
+                );
+            }
+            return Ok(result);
         }
         if let Some(signature) = self.functions.get(&name).cloned() {
             if signature.index == self.entry {

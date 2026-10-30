@@ -140,6 +140,10 @@ impl Lower<'_> {
                         .iter()
                         .position(|field| field.name == name)
                         .map(|slot| slot as u32);
+                    // A view (v38) may hold an object that has the name.
+                    if slot.is_none() && this.types.profile.structural_subtyping() {
+                        return this.undeclared_in(id, name, unboxed, span);
+                    }
                     Expr {
                         span,
                         ty: Type::Boolean,

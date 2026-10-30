@@ -390,6 +390,7 @@ fn case_corpus_behaves_identically_under_v38() {
         .flat_map(|dir| std::fs::read_dir(dir.path()).unwrap().flatten())
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|e| e == "ts"))
+        .filter(|path| !crate::frozen_profile_tests::deviates_under_v38(path))
         .collect();
     files.sort();
     let grants = [CapabilityGrant {

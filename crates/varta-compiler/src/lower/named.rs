@@ -33,6 +33,9 @@ pub(crate) struct NamedTypes {
     /// Reserved types of declarations that referred to themselves while being
     /// resolved (v34 `recursive_types`), filled when their resolution ends.
     placeholders: BTreeMap<Key, Type>,
+    /// The source of every linked module, by module index (v38 diagnostics
+    /// of generic method signatures instantiated in another module).
+    sources: BTreeMap<usize, Source>,
 }
 
 /// Exported type names of one module, pointing at the exporting module's entry
@@ -44,6 +47,10 @@ pub(super) fn enter(types: &mut ir::ValueTypes, module: usize) {
 }
 pub(super) fn current(types: &ir::ValueTypes) -> usize {
     types.named.current
+}
+/// The source of the module whose annotations are being lowered, once linked.
+pub(super) fn current_source(types: &ir::ValueTypes) -> Option<Source> {
+    types.named.sources.get(&types.named.current).cloned()
 }
 
 /// Record local declarations and type imports of `path`, then return its type
@@ -57,6 +64,7 @@ pub(super) fn link_module(
 ) -> Result<Exports> {
     let unit = &graph.units[path];
     let source = &unit.source;
+    types.named.sources.insert(module, source.clone());
     let mut merged = interfaces::Merged::new();
     for item in &unit.ast.body {
         // Exported classes are scanned as module exports and linked below.
@@ -272,6 +280,33 @@ pub(super) fn is_type(types: &ir::ValueTypes, module: usize, name: &str) -> bool
 /// module-local type shadows a global built-in type name (not its value).
 pub(super) fn declared(types: &ir::ValueTypes, name: &str) -> bool {
     is_type(types, types.named.current, name)
+}
+
+/// The declared name of a resolved interface or alias type, with its type
+/// arguments (`Readable<number>`), for diagnostics (v38). The first
+/// declaration in key order wins when several resolve to one shape.
+pub(super) fn name_of(types: &ir::ValueTypes, ty: Type) -> Option<String> {
+    if !matches!(ty, Type::Record(_)) {
+        return None;
+    }
+    let ((_, name), arguments) = types
+        .named
+        .resolved
+        .iter()
+        .find(|(_, resolved)| **resolved == ty)
+        .map(|(key, _)| key)?;
+    if arguments.is_empty() {
+        return Some(name.clone());
+    }
+    let arguments: Vec<String> = arguments
+        .iter()
+        .map(|argument| match argument {
+            Type::Record(_) => name_of(types, *argument)
+                .unwrap_or_else(|| void_functions::describe(*argument, types)),
+            other => void_functions::describe(*other, types),
+        })
+        .collect();
+    Some(format!("{name}<{}>", arguments.join(", ")))
 }
 
 /// The class named `name` in the current module's type namespace, if any.

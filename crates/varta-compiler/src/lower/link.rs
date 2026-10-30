@@ -222,6 +222,7 @@ pub(crate) fn lower(
         initializers: constants.initializers,
         suspendable: BTreeMap::new(),
     };
+    subtyping::resolve(&mut program)?;
     if profile.literal_types() {
         literal_erasure::erase_program(&mut program);
         classes::hide_prelude_state(&mut program.types);

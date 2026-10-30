@@ -14,6 +14,17 @@ pub(super) fn intern_full(
     result: Type,
     types: &mut ir::ValueTypes,
 ) -> Result<Type> {
+    intern_marked(receiver, params, shape, result, None, types)
+}
+/// `intern_full` with the erased generic signature marker (v38).
+pub(super) fn intern_marked(
+    receiver: Option<Type>,
+    params: Vec<Type>,
+    shape: ir::ParameterShape,
+    result: Type,
+    generic: Option<u32>,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
     required(types)?;
     if receiver
         .into_iter()
@@ -29,6 +40,7 @@ pub(super) fn intern_full(
         receiver,
         params,
         result,
+        generic,
     };
     if let Some(index) = types.functions.iter().position(|ty| ty == &signature) {
         return Ok(Type::Function(index as u32));
@@ -217,6 +229,7 @@ impl Lower<'_> {
     }
     pub(super) fn arrow(&mut self, arrow: &ast::ArrowExpr, expected: Option<Type>) -> Result<Expr> {
         required(self.types)?;
+        let original = expected;
         let asynchronous = arrow.is_async && self.types.profile.async_methods();
         if arrow.is_async && !asynchronous && self.types.profile.async_functions() {
             return Err(promises::rejected("async arrow function"));
@@ -235,6 +248,31 @@ impl Lower<'_> {
             return Err(unsupported(
                 "dynamic this context for an arrow; use a function expression",
             ));
+        }
+        // `(x) => promise` where `() => Promise<unknown>` is expected (v38):
+        // TypeScript's promise covariance. The body's promise has its own
+        // value type, so the arrow awaits it and fulfills its own
+        // `Promise<unknown>` (one more job than returning the promise).
+        if self.types.profile.structural_subtyping()
+            && self.types.profile.async_methods()
+            && !arrow.is_async
+            && matches!(&*arrow.body, ast::ArrowFunctionBody::Expr(_))
+            && let Some(Type::Promise(id)) = expected.as_ref().map(|ty| ty.result)
+            && self.types.promises[id as usize].value == Type::Unknown
+            && let ast::ArrowFunctionBody::Expr(body) = &*arrow.body
+            && !matches!(stmt::unparen(body), ast::Expr::Await(_))
+        {
+            let awaited = ast::ArrowExpr {
+                is_async: true,
+                body: Box::new(ast::ArrowFunctionBody::Expr(Box::new(ast::Expr::Await(
+                    ast::AwaitExpr {
+                        span: body.span(),
+                        arg: body.clone(),
+                    },
+                )))),
+                ..arrow.clone()
+            };
+            return self.arrow(&awaited, original);
         }
         self.arrow_context(
             arrow,

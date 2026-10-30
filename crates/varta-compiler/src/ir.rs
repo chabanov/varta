@@ -313,6 +313,12 @@ pub(crate) struct ValueTypes {
     pub tuples: Vec<TupleType>,
     /// Loaded engine prelude modules and their functions (v37).
     pub engine: crate::lower::engine::EngineModules,
+    /// Structural views admitted by width subtyping (v38).
+    pub subtyping: crate::lower::subtyping::Views,
+    /// Generic method signatures of object types (v38), erased.
+    pub erased: crate::lower::erased_methods::ErasedMethods,
+    /// The `unknown[]` view function of `Array.isArray` narrowing (v38).
+    pub unknown_array: Option<usize>,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1).
@@ -520,6 +526,11 @@ pub(crate) struct FunctionType {
     pub receiver: Option<Type>,
     pub params: Vec<Type>,
     pub result: Type,
+    /// The erased type of a generic method signature (v38): an index into
+    /// `lower::erased_methods::ErasedMethods`. It keeps the type distinct
+    /// from the same non-generic signature while lowering; erasure merges
+    /// it with that signature afterwards.
+    pub generic: Option<u32>,
 }
 impl FunctionType {
     pub(crate) fn physical_params(&self) -> Vec<Type> {
@@ -628,6 +639,7 @@ impl Function {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Expr {
     pub span: swc_common::Span,
     pub ty: Type,
@@ -783,6 +795,7 @@ pub(crate) enum NumberPredicate {
     SafeInteger,
 }
 
+#[derive(Clone)]
 pub(crate) enum Expression {
     Assignment {
         value: Box<Expr>,
@@ -984,6 +997,7 @@ pub(crate) enum Expression {
 
 pub(crate) use varta_common::HostOperation as Host;
 
+#[derive(Clone)]
 pub(crate) enum Statement {
     Trap,
     /// Publish stored module constant `n` into its permanent root slot (v32).

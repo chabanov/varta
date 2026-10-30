@@ -12,6 +12,7 @@ pub(super) fn erase_program(program: &mut ir::Program) {
     let views = Views {
         collections: types.collections.iter().map(|c| c.storage).collect(),
         tuples: types.tuples.iter().map(|t| t.array).collect(),
+        objects: types.profile.structural_subtyping(),
     };
     let eraser = Eraser {
         functions: merge_functions(&mut types.functions, &views),
@@ -70,12 +71,15 @@ pub(super) fn erase_program(program: &mut ir::Program) {
 struct Views {
     collections: Vec<Type>,
     tuples: Vec<Type>,
+    /// V38 `object` annotations: TypeScript's `object` is its `unknown` cell.
+    objects: bool,
 }
 impl Views {
     fn physical(&self, ty: Type) -> Type {
         match ty.erased() {
             Type::Collection(_, id) => self.collections[id as usize],
             Type::Tuple(id) => self.tuples[id as usize],
+            Type::Object(_) if self.objects => Type::Unknown,
             other => other,
         }
     }
@@ -131,6 +135,7 @@ fn merge_functions(functions: &mut Vec<ir::FunctionType>, views: &Views) -> Vec<
         views: Views {
             collections: views.collections.clone(),
             tuples: views.tuples.clone(),
+            objects: views.objects,
         },
     };
     for function in &mut kept {

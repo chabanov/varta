@@ -471,6 +471,28 @@ pub(super) fn refine(
     unions::intern(refined, types).ok()
 }
 
+/// Whether the singleton literals `singles` cover every value of `ty`, whose
+/// members must all be literal sets (v38 exhaustive `switch`).
+pub(super) fn exhausted_by(ty: Type, singles: &[Type], types: &ir::ValueTypes) -> bool {
+    let covered: BTreeSet<&LiteralValue> = singles
+        .iter()
+        .filter_map(|single| match single {
+            Type::Literal(_, id) => types.literals.set(*id).first(),
+            _ => None,
+        })
+        .collect();
+    let members = unions::members(ty, types);
+    !members.is_empty()
+        && members.iter().all(|member| match member {
+            Type::Literal(_, id) => types
+                .literals
+                .set(*id)
+                .iter()
+                .all(|value| covered.contains(value)),
+            _ => false,
+        })
+}
+
 /// The constants of a literal set, in canonical order (v34 checked assertions).
 pub(super) fn constants(id: u32, span: swc_common::Span, types: &ir::ValueTypes) -> Vec<Expr> {
     types

@@ -111,6 +111,25 @@ in [conformance/README.md](conformance/README.md).
   budgets, decisions and execution flags, spans every v38 turn and coexists
   with `--budget-report`.
 
+- V38 structural subtyping (`structural_subtyping`, in development): a record
+  or class instance with more members is assignable to an interface or
+  object type it provides, without a copy (identity and writes are shared;
+  each access through such a view is one accessor call and one descriptor
+  test per source layout, and types that never receive a wider value keep
+  direct slots). Mismatch diagnostics name both types and list missing,
+  mismatched and extra members. The same selector admits generic method
+  signatures in interfaces (erased, with checked results), `object`
+  annotations, `Array.isArray` narrowing of `unknown` to `unknown[]`, object
+  spread of records and optional parameters, `obj.m?.()` on class methods,
+  property narrowings kept across calls and getters (reads checked),
+  `JSON.stringify` typed `string`, literal `??` fallbacks, `record as
+  Record<string, T>`, records held by `unknown` read as JSON objects,
+  `Promise<unknown>` arrow contexts, `as void`, `for...of` over strings,
+  exhaustive literal `switch` statements, constructor parameter properties,
+  and `encodeURIComponent`,
+  `encodeURI` and `URIError` in a new prelude. No host import, value tag or
+  layout changes; v37 keeps its bytes.
+
 - Opt-in v38 (batch: program and data limits, turn budgets, linked
   intrinsics, view protocol and TSX, structural subtyping and code generation
   v2, in development) is registered. It inherits every v37 feature, shares

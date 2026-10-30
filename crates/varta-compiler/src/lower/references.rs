@@ -210,6 +210,15 @@ impl Lower<'_> {
     }
     pub(super) fn refine(&mut self, name: &str, matched: Guard, positive: bool) -> Result<()> {
         self.refine_with(name, |ty, types| {
+            // `Array.isArray` proves `unknown[]` for an `unknown` or `object`
+            // value (v38); reads view the array through `unknown_array`.
+            if matches!(ty, Type::Unknown | Type::Object(_))
+                && matches!(matched, Guard::Array)
+                && positive
+                && types.profile.structural_subtyping()
+            {
+                return Lower::unknown_array_type(types).ok().map(|ty| vec![ty]);
+            }
             if ty == Type::Unknown {
                 unknown::refine(matched, positive, types)
             } else if let Type::Object(nullable) = ty {

@@ -38,6 +38,18 @@ const CASE_DIRECTORIES: [&str; 20] = [
     "web_cases",
 ];
 
+/// Case programs whose v38 behaviour deliberately differs from v37, by the
+/// documented v38 contract: `JSON.stringify` is typed `string` under
+/// `structural_subtyping()` and throws `TypeError` for a value without a
+/// JSON form (`unknown_cases/flow.ts` and `v35_cases/unknown_json.ts`
+/// serialize `undefined` held by `unknown`).
+pub(crate) const V38_DEVIATIONS: [&str; 2] = ["unknown_cases/flow.ts", "v35_cases/unknown_json.ts"];
+
+/// Whether `path` is one of [`V38_DEVIATIONS`].
+pub(crate) fn deviates_under_v38(path: &std::path::Path) -> bool {
+    V38_DEVIATIONS.iter().any(|case| path.ends_with(case))
+}
+
 fn case_files() -> Vec<std::path::PathBuf> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files: Vec<_> = CASE_DIRECTORIES
@@ -131,7 +143,8 @@ fn every_v37_case_runs_identically_under_v38() {
     };
     let mut compared = 0;
     for path in case_files() {
-        if path.parent().is_some_and(|dir| dir.ends_with("net_cases")) {
+        if path.parent().is_some_and(|dir| dir.ends_with("net_cases")) || deviates_under_v38(&path)
+        {
             continue;
         }
         let source = std::fs::read_to_string(&path).unwrap();

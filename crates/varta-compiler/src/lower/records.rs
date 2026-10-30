@@ -140,7 +140,12 @@ pub(super) fn type_fields(
         let ast::TsTypeElement::TsPropertySignature(field) = member else {
             return Err(unsupported("object type member"));
         };
-        if field.optional && !types.profile.missing() || field.readonly || field.computed {
+        // `readonly` (v38 `structural_subtyping`) is a type-level modifier
+        // that does not change the field's value or layout.
+        if field.optional && !types.profile.missing()
+            || field.readonly && !types.profile.structural_subtyping()
+            || field.computed
+        {
             return Err(unsupported("optional, readonly or computed object field"));
         }
         let name = expression_key(&field.key)?;
@@ -174,12 +179,23 @@ fn method_signature(
     if method.computed {
         return Err(unsupported("computed method signature"));
     }
-    if method.type_params.is_some() {
+    if method.type_params.is_some() && !types.profile.structural_subtyping() {
         return Err(unsupported(
             "generic method signature in an object type; a generic method has no function value",
         ));
     }
     let name = expression_key(&method.key)?;
+    // V38 erases the type parameters of a generic method signature.
+    if method.type_params.is_some() {
+        if method.optional {
+            return Err(unsupported("optional generic method signature"));
+        }
+        return Ok(RecordField {
+            ty: erased_methods::signature(&name, method, types)?,
+            name,
+            optional: false,
+        });
+    }
     if method.optional && inherited(&name) {
         return Err(unsupported(
             "optional inherited property requires prototype semantics",
@@ -233,7 +249,23 @@ impl Lower<'_> {
     /// expression stored in the field `m`. Its `this` would be the object in
     /// JavaScript, but function fields are called without a receiver, so a
     /// method that uses `this` is rejected rather than bound differently.
+    pub(super) fn object_method_value(
+        &mut self,
+        method: &ast::MethodProp,
+        expected: Option<Type>,
+    ) -> Result<Expr> {
+        self.object_method(method, expected)
+    }
     fn object_method(&mut self, method: &ast::MethodProp, expected: Option<Type>) -> Result<Expr> {
+        if method.function.type_params.is_some() && self.types.profile.structural_subtyping() {
+            if uses_receiver(&method.function) {
+                return Err(self.source.locate(
+                    unsupported("this or super in an object literal method; function fields are called without a receiver"),
+                    method.function.span,
+                ));
+            }
+            return self.erased_method(method, expected);
+        }
         if method.function.type_params.is_some() {
             return Err(self.source.locate(
                 unsupported("generic object literal method"),
@@ -262,6 +294,30 @@ impl Lower<'_> {
         }
         if object.props.len() > self.types.max_record_fields() {
             return Err(invalid("object field count exceeds limit"));
+        }
+        // Object spread (v38): into a dictionary when the first source is
+        // one (without another context), otherwise into a closed record.
+        if self.types.profile.structural_subtyping()
+            && let Some(first) = object.props.iter().find_map(|property| match property {
+                ast::PropOrSpread::Spread(spread) => Some(&spread.expr),
+                ast::PropOrSpread::Prop(_) => None,
+            })
+        {
+            let dictionary = self.peek_type(first, 0).and_then(|ty| {
+                unions::members(ty, self.types)
+                    .into_iter()
+                    .find(|member| matches!(member, Type::Dictionary(_)))
+            });
+            if expected.is_none()
+                && let Some(Type::Dictionary(id)) = dictionary
+            {
+                let plain =
+                    dictionaries::intern(self.types.dictionaries[id as usize].value, self.types)?;
+                if let Type::Dictionary(plain) = plain {
+                    return self.dictionary_literal(object, plain);
+                }
+            }
+            return self.record_spread(object, expected);
         }
         let mut values = Vec::new();
         for property in &object.props {

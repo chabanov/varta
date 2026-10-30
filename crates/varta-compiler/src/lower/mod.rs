@@ -278,6 +278,10 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
         }
         ast::TsKeywordTypeKind::TsUnknownKeyword if types.profile.unknown_type() => Type::Unknown,
         ast::TsKeywordTypeKind::TsNeverKeyword if types.profile.language_core() => Type::Never,
+        // TypeScript's `object` (v38): an `unknown` cell proven non-primitive.
+        ast::TsKeywordTypeKind::TsObjectKeyword if types.profile.structural_subtyping() => {
+            Type::Object(false)
+        }
         _ => return Err(unsupported("type annotation")),
     })
 }
@@ -351,6 +355,7 @@ mod dictionary_helpers;
 mod dictionary_spread;
 mod dictionary_updates;
 pub(crate) mod engine;
+pub(crate) mod erased_methods;
 mod errors;
 mod exceptions;
 mod exports;
@@ -413,6 +418,7 @@ mod simplify;
 pub(crate) use prune::LINKED_FUNCTIONS;
 mod property_deletion;
 mod record_reads;
+mod record_spread;
 mod record_writes;
 mod records;
 mod reduce_inference;
@@ -424,7 +430,9 @@ mod signature;
 mod spread;
 mod stmt;
 mod string_enumeration;
+mod string_iteration;
 mod strings;
+pub(crate) mod subtyping;
 pub(crate) mod suspension;
 mod switches;
 mod tdz;
@@ -435,6 +443,7 @@ mod type_operators;
 mod undefined;
 mod unions;
 mod unknown;
+mod unknown_arrays;
 mod updates;
 mod void_functions;
 mod web_text;

@@ -98,6 +98,33 @@ pub(super) fn chained_binding(test: &ast::Expr) -> Option<String> {
 
 impl Lower<'_> {
     pub(super) fn optional_chain(&mut self, chain: &ast::OptChainExpr) -> Result<Expr> {
+        // `obj.m?.(args)` on a class instance (v38): a method always exists,
+        // so the optional call is the ordinary call.
+        if self.types.profile.structural_subtyping()
+            && chain.optional
+            && let ast::OptChainBase::Call(call) = &*chain.base
+            && let ast::Expr::Member(member) = stmt::unparen(&call.callee)
+            && let ast::MemberProp::Ident(name) = &member.prop
+            && first_optional(&member.obj).is_none()
+            && let Some(class) = self.class_receiver(&member.obj, 0)
+            && self.types.classes.field(class, name.sym.as_ref()).is_none()
+            && self
+                .types
+                .classes
+                .get(class)
+                .methods
+                .get(name.sym.as_ref())
+                .is_some_and(|method| !method.getter)
+        {
+            let call = ast::Expr::Call(ast::CallExpr {
+                span: call.span,
+                ctxt: call.ctxt,
+                callee: ast::Callee::Expr(call.callee.clone()),
+                args: call.args.clone(),
+                type_args: call.type_args.clone(),
+            });
+            return self.expr(&call);
+        }
         let expression = ast::Expr::OptChain(chain.clone());
         let Some(target) = first_optional(&expression) else {
             return Err(invalid("optional chain without an optional link"));

@@ -65,6 +65,19 @@ pub(super) fn parameter(ty: &ast::TsType, types: &ir::ValueTypes) -> Option<Type
     types.generics.frames.last()?.get(id.sym.as_ref()).copied()
 }
 
+/// The innermost visible type-parameter frame (empty outside generics).
+pub(super) fn visible(types: &ir::ValueTypes) -> Frame {
+    types.generics.frames.last().cloned().unwrap_or_default()
+}
+/// Make `frame` the innermost frame while a body is lowered with a `Lower`
+/// that owns the types; `pop_frame` removes it.
+pub(super) fn push_frame(types: &mut ir::ValueTypes, frame: Frame) {
+    types.generics.frames.push(frame);
+}
+pub(super) fn pop_frame(types: &mut ir::ValueTypes) {
+    types.generics.frames.pop();
+}
+
 pub(super) fn with_frame<R>(
     types: &mut ir::ValueTypes,
     frame: Frame,

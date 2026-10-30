@@ -112,10 +112,17 @@ impl Lower<'_> {
             cases.push((test, body));
         }
         self.switches -= 1;
+        // V38: a literal union covered by the clauses is exhaustive.
+        let exhausted = !default
+            && self.types.profile.structural_subtyping()
+            && self.exhausts(statement, value.ty, &direct);
+        if exhausted {
+            cases.push((None, vec![S::Trap]));
+        }
         if flow {
             let mut paths = self.flow_end(target);
             paths.extend(previous);
-            if !default {
+            if !default && !exhausted {
                 paths.push(direct);
             }
             self.flow_join(&saved, &paths)?;
@@ -143,6 +150,35 @@ impl Lower<'_> {
         };
         let left = erased(a);
         erased(b).iter().any(|member| left.contains(member))
+    }
+    /// Whether the clause literals of `statement` cover every value of its
+    /// discriminant of type `ty` (v38): its binding narrowed to `never` once
+    /// every test failed, or a literal union whose values are all tested.
+    fn exhausts(&mut self, statement: &ast::SwitchStmt, ty: Type, rest: &flow::Snapshot) -> bool {
+        if let ast::Expr::Ident(id) = stmt::unparen(&statement.discriminant)
+            && self
+                .binding(id.sym.as_ref())
+                .is_ok_and(|binding| rest.facts.get(&binding.slot) == Some(&Type::Never))
+        {
+            return true;
+        }
+        let placeholder = ast::Expr::Ident(ast::Ident::new(
+            "#case".into(),
+            statement.span,
+            Default::default(),
+        ));
+        let mut singles = Vec::new();
+        for case in &statement.cases {
+            let Some(test) = case.test.as_deref() else {
+                return false;
+            };
+            match literals::guard_operand(&placeholder, test, self.types) {
+                Some((_, single)) => singles.push(single),
+                None => return false,
+            }
+        }
+        let declared = self.peek_type(&statement.discriminant, 0).unwrap_or(ty);
+        literals::exhausted_by(declared, &singles, self.types)
     }
     /// Whether a `switch` over `value` uses the v37 equality lowering.
     pub(super) fn equality_switch(&self, value: &Expr) -> bool {
@@ -228,6 +264,13 @@ impl Lower<'_> {
             self.guard(guard, false)?;
             rest = self.flow_snapshot();
         }
+        // V38: a switch whose clauses narrow its discriminant binding to
+        // `never` is exhaustive, as in TypeScript; the missing default is
+        // unreachable and traps.
+        let exhausted = !default
+            && narrowing
+            && self.types.profile.structural_subtyping()
+            && self.exhausts(statement, ty, &rest);
         let target = self.flow_target(flow_control::Kind::Switch);
         self.switches += 1;
         let mut cases = Vec::new();
@@ -243,9 +286,12 @@ impl Lower<'_> {
             cases.push((test, body));
         }
         self.switches -= 1;
+        if exhausted {
+            cases.push((None, vec![S::Trap]));
+        }
         let mut paths = self.flow_end(target);
         paths.extend(previous);
-        if !default {
+        if !default && !exhausted {
             paths.push(rest);
         }
         self.flow_join(&saved, &paths)?;

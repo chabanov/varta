@@ -38,8 +38,11 @@ pub(super) fn shared_members(types: &ir::ValueTypes) -> SharedMembers {
         shared.unions.insert(id as u32);
         for member in members {
             match *member {
+                // A view shape (v38) also holds the objects assigned to it.
                 Type::Record(shape) => {
-                    shared.shapes.insert(*member, vec![shape]);
+                    shared
+                        .shapes
+                        .insert(*member, types.subtyping.shapes(shape, types));
                 }
                 Type::Class(class) => {
                     shared

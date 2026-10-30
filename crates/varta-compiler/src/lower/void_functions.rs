@@ -87,6 +87,16 @@ impl Lower<'_> {
     /// The two types of a mismatch diagnostic, with function signatures
     /// spelled out under v37 when both are function types.
     pub(super) fn mismatch(&self, expected: Type, actual: Type) -> (String, String) {
+        // V38 names both object types and why the actual one is not a
+        // structural subtype of the expected one.
+        if self.types.profile.structural_subtyping()
+            && let Some(reasons) = subtyping::reasons(expected, actual, self.types)
+        {
+            return (
+                subtyping::describe(expected, self.types),
+                format!("{} ({reasons})", subtyping::describe(actual, self.types)),
+            );
+        }
         if self.types.profile.language_core()
             && matches!(expected, Type::Function(_))
             && matches!(actual, Type::Function(_))

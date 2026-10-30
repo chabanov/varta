@@ -8951,10 +8951,8 @@ or any change to the static-region ABI lands as an early, separate foundation
 commit, and the other streams rebase onto it. V37 and earlier profiles keep
 their host ABI, value ABI, static region and layouts.
 
-Eight selectors gate the batch's work streams; `program_limits()` admits the
-[multi-page static region](#multi-page-static-region-program_limits) and the
-profile limits registry, `data_limits()` and `turn_budgets()` admit their
-subsections below, and the others admit nothing yet:
+Eight selectors gate the batch's work streams; each admits nothing until its
+stream adds a subsection below:
 
 - program-limits stream: `program_limits()` (profile-dependent structural
   limits up to the Wasm limits, a shared descriptor-driven checked decoder,
@@ -9646,6 +9644,143 @@ the fuel outside every function (instantiation: data segments and initial
 memory), and the activations a trap or an exhausted budget left open; a guest
 exit is not an error. An HTTP service's startup is profiled and its server is
 not started.
+
+#### Structural subtyping (`structural_subtyping`)
+
+V38 admits TypeScript's width subtyping of object types and the remaining
+pilot language items under `structural_subtyping()`. It adds no host import,
+value tag or layout; v37 and earlier profiles keep their bytes and
+diagnostics.
+
+**Assignability.** A value of a closed record shape or class instance type is
+assignable to a record shape (an interface, alias or object type) when every
+member of the target is provided with an assignable type: a record field of
+the same name, or a public class field, getter or method. Optional target
+members may be missing; extra source members are allowed. Member types are
+assignable when they are equal, nominally assignable (literal, union, class
+and dictionary rules), structurally assignable records (checked recursively,
+cyclic shapes coinductively), or unions whose members each convert. A class
+method provides a target member only as a required function type with the
+same parameters (its result assignable or the target `void`). Arrays are not
+covariant: `Signal[]` is not assignable to `Readable[]`, because a write
+through the wider element type would not fit the narrower array; copy with
+`map`. A value entering a union of several record shapes is viewed by every
+member it is assignable to, and is rejected when it has a key that only
+members it is not assignable to declare (an `in` test of that key could
+otherwise narrow to a member that cannot view it).
+
+**Representation: views.** The value is not copied. Lowering records an edge
+(source type → target shape) for every admitted coercion. After all bodies are
+lowered, `subtyping::resolve` closes the edges transitively; a target shape
+with foreign sources is a *view*. Every member access whose static type is a
+view goes through one synthesized accessor per (view, member, operation):
+
+- a read returns the source's own slot, a class getter's result, or
+  `undefined` for a missing optional member, converted to the view's member
+  type;
+- a write stores into the source's slot of the identical type; a source
+  that declares the member with another type, as readonly, or not at all is a
+  compile-time error at the write;
+- `"key" in v` tests the source's presence bit or its declared members, also
+  for keys the view does not declare;
+- a function-member call calls a class method directly (receiver and
+  arguments evaluated before the member is selected) or the source's
+  function field.
+
+Each accessor tests the object's layout descriptor against each source (a
+class source against its family) and falls back to the view's own layout.
+Shapes without wider sources keep direct slot access, so programs without
+coercions emit the same functions as under v37. Cost: one direct call plus
+one descriptor comparison per source layout for each access through a view.
+Identity is preserved (`===` compares handles even when the static types
+differ, instead of folding to `false`), mutations are visible through every
+type, `JSON.stringify` serializes the object itself, `instanceof` tests the
+descriptor of a record-typed value, and union member tests include the view's
+sources. Spreads and key enumeration through a view see the view's declared
+members: spreading copies those members, and `Object.keys`/`values`/
+`entries`, `for...in` and dictionary copies keep the exact enumeration for
+objects of the view's own layouts but list the view's present members in
+canonical order for other sources' objects. Rest patterns and `delete` over a
+view are rejected.
+
+Mismatch diagnostics name both types (interfaces and aliases by name with
+their type arguments) and list the missing, mismatched and extra members, for
+example `expected Readable<number>, found { label: string } (missing field
+value)`.
+
+**Generic method signatures.** `m<T = D>(params): R` in an object type is a
+function field of its erased signature, every type parameter `unknown`, with
+a marker that keeps it distinct from the same non-generic signature until
+erasure merges them. An object literal method with type parameters
+implementing it is lowered once with its parameters as `unknown`. A call
+`x.m<A>(args)` binds the declaration's parameters (explicit arguments, then
+defaults, then `unknown`) in its declaring module, checks the arguments
+against the instantiated parameters, passes them as `unknown` and converts the
+`unknown` result with a checked assertion (`TypeError` on mismatch, where
+TypeScript's `as T` is unchecked). A type parameter may stand only for a whole
+parameter or the whole result type. Class generic methods do not implement
+such members.
+
+**Pilot items.** Under the same selector:
+
+- `object` annotations are the `unknown` cell proven non-primitive; any
+  record, instance, dictionary or array widens to it; `x as object` tests the
+  cell's tag; `object` asserts to declared types like `unknown`.
+- `Array.isArray(x)` narrows `unknown` and `object` bindings to `unknown[]`.
+  A read calls one synthesized function that returns the array itself when
+  its elements are cells (JSON graphs) and otherwise a fresh `unknown[]` with
+  each element boxed by its element kind (a snapshot); arrays of function or
+  promise values throw `TypeError`.
+- Object spread into a record literal: the result has every member's
+  fields; a field is required when some member provides it unconditionally
+  and takes the last such member's value, overridden by later optional
+  source fields that are present; fields only optional sources provide are
+  optional. `...x` of `R | undefined` or `R | null` copies nothing when
+  nullish. A spread whose first source is a dictionary builds a dictionary;
+  dictionary spreads also accept `D | undefined`. Key order: fields every
+  member provides come first in member order, the others follow in the order
+  they become present (JavaScript orders by first definition).
+- `obj.m?.()` on a class method is the ordinary call.
+- Property-path facts survive calls, `new`, `await`, loops and getter paths,
+  as TypeScript keeps them; a read of a fact that may be stale tests the value
+  against the narrowed members and throws `TypeError` ("property … no longer
+  has the type an earlier test proved"); stale literal facts of primitives are
+  not applied.
+- `JSON.stringify` is typed `string`; a value without a JSON form throws
+  `TypeError`. `JSON.stringify` of `never` is unreachable.
+- `x ?? "lit"` and `x || "lit"` keep a literal union when the literal is a
+  member of `x`'s literal set.
+- `record as Record<string, T>` copies the record's present fields into a
+  fresh dictionary (a snapshot, like `{ ...record }`). A closed record held by
+  `unknown` reads as a JSON object (`as Record<string, unknown>`, checked
+  conversions to records and dictionaries) through one per-program function
+  that dispatches over every record shape boxed into `unknown`, building a
+  dictionary of its present fields in canonical field order; class instances
+  held by `unknown` throw `TypeError`.
+- `for (… of text)` over a string visits code points (surrogate pairs
+  together), with the loop index advanced before the body.
+- A `switch` whose literal clauses cover its discriminant's literal union (or
+  narrow its binding to `never`) is exhaustive: the missing `default` traps,
+  and a value-returning function needs no return after the switch.
+- `constructor(private readonly x: T)` parameter properties are a
+  pre-layout rewrite into the field declaration, a plain parameter and
+  `this.x = x` at the start of the body (after `super(...)` in a derived
+  class); defaults, patterns, `override` and decorators are rejected.
+- `x as void` (a `request<void>` instance of a generic `as T`) evaluates the
+  value and discards it.
+- An arrow whose context expects `(…) => Promise<unknown>` and whose body
+  is an expression awaits it: an async arrow fulfilling its own
+  `Promise<unknown>` (one more job than returning the promise).
+- The engine prelude `<varta>/builtins/uri.ts` provides
+  `encodeURIComponent`, `encodeURI` and the `URIError` class they throw
+  (Varta has no native `URIError`), in guest code without a host import.
+
+Not yet admitted: Web byte bodies (`ReadableStream<Uint8Array>`,
+`arrayBuffer()`, `Blob`, `FormData`), typed `globalThis` member access,
+`Promise.race` over differently typed promises, `A[] | B[]` of record
+element types, `instanceof Map/Set/
+Uint8Array`, unions mixing collections with other objects, exhaustive switches
+over discriminant paths, and record spreads that keep JavaScript's key order.
 
 ## Local modules
 
