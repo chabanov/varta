@@ -36,40 +36,6 @@ fn word(data: &[u8], at: usize) -> Result<u32, ValueAbiError> {
 fn wide(data: &[u8], at: usize) -> Result<u64, ValueAbiError> {
     Ok(u64::from(word(data, at)?) | (u64::from(word(data, at + 4)?) << i32::BITS))
 }
-/// The canonical array index named by UTF-16 `units`, if any: `0` or a decimal
-/// without leading zeros below `u32::MAX` (ECMAScript CanonicalNumericIndex
-/// restricted to array indices).
-#[must_use]
-pub fn array_index(units: &[u16]) -> Option<u64> {
-    const DIGITS: usize = 10;
-    if units.is_empty() || units.len() > DIGITS || units.len() > 1 && units[0] == u16::from(b'0') {
-        return None;
-    }
-    let mut value = 0u64;
-    for unit in units {
-        let digit = unit.checked_sub(u16::from(b'0')).filter(|d| *d <= 9)?;
-        value = value * 10 + u64::from(digit);
-    }
-    (value <= MAX_ARRAY_INDEX).then_some(value)
-}
-/// The canonical storage fields of a dictionary of value layout `version`
-/// in slot order, with their descriptor kinds.
-#[must_use]
-pub fn dictionary_storage(version: u32) -> &'static [(&'static str, ValueKind)] {
-    if hashed_dictionaries(version) {
-        &[
-            (DICTIONARY_HOLES_FIELD, ValueKind::Float64),
-            (DICTIONARY_KEYS_FIELD, ValueKind::Array),
-            (DICTIONARY_TABLE_FIELD, ValueKind::Array),
-            (DICTIONARY_VALUES_FIELD, ValueKind::Array),
-        ]
-    } else {
-        &[
-            (DICTIONARY_KEYS_FIELD, ValueKind::Array),
-            (DICTIONARY_VALUES_FIELD, ValueKind::Array),
-        ]
-    }
-}
 /// A canonical non-negative integral binary64 of at most `max`.
 fn count(bits: u64, max: usize) -> Option<usize> {
     let value = f64::from_bits(bits);

@@ -6,7 +6,8 @@
 //! static region ([`abi`]), bounded guest-memory reads ([`memory`]), the
 //! value tags, layout constants, primitive-cell reader and error classes
 //! ([`value`]), the BigInt transport ([`bigint`]), the data limits
-//! ([`limits`]) and the UTF-16 helpers ([`text`]). The linked
+//! ([`limits`]), the UTF-16 helpers ([`text`]) and the checked JSON schema
+//! model with its shared decoder ([`json`]). The linked
 //! intrinsic library (`varta-intrinsics`, compiled to wasm32) reads guest
 //! memory through that core, so the layout has one owner.
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -35,7 +36,8 @@ mod host;
 pub mod http;
 #[cfg(feature = "std")]
 mod invocation;
-#[cfg(feature = "std")]
+/// Checked JSON schemas and decoding; without `std` the schema model, its
+/// validation and the shared UTF-16 decoder ([`json::scan`]).
 pub mod json;
 #[cfg(feature = "std")]
 pub mod language;

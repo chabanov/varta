@@ -108,6 +108,17 @@ impl Writer {
         self.stamp(caller, ptr, flag, link)?;
         Ok(((data.len() as u64) << i32::BITS) | ptr as u64)
     }
+    /// The shared top-down builder's view of this writer
+    /// (`varta_common::json::build`).
+    pub(super) fn heap<'a, 'b>(
+        &'a self,
+        caller: &'a mut Caller<'b, RuntimeContext>,
+    ) -> HostHeap<'a, 'b> {
+        HostHeap {
+            writer: self,
+            caller,
+        }
+    }
     /// Write one payload slot of a published container.
     pub(super) fn store(
         &self,
@@ -474,5 +485,40 @@ impl Writer {
                 self.owned(caller, &data, HEAP_RECORD_FLAG, link)
             }
         }
+    }
+}
+
+/// Guest memory for the shared top-down builder: blocks from the module's
+/// host-free allocator, checked as [`Writer::block`] checks them, the
+/// result retained through its retention helper.
+pub(super) struct HostHeap<'a, 'b> {
+    writer: &'a Writer,
+    caller: &'a mut Caller<'b, RuntimeContext>,
+}
+impl varta_common::json::build::Heap for HostHeap<'_, '_> {
+    type Error = wasmtime::Error;
+    fn allocate(&mut self, len: usize) -> Result<usize, wasmtime::Error> {
+        self.writer.block(self.caller, len)
+    }
+    fn write(&mut self, at: usize, bytes: &[u8]) -> Result<(), wasmtime::Error> {
+        self.writer
+            .memory
+            .write(&mut *self.caller, at, bytes)
+            .map_err(wasmtime::Error::new)
+    }
+    fn zero(&mut self, at: usize, len: usize) -> Result<(), wasmtime::Error> {
+        let data = self.writer.memory.data_mut(&mut *self.caller);
+        at.checked_add(len)
+            .and_then(|end| data.get_mut(at..end))
+            .ok_or_else(|| error("memory range"))?
+            .fill(0);
+        Ok(())
+    }
+    fn retain(&mut self, handle: u64) -> Result<(), wasmtime::Error> {
+        let retained = self.writer.retain.call(&mut *self.caller, handle as i64)?;
+        if retained as u64 != handle {
+            return Err(error("retention helper changed the value"));
+        }
+        Ok(())
     }
 }

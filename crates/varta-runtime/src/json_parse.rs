@@ -44,126 +44,14 @@ fn words<const N: usize>(data: &[u8], ptr: usize) -> Result<[u32; N], wasmtime::
     }
     Ok(words)
 }
-/// A dictionary's storage descriptor: the schema's value layout (value15 to
-/// value18) with exactly its canonical slots (`value::dictionary_storage`):
-/// required `keys` and `values` vectors, and under value18 the `holes` count
-/// and the `table` slot.
-fn dictionary_descriptor(
-    data: &[u8],
-    region: abi::StaticRegion,
-    descriptor: usize,
-    version: u32,
-) -> Result<(), wasmtime::Error> {
-    let fields = dictionary_fields(version);
-    static_bytes(data, region, descriptor, descriptor_bytes(fields))?;
-    if !dynamic_layout(version) || words::<2>(data, descriptor)? != [version, fields as u32] {
-        return Err(error("dictionary descriptor version or count"));
-    }
-    for (slot, (name, expected)) in dictionary_storage(version).iter().enumerate() {
-        let [key, len, raw, kind] = words::<4>(
-            data,
-            descriptor + RECORD_DESCRIPTOR_HEADER + slot * RECORD_DESCRIPTOR_ENTRY,
-        )?;
-        if raw as usize != slot
-            || kind != *expected as u32
-            || static_bytes(data, region, key as usize, len as usize)? != name.as_bytes()
-        {
-            return Err(error("dictionary descriptor disagrees with its layout"));
-        }
-    }
-    Ok(())
-}
+/// The schema's static descriptors (`JsonSchema::check_descriptors`, the
+/// check the linked v38 decoder runs too).
 fn descriptors(
     schema: &JsonSchema,
     data: &[u8],
     region: abi::StaticRegion,
 ) -> Result<(), wasmtime::Error> {
-    for ty in &schema.types {
-        if let JsonType::Dictionary { descriptor, .. } = ty {
-            dictionary_descriptor(data, region, *descriptor as usize, schema.value_version())?;
-        }
-        if let JsonType::Record { descriptor, fields } = ty {
-            let descriptor = *descriptor as usize;
-            static_bytes(data, region, descriptor, descriptor_bytes(fields.len()))?;
-            if is_wide_record(fields.len()) {
-                // The collector traces a wide record through this edge bitmap.
-                let at =
-                    descriptor + RECORD_DESCRIPTOR_HEADER + fields.len() * RECORD_DESCRIPTOR_ENTRY;
-                let edges = read_slot_set(data, at, presence_words(fields.len()))
-                    .ok_or_else(|| error("record edge bitmap"))?;
-                let expected = fields
-                    .iter()
-                    .enumerate()
-                    .fold(0u128, |mask, (slot, field)| {
-                        if schema.types[field.ty as usize].kind().is_reference() {
-                            mask | 1 << slot
-                        } else {
-                            mask
-                        }
-                    });
-                if edges != expected {
-                    return Err(error("record edge bitmap disagrees with schema"));
-                }
-            }
-            let [version, count] = words::<2>(data, descriptor)?;
-            if !compatible_version(version, schema.value_version())
-                || count as usize != fields.len()
-            {
-                return Err(error("record descriptor version or count"));
-            }
-            let mut slots = std::collections::BTreeSet::new();
-            for index in 0..fields.len() {
-                let [key, len, slot, kind] = words::<4>(
-                    data,
-                    descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY,
-                )?;
-                let optional = matches!(
-                    schema.version,
-                    varta_common::json::CHECKED_SCHEMA_VERSION
-                        | varta_common::json::VECTOR_SCHEMA_VERSION
-                        | varta_common::json::ERROR_SCHEMA_VERSION
-                        | varta_common::json::ERROR_FAMILY_SCHEMA_VERSION
-                        | varta_common::json::SPARSE_SCHEMA_VERSION
-                        | varta_common::json::BIGINT_SCHEMA_VERSION
-                        | varta_common::json::FUNCTION_SCHEMA_VERSION
-                        | varta_common::json::DYNAMIC_SCHEMA_VERSION
-                        | varta_common::json::PROMISE_SCHEMA_VERSION
-                        | varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION
-                        | varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION
-                ) && slot & OPTIONAL_FIELD_FLAG != 0;
-                let slot = if matches!(
-                    schema.version,
-                    varta_common::json::CHECKED_SCHEMA_VERSION
-                        | varta_common::json::VECTOR_SCHEMA_VERSION
-                        | varta_common::json::ERROR_SCHEMA_VERSION
-                        | varta_common::json::ERROR_FAMILY_SCHEMA_VERSION
-                        | varta_common::json::SPARSE_SCHEMA_VERSION
-                        | varta_common::json::BIGINT_SCHEMA_VERSION
-                        | varta_common::json::FUNCTION_SCHEMA_VERSION
-                        | varta_common::json::DYNAMIC_SCHEMA_VERSION
-                        | varta_common::json::PROMISE_SCHEMA_VERSION
-                        | varta_common::json::FUNCTION_FIELD_SCHEMA_VERSION
-                        | varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION
-                ) {
-                    slot & !OPTIONAL_FIELD_FLAG
-                } else {
-                    slot
-                };
-                let field = fields
-                    .get(slot as usize)
-                    .ok_or_else(|| error("record slot"))?;
-                if !slots.insert(slot)
-                    || optional != field.optional
-                    || kind != schema.types[field.ty as usize].kind() as u32
-                    || static_bytes(data, region, key as usize, len as usize)?
-                        != field.name.as_bytes()
-                {
-                    return Err(error("record descriptor disagrees with schema"));
-                }
-            }
-        }
-    }
-    Ok(())
+    schema.check_descriptors(data, region).map_err(error)
 }
 
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
@@ -289,6 +177,20 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     }
     Ok(())
 }
+/// A checked input: a tree for the child-first builder of earlier profiles,
+/// or (v38) the shared decoder's tape with a copy of its text for the shared
+/// top-down builder.
+enum Parsed {
+    Value(JsonValue),
+    Tape(varta_common::json::scan::Tape, Vec<u8>),
+}
+/// The execution deadline of a v38 host decode (none before v38).
+struct HostDeadline(Option<std::time::Instant>);
+impl varta_common::json::scan::Deadline for HostDeadline {
+    fn overdue(&mut self) -> bool {
+        self.0.is_some_and(|at| std::time::Instant::now() >= at)
+    }
+}
 /// Nesting depth of JSON source text, scanned iteratively (strings skipped).
 fn source_depth(input: &[u8]) -> usize {
     let (mut depth, mut deepest, mut quoted, mut escaped) = (0usize, 0, false, false);
@@ -399,27 +301,38 @@ fn decode(
     }
     descriptors(&schema, data, region)?;
     let input = bytes(data, ptr as usize, len as usize)?;
-    let value = if recoverable {
-        use varta_common::{
-            json::{JsonDecodeError, JsonInputLimit},
-            text::JsonTextError,
+    let parsed = if recoverable {
+        use varta_common::json::{
+            JsonDecodeError,
+            scan::{self, JsonLimits, Tape},
         };
-        let parsed = match varta_common::text::json_input_limited(input, limits.json_input_bytes) {
-            Ok(encoded) => deep_decode(&encoded, limits, |encoded| match deadline {
-                Some(deadline) => schema.parse_json_classified_until(encoded, limits, deadline),
-                None => schema.parse_json_classified(encoded),
-            })?,
-            Err(JsonTextError::Syntax) => Err(JsonDecodeError::Syntax { line: 1, column: 1 }),
-            Err(JsonTextError::Limit) => Err(JsonDecodeError::Limit(JsonInputLimit::Bytes)),
-            Err(JsonTextError::Encoding) => {
-                return Err(wasmtime::Error::new(ValueAbiError(
-                    "invalid JSON UTF-16 byte length".into(),
-                )));
+        if !input.len().is_multiple_of(size_of::<u16>()) {
+            return Err(wasmtime::Error::new(ValueAbiError(
+                "invalid JSON UTF-16 byte length".into(),
+            )));
+        }
+        // The shared decoder (one implementation with the linked v38
+        // `json_parse_v19`) reads the UTF-16 text in place, iteratively.
+        let mut tape = Tape::default();
+        let scanned = scan::scan(
+            input,
+            &schema,
+            JsonLimits::of(limits, schema.value_version()),
+            &mut tape,
+            &mut HostDeadline(deadline),
+        );
+        let parsed = scanned.map(|()| {
+            if top_down {
+                // The shared top-down builder reads strings from the text,
+                // copied before guest code runs.
+                Parsed::Tape(tape, input.to_vec())
+            } else {
+                Parsed::Value(tape.value(input, &schema))
             }
-        };
+        });
         exceptions::deadline(&caller)?;
         match parsed {
-            Ok(value) => value,
+            Ok(parsed) => parsed,
             Err(JsonDecodeError::Syntax { .. }) => {
                 return exceptions::publish(&mut caller, memory, &schema, ErrorClass::SyntaxError);
             }
@@ -437,23 +350,36 @@ fn decode(
         } else {
             input
         };
-        deep_decode(input, limits, |input| match deadline {
-            Some(deadline) => schema.parse_json_until(input, limits, deadline),
-            None => schema.parse_json(input),
-        })?
-        .map_err(error)?
+        Parsed::Value(
+            deep_decode(input, limits, |input| match deadline {
+                Some(deadline) => schema.parse_json_until(input, limits, deadline),
+                None => schema.parse_json(input),
+            })?
+            .map_err(error)?,
+        )
     };
     let writer = heap::Writer::new(&mut caller, memory)?;
-    let built = if top_down {
-        tree::build(&writer, &mut caller, &schema, &value, limits)
-    } else {
-        writer.build(&mut caller, &schema, &value)
+    let value = match parsed {
+        Parsed::Tape(tape, text) => varta_common::json::build::build(
+            &tape,
+            &text,
+            &schema,
+            &mut writer.heap(&mut caller),
+        )?,
+        Parsed::Value(value) => {
+            let built = if top_down {
+                tree::build(&writer, &mut caller, &schema, &value, limits)
+            } else {
+                writer.build(&mut caller, &schema, &value)
+            };
+            // A deep tree is dropped on the JSON host stack, never by host
+            // recursion here.
+            if top_down && nesting(&value) > DataLimits::LEGACY.json_depth {
+                crate::json::deep(move || drop(value))?;
+            }
+            built?
+        }
     };
-    // A deep tree is dropped on the JSON host stack, never by host recursion here.
-    if top_down && nesting(&value) > DataLimits::LEGACY.json_depth {
-        crate::json::deep(move || drop(value))?;
-    }
-    let value = built?;
     if recoverable {
         exceptions::ready(&mut caller)?;
         exceptions::deadline(&caller)?;

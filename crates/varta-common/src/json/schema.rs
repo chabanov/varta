@@ -1,16 +1,23 @@
 use super::*;
 use crate::value::*;
+use alloc::{collections::BTreeSet, format};
+#[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", serde(deny_unknown_fields))]
 pub struct JsonSchema {
     pub version: u32,
     pub root: u32,
     pub types: Vec<JsonType>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "std",
+    serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)
+)]
 pub enum JsonType {
     BigInt,
     Null,
@@ -39,12 +46,16 @@ pub enum JsonType {
         value: u32,
     },
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", serde(deny_unknown_fields))]
 pub struct JsonField {
     pub name: String,
     pub ty: u32,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(
+        feature = "std",
+        serde(default, skip_serializing_if = "std::ops::Not::not")
+    )]
     pub optional: bool,
 }
 impl JsonType {
@@ -66,6 +77,7 @@ impl JsonType {
         }
     }
 }
+#[cfg(feature = "std")]
 impl JsonSchema {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, CheckedJsonError> {
         Self::from_bytes_within(bytes, &crate::limits::FROZEN)
@@ -104,10 +116,49 @@ impl JsonSchema {
     pub fn validate(&self) -> Result<(), CheckedJsonError> {
         self.validate_within(&crate::limits::FROZEN)
     }
+}
+/// The structural limits a schema is validated within: the schema-related
+/// part of a profile's [`crate::limits::ProgramLimits`], available to the
+/// `no_std` core (the linked v38 decoder validates within [`Self::WASM`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaBounds {
+    pub record_shapes: usize,
+    pub array_types: usize,
+    pub union_types: usize,
+    pub json_union_members: usize,
+}
+impl SchemaBounds {
+    /// The bounds of [`crate::limits::WASM`] (v38 `program_limits`).
+    pub const WASM: Self = Self {
+        record_shapes: crate::limits::ENTITIES,
+        array_types: crate::limits::ENTITIES,
+        union_types: crate::limits::ENTITIES,
+        json_union_members: crate::limits::ENTITIES,
+    };
+    #[must_use]
+    pub fn of(limits: &crate::limits::ProgramLimits) -> Self {
+        Self {
+            record_shapes: limits.record_shapes,
+            array_types: limits.array_types,
+            union_types: limits.union_types,
+            json_union_members: limits.json_union_members,
+        }
+    }
+    /// Schema types: as [`crate::limits::ProgramLimits::schema_types`].
+    #[must_use]
+    pub fn schema_types(&self, unions: bool) -> usize {
+        4 + self.record_shapes + self.array_types + if unions { 1 + self.union_types } else { 0 }
+    }
+}
+impl JsonSchema {
     pub fn validate_within(
         &self,
         limits: &crate::limits::ProgramLimits,
     ) -> Result<(), CheckedJsonError> {
+        self.validate_bounded(SchemaBounds::of(limits))
+    }
+    /// [`Self::validate_within`] within plain bounds (`no_std`).
+    pub fn validate_bounded(&self, limits: SchemaBounds) -> Result<(), CheckedJsonError> {
         fn bad(message: &str) -> CheckedJsonError {
             CheckedJsonError::Schema(message.into())
         }
@@ -241,7 +292,7 @@ impl JsonSchema {
                             limits.json_union_members
                         )));
                     }
-                    let mut kinds = std::collections::BTreeSet::new();
+                    let mut kinds = BTreeSet::new();
                     let mut depth = 0;
                     let mut references = false;
                     for member in members {
