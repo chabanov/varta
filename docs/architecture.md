@@ -8070,6 +8070,12 @@ All host access is denied unless the **exact operation** is granted. A grant for
 `env.has` cannot authorize `env.get`; `fs.read` cannot authorize `fs.print`.
 Logging has no system-access capability but is output-budgeted.
 
+The [permission model](development-plan.md#permission-model) (accepted direction,
+details pending) makes every denial in new profiles recoverable (`NotAllowedError`
+or a failed `VartaResult`, never a trap) and adds permission states, a host
+permission broker and user consent as a grant source bounded by the host ceiling.
+Nothing below changes until a profile adopts it.
+
 Configuration shorthand:
 
 ```json

@@ -1543,7 +1543,10 @@ only, at most the value-byte limit, and only in the batch committed by a turn wh
 task was a trusted `click` or `keydown` record (a user gesture). In any other turn
 `copy_text` invalidates the batch. Without the grant, or when the platform refuses
 the write, the copy is skipped with a host diagnostic and no event (draft: no
-result is reported to the guest yet). The browser applier uses
+result is reported to the guest yet). **Superseded direction:** the accepted
+[permission model](development-plan.md#permission-model) requires that denials
+and refusals of `copy_text` and of `ui.open_url` activations reach the guest as
+recoverable results; the result records are a pending draft change. The browser applier uses
 `navigator.clipboard.writeText` within the platform's user-activation window;
 natively the shell writes the system clipboard. `clipboard.read` stays out of v1.
 
@@ -1574,7 +1577,8 @@ use grid with roles).
 
 **Pending owner confirmation** (product-visible draft choices of this round): the
 key table's coverage (named keys only, no letter shortcuts such as Ctrl+K in v1);
-that a denied or refused `copy_text` is silent to the guest; the `rows` default of
+how a denied or refused `copy_text` is reported to the guest (no longer silent,
+per the permission model); the `rows` default of
 2; and that Markdown block quotes and rules stay out of v1.
 
 ## Entry-point limits
