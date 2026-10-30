@@ -11,16 +11,21 @@
 //! never renewed.
 //!
 //! A package manifest may *request* budgets; the host ceiling caps them. An
-//! omitted request keeps the production default, and without a host ceiling
-//! the production default is also the cap, so a package can lower its budgets
-//! but only the embedder can raise them. Earlier profiles keep their
-//! production budgets and ignore both.
+//! omitted request keeps the v38 production default ([`Budgets::TURN`]), and
+//! without a host ceiling that default is also the cap, so a package can
+//! lower its budgets but only the embedder can raise them. Earlier profiles
+//! keep their production budgets ([`Budgets::PRODUCTION`]) and ignore both.
 use crate::abi;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Engine maxima no request or ceiling may exceed.
 pub const MAX_FUEL_PER_TURN: u64 = 1_000_000_000;
+/// The production fuel of one v38 turn (owner decision, from the measured
+/// v38 console turns at the fair host-fuel rates: a turn that parses a 20 KB
+/// response and updates a 50-row view needs about 5.6 million). Every earlier
+/// profile keeps [`abi::FUEL`] per execution.
+pub const TURN_FUEL: u64 = 8_000_000;
 pub const MAX_DEADLINE_PER_TURN_MS: u64 = 60_000;
 pub const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_HOST_CALLS_PER_TURN: u32 = 1 << 20;
@@ -99,10 +104,11 @@ impl BudgetKind {
             Self::Output => MAX_OUTPUT_BYTES,
         }
     }
-    /// The production default, in the wire unit.
+    /// The v38 production default ([`Budgets::TURN`]) in the wire unit: an
+    /// omitted request's value and, without a ceiling, the cap.
     #[must_use]
     pub fn production(self) -> u64 {
-        Budgets::PRODUCTION.value(self)
+        Budgets::TURN.value(self)
     }
 }
 
@@ -150,13 +156,20 @@ pub struct Budgets {
     pub output_bytes: usize,
 }
 impl Budgets {
-    /// The production budgets of every entry point (`abi`), unchanged.
+    /// The frozen production budgets (`abi`) of every profile before v38 and
+    /// of the tool and HTTP entry points.
     pub const PRODUCTION: Self = Self {
         fuel_per_turn: abi::FUEL,
         deadline_per_turn: Duration::from_secs(abi::DEADLINE_SECONDS),
         memory_bytes: abi::MAX_MEMORY_BYTES,
         host_calls_per_turn: abi::MAX_HOST_CALLS,
         output_bytes: abi::MAX_OUTPUT_BYTES,
+    };
+    /// The production budgets of a v38 (`turn_budgets`) instance, per turn:
+    /// [`TURN_FUEL`] fuel, the other budgets as [`Self::PRODUCTION`].
+    pub const TURN: Self = Self {
+        fuel_per_turn: TURN_FUEL,
+        ..Self::PRODUCTION
     };
     /// One budget in its wire unit (milliseconds for the deadline).
     #[must_use]
@@ -183,13 +196,13 @@ impl Budgets {
             BudgetKind::Output => self.output_bytes = usize::try_from(value).unwrap_or(usize::MAX),
         }
     }
-    /// Resolve a package request against the host ceiling: each budget is the
-    /// request (or the production default) capped by the ceiling (or, without
-    /// a ceiling value, by the production default). Both inputs must already
-    /// be valid.
+    /// Resolve a v38 package request against the host ceiling: each budget
+    /// is the request (or the v38 production default, [`Self::TURN`]) capped
+    /// by the ceiling (or, without a ceiling value, by that default). Both
+    /// inputs must already be valid.
     #[must_use]
     pub fn resolve(requested: &BudgetRequest, ceiling: Option<&BudgetRequest>) -> ResolvedBudgets {
-        let mut budgets = Self::PRODUCTION;
+        let mut budgets = Self::TURN;
         let mut capped = Vec::new();
         for kind in BudgetKind::ALL {
             let wanted = requested.value(kind).unwrap_or(kind.production());
@@ -230,9 +243,17 @@ mod tests {
     #[test]
     fn omitted_requests_keep_the_production_budgets() {
         let resolved = Budgets::resolve(&BudgetRequest::default(), None);
-        assert_eq!(resolved.budgets, Budgets::PRODUCTION);
+        assert_eq!(resolved.budgets, Budgets::TURN);
         assert!(resolved.capped.is_empty());
-        assert_eq!(BudgetKind::Fuel.production(), abi::FUEL);
+        assert_eq!(BudgetKind::Fuel.production(), TURN_FUEL);
+        // Only the per-turn fuel differs from the frozen production budgets.
+        assert_eq!(
+            Budgets {
+                fuel_per_turn: abi::FUEL,
+                ..Budgets::TURN
+            },
+            Budgets::PRODUCTION
+        );
         assert_eq!(
             BudgetKind::Deadline.production(),
             abi::DEADLINE_SECONDS * MILLISECONDS_PER_SECOND
@@ -255,30 +276,30 @@ mod tests {
         assert!(resolved.capped.is_empty());
 
         let raise = BudgetRequest {
-            fuel_per_turn: Some(5_000_000),
+            fuel_per_turn: Some(40_000_000),
             ..BudgetRequest::default()
         };
         // Without a ceiling value the production default caps the request.
         let capped = Budgets::resolve(&raise, None);
-        assert_eq!(capped.budgets.fuel_per_turn, abi::FUEL);
+        assert_eq!(capped.budgets.fuel_per_turn, TURN_FUEL);
         assert_eq!(
             capped.capped,
             [CappedBudget {
                 kind: BudgetKind::Fuel,
-                requested: 5_000_000,
-                allowed: abi::FUEL
+                requested: 40_000_000,
+                allowed: TURN_FUEL
             }]
         );
         let ceiling = BudgetRequest {
-            fuel_per_turn: Some(3_000_000),
+            fuel_per_turn: Some(30_000_000),
             memory_bytes: Some(16 * 1024 * 1024),
             ..BudgetRequest::default()
         };
         let resolved = Budgets::resolve(&raise, Some(&ceiling));
-        assert_eq!(resolved.budgets.fuel_per_turn, 3_000_000);
+        assert_eq!(resolved.budgets.fuel_per_turn, 30_000_000);
         // A raised ceiling grants nothing the package did not request.
         assert_eq!(resolved.budgets.memory_bytes, abi::MAX_MEMORY_BYTES);
-        assert_eq!(resolved.capped[0].allowed, 3_000_000);
+        assert_eq!(resolved.capped[0].allowed, 30_000_000);
         // A ceiling below the default also lowers an omitted request.
         let tight = BudgetRequest {
             host_calls_per_turn: Some(8),

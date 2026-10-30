@@ -45,7 +45,7 @@ pub(crate) fn run_test_budgets(bytes: &[u8], budgets: u64) -> Run {
     run_budgets(bytes, budgets, false)
 }
 /// [`run_test_budgets`], with host work at the fair rates when `rated`.
-fn run_budgets(bytes: &[u8], budgets: u64, rated: bool) -> Run {
+pub(crate) fn run_budgets(bytes: &[u8], budgets: u64, rated: bool) -> Run {
     const HOST_CALLS: u32 = 1 << 20;
     let runtime = VartaRuntime::new();
     let mut execution = execution::Execution::with_test_budgets(
@@ -415,7 +415,7 @@ fn codegen_v2_fuel_ceilings_hold() {
 }
 
 /// Fuel of console-shaped turns under v38 (fair host fuel, JSON decoded in
-/// guest code), for the per-turn fuel recommendation of the development
+/// guest code), for the per-turn fuel table of the development
 /// plan: `cargo test -p varta-runtime --lib console_turn_fuel -- --ignored
 /// --nocapture`.
 #[test]
@@ -443,7 +443,7 @@ fn console_turn_fuel() {
     }
 }
 
-/// Row counts of the keyed view that one production budget (1M fuel, 1024
+/// Row counts of the keyed view that one frozen production budget (`abi::FUEL`, 1024
 /// host calls) runs: v38 mounts and updates more rows than before the
 /// hotspot work (74 and 35 rows at cb6795d) and than v37 (19 and 11).
 #[test]
@@ -460,6 +460,39 @@ fn keyed_views_fit_one_production_budget() {
             run.lines[0].starts_with(&format!("varta log: {rows} ")),
             "{:?}",
             run.lines
+        );
+    }
+}
+
+/// The most keyed-view rows one v38 production turn (`budget::TURN_FUEL`,
+/// 1024 host calls) mounts and updates (bisection):
+/// `cargo test -p varta-runtime --lib keyed_view_rows_per_v38_turn -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn keyed_view_rows_per_v38_turn() {
+    const LARGEST: usize = 1 << 14;
+    let budgets = varta_common::budget::TURN_FUEL / abi::FUEL;
+    for (name, view) in [
+        ("mount", view_mount as fn(usize) -> String),
+        ("update", view_update),
+    ] {
+        let fits = |n: usize| run_with(&compile(&view(n), V38), &[], budgets).error;
+        let (mut low, mut high) = (0, 1);
+        while high < LARGEST && fits(high).is_none() {
+            low = high;
+            high *= 2;
+        }
+        while high - low > 1 {
+            let middle = (low + high) / 2;
+            if fits(middle).is_none() {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        println!(
+            "keyed view {name}: {low} rows (at {high}: {:?})",
+            fits(high)
         );
     }
 }

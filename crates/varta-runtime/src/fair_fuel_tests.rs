@@ -63,12 +63,23 @@ fn v38_host_calls_pay_the_published_rates() {
 /// fuel-budget error, before the call's effect (no log line is written).
 #[test]
 fn an_unaffordable_charge_is_the_typed_fuel_budget_error() {
-    // One log of an argument longer than the whole per-turn fuel.
+    // One log of an argument longer than the whole per-turn fuel, which
+    // the manifest lowers to `abi::FUEL` (a string as long as the v38
+    // default would exceed the memory budget).
     let units = (abi::FUEL as usize / size_of::<u16>()) + 1;
     let source = format!(
         "export function main(): void {{ const s = \"x\".repeat({units}); console.log(s); }}"
     );
-    let report = VartaRuntime::new().run_with(&compile(&source, V38), RunOptions::default());
+    let report = VartaRuntime::new().run_with(
+        &compile(&source, V38),
+        RunOptions {
+            budgets: varta_common::budget::BudgetRequest {
+                fuel_per_turn: Some(abi::FUEL),
+                ..Default::default()
+            },
+            ..RunOptions::default()
+        },
+    );
     let failure = report.failure.expect("the charge exhausts the fuel");
     assert!(
         matches!(&failure, RuntimeError::Budget(exhausted) if exhausted.budget == varta_common::budget::BudgetKind::Fuel),

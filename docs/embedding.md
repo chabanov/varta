@@ -464,7 +464,10 @@ effect or before its result reaches the guest. Fuel the import's guest
 callbacks consume (the value allocator and retention helper) is guest fuel.
 Earlier profiles charge nothing for host work. A host that implements fuel
 differently (a browser counting with its own instrumentation) must still
-charge these amounts for these units of work.
+charge these amounts for these units of work. The KV imports charge their
+rates on top of the call and the descriptor and result bytes; the SQLite time
+they leave uncharged (a commit's durable sync, opening a database file) is
+bounded by the turn deadline and the commit cutoff, not by fuel.
 
 <!-- generated:embedding-fair-fuel:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Work | Fuel | Constant | Charged |
@@ -478,6 +481,11 @@ charge these amounts for these units of work.
 | each schema record field or union member checked | 3000 | `fuel::JSON_SCHEMA_FIELD` | before the first guest allocation |
 | each value JSON serialization visits | 1500 | `fuel::JSON_STRINGIFY_VALUE` | before the result is published |
 | each UTF-16 unit of serialized JSON | 30 | `fuel::JSON_STRINGIFY_UNIT` | before the result is published |
+| each KV open, read or commit (`kv_open`, `kv_read`, `kv_commit`) | 100000 | `fuel::KV_OPERATION` | after the grant, before the file, the read or the submit |
+| each KV key or value byte staged (`kv_stage`) or committed | 10 | `fuel::KV_BYTE` | before it is kept or submitted |
+| each KV entry a read returns | 2000 | `fuel::KV_ENTRY` | before the entry count is returned |
+| each KV key or value byte a read returns | 10 | `fuel::KV_BYTE` | before the entry count is returned |
+| each value a KV decode (`kv_key`, `kv_value`) builds (its schema types and fields at the schema rates) | 1500 | `fuel::JSON_PARSE_VALUE` | before the first guest allocation |
 <!-- generated:embedding-fair-fuel:end -->
 
 How the rates were calibrated is recorded in the
@@ -999,8 +1007,10 @@ One **execution** owns one fresh store and instance and is never reused:
    the [limits table](architecture.md#resource-limits); they cover the whole
    execution, including instantiation and every job. **v38 (`turn_budgets`):**
    resolve the manifest's `budgets` against the host ceiling (each budget is
-   the request or the default, capped by the ceiling's value or by the
-   default), and treat the run as **event turns**: turn 1 is steps 3 to 7 up
+   the request or the v38 default, capped by the ceiling's value or by the
+   default; the v38 default per-turn fuel is `budget::TURN_FUEL` in the
+   [limits table](architecture.md#resource-limits), every other default is
+   the earlier profiles' value), and treat the run as **event turns**: turn 1 is steps 3 to 7 up
    to the first task; every later task (a fired timer, a network completion, a
    host task) with the microtasks it queues is one turn. Fuel, host calls and
    the microtask count MUST be renewed at the start of every turn; memory and

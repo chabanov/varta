@@ -431,6 +431,20 @@ impl HostFailure {
             exhausted: false,
         }
     }
+    /// The trap of a host operation whose argument or result transfer
+    /// failed: Wasmtime's out-of-fuel trap when a fair-fuel charge emptied
+    /// the fuel (the turn then reports the typed fuel-budget error), else
+    /// `fatal` of the failure's message.
+    pub(crate) fn into_trap(
+        self,
+        fatal: impl FnOnce(String) -> wasmtime::Error,
+    ) -> wasmtime::Error {
+        if self.exhausted {
+            wasmtime::Error::new(wasmtime::Trap::OutOfFuel)
+        } else {
+            fatal(self.message)
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -703,11 +717,15 @@ impl VartaRuntime {
             ceiling.validate()?;
         }
         options.budgets.validate()?;
-        // Earlier profiles keep the production budgets and their meaning.
+        // Earlier profiles keep the frozen production budgets and their
+        // meaning; v38 resolves its request from the v38 defaults.
         let resolved = if v38 {
             Budgets::resolve(&options.budgets, options.budget_ceiling.as_ref())
         } else {
-            Budgets::resolve(&BudgetRequest::default(), None)
+            varta_common::budget::ResolvedBudgets {
+                budgets: Budgets::PRODUCTION,
+                capped: Vec::new(),
+            }
         };
         let artifact = artifact_identity(bytes);
         let stored = match (&options.decisions, v38) {

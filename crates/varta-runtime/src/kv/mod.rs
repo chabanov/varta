@@ -8,6 +8,13 @@
 //! promises settle in the same turn. Every failure the guest can cause is recoverable (`kv::FAILED` and
 //! `kv_text`); malformed descriptors and ids are fatal, because only a
 //! tampered module produces them.
+//!
+//! Under v38 every operation also pays fair host fuel (`varta_common::fuel`,
+//! [`charge`]): `KV_OPERATION` per open, read and commit, `KV_BYTE` per key
+//! or value byte staged, committed or returned by a read, `KV_ENTRY` per
+//! entry a read returns, and the checked JSON rates for the schema and the
+//! values a decode builds.
+mod charge;
 mod decode;
 mod stage;
 pub(crate) mod store;
@@ -17,6 +24,7 @@ use crate::{RuntimeContext, permission::Decision};
 use denokv_proto::{KeyPart, KvValue, MutationKind};
 use std::collections::BTreeMap;
 use store::{Database, KvError, Wait};
+use varta_common::fuel;
 use varta_common::{
     HostOperation,
     kv::{self, EntryField, MutationCode, Selector, StageMode},
@@ -38,11 +46,15 @@ struct Staged {
 
 impl Staged {
     fn size(&self) -> usize {
-        let value = match &self.value {
-            KvValue::V8(bytes) | KvValue::Bytes(bytes) => bytes.len(),
-            KvValue::U64(_) => size_of::<u64>(),
-        };
-        value + self.key.as_ref().map_or(0, Vec::len)
+        value_bytes(&self.value) + self.key.as_ref().map_or(0, Vec::len)
+    }
+}
+
+/// The stored bytes of a value.
+fn value_bytes(value: &KvValue) -> usize {
+    match value {
+        KvValue::V8(bytes) | KvValue::Bytes(bytes) => bytes.len(),
+        KvValue::U64(_) => size_of::<u64>(),
     }
 }
 
@@ -148,7 +160,7 @@ fn descriptor(
     len: i32,
 ) -> Result<String, wasmtime::Error> {
     crate::host::input(caller, ptr, len, kv::MAX_DESCRIPTOR_BYTES, true)
-        .map_err(|error| fatal(error.message))
+        .map_err(|error| error.into_trap(fatal))
 }
 
 /// The broker's decision on the exact grant `capability` for the path of
@@ -202,6 +214,9 @@ fn open(
             kv::MAX_OPEN_DATABASES
         ))));
     }
+    // V38 fair fuel: the open, after the grant and before the file.
+    crate::fair_fuel::charge(caller, fuel::KV_OPERATION)?;
+    let context = caller.data_mut();
     match store::open(target, &path, writable) {
         Ok(database) => {
             context.kv.next_id += 1;
@@ -245,6 +260,9 @@ fn stage(
         Ok(staged) => staged,
         Err(error) => return Ok(context.kv.fail(&error)),
     };
+    // V38 fair fuel: the encoded key and value bytes, before they are kept.
+    crate::fair_fuel::charge(caller, charge::staged(staged.size()))?;
+    let context = caller.data_mut();
     context.kv.staged_bytes += staged.size();
     if context.kv.staged_bytes > kv::MAX_STAGED_BYTES {
         return Ok(context.kv.fail(&KvError::type_error(
@@ -385,11 +403,22 @@ fn read(
     let deadline = context.deadline;
     let prefixes: Vec<Vec<u8>> = ranges.iter().map(|range| range.prefix.clone()).collect();
     let reads = ranges.into_iter().map(|range| range.read).collect();
-    let outcome = context.kv.run(id, |database, runtime| {
+    // V38 fair fuel: the read, after the grant and before the database.
+    crate::fair_fuel::charge(caller, fuel::KV_OPERATION)?;
+    let outcome = caller.data_mut().kv.run(id, |database, runtime| {
         database.read(runtime, deadline, reads)
     })?;
     match outcome {
         Ok(outputs) => {
+            // The entries returned, before the guest sees their count.
+            let returned = charge::returned(
+                outputs
+                    .iter()
+                    .flat_map(|output| &output.entries)
+                    .map(|entry| entry.key.len() + value_bytes(&entry.value)),
+            );
+            crate::fair_fuel::charge(caller, returned)?;
+            let context = caller.data_mut();
             context.kv.entries.clear();
             for (range, output) in outputs.into_iter().enumerate() {
                 for entry in output.entries {
@@ -405,8 +434,8 @@ fn read(
             }
             Ok(context.kv.entries.len() as f64)
         }
-        Err(Wait::Failed(error)) => Ok(context.kv.fail(&error)),
-        Err(Wait::Deadline) => Err(context.deadline_error()),
+        Err(Wait::Failed(error)) => Ok(caller.data_mut().kv.fail(&error)),
+        Err(Wait::Deadline) => Err(caller.data().deadline_error()),
     }
 }
 
@@ -602,6 +631,19 @@ fn commit(
     }
     let deadline = context.deadline;
     let (checks, mutations) = plan;
+    // V38 fair fuel: the commit and the key and value bytes it writes, after
+    // the grant and before anything is submitted.
+    let written = checks
+        .iter()
+        .map(|check| check.key.len())
+        .chain(
+            mutations
+                .iter()
+                .map(|mutation| mutation.key.len() + mutation.kind.value().map_or(0, value_bytes)),
+        )
+        .sum();
+    crate::fair_fuel::charge(caller, charge::committed(written))?;
+    let context = caller.data_mut();
     let outcome = context.kv.run(id, |database, runtime| {
         database.commit(runtime, deadline, checks, mutations)
     })?;
@@ -844,8 +886,12 @@ fn decoded(
             )),
         }
     };
-    let classified = value
-        .and_then(|value| decode::Classifier::new(&schema, limits, context.deadline).root(&value));
+    let mut classifier = decode::Classifier::new(&schema, limits, context.deadline);
+    let classified = value.and_then(|value| classifier.root(&value));
+    // V38 fair fuel: the schema and the values decoded, before the first
+    // guest allocation (as checked JSON charges).
+    let decoded = charge::decoded(&schema, classifier.values());
+    crate::fair_fuel::charge(caller, decoded)?;
     match classified {
         Ok(value) => crate::json_parse::materialize(caller, memory, &schema, value, true)
             .map(|value| value as i64),
@@ -894,7 +940,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
          -> Result<i32, wasmtime::Error> {
             let text = entry(caller.data(), index, field)?;
             crate::host::result16(&mut caller, text.as_bytes())
-                .map_err(|error| fatal(error.message))
+                .map_err(|error| error.into_trap(fatal))
         },
     )?;
     linker.func_wrap(
@@ -918,7 +964,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             caller.data().check_deadline()?;
             let text = caller.data().kv.text.clone();
             crate::host::result16(&mut caller, text.as_bytes())
-                .map_err(|error| fatal(error.message))
+                .map_err(|error| error.into_trap(fatal))
         },
     )?;
     linker.func_wrap(
@@ -935,6 +981,9 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "kv_fuel_tests.rs"]
+mod fuel_tests;
 #[cfg(test)]
 #[path = "kv_tests.rs"]
 mod tests;

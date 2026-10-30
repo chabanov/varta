@@ -380,6 +380,36 @@ fn fair_fuel() -> String {
                 "JSON_STRINGIFY_UNIT",
                 "before the result is published",
             ),
+            (
+                "each KV open, read or commit (`kv_open`, `kv_read`, `kv_commit`)",
+                fuel::KV_OPERATION,
+                "KV_OPERATION",
+                "after the grant, before the file, the read or the submit",
+            ),
+            (
+                "each KV key or value byte staged (`kv_stage`) or committed",
+                fuel::KV_BYTE,
+                "KV_BYTE",
+                "before it is kept or submitted",
+            ),
+            (
+                "each KV entry a read returns",
+                fuel::KV_ENTRY,
+                "KV_ENTRY",
+                "before the entry count is returned",
+            ),
+            (
+                "each KV key or value byte a read returns",
+                fuel::KV_BYTE,
+                "KV_BYTE",
+                "before the entry count is returned",
+            ),
+            (
+                "each value a KV decode (`kv_key`, `kv_value`) builds (its schema types and fields at the schema rates)",
+                fuel::JSON_PARSE_VALUE,
+                "JSON_PARSE_VALUE",
+                "before the first guest allocation",
+            ),
         ]
         .into_iter()
         .map(|(work, rate, name, when)| {

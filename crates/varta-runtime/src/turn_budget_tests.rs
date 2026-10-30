@@ -62,10 +62,11 @@ export function main(): void {
   setTimeout(() => { console.log(`second ${work(__N__)}`); }, 2);
 }
 "#;
-// Each turn of `SPREAD` fits the production fuel budget and the three
-// together do not, under the v38 code generator (`codegen_v2`) and, with
-// `V37_ITERATIONS`, under the v37 code generator.
-const ITERATIONS: &str = "30000";
+// Each turn of `SPREAD` fits the v38 production per-turn fuel
+// (`budget::TURN_FUEL`) and the three together do not, under the v38 code
+// generator (`codegen_v2`); with `V37_ITERATIONS` the three exceed the v37
+// per-execution fuel (`abi::FUEL`) under the v37 code generator.
+const ITERATIONS: &str = "240000";
 const V37_ITERATIONS: &str = "6000";
 
 #[test]
@@ -78,9 +79,10 @@ fn fuel_renews_for_every_turn_in_v38_and_not_before() {
     let kinds: Vec<TurnKind> = budget.turns.iter().map(|t| t.kind).collect();
     assert_eq!(kinds, [TurnKind::Main, TurnKind::Timer, TurnKind::Timer]);
     // Each turn fits the production budget; the three together do not.
+    let turn = varta_common::budget::TURN_FUEL;
     let fuel: Vec<u64> = budget.turns.iter().map(|t| t.fuel).collect();
-    assert!(fuel.iter().all(|f| *f < abi::FUEL), "{fuel:?}");
-    assert!(fuel.iter().sum::<u64>() > abi::FUEL, "{fuel:?}");
+    assert!(fuel.iter().all(|f| *f < turn), "{fuel:?}");
+    assert!(fuel.iter().sum::<u64>() > turn, "{fuel:?}");
     assert_eq!(budget.total_fuel, fuel.iter().sum::<u64>());
     assert_eq!(budget.turns[0].turn, 1);
     assert_eq!(budget.turns[2].turn, 3);
@@ -132,7 +134,7 @@ export function main(): void {
                     turn: 2,
                     kind: TurnKind::Timer,
                     budget: BudgetKind::Fuel,
-                    limit: abi::FUEL,
+                    limit: varta_common::budget::TURN_FUEL,
                 }
             );
             assert!(
@@ -174,19 +176,22 @@ fn manifest_budgets_are_capped_by_the_host_ceiling() {
     );
     // A raise beyond the default needs the ceiling; otherwise it is capped.
     let mut raised = options(timers());
-    raised.budgets.fuel_per_turn = Some(5_000_000);
+    raised.budgets.fuel_per_turn = Some(40_000_000);
     let report = bounded(&bytes, raised.clone());
     let budget = report.budget.unwrap();
-    assert_eq!(budget.budgets.fuel_per_turn, abi::FUEL);
+    assert_eq!(
+        budget.budgets.fuel_per_turn,
+        varta_common::budget::TURN_FUEL
+    );
     assert_eq!(budget.capped.len(), 1);
-    assert_eq!(budget.capped[0].requested, 5_000_000);
+    assert_eq!(budget.capped[0].requested, 40_000_000);
     raised.budget_ceiling = Some(BudgetRequest {
-        fuel_per_turn: Some(3_000_000),
+        fuel_per_turn: Some(30_000_000),
         ..BudgetRequest::default()
     });
     let budget = bounded(&bytes, raised).budget.unwrap();
-    assert_eq!(budget.budgets.fuel_per_turn, 3_000_000);
-    assert_eq!(budget.capped[0].allowed, 3_000_000);
+    assert_eq!(budget.budgets.fuel_per_turn, 30_000_000);
+    assert_eq!(budget.capped[0].allowed, 30_000_000);
     // A tight host-call ceiling applies per turn.
     let mut tight = options(timers());
     tight.budget_ceiling = Some(BudgetRequest {

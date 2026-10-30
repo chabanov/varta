@@ -63,9 +63,14 @@ fn limits() -> String {
             "abi::INTRINSIC_STACK_BYTES",
         ),
         (
-            "Guest instructions (fuel)",
+            "Guest instructions (fuel), v1–v37 per execution",
             abi::FUEL.to_string(),
             "abi::FUEL",
+        ),
+        (
+            "Guest instructions (fuel), v38 per turn (`turn_budgets`)",
+            varta_common::budget::TURN_FUEL.to_string(),
+            "budget::TURN_FUEL",
         ),
         (
             "Execution/HTTP deadline",

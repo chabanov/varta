@@ -44,6 +44,10 @@ fn consumed(bytes: &[u8]) -> u64 {
     let runtime = VartaRuntime::new();
     let module = runtime.prepare_module(bytes).unwrap();
     let mut execution = execution::Execution::new(&runtime.engine, &[], None).unwrap();
+    // The production fuel of the module's profile: one v38 turn or one
+    // earlier execution.
+    let budget = production_fuel(module.profile);
+    execution.store.set_fuel(budget).unwrap();
     let instance = execution.instantiate_prepared(&module).unwrap();
     let store = &mut execution.store;
     let result = instance
@@ -54,7 +58,14 @@ fn consumed(bytes: &[u8]) -> u64 {
         .and_then(|()| exceptions::finish(&instance, store))
         .and_then(|()| scheduler::checkpoint(&instance, store));
     drop(result);
-    abi::FUEL - store.get_fuel().unwrap()
+    budget - store.get_fuel().unwrap()
+}
+fn production_fuel(profile: P) -> u64 {
+    if profile.turn_budgets() {
+        varta_common::budget::TURN_FUEL
+    } else {
+        abi::FUEL
+    }
 }
 
 const PROGRAM: &str = r#"
@@ -82,7 +93,7 @@ fn probes_refund_their_cost_and_attribute_every_unit() {
         let profile_fuel = &run.profile;
         // The instrumented run consumes exactly the uninstrumented fuel.
         assert_eq!(profile_fuel.consumed, consumed(&plain(PROGRAM, profile)));
-        assert_eq!(profile_fuel.budget, abi::FUEL);
+        assert_eq!(profile_fuel.budget, production_fuel(profile));
         assert_eq!(profile_fuel.unfinished, 0);
         let attributed: u64 = profile_fuel.functions.iter().map(|f| f.self_fuel).sum();
         // Instantiation (data segments, initial memory) runs no function.

@@ -370,7 +370,8 @@ fn read_text(
     ptr: i32,
     len: i32,
 ) -> Result<String, wasmtime::Error> {
-    host::input(caller, ptr, len, MAX_DESCRIPTOR_BYTES, true).map_err(|_| fatal(EventError::State))
+    host::input(caller, ptr, len, MAX_DESCRIPTOR_BYTES, true)
+        .map_err(|error| error.into_trap(|_| fatal(EventError::State)))
 }
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
@@ -407,7 +408,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             caller.data().check_deadline()?;
             let text = caller.data_mut().events.text(id).map_err(fatal)?;
             host::result16(&mut caller, text.as_bytes())
-                .map_err(|error| wasmtime::Error::msg(error.message))
+                .map_err(|error| error.into_trap(wasmtime::Error::msg))
         },
     )?;
     linker.func_wrap(

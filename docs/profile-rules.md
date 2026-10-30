@@ -3390,6 +3390,16 @@ Normative contract: [architecture](architecture.md#kv-storage-kv).
   thread.
 - `watch`, queues, `consistency` and in-memory databases are not admitted;
   keep them compile errors until their own increment.
+- Fair fuel (`kv::charge`): `KV_OPERATION` per open, read and commit after
+  the grant and before the file, the read or the submit; `KV_BYTE` per key or
+  value byte when it is staged, committed and returned by a read; `KV_ENTRY`
+  per returned entry before the count reaches the guest; a decode pays the
+  checked JSON schema and value rates before the first guest allocation (and
+  before a mismatch's `TypeError`). Charge with `?` so an unaffordable charge
+  is the typed fuel error before the effect (`kv_fuel_tests` checks that an
+  unaffordable commit writes nothing), and map transfer failures through
+  `HostFailure::into_trap`. A new KV work unit gets a rate calibrated with
+  `kv_fuel_calibration` (release build), never left free.
 
 ### Code generation v2 (`codegen_v2`)
 
@@ -3767,10 +3777,14 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   writes guest strings or does work proportional to its input outside
   `host::input`/`host::result*`, charges its work there, before the effect
   or before the result is published; a host failure caused by a charge
-  must stay the typed fuel error (`HostFailure::exhausted`). New work units
-  get a rate in `varta_common::fuel`, calibrated against the linked
-  equivalent (development plan, fair host fuel) and published through the
-  `embedding-fair-fuel` block. Fuel comparisons with v37 rate v37's host
+  must stay the typed fuel error (`HostFailure::exhausted`; map a failed
+  `host::input`/`host::result*` through `HostFailure::into_trap`, never to an
+  ad-hoc message). New work units get a rate in `varta_common::fuel`,
+  calibrated against the linked equivalent, or against guest time where none
+  exists (KV; development plan, fair host fuel), and published through the
+  `embedding-fair-fuel` block. V38's production per-turn fuel is
+  `budget::TURN_FUEL` (`Budgets::TURN`); earlier profiles keep `abi::FUEL` per
+  execution, and only a host ceiling raises the v38 default. Fuel comparisons with v37 rate v37's host
   work at the same rates (`Execution::rate_host_work`). Never raise
   production budgets for a test: declare test-only budgets.
 - Linked JSON (`json_parse_v19`, linked under v38; the compiler test

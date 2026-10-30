@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. `v36-merge` with the declared-fields, function-fields, timers and async-generator streams: commit `765743e` (2026-10-29), 2196 tests, 0 failures, conformance 101 passed and 9 known gaps. `v38-wave2-merge` with the seven wave-2 streams: code at commit `911e9ed` (2026-10-30), 2662 tests, 0 failures, 3 ignored, conformance 123 passed and 4 known gaps, baseline matched, including the `no_std` core check. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.13.1](#pilot-acceptance-package-uarp-sdk) (0.13.0 for the wave-2 streams, 0.12.0 until the v38 integration); `typeof` engine-globals probe under v38: **65 of 65** files check unmodified (wave-2 integration: 7, stopped at the `typeof Blob` guard of `core/transport.ts`) ([probe](#pilot-acceptance-package-uarp-sdk)); earlier: M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.13.2](#pilot-acceptance-package-uarp-sdk) (0.13.1 for the wave-2 integration and wave-3a streams, 0.13.0 for the wave-2 streams, 0.12.0 until the v38 integration); wave-3a integration probe under v38: **65 of 65** files check unmodified (0.13.1 with `typeof` of engine globals: 65 of 65; wave-2 integration: 7, stopped at the `typeof Blob` guard of `core/transport.ts`) ([probe](#pilot-acceptance-package-uarp-sdk)); earlier: M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 | Platform targets | Third-party embedding contract published in [embedding.md](embedding.md); browser, desktop and Raspberry Pi 5 targets, application lifecycle and view layer follow the [accepted design](#platform-targets-and-application-model) (2026-10-29), not implemented yet |
 
 Next work, in order:
@@ -267,15 +267,23 @@ The package is an external acceptance target, not an engine feature. No UARP
 types, routes or client logic enter engine crates, built-in profiles or the core
 CLI, and its sources are not vendored into this repository.
 
-Pinned baseline: version **0.13.1** (adopted at the v38 wave-2 integration,
-2026-10-30), tarball SHA-256
-`2310e037455f3da99c672e7b70cb340c476be81921b76a2f7e8b2e65901043b5`
-(npm integrity `sha512-ccaWE8iqbR+NLnZqgcB2jNsoH3OXP1qJXVFFGAxGZ1UsgBOIhD7JCf/OAImYeBrhSG2WoBHyOBM65ZR0+hAsAQ==`,
-verified against the registry and recomputed from the tarball), 65 source
-files. 0.13.1 fixes `uploadPublicSessionImage`, which now sends its
-`BinaryInput` as `binary: body` with an image content type, through a new
-`binaryContentType` helper in `core/transport.ts`. Later versions are adopted
-explicitly, with this section updated. History: the wave-2 stream probes used
+Pinned baseline: version **0.13.2** (owner decision, adopted at the v38
+wave-3a integration, 2026-10-30), tarball SHA-256
+`7cfda733abddadf6f08f1e3c86c53e7ebb00ee927b3afb5f6d7f3ba69e4dcc75`
+(npm integrity `sha512-Zitwbwt6K0JGwn44YK1sZZprWgPNfiwXJRgIn4mNbhwYzEN2nnSdbskn0isRx9pbLAyHY8Ft3ofsQ9UB4gJ8sA==`,
+shasum `0c7a9b036a762bb0bac319762815c16d7ff78eec`, verified against the
+registry and recomputed from the tarball), 65 source files. 0.13.2 changes
+only `generated/meta.ts` (`SDK_VERSION`) and `generated/models.ts`: the
+tool-call event gains a required `arguments: JsonObject` (with
+`arguments_preview?` and a deprecated alias) and three run events type
+`error_code?` as the `ErrorCode` literal union instead of `string`. Later
+versions are adopted explicitly, with this section updated. History: the
+wave-2 integration and the wave-3a stream probes used **0.13.1** (tarball
+SHA-256 `2310e037455f3da99c672e7b70cb340c476be81921b76a2f7e8b2e65901043b5`, npm
+integrity `sha512-ccaWE8iqbR+NLnZqgcB2jNsoH3OXP1qJXVFFGAxGZ1UsgBOIhD7JCf/OAImYeBrhSG2WoBHyOBM65ZR0+hAsAQ==`,
+65 source files; it fixed `uploadPublicSessionImage`, which sends its
+`BinaryInput` as `binary: body` with an image content type through the
+`binaryContentType` helper of `core/transport.ts`); the wave-2 stream probes used
 **0.13.0** (owner decision of 2026-10-30, tarball SHA-256
 `69d986d3002247fc347d5a39742f5a46246163d782dcb910e118c8bb4790395d`, npm
 integrity `sha512-frtICedMsIcJialN4oBVzsqn4sI6O7vWcAw++Ioc7ZuXu7dGM8lwXG+soKCnvtN5zsZmIDr7ztSVH25Wgm+Izg==`,
@@ -889,6 +897,15 @@ before). `typeof Blob` in `binaryContentType` folds to `"function"` and
 `body instanceof Blob` narrows as before
 ([contract](architecture.md#web-bytes-web_bytes)).
 
+**Wave-3a integration pilot probe (`v38-wave3a-merge`, uarp-sdk 0.13.2,
+2026-10-30).** Same per-file probe (`varta check` under v38, each file the
+only `export *` source of a probe entry, default-imported when it has a
+default export) of a scratch copy of the pinned **0.13.2** sources (`npm pack
+uarp-sdk@0.13.2`, integrity verified), production budgets, debug build, no
+live API call, sources unmodified: **65 of 65** files check, with the
+method-subtyping, linked conversions, linked JSON, fair fuel and KV streams
+integrated.
+
 **Wave 2 (integrated on `v38-wave2-merge`, 2026-10-30).**
 
 | Stream | Scope | State |
@@ -914,7 +931,7 @@ before). `typeof Blob` in `binaryContentType` folds to `"function"` and
 | (g) Network wait in scripted sessions | A bounded, explicit network-wait step for `--view-script` sessions, so scripted views that await responses stay deterministic on virtual time | Open |
 | (h) Linked value18 readers | Link the value18 readers (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12` as linked rendering plus the `log_string16` effect, `json_parse_v19`, `primitive_to_string_v6`/`primitive_to_number_v6` with (a)); `bigint_from_value_v5` is already linked at the integration, since it reads only primitive and BigInt cells | Implemented in part on `v38-p2-conversions`: the reference, vector, dictionary (with its full table validation), Error and closure-envelope readers are generic over `Memory` in the `no_std` core; `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11` and `value_is_error_class_v7` are `varta_intrinsics::value` (also the value8–value17 host readers), linked behind tag fast paths. Pending: `value_log_v12` (its record, array and dictionary rendering is the JSON diagnostic renderer, with the JSON stream); `json_parse_v19` is linked by (b) |
 | (i) L0 open choices | The L0 view protocol's open choices, including `role="separator"` and `role="group"` | Open |
-| (j) Deno KV storage | Owner decision: a native KV host capability file-compatible with Deno KV, so the UARP API's Deno KV file (SQLite, `denokv_sqlite` schema 3) opens in Varta without a migration and Deno reads what Varta writes | Implemented on `v38-kv` under `kv()` ([contract](architecture.md#kv-storage-kv)): `kv.read`/`kv.write` path grants over virtual roots, nine host ABI 34 imports, pinned no-follow open verified against SQLite's descriptor, exact schema check, lock probe, a strict V8 serializer codec, Deno-shaped `Kv`/`AtomicOperation`/`KvListIterator`/`KvU64` with strict checked-JSON decoding. Open: below |
+| (j) Deno KV storage | Owner decision: a native KV host capability file-compatible with Deno KV, so the UARP API's Deno KV file (SQLite, `denokv_sqlite` schema 3) opens in Varta without a migration and Deno reads what Varta writes | Implemented on `v38-kv` under `kv()` ([contract](architecture.md#kv-storage-kv)): `kv.read`/`kv.write` path grants over virtual roots, nine host ABI 34 imports, pinned no-follow open verified against SQLite's descriptor, exact schema check, lock probe, a strict V8 serializer codec, Deno-shaped `Kv`/`AtomicOperation`/`KvListIterator`/`KvU64` with strict checked-JSON decoding; fair host fuel at the calibrated KV rates since the wave-3a integration ([KV fair fuel](#kv-fair-fuel-v38)). Open: below |
 
 **KV storage dependencies (v38 `kv`, 2026-10-30).** Evidence: Deno v2.9.4's
 `Cargo.lock` (tag `v2.9.4`, `github.com/denoland/deno`) locks `denokv_sqlite`
@@ -1412,8 +1429,11 @@ it, which fixed the final rates. Re-pinned: the codegen v2
 holds unchanged against v37 at fair rates (table:
 `codegen_v2_fuel_ceilings_hold`).
 
-**Per-turn fuel (recommendation, the owner sets it).** Production stays at
-1,000,000 fuel per turn. Measured v38 turns (`console_turn_fuel`):
+**Per-turn fuel (owner decision, applied at the wave-3a integration).** The
+v38 production per-turn fuel is `budget::TURN_FUEL` = 8,000,000
+(`Budgets::TURN`; a manifest may lower it, only a host ceiling raises it);
+v1–v37 keep `abi::FUEL` = 1,000,000 per execution. The measurements behind
+the decision, v38 turns (`console_turn_fuel`) before the integration:
 
 | Turn | v38 fuel |
 | --- | ---: |
@@ -1426,10 +1446,170 @@ holds unchanged against v37 at fair rates (table:
 | response of 20 KB parsed | 4,832,673 |
 
 A console turn that receives a 20 KB response and updates a 50-row view
-needs about 5.6M; the 24-member event fixture already exceeds 1M in one
-turn (its tests now declare 4M test-only per-turn fuel). Recommendation: a
-v38 per-turn default of 8,000,000 fuel (about 40% headroom over the 20 KB
-turn), with the host-call budget unchanged.
+needs about 5.6M; the 24-member event fixture exceeded 1M in one turn (its
+tests declared 4M test-only per-turn fuel; with the 8M default they run on
+production budgets). Decision: a v38 per-turn default of 8,000,000 fuel
+(about 40% headroom over the 20 KB turn), with the host-call budget
+unchanged; the [wave-3a measurement](#wave-3a-integration-measurement-v38)
+re-measures these turns.
+
+#### KV fair fuel (v38)
+
+KV storage pays fair fuel like every v38 import
+([contract](architecture.md#fair-host-fuel-fair_fuel)): the call, its
+descriptor and result bytes, and three KV rates (`varta_common::fuel`):
+
+| Work | Fuel | Calibration (release build, reference macOS arm64 host) |
+| --- | ---: | --- |
+| KV open, read or commit (`KV_OPERATION`) | 100,000 | the fixed host time of a point read (about 95,000 fuel-equivalent) and of a commit whose check fails (no write: 15,000 to 90,000 over runs), rounded up |
+| KV key or value byte staged, committed or returned (`KV_BYTE`) | 10 | a set's host time per value byte, 17.2 fuel-equivalent, charged twice (staged and committed); a get's 2.4 per byte is charged once |
+| KV entry returned (`KV_ENTRY`) | 2,000 | a listed entry's host time, 13,070 fuel-equivalent, is covered together with its two decodes at the checked JSON rates (29,700 charged per string entry) |
+
+Method (`kv_fuel_calibration`, `cargo test --release -p varta-runtime --lib
+kv_fuel_calibration -- --ignored --nocapture`): KV has no linked equivalent,
+so the guest's own speed is the yardstick. A plain guest loop measures the
+guest fuel rate (3.17 to 3.23 fuel per ns). Each workload (get of 16, 4,096
+and 32,768-unit strings; set of the same; a commit whose check fails; a list
+of 10, 100 and 400 entries; reopening a database) runs 40 and 80 times on a
+fresh database, fastest of five runs; the marginal wall time minus the
+marginal guest fuel at that rate is the operation's host time, which the
+guest rate converts to fuel. Fitting `a + b·bytes` and `a + c·entries` and
+rounding up gives the rates; with them the charges cover the measured host
+time 1.2 to 2.6 times on gets, 2.0 to 2.2 times on lists and 1.1 times per
+byte on sets. Two fixed host costs stay outside fuel, bounded by the turn
+deadline and the commit cutoff instead (the commit reserve, `kv::COMMIT_RESERVE_MS`):
+a commit's durable sync (a set's fixed host time is about 430,000
+fuel-equivalent, about 135 µs, of which `KV_OPERATION` covers 100,000) and
+opening a database file (about 3,000,000 fuel-equivalent, about 0.95 ms:
+SQLite open, schema and descriptor checks, the lock-probe connection and the
+worker thread), which a program does once. Charging them as fuel would price
+I/O waits as guest work; whether to add a per-open or per-durable-commit rate
+is an [open item](#wave-3a-integration-open-items). An unaffordable charge is
+the typed fuel error before the effect: an unaffordable commit is never
+submitted (`an_unaffordable_commit_is_the_typed_fuel_error_and_writes_nothing`).
+
+#### Wave-3a integration measurement (v38)
+
+Integrated tip `v38-wave3a-merge` (method subtyping, linked conversions and
+readers, linked JSON with fair host fuel, KV storage with its fair rates,
+the 8M per-turn fuel), debug test build on the reference macOS arm64 host;
+fuel is deterministic.
+
+Code generation v2 (`codegen_v2_fuel_ceilings_hold --nocapture`, v37 at
+production rules, host work uncharged):
+
+| Workload | Size | v37 fuel | v38 fuel | Ratio | v37 / iteration | v38 / iteration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| number loop | 10,000 | 950,609 | 140,755 | 6.75x | 95.0 | 14.0 |
+| 3-char string `===` | 4,000 | 1,129,393 | 305,028 | 3.70x | 278.0 | 76.0 |
+| string `===` literal | 4,000 | 1,517,449 | 132,990 | 11.41x | 375.0 | 33.0 |
+| `s = s + "x"` | 800 | 999,716 | 50,413 | 19.83x | 1,638.7 | 61.4 |
+| dictionary 50+50 | 50 | 636,435 | 157,791 | 4.03x | 15,870.9 | 3,064.0 |
+| record field reads | 1,000 | 180,128 | 22,813 | 7.90x | 163.0 | 22.0 |
+| function calls | 1,000 | 129,593 | 27,717 | 4.68x | 129.0 | 27.0 |
+| closure calls | 1,000 | 426,971 | 305,041 | 1.40x | 426.0 | 304.0 |
+| array push + index sum | 500 | 649,719 | 112,105 | 5.80x | 1,413.9 | 220.3 |
+| Markdown-like scan | 10 | 544,148 | 65,336 | 8.33x | 62,347.4 | 6,350.0 |
+| `JSON.parse` ~2 KB | 40 | 769,036 | 412,273 | 1.87x | 20,432.8 | 9,797.0 |
+| list render | 100 rows | 2,939,482 | 148,503 | 19.79x | 50,732.7 | 1,466.6 |
+| keyed diff | 100 rows | 5,005,898 | 471,837 | 10.61x | 73,849.8 | 4,695.6 |
+| keyed diff | 500 rows | fails (fuel) | 2,349,776 | – | – | 4,734.6 |
+| Markdown blocks fixture (chat replies) | 1 | 252,353 | 59,102 | 4.27x | 229,000.0 | 54,676.0 |
+| keyed view mount | 10 rows | 181,126 | 82,600 | 2.19x | 15,324.8 | 7,748.4 |
+| keyed view update | 10 rows | 894,774 | 156,736 | 5.71x | 141,983.4 | 15,143.4 |
+
+Keyed view at the v38 turn budget (`keyed_view_rows_per_v38_turn`,
+8,000,000 fuel and 1,024 host calls, bisection): **621 rows mounted** and
+**404 rows updated** in one turn, both bounded by fuel (one production
+`abi::FUEL` budget: 120 and 50, `keyed_views_fit_one_production_budget`).
+
+Console turns (`console_turn_fuel`):
+
+| Turn | v38 fuel | Share of the 8M turn |
+| --- | ---: | ---: |
+| keyed view mount, 50 rows | 388,892 | 4.9% |
+| keyed view update, 50 rows | 740,267 | 9.3% |
+| Markdown blocks, 3 replies | 169,910 | 2.1% |
+| 24-member union events, 25 parses | 1,196,587 | 15.0% |
+| response of 2 KB parsed | 458,859 | 5.7% |
+| response of 10 KB parsed | 2,228,788 | 27.9% |
+| response of 20 KB parsed | 4,761,240 | 59.5% |
+
+Checked JSON per parse (`linked_json_fuel_measurement`, the fuel of one
+`JSON.parse(text) as T` beyond the program without it):
+
+| Workload | Text units | v37 | v37 at fair rates | v38 import, free | v38 import, fair | v38 linked (production) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 record | 54 | 737 | 36,547 | 433 | 36,243 | 30,086 |
+| 40 records (~2 KB) | 2,181 | 18,755 | 455,335 | 10,495 | 447,075 | 367,042 |
+| 1,000 numbers | 4,001 | 275 | 1,627,855 | 175 | 1,627,755 | 886,614 |
+| RunEventV1-like member (`unknown`) | 76 | 1,995 | 66,967 | 1,135 | 66,045 | 43,282 |
+
+KV per operation (`kv_operation_fuel`; a `Run` record of the language-guide
+shape per entry, marginal over 40 operations on a fresh database):
+
+| Operation | v38 fuel (fair rates) | Guest fuel alone |
+| --- | ---: | ---: |
+| `get` of 1 record | 185,767 | 7,129 |
+| `set` of 1 record | 110,463 | 8,043 |
+| `list` of 10 records | 987,076 | 102,864 |
+
+A listed record costs about 98,000 fuel, most of it the two decodes'
+schema charges (`JSON_SCHEMA_TYPE`/`JSON_SCHEMA_FIELD` per call: the schema
+is read and checked on every `kv_key`/`kv_value`, as on every checked
+parse): listing 50 records takes about 4.9M of the 8M turn.
+
+Mixed-kind conversions (`mixed_kind_conversion_fuel`: every pair of twelve
+mixed primitives of a `string | number | bigint` array, with fractions,
+`1e21`, digit and non-digit strings, `5n` and `-70000000000n`, compared with
+`<`, `<=`, `==` and `===`, and each converted with `String`): v37 234,585
+fuel with its host work uncharged, **264,295 at the fair rates**, v38
+**785,203** (identical output). The accepted regression is 3.0 times the
+fair-rated v37 on this fixture (the earlier fixture measured 425,395 against
+348,471 unrated): the BigInt beyond 2^32 and the non-digit strings reach the
+linked comparison and parser, which cost their instructions (thousands per
+call) where the host import charges `CALL` and its bytes.
+
+Module size: the linked library is 443,815 bytes (wave-2 293,907; the
+conversions and readers +41,352, linked JSON +109,486, shared without
+duplicates: the sum of the two branch deltas is 150,838, the integrated
+delta 149,908). Linked JSON's scratch path in the library's allocator adds
+about 600 bytes of code to every linked closure (`primitive_to_string` 10,123
+code bytes, 9.3 KiB before), so a v38 program whose only linked code is
+Number text grew past its v37 build (32,822 against 31,335 bytes;
+`unread_module_constants_cost_nothing_at_startup` now avoids Number text, as
+`unreachable_async_functions_and_their_frames_are_removed` already did).
+
+Imports of a v38 module that parses checked JSON, stringifies, and gets,
+sets and lists KV records (a scratch project, 231,296 bytes): the nine
+`kv_*` imports, `json_stringify_owned`, `promise_react`, `promise_settle`,
+`scheduler_enqueue`, `promise_unhandled`, `promise_handled` and
+`log_string16`; `json_parse_v19` is linked. Its one turn takes 662,988 fuel
+and 14 host calls.
+
+#### Wave-3a integration open items
+
+Recorded, not implemented (owner decisions where stated):
+
+- Compiled per-schema JSON decoders (owner decision: ahead-of-time decoders
+  emitted by the compiler, no cross-call schema cache); they would also
+  remove the per-call schema charge of KV decodes.
+- Linked `json_stringify_owned` (its `no_std` encoder over the shared value18
+  readers).
+- `value_log_v12` split into a linked formatter and the `log_string16`
+  effect.
+- Wave 3 (c): owned results larger than 1 MiB, including the case-mapping
+  call sites.
+- Idle collection between turns, then an incremental collector (owner
+  decision; wave 3 (f)).
+- HTTP adapters for v38 (owner decision).
+- A bounded network-wait step for scripted sessions (wave 3 (g)).
+- KV: the event-loop (async) completion model instead of the synchronous
+  wait, `watch` and queues, and the guest mapping of `Date`, `Map`, `Set` and
+  BigInt values; whether a per-open or per-durable-commit fuel rate should
+  price SQLite's fixed I/O ([KV fair fuel](#kv-fair-fuel-v38)).
+- `if (res.ok)` narrowing on boolean-literal discriminants.
+- The L0 view protocol's open choices (wave 3 (i)).
 
 ### Platform targets and application model
 

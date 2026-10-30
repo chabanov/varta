@@ -17,23 +17,10 @@ fn compile(source: &str, profile: P) -> Vec<u8> {
     wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
     bytes
 }
-/// Test-only per-turn fuel (CLAUDE.md §11): the 24-member fixture parses 25
-/// events in one turn, which with JSON decoded in guest code takes about
-/// 1.1M fuel (the development plan's per-turn fuel recommendation).
-const TEST_FUEL_PER_TURN: u64 = 4 * abi::FUEL;
+/// Production budgets: the 24-member fixture parses 25 events in one turn
+/// (about 1.2M fuel at the fair rates), within the v38 per-turn fuel.
 fn run(source: &str, profile: P) -> Vec<String> {
-    let budgets = varta_common::budget::BudgetRequest {
-        fuel_per_turn: Some(TEST_FUEL_PER_TURN),
-        ..Default::default()
-    };
-    let report = VartaRuntime::new().run_with(
-        &compile(source, profile),
-        RunOptions {
-            budgets,
-            budget_ceiling: Some(budgets),
-            ..RunOptions::default()
-        },
-    );
+    let report = VartaRuntime::new().run_with(&compile(source, profile), RunOptions::default());
     if let Some(failure) = report.failure {
         panic!("{failure}\n{source}");
     }
@@ -308,7 +295,12 @@ fn the_24_member_union_survives_forced_collections() {
     let runtime = crate::VartaRuntime::new();
     let module = runtime.prepare_module(&bytes).unwrap();
     let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
-    execution.store.set_fuel(TEST_FUEL_PER_TURN).unwrap();
+    // The v38 production per-turn fuel (the bare execution starts with the
+    // frozen per-execution budget).
+    execution
+        .store
+        .set_fuel(varta_common::budget::TURN_FUEL)
+        .unwrap();
     let instance = execution.instantiate_prepared(&module).unwrap();
     let store = &mut execution.store;
     let start = instance.get_func(&mut *store, "_start").unwrap();

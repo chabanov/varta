@@ -16208,23 +16208,23 @@ fn manifest_budgets_need_v38_and_are_capped_by_the_host_policy() {
         assert!(!check.status.success(), "{bad}: {}", combined(&check));
     }
     // A raise is capped at the production default unless the host allows it.
-    project.configure("budgets", serde_json::json!({"fuelPerTurn": 5000000}));
+    project.configure("budgets", serde_json::json!({"fuelPerTurn": 40000000}));
     let build = project.command(&["build"]);
     assert!(build.status.success(), "{}", combined(&build));
     let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
     let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
-    assert_eq!(info["budgets"]["fuelPerTurn"], 5_000_000);
+    assert_eq!(info["budgets"]["fuelPerTurn"], 40_000_000);
     let capped = project.command(&["run", "dist/app.wasm", "--budget-report"]);
     assert!(capped.status.success(), "{}", combined(&capped));
     assert!(
         combined(&capped)
-            .contains("varta budget: capped fuelPerTurn: requested 5000000, allowed 1000000"),
+            .contains("varta budget: capped fuelPerTurn: requested 40000000, allowed 8000000"),
         "{}",
         combined(&capped)
     );
     fs::write(
         project.0.join("host-policy.json"),
-        br#"{"abiVersion":34,"budgets":{"fuelPerTurn":3000000},"capabilities":[]}"#,
+        br#"{"abiVersion":34,"budgets":{"fuelPerTurn":30000000},"capabilities":[]}"#,
     )
     .unwrap();
     let allowed = project.command(&[
@@ -16236,9 +16236,9 @@ fn manifest_budgets_need_v38_and_are_capped_by_the_host_policy() {
     ]);
     assert!(allowed.status.success(), "{}", combined(&allowed));
     let text = combined(&allowed);
-    assert!(text.contains("/3000000, host calls"), "{text}");
+    assert!(text.contains("/30000000, host calls"), "{text}");
     assert!(
-        text.contains("capped fuelPerTurn: requested 5000000, allowed 3000000"),
+        text.contains("capped fuelPerTurn: requested 40000000, allowed 30000000"),
         "{text}"
     );
     // A host policy never carries consent metadata.

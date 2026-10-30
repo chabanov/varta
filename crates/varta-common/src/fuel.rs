@@ -44,6 +44,15 @@ pub const JSON_SCHEMA_FIELD: u64 = 3000;
 pub const JSON_STRINGIFY_VALUE: u64 = 1500;
 /// One UTF-16 code unit of serialized JSON output.
 pub const JSON_STRINGIFY_UNIT: u64 = 30;
+/// One KV storage operation (v38 `kv`): opening a database, one snapshot
+/// read or one atomic commit (its SQLite statements and transaction; the
+/// durable sync of a commit is bounded by the turn deadline, not by fuel).
+pub const KV_OPERATION: u64 = 100_000;
+/// One byte of a KV key or value: encoded and staged, written by a commit or
+/// returned by a read.
+pub const KV_BYTE: u64 = 10;
+/// One entry a KV read returns (its decode pays the checked JSON rates).
+pub const KV_ENTRY: u64 = 2_000;
 
 /// The fair fuel of `units` of work at `rate`, saturating: a charge that
 /// cannot be represented cannot be paid either.

@@ -565,6 +565,43 @@ fn linked_value_measurements() {
     }
 }
 
+/// The mixed-kind regression of the development plan: every pair of twelve
+/// mixed primitives (strings, BigInts, fractions) compared four ways and
+/// converted, under v37 (host imports unrated and at the fair rates) and
+/// v38 (linked): `cargo test -p varta-runtime --lib mixed_kind_conversion_fuel -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn mixed_kind_conversion_fuel() {
+    let source = r#"
+export function main(): void {
+  const xs: (string | number | bigint)[] = [0, 1.5, -2, 1e21, "3", "12.5", "abc", "", "007", 5n, -70000000000n, 2];
+  let s = 0;
+  let text = 0;
+  for (const a of xs) {
+    text = text + String(a).length;
+    for (const b of xs) {
+      if (a < b) { s = s + 1; }
+      if (a <= b) { s = s + 2; }
+      if (a == b) { s = s + 4; }
+      if (a === b) { s = s + 8; }
+    }
+  }
+  console.log(String(s) + " " + String(text));
+}
+"#;
+    let run = |profile, rated| {
+        let run = crate::codegen_v2_tests::run_budgets(&compile(source, profile), 20, rated);
+        assert_eq!(run.error, None);
+        run
+    };
+    let (v37, v37_rated, v38) = (run(V37, false), run(V37, true), run(V38, false));
+    assert_eq!(v37.lines, v38.lines);
+    println!(
+        "{:?}: v37 {} (host work unrated), v37 at fair rates {}, v38 {}",
+        v38.lines, v37.fuel, v37_rated.fuel, v38.fuel
+    );
+}
+
 /// Conversions, comparisons and readers keep their results while
 /// collections run between them: each iteration builds about 120 KiB of
 /// garbage, far more than the managed heap holds.

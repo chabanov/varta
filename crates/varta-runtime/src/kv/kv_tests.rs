@@ -12,14 +12,14 @@ const ROWS: &str = include_str!("../kv_cases/deno-2.9.4/rows.json");
 const LOG: &str = "varta log: ";
 
 /// A temporary host tree: `root/` (the `data` root) and `outside/`.
-struct Tree(PathBuf);
+pub(super) struct Tree(PathBuf);
 impl Drop for Tree {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 impl Tree {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let base = std::env::temp_dir().join(format!(
             "varta-kv-{}-{}",
@@ -30,7 +30,7 @@ impl Tree {
         std::fs::create_dir_all(base.join("outside")).unwrap();
         Self(base)
     }
-    fn root(&self) -> PathBuf {
+    pub(super) fn root(&self) -> PathBuf {
         self.0.join("root")
     }
     fn fixture(&self, name: &str) -> PathBuf {
@@ -38,7 +38,7 @@ impl Tree {
         std::fs::write(&path, FIXTURE).unwrap();
         path
     }
-    fn roots(&self) -> FileRoots {
+    pub(super) fn roots(&self) -> FileRoots {
         let mut roots = FileRoots::new();
         roots.open("data", &self.root()).unwrap();
         roots
@@ -52,14 +52,14 @@ fn grant(id: &str, patterns: &[&str]) -> CapabilityGrant {
     }
 }
 
-fn read_write() -> Vec<CapabilityGrant> {
+pub(super) fn read_write() -> Vec<CapabilityGrant> {
     vec![
         grant(kv::READ_CAPABILITY, &["/data/**"]),
         grant(kv::WRITE_CAPABILITY, &["/data/**"]),
     ]
 }
 
-fn compile(source: &str) -> Vec<u8> {
+pub(super) fn compile(source: &str) -> Vec<u8> {
     let bytes = varta_compiler::compile_typescript_with_profile(
         source,
         LanguageProfile::CheckedF64Utf16V38,
@@ -151,7 +151,7 @@ fn deno_row(key: &[u8]) -> (Vec<u8>, i64) {
 }
 
 /// Every row of a database file: `(k, v, v_encoding, version)`.
-fn rows(path: &Path) -> Vec<(Vec<u8>, Vec<u8>, i64, i64)> {
+pub(super) fn rows(path: &Path) -> Vec<(Vec<u8>, Vec<u8>, i64, i64)> {
     let connection = rusqlite::Connection::open(path).unwrap();
     let mut statement = connection
         .prepare("select k, v, v_encoding, version from kv order by k")
@@ -875,7 +875,7 @@ fn fenced_rows(path: &Path) -> usize {
         .count()
 }
 
-fn waiting_runtime() -> tokio::runtime::Runtime {
+pub(super) fn waiting_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()

@@ -83,6 +83,11 @@ impl<'a> Classifier<'a> {
         Ok(())
     }
 
+    /// The values visited so far (the decoded values of a finished root).
+    pub(crate) fn values(&self) -> usize {
+        self.nodes
+    }
+
     /// The root value at the schema's root type.
     pub(crate) fn root(&mut self, value: &Value) -> Result<JsonValue, DecodeError> {
         self.classify(value, self.schema.root, 0)

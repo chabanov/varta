@@ -11,6 +11,17 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 KV storage pays fair host fuel (`kv`): `fuel::KV_OPERATION` (100,000)
+  per open, read and commit, `fuel::KV_BYTE` (10) per key or value byte
+  staged, committed and returned by a read, `fuel::KV_ENTRY` (2,000) per
+  entry returned, and the checked JSON schema and value rates for each
+  decode, on top of the call and its descriptor and result bytes. The rates
+  are calibrated against guest time (host time per operation, byte and entry
+  at the measured guest fuel rate, rounded up); a commit's durable sync and
+  opening a file stay bounded by the turn deadline. An unaffordable charge is
+  the typed fuel error before the effect, so such a commit is never
+  submitted. The `embedding-fair-fuel` block lists the rates.
+
 - V38 callable signatures (`structural_subtyping`): a class method, function
   field, function value or function literal may declare more parameters than
   the type it is assigned to when every extra one is optional, has a default
@@ -1199,6 +1210,14 @@ in [conformance/README.md](conformance/README.md).
 
 ### Changed
 
+- V38 per-turn fuel default (owner decision): `budget::TURN_FUEL` =
+  8,000,000 fuel per turn (`Budgets::TURN`), from the measured console turns
+  at the fair host-fuel rates; a manifest can only lower it and only a host
+  ceiling can raise it. v1–v37 keep `abi::FUEL` per execution. The generated
+  limits table lists both.
+- Pilot pin: uarp-sdk 0.13.2 (owner decision; 65 of 65 files check under v38,
+  sources unmodified).
+
 - Unhandled-rejection reports (v34 and v35 scheduler) hold bounded host
   memory: each reason is copied out of guest memory only up to 256 UTF-16 code
   units per string field and rendered to at most 2048 bytes, at most 16
@@ -1232,6 +1251,11 @@ in [conformance/README.md](conformance/README.md).
   are generated from the registries and checked by a workspace test.
 
 ### Fixed
+
+- V38 wave-3a integration: a fair-fuel charge that empties the fuel inside
+  `host::input` or `host::result*` of the event, network-text and KV imports
+  is the typed fuel-budget error (`HostFailure::into_trap`), no longer an
+  ad-hoc host error message.
 
 - V38 wave-2 integration: strict record-union matching (`web_bytes`) over
   more than 16 members tests a member already held by the cell as a flat

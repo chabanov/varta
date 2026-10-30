@@ -9056,9 +9056,13 @@ ceiling sets none): a package can lower its budgets, and only the embedder can
 raise them. A capped request is not an error; the budget report lists it. A
 manifest or host policy with `abiVersion` below 34 that declares `budgets`,
 `required` or `purpose` is rejected. Modules of earlier profiles keep the
-production budgets whatever a ceiling declares. Defaults equal the production
-values in the [limits table](#resource-limits), so a v38 module without budgets
-runs with the same allowances as before, now per turn.
+production budgets whatever a ceiling declares. The v38 defaults
+(`Budgets::TURN`) are the production values in the [limits
+table](#resource-limits), per turn: `budget::TURN_FUEL` fuel per turn (owner
+decision, from the measured v38 console turns with host work at the [fair
+rates](#fair-host-fuel-fair_fuel)) and the earlier profiles' deadline, memory,
+host-call and output values. A manifest can only lower them and only a host
+ceiling can raise them; v1–v37 keep `abi::FUEL` per execution.
 
 **Exhaustion.** A v38 turn that exhausts a budget fails with `BudgetExhausted`
 (`turn N (kind) exhausted its fuel budget (… instructions per turn); the
@@ -9095,8 +9099,9 @@ reference host `--budget-report` shows the same order: a counting loop costs
 about 90 to 110 instructions per iteration, a timer turn that logs one line
 about 1,000 to 1,600, and the first turn of a small program about 40,000 plus
 its own work. These are the working UI profile: an embedder sets per-turn
-values for UI targets through its ceiling from such measurements; the
-production defaults stay unchanged.
+values for UI targets through its ceiling from such measurements. The v38
+default per-turn fuel was raised from `abi::FUEL` to `budget::TURN_FUEL` once
+host work paid fair fuel ([measurements](development-plan.md#fair-host-fuel-v38)).
 
 **Run reports and diagnostics.** `VartaRuntime::run_with(bytes, RunOptions)`
 returns a `RunReport`: the output lines captured before any failure, the
@@ -10513,8 +10518,26 @@ that error too, never a logged host status. Fuel the import's guest
 callbacks consume (allocator, retention helper) is guest fuel. Fuel-profile
 probes refund their call charge. Profiles before v38 charge nothing; a
 test-only switch (`Execution::rate_host_work`) charges an earlier profile at
-the same rates so fuel comparisons are like with like. The rates are
-calibrated against the linked equivalents
+the same rates so fuel comparisons are like with like.
+
+KV storage ([`kv`](#kv-storage-kv)) adds three rates: `KV_OPERATION` per
+`kv_open`, `kv_read` and `kv_commit` (after the grant check, before the file
+is opened, the read runs or the commit is submitted), `KV_BYTE` per key or
+value byte encoded by `kv_stage` (before it is kept), written by a commit
+(with the operation charge) and returned by a read, and `KV_ENTRY` per entry
+a read returns (with its bytes, before the entry count reaches the guest).
+A decode (`kv_key`, `kv_value`) pays `JSON_SCHEMA_TYPE`,
+`JSON_SCHEMA_FIELD` and `JSON_PARSE_VALUE` for its schema and the values it
+decodes, before the first guest allocation, as checked JSON does; a failed
+decode pays them before its `TypeError` is thrown. A charge the fuel cannot
+cover is the typed fuel-budget error before the operation's effect: an
+unaffordable commit is never submitted. KV has no linked equivalent, so its
+rates are calibrated against guest time instead
+([KV fair fuel](development-plan.md#kv-fair-fuel-v38)): the host time of each
+operation (wall time minus its guest fuel at the measured guest fuel rate),
+fitted to a fixed part, a part per byte and a part per entry and converted at
+the guest's fuel rate, then rounded up. The JSON rates are calibrated against
+the linked equivalents
 ([fair host fuel](development-plan.md#fair-host-fuel-v38)): `CALL` the
 cheapest linked call, `BYTE` Wasmtime's `memory.copy` rate, the JSON rates
 the fitted upper bound of the linked decoder's fuel per unit, value and
@@ -10884,8 +10907,13 @@ into the static type the program names. V37 and earlier profiles reject
   target like `json_parse_v19`; `kv_entry (index, field) -> i32` and `kv_text ()
   -> i32` return text in the host result buffer; `kv_close (id)`. Open, read,
   commit, stage and the two decoders are charged to the host-call budget; the
-  entry, text and close bookkeeping observes the deadline only. A read
-  descriptor is the version, the database id, the range count and per range
+  entry, text and close bookkeeping observes the deadline only. Every import
+  also pays [fair host fuel](#fair-host-fuel-fair_fuel): the call and its
+  descriptor and result bytes, `KV_OPERATION` per open, read and commit,
+  `KV_BYTE` per key or value byte staged, committed or returned, `KV_ENTRY`
+  per entry returned, and the checked JSON schema and value rates for a
+  decode. SQLite's own time is bounded by the turn deadline and the
+  commit cutoff above, not by fuel. A read descriptor is the version, the database id, the range count and per range
   the `kv::Selector`, one or two stage ids, the limit, the reverse flag and the
   cursor; a commit descriptor is the version, the id, the check count with
   each check's key stage and versionstamp (empty for null), and the mutation
@@ -12073,7 +12101,8 @@ a denied exit returns a failed `VartaResult<void>`.
 | --- | --- | --- |
 | Guest linear memory | 8 MiB | `abi::MAX_MEMORY_BYTES` |
 | Linked intrinsic stack in memory 0 (v38 `linked_intrinsics`) | 16 KiB | `abi::INTRINSIC_STACK_BYTES` |
-| Guest instructions (fuel) | 1000000 | `abi::FUEL` |
+| Guest instructions (fuel), v1–v37 per execution | 1000000 | `abi::FUEL` |
+| Guest instructions (fuel), v38 per turn (`turn_budgets`) | 8000000 | `budget::TURN_FUEL` |
 | Execution/HTTP deadline | 5 s | `abi::DEADLINE_SECONDS` |
 | Host calls per execution | 1024 | `abi::MAX_HOST_CALLS` |
 | Captured output | 1 MiB | `abi::MAX_OUTPUT_BYTES` |
@@ -12111,7 +12140,8 @@ the runtime's module, catalog and schema readers, the value readers'
 function-index bounds and the artifact and launcher payload readers all use
 it. V38 (`program_limits()`) admits the WebAssembly implementation limits
 ([program limits](#program-limits-program_limits)); production runtime
-budgets are the same for every profile.
+budgets are the same for every profile except the v38 per-turn fuel
+(`budget::TURN_FUEL`).
 
 <!-- generated:program-limits:begin (checked by crates/varta-common/tests/documentation.rs) -->
 | Limit | v1–v37 (`limits::FROZEN`) | v38 (`limits::WASM`) | Field |
@@ -12151,8 +12181,9 @@ The per-value rows above (array elements and spread arguments, string
 values, JSON depth, visited values, input and output, live frames, pending
 continuations and timers) are the frozen limits of every profile before v38.
 Profile v38 takes them from `limits::DataLimits::V38`
-([data limits](#data-limits-data_limits)); its memory, fuel, deadline,
-host-call and output budgets are the production budgets above.
+([data limits](#data-limits-data_limits)); its memory, deadline, host-call
+and output budgets are the production budgets above, and its fuel is
+`budget::TURN_FUEL` per turn.
 
 In v38 the fuel, host-call and microtask rows apply per event turn, and the
 deadline per turn in a long-lived application instance; a manifest may lower
