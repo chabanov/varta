@@ -44,7 +44,9 @@ pub(super) fn function(
     retain: u32,
     keys: bool,
     sparse: bool,
+    limits: varta_common::limits::DataLimits,
 ) -> Function {
+    let sizes = sparse::Sizes::new(limits);
     let mut f = Function::new([(15, ValType::I32), (2, ValType::I64)]);
     instructions(
         &mut f,
@@ -55,7 +57,7 @@ pub(super) fn function(
             I::I32WrapI64,
             I::I32Load(LENGTH_WORD),
             I::LocalTee(LENGTH),
-            I::I32Const(values::MAX_ARRAY_ELEMENTS as i32),
+            I::I32Const(limits.array_elements as i32),
             I::I32GtU,
             I::If(BlockType::Empty),
             I::Unreachable,
@@ -87,18 +89,27 @@ pub(super) fn function(
             I::End,
             I::End,
             I::End,
-            I::LocalGet(CAPACITY),
-            I::I32Const(values::ARRAY_SLOT_BYTES as i32),
-            I::I32Mul,
-            I::I32Const(
-                (values::ARRAY_META_BYTES
-                    + if sparse {
-                        values::SPARSE_BITMAP_BYTES
-                    } else {
-                        0
-                    }) as i32,
-            ),
-            I::I32Add,
+        ]
+        .into_iter()
+        .chain(if sizes.large {
+            sizes.backing_bytes(&[I::LocalGet(CAPACITY)])
+        } else {
+            vec![
+                I::LocalGet(CAPACITY),
+                I::I32Const(values::ARRAY_SLOT_BYTES as i32),
+                I::I32Mul,
+                I::I32Const(
+                    (values::ARRAY_META_BYTES
+                        + if sparse {
+                            values::SPARSE_BITMAP_BYTES
+                        } else {
+                            0
+                        }) as i32,
+                ),
+                I::I32Add,
+            ]
+        })
+        .chain([
             I::LocalTee(BYTES),
             I::Call(allocate),
             I::LocalSet(DEST),
@@ -106,7 +117,7 @@ pub(super) fn function(
             I::I32Const(0),
             I::LocalGet(BYTES),
             I::MemoryFill(MEMORY),
-        ],
+        ]),
     );
     header(
         &mut f,
@@ -143,9 +154,9 @@ pub(super) fn function(
     pack(&mut f, BYTES, CELL);
     instructions(&mut f, [I::Call(retain), I::LocalSet(OUTPUT)]);
     if sparse {
-        sparse::bitmap(&mut f, INPUT);
+        sparse::bitmap_of(&mut f, INPUT, sizes);
         f.instruction(&I::LocalSet(SOURCE_BITS));
-        sparse::bitmap(&mut f, OUTPUT);
+        sparse::bitmap_of(&mut f, OUTPUT, sizes);
         f.instruction(&I::LocalSet(DEST_BITS));
     }
     instructions(

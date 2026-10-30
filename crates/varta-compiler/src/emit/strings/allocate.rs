@@ -1,24 +1,25 @@
 //! First-fit reusable blocks; collect before growing committed memory, once per request.
 use super::*;
 
+// Locals of the allocator (parameter 0 is the requested byte count).
+const LEN: u32 = 0;
+const NEED: u32 = 1;
+const CURRENT: u32 = 2;
+const PREVIOUS: u32 = 3;
+const SIZE: u32 = 4;
+const REST: u32 = 5;
+const REPLACEMENT: u32 = 6;
+const END: u32 = 7;
+const RETRIED: u32 = 8;
+const REPEAT: u32 = 0;
+const DONE: u32 = 1;
+const RETRY_FROM_IF: u32 = 1;
 pub(super) fn function(
     globals: Globals,
     collect: u32,
     limits: varta_common::limits::DataLimits,
 ) -> Function {
     use varta_common::limits::Resource;
-    const LEN: u32 = 0;
-    const NEED: u32 = 1;
-    const CURRENT: u32 = 2;
-    const PREVIOUS: u32 = 3;
-    const SIZE: u32 = 4;
-    const REST: u32 = 5;
-    const REPLACEMENT: u32 = 6;
-    const END: u32 = 7;
-    const RETRIED: u32 = 8;
-    const REPEAT: u32 = 0;
-    const DONE: u32 = 1;
-    const RETRY_FROM_IF: u32 = 1;
     let mut function = Function::new([(RETRIED, ValType::I32)]);
     let mut code = vec![
         I::LocalGet(LEN),
@@ -152,14 +153,9 @@ pub(super) fn function(
                 I::I32DivU,
                 I::MemorySize(MEMORY),
                 I::I32Sub,
-                I::MemoryGrow(MEMORY),
-                I::I32Const(-1),
-                I::I32Eq,
-                I::If(BlockType::Empty),
             ])
-            .chain(globals.fail(Resource::Memory, NEED))
+            .chain(grow(globals, limits))
             .chain([
-                I::End,
                 I::End,
                 I::GlobalGet(globals.heap),
                 I::LocalTee(CURRENT),
@@ -183,4 +179,46 @@ pub(super) fn function(
             ]),
     );
     function
+}
+
+/// `[needed pages] -> []`: grow memory or report the memory budget. V38
+/// (`data_limits`) grows by at least half the committed pages when the budget
+/// allows, so collections run once per geometric growth step rather than on
+/// every page (amortized linear collection work while live data grows);
+/// it falls back to the exact need. Earlier profiles grow by the exact need.
+fn grow(globals: Globals, limits: varta_common::limits::DataLimits) -> Vec<I<'static>> {
+    use varta_common::limits::Resource;
+    let mut code = Vec::new();
+    if limits.amortized_growth {
+        code.extend([
+            I::LocalSet(SIZE),
+            I::MemorySize(MEMORY),
+            I::I32Const(1),
+            I::I32ShrU,
+            I::LocalSet(REST),
+            I::LocalGet(REST),
+            I::LocalGet(SIZE),
+            I::LocalGet(REST),
+            I::LocalGet(SIZE),
+            I::I32GtU,
+            I::Select,
+            I::MemoryGrow(MEMORY),
+            I::I32Const(-1),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+            I::LocalGet(SIZE),
+        ]);
+    }
+    code.extend([
+        I::MemoryGrow(MEMORY),
+        I::I32Const(-1),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+    ]);
+    code.extend(globals.fail(Resource::Memory, NEED));
+    code.push(I::End);
+    if limits.amortized_growth {
+        code.push(I::End);
+    }
+    code
 }

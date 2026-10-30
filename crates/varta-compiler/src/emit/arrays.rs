@@ -21,7 +21,7 @@ impl Emitter<'_> {
         let bitmap = values::ARRAY_META_BYTES + capacity * values::ARRAY_SLOT_BYTES;
         let size = bitmap
             + if self.profile.sparse_arrays() {
-                values::SPARSE_BITMAP_BYTES
+                varta_common::limits::DataLimits::sparse_bitmap_bytes(capacity)
             } else {
                 0
             };
@@ -289,7 +289,7 @@ impl Emitter<'_> {
             I::F64Lt,
             I::I32Or,
             I::LocalGet(self.float_temporary),
-            I::F64Const((values::MAX_ARRAY_ELEMENTS as f64).into()),
+            I::F64Const((self.profile.data().array_elements as f64).into()),
             I::F64Gt,
             I::I32Or,
         ]);
@@ -314,12 +314,21 @@ impl Emitter<'_> {
             I::I32Sub,
             I::I32Shl,
             I::End,
-            I::I32Const(values::ARRAY_SLOT_BYTES as i32),
-            I::I32Mul,
-            I::I32Const((values::ARRAY_META_BYTES + values::SPARSE_BITMAP_BYTES) as i32),
-            I::I32Add,
-            I::LocalTee(bytes),
         ]);
+        let sizes = strings::Sizes::new(self.profile.data());
+        if sizes.large {
+            // The capacity, kept in `bytes` until its backing size replaces it.
+            self.code.push(I::LocalSet(bytes));
+            self.code.extend(sizes.backing_bytes(&[I::LocalGet(bytes)]));
+        } else {
+            self.code.extend([
+                I::I32Const(values::ARRAY_SLOT_BYTES as i32),
+                I::I32Mul,
+                I::I32Const((values::ARRAY_META_BYTES + values::SPARSE_BITMAP_BYTES) as i32),
+                I::I32Add,
+            ]);
+        }
+        self.code.push(I::LocalTee(bytes));
         self.string_helper(strings::Helper::Allocate)?;
         self.code.extend([
             I::LocalSet(self.temporary),

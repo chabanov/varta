@@ -16,6 +16,7 @@ mod index_key;
 mod regexp;
 mod roots;
 mod sparse;
+pub(super) use sparse::Sizes;
 mod string_index;
 mod string_range;
 mod string_search;
@@ -267,7 +268,7 @@ impl Helper {
                 profile.closures(),
                 frames.is_some(),
                 profile.wide_records(),
-                profile.data().array_elements,
+                profile.data(),
             ),
             Self::FrameTable => super::frames::table_helper(
                 globals,
@@ -282,12 +283,14 @@ impl Helper {
                 profile.sparse_arrays(),
                 false,
                 profile.bigint_values(),
+                sparse::Sizes::new(profile.data()),
             ),
             Self::ArrayLastIndex => array_search::function(
                 helpers[&Self::Compare],
                 profile.sparse_arrays(),
                 true,
                 profile.bigint_values(),
+                sparse::Sizes::new(profile.data()),
             ),
             Self::StringIncludes => string_search::function(crate::ir::StringSearch::Includes),
             Self::StringStartsWith => string_search::function(crate::ir::StringSearch::StartsWith),
@@ -323,23 +326,33 @@ impl Helper {
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
                 profile.sparse_arrays(),
+                sparse::Sizes::new(profile.data()),
             ),
-            Self::ArrayReverse => array_reverse::function(profile.sparse_arrays()),
-            Self::ArrayFill => array_fill::function(profile.sparse_arrays()),
+            Self::ArrayReverse => {
+                array_reverse::function(profile.sparse_arrays(), sparse::Sizes::new(profile.data()))
+            }
+            Self::ArrayFill => {
+                array_fill::function(profile.sparse_arrays(), sparse::Sizes::new(profile.data()))
+            }
             Self::ArrayKeys | Self::ArrayValues => array_enumeration::function(
                 globals,
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
                 self == Self::ArrayKeys,
                 profile.sparse_arrays(),
+                profile.data(),
             ),
-            Self::ArrayPush => {
-                array_push::function(helpers[&Self::Allocate], profile.sparse_arrays())
+            Self::ArrayPush => array_push::function(
+                helpers[&Self::Allocate],
+                profile.sparse_arrays(),
+                profile.data(),
+            ),
+            Self::ArrayResize => array_resize::function(helpers[&Self::Allocate], profile.data()),
+            Self::ArrayPresent => sparse::function(false, profile.data()),
+            Self::ArrayStringHasOwn => {
+                array_own_key::function(helpers[&Self::ArrayPresent], profile.data())
             }
-            Self::ArrayResize => array_resize::function(helpers[&Self::Allocate]),
-            Self::ArrayPresent => sparse::function(false),
-            Self::ArrayStringHasOwn => array_own_key::function(helpers[&Self::ArrayPresent]),
-            Self::ArraySetPresent => sparse::function(true),
+            Self::ArraySetPresent => sparse::function(true, profile.data()),
             Self::ArrayIndex => array_index::function(profile.resizable_arrays()),
             Self::ArrayIndexKey => index_key::function(),
         }

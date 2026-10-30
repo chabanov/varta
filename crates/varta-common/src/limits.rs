@@ -118,6 +118,11 @@ pub struct DataLimits {
     /// Whether the guest reports exhausted resources through
     /// [`RESOURCE_FAILURE`] before trapping.
     pub reports_resources: bool,
+    /// Whether the guest heap grows geometrically (by at least half its
+    /// committed pages, within the memory budget) and marks through a
+    /// bounded worklist, so collection work stays amortized linear in the
+    /// allocated bytes while live data grows.
+    pub amortized_growth: bool,
     /// Resume tokens the host scheduler holds at once.
     pub pending_continuations: usize,
     /// Timers armed or awaiting release at once.
@@ -133,6 +138,7 @@ impl DataLimits {
         json_nodes: value::MAX_JSON_NODES,
         json_input_bytes: abi::MAX_INPUT_BYTES,
         reports_resources: false,
+        amortized_growth: false,
         pending_continuations: crate::scheduler::MAX_PENDING_CONTINUATIONS,
         pending_timers: crate::scheduler::MAX_PENDING_TIMERS,
     };
@@ -150,6 +156,7 @@ impl DataLimits {
         // one and a half times its UTF-16 bytes.
         json_input_bytes: V38_MAX_STRING_BYTES,
         reports_resources: true,
+        amortized_growth: true,
         pending_continuations: V38_MAX_PENDING_CONTINUATIONS,
         pending_timers: V38_MAX_PENDING_TIMERS,
     };

@@ -1,5 +1,5 @@
 use super::*;
-use varta_common::value::{MAX_ARRAY_ELEMENTS, MAX_ARRAY_TYPES};
+use varta_common::value::MAX_ARRAY_TYPES;
 
 pub(super) fn intern(element: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     if matches!(element, Type::Generator(_)) {
@@ -26,7 +26,7 @@ pub(super) fn intern(element: Type, types: &mut ir::ValueTypes) -> Result<Type> 
 
 impl Lower<'_> {
     pub(super) fn array(&mut self, array: &ast::ArrayLit, expected: Option<Type>) -> Result<Expr> {
-        if array.elems.len() > MAX_ARRAY_ELEMENTS {
+        if array.elems.len() > self.types.profile.data().array_elements {
             return Err(invalid("array element count exceeds limit"));
         }
         if self.types.profile.array_inference() && !matches!(expected, Some(Type::Array(_))) {
@@ -281,7 +281,7 @@ impl Lower<'_> {
         } else if call.args.is_empty() {
             (self.types.number(), E::Length(Box::new(base)))
         } else {
-            if call.args.len() > MAX_ARRAY_ELEMENTS {
+            if call.args.len() > self.types.profile.data().array_elements {
                 return Err(invalid("array.push argument limit"));
             }
             let mut values = Vec::new();

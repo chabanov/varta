@@ -224,6 +224,9 @@ pub(crate) struct RuntimeContext {
     output: RunOutput,
     output_bytes: usize,
     host_calls: u32,
+    /// The host-call budget: the production `abi::MAX_HOST_CALLS`; only
+    /// tests declare a larger one (`Execution::allow_test_host_calls`).
+    host_call_limit: u32,
     deadline: Instant,
     http_control: Option<(String, HttpShutdown)>,
     random: random::RandomSource,
@@ -242,7 +245,7 @@ impl RuntimeContext {
     }
 
     fn check_budget(&self) -> Result<(), wasmtime::Error> {
-        if self.host_calls > abi::MAX_HOST_CALLS || Instant::now() >= self.deadline {
+        if self.host_calls > self.host_call_limit || Instant::now() >= self.deadline {
             return Err(wasmtime::Error::msg("host operation budget exhausted"));
         }
         Ok(())

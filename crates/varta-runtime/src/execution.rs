@@ -36,6 +36,7 @@ impl Execution {
                 output: RunOutput::default(),
                 output_bytes: 0,
                 host_calls: 0,
+                host_call_limit: abi::MAX_HOST_CALLS,
                 http_control: None,
                 function_catalog: None,
                 random: crate::random::RandomSource::default(),
@@ -109,6 +110,13 @@ impl Execution {
     #[cfg(test)]
     pub fn allow_test_wall_clock(&mut self, allowance: Duration) {
         self.store.data_mut().deadline = Instant::now() + allowance;
+    }
+    /// Test-only host-call budget (CLAUDE.md §11) for measurements whose
+    /// workload exceeds the production 1024 host calls. Production executions
+    /// never call this.
+    #[cfg(test)]
+    pub fn allow_test_host_calls(&mut self, calls: u32) {
+        self.store.data_mut().host_call_limit = calls;
     }
     pub fn check_deadline(&self) -> Result<(), wasmtime::Error> {
         if Instant::now() >= self.store.data().deadline {

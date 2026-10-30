@@ -120,7 +120,7 @@ impl Lower<'_> {
                 }
                 tail.push(Some(value));
             }
-            if tail.len() > varta_common::value::MAX_ARRAY_ELEMENTS {
+            if tail.len() > self.types.profile.data().array_elements {
                 return Err(invalid("rest array exceeds element bound"));
             }
             result.push(Expr {
