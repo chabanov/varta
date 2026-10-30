@@ -309,6 +309,58 @@ declare class Response {
   json(): Promise<unknown>;
 }
 declare function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
+// checked-f64-utf16-v38 (batch, in development) web bytes: bodies are bytes.
+// `Response.body` is `ReadableStream<Uint8Array>` (the type parameter must be
+// `Uint8Array`; `read()` gives `{ done, value }` with an empty `Uint8Array`
+// once done), `Response` adds `arrayBuffer()`, `bytes()` and `blob()`, and
+// `BodyInit` is `string | URLSearchParams | Blob | ArrayBuffer | Uint8Array |
+// FormData` for requests and responses (a response also takes a stream).
+// `text()`/`json()` of a network body stay host-decoded UTF-8. `ArrayBuffer`,
+// `Blob` and `FormData` are typed guest preludes (TypeScript's DOM library
+// types match their subset; `ArrayBufferView` is `Uint8Array`); a multipart
+// boundary is deterministic (`----formdata-varta-` and the first 11-digit
+// counter that occurs in no part). `globalThis` is typed: `crypto`,
+// `process.env`, `globalThis`, and the functions `fetch`,
+// `encodeURIComponent` and `encodeURI`; any other member is a compile error.
+// `process.env` is a snapshot of the variables the `env.get` grants (package
+// and host ceiling) name exactly; wildcards list nothing and the environment
+// is never enumerated; `process.env.NAME` with a static key reads that name
+// through the env.get check when it runs. Internal imports, host ABI34 minimum: net_request_start_v2 (i32 ptr,
+// i32 len)->f64 id [net.request, host-call budget; descriptor version 2 with
+// text or byte bodies; v38 never imports net_request_start],
+// net_body_read_bytes (f64 id)->() [bookkeeping: the next chunk as bytes,
+// one code unit per byte], env_snapshot (i32 ptr, i32 len)->i32 ptr
+// [env.get, host-call budget; a UTF-16 name: empty for the snapshot of
+// the exactly granted names, else that one variable; JSON object in the host
+// result buffer]. A class merged with a same-named interface takes the
+// interface's members from one `Object.assign(this, …)` in its constructor.
+type BlobPart = string | Blob | ArrayBuffer | Uint8Array;
+interface BlobPropertyBag {
+  type?: string;
+}
+declare class Blob {
+  constructor(blobParts?: BlobPart[], options?: BlobPropertyBag);
+  readonly size: number;
+  readonly type: string;
+  slice(start?: number, end?: number, contentType?: string): Blob;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  bytes(): Promise<Uint8Array>;
+  text(): Promise<string>;
+}
+type FormDataEntryValue = string | Blob;
+declare class FormData {
+  constructor();
+  append(name: string, value: FormDataEntryValue, filename?: string): void;
+  set(name: string, value: FormDataEntryValue, filename?: string): void;
+  delete(name: string): void;
+  get(name: string): FormDataEntryValue | null;
+  getAll(name: string): FormDataEntryValue[];
+  has(name: string): boolean;
+  /** Snapshots in entry order (WHATWG: iterators). */
+  keys(): string[];
+  values(): FormDataEntryValue[];
+  entries(): [string, FormDataEntryValue][];
+}
 declare class URLSearchParams {
   constructor(init?: string | Record<string, string> | string[][]);
   readonly size: number;

@@ -236,7 +236,7 @@ impl Checked for Vec<ast::ExprOrSpread> {
     }
 }
 
-fn this_assign(name: &str, value: Box<ast::Expr>) -> ast::Stmt {
+pub(super) fn this_assign(name: &str, value: Box<ast::Expr>) -> ast::Stmt {
     let span = value.span();
     ast::Stmt::Expr(ast::ExprStmt {
         span,
@@ -312,6 +312,14 @@ pub(super) fn declaration(id: u32, types: &ir::ValueTypes) -> Result<ast::FnDecl
             (function, statements)
         }
         None => implicit(id, types)?,
+    };
+    // V38 (`web_bytes`): `Object.assign(this, X)` provides the members of a
+    // merged interface.
+    let statements = match &class.merged {
+        Some(merged) => {
+            merged_interfaces::rewrite(statements, merged, &class.name, source, class.span)?
+        }
+        None => statements,
     };
     for (_, value) in &class.initializers {
         discipline.check_initializer(&**value)?;

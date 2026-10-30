@@ -13,7 +13,7 @@ and does not claim full ECMAScript, Node or npm compatibility.
 | Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. `v36-merge` with the declared-fields, function-fields, timers and async-generator streams: commit `765743e` (2026-10-29), 2196 tests, 0 failures, conformance 101 passed and 9 known gaps. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
 | Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
 | Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.12.0](#pilot-acceptance-package-uarp-sdk); M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
+| Pilot | [uarp-sdk 0.13.0](#pilot-acceptance-package-uarp-sdk) (0.12.0 until the v38 integration); M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
 | Platform targets | Third-party embedding contract published in [embedding.md](embedding.md); browser, desktop and Raspberry Pi 5 targets, application lifecycle and view layer follow the [accepted design](#platform-targets-and-application-model) (2026-10-29), not implemented yet |
 
 Next work, in order:
@@ -267,10 +267,17 @@ The package is an external acceptance target, not an engine feature. No UARP
 types, routes or client logic enter engine crates, built-in profiles or the core
 CLI, and its sources are not vendored into this repository.
 
-Pinned baseline: version **0.12.0**, tarball SHA-256
-`2a0f2ce97132c90be61ca45c5ea65b77ba25d1706e50894543c5737a6d8bb56e`
-(npm integrity `sha512-zoKVCcSTIJXiLvyUKmXyNBH1xPDo7XRcikch+YUasnQPbvTZ8atvdgCci9e8FD+klG4/VyXcMpYGMlXngEPbEg==`).
-Later versions are adopted explicitly, with this section updated.
+Pinned baseline: version **0.13.0** (owner decision of 2026-10-30, the
+version the console uses and npm `latest`), tarball SHA-256
+`69d986d3002247fc347d5a39742f5a46246163d782dcb910e118c8bb4790395d`
+(npm integrity `sha512-frtICedMsIcJialN4oBVzsqn4sI6O7vWcAw++Ioc7ZuXu7dGM8lwXG+soKCnvtN5zsZmIDr7ztSVH25Wgm+Izg==`,
+verified against the registry), 65 source files. Later versions are adopted
+explicitly, with this section updated. History: every measurement up to and
+including the v38 integration probe used **0.12.0** (tarball SHA-256
+`2a0f2ce97132c90be61ca45c5ea65b77ba25d1706e50894543c5737a6d8bb56e`, npm
+integrity `sha512-zoKVCcSTIJXiLvyUKmXyNBH1xPDo7XRcikch+YUasnQPbvTZ8atvdgCci9e8FD+klG4/VyXcMpYGMlXngEPbEg==`,
+65 source files); 0.13.0 changes the transport's retryable statuses (no
+409), `generated/meta.ts`, the generated models and 15 resource modules.
 
 | Part | Size | Content |
 | --- | --- | --- |
@@ -834,13 +841,25 @@ structural-subtyping stream's text equivalents for byte bodies, Web types and
 integration); the rest stop at `Blob` (10) and at checked conversions to a
 union of record shapes without a literal discriminant (4).
 
+**Web-bytes pilot probe (`v38-web-bytes`, 2026-10-30).** Per-file `varta
+check` under v38 of scratch copies of the pinned **0.13.0** sources
+(`npm pack uarp-sdk@0.13.0`, integrity verified), production budgets, no
+live API call. Unmodified: **62 of 65** files check (the integration probe of
+0.12.0: 5); the 3 others (`generated/resources/public.ts`,
+`generated/resources/index.ts` and `index.ts`, which import it) stop at one
+SDK generator bug: `uploadPublicSessionImage` passes its `BinaryInput` as the
+JSON `body: unknown`, a `Uint8Array` held by `unknown` (a known subset gap;
+the SDK owner fixes the generator). With that one line changed to `binary:
+body` in a scratch copy, **65 of 65** files check, including the merged
+`UarpClient` class. No file stops at a union member limit.
+
 **Wave 2 (open, owned after integration).**
 
 | Stream | Scope | State |
 | --- | --- | --- |
 | (a) Intrinsics in memory 0 and a `no_std` value layout | Move the linked library's private memory into a reserved region of memory 0 (owner decision: no multi-memory); make `varta-common`'s value layout a `no_std` core (`std` feature on by default) that `varta-intrinsics` depends on with `default-features = false`, removing the restated cell readers of `varta_intrinsics::layout`; link the remaining 28 layout-reading pure operations. Also lifts the frozen 1 MiB string and result-buffer limits of the linked string intrinsics under v38 | Implemented in part (branch `v38-intrinsics-region`): one memory with the relocated intrinsic region (`varta.intrinsics`: stack, packed data, reserved arena), the `no_std` core (`abi`, `memory`, `value` cells and error classes, `bigint` transport, `limits`, `text`) as the one owner of the cell layout, `varta-bigint` without `std`, and the 13 BigInt operations linked; the value conversions and comparisons run the same shared code as host imports. Linked code reads strings within the v38 data limit; results above the 1 MiB result buffer still trap. Open: a cheap number/string conversion path, JSON and the value18 readers ([next increment](#linked-intrinsics-measurement-v38)), owned string results |
 | (b) Dictionary and mixed-record hashing | Hashed dictionaries and mixed records; needs value layout 18 (a third storage slot) | Implemented on `v38-dictionary-hashing` (selector `dictionary_hashing()`, [contract](architecture.md#dictionary-hashing-dictionary_hashing)): value ABI/layout 18 for v38 with a four-slot dictionary storage record (`holes`, `keys`, `table`, `values`), an open-addressing `number[]` table probed from a seedless FNV-1a hash of the UTF-16 key units by allocation-free guest helpers, tombstones and holes for deletions, compaction before enumeration and amortized rebuilds at half load; twelve value18 readers (host ABI 34), JSON schema 18 and exception channel v9; every table validated against its entries at every reader. Measured below ([dictionary hashing measurement](#dictionary-hashing-measurement-v38)). Pending: array-index keys inserted below an existing key stay linear (an ordered rotation), and allocation-heavy loops at 20k+ entries are bound by the first-fit allocator (stream d) |
-| (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Open; first pilot blockers |
+| (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Implemented on `v38-web-bytes` under `web_bytes()` ([contract](architecture.md#web-bytes-web_bytes)): byte bodies (host ABI 34 `net_request_start_v2`, `net_body_read_bytes`), `ArrayBuffer`/`Blob`/`FormData` preludes with a deterministic multipart boundary, typed `globalThis` with `process.env` as an `env.get`-granted snapshot (`env_snapshot`), mixed `Promise.race`, strict record-union conversions (exactly one match, ambiguity a `TypeError`), union-to-union checked assertions, function adapters for `f as F`, `instanceof` narrowing of property paths in conditionals, records reaching a `Uint8Array` held by `unknown`, `process.env` by exact names with static-key reads, classes merged with an interface through `Object.assign(this, …)`. Pending: a `Uint8Array` (or a union that may hold one) held by `unknown` (a known gap, planned later), `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, spread key order through views; `File`, `Blob.stream()`, `formData()`, `FormData` iterators |
 | (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Implemented on `v38-codegen-hotspots` ([contract](architecture.md#code-generation-v2-codegen_v2), [measurements](#code-generation-v2-measurements)): appended `push`, checked element reads without union cells, word-stored literal and grown backings, concatenation chains, quiet function-value calls, exact-size free lists. `charAt` of non-ASCII units in constant time; `--profile-fuel` of programs with checked JSON fixed. Pending: the 100-row keyed diff under 1M fuel needs (b); closure entry checks stay as decided; incremental collection deferred (open) |
 | (e) Strict members and wide unions | Undeclared member access as a compile error (owner decision, TS2339), per-union member limits in the limits registry, discriminant dispatch for wide record unions (uarp-sdk 0.13.0 `RunEventV1`, 24 members), exhaustive discriminant switches | Implemented on `v38-strict-members` ([contract](architecture.md#strict-members-and-wide-unions-strict_members)); `if`/`else if` chains stay non-exhaustive, as in TypeScript |
 
@@ -850,7 +869,7 @@ union of record shapes without a literal discriminant (4).
 | --- | --- | --- |
 | (a) Inline conversions and comparisons | `primitive_to_string_v5`, `primitive_to_number_v5`, `primitive_compare` and `primitive_equal` get an inline codegen fast path for integers, ASCII strings and same-tag comparisons, with the linked general path (`varta_intrinsics::bigint`, already shared with the host imports) behind it, removing those host imports without a fuel regression. Measured when they were linked without it: the codegen v2 dictionary workload (50 inserts + 50 reads) rose from 456 K to 1.1 M fuel, and the v37 case `generator_cases/lifetime.ts` exhausted the production fuel budget under v38 | Open |
 | (b) Linked JSON | `json_parse_v18` and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | Open |
-| (c) Owned string results | Results larger than the 1 MiB result buffer (case mapping, `String(x)` of a longer string) are returned as owned guest strings | Open |
+| (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Implemented on `v38-web-bytes` under `web_bytes()` ([contract](architecture.md#web-bytes-web_bytes)): byte bodies (host ABI 34 `net_request_start_v2`, `net_body_read_bytes`), `ArrayBuffer`/`Blob`/`FormData` preludes with a deterministic multipart boundary, typed `globalThis` with `process.env` as an `env.get`-granted snapshot (`env_snapshot`), mixed `Promise.race`, strict record-union conversions (exactly one match, ambiguity a `TypeError`), union-to-union checked assertions, function adapters for `f as F`, `instanceof` narrowing of property paths in conditionals, records reaching a `Uint8Array` held by `unknown`, `process.env` by exact names with static-key reads, classes merged with an interface through `Object.assign(this, …)`. Pending: a `Uint8Array` (or a union that may hold one) held by `unknown` (a known gap, planned later), `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, spread key order through views; `File`, `Blob.stream()`, `formData()`, `FormData` iterators |
 
 #### Code generation v2 measurements
 

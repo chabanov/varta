@@ -42,6 +42,21 @@ pub enum HostOperation {
     /// v37: cancel the transfer and release the request; unknown ids are a
     /// no-op.
     NetRequestAbort,
+    /// v38 (`web_bytes`): `net_request_start` for request descriptor
+    /// version 2, whose body is either UTF-8 text or bytes (one code unit
+    /// per byte). Same signature, grant check and budget; v38 imports only
+    /// this form. Capability `net.request`.
+    NetRequestStartV2,
+    /// v38 (`web_bytes`): arm the next body chunk as bytes: its completion
+    /// text carries each received byte as one code unit, undecoded.
+    NetBodyReadBytes,
+    /// v38 (`web_bytes`): with an empty UTF-16 name, the set environment
+    /// variables whose names the `env.get` grants (package and host ceiling)
+    /// list exactly, as a JSON object in the host result buffer (the
+    /// `process.env` snapshot; wildcards list nothing); with a name, that one
+    /// variable checked like `env_get` (absent when unset, a recoverable
+    /// denial otherwise). Capability `env.get`.
+    EnvSnapshot,
     /// v37: `timer_start` with a recoverable denial: without the grant it
     /// arms nothing, releases the timer frame and returns 0, and the guest
     /// throws a `NotAllowedError` `DOMException`. Capability `time.timer`.
@@ -440,6 +455,7 @@ impl HostOperation {
                 | Self::FsRead16
                 | Self::NetGet16
                 | Self::NetRequestText
+                | Self::EnvSnapshot
                 | Self::EventText
                 | Self::JsonStringifyV5
                 | Self::StringCharAt16
@@ -547,6 +563,9 @@ impl HostOperation {
             Self::NetRequestText => "net_request_text",
             Self::NetBodyRead => "net_body_read",
             Self::NetRequestAbort => "net_request_abort",
+            Self::NetRequestStartV2 => "net_request_start_v2",
+            Self::NetBodyReadBytes => "net_body_read_bytes",
+            Self::EnvSnapshot => "env_snapshot",
             Self::TimerStartV2 => "timer_start_v2",
             Self::JsonStringifyV17 => "json_stringify_v17",
             Self::JsonStringifyOwned => "json_stringify_owned",
@@ -855,6 +874,17 @@ impl HostOperation {
                 | Self::NetRequestText
                 | Self::NetBodyRead
                 | Self::NetRequestAbort
+                | Self::NetRequestStartV2
+                | Self::NetBodyReadBytes
+        )
+    }
+    /// The v38 web-bytes operations (`web_bytes`): the byte forms of the
+    /// network request operations and the `process.env` snapshot.
+    #[must_use]
+    pub fn web_bytes(self) -> bool {
+        matches!(
+            self,
+            Self::NetRequestStartV2 | Self::NetBodyReadBytes | Self::EnvSnapshot
         )
     }
     /// The v38 permission and host event operations (`turn_budgets`). None
@@ -880,7 +910,7 @@ impl HostOperation {
     }
     #[must_use]
     pub fn minimum_abi(self) -> u32 {
-        if self.instance_events() || self == Self::ViewCommit {
+        if self.instance_events() || self.web_bytes() || self == Self::ViewCommit {
             return crate::abi::PROGRAM_LIMITS_VERSION;
         }
         if self.text_case()
@@ -1173,11 +1203,12 @@ impl HostOperation {
             Self::EventWatch => (&[F64, F64], &[]),
             Self::EventTake | Self::EventText => (&[F64], &[I32]),
             Self::EventSourceClose => (&[F64], &[]),
-            Self::NetRequestStart => (&[I32, I32], &[F64]),
+            Self::NetRequestStart | Self::NetRequestStartV2 => (&[I32, I32], &[F64]),
+            Self::EnvSnapshot => (&[I32, I32], &[I32]),
             Self::NetRequestWatch => (&[F64, F64], &[]),
             Self::NetRequestTake => (&[F64], &[I32]),
             Self::NetRequestText => (&[F64], &[I32]),
-            Self::NetBodyRead | Self::NetRequestAbort => (&[F64], &[]),
+            Self::NetBodyRead | Self::NetBodyReadBytes | Self::NetRequestAbort => (&[F64], &[]),
             Self::TimerStart | Self::TimerStartV2 => (&[F64, F64, I32], &[F64]),
             Self::TimerClear => (&[F64], &[]),
             Self::TimerTake => (&[F64], &[I32]),
@@ -1443,6 +1474,9 @@ impl HostOperation {
             "net_request_text" => Self::NetRequestText,
             "net_body_read" => Self::NetBodyRead,
             "net_request_abort" => Self::NetRequestAbort,
+            "net_request_start_v2" => Self::NetRequestStartV2,
+            "net_body_read_bytes" => Self::NetBodyReadBytes,
+            "env_snapshot" => Self::EnvSnapshot,
             "timer_start_v2" => Self::TimerStartV2,
             "json_stringify_v17" => Self::JsonStringifyV17,
             "json_stringify_owned" => Self::JsonStringifyOwned,
@@ -1706,6 +1740,7 @@ impl HostOperation {
             | Self::NetRequestTake
             | Self::NetRequestText
             | Self::NetBodyRead
+            | Self::NetBodyReadBytes
             | Self::NetRequestAbort
             | Self::PermissionQuery
             | Self::PermissionRequest
@@ -1859,9 +1894,9 @@ impl HostOperation {
             | Self::HttpService => return None,
             Self::Time | Self::DateNow => "time.now",
             Self::TimerStart | Self::TimerStartV2 => "time.timer",
-            Self::NetRequestStart => crate::net::REQUEST_CAPABILITY,
+            Self::NetRequestStart | Self::NetRequestStartV2 => crate::net::REQUEST_CAPABILITY,
             Self::EnvHas | Self::EnvHas16 => "env.has",
-            Self::EnvGet | Self::EnvGet16 => "env.get",
+            Self::EnvGet | Self::EnvGet16 | Self::EnvSnapshot => "env.get",
             Self::EnvPrint | Self::EnvPrint16 => "env.print",
             Self::FsRead | Self::FsRead16 => "fs.read",
             Self::FsPrint | Self::FsPrint16 => "fs.print",

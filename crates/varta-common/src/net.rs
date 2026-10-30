@@ -63,6 +63,14 @@ pub const DESCRIPTOR_SEPARATOR: char = '\n';
 /// The body flag of a descriptor without and with a request body.
 pub const DESCRIPTOR_NO_BODY: &str = "0";
 pub const DESCRIPTOR_BODY: &str = "1";
+/// The first line of a v38 (`web_bytes`) descriptor, accepted only by
+/// `net_request_start_v2`. Its body flag is [`DESCRIPTOR_NO_BODY`],
+/// [`DESCRIPTOR_BODY`] (text, sent as UTF-8) or [`DESCRIPTOR_BYTES`].
+pub const DESCRIPTOR_VERSION_BYTES: &str = "varta-net-request-2";
+/// The body flag of a version 2 descriptor whose body is bytes: each code
+/// unit of the remainder is one byte (a unit above 0xFF is a malformed
+/// descriptor), so a byte body is at most half of [`MAX_REQUEST_BYTES`].
+pub const DESCRIPTOR_BYTES: &str = "2";
 
 /// What a taken completion is (`net_request_take`). The prelude mirrors these
 /// codes as named constants; a compiler test keeps both in step.
@@ -73,7 +81,9 @@ pub enum CompletionKind {
     Head = 1,
     /// One body chunk; its text is the chunk decoded as UTF-8 (a sequence
     /// split between chunks is completed by the next one; invalid bytes become
-    /// U+FFFD as with a non-fatal `TextDecoder`).
+    /// U+FFFD as with a non-fatal `TextDecoder`). A chunk armed by
+    /// `net_body_read_bytes` (v38) carries each received byte as one code
+    /// unit instead, undecoded.
     Chunk = 2,
     /// The body ended; the request is released.
     End = 3,

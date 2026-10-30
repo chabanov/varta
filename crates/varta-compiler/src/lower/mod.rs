@@ -449,6 +449,7 @@ mod unknown_arrays;
 mod updates;
 mod view;
 mod void_functions;
+mod web_bytes;
 mod web_text;
 
 impl Lower<'_> {

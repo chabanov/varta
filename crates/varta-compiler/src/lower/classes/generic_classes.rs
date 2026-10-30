@@ -90,6 +90,7 @@ pub(in crate::lower) fn instantiate_class(
         template: Some(template),
         frame,
         unallocated: Vec::new(),
+        merged: None,
     };
     types.classes.list.push(instance);
     // Registered before layout, so `next: Node<T> | null` names itself.

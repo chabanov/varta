@@ -513,3 +513,131 @@ fn net_imports_need_host_abi_33() {
         assert!(VartaRuntime::new().validate_module(&bytes).is_err());
     }
 }
+
+const V38: LanguageProfile = LanguageProfile::CheckedF64Utf16V38;
+
+/// `run` of a v38 (`web_bytes`) program.
+fn run_v38(source: &str, expected: &[&str]) {
+    let server = Loopback::start();
+    let source = program(source, &server);
+    let output = VartaRuntime::new()
+        .run_wasm_bytes(&compile_with(&source, V38), &grants(&server))
+        .unwrap_or_else(|e| panic!("{e:?}\n{source}"));
+    assert_eq!(output.lines, lines(expected), "{source}");
+}
+
+/// V38 byte bodies match Node (`node_runner.mjs --bytes`): reader chunks are
+/// `Uint8Array`s, `bytes()`/`arrayBuffer()`/`blob()` keep bytes that are no
+/// UTF-8, a pull source wraps another body, and byte, blob and multipart
+/// request bodies arrive as sent (the boundary is masked; Varta's is
+/// deterministic).
+#[test]
+fn byte_bodies_match_node() {
+    run_v38(
+        include_str!("web_bytes_cases/net_bytes.ts"),
+        &[
+            "9 é€😀 false",
+            "bytes 0,255,128,65",
+            "arrayBuffer 4 0,255,128,65",
+            "blob 4 application/octet-stream 255,128",
+            "used true",
+            "wrapped 200 text/event-stream 60",
+            "sent bytes null 0,255,128,65",
+            "sent blob text/plain héllo",
+            r#"sent form multipart/form-data "--<b>\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nvalue\r\n--<b>\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nabc\r\n--<b>--\r\n""#,
+        ],
+    );
+}
+
+/// A v38 fetch imports `net_request_start_v2` (descriptor version 2) and
+/// `net_body_read_bytes`, both at host ABI 34, and never the v37 start; a
+/// relabelled v37 module fails validation before any guest effect.
+#[test]
+fn byte_imports_need_host_abi_34() {
+    use varta_common::HostOperation as H;
+    let bytes = compile_with(
+        "export async function main(): Promise<void> {
+           const r = await fetch('http://127.0.0.1:1/', { method: 'POST', body: new Uint8Array([1]) });
+           const b = await r.bytes();
+           console.log(String(b.length));
+         }",
+        V38,
+    );
+    let module = VartaRuntime::new().validate_module(&bytes).unwrap();
+    let imports: Vec<String> = module.imports().map(|i| i.name().to_owned()).collect();
+    for operation in [H::NetRequestStartV2, H::NetBodyReadBytes] {
+        assert!(
+            imports.iter().any(|name| name == operation.name()),
+            "{imports:?}"
+        );
+        assert_eq!(operation.minimum_abi(), abi::PROGRAM_LIMITS_VERSION);
+    }
+    assert_eq!(H::NetRequestStartV2.capability(), Some(REQUEST_CAPABILITY));
+    assert_eq!(H::NetBodyReadBytes.capability(), None);
+    assert!(!imports.iter().any(|name| name == H::NetRequestStart.name()));
+    assert_eq!(V38.host_operation(H::NetRequestStart), H::NetRequestStartV2);
+    assert_eq!(V37.host_operation(H::NetRequestStart), H::NetRequestStart);
+    use varta_common::language::{LanguageContract, SCHEMA_VERSION};
+    let declared = LanguageContract {
+        schema_version: SCHEMA_VERSION,
+        profile: V37,
+    }
+    .to_bytes()
+    .unwrap();
+    let relabelled = crate::language_tests::replace(&bytes, &declared);
+    let downgraded = crate::language_tests::host_abi(&relabelled, Some(abi::NET_REQUEST_VERSION));
+    for bytes in [relabelled, downgraded] {
+        assert!(VartaRuntime::new().validate_module(&bytes).is_err());
+    }
+}
+
+/// A byte body is checked against the grant before any connection: the
+/// denial is recoverable and no socket opens.
+#[test]
+fn byte_body_denials_open_no_socket() {
+    let server = Loopback::start();
+    let source = program(
+        "export async function main(): Promise<void> {
+           const form = new FormData();
+           form.append('f', new Blob([new Uint8Array([1, 2])]), 'x.bin');
+           try {
+             await fetch('__BASE__/mirror', { method: 'POST', body: form });
+           } catch (error) {
+             console.log(error instanceof DOMException ? error.name : 'other');
+           }
+         }",
+        &server,
+    );
+    let output = VartaRuntime::new()
+        .run_wasm_bytes(&compile_with(&source, V38), &[])
+        .unwrap();
+    assert_eq!(
+        output.lines,
+        [
+            format!(
+                "varta log: <capability denied: net.request> (POST {}/mirror)",
+                server.base
+            ),
+            "varta log: NotAllowedError".into(),
+        ]
+    );
+    assert_eq!(server.accepted(), 0);
+}
+
+/// V37 keeps its text-body prelude: `Blob`, `FormData`, `ArrayBuffer`, a
+/// typed `ReadableStream<Uint8Array>` and `globalThis` are rejected there.
+#[test]
+fn v37_rejects_the_byte_body_types() {
+    for source in [
+        "export function main(): void { const b = new Blob(['x']); console.log(String(b.size)); }",
+        "export function main(): void { const f = new FormData(); console.log(String(f.has('a'))); }",
+        "export function main(): void { const a = new ArrayBuffer(1); console.log(String(a.byteLength)); }",
+        "function f(s: ReadableStream<Uint8Array>): boolean { return s.locked; } export function main(): void {}",
+        "export function main(): void { const g = globalThis; }",
+    ] {
+        assert!(
+            varta_compiler::compile_typescript_with_profile(source, V37).is_err(),
+            "{source}"
+        );
+    }
+}

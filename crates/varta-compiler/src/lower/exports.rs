@@ -64,6 +64,11 @@ pub(super) trait Namespace {
     /// `Ok` when another namespace supplies it, otherwise an unlocated error.
     fn missing(&self, export: &Export, target: &Path) -> Result<()>;
     fn identity(&self, binding: &Self::Binding) -> Self::Identity;
+    /// Whether two exports of one name may bind one declaration (the type
+    /// namespace of a merged class and interface, v38 `web_bytes`).
+    fn merges(&self) -> bool {
+        false
+    }
 }
 
 /// The diagnostic for importing or re-exporting an ambiguous star export.
@@ -150,10 +155,11 @@ fn explicit<N: Namespace>(
     let Some(binding) = binding else {
         return Ok(());
     };
-    if table
-        .bound
-        .insert(export.exported.clone(), binding)
-        .is_some()
+    // A merged class and interface (v38 `web_bytes`) export one declaration
+    // twice: the same identity is no duplicate.
+    let identity = namespace.identity(&binding);
+    if let Some(previous) = table.bound.insert(export.exported.clone(), binding)
+        && !(namespace.merges() && namespace.identity(&previous) == identity)
     {
         return Err(CompilerError::Module(format!(
             "duplicate export: {}",

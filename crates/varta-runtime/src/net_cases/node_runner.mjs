@@ -2,15 +2,16 @@
 // way `net_tests.rs` runs it under Varta. Response bodies are piped through
 // TextDecoderStream, because Varta's body chunks are decoded text where
 // Node's are bytes; everything else is Node's own fetch.
-// Usage: node node_runner.mjs BASE_URL CASE.ts (Node strips the types).
+// Usage: node node_runner.mjs BASE_URL CASE.ts [--bytes] (Node strips the
+// types). With --bytes (the v38 byte-body cases) bodies stay Node's bytes.
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const [base, file] = process.argv.slice(2);
+const [base, file, mode] = process.argv.slice(2);
 const nodeFetch = globalThis.fetch;
-globalThis.fetch = async (input, init) => {
+if (mode !== '--bytes') globalThis.fetch = async (input, init) => {
   const response = await nodeFetch(input, init);
   const bytes = Object.getOwnPropertyDescriptor(Response.prototype, 'body').get;
   let text;

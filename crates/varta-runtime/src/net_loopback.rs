@@ -104,6 +104,8 @@ struct Request {
     path: String,
     headers: Vec<(String, String)>,
     body: String,
+    /// The body as received (`/mirror` answers with it).
+    raw: Vec<u8>,
 }
 
 fn read_request<S: Read>(stream: S) -> Option<Request> {
@@ -136,6 +138,7 @@ fn read_request<S: Read>(stream: S) -> Option<Request> {
         path,
         headers,
         body: String::from_utf8_lossy(&body).into_owned(),
+        raw: body,
     })
 }
 
@@ -231,6 +234,20 @@ fn answer<S: Read + Write>(mut stream: S) {
                 "text/plain; charset=utf-8",
                 &[&bytes[..1], &bytes[1..4], &bytes[4..]],
             );
+        }
+        // V38 byte bodies: bytes that are no UTF-8, and the request body
+        // echoed with its content type (none when the request had none).
+        "/bytes" => fixed(
+            &mut stream,
+            "200 OK",
+            "content-type: application/octet-stream\r\n",
+            &[0x00, 0xFF, 0x80, 0x41],
+        ),
+        "/mirror" => {
+            let content_type = header(&request, "content-type")
+                .map(|value| format!("content-type: {value}\r\n"))
+                .unwrap_or_default();
+            fixed(&mut stream, "200 OK", &content_type, &request.raw);
         }
         "/redirect" => fixed(&mut stream, "302 Found", "location: /hello\r\n", b""),
         "/missing" => fixed(

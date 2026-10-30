@@ -193,6 +193,7 @@ impl Lower<'_> {
             || call.args[0].spread.is_some()
             || literals::contains(target, self.types)
             || !json_type(target, self.types, false, false)
+            || self.undiscriminated_unions(target)
         {
             return Ok(None);
         }

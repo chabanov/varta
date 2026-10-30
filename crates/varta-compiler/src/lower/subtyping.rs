@@ -40,6 +40,10 @@ pub(crate) struct Views {
     /// reads a closed record held by an `unknown` cell as a JSON object, and
     /// that dictionary type; `resolve` adds one branch per boxed shape.
     graph: Option<(usize, Type)>,
+    /// V38 (`web_bytes`): the `TypeError` the JSON-object view throws for a
+    /// field that holds a `Uint8Array` (its storage cannot be held by
+    /// `unknown`).
+    bytes_error: Option<ir::Statement>,
 }
 impl Views {
     /// Note the closed record shapes a value of `ty` entering an `unknown`
@@ -1375,23 +1379,58 @@ impl Rewriter<'_> {
                 ),
             ];
             for (slot, field) in types.records[shape as usize].fields.iter().enumerate() {
-                let value = unknown::widen(
-                    Expr {
-                        span,
-                        ty: field.ty,
-                        kind: E::Field(Box::new(local(span, 0, record)), slot as u32),
-                    },
-                    types,
-                )?;
+                let read = Expr {
+                    span,
+                    ty: field.ty,
+                    kind: E::Field(Box::new(local(span, 0, record)), slot as u32),
+                };
                 let key = Expr {
                     span,
                     ty: Type::String,
                     kind: E::String(types.profile.string_bytes(&field.name)),
                 };
-                let entry = vec![
-                    push(keys, dictionary.keys, key),
-                    push(values, dictionary.values, value),
-                ];
+                // V38 (`web_bytes`): a field that holds a `Uint8Array` (the
+                // field reads have no effect, so it is read twice).
+                let bytes = types
+                    .subtyping
+                    .bytes_error
+                    .clone()
+                    .filter(|_| collections::holds_bytes(field.ty, types));
+                let entry = if let Some(throw) = bytes {
+                    let byte_member = unions::members(field.ty, types)
+                        .into_iter()
+                        .find(|member| matches!(member, Type::Collection(..)))
+                        .ok_or_else(|| CompilerError::Internal("missing byte member".into()))?;
+                    if field.ty.is_union() {
+                        vec![S::If(
+                            Expr {
+                                span,
+                                ty: Type::Boolean,
+                                kind: E::IsUnionMember(Box::new(read.clone()), byte_member),
+                            },
+                            vec![throw],
+                            vec![
+                                push(keys, dictionary.keys, key),
+                                push(
+                                    values,
+                                    dictionary.values,
+                                    Expr {
+                                        ty: Type::Unknown,
+                                        ..read
+                                    },
+                                ),
+                            ],
+                        )]
+                    } else {
+                        vec![throw]
+                    }
+                } else {
+                    let value = unknown::widen(read, types)?;
+                    vec![
+                        push(keys, dictionary.keys, key),
+                        push(values, dictionary.values, value),
+                    ]
+                };
                 if field.optional {
                     branch.push(S::If(
                         Expr {
@@ -1596,6 +1635,14 @@ impl Lower<'_> {
                     "a class instance held by unknown cannot be read as a JSON object",
                     span,
                 )?;
+                if self.types.profile.web_bytes() {
+                    let bytes = self.array_error(
+                        varta_common::value::ErrorClass::TypeError,
+                        "a Uint8Array held by unknown cannot be read as a JSON value",
+                        span,
+                    )?;
+                    self.types.subtyping.bytes_error = Some(S::Throw(bytes));
+                }
                 self.generated.insert(
                     index,
                     ir::Function {

@@ -346,7 +346,7 @@ impl Lower<'_> {
         if self.types.profile.promise_values()
             && let Some(combinator) = super::combinators::Combinator::from_name(method)
         {
-            return self.promise_combinator(call, combinator);
+            return self.promise_combinator(call, combinator, expected);
         }
         if method == "withResolvers" && self.types.profile.function_fields() {
             return self.promise_with_resolvers(call);

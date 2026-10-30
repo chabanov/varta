@@ -2,6 +2,7 @@
 //! concatenated and the compiler never performs ambient filesystem/network I/O.
 mod defaults;
 pub(crate) mod engine;
+mod global_members;
 mod syntax;
 #[cfg(test)]
 mod tests;
@@ -157,6 +158,9 @@ impl Builder<'_> {
         let mut ast = parse::parse_module(&source, tsx)?;
         if tsx {
             crate::jsx::desugar(&mut ast, &source)?;
+        }
+        if self.profile.web_bytes() && !engine::is_prelude(&input.path) {
+            global_members::rewrite(&mut ast);
         }
         let syntax::Scan {
             mut imports,

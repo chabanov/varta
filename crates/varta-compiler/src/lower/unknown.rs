@@ -104,7 +104,14 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
             kind: E::Reinterpret(Box::new(value)),
         });
     }
-    if collections::reaches(value.ty, types) {
+    // V38 (`web_bytes`): a record, array or dictionary whose fields reach a
+    // `Uint8Array` may enter `unknown` as it is; its typed slots keep the
+    // bytes, and the JSON-object view of such a field throws `TypeError`.
+    // The value itself must not be (or directly hold) the byte storage.
+    let bytes_inside = types.profile.web_bytes()
+        && !collections::reaches_private(value.ty, types)
+        && !collections::holds_bytes(value.ty, types);
+    if collections::reaches(value.ty, types) && !bytes_inside {
         return Err(collections::opaque("conversion to unknown"));
     }
     // A tuple (v37) is an ordinary array to every dynamic reader.
@@ -419,6 +426,20 @@ impl Lower<'_> {
         if upcast(source, target, self.types) {
             return unions::widen(value, Some(target), self.types);
         }
+        // V38 (`web_bytes`): an assertion to a wider object type is the
+        // structural coercion an assignment makes.
+        let value = match self.structural_upcast(value, target)? {
+            Ok(viewed) => return Ok(viewed),
+            Err(value) => value,
+        };
+        let value = match self.union_downcast(value, target, message)? {
+            Ok(narrowed) => return Ok(narrowed),
+            Err(value) => value,
+        };
+        let value = match self.function_adapter(value, target)? {
+            Ok(adapted) => return Ok(adapted),
+            Err(value) => value,
+        };
         // `record as Record<string, T>` (v38): a dictionary of the record's
         // present fields (a snapshot, like `{ ...record }`).
         if self.types.profile.structural_subtyping()
@@ -657,6 +678,12 @@ impl Lower<'_> {
                     member(target),
                     test(span, E::ArrayKind(Box::new(values), kind)),
                 )
+            }
+            // V38 (`web_bytes`): `unknown` never holds a collection (its state
+            // is private), so a collection member of an asserted union never
+            // matches; the union's other members are tested.
+            Type::Collection(..) if self.types.profile.web_bytes() && source == Type::Unknown => {
+                boolean(span, false)
             }
             _ => return Err(unsupported(&format!("type assertion to {name}"))),
         })

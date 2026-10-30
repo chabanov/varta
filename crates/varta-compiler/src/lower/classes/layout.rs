@@ -359,6 +359,52 @@ fn layout_members(
             }
         }
     }
+    // V38 (`web_bytes`): the members of a merged interface are instance
+    // fields the constructor provides (`merged_interfaces`).
+    if let Some(merged) = types.classes.list[id as usize].merged.clone() {
+        let record = merged.interface.resolve(types)?;
+        let Type::Record(shape) = record else {
+            return Err(source.locate(
+                unsupported(&format!(
+                    "declaration merging of class {} with an interface that is not a closed record type",
+                    types.classes.list[id as usize].name
+                )),
+                class.span,
+            ));
+        };
+        let mut members = Vec::new();
+        for member in types.records[shape as usize].fields.clone() {
+            if fields.iter().any(|f| f.name == member.name)
+                || methods.contains_key(&member.name)
+                || generic.0.contains_key(&member.name)
+            {
+                return Err(source.locate(
+                    unsupported(&format!(
+                        "merged interface member {} also declared by class {}",
+                        member.name, types.classes.list[id as usize].name
+                    )),
+                    class.span,
+                ));
+            }
+            let ty = if member.optional {
+                unions::intern(vec![member.ty, Type::Undefined], types)?
+            } else {
+                member.ty
+            };
+            members.push(member.name.clone());
+            fields.push(Field {
+                name: member.name,
+                ty,
+                owner: id,
+                access: Access::Public,
+                readonly: false,
+                redeclared: None,
+            });
+        }
+        if let Some(entry) = types.classes.list[id as usize].merged.as_mut() {
+            entry.members = members;
+        }
+    }
     if fields.len() > types.max_record_fields() {
         return Err(source.locate(invalid("class field count exceeds limit"), class.span));
     }

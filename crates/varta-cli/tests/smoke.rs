@@ -16580,3 +16580,137 @@ fn strict_members_and_discriminated_unions_run_in_dev_and_single_binaries() {
     assert!(dev.status.success(), "{}", combined(&dev));
     assert_eq!(stdout_lines(&dev), ["varta log: plain undefined"]);
 }
+
+/// A v38 web-bytes project (`web_bytes`): `process.env` through the pilot's
+/// typed `globalThis` cast, and `Blob`/`FormData` bodies whose request is
+/// denied before any connection.
+fn web_bytes_project(capabilities: serde_json::Value) -> PathBuf {
+    let project = temp_project();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("varta.config.json"),
+        serde_json::json!({
+            "entry": "src/main.ts",
+            "target": "native",
+            "policy": "strict",
+            "out": "dist/app",
+            "capabilities": capabilities,
+            "languageProfile": "checked-f64-utf16-v38",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.ts"),
+        r#"function readEnv(): (name: string) => string | undefined {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  return (name) => env?.[name];
+}
+export async function main(): Promise<void> {
+  const env = readEnv();
+  console.log(`allowed=${env('VARTA_WEB_ALLOWED')} secret=${env('VARTA_WEB_SECRET')}`);
+  const listed = Object.keys((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
+  console.log(`listed=${listed.join(',')}`);
+  console.log(`static=${globalThis.process.env.VARTA_WEB_ALLOWED} ${globalThis.process.env['VARTA_WEB_SECRET']}`);
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array([1, 2, 3])], { type: 'application/x-test' }), 'a.bin');
+  try {
+    await fetch('http://127.0.0.1:9/upload', { method: 'POST', body: form });
+  } catch (error) {
+    console.log(error instanceof DOMException ? error.name : 'other');
+  }
+}
+"#,
+    )
+    .unwrap();
+    project
+}
+
+fn web_bytes_command(project: &PathBuf, command: &mut Command) -> String {
+    let output = command
+        .current_dir(project)
+        .env("VARTA_WEB_ALLOWED", "yes")
+        .env("VARTA_WEB_SECRET", "hidden")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", combined(&output));
+    combined(&output)
+}
+
+#[test]
+fn web_bytes_env_snapshots_and_byte_bodies_follow_exact_grants() {
+    // `process.env` holds only the variables the exact `env.get` grant names;
+    // the multipart request is denied (no `net.request`) before any socket.
+    let project = web_bytes_project(serde_json::json!({"env": {"get": ["VARTA_WEB_ALLOWED"]}}));
+    let denied = "varta log: <capability denied: net.request> (POST http://127.0.0.1:9/upload)";
+    for output in [web_bytes_command(&project, varta().arg("dev")), {
+        let build = varta()
+            .current_dir(&project)
+            .args(["build", "--single"])
+            .output()
+            .unwrap();
+        assert!(build.status.success(), "{}", combined(&build));
+        web_bytes_command(&project, &mut Command::new(project.join("dist/app")))
+    }] {
+        assert!(
+            output.contains("varta log: allowed=yes secret=undefined"),
+            "{output}"
+        );
+        assert!(
+            output.contains("varta log: listed=VARTA_WEB_ALLOWED\n"),
+            "{output}"
+        );
+        assert!(
+            output.contains("varta log: static=yes undefined"),
+            "{output}"
+        );
+        assert!(output.contains(denied), "{output}");
+        assert!(output.contains("varta log: NotAllowedError"), "{output}");
+        assert!(!output.contains("hidden"), "{output}");
+    }
+    // A host ceiling without the grant empties the snapshot.
+    let ceiling = project.join("ceiling.json");
+    fs::write(
+        &ceiling,
+        serde_json::json!({"schemaVersion": 1, "abiVersion": 1, "capabilities": []}).to_string(),
+    )
+    .unwrap();
+    let output = web_bytes_command(
+        &project,
+        varta().args(["dev", "--policy", ceiling.to_str().unwrap()]),
+    );
+    assert!(
+        output.contains("varta log: allowed=undefined secret=undefined"),
+        "{output}"
+    );
+    let _ = fs::remove_dir_all(&project);
+    // Without any `env.get` grant the environment is never read.
+    let project = web_bytes_project(serde_json::json!({}));
+    let output = web_bytes_command(&project, varta().arg("dev"));
+    assert!(
+        output.contains("varta log: allowed=undefined secret=undefined"),
+        "{output}"
+    );
+    assert!(output.contains("varta log: listed=\n"), "{output}");
+    assert!(
+        output.contains("varta log: static=undefined undefined"),
+        "{output}"
+    );
+    let _ = fs::remove_dir_all(&project);
+    // A wildcard grant lists no name (the environment is never enumerated),
+    // yet a static key it matches reads its variable by name; a name outside
+    // it stays undefined.
+    let project = web_bytes_project(serde_json::json!({"env": {"get": ["VARTA_WEB_ALLOW*"]}}));
+    let output = web_bytes_command(&project, varta().arg("dev"));
+    assert!(
+        output.contains("varta log: allowed=undefined secret=undefined"),
+        "{output}"
+    );
+    assert!(output.contains("varta log: listed=\n"), "{output}");
+    assert!(
+        output.contains("varta log: static=yes undefined"),
+        "{output}"
+    );
+    assert!(!output.contains("hidden"), "{output}");
+    let _ = fs::remove_dir_all(&project);
+}

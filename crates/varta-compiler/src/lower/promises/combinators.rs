@@ -35,6 +35,16 @@ impl Combinator {
     }
 }
 
+/// The argument of a combinator call, as `race_items` lowers it.
+enum RaceItems {
+    /// Not an array literal of promises of different types: lower as usual.
+    Ordinary,
+    /// An array literal of promises of one type, already lowered.
+    Array(Expr),
+    /// The whole result of a race over promises of different types.
+    Mixed(Expr),
+}
+
 /// Private fields of a combinator's state record.
 const ITEMS: &str = "items";
 const REMAINING: &str = "remaining";
@@ -140,6 +150,7 @@ impl Lower<'_> {
         &mut self,
         call: &ast::CallExpr,
         combinator: Combinator,
+        expected: Option<Type>,
     ) -> Result<Expr> {
         let span = call.span;
         let what = format!("Promise.{}", combinator.name());
@@ -156,7 +167,11 @@ impl Lower<'_> {
                 .source
                 .locate(rejected(&format!("{what} arguments")), span));
         }
-        let items = self.expr(&argument.expr)?;
+        let items = match self.race_items(combinator, &argument.expr, expected, span)? {
+            RaceItems::Mixed(result) => return Ok(result),
+            RaceItems::Array(items) => items,
+            RaceItems::Ordinary => self.expr(&argument.expr)?,
+        };
         let id = match items.ty {
             Type::Array(array) => match self.types.arrays[array as usize] {
                 Type::Promise(id) => id,
@@ -291,6 +306,206 @@ impl Lower<'_> {
                 body,
             },
         })
+    }
+    /// `Promise.race([p0, p1, …])` over an array literal (v38 `web_bytes`):
+    /// the elements are lowered one by one, so promises of different value
+    /// types race into `Promise<T0 | T1 | …>` without forming an array of a
+    /// union of promise types. Elements of one type form the ordinary array.
+    fn race_items(
+        &mut self,
+        combinator: Combinator,
+        argument: &ast::Expr,
+        expected: Option<Type>,
+        span: swc_common::Span,
+    ) -> Result<RaceItems> {
+        let ast::Expr::Array(array) = stmt::unparen(argument) else {
+            return Ok(RaceItems::Ordinary);
+        };
+        if combinator != Combinator::Race
+            || !self.types.profile.web_bytes()
+            || array.elems.is_empty()
+            || array
+                .elems
+                .iter()
+                .any(|element| element.as_ref().is_none_or(|e| e.spread.is_some()))
+        {
+            return Ok(RaceItems::Ordinary);
+        }
+        let mut elements = Vec::new();
+        for element in array.elems.iter().flatten() {
+            let value = self.expr(&element.expr)?;
+            if !matches!(value.ty, Type::Promise(_)) {
+                return Err(self.source.locate(
+                    type_error(format!(
+                        "Promise.race takes an array of promises, not of {}",
+                        value.ty
+                    )),
+                    value.span,
+                ));
+            }
+            elements.push(value);
+        }
+        let first = elements[0].ty;
+        if elements.iter().all(|element| element.ty == first) {
+            let ty = arrays::intern(first, self.types)?;
+            return Ok(RaceItems::Array(Expr {
+                span: array.span,
+                ty,
+                kind: E::Array(elements.into_iter().map(Some).collect()),
+            }));
+        }
+        let mut values = Vec::new();
+        for element in &elements {
+            let Type::Promise(id) = element.ty else {
+                return Err(CompilerError::Internal(
+                    "missing race element promise".into(),
+                ));
+            };
+            values.push(stored(self.types.promises[id as usize].value));
+        }
+        // The contextual promise type, when every element's value is one of
+        // its members (TypeScript infers the race from its context).
+        // A value whose primitive base a literal member of the context has
+        // (a `Promise<'timeout'>` fulfills with `string`, since promise values
+        // erase literal types) is accepted and checked when it settles.
+        let contextual = expected.and_then(|ty| match ty {
+            Type::Promise(id) => {
+                let members =
+                    unions::members(stored(self.types.promises[id as usize].value), self.types);
+                values
+                    .iter()
+                    .flat_map(|value| unions::members(*value, self.types))
+                    .all(|member| {
+                        literals::member_of(member, &members, self.types)
+                            || members.iter().any(
+                                |m| matches!(m, Type::Literal(base, _) if base.erased() == member),
+                            )
+                    })
+                    .then_some(id)
+            }
+            _ => None,
+        });
+        let result = match contextual {
+            Some(id) => id,
+            None => {
+                let value = unions::intern(values, self.types)?;
+                let Type::Promise(result) = intern(value, self.types)? else {
+                    return Err(CompilerError::Internal(
+                        "missing race result promise".into(),
+                    ));
+                };
+                result
+            }
+        };
+        let result_ty = Type::Promise(result);
+        let output = self.hidden(result_ty);
+        let mut roots = vec![output];
+        let mut body = Vec::new();
+        let mut starts = Vec::new();
+        for element in elements {
+            let Type::Promise(id) = element.ty else {
+                return Err(CompilerError::Internal(
+                    "missing race element promise".into(),
+                ));
+            };
+            let slot = self.hidden(element.ty);
+            roots.push(slot);
+            body.push(S::Init(slot, element));
+            let job = self.race_job(span, id, result)?;
+            starts.push(schedule(
+                span,
+                job,
+                vec![
+                    local(span, slot, Type::Promise(id)),
+                    local(span, output, result_ty),
+                ],
+                ScheduleMode::Start,
+            ));
+        }
+        body.push(S::Init(output, self.promise_object(span, result, None)?));
+        // One job per element, in index order, as `race` calls each
+        // element's `then`.
+        body.extend(starts);
+        Ok(RaceItems::Mixed(Expr {
+            span,
+            ty: result_ty,
+            kind: E::ValueBlock {
+                output,
+                marker: self.hidden(Type::Number),
+                roots,
+                body,
+            },
+        }))
+    }
+    /// The job of one element of a mixed race: `(element, result) -> void`
+    /// awaits the element and settles the result with its value widened to
+    /// the result's union (a settled result ignores later elements).
+    fn race_job(&mut self, span: swc_common::Span, id: u32, result: u32) -> Result<usize> {
+        self.memoized(
+            Helper::Combinator(Combinator::Race),
+            vec![Type::Promise(id), Type::Promise(result)],
+            |lower| {
+                lower.synthesize(
+                    Self::plain(span, vec![Type::Promise(id), Type::Promise(result)], true),
+                    |child, params, _| child.race_job_body(span, (id, result), params),
+                )
+            },
+        )
+    }
+    fn race_job_body(
+        &mut self,
+        span: swc_common::Span,
+        (id, result): (u32, u32),
+        params: &[u32],
+    ) -> Result<Vec<S>> {
+        let [element, target] = params else {
+            return Err(CompilerError::Internal("race job parameters".into()));
+        };
+        let value = stored(self.types.promises[id as usize].value);
+        let union = stored(self.types.promises[result as usize].value);
+        let reason = self.exception_type()?;
+        let e = self.hidden(reason);
+        let marker = self.hidden(Type::Number);
+        let fulfilled = self.hidden(value);
+        let awaited = self.await_promise(span, local(span, *element, Type::Promise(id)))?;
+        let fulfill = self.fulfill_helper(span, result)?;
+        let reject = self.reject_helper(span, result)?;
+        let members = unions::members(union, self.types);
+        let exact = unions::members(value, self.types)
+            .into_iter()
+            .all(|member| literals::member_of(member, &members, self.types));
+        let widened = if exact {
+            unions::widen(local(span, fulfilled, value), Some(union), self.types)?
+        } else {
+            // A primitive standing for a literal member of the contextual
+            // union: a checked assertion (`TypeError` outside the literals).
+            let name = subtyping::describe(union, self.types);
+            let message = format!("Promise.race element fulfilled with a value outside {name}");
+            self.assert_value(local(span, fulfilled, value), union, &name, &message, span)?
+        };
+        Ok(vec![
+            S::Init(fulfilled, zero(span, value)),
+            S::TryCatch {
+                body: vec![
+                    S::Set(fulfilled, awaited),
+                    invoke(
+                        span,
+                        fulfill,
+                        vec![local(span, *target, Type::Promise(result)), widened],
+                    ),
+                ],
+                binding: Some(e),
+                handler: vec![invoke(
+                    span,
+                    reject,
+                    vec![
+                        local(span, *target, Type::Promise(result)),
+                        local(span, e, reason),
+                    ],
+                )],
+                marker,
+            },
+        ])
     }
     /// The settlement of a combinator over an empty array: `all` and
     /// `allSettled` fulfill with `[]` and `any` rejects at once; `race` stays

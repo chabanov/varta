@@ -45,6 +45,17 @@ impl Lower<'_> {
             },
             Some(argument) => self.expr(&argument.expr)?,
         };
+        // V38 (`web_bytes`): a view of an `ArrayBuffer` shares its storage.
+        let value = match self.buffer_view(value)? {
+            Ok(storage) => {
+                return Ok(Expr {
+                    span,
+                    ty: Type::Collection(K::Uint8Array, id),
+                    kind: E::Reinterpret(Box::new(storage)),
+                });
+            }
+            Err(value) => value,
+        };
         let value = self.physical_array(value)?;
         let function = match value.ty {
             ty if ty == number => "bytesOfLength",

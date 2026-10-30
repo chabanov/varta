@@ -603,3 +603,73 @@ fn a_missing_discriminant_case_names_the_unhandled_members() {
         "{error}"
     );
 }
+
+/// Strict members cover the wave-2 web-bytes paths: a class merged with an
+/// interface declares the merged members and nothing else, and
+/// `process.env` stays a dictionary-like view whose static names read
+/// through `env.get` instead of failing as undeclared.
+#[test]
+fn merged_classes_are_strict_and_process_env_keeps_its_dictionary_rule() {
+    let merged = |read: &str| {
+        format!(
+            "interface R {{ a: number; b: string }} interface C extends R {{}}
+             class C {{ constructor() {{ Object.assign(this, {{ a: 1, b: 'y' }}); }} }}
+             export function main(): void {{ const c = new C(); console.log({read}); }}"
+        )
+    };
+    assert_eq!(run(&merged("String(c.a) + c.b"), V38), logs(&["1y"]));
+    let error = rejected(&merged("String(c.zzz)"), V38);
+    assert!(
+        error.contains("property zzz is not declared by C"),
+        "{error}"
+    );
+    let env = "export function main(): void {
+       console.log(`${globalThis.process.env.VARTA_STRICT_UNSET} ${globalThis.process.env.VARTA_STRICT_OTHER}`);
+     }";
+    // Without a grant each static read is the recoverable `env.get` denial.
+    assert_eq!(
+        run(env, V38),
+        logs(&[
+            "<capability denied: env> (VARTA_STRICT_UNSET)",
+            "<capability denied: env> (VARTA_STRICT_OTHER)",
+            "undefined undefined",
+        ])
+    );
+}
+
+/// A union of 200 record members without discriminants (`web_bytes` strict
+/// matching) admitted by the registry's member limit: a cell holding a
+/// member is tested by a flat sequence, an object converts to its one exact
+/// match, and an object that matches none is a catchable `TypeError`
+/// (every member is tried, so one conversion costs about 200 trial builds).
+#[test]
+fn a_200_member_undiscriminated_union_converts_by_strict_matching() {
+    const COUNT: usize = 200;
+    let mut source = String::new();
+    for i in 0..COUNT {
+        source.push_str(&format!("interface M{i} {{ f{i}: number }}\n"));
+    }
+    source.push_str("type U =\n");
+    for i in 0..COUNT {
+        source.push_str(&format!("  | M{i}\n"));
+    }
+    source.push_str(
+        r#";
+function convert(text: string): string {
+  try {
+    const u = JSON.parse(text) as U;
+    const again: unknown = u;
+    return JSON.stringify(again as U);
+  } catch (e) {
+    return e instanceof TypeError ? "TypeError" : "other";
+  }
+}
+export function main(): void {
+  for (const text of ['{"f199":3}', '{}']) {
+    console.log(convert(text));
+  }
+}
+"#,
+    );
+    assert_eq!(run(&source, V38), logs(&[r#"{"f199":3}"#, "TypeError"]));
+}

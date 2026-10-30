@@ -280,7 +280,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 54 |
+| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 56 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -785,7 +785,7 @@ import the operation, as contiguous runs in registry order.
 | `json_stringify_v17` | (i32, i32, i32) → (i32, i32) | 33 | none | — | — | `checked-f64-utf16-v37` |
 | `net_body_read` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `net_request_abort` | (f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
-| `net_request_start` | (i32, i32) → (f64) | 33 | `net.request` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
+| `net_request_start` | (i32, i32) → (f64) | 33 | `net.request` | — | — | `checked-f64-utf16-v37` |
 | `net_request_take` | (f64) → (i32) | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `net_request_text` | (f64) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `net_request_watch` | (f64, f64) → () | 33 | none | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
@@ -793,6 +793,7 @@ import the operation, as contiguous runs in registry order.
 | `string_to_upper_case16` | (i32, i32) → (i32) | 33 | none | yes | yes | `checked-f64-utf16-v37` |
 | `timer_start_v2` | (f64, f64, i32) → (f64) | 33 | `time.timer` | — | — | `checked-f64-utf16-v37` – `checked-f64-utf16-v38` |
 | `bigint_from_value_v5` | (i64) → (i32, i32) | 34 | none | yes | — | — |
+| `env_snapshot` | (i32, i32) → (i32) | 34 | `env.get` | yes | yes | `checked-f64-utf16-v38` |
 | `event_source_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_source_open` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `event_take` | (f64) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
@@ -800,6 +801,8 @@ import the operation, as contiguous runs in registry order.
 | `event_watch` | (f64, f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `json_parse_v19` | (i32, i32, i32, i32) → (i64) | 34 | none | yes | — | `checked-f64-utf16-v38` |
 | `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `net_body_read_bytes` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `net_request_start_v2` | (i32, i32) → (f64) | 34 | `net.request` | — | — | `checked-f64-utf16-v38` |
 | `permission_query` | (i32, i32) → (i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `permission_request` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `primitive_to_number_v6` | (i64) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |

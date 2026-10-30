@@ -8994,7 +8994,10 @@ by selectors; each admits nothing until its stream adds a subsection below:
 - strict-members stream: `strict_members()` (undeclared member access is a
   compile error, per-union member limits from the registry, discriminant
   dispatch and exhaustive discriminant switches;
-  [implemented](#strict-members-and-wide-unions-strict_members)).
+  [implemented](#strict-members-and-wide-unions-strict_members));
+- wave-2 web-bytes stream: `web_bytes()` (byte bodies, `ArrayBuffer`, `Blob`,
+  `FormData`, typed `globalThis` and `process.env`, mixed `Promise.race` and
+  strict record-union conversions; [implemented](#web-bytes-web_bytes)).
 
 The view-protocol and TSX streams add
 [their subsection](#v38-view-protocol-and-tsx-view_protocol-tsx). Until a
@@ -9996,13 +9999,14 @@ such members.
   `encodeURIComponent`, `encodeURI` and the `URIError` class they throw
   (Varta has no native `URIError`), in guest code without a host import.
 
-Not yet admitted: Web byte bodies (`ReadableStream<Uint8Array>`,
-`arrayBuffer()`, `Blob`, `FormData`), typed `globalThis` member access,
-`Promise.race` over differently typed promises, `A[] | B[]` of record
-element types, `instanceof Map/Set/
-Uint8Array`, unions mixing collections with other objects, and record spreads
-that keep JavaScript's key order. Exhaustive switches over discriminant paths
-are admitted by [strict members](#strict-members-and-wide-unions-strict_members).
+Not yet admitted: `A[] | B[]` of record element types, `instanceof
+Map/Set/Uint8Array`, a `Uint8Array` held by `unknown`, and record spreads that
+keep JavaScript's key order. Exhaustive switches over discriminant paths are
+admitted by [strict members](#strict-members-and-wide-unions-strict_members).
+Web byte bodies, `Blob`/`FormData`/`ArrayBuffer`, typed `globalThis`,
+`Promise.race` over differently typed promises and strict conversions to
+record unions without discriminants are the wave-2
+[web-bytes subsection](#web-bytes-web_bytes).
 
 #### Strict members and wide unions (`strict_members`)
 
@@ -10041,7 +10045,12 @@ inherited object property: …`); a name a union does not declare on every
 member keeps `property … is not declared by every member of the union`; an
 engine prelude member that is still pending keeps its `unsupported` reason.
 Engine preludes declare every name they read (checked by a test that loads
-each of them under v38).
+each of them under v38). With [web bytes](#web-bytes-web_bytes), the
+instance of a class merged with an interface declares the class's and the
+merged interface's members and is checked like any class instance, while
+`process.env` is a dictionary-like view: a static name reads that one
+variable through the `env.get` check and is never an undeclared-member
+error.
 
 **Per-union member limits come from the registry.** The structural (non-
 literal) members of one union annotation and the members of one checked JSON
@@ -10283,6 +10292,169 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   the 1 MiB result buffer (case mapping or `String(x)` of a longer string)
   traps, as the host's result transfer fails. Delivering such results as
   owned guest strings needs allocating call sites and is open.
+
+#### Web bytes (`web_bytes`)
+
+Wave 2 of v38 admits byte bodies and the Web types around them under
+`web_bytes()`, with three host imports at minimum host ABI 34; v37 and
+earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
+`Blob`, `FormData`, `ArrayBuffer`, `ReadableStream<Uint8Array>` and
+`globalThis`). No value tag or layout is added.
+
+- **Byte bodies.** Under v38 the `fetch` prelude is
+  `<varta>/web/fetch.ts` with the source `prelude/fetch_bytes.ts` (the
+  `extended` text of the v37 module). `ReadableStream<R extends Uint8Array =
+  Uint8Array>`, `ReadableStreamDefaultReader<R>`,
+  `ReadableStreamReadResult<R>`, `ReadableStreamDefaultController<R>` and
+  `UnderlyingSource<R>` carry `Uint8Array` chunks; the type parameter exists
+  for TypeScript's spelling and must be `Uint8Array` (another argument fails
+  its constraint). `read()` returns `{ done, value }` with an empty
+  `Uint8Array` once done (WHATWG: `undefined`). `Response` adds
+  `arrayBuffer()`, `bytes()` and `blob()` (its type the lowercased
+  `content-type`, or empty); `text()` and `json()` of a network body keep the
+  v37 host-decoded UTF-8 path, every other consumption reads bytes. A
+  `BodyInit` is `string | URLSearchParams | Blob | ArrayBuffer | Uint8Array |
+  FormData` for `Request`, `RequestInit.body` and `new Response(body)` (which
+  also takes a `ReadableStream<Uint8Array>`); a string body defaults its
+  content type to `text/plain;charset=UTF-8`, `URLSearchParams` to the form
+  type, a `Blob` to its non-empty type and `FormData` to
+  `multipart/form-data; boundary=…`. Bytes travel as byte strings (one
+  UTF-16 code unit 0..=0xFF per byte); `varta.text.units` (an engine
+  intrinsic of the preludes, the inverse of `varta.text.fromUnits`) turns one
+  into a `number[]` reserved at its final length.
+- **Imports.** `net_request_start_v2 (ptr:i32, len:i32) -> f64` is
+  `net_request_start` for request descriptor version 2
+  (`net::DESCRIPTOR_VERSION_BYTES`), whose body flag is `0` (none), `1` (text,
+  sent as UTF-8) or `2` (`net::DESCRIPTOR_BYTES`: bytes, a code unit above
+  0xFF is a fatal malformed descriptor); same `net.request` check before any
+  effect, host-call budget and recoverable denial. V38 maps
+  `net_request_start` to it (`LanguageProfile::host_operation`), so a v38
+  module never imports the v1 start and validation rejects one that does;
+  each import accepts only its own descriptor version.
+  `net_body_read_bytes (id:f64) -> ()` arms the next chunk like
+  `net_body_read` but delivers its bytes undecoded (bytes a text read kept for
+  an unfinished UTF-8 sequence come first); it is bookkeeping (no
+  capability, no host-call charge, the deadline observed). Chunks keep
+  `net::MAX_CHUNK_BYTES` and the body keeps `net::MAX_RESPONSE_BODY_BYTES`;
+  a byte request body is at most half of `net::MAX_REQUEST_BYTES`.
+  `env_snapshot (ptr:i32, len:i32) -> i32` is below.
+- **`ArrayBuffer`, `Blob`, `FormData`** (`<varta>/web/blob.ts`, guest code,
+  no host import, loaded when a module names one of them). `ArrayBuffer`
+  (`new ArrayBuffer(n)`, `byteLength`, `slice`, `ArrayBuffer.isView`) owns
+  the `number[]` storage that `new Uint8Array(buffer)` views (shared, so
+  writes through the view are seen by the buffer; there are no offsets).
+  `ArrayBufferView` is `Uint8Array` (no other typed array exists), so
+  `ArrayBuffer.isView` of an `unknown` value is false. `Blob` (parts of
+  `string`, `Blob`, `ArrayBuffer` or `Uint8Array`, strings as UTF-8 with lone
+  surrogates as U+FFFD; `type` normalized as WHATWG; `size`, `slice`,
+  `arrayBuffer`, `bytes`, `text`) is immutable and holds a byte string, so
+  `response.blob()` and blob request bodies copy no byte one at a time; there
+  is no `stream()`, no `File` and no `endings`. `FormData` (`append`, `set`,
+  `delete`, `get`, `getAll`, `has`, and snapshot `keys`/`values`/`entries`
+  arrays instead of iterators) keeps string and `Blob` entries with their file
+  names (`blob` by default; `get` returns the `Blob`, not a `File`); a file
+  name with a string value is a `TypeError`. As a body it serializes in
+  Node's layout (CR/LF normalization, `%0A`/`%0D`/`%22` escapes,
+  `application/octet-stream` for untyped blobs) with a deterministic boundary:
+  `----formdata-varta-` and the first 11-digit counter, from 0, whose
+  boundary occurs in no part (Node draws a random one).
+- **Typed `globalThis`** (`<varta>/web/global.ts`). Unless a module binds the
+  name, `globalThis` is an instance of the prelude's `GlobalObject`, whose
+  getters are `globalThis`, `crypto` (a `Crypto` with `getRandomValues` and
+  `randomUUID`) and `process` (a `Process` with `env`); any other member is a
+  compile error, never `any`. `globalThis.fetch`, `globalThis.encodeURIComponent`
+  and `globalThis.encodeURI` are the global functions themselves (the module
+  scanner rewrites the member into the name before implicit imports, unless
+  the module binds it). `typeof x.m` of a class method is `"function"`, so
+  `typeof c.randomUUID === 'function'` feature detection compiles.
+  `globalThis as T` (any `x as T` to a wider object type) is the structural
+  view an assignment makes, and `f as F` (or `F | undefined`) of a named
+  function whose parameters accept `F`'s is a fresh adapter function of `F`'s
+  signature (not `===` to `f`).
+- **`process.env`** names variables exactly; the environment is never
+  enumerated. `env_snapshot (ptr:i32, len:i32) -> i32` (capability `env.get`,
+  one host call) takes a UTF-16 name:
+  - With the empty name it returns, in the host result buffer, a JSON object
+    (in name order) of the set variables whose names appear *exactly* (no
+    `*` or `?`) in the package's `env.get` patterns and, when there is a host
+    ceiling, also exactly in the ceiling's, each passing the check `env_get`
+    makes. `process.env` read as a value is this snapshot, a fresh
+    `Record<string, string | undefined>` per read, so a dynamic key,
+    `Object.keys(process.env)` and spreads see only exactly granted names. A
+    wildcard pattern lists nothing.
+  - With a name it returns `{"NAME": value}`, or `{}` when the variable is
+    unset, after the same check as `env_get` (any matching pattern, package
+    and ceiling); a denial is the recoverable `env.get` denial (failed status,
+    logged), checked before any read. `process.env.NAME` and
+    `process.env['NAME']` with a static key compile to this read
+    (`environmentValue`), so a wildcard grant reads a variable by name when
+    the read runs. A denied or unset variable is `undefined`.
+  Values that are not Unicode are skipped; a result beyond the host result
+  buffer fails recoverably and reads as `{}`. Writes change only the
+  snapshot.
+- **`Promise.race` over differently typed promises.** An array literal of
+  promises of different value types races into `Promise<T0 | T1 | …>` (one
+  job per element, in index order, as for one type); `await
+  Promise.race([...])` assigned or declared at a union type takes it as
+  context. Promise values erase literal types (`new Promise<'timeout'>` is a
+  `Promise<string>`), so an element whose value is the base of a literal
+  member of the context fulfills through a checked assertion (`TypeError`
+  for another value). `Promise.all`, `allSettled` and `any` still take one
+  promise type.
+- **Strict conversions to record unions without a discriminant.** A checked
+  conversion (`unknown as T`, `JSON.parse(text) as T`, checked declared
+  reads) to a union with several record members of which some has no literal
+  discriminant: a cell that already holds one member (exact) is that member;
+  otherwise every member is built from the JSON object in member order. Each
+  build is strict (an unknown key, a missing required field or a mistyped
+  value fails it; builds have no effect). Exactly one successful build is the
+  result; none throws the conversion's `TypeError`, and more than one throws
+  `TypeError("checked conversion to T is ambiguous: the value matches more
+  than one member")`. Member order never decides. `JSON.parse(text) as T`
+  with such a union anywhere in `T` parses to `unknown` first, since the
+  host's schema parser cannot select the member. Unions whose members all
+  have discriminants keep the v37 selection.
+- **Unions and `unknown` with bytes.** `x as U` from a union to a union of
+  some of its members (a `BodyInit` to a `BlobPart`) tests the cell against
+  `U`'s members, `TypeError` otherwise; `o.p instanceof C ? o.p : y` narrows
+  the property of a record or dictionary in the consequent. `unknown` never
+  holds a `Uint8Array` (its storage is private): converting `unknown` to a
+  union with a `Uint8Array` member tests the other members. A record, array
+  or dictionary whose fields reach a `Uint8Array` (and no `Map`, `Set` or
+  opaque builtin) may enter `unknown` or `object` as it is; its JSON-object
+  view (`as Record<string, unknown>`, `Object.keys`, checked conversions)
+  throws `TypeError("a Uint8Array held by unknown cannot be read as a JSON
+  value")` for a field that holds the bytes. Deviation: a host reader
+  (`JSON.stringify` or logging of such an `unknown`) sees the field's storage
+  and prints a number array where JavaScript prints `{"0":…}`. A
+  `Uint8Array`, or a union that may hold one, still cannot itself be
+  converted to `unknown`: the compile error names the conversion. This is a
+  known subset gap planned for a later increment (owner decision of
+  2026-10-30: no boxing now). The pilot hits it only in a generator bug of
+  uarp-sdk 0.13.0 (`uploadPublicSessionImage` passes its `BinaryInput` as the
+  JSON `body`, so a `Blob` would be sent as `{}`; every other upload uses
+  `binary:`), which the SDK owner fixes.
+- **Classes merged with an interface.** `interface C extends A, B { … }` and
+  `class C` in one module merge: the interface's members (own and inherited,
+  optional ones as `T | undefined`) become ordinary public instance fields of
+  `C`; a method member is a function field whose value comes from the
+  assigned object. The constructor must contain exactly one top-level
+  `Object.assign(this, X)`; it is rewritten into `const t: interface C = X`
+  followed by `this.m = t.m` for every merged member, so the ordinary checks
+  prove every member provided with a compatible type (a mismatch names both
+  types and each missing or mismatched member) and the constructor
+  discipline proves that no use of `this` before it can observe a merged
+  member (only already assigned declared fields may be read; no method call,
+  no escape). Without the call, with a second one, or with a merged member
+  the class also declares, compilation fails naming the members. Members of
+  `X` that the interface does not declare are not copied (they are not
+  visible through `C`'s type). Both `export interface C` and `export class C`
+  export the one class. Generic merged classes and interfaces are rejected;
+  v37 keeps rejecting every class and interface merging.
+- **Cost.** A byte read converts its chunk with one guest loop
+  (`varta.text.units`), and `TextDecoder`/`TextEncoder` and multipart
+  serialization run per byte in guest code; network `text()` keeps the host
+  decoder. Production budgets are unchanged.
 
 ### V38 view protocol and TSX (`view_protocol()`, `tsx()`)
 

@@ -3485,10 +3485,78 @@ is normative.
   non-exhaustive one records `core.uncovered`, which `link::finish_body`
   appends to the missing-return diagnostic; `stmt::statement` clears it, so
   only a switch the end of the function directly follows is named.
+- Web-bytes paths (wave-2 integration): a class merged with an interface
+  (`classes::merged_interfaces`) declares exactly its own and the merged
+  members, so an undeclared name on its instance is the ordinary strict
+  error. `process.env` is a dictionary-like view: its static names keep the
+  `environmentValue` read through `env.get` and never go through the strict
+  check. `matched_build` over more than `limits::FROZEN.union_members`
+  record members tests the held member as a flat guarded sequence, like
+  `discriminant_chain`.
 - Tests: `varta-runtime` `strict_member_tests` (Node 24 logs of
-  `strict_member_cases`, the generated 200-member union, forced collections,
-  fuel bounds of the dispatch, v37 rejections and the relabel test) and the
-  CLI smoke test through `dev` and the single binary.
+  `strict_member_cases`, the generated 200-member union, the 200-member
+  union without discriminants, merged classes and `process.env`, forced
+  collections, fuel bounds of the dispatch, v37 rejections and the relabel
+  test) and the CLI smoke test through `dev` and the single binary.
+
+### Web bytes (`web_bytes`)
+
+Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
+
+- Gate every admission on `web_bytes()`; v37 keeps its text-body prelude
+  (`fetch.ts`) and v1–v37 digests stay frozen. The v38 `fetch` source is the
+  `extended` text of the same module (`prelude/fetch_bytes.ts`); keep the two
+  preludes' shared behaviour (redirects, aborts, denials) in step.
+- Bytes cross the host boundary as byte strings (one code unit 0..=0xFF per
+  byte), never per-byte host calls: `net_body_read_bytes` for chunks,
+  descriptor flag `2` of `net_request_start_v2` for request bodies. Turn a
+  byte string into a `Uint8Array` only where a reader asks for one
+  (`varta.text.units` + `varta.bytes.adopt`); `blob()` and blob bodies keep
+  the string.
+- `net_request_start` maps to `net_request_start_v2` under v38
+  (`LanguageProfile::host_operation`); each import parses only its own
+  descriptor version, and a unit above 0xFF in a byte body is a fatal
+  `NetError::Descriptor`. Mirror the descriptor constants in the prelude
+  (`the_byte_fetch_prelude_mirrors_the_net_contract`).
+- Engine-internal members of the blob and fetch preludes (`Blob.byteString`,
+  `Blob.adopt`, `Blob.encode`, `ArrayBuffer.storageOf`, `ArrayBuffer.adopt`,
+  `FormData.multipart`, `Request.bodySource`) are instance methods listed in
+  `INTERNAL_MEMBERS`, so program modules cannot forge a byte string.
+- `process.env` reads only through `env_snapshot`. The snapshot lists only
+  `Policy::exact_names` (patterns without `*`/`?`, in the request and in the
+  ceiling) that also pass `Policy::env`; never enumerate `std::env::vars`.
+  A static key (`environmentValue`) reads one name with the `env_get`
+  check. Never add an ambient environment path.
+- A merged class/interface (`classes::merged_interfaces`) is an AST rewrite
+  before the constructor discipline: the `Object.assign(this, X)` temporary
+  is typed with the merged interface (declared under the unspellable
+  `merged_type_name`), so missing or incompatible members fail the ordinary
+  structural check. Keep the discipline unchanged; one call only.
+- A `Uint8Array` held by `unknown` stays a compile error (owner decision);
+  do not box it until the planned increment.
+- `globalThis` lowers to the global prelude's `GlobalObject`; function
+  globals reach through it only by the scanner rewrite
+  (`modules::global_members::FUNCTION_GLOBALS`). Add a member as a getter of
+  `GlobalObject` or a name of that list, never as an untyped fallback.
+- Record unions without discriminants convert by strict matching
+  (`matched_build`): exact members first, then every member built under
+  `try`, exactly one success. Never pick a member by order;
+  `undiscriminated_unions` routes `JSON.parse(text) as T` through `unknown`
+  when the schema parser cannot select.
+- A mixed `Promise.race` is lowered element by element (`race_items`); the
+  homogeneous literal keeps one array. A literal-erased element value fulfills
+  through `assert_value`, never a retag.
+- `unknown` never holds a `Uint8Array`: `collections::holds_bytes` values stay
+  rejected by `unknown::widen`; records reaching bytes are admitted only
+  without other private builtins (`reaches_private`) and their JSON-object
+  view throws for the bytes (`Views::bytes_error`).
+- Tests: `varta-runtime` `web_bytes_tests` (Node 24 logs of
+  `web_bytes_cases`), `net_tests` byte bodies against the loopback server and
+  `net_cases/server.mjs` (`node_runner.mjs --bytes`), ABI 34 import and
+  relabelling tests, the denial test, the runtime descriptor unit tests, and
+  the CLI smoke test of `process.env` grants and byte-body denials through
+  `dev` and `build --single`. V37 cases that read text chunks are listed in
+  `V38_DEVIATIONS`.
 
 ### V38 linked intrinsics
 

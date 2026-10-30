@@ -126,6 +126,8 @@ pub(super) struct Class {
     pub frame: generics::Frame,
     /// Own members of an instance whose function slots are not allocated yet.
     unallocated: Vec<Member>,
+    /// V38 (`web_bytes`): the same-named interface merged with the class.
+    merged: Option<merged_interfaces::MergedInterface>,
 }
 impl Class {
     /// A generic class declaration (not one of its instances).
@@ -173,7 +175,39 @@ pub(crate) struct Classes {
     /// Instance member bodies to lower: (function index, class, member).
     pending_members: VecDeque<generic_classes::PendingMember>,
 }
+/// The type name under which the merged interface of class `class` is
+/// declared (v38 `web_bytes`): no identifier can spell it, and diagnostics
+/// read `interface C`.
+pub(super) fn merged_type_name(class: &str) -> String {
+    format!("interface {class}")
+}
+
 impl Classes {
+    /// Merge `interface` into the same-named class `id` (v38 `web_bytes`):
+    /// its members become instance fields that the constructor provides
+    /// with `Object.assign(this, …)`. Generic classes and interfaces merge
+    /// no members.
+    pub(super) fn merge_interface(
+        &mut self,
+        id: u32,
+        interface: interfaces::Interface,
+    ) -> Result<()> {
+        let class = &mut self.list[id as usize];
+        if class.is_template() || interface.params().is_some() || class.merged.is_some() {
+            return Err(interface.source().locate(
+                unsupported(&format!(
+                    "declaration merging of a generic interface or class {}",
+                    class.name
+                )),
+                interface.span(),
+            ));
+        }
+        class.merged = Some(merged_interfaces::MergedInterface {
+            interface: Box::new(interface),
+            members: Vec::new(),
+        });
+        Ok(())
+    }
     pub(crate) fn shape(&self, id: u32) -> u32 {
         self.list[id as usize].shape
     }
@@ -538,6 +572,7 @@ pub(super) fn register(
         frame: generics::Frame::new(),
         unallocated: Vec::new(),
         opaque: crate::modules::engine::is_builtin_source(source),
+        merged: None,
     });
     Ok(Some((name, id)))
 }
@@ -567,6 +602,7 @@ mod generic_methods;
 mod implements;
 mod layout;
 mod members;
+mod merged_interfaces;
 mod parameter_properties;
 mod private_names;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers, late_dispatch_bodies};

@@ -36,6 +36,15 @@ const HTTP1_ALPN: &[u8] = b"http/1.1";
 /// The UTF-8 replacement for invalid or truncated sequences.
 const REPLACEMENT: char = '\u{FFFD}';
 
+/// How one pulled chunk is delivered: decoded as UTF-8 text
+/// (`net_body_read`), or as its bytes, one code unit per byte
+/// (`net_body_read_bytes`, v38).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ReadMode {
+    Text,
+    Bytes,
+}
+
 /// TLS client settings: the compiled-in Mozilla roots (plus test-only roots in
 /// runtime tests), the ring provider and HTTP/1.1 only.
 pub(super) fn tls_config() -> Result<Arc<rustls::ClientConfig>, String> {
@@ -60,7 +69,7 @@ pub(super) async fn run(
     id: u64,
     plan: Plan,
     events: mpsc::UnboundedSender<Event>,
-    mut pull: mpsc::Receiver<()>,
+    mut pull: mpsc::Receiver<ReadMode>,
 ) {
     let deadline = tokio::time::Instant::from_std(plan.deadline);
     let send = |kind: CompletionKind, text: String| {
@@ -83,10 +92,10 @@ pub(super) async fn run(
     }
     let mut reader = BodyReader::new(body);
     loop {
-        if pull.recv().await.is_none() {
+        let Some(mode) = pull.recv().await else {
             return;
-        }
-        match tokio::time::timeout_at(deadline, reader.next()).await {
+        };
+        match tokio::time::timeout_at(deadline, reader.next(mode)).await {
             Ok(Ok(Some(text))) => send(CompletionKind::Chunk, text),
             Ok(Ok(None)) => return send(CompletionKind::End, String::new()),
             Ok(Err(reason)) => return send(CompletionKind::Failed, reason),
@@ -224,9 +233,22 @@ impl BodyReader {
             ended: false,
         }
     }
-    /// The next nonempty chunk of text, or `None` at the end of the body.
-    async fn next(&mut self) -> Result<Option<String>, String> {
+    /// The next nonempty chunk (text, or bytes as code units), or `None` at
+    /// the end of the body.
+    async fn next(&mut self, mode: ReadMode) -> Result<Option<String>, String> {
         loop {
+            if mode == ReadMode::Bytes && (!self.buffer.is_empty() || !self.carry.is_empty()) {
+                // Bytes an earlier text read kept for an unfinished sequence
+                // come first, undecoded.
+                let mut bytes = std::mem::take(&mut self.carry);
+                let take = self
+                    .buffer
+                    .len()
+                    .min(MAX_CHUNK_BYTES.saturating_sub(bytes.len()));
+                let rest = self.buffer.split_off(take);
+                bytes.extend_from_slice(&std::mem::replace(&mut self.buffer, rest));
+                return Ok(Some(latin1(&bytes)));
+            }
             if !self.buffer.is_empty() {
                 let rest = self
                     .buffer

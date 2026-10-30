@@ -1,4 +1,5 @@
 use crate::{GuestExit, HostFailure, RuntimeContext};
+use varta_common::HostOperation;
 use varta_common::abi::{self, HostStatus};
 use wasmtime::{Caller, Extern, Linker, Val};
 
@@ -108,6 +109,26 @@ pub(super) fn result_bytes(
         .set(caller, Val::I32(bytes.len() as i32))
         .map_err(HostFailure::io)?;
     Ok(abi::RESULT_BASE as i32)
+}
+
+/// The `process.env` snapshot of v38 (`env_snapshot`): a JSON object of the
+/// set variables whose names the `env.get` grants list exactly, in the
+/// package request and in the host ceiling (each name also passes the check
+/// `env_get` makes), in name order. A wildcard pattern lists nothing: the
+/// environment is never enumerated, only granted names are read. Values that
+/// are not Unicode are skipped.
+fn env_snapshot(policy: &crate::policy::Policy) -> String {
+    const ENV_GET: &str = "env.get";
+    let mut variables = serde_json::Map::new();
+    for name in policy.exact_names(ENV_GET) {
+        if !policy.env(ENV_GET, &name) {
+            continue;
+        }
+        if let Some(value) = std::env::var_os(&name).and_then(|value| value.into_string().ok()) {
+            variables.insert(name, serde_json::Value::String(value));
+        }
+    }
+    serde_json::Value::Object(variables).to_string()
 }
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
@@ -247,6 +268,47 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
     }
+    linker.func_wrap(
+        "varta",
+        HostOperation::EnvSnapshot.name(),
+        |mut caller: Caller<'_, RuntimeContext>,
+         ptr: i32,
+         len: i32|
+         -> Result<i32, wasmtime::Error> {
+            reset(&mut caller)?;
+            const ENV_GET: &str = "env.get";
+            let text = (|| {
+                let name = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES, true)?;
+                if name.is_empty() {
+                    return Ok(env_snapshot(&caller.data().policy));
+                }
+                // One named variable, checked exactly as `env_get` checks it;
+                // an unset variable is absent without a failure.
+                if !caller.data().policy.env(ENV_GET, &name) {
+                    return Err(HostFailure::denied(ENV_GET, &name));
+                }
+                let mut variables = serde_json::Map::new();
+                if let Some(value) = std::env::var_os(&name).and_then(|v| v.into_string().ok()) {
+                    variables.insert(name, serde_json::Value::String(value));
+                }
+                Ok(serde_json::Value::Object(variables).to_string())
+            })();
+            let text = match text {
+                Ok(text) => text,
+                Err(error) => {
+                    failure(&mut caller, error)?;
+                    return Ok(0);
+                }
+            };
+            match result16(&mut caller, text.as_bytes()) {
+                Ok(value) => Ok(value),
+                Err(error) => {
+                    failure(&mut caller, error)?;
+                    Ok(0)
+                }
+            }
+        },
+    )?;
     for (name, utf16) in [("env_print", false), ("env_print16", true)] {
         linker.func_wrap(
             "varta",
