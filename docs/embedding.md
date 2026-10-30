@@ -924,6 +924,52 @@ They are never delivered to the guest.
 | `UnhandledRejection` | `unhandled promise rejection: <reason> (<count> rejected promise(s) had no handler after the microtask checkpoint)` |
 <!-- generated:embedding-scheduler-errors:end -->
 
+`<due_ms>` is the due time of the earliest timer that keeps the loop alive, in
+milliseconds since the execution started, **rounded up** to an integer and printed
+as a plain decimal integer (no fraction, exponent or separator): a loop time of
+`6000` or `5999.25` both print `6000`. `<deadline_seconds>` is the execution
+deadline in whole seconds. `<count>` is a plain decimal integer and `<reason>` is
+the bounded rejection rendering of the [microtask checkpoint](#microtask-checkpoint).
+
+**Which error each misuse raises.** Checks run in the order of the rows for one
+import; the first failing row decides. "Not issued" means not an integer, outside
+0 to `scheduler::MAX_PROMISE_SERIALS`, or above the last value the host issued.
+
+<!-- generated:embedding-scheduler-misuse:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
+| Import or step | Misuse | Error |
+| --- | --- | --- |
+| `promise_react` | serial not issued | `UnknownSerial` |
+| `promise_react` | serial 0 when every serial is already issued | `SerialBudget` |
+| `promise_react` | serial already settled (and not a cleared timer's serial) | `UnknownSerial` |
+| `promise_react`, `scheduler_enqueue` | the held tokens already reach the limit | `QueueFull` |
+| `promise_react`, `scheduler_enqueue` | token already held | `DuplicateToken` |
+| `promise_settle` | serial not issued, or settled before (a double settle) | `UnknownSerial` |
+| `promise_unhandled` | every rejection id is already issued | `SerialBudget` |
+| `promise_handled` | id not issued, never reported, or withdrawn before (a repeated withdrawal) | `UnknownSerial` |
+| `timer_start` | no `time.timer` grant | `TimerDenied` |
+| `timer_start` | flags outside interval and unref | `TimerState` |
+| `timer_start` | serial not issued | `UnknownSerial` |
+| `timer_start` | serial 0, not exactly one registered reaction, or a timer already armed for it | `TimerState` |
+| `timer_start` | the pending timers already reach the limit | `TimerBudget` |
+| `timer_start` | every timer id is already issued | `SerialBudget` |
+| `timer_take` | serial not issued | `UnknownSerial` |
+| `timer_take` | no timer for the serial, or the timer neither fired nor was cleared | `TimerState` |
+| `varta_resume` result | an outcome other than `Suspended` or `Returned` | `Outcome` |
+| Microtask checkpoint | one more job than the per-execution job limit | `JobBudget` |
+| Event loop | the next timer is due at or after the deadline | `TimerDeadline` |
+| Event loop | a rejection still unhandled after a checkpoint | `UnhandledRejection` |
+<!-- generated:embedding-scheduler-misuse:end -->
+
+**Which limit fires first.** Every held token names a distinct live frame, and
+`scheduler::MAX_PENDING_CONTINUATIONS` equals `frame::MAX_LIVE_FRAMES`. The
+compiler-generated code keeps live frames in a guest root table of exactly
+`frame::MAX_LIVE_FRAMES` slots and executes `unreachable` when it has to admit one
+more frame, before that frame can register its token. So a compiled program with
+too many pending awaits or timers stops with a **Wasm trap** (`unreachable`), never
+with `QueueFull`; `QueueFull` is reachable only by a module that passes tokens that
+name no live frame. `TimerBudget` (half the frame limit) does fire first for a
+program that starts too many timers.
+
 ## Function and frame catalogs
 
 Profiles with entries in the **`varta.functions` versions** column of the
@@ -975,8 +1021,35 @@ but tokens the guest itself handed over.
 binding is `{ty, result}`; a function is `{code, signature, captures}`. A frame
 layout is `{code, slots, capacity?, states, result, return_input, exception,
 generator?}` with slots `{binding, shared}` and states `{input, yielded,
-saved?}`; `input` and `return_input` are `float64`, `boolean`, `undefined`,
-`guest` or `null`.
+saved?}`, where every `saved[]` element is a slot `{binding, shared}` as well.
+`input` is always one of the JSON **strings** `"float64"`, `"boolean"`,
+`"undefined"` or `"guest"`; `return_input` is one of those strings, JSON `null` or
+absent (no admissible `Return` input). No member takes the string `"null"`.
+
+Members of each type kind (besides `kind`), generated from the reader's type:
+
+<!-- generated:embedding-catalog-types:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
+| `kind` | Members |
+| --- | --- |
+| `i32` | none |
+| `float64` | none |
+| `boolean` | none |
+| `string` | none |
+| `null` | none |
+| `undefined` | none |
+| `bigInt` | none |
+| `error` | `class`: native error class tag or `null` (may be absent) |
+| `function` | `signature`: signature number below `function::MAX_TYPES` |
+| `record` | `fields`: array of `{name, ty, optional}`, sorted by `name` |
+| `array` | `element`: type index |
+| `dictionary` | `value`: type index |
+| `primitiveUnion` | `members`: array of type indices |
+| `referenceUnion` | `members`: array of type indices |
+| `class` | none |
+| `generator` | none |
+| `unknown` | none |
+| `promise` | none |
+<!-- generated:embedding-catalog-types:end -->
 
 Optionality, exactly as the strict reader accepts it (every object rejects unknown
 members):

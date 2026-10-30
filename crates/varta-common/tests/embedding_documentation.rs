@@ -15,6 +15,7 @@ use varta_common::{
     capability_kind, exceptions, function,
     function::admission,
     function::frame::{self, Completion, Outcome},
+    function::{CaptureField, CaptureType},
     http,
     language::{self, LanguageProfile},
     scheduler, value,
@@ -806,6 +807,198 @@ fn scheduler_error_name(error: &scheduler::SchedulerError) -> &'static str {
     }
 }
 
+/// Import misuse and the scheduler error it raises, in check order per import.
+fn scheduler_misuse() -> String {
+    use scheduler::SchedulerError as E;
+    let budget = E::SerialBudget;
+    let rows: Vec<(&str, &str, E)> = vec![
+        ("`promise_react`", "serial not issued", E::UnknownSerial),
+        (
+            "`promise_react`",
+            "serial 0 when every serial is already issued",
+            budget.clone(),
+        ),
+        (
+            "`promise_react`",
+            "serial already settled (and not a cleared timer's serial)",
+            E::UnknownSerial,
+        ),
+        (
+            "`promise_react`, `scheduler_enqueue`",
+            "the held tokens already reach the limit",
+            E::QueueFull,
+        ),
+        (
+            "`promise_react`, `scheduler_enqueue`",
+            "token already held",
+            E::DuplicateToken,
+        ),
+        (
+            "`promise_settle`",
+            "serial not issued, or settled before (a double settle)",
+            E::UnknownSerial,
+        ),
+        (
+            "`promise_unhandled`",
+            "every rejection id is already issued",
+            budget.clone(),
+        ),
+        (
+            "`promise_handled`",
+            "id not issued, never reported, or withdrawn before (a repeated withdrawal)",
+            E::UnknownSerial,
+        ),
+        ("`timer_start`", "no `time.timer` grant", E::TimerDenied),
+        (
+            "`timer_start`",
+            "flags outside interval and unref",
+            E::TimerState,
+        ),
+        ("`timer_start`", "serial not issued", E::UnknownSerial),
+        (
+            "`timer_start`",
+            "serial 0, not exactly one registered reaction, or a timer already armed for it",
+            E::TimerState,
+        ),
+        (
+            "`timer_start`",
+            "the pending timers already reach the limit",
+            E::TimerBudget,
+        ),
+        ("`timer_start`", "every timer id is already issued", budget),
+        ("`timer_take`", "serial not issued", E::UnknownSerial),
+        (
+            "`timer_take`",
+            "no timer for the serial, or the timer neither fired nor was cleared",
+            E::TimerState,
+        ),
+        (
+            "`varta_resume` result",
+            "an outcome other than `Suspended` or `Returned`",
+            E::Outcome,
+        ),
+        (
+            "Microtask checkpoint",
+            "one more job than the per-execution job limit",
+            E::JobBudget,
+        ),
+        (
+            "Event loop",
+            "the next timer is due at or after the deadline",
+            E::TimerDeadline {
+                due_ms: 0,
+                deadline_seconds: 0,
+            },
+        ),
+        (
+            "Event loop",
+            "a rejection still unhandled after a checkpoint",
+            E::UnhandledRejection {
+                count: 0,
+                reason: scheduler::RejectionReason::NotRetained,
+            },
+        ),
+    ];
+    table(
+        &["Import or step", "Misuse", "Error"],
+        rows.into_iter().map(|(site, misuse, error)| {
+            vec![
+                site.to_owned(),
+                misuse.to_owned(),
+                format!("`{}`", scheduler_error_name(&error)),
+            ]
+        }),
+    )
+}
+
+/// Members of each catalog type kind, read back from the reader's own serialization.
+fn catalog_types() -> String {
+    // Exhaustive on purpose: a new type kind fails compilation here.
+    fn sample(kind: &CaptureType) -> CaptureType {
+        match kind {
+            CaptureType::I32 => CaptureType::I32,
+            CaptureType::Float64 => CaptureType::Float64,
+            CaptureType::Boolean => CaptureType::Boolean,
+            CaptureType::String => CaptureType::String,
+            CaptureType::Null => CaptureType::Null,
+            CaptureType::Undefined => CaptureType::Undefined,
+            CaptureType::BigInt => CaptureType::BigInt,
+            CaptureType::Error { .. } => CaptureType::Error { class: Some(0) },
+            CaptureType::Function { .. } => CaptureType::Function { signature: 0 },
+            CaptureType::Record { .. } => CaptureType::Record {
+                fields: vec![CaptureField {
+                    name: String::new(),
+                    ty: 0,
+                    optional: false,
+                }],
+            },
+            CaptureType::Array { .. } => CaptureType::Array { element: 0 },
+            CaptureType::Dictionary { .. } => CaptureType::Dictionary { value: 0 },
+            CaptureType::PrimitiveUnion { .. } => CaptureType::PrimitiveUnion { members: vec![] },
+            CaptureType::ReferenceUnion { .. } => CaptureType::ReferenceUnion { members: vec![] },
+            CaptureType::Class => CaptureType::Class,
+            CaptureType::Generator => CaptureType::Generator,
+            CaptureType::Unknown => CaptureType::Unknown,
+            CaptureType::Promise => CaptureType::Promise,
+        }
+    }
+    let kinds = [
+        CaptureType::I32,
+        CaptureType::Float64,
+        CaptureType::Boolean,
+        CaptureType::String,
+        CaptureType::Null,
+        CaptureType::Undefined,
+        CaptureType::BigInt,
+        CaptureType::Error { class: None },
+        CaptureType::Function { signature: 0 },
+        CaptureType::Record { fields: vec![] },
+        CaptureType::Array { element: 0 },
+        CaptureType::Dictionary { value: 0 },
+        CaptureType::PrimitiveUnion { members: vec![] },
+        CaptureType::ReferenceUnion { members: vec![] },
+        CaptureType::Class,
+        CaptureType::Generator,
+        CaptureType::Unknown,
+        CaptureType::Promise,
+    ];
+    let describe = |member: &str| match member {
+        "class" => "`class`: native error class tag or `null` (may be absent)",
+        "signature" => "`signature`: signature number below `function::MAX_TYPES`",
+        "fields" => "`fields`: array of `{name, ty, optional}`, sorted by `name`",
+        "element" => "`element`: type index",
+        "value" => "`value`: type index",
+        "members" => "`members`: array of type indices",
+        _ => "",
+    };
+    table(
+        &["`kind`", "Members"],
+        kinds.iter().map(|kind| {
+            // Infallible: catalog types serialize to a JSON object.
+            let value = serde_json::to_value(sample(kind)).unwrap();
+            let object = value.as_object().unwrap();
+            let name = object["kind"].as_str().unwrap().to_owned();
+            let members: Vec<String> = object
+                .keys()
+                .filter(|key| key.as_str() != "kind")
+                .map(|key| {
+                    let text = describe(key);
+                    assert!(!text.is_empty(), "undocumented catalog member {key}");
+                    text.to_owned()
+                })
+                .collect();
+            vec![
+                format!("`{name}`"),
+                if members.is_empty() {
+                    "none".to_owned()
+                } else {
+                    members.join("; ")
+                },
+            ]
+        }),
+    )
+}
+
 /// Reference diagnostics of every fatal scheduler error, with placeholders for
 /// the values a particular failure carries.
 fn scheduler_errors() -> String {
@@ -877,6 +1070,8 @@ fn embedding_layout_names_and_codes_match_constants() {
     assert_block(DOCUMENT, "embedding-grant-kinds", &grant_kinds());
     assert_block(DOCUMENT, "embedding-timers", &timers());
     assert_block(DOCUMENT, "embedding-scheduler-errors", &scheduler_errors());
+    assert_block(DOCUMENT, "embedding-scheduler-misuse", &scheduler_misuse());
+    assert_block(DOCUMENT, "embedding-catalog-types", &catalog_types());
     assert_block(
         DOCUMENT,
         "embedding-tool-catalog-example",
