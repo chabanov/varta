@@ -788,6 +788,71 @@ fn timers() -> String {
     )
 }
 
+fn scheduler_error_name(error: &scheduler::SchedulerError) -> &'static str {
+    use scheduler::SchedulerError as E;
+    // Exhaustive on purpose: a new scheduler error fails compilation here.
+    match error {
+        E::QueueFull => "QueueFull",
+        E::JobBudget => "JobBudget",
+        E::SerialBudget => "SerialBudget",
+        E::DuplicateToken => "DuplicateToken",
+        E::UnknownSerial => "UnknownSerial",
+        E::Outcome => "Outcome",
+        E::TimerBudget => "TimerBudget",
+        E::TimerDenied => "TimerDenied",
+        E::TimerState => "TimerState",
+        E::TimerDeadline { .. } => "TimerDeadline",
+        E::UnhandledRejection { .. } => "UnhandledRejection",
+    }
+}
+
+/// Reference diagnostics of every fatal scheduler error, with placeholders for
+/// the values a particular failure carries.
+fn scheduler_errors() -> String {
+    use scheduler::{RejectionReason, SchedulerError as E};
+    // Sentinel values that cannot occur in the fixed text, replaced by placeholders.
+    const DUE: u64 = 9_100_001;
+    const DEADLINE: u64 = 9_100_002;
+    const COUNT: u64 = 9_100_003;
+    const REASON: &str = "<reason>";
+    let errors = [
+        E::QueueFull,
+        E::JobBudget,
+        E::SerialBudget,
+        E::DuplicateToken,
+        E::UnknownSerial,
+        E::Outcome,
+        E::TimerBudget,
+        E::TimerDenied,
+        E::TimerState,
+        E::TimerDeadline {
+            due_ms: DUE,
+            deadline_seconds: DEADLINE,
+        },
+        E::UnhandledRejection {
+            count: COUNT,
+            reason: RejectionReason::Retained {
+                text: REASON.to_owned(),
+                truncated: false,
+            },
+        },
+    ];
+    table(
+        &["Error", "Reference diagnostic"],
+        errors.iter().map(|error| {
+            let text = error
+                .to_string()
+                .replace(&DUE.to_string(), "<due_ms>")
+                .replace(&DEADLINE.to_string(), "<deadline_seconds>")
+                .replace(&COUNT.to_string(), "<count>");
+            vec![
+                format!("`{}`", scheduler_error_name(error)),
+                format!("`{text}`"),
+            ]
+        }),
+    )
+}
+
 #[test]
 fn embedding_host_operations_match_registry() {
     assert_block(DOCUMENT, "embedding-host-operations", &host_operations());
@@ -811,6 +876,7 @@ fn embedding_layout_names_and_codes_match_constants() {
     assert_block(DOCUMENT, "embedding-entry-limits", &entry_limits());
     assert_block(DOCUMENT, "embedding-grant-kinds", &grant_kinds());
     assert_block(DOCUMENT, "embedding-timers", &timers());
+    assert_block(DOCUMENT, "embedding-scheduler-errors", &scheduler_errors());
     assert_block(
         DOCUMENT,
         "embedding-tool-catalog-example",

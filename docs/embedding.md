@@ -755,6 +755,20 @@ execution as a failure. An authorized exit ends it with its exit code (which may
 be 0) and is not an exception. Neither is ever delivered to the guest as a
 catchable value.
 
+**Output of a failed execution.** The reference host captures every output line in
+the execution's store as it is emitted (only an HTTP service streams them through
+its observer). After a successful run or an authorized exit it returns the lines,
+and `varta run`, `varta dev` and the runtime companion print them. When the
+execution **fails** (a trap including fuel or deadline exhaustion, an uncaught
+exception, a scheduler error), the reference host drops the captured lines with the
+store and returns only the error, so the CLI and the companion print only
+`varta failed: …` / `varta runtime failed: …`; a failed tool invocation likewise
+carries no logs. **Normative for third-party hosts:** a host SHOULD deliver the
+lines a failed execution emitted before it failed, in order and before the failure
+diagnostic, marked as belonging to a failed execution; machine envelopes of
+Tool invocation ABI v1 keep carrying no logs on failure. The reference host's
+change is listed under [Proposed changes](#proposed-changes).
+
 ### Exception channel
 
 Profiles with an exception channel export `varta.exception.pending` (mutable i32),
@@ -860,14 +874,55 @@ fatal scheduler error.
   beyond the execution deadline (in ms), fail at once with the timer-deadline
   error; (5) wait until the wall clock is at least execution start + due time, then
   check the deadline; (6) set loop time to the maximum of itself and the due time,
-  mark the timer fired, move its promise's reactions to the microtask queue (a
-  fired timer without a registered reaction is fatal); an interval is re-armed at
-  due time + its delay with a new sequence and expects a new reaction under the
-  same serial; then repeat from (1).
+  mark the timer fired and move every reaction registered under its serial to the
+  end of the microtask queue; an interval is re-armed at due time + its delay with a
+  new sequence, and its serial gets an empty reaction list for the frame to register
+  into again; then repeat from (1). (A fired timer whose serial has no reaction list
+  at all is a fatal invalid timer operation; with the rules above it cannot occur.)
+- **Tokens.** A timer holds **no token of its own**. The only token involved is the
+  resume token of the waiting timer frame, registered with `promise_react` under the
+  timer's serial before `timer_start` (which requires exactly one such reaction).
+  That token is *held* in the sense of the [microtask bounds](#microtask-checkpoint):
+  while registered as the reaction and while queued after a firing or a clear, until
+  the host takes it from the queue. So each pending timer accounts for exactly one
+  held token against `scheduler::MAX_PENDING_CONTINUATIONS`, and an interval frame
+  holds a new one each time it registers again. `scheduler::MAX_PENDING_TIMERS`
+  separately bounds the timers themselves.
+- **Interval due again before the previous firing was taken.** Firings
+  **coalesce**: a firing marks the timer fired and wakes whatever reaction is
+  registered at that moment; if the frame has not registered again yet, the firing
+  wakes nothing and only keeps the fired mark, and the interval is re-armed as
+  usual. `timer_take` then reports one firing (1) however many coalesced, and the
+  interval stays. It is neither queued twice nor an error. The compiler-generated
+  timer frame calls its callback synchronously and registers again within the turn
+  its firing queued it, and timers only fire after the microtask queue is empty, so
+  coalescing happens only if a frame fails to register again.
 - **Budgets.** `timer_start` counts against the host-call budget; the other three
-  are bookkeeping that observe the deadline like the promise imports. Every pending
-  timer also holds a token counted against `scheduler::MAX_PENDING_CONTINUATIONS`.
-  The whole loop runs within the one execution deadline.
+  are bookkeeping that observe the deadline like the promise imports. The whole loop
+  runs within the one execution deadline.
+
+### Scheduler errors
+
+Every fatal scheduler error ends the execution with the reference diagnostic below
+(placeholders in angle brackets). These texts are stable for a profile: a host that
+reports scheduler failures SHOULD use them verbatim, and conformance compares them.
+They are never delivered to the guest.
+
+<!-- generated:embedding-scheduler-errors:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
+| Error | Reference diagnostic |
+| --- | --- |
+| `QueueFull` | `microtask queue exceeds 64 pending continuations` |
+| `JobBudget` | `execution exceeds 65536 microtasks` |
+| `SerialBudget` | `execution exceeds 1048576 promise serials` |
+| `DuplicateToken` | `resume token is already scheduled` |
+| `UnknownSerial` | `unknown promise serial` |
+| `Outcome` | `scheduled frame reported an invalid outcome` |
+| `TimerBudget` | `execution exceeds 32 pending timers` |
+| `TimerDenied` | `<capability denied: time.timer> (setTimeout and setInterval require an exact time.timer grant)` |
+| `TimerState` | `invalid timer operation` |
+| `TimerDeadline` | `execution deadline exceeded: the next timer is due at least <due_ms> ms after the execution started, beyond the <deadline_seconds> s deadline` |
+| `UnhandledRejection` | `unhandled promise rejection: <reason> (<count> rejected promise(s) had no handler after the microtask checkpoint)` |
+<!-- generated:embedding-scheduler-errors:end -->
 
 ## Function and frame catalogs
 
@@ -921,8 +976,30 @@ binding is `{ty, result}`; a function is `{code, signature, captures}`. A frame
 layout is `{code, slots, capacity?, states, result, return_input, exception,
 generator?}` with slots `{binding, shared}` and states `{input, yielded,
 saved?}`; `input` and `return_input` are `float64`, `boolean`, `undefined`,
-`guest` or `null`. Optional members (`capacity`, `generator`, `saved`, `frames`)
-may be absent; `result` and `return_input` may be `null`.
+`guest` or `null`.
+
+Optionality, exactly as the strict reader accepts it (every object rejects unknown
+members):
+
+| Member | Absent | `null` |
+| --- | --- | --- |
+| Top level `frames` | Allowed (empty) | Rejected |
+| Every other top-level member | Rejected | Rejected |
+| `types[].class` (`error`) | Allowed (no class) | Allowed (no class) |
+| Every other type member (`signature`, `fields`, `element`, `value`, `members`) and every `fields[]` member (`name`, `ty`, `optional`) | Rejected | Rejected |
+| `bindings[].ty`, `bindings[].result` | Rejected | Rejected |
+| `functions[].code`, `signature`, `captures` | Rejected | Rejected |
+| `frames[].capacity` | Allowed (cell layout) | Allowed (cell layout) |
+| `frames[].result`, `frames[].return_input` | Allowed (none) | Allowed (none) |
+| `frames[].generator` | Allowed (`false`) | Rejected |
+| `frames[].code`, `slots`, `states`, `exception` | Rejected | Rejected |
+| `frames[].slots[].binding`, `shared` | Rejected | Rejected |
+| `frames[].states[].input`, `yielded` | Rejected | Rejected |
+| `frames[].states[].saved` | Allowed (empty) | Rejected |
+
+In particular `states[].yielded` is a required binding index and is never `null`.
+The catalog's own validation then requires `capacity` in liveness layouts (version
+3) and forbids it and `saved` in cell layouts (version 2).
 
 The remaining structural rules (type graph, capture and liveness entries, binding
 classes per layout) are defined by `varta_common::function::{catalog, validate,
@@ -1642,6 +1719,7 @@ generated tables. Unstable draft v0, like the rest of the view protocol.
 | `dialog` background colour | `#ffffff` / `#1f1f1f` |
 | `dialog` text colour | `#111111` / `#eeeeee` |
 | Browser selector substituted for `:root` | `[data-l0-root]` (both schemes) |
+| View root (node 1) base style | `display: block; height: 100%` (both schemes; browser base sheet: `[data-l0-root] { display: block; height: 100% }`) |
 <!-- generated:view-defaults:end -->
 
 **Authoring note (L1 templates).** A grid or flex container whose items include
@@ -1756,6 +1834,15 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
   (a granted or stored decision) the action runs in the activation of the original
   gesture as before. The guest never receives the gesture of the prompt and the
   prompt's turn is not a guest gesture turn.
+- **View root fills the host (round 7).** Node 1, the view root, normatively
+  fills its host block on every renderer with the base style in the
+  [defaults table](#view-draft-v0-round-4-subset-fixes): `display: block` and
+  `height: 100%` of the host container. The browser applier puts
+  `[data-l0-root] { display: block; height: 100% }` in its base sheet and gives its
+  host element a definite height; natively the root is the window's content box
+  and resizes with the window. Guest stylesheets may change the root's other
+  properties but layouts that depend on the root height (a full-height chat
+  layout) behave the same on every renderer.
 - **Arbitrary external links (pending owner decision).** Agent answers contain
   links to arbitrary sites, which a fixed `ui.open_url` pattern list cannot cover.
   One option under discussion is an `https://*` grant form whose every activation
@@ -1854,4 +1941,5 @@ Not normative yet; each needs its own change to the engine, CLI or contract.
 | `varta.functions` structure | Normative minimum here; full rules only in code | Publish the full catalog schema and structural rules in this document, generated from the registry | Documentation and a drift test only |
 | Approximated Math results | Platform `f64` library, last bits host-dependent | Bit-identical results on every host by linking one pure-Rust implementation into the guest (the accepted thin-host decision) | A new profile whose Math imports are guest code |
 | Denial targets | Runtime constants (`clock`, `process`, otherwise the guest input), documented by hand | Move each operation's denial target into the `HostOperation` registry so the target table is generated | `varta-common` registry data read by the runtime handlers; no observable change |
+| Output of a failed execution | Captured lines are dropped; only the error is printed | Return the captured lines with the error (a `RuntimeError` carrying the partial output) and print them before the error in `varta run`/`dev` and the companion, at least in `dev`; optionally a `logs` member in failure envelopes | `varta-runtime` execution result types, the CLI and the companion, their tests; envelopes would need a new version |
 | Denied `timer_start` | Fatal for the execution | Keep it fatal, or reject the timer's promise so the guest can recover; needs a decision | Runtime scheduler and the timer prelude, in a new profile if changed |

@@ -980,6 +980,10 @@ pub const DIALOG_TEXT: [&str; 2] = ["#111111", "#eeeeee"];
 /// The selector the browser applier substitutes for `:root`, matching the
 /// root container (node [`ROOT_NODE`]) inside its closed shadow root.
 pub const ROOT_SELECTOR_IN_BROWSER: &str = "[data-l0-root]";
+/// Base style of the view root (node [`ROOT_NODE`]) on every renderer: it
+/// fills the host block (the applier's host element in the browser, the
+/// window's content box natively) and resizes with it.
+pub const ROOT_BASE_STYLE: &str = "display: block; height: 100%";
 
 /// Pseudo-classes a stylesheet selector may use.
 pub const PSEUDO_CLASSES: &[&str] = &[

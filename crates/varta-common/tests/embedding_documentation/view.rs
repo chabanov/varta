@@ -304,6 +304,15 @@ fn defaults() -> String {
                 "Browser selector substituted for `:root`",
                 format!("`{}` (both schemes)", view::ROOT_SELECTOR_IN_BROWSER),
             ),
+            (
+                "View root (node 1) base style",
+                format!(
+                    "`{}` (both schemes; browser base sheet: `{} {{ {} }}`)",
+                    view::ROOT_BASE_STYLE,
+                    view::ROOT_SELECTOR_IN_BROWSER,
+                    view::ROOT_BASE_STYLE
+                ),
+            ),
         ]
         .into_iter()
         .map(|(item, value)| vec![item.to_owned(), value]),
