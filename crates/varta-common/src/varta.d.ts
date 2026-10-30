@@ -97,7 +97,7 @@ declare class ReadableStream {
   [Symbol.asyncIterator](): AsyncGenerator<string, void, undefined>;
 }
 declare class Request {
-  constructor(input: string | Request, init?: RequestInit);
+  constructor(input: string | URL | Request, init?: RequestInit);
   readonly method: string;
   readonly url: string;
   readonly headers: Headers;
@@ -117,7 +117,7 @@ declare class Response {
   text(): Promise<string>;
   json(): Promise<unknown>;
 }
-declare function fetch(input: string | Request, init?: RequestInit): Promise<Response>;
+declare function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
 declare class URLSearchParams {
   constructor(init?: string | Record<string, string> | string[][]);
   readonly size: number;

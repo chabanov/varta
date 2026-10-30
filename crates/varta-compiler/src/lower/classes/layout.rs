@@ -423,6 +423,12 @@ fn field(
     let name = member_name(&property.key)?;
     let ty = match annotation(property.type_ann.as_deref(), types)? {
         Some(ty) => ty,
+        None if property.readonly
+            && types.profile.language_core()
+            && let Some(literal) = property.value.as_deref().and_then(readonly_literal) =>
+        {
+            literals::annotation(&literal, types)?
+        }
         None => property
             .value
             .as_deref()
@@ -468,6 +474,22 @@ fn field(
     ))
 }
 
+/// The literal type of a readonly field's literal initializer (v37
+/// `language_core`): TypeScript keeps `readonly kind = 'leaf'` at the type
+/// `'leaf'`, so such fields discriminate unions of classes.
+fn readonly_literal(value: &ast::Expr) -> Option<ast::TsLitType> {
+    let lit = match stmt::unparen(value) {
+        ast::Expr::Lit(ast::Lit::Str(text)) => ast::TsLit::Str(text.clone()),
+        ast::Expr::Lit(ast::Lit::Num(number)) => ast::TsLit::Number(number.clone()),
+        ast::Expr::Lit(ast::Lit::Bool(value)) => ast::TsLit::Bool(*value),
+        _ => return None,
+    };
+    Some(ast::TsLitType {
+        span: value.span(),
+        lit,
+    })
+}
+
 /// The class type of a `new C(...)` (or `new C<A>(...)`) field initializer
 /// (v37 `class_generics`, as in the pilot's `#controller = new
 /// AbortController()`); a generic class needs explicit type arguments here.
@@ -481,6 +503,28 @@ fn constructed_type(value: &ast::Expr, types: &mut ir::ValueTypes) -> Result<Opt
     let ast::Expr::Ident(name) = &*new.callee else {
         return Ok(None);
     };
+    // `new Map<K, V>()`, `new Set<T>()` and `new Uint8Array(n)` (v37
+    // `collections`); without type arguments TypeScript infers `any`.
+    if let Some(kind) = collections::builtin(name.sym.as_ref(), types) {
+        let args: Vec<&ast::TsType> = new
+            .type_args
+            .iter()
+            .flat_map(|args| args.params.iter().map(|ty| &**ty))
+            .collect();
+        return Ok(match (kind, args.as_slice()) {
+            (ir::CollectionKind::Map, [key, value]) => {
+                let key = keyword_type(key, types)?;
+                let value = keyword_type(value, types)?;
+                Some(collections::intern(kind, key, value, types)?)
+            }
+            (ir::CollectionKind::Set, [value]) => {
+                let value = keyword_type(value, types)?;
+                Some(collections::intern(kind, value, value, types)?)
+            }
+            (ir::CollectionKind::Uint8Array, []) => Some(collections::bytes(types)?),
+            _ => None,
+        });
+    }
     let Some(class) = named::class(types, name.sym.as_ref()) else {
         return Ok(None);
     };

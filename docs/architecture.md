@@ -8703,7 +8703,7 @@ as unknown names and keep their bytes and diagnostics.
   budgets are unchanged.
 - **Guest API.** Engine preludes (`<varta>/web/fetch.ts`, `url.ts`,
   `permission.ts`), loaded only when a module names one of their exports, so
-  other programs keep their bytes: `fetch(input: string | Request, init?)`;
+  other programs keep their bytes: `fetch(input: string | URL | Request, init?)`;
   `Request` (`method` normalized and validated like Node, `url`, `headers`,
   `signal`, `redirect`); `Response` (`status`, `statusText`, `ok`, `headers`,
   `url`, `redirected`, `type`, `body`, `bodyUsed`, `text()`, `json()` →

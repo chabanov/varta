@@ -142,6 +142,122 @@ fn json_forms_and_reserved_keys_are_rejected_by_name_in_v37() {
     }
 }
 
+#[test]
+fn split_has_one_dispatch_path_for_string_and_regexp_separators() {
+    run(
+        include_str!("v37_integration_cases/split_dispatch.ts"),
+        &[
+            r#"[["a","b","","c"],["a","b","c"],["a","b","c"],["a b"],["a","b"],["x","1","y","2","z"],[""],[""],["a"]]"#,
+            "p|q",
+            "2",
+            "2 a+b",
+        ],
+    );
+}
+
+#[test]
+fn temporal_dead_zones_private_state_and_generic_methods_match_node() {
+    run(
+        include_str!("v37_integration_cases/tdz_private_generic.ts"),
+        &["#1,#2 +1+2 true false", "ReferenceError 1"],
+    );
+}
+
+#[test]
+fn instanceof_tests_every_class_member_of_a_union() {
+    run(
+        include_str!("v37_integration_cases/instanceof_unions.ts"),
+        &["left base other", "true false"],
+    );
+}
+
+/// Union members holding Map, Set, Uint8Array and #private storage stay
+/// reachable through descriptor dispatch while collections run between
+/// awaits (forced before every job in the second run).
+#[test]
+fn record_unions_holding_collections_survive_forced_collections() {
+    run_collecting(
+        include_str!("v37_integration_cases/union_collections.ts"),
+        &[
+            "branch a,b leaf+branch = 6",
+            "leaf 1 113 = 1",
+            "summary n/m = 2",
+            "branch c leaf",
+        ],
+    );
+}
+
+/// A union whose members include a collection beside another object member
+/// is rejected by name (collections take part only as the single member of
+/// their union tag, and `instanceof Map` is not modelled).
+#[test]
+fn unions_of_collections_and_other_objects_are_rejected_by_name() {
+    let error = rejected(
+        "class Box{v=1;}type Item=Map<string,number>|Box;\
+         export function main():void{const i:Item=new Box();console.log(typeof i);}",
+        V37,
+    );
+    assert!(error.contains("in one union"), "{error}");
+}
+
+/// The SDK's server-sent-events loop: `fetch(new URL(...))`, an async
+/// generator splitting the streamed body with a RegExp, `#private` state
+/// with a generic method, a `Map` and a module `let` mutated across `await`,
+/// against the loopback server (no other host is contacted).
+#[test]
+fn sse_line_loop_across_streams_matches_node() {
+    use varta_common::net::REQUEST_CAPABILITY;
+    use varta_common::{CapabilityValue, RequestScope};
+    let server = crate::net_loopback::Loopback::start();
+    let source =
+        include_str!("v37_integration_cases/sse_lines.ts").replace("__BASE__", &server.base);
+    let grants = [CapabilityGrant {
+        id: REQUEST_CAPABILITY.into(),
+        value: CapabilityValue::Requests(RequestScope {
+            urls: vec![format!("{}/**", server.base)],
+            methods: None,
+        }),
+    }];
+    let output = VartaRuntime::new()
+        .run_wasm_bytes(&compile(&source, V37), &grants)
+        .unwrap_or_else(|e| panic!("{e:?}\n{source}"));
+    assert_eq!(
+        output.lines,
+        lines(&["1 1 TICK 1", "2 2 TICK 2", "3 3 TICK 3", "3 6 true"])
+    );
+}
+
+/// A module that uses every v37 stream (the SSE loop: language core, class
+/// generics, collections, RegExp and fetch, plus `json_stringify_v17`),
+/// relabelled as v36 with or without its host ABI section downgraded, fails
+/// validation, and running it fails the same way before any guest effect.
+#[test]
+fn every_stream_module_relabelled_as_v36_fails_before_guest_effects() {
+    use varta_common::language::{LanguageContract, SCHEMA_VERSION};
+    let source = include_str!("v37_integration_cases/sse_lines.ts")
+        .replace("__BASE__", "http://127.0.0.1:1")
+        .replace(
+            "console.log(`${received}",
+            "console.log(JSON.stringify({ received }) + `${received}",
+        );
+    let bytes = compile(&source, V37);
+    let declared = LanguageContract {
+        schema_version: SCHEMA_VERSION,
+        profile: V36,
+    }
+    .to_bytes()
+    .unwrap();
+    let relabelled = crate::language_tests::replace(&bytes, &declared);
+    let downgraded =
+        crate::language_tests::host_abi(&relabelled, Some(varta_common::abi::TIMERS_VERSION));
+    let runtime = VartaRuntime::new();
+    for module in [&relabelled, &downgraded] {
+        let refused = runtime.validate_module(module).unwrap_err().to_string();
+        let error = runtime.run_wasm_bytes(module, &timer_grant()).unwrap_err();
+        assert_eq!(error.to_string(), refused);
+    }
+}
+
 /// V37 removes unreachable functions before the function limit applies:
 /// unused prelude members and unused program functions take no slot, while
 /// v36 keeps every linked function and its diagnostic.

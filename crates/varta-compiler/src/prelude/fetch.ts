@@ -530,9 +530,9 @@ export class Request {
   private readonly given: AbortSignal | null;
   private fallback: AbortSignal | null;
 
-  constructor(input: string | Request, init?: RequestInit) {
+  constructor(input: string | URL | Request, init?: RequestInit) {
     const base = input instanceof Request ? input : null;
-    this.url = input instanceof Request ? input.url : input;
+    this.url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
     this.method = normalizeMethod(init?.method ?? (base === null ? 'GET' : base.method));
     this.headers = new Headers(init?.headers ?? (base === null ? undefined : base.headers));
     this.given = init?.signal ?? (base === null ? null : base.signalOf());
@@ -743,7 +743,7 @@ async function send(
   return response;
 }
 
-export async function fetch(input: string | Request, init?: RequestInit): Promise<Response> {
+export async function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const request = new Request(input, init);
   return send(request, request.url, request.method, request.bodyText(), 0);
 }

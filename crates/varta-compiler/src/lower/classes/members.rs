@@ -674,13 +674,61 @@ impl Lower<'_> {
     /// A union holds at most one record-tagged member, which may be a class.
     fn union_instance_of(&mut self, value: Expr, class: u32, span: Span) -> Result<Expr> {
         let union = value.ty;
-        let member = unions::members(union, self.types)
+        let members: Vec<u32> = unions::members(union, self.types)
             .into_iter()
-            .find_map(|ty| match ty {
+            .filter_map(|ty| match ty {
                 Type::Class(member) => Some(member),
                 _ => None,
-            });
+            })
+            .collect();
         let classes = &self.types.classes;
+        // V37 unions may hold several classes (`language_core`): test every
+        // member that is `class` or a subclass, else the nearest ancestor.
+        let below: Vec<u32> = members
+            .iter()
+            .copied()
+            .filter(|member| classes.descends(*member, class))
+            .collect();
+        if below.len() > 1 {
+            let saved = self.hidden(union);
+            let result = self.hidden(Type::Boolean);
+            let marker = self.hidden(Type::Number);
+            let test = below
+                .iter()
+                .rev()
+                .fold(boolean(span, false), |rest, member| Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::Conditional(
+                        Box::new(Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::IsUnionMember(
+                                Box::new(local(span, saved, union)),
+                                Type::Class(*member),
+                            ),
+                        }),
+                        Box::new(boolean(span, true)),
+                        Box::new(rest),
+                    ),
+                });
+            return Ok(Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::ValueBlock {
+                    output: result,
+                    marker,
+                    roots: vec![saved],
+                    body: vec![S::Init(saved, value), S::Init(result, test)],
+                },
+            });
+        }
+        let member = below.first().copied().or_else(|| {
+            members
+                .iter()
+                .copied()
+                .find(|member| classes.descends(class, *member))
+        });
         let kind = match member {
             Some(member) if classes.descends(member, class) => {
                 E::IsUnionMember(Box::new(value), Type::Class(member))
@@ -761,10 +809,25 @@ impl Lower<'_> {
             // The descriptor test proves the class family (v34 `unknown`).
             return self.refine_with(name, |_, _| yes.then(|| vec![Type::Class(class)]));
         }
-        let member = unions::members(ty, self.types).into_iter().find(
-            |member| matches!(member, Type::Class(m) if self.types.classes.descends(*m, class)),
-        );
-        match member {
+        let descendants: Vec<Type> = unions::members(ty, self.types)
+            .into_iter()
+            .filter(
+                |member| matches!(member, Type::Class(m) if self.types.classes.descends(*m, class)),
+            )
+            .collect();
+        // V37 unions may hold several subclasses (`language_core`): keep (or
+        // drop) all of them, never only the first.
+        if descendants.len() > 1 {
+            return self.refine_with(name, |ty, types| {
+                Some(
+                    unions::members(ty, types)
+                        .into_iter()
+                        .filter(|member| descendants.contains(member) == yes)
+                        .collect(),
+                )
+            });
+        }
+        match descendants.first().copied() {
             Some(member) => self.refine(name, references::Guard::Exact(member), yes),
             None if yes && self.types.classes.is_error(class) => {
                 self.refine_error_downcast(name, class)
