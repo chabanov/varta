@@ -429,6 +429,7 @@ mod signature;
 mod spread;
 mod stmt;
 mod string_enumeration;
+mod string_iteration;
 mod strings;
 pub(crate) mod subtyping;
 pub(crate) mod suspension;

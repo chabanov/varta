@@ -568,10 +568,16 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
         created: Vec::new(),
         next: count,
         source: None,
+        span: swc_common::DUMMY_SP,
+        locals: Vec::new(),
     };
     for function in &mut program.functions {
         rewriter.source = Some(function.source.clone());
-        rewriter.statements(&mut function.body)?;
+        rewriter.span = function.span;
+        rewriter.locals = std::mem::take(&mut function.locals);
+        let rewritten = rewriter.statements(&mut function.body);
+        function.locals = std::mem::take(&mut rewriter.locals);
+        rewritten?;
     }
     let names: Vec<((u32, String), usize)> = program
         .types
@@ -620,6 +626,9 @@ struct Rewriter<'a> {
     created: Vec<ir::Function>,
     next: usize,
     source: Option<Source>,
+    /// The span and locals of the function being rewritten.
+    span: swc_common::Span,
+    locals: Vec<Type>,
 }
 impl Rewriter<'_> {
     fn view(&self, ty: Type) -> Option<u32> {
@@ -650,10 +659,13 @@ impl Rewriter<'_> {
             | S::Continue => {}
             S::RecordRest { from, .. } => {
                 if self.view(Type::Record(*from)).is_some() {
-                    return Err(unsupported(&format!(
-                        "rest pattern over {}, which a wider object type is assigned to",
-                        describe(Type::Record(*from), self.types)
-                    )));
+                    return Err(self.locate(
+                        unsupported(&format!(
+                            "rest pattern over {}, which a wider object type is assigned to",
+                            describe(Type::Record(*from), self.types)
+                        )),
+                        self.span,
+                    ));
                 }
             }
             S::Throw(value)
@@ -676,15 +688,41 @@ impl Rewriter<'_> {
                 self.statements(body)?;
                 self.statements(finalizer)?;
             }
-            S::RecordEnumerate { shape, values, .. } => {
-                if self.view(Type::Record(*shape)).is_some() {
-                    return Err(unsupported(&format!(
-                        "enumerating the keys of {}, which a wider object type is assigned to",
-                        describe(Type::Record(*shape), self.types)
-                    )));
-                }
-                for value in values {
+            S::RecordEnumerate { values, .. } => {
+                for value in values.iter_mut() {
                     self.expression(value)?;
+                }
+                if let S::RecordEnumerate {
+                    source,
+                    target,
+                    shape,
+                    values,
+                    ..
+                } = statement
+                    && let Some(view) = self.view(Type::Record(*shape))
+                {
+                    // An object of the view's own layouts keeps its exact
+                    // key order; another source's object enumerates the
+                    // view's members.
+                    let (source, target, values) = (*source, *target, values.clone());
+                    let original = statement.clone();
+                    let span = self.span;
+                    let descriptor = self.locals.len() as u32;
+                    self.locals.push(Type::Number);
+                    let viewed = self.view_enumeration(view, source, target, values)?;
+                    *statement = S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::IsClass {
+                                value: Box::new(local(span, source, Type::Record(view))),
+                                shapes: vec![view],
+                                slot: descriptor,
+                            },
+                        },
+                        vec![original],
+                        vec![viewed],
+                    );
                 }
             }
             S::SetField(object, slot, value) => {
@@ -750,6 +788,62 @@ impl Rewriter<'_> {
             }
         }
         Ok(())
+    }
+    /// The present-entry compaction of `Object.keys`/`values`/`entries` (and
+    /// dictionary copies) of a view holding another source's object: the
+    /// entries of the view's present members, in its canonical member order
+    /// (the object's own key order is not visible through the view).
+    fn view_enumeration(
+        &mut self,
+        view: u32,
+        source: u32,
+        target: u32,
+        values: Vec<Expr>,
+    ) -> Result<S> {
+        let span = self.span;
+        let array = self.locals[target as usize];
+        let fresh = self.locals.len() as u32;
+        self.locals.push(array);
+        let record = Type::Record(view);
+        let mut body = vec![S::Init(
+            fresh,
+            Expr {
+                span,
+                ty: array,
+                kind: E::Array(Vec::new()),
+            },
+        )];
+        let fields = self.types.records[view as usize].fields.clone();
+        for (slot, (field, value)) in fields.iter().zip(values).enumerate() {
+            let push = S::Expr(Expr {
+                span,
+                ty: self.types.number(),
+                kind: E::ArrayPush(
+                    Box::new(local(span, fresh, array)),
+                    Box::new(Expr {
+                        span,
+                        ty: array,
+                        kind: E::Array(vec![Some(value)]),
+                    }),
+                ),
+            });
+            if field.optional {
+                let index = self.accessor(view, slot as u32, Access::Has, span)?;
+                body.push(S::If(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::Call(index, vec![local(span, source, record)]),
+                    },
+                    vec![push],
+                    Vec::new(),
+                ));
+            } else {
+                body.push(push);
+            }
+        }
+        body.push(S::Set(target, local(span, fresh, array)));
+        Ok(S::Block(body))
     }
     fn boxed(&mut self, values: &mut [&mut Box<Expr>]) -> Result<()> {
         for value in values {

@@ -242,7 +242,11 @@ impl Lower<'_> {
                 self.flow_restore(&saved);
                 S::While(test, body)
             }
-            ast::Stmt::ForOf(statement) => self.for_of(statement)?,
+            ast::Stmt::ForOf(statement) => match self.string_for_of(statement) {
+                // A string iterates its code points (v38).
+                Some(lowered) => self.statement(&lowered)?,
+                None => self.for_of(statement)?,
+            },
             ast::Stmt::ForIn(statement) if self.types.profile.mixed_index_records() => {
                 self.for_in(statement)?
             }

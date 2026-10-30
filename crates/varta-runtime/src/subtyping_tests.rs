@@ -222,23 +222,15 @@ fn view_mismatches_name_both_types_and_the_members() {
 }
 
 #[test]
-fn views_reject_layout_dependent_operations() {
-    let prelude = "interface N{name:string}\
-                   export function main():void{const e={name:'a',n:1};const v:N=e;";
-    for (body, expected) in [
-        (
-            "for(const k in v){console.log(k);}}",
-            "enumerating the keys of N, which a wider object type is assigned to",
-        ),
-        (
-            "const {name,...rest}=v;console.log(name);}",
-            "rest pattern over N, which a wider object type is assigned to",
-        ),
-    ] {
-        let source = format!("{prelude}{body}");
-        let error = rejected(&source, V38);
-        assert!(error.contains(expected), "{error}\n{source}");
-    }
+fn views_reject_rest_patterns() {
+    let source = "interface N{name:string}\
+                  export function main():void{const e={name:'a',n:1};const v:N=e;\
+                  const {name,...rest}=v;console.log(name);}";
+    let error = rejected(source, V38);
+    assert!(
+        error.contains("rest pattern over N, which a wider object type is assigned to"),
+        "{error}\n{source}"
+    );
 }
 
 /// V37 keeps rejecting width subtyping with its old diagnostics, and its
@@ -432,6 +424,15 @@ fn checked_deviations_are_pinned() {
          export function main():void{console.log(JSON.stringify(f({retries:3,reconnect:true},'y')));}",
         &[r#"{"label":"y","reconnect":false,"retries":3}"#],
     );
+    // Key enumeration through a view holding another source's object lists
+    // the view's members in canonical order (Node: tag,limit,cursor); an
+    // object of the view's own layout keeps its order.
+    run(
+        "interface P{limit?:number;cursor?:string;tag:string}\
+         function keys(p:P):string{let out='';for(const k in p)out+=k+';';return `${Object.keys(p).join(',')} ${out}`;}\
+         export function main():void{const b:P={tag:'t',limit:2};console.log(keys({...b,cursor:'c'}));console.log(keys(b));}",
+        &["cursor,limit,tag cursor;limit;tag;", "tag,limit tag;limit;"],
+    );
     // A stale property narrowing throws instead of reading the new value.
     run(
         "class B{t='x';}class R{#b:B|null=new B();get body():B|null{return this.#b;}drop():void{this.#b=null;}}\
@@ -527,4 +528,12 @@ fn unknown_array_and_record_graph_views_survive_forced_collections() {
     }
     assert!(store.data().scheduler.unhandled_rejection().is_none());
     assert_eq!(store.data().output.lines, ["varta log: a,b,c,"]);
+}
+
+#[test]
+fn string_iteration_and_exhaustive_switches_match_node() {
+    run(
+        include_str!("subtyping_cases/language_items.ts"),
+        &["[h][é][l][l][o][😀][!] 8", "z BC 20"],
+    );
 }

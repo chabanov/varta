@@ -637,6 +637,7 @@ impl Function {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Expr {
     pub span: swc_common::Span,
     pub ty: Type,
@@ -750,6 +751,7 @@ pub(crate) enum NumberPredicate {
     SafeInteger,
 }
 
+#[derive(Clone)]
 pub(crate) enum Expression {
     Assignment {
         value: Box<Expr>,
@@ -951,6 +953,7 @@ pub(crate) enum Expression {
 
 pub(crate) use varta_common::HostOperation as Host;
 
+#[derive(Clone)]
 pub(crate) enum Statement {
     Trap,
     /// Publish stored module constant `n` into its permanent root slot (v32).
