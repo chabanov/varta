@@ -75,6 +75,8 @@ crates/
   varta-conformance/     # development tooling: pinned compatibility inventory runner
 conformance/             # inventory manifest (core-v1.json) and checked cases
 examples/                # product examples (e.g. uarp-console); not workspace members, never depended on by crates
+  uarp-console/          # the cross-target acceptance application (product code only)
+  varta-web-host/        # prototype third-party browser host and L0 applier built from docs/embedding.md
 docs/
   architecture.md        # normative contract; generated version matrix and limits
   embedding.md           # third-party host contract; generated registry tables
@@ -98,7 +100,7 @@ Placement rules:
   (`VartaConfig`, `CapabilitySpec`) belongs to `varta-project`, not common. CLI
   production code depends on `varta-project`; backend details stay in runtime.
   The boundary regression test and the CI core-only build enforce this direction.
-- `examples/` holds product examples such as `examples/uarp-console/`, kept apart from the engine. It is not a Cargo workspace member, and no crate (engine, distribution, tooling or tests) depends on it. Third-party sources such as uarp-sdk are pinned npm dependencies installed under `node_modules/`, ignored by version control, and are never vendored.
+- `examples/` holds product examples such as `examples/uarp-console/`, kept apart from the engine. It is not a Cargo workspace member, and no crate (engine, distribution, tooling or tests) depends on it. Third-party sources such as uarp-sdk are pinned npm dependencies installed under `node_modules/`, ignored by version control, and are never vendored. `examples/varta-web-host/` is a prototype third-party host written only from `docs/embedding.md`; it validates that contract and is replaced by the generated browser host (platform increments P1/P9). Examples may depend on each other only in the direction product → host (`uarp-console` → `varta-web-host`).
 - New crates go in `crates/<name>/` and are added to workspace `members` and, if user-facing, `default-members`.
 - Domain logic (parsing, emission, capability matching, host I/O, artifact packaging and validation) never lives in `varta-cli`. The CLI calls varta-project and prints results.
 - Shared types and errors belong in `varta-common`. Compiler and runtime must not re-declare them.
