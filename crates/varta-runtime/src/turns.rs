@@ -81,6 +81,71 @@ pub struct BudgetReport {
     pub output_bytes: usize,
 }
 
+/// The prefix of every budget report line (`--budget-report`).
+pub const BUDGET_REPORT_PREFIX: &str = "varta budget: ";
+
+impl BudgetReport {
+    /// The human-readable report the CLI and the runtime companion print
+    /// (`--budget-report`): one line per reported turn, the totals, and every
+    /// request the ceiling lowered. The text is unstable diagnostics.
+    #[must_use]
+    pub fn lines(&self) -> Vec<String> {
+        let budgets = &self.budgets;
+        let deadline = budgets.value(BudgetKind::Deadline);
+        let scope = if self.deadline_per_turn {
+            "per turn"
+        } else {
+            "per execution"
+        };
+        let mut lines: Vec<String> = self
+            .turns
+            .iter()
+            .map(|turn| {
+                let label = if self.per_turn {
+                    format!("turn {} {}", turn.turn, turn.kind.name())
+                } else {
+                    turn.kind.name().to_owned()
+                };
+                format!(
+                    "{BUDGET_REPORT_PREFIX}{label}: fuel {}/{}, host calls {}/{}, microtasks {}, wall {} ms ({deadline} ms {scope}), memory {}/{} bytes",
+                    turn.fuel,
+                    budgets.fuel_per_turn,
+                    turn.host_calls,
+                    budgets.host_calls_per_turn,
+                    turn.microtasks,
+                    turn.wall.as_millis(),
+                    turn.memory_bytes,
+                    budgets.memory_bytes,
+                )
+            })
+            .collect();
+        let unlisted = self.total_turns.saturating_sub(self.turns.len() as u64);
+        if unlisted > 0 {
+            lines.push(format!(
+                "{BUDGET_REPORT_PREFIX}{unlisted} later turns not listed"
+            ));
+        }
+        lines.push(format!(
+            "{BUDGET_REPORT_PREFIX}total: {} turns, fuel {}, peak memory {}/{} bytes, output {}/{} bytes",
+            self.total_turns,
+            self.total_fuel,
+            self.peak_memory_bytes,
+            budgets.memory_bytes,
+            self.output_bytes,
+            budgets.output_bytes,
+        ));
+        lines.extend(self.capped.iter().map(|capped| {
+            format!(
+                "{BUDGET_REPORT_PREFIX}capped {}: requested {}, allowed {}",
+                capped.kind.wire_name(),
+                capped.requested,
+                capped.allowed
+            )
+        }));
+        lines
+    }
+}
+
 /// A turn exhausted one of its budgets; the instance is terminated (a trap
 /// kills the instance, and it is never restarted automatically).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -155,6 +155,7 @@ impl VartaRuntime {
     #[must_use]
     pub fn run_application(&self, bytes: &[u8], options: ApplicationOptions) -> RunReport {
         let mut report = RunReport::new(crate::artifact_identity(bytes));
+        let observer = options.run.observer.clone();
         let mut application = match self.start_application(bytes, options) {
             Ok(application) => application,
             Err(error) => {
@@ -162,7 +163,20 @@ impl VartaRuntime {
                 return report;
             }
         };
-        application.run();
+        // With an observer, output streams after every turn, so a long-lived
+        // instance's lines appear while it runs.
+        let stream = |application: &mut Application| {
+            if let Some(observer) = &observer {
+                for line in application.take_output() {
+                    observer(crate::RuntimeEvent::Output(line));
+                }
+            }
+        };
+        stream(&mut application);
+        while let Step::Turn(_) = application.step(None) {
+            stream(&mut application);
+        }
+        stream(&mut application);
         application.report_into(&mut report);
         report
     }

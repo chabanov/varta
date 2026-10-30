@@ -15,9 +15,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use varta_common::Manifest;
-use varta_runtime::VartaRuntime;
-pub use varta_runtime::{RunOutput, RuntimeEvent, RuntimeObserver};
+pub use varta_common::permission::DecisionFile;
+use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
+pub use varta_runtime::{RunOutput, RunReport, RuntimeEvent, RuntimeObserver};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
@@ -31,6 +31,8 @@ pub enum ProjectError {
     Compile(#[from] varta_compiler::CompilerError),
     #[error(transparent)]
     Runtime(#[from] varta_runtime::RuntimeError),
+    #[error(transparent)]
+    Permission(#[from] varta_common::permission::PermissionError),
     #[error("invalid artifact: {0}")]
     Artifact(String),
     #[error("{0}")]
@@ -85,10 +87,7 @@ impl CheckedProject {
         )?;
         let wasm = compilation.wasm;
         VartaRuntime::new().validate_module(&wasm)?;
-        let mut manifest = Manifest::new(&config.normalized_capabilities());
-        manifest.abi_version = config.language_profile.host_abi();
-        manifest.entry = Some(config.entry.clone());
-        manifest.target = Some(config.target.clone());
+        let manifest = config.manifest();
         let output = base.join(&config.out);
         Ok(Self {
             config,
@@ -140,6 +139,50 @@ pub fn run_observed(
     )?)
 }
 
+/// How `run`, `dev` and a packaged application execute.
+#[derive(Default)]
+pub struct RunSettings {
+    /// Run a v38 module as a long-lived application instance: the deadline
+    /// renews per turn and output streams through the observer per turn.
+    pub application: bool,
+    /// Stored permission decisions (the headless policy file).
+    pub decisions: Option<DecisionFile>,
+    pub observer: Option<RuntimeObserver>,
+}
+
+/// Read a bounded headless decision file.
+pub fn read_decisions(path: &Path) -> Result<DecisionFile> {
+    Ok(DecisionFile::parse(&artifact::read_bounded(
+        path,
+        artifact::MAX_MANIFEST_BYTES,
+    )?)?)
+}
+
+/// Run an artifact and report everything it produced, including the output
+/// captured before a failure and the per-turn budget report.
+pub fn run_report(
+    artifact: &Artifact,
+    host: Option<&HostPolicy>,
+    settings: RunSettings,
+) -> Result<RunReport> {
+    let mut options =
+        RunOptions::from_manifests(&artifact.manifest, host.map(HostPolicy::manifest))?;
+    options.decisions = settings.decisions;
+    options.observer = settings.observer;
+    let runtime = VartaRuntime::new();
+    Ok(if settings.application {
+        runtime.run_application(
+            &artifact.wasm,
+            ApplicationOptions {
+                run: options,
+                ..ApplicationOptions::default()
+            },
+        )
+    } else {
+        runtime.run_with(&artifact.wasm, options)
+    })
+}
+
 /// Policy review additionally requires a declaration for every privileged import.
 /// An omitted grant is still safe to execute: the runtime denies the operation.
 pub fn validate(artifact: &Artifact) -> Result<()> {
@@ -183,7 +226,7 @@ pub fn inspect_with_policy(
         "schemaVersion": artifact.manifest.schema_version, "abiVersion": artifact.manifest.abi_version, "language":module.language, "valueAbiVersion":module.value_abi_version,
         "policy": artifact.manifest.policy,
         "capabilities": grants.iter().map(|g| &g.id).collect::<Vec<_>>(),
-        "grants": artifact.manifest.capabilities, "imports": imports, "exports": module.exports, "memories": module.memories,
+        "grants": artifact.manifest.capabilities, "budgets": artifact.manifest.budgets, "identity": varta_runtime::artifact_identity(&artifact.wasm), "imports": imports, "exports": module.exports, "memories": module.memories,
         "toolCatalog": module.tool_catalog.map(|catalog| catalog.discovery()), "httpService": module.http_service,
         "authorization": authorization(&artifact.manifest, policy)? }),
     )

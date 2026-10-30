@@ -13,6 +13,9 @@ struct Cli {
     /// Limit run/dev/invoke/inspect/validate (or this packaged app) with a host policy JSON file.
     #[arg(long, global = true, value_name = "PATH")]
     policy: Option<PathBuf>,
+    /// Stored permission decisions for run/dev (or this packaged app): the headless policy file, keyed by artifact hash (checked-f64-utf16-v38).
+    #[arg(long, global = true, value_name = "PATH")]
+    decisions: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -29,9 +32,12 @@ enum Commands {
         json: bool,
     },
     /// Check, compile and execute portable Wasm with resource budgets.
+    /// Output captured before a failure is printed before the diagnostic.
     Dev {
         #[arg(long, default_value = "varta.config.json")]
         config: PathBuf,
+        #[command(flatten)]
+        execution: ExecutionFlags,
     },
     /// Build validated Wasm; --single embeds portable Wasm in a native launcher.
     Build {
@@ -44,7 +50,12 @@ enum Commands {
         launcher: Option<PathBuf>,
     },
     /// Execute portable Wasm or a Varta container (native AOT is rejected).
-    Run { path: PathBuf },
+    /// Output captured before a failure is printed before the diagnostic.
+    Run {
+        path: PathBuf,
+        #[command(flatten)]
+        execution: ExecutionFlags,
+    },
     /// Invoke one published tool with checked JSON parameters, without running main.
     Invoke {
         path: PathBuf,
@@ -70,6 +81,33 @@ enum Commands {
     },
 }
 
+#[derive(clap::Args)]
+struct ExecutionFlags {
+    /// Print each turn's fuel, host calls, wall time and memory (and the totals) to stderr after the run.
+    #[arg(long)]
+    budget_report: bool,
+    /// Run a checked-f64-utf16-v38 program as a long-lived application instance: the deadline renews per turn and output streams per turn.
+    #[arg(long)]
+    app: bool,
+}
+
+/// Print the output captured before any failure, then the budget report,
+/// then return the failure (printed by `main` as the diagnostic).
+fn finish(report: varta_project::RunReport, budget_report: bool) -> Result<i32, ProjectError> {
+    for line in &report.output.lines {
+        println!("{line}");
+    }
+    if budget_report && let Some(budget) = &report.budget {
+        for line in budget.lines() {
+            eprintln!("{line}");
+        }
+    }
+    match report.failure {
+        Some(error) => Err(error.into()),
+        None => Ok(report.output.exit_code),
+    }
+}
+
 fn output(result: varta_project::RunOutput) -> i32 {
     for line in result.lines {
         println!("{line}");
@@ -77,7 +115,24 @@ fn output(result: varta_project::RunOutput) -> i32 {
     result.exit_code
 }
 
-fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32, ProjectError> {
+fn execute(
+    command: Option<Commands>,
+    policy_path: Option<&Path>,
+    decisions_path: Option<&Path>,
+) -> Result<i32, ProjectError> {
+    if decisions_path.is_some()
+        && !matches!(
+            command,
+            None | Some(Commands::Run { .. } | Commands::Dev { .. })
+        )
+    {
+        return Err(ProjectError::Usage(
+            "--decisions applies to run, dev or a packaged app".into(),
+        ));
+    }
+    let decisions = decisions_path
+        .map(varta_project::read_decisions)
+        .transpose()?;
     if policy_path.is_some()
         && matches!(
             command,
@@ -105,10 +160,10 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
                 println!("varta check: ok ({})", config.display());
             }
         }
-        Some(Commands::Dev { config }) => {
+        Some(Commands::Dev { config, execution }) => {
             let project = CheckedProject::load(&config)?;
-            let result = run(&project.artifact, policy.as_ref())?;
-            let code = output(result);
+            let report = run_report(&project.artifact, policy.as_ref(), decisions, &execution)?;
+            let code = finish(report, execution.budget_report)?;
             println!("varta dev: completed");
             return Ok(code);
         }
@@ -124,10 +179,10 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
                 println!("wrote artifact: {}", path.display());
             }
         }
-        Some(Commands::Run { path }) => {
+        Some(Commands::Run { path, execution }) => {
             let artifact = Artifact::read(&path)?;
-            let result = run(&artifact, policy.as_ref())?;
-            let code = output(result);
+            let report = run_report(&artifact, policy.as_ref(), decisions, &execution)?;
+            let code = finish(report, execution.budget_report)?;
             println!("varta run: completed {}", path.display());
             return Ok(code);
         }
@@ -194,6 +249,15 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
                 println!("varta validate: ok ({})", path.display());
             }
         }
+        None if decisions.is_some() => {
+            let artifact = Artifact::read(&std::env::current_exe()?)?;
+            let flags = ExecutionFlags {
+                budget_report: false,
+                app: false,
+            };
+            let report = run_report(&artifact, policy.as_ref(), decisions, &flags)?;
+            return finish(report, false);
+        }
         None => {
             return Ok(output(run(
                 &Artifact::read(&std::env::current_exe()?)?,
@@ -204,20 +268,37 @@ fn execute(command: Option<Commands>, policy_path: Option<&Path>) -> Result<i32,
     Ok(0)
 }
 
+fn observer() -> varta_project::RuntimeObserver {
+    std::sync::Arc::new(|event| match event {
+        varta_project::RuntimeEvent::Listening { address, .. } => {
+            eprintln!("varta listening: http://{address}")
+        }
+        varta_project::RuntimeEvent::Output(line) => println!("{line}"),
+        varta_project::RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
+    })
+}
+
 fn run(
     artifact: &Artifact,
     policy: Option<&HostPolicy>,
 ) -> Result<varta_project::RunOutput, ProjectError> {
-    varta_project::run_observed(
+    varta_project::run_observed(artifact, policy, observer())
+}
+
+fn run_report(
+    artifact: &Artifact,
+    policy: Option<&HostPolicy>,
+    decisions: Option<varta_project::DecisionFile>,
+    flags: &ExecutionFlags,
+) -> Result<varta_project::RunReport, ProjectError> {
+    varta_project::run_report(
         artifact,
         policy,
-        std::sync::Arc::new(|event| match event {
-            varta_project::RuntimeEvent::Listening { address, .. } => {
-                eprintln!("varta listening: http://{address}")
-            }
-            varta_project::RuntimeEvent::Output(line) => println!("{line}"),
-            varta_project::RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
-        }),
+        varta_project::RunSettings {
+            application: flags.app,
+            decisions,
+            observer: Some(observer()),
+        },
     )
 }
 
@@ -233,7 +314,7 @@ fn main() {
                 | Commands::Invoke { json: true, .. }
         )
     );
-    match execute(cli.command, cli.policy.as_deref()) {
+    match execute(cli.command, cli.policy.as_deref(), cli.decisions.as_deref()) {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             if json {

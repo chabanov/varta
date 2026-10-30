@@ -33,6 +33,22 @@ pub struct VartaConfig {
     #[serde(default)]
     pub capabilities:
         std::collections::BTreeMap<String, std::collections::BTreeMap<String, CapabilitySpec>>,
+    /// Requested per-turn and per-instance budgets (checked-f64-utf16-v38);
+    /// the host ceiling caps them.
+    #[serde(default)]
+    pub budgets: Option<varta_common::budget::BudgetRequest>,
+    /// Consent metadata of requested grants by capability id
+    /// (checked-f64-utf16-v38): `required` and `purpose`.
+    #[serde(default)]
+    pub permissions: std::collections::BTreeMap<String, PermissionSpec>,
+}
+
+/// `"permissions": { "net.request": { "required": false, "purpose": "..." } }`.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionSpec {
+    pub required: Option<bool>,
+    pub purpose: Option<String>,
 }
 
 pub(crate) fn default_policy() -> String {
@@ -57,7 +73,35 @@ impl VartaConfig {
                 "only the strict policy is implemented".into(),
             ));
         }
-        varta_common::validate_grants(&self.normalized_capabilities())
+        let grants = self.normalized_capabilities();
+        varta_common::validate_grants(&grants)?;
+        for id in self.permissions.keys() {
+            if !grants.iter().any(|grant| &grant.id == id) {
+                return Err(VartaError::InvalidManifest(format!(
+                    "permissions names {id}, which the capabilities do not request"
+                )));
+            }
+        }
+        self.manifest().grants().map(|_| ())
+    }
+
+    /// The package manifest of this configuration (host ABI, grants, budgets
+    /// and consent metadata); the manifest schema validates the members the
+    /// profile admits.
+    #[must_use]
+    pub fn manifest(&self) -> varta_common::Manifest {
+        let mut manifest = varta_common::Manifest::new(&self.normalized_capabilities());
+        manifest.abi_version = self.language_profile.host_abi();
+        manifest.entry = Some(self.entry.clone());
+        manifest.target = Some(self.target.clone());
+        manifest.budgets = self.budgets;
+        for wire in &mut manifest.capabilities {
+            if let Some(spec) = self.permissions.get(&wire.id) {
+                wire.required = spec.required;
+                wire.purpose = spec.purpose.clone();
+            }
+        }
+        manifest
     }
 
     #[must_use]
@@ -212,6 +256,67 @@ mod tests {
         let mut config = config(serde_json::json!({}));
         config.policy = "compat".into();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn budgets_and_consents_need_profile_v38_and_requested_grants() {
+        let config = |profile: &str, extra: serde_json::Value| {
+            let mut value = serde_json::json!({"languageProfile":profile,"entry":"src/main.ts",
+                "target":"native","out":"dist/app","capabilities":{"time":{"timer":true}}});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<VartaConfig>(value)
+        };
+        let v38 = config(
+            "checked-f64-utf16-v38",
+            serde_json::json!({"budgets":{"fuelPerTurn":2000000},
+                "permissions":{"time.timer":{"required":false,"purpose":"Retry later"}}}),
+        )
+        .unwrap();
+        v38.validate().unwrap();
+        let manifest = v38.manifest();
+        assert_eq!(
+            manifest.abi_version,
+            varta_common::abi::PROGRAM_LIMITS_VERSION
+        );
+        assert_eq!(manifest.budget_request().fuel_per_turn, Some(2_000_000));
+        assert!(!manifest.consents()["time.timer"].required);
+        for (profile, extra) in [
+            (
+                "checked-f64-utf16-v37",
+                serde_json::json!({"budgets":{"fuelPerTurn":1}}),
+            ),
+            (
+                "checked-f64-utf16-v37",
+                serde_json::json!({"permissions":{"time.timer":{"required":false}}}),
+            ),
+            (
+                "checked-f64-utf16-v38",
+                serde_json::json!({"permissions":{"time.now":{"required":false}}}),
+            ),
+            (
+                "checked-f64-utf16-v38",
+                serde_json::json!({"budgets":{"fuelPerTurn":0}}),
+            ),
+            (
+                "checked-f64-utf16-v38",
+                serde_json::json!({"permissions":{"time.timer":{"purpose":""}}}),
+            ),
+        ] {
+            assert!(
+                config(profile, extra.clone()).unwrap().validate().is_err(),
+                "{profile} {extra}"
+            );
+        }
+        assert!(
+            config(
+                "checked-f64-utf16-v38",
+                serde_json::json!({"permissions":{"time.timer":{"optional":true}}})
+            )
+            .is_err()
+        );
     }
 
     #[test]

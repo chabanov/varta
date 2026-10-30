@@ -14,6 +14,9 @@ impl HostPolicy {
     pub(crate) fn grants(&self) -> &[CapabilityGrant] {
         &self.grants
     }
+    pub(crate) fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
     pub fn read(path: &Path) -> Result<Self> {
         Self::from_manifest(Manifest::parse(&artifact::read_bounded(
             path,
@@ -22,6 +25,7 @@ impl HostPolicy {
     }
 
     pub fn from_manifest(manifest: Manifest) -> Result<Self> {
+        manifest.validate_ceiling()?;
         let grants = manifest.grants()?;
         Ok(Self { manifest, grants })
     }

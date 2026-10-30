@@ -24,7 +24,7 @@ mod exceptions;
 mod execution;
 mod turns;
 pub use permission::PermissionPrompter;
-pub use turns::{BudgetExhausted, BudgetReport, TurnKind, TurnUsage};
+pub use turns::{BUDGET_REPORT_PREFIX, BudgetExhausted, BudgetReport, TurnKind, TurnUsage};
 mod prepared;
 #[cfg(test)]
 mod prepared_tests;
