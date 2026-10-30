@@ -343,6 +343,63 @@ fn unread_module_constants_cost_nothing_at_startup() {
     assert!(v38.len() < v37.len());
 }
 
+/// V38 removes unreachable async functions and methods with their frame
+/// layouts (v37 keeps every suspendable function); generator bodies stay.
+#[test]
+fn unreachable_async_functions_and_their_frames_are_removed() {
+    const COUNT: usize = 30;
+    let mut source = String::from("class Api {\n");
+    for i in 0..COUNT {
+        source.push_str(&format!(
+            "  async m{i}(n: number): Promise<number> {{ const v = await Promise.resolve(n); return v + {i}; }}\n"
+        ));
+    }
+    source.push_str("}\n");
+    for i in 0..COUNT {
+        source.push_str(&format!(
+            "async function f{i}(): Promise<string> {{ return await Promise.resolve(\"f{i}\"); }}\n"
+        ));
+    }
+    source.push_str(
+        "function* digits(): Generator<number, void, undefined> { yield 1; yield 2; }\n\
+         export async function main(): Promise<void> {\n\
+           const api = new Api();\n\
+           const v = await api.m3(1);\n\
+           const s = await f7();\n\
+           let sum = 0;\n\
+           for (const d of digits()) { sum = sum + d; }\n\
+           console.log(String(v) + s + String(sum));\n\
+         }\n",
+    );
+    let functions = |bytes: &[u8]| {
+        wasmparser::Parser::new(0)
+            .parse_all(bytes)
+            .find_map(|payload| match payload.unwrap() {
+                wasmparser::Payload::FunctionSection(reader) => Some(reader.count()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let compile =
+        |profile| varta_compiler::compile_typescript_with_profile(&source, profile).unwrap();
+    let (v37, v38) = (compile(V37), compile(V38));
+    let run = |bytes: &[u8]| {
+        VartaRuntime::new()
+            .run_wasm_bytes(bytes, &[])
+            .unwrap()
+            .lines
+    };
+    assert_eq!(run(&v37), [log("4f73")]);
+    assert_eq!(run(&v38), run(&v37));
+    // Each async function or method takes a creator and a resume body.
+    assert!(
+        functions(&v38) + 4 * (COUNT as u32 - 1) <= functions(&v37),
+        "{} vs {}",
+        functions(&v38),
+        functions(&v37)
+    );
+}
+
 /// The exported `varta_resume` dispatcher's body size.
 fn dispatcher_bytes(bytes: &[u8]) -> usize {
     let mut imported = 0;

@@ -3148,6 +3148,9 @@ profiles frozen, and add each stream's rules under its own heading here.
 - Runtime readers take `value::ModuleBounds` (static region and limits) from
   the validated module, never from guest memory; legacy and test callers use
   `ModuleBounds::LEGACY`.
+- V38 roots only generator bodies among suspendable functions; unreachable
+  async functions lose their frames. The suspension test hook keeps every
+  frame (it exports the creators).
 - V38 skips unread module constants (`prune::unread_constants`) and renumbers
   the remaining ones. Any new constant reference in the IR must be visible to
   `each_constant` and `reads`, and an initializer statement other than

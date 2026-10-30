@@ -11885,6 +11885,81 @@ fn program_limits_static_extension_runs_everywhere_and_v37_rejects_it() {
     );
 }
 
+/// V38 structural limits from the profile registry through `varta dev`, both
+/// artifacts, both binaries and the packaged executable: 300 functions, 150
+/// record shapes and 20 async functions (over the frozen 256 functions and
+/// 128 shapes). The same project fails `check` under v37.
+#[test]
+fn program_limits_over_the_frozen_ceilings_run_everywhere() {
+    let mut source = String::new();
+    for i in 0..300 {
+        source.push_str(&format!(
+            "function f{i}(n:number):number{{return n+{i};}}\n"
+        ));
+    }
+    for i in 0..150 {
+        source.push_str(&format!(
+            "interface R{i}{{v{i}:number}}\nfunction r{i}():R{i}{{return {{v{i}:{i}}};}}\n"
+        ));
+    }
+    for i in 0..20 {
+        source.push_str(&format!(
+            "async function a{i}():Promise<number>{{return await Promise.resolve({i});}}\n"
+        ));
+    }
+    source.push_str("export async function main():Promise<void>{let t=0;\n");
+    for i in 0..300 {
+        source.push_str(&format!("t=f{i}(t);\n"));
+    }
+    for i in 0..150 {
+        source.push_str(&format!("t=t+r{i}().v{i};\n"));
+    }
+    for i in 0..20 {
+        source.push_str(&format!("{{const v=await a{i}();t=t+v;}}\n"));
+    }
+    source.push_str("console.log(String(t));}\n");
+    let total: usize = (0..300).sum::<usize>() + (0..150).sum::<usize>() + (0..20).sum::<usize>();
+    let project = RegressionProject::new(&source, serde_json::json!({}));
+    project.language_profile("checked-f64-utf16-v38");
+    let expected = [format!("varta log: {total}")];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(validate.status.success(), "{}", combined(&validate));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success(), "{}", combined(&check));
+    assert!(
+        combined(&check).contains("exceeds limit")
+            || combined(&check).contains("too many functions"),
+        "{}",
+        combined(&check)
+    );
+}
+
 /// The v37 language core through `varta dev`, both artifacts, both binaries
 /// and the packaged executable: a timer callback naming the abort listener
 /// declared after it, hoisted helpers, a closure reading its binding before

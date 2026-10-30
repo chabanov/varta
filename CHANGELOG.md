@@ -11,6 +11,12 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 removes unreachable async functions and methods with their frame
+  layouts (v37 roots every suspendable function); generator bodies stay. A
+  minimal use of the 1900-model pilot mimic keeps 79 functions instead of
+  every resource method. The program-limits measurement is recorded in the
+  development plan.
+
 - V38 skips the initialization of module constants that no reachable code
   reads and renumbers the rest, so startup fuel, root slots and static data no
   longer grow with unused constants (100 unread enum objects: 5991 fuel under

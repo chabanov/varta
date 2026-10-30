@@ -9025,10 +9025,17 @@ stream), imports, globals and tables, and all production runtime budgets
 limit relabelled as v37 fails at its host ABI section, and with a downgraded
 host ABI at the frozen structural checks, before any guest effect.
 
-#### Unread module constants (`program_limits`)
+#### Unreachable frames and unread module constants (`program_limits`)
 
-V37 removes unreachable functions but keeps every module-constant
-initializer, so a program pays at startup for every constant of every module
+V37 removes unreachable functions but keeps every suspendable function as a
+root, so each async function or method of every reached class (the pilot's
+841 resource methods and their `request<T>` instances) keeps its creator,
+resume body, frame layout and dispatch case. V38 roots only generator bodies
+(their step functions dispatch over the generator type's frames); an
+unreachable async function or method is removed with its frame layout,
+catalog row and dispatch entry, and the remaining frames are renumbered.
+
+V37 also keeps every module-constant initializer, so a program pays at startup for every constant of every module
 it reaches (the pilot's 356 enum-value objects in `models.ts` cost about 390 K
 fuel). V38 extends the removal to constants: a constant whose value no
 reachable code reads — directly, through another read constant, through a

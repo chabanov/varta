@@ -48,7 +48,23 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     stack.extend(program.tools.iter().map(|(index, _)| *index));
     stack.extend(program.http.iter().map(|(index, _)| *index));
     stack.extend(program.initializers.iter().copied());
-    stack.extend(program.suspendable.keys().copied());
+    // V37 keeps every suspendable function; v38 (`program_limits`) keeps only
+    // generator bodies unconditionally (their step functions dispatch over
+    // the generator type's frames) and removes unreachable async functions
+    // and methods with their frame layouts.
+    // The test hook exports every frame creator, so it keeps every frame.
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    let hooked = super::suspension::hook::enabled();
+    #[cfg(not(any(test, feature = "suspension-test-hook")))]
+    let hooked = false;
+    let every_frame = !program.types.profile.program_limits() || hooked;
+    stack.extend(
+        program
+            .suspendable
+            .iter()
+            .filter(|(_, machine)| every_frame || machine.generator.is_some())
+            .map(|(index, _)| *index),
+    );
     let mut live = vec![false; count];
     while let Some(index) = stack.pop() {
         let Some(seen) = live.get_mut(index) else {
@@ -127,6 +143,7 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     }
     program.suspendable = std::mem::take(&mut program.suspendable)
         .into_iter()
+        .filter(|(index, _)| live[*index])
         .map(|(index, machine)| Ok((remap(index)?, machine)))
         .collect::<Result<_>>()?;
     Ok(())
