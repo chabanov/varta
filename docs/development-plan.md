@@ -1355,12 +1355,12 @@ adds a decision step and a user as a bounded grant source.
   `DOMException`, or keep returning a failed `VartaResult` with status 1 where the
   `VartaResult` ABI applies. A denial **never traps** and never ends the execution;
   only budgets, traps of guest code and authorized exits stay fatal.
-- **Revision of round 3.** `copy_text` and the `ui.open_url` activation report a
-  denial or a platform refusal to the guest instead of staying silent: proposed, a
-  `copy_text` takes a request id and the host answers with a result event record
-  (`granted` or `NotAllowedError`), and a denied external link delivers a
-  `link_denied` record to the link's `click` listeners. The exact records are a
-  draft v0 change of the [view protocol](embedding.md#view-draft-v0-round-3-chat-requirements).
+- **Revision of round 3.** `copy_text` and the `ui.open_url` activation report
+  every outcome to the guest: `copy_text` carries a request id and each request,
+  and each external-link activation, gets one `command_result` record with the
+  status `ok`, `not_allowed`, `refused_by_platform` or `invalid_context`, which the
+  guest API maps to `NotAllowedError` (decided 2026-10-29,
+  [round 5](embedding.md#view-draft-v0-round-5-command-results)).
 - **Profiles.** The v37 net-request stream is implementing recoverable
   `net.request` denials and recoverable v37 timer denials now. **v36 is frozen**: a
   denied `timer_start` stays fatal there, exactly as its contract states. Earlier
@@ -1377,14 +1377,22 @@ grant has patterns) is in one of three states, following the
 | `denied` | Outside the request or the ceiling, or the user refused it; operations fail recoverably at once |
 | `prompt` | Requested and within the ceiling, but no decision yet; the next use (or `request()`) asks the user |
 
-- **Query.** A guest API `varta.permissions.query({ name, resource? })` resolves
-  to `{ state }` and never prompts. In the browser it maps to
-  `navigator.permissions.query` where the browser exposes that permission, and to
-  the broker's own state otherwise.
-- **Request (optional, proposed).** `varta.permissions.request({ name, resource? })`
-  asks explicitly. For UI-sensitive permissions (`clipboard.write`, `ui.open_url`,
-  future camera, microphone or location) it is valid only during a user-gesture
-  turn; outside one it resolves to the current state without prompting.
+- **Query (accepted 2026-10-29).** A guest API
+  `varta.permissions.query({ name, resource? })` resolves to `{ state }` and never
+  prompts; it **distinguishes `denied` from `prompt`**. Fingerprinting
+  consideration: the answer reveals only this application's own state (the
+  package request, the ceiling and decisions stored for this application
+  identity), never another application's, and the broker answers within the
+  current user's profile only. In the browser the host combines the broker's
+  state with `navigator.permissions.query` where the browser exposes that
+  permission: the stricter wins (`denied` over `prompt` over `granted`), and where
+  the browser does not expose it the broker's own state is the answer.
+- **Request (accepted 2026-10-29).** `varta.permissions.request({ name, resource? })`
+  exists and asks explicitly, but it is valid only during a user-gesture turn: there
+  it prompts if the state is `prompt` and resolves to the new state; in every other
+  turn it does not prompt and resolves to the current state. Outside `request()`, a
+  permission in `prompt` state is asked at its first use (subject to the
+  user-gesture rule for UI-sensitive permissions).
 
 **3. Manifest.** A requested grant gains, besides its exact resource patterns:
 
@@ -1456,12 +1464,14 @@ Broker, permission states and `query`: with the application lifecycle increment
 and the OS bundles and first-run approval of the shells (P10b). The headless
 policy-file path needs no new UI.
 
-**Open questions.** Whether `request()` exists at all or prompts happen only at the
-point of use; whether "allow for this session" is offered; the exact identity key
-before C3; how a required permission refused at first run is presented on each
-target; the exact result records for `copy_text` and `ui.open_url`; whether
-`query` reveals `denied` versus `prompt` to the guest (a fingerprinting concern in
-the browser); the rate-limit values.
+**Decided on 2026-10-29.** `request()` exists, user-gesture only; `query`
+distinguishes `denied` from `prompt`; the result records of `copy_text` and
+`ui.open_url` are the engine's choice and are specified in
+[round 5](embedding.md#view-draft-v0-round-5-command-results).
+
+**Open questions.** Whether "allow for this session" is offered; the exact identity
+key before C3; how a required permission refused at first run is presented on each
+target; the rate-limit values.
 
 #### Increments and acceptance
 

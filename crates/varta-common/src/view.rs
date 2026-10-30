@@ -40,6 +40,8 @@ pub const DRAFT_MAX_LIVE_LISTENERS: usize = 8 * 1024;
 pub const DRAFT_MAX_VALUE_BYTES: usize = 64 * 1024;
 pub const DRAFT_MAX_STYLESHEET_BYTES: usize = 256 * 1024;
 pub const DRAFT_MAX_PENDING_EVENTS: usize = 64;
+/// Placeholder: `copy_text` requests awaiting their `command_result` at once.
+pub const DRAFT_MAX_PENDING_COMMANDS: usize = 16;
 
 /// Declares a `u16`/`u8`-coded enum with its wire name and an `ALL` table in code order.
 macro_rules! coded {
@@ -261,6 +263,7 @@ coded! {
         Scroll = 8 => "scroll",
         Cancel = 9 => "cancel",
         Close = 10 => "close",
+        CommandResult = 11 => "command_result",
     }
 }
 
@@ -351,6 +354,9 @@ pub enum Operand {
     Text,
     /// `u16` [`Key`] code or [`ANY_KEY`], padded to 4 bytes.
     Key,
+    /// `u32` guest-chosen nonzero request id, unique among pending requests;
+    /// echoed in the `command_result` record.
+    Request,
     /// `u32` modifier bits (within [`MODIFIER_MASK`]) that must all be held.
     RequiredModifiers,
     /// `u32` modifier bits (within [`MODIFIER_MASK`]) that must all be released.
@@ -360,7 +366,12 @@ impl Operand {
     #[must_use]
     pub fn wire(self) -> &'static str {
         match self {
-            Self::Node | Self::Parent | Self::Before | Self::Handler | Self::Sheet => "u32 id",
+            Self::Node
+            | Self::Parent
+            | Self::Before
+            | Self::Handler
+            | Self::Sheet
+            | Self::Request => "u32 id",
             Self::Tag
             | Self::Attribute
             | Self::Property
@@ -395,6 +406,7 @@ impl Operand {
             Self::Argument => "argument",
             Self::Text => "text",
             Self::Key => "key",
+            Self::Request => "request",
             Self::RequiredModifiers => "required_modifiers",
             Self::ForbiddenModifiers => "forbidden_modifiers",
         }
@@ -428,7 +440,8 @@ impl Opcode {
             Self::SetChecked => &[O::Node, O::Checked, O::BaseSeq],
             Self::Command => &[O::Node, O::Command, O::Argument],
             Self::Stylesheet => &[O::Sheet, O::Text],
-            Self::SetTitle | Self::CopyText => &[O::Text],
+            Self::SetTitle => &[O::Text],
+            Self::CopyText => &[O::Request, O::Text],
         }
     }
 }
@@ -558,7 +571,7 @@ pub const EVENT_FIELDS: &[EventField] = &[
         ty: FieldType::U32,
     },
     EventField {
-        name: "reserved",
+        name: "status",
         offset: 20,
         ty: FieldType::U32,
     },
@@ -987,6 +1000,81 @@ pub const FORBIDDEN_CSS: &[&str] = &[
 ];
 /// Characters that are structural in stylesheets and invalid in `set_style` values.
 pub const FORBIDDEN_STYLE_VALUE: &[&str] = &[";", "{", "}"];
+
+coded! {
+    /// The `status` field of a `command_result` record (0 in every other record).
+    CommandStatus: u32 {
+        Ok = 0 => "ok",
+        NotAllowed = 1 => "not_allowed",
+        RefusedByPlatform = 2 => "refused_by_platform",
+        InvalidContext = 3 => "invalid_context",
+    }
+}
+impl CommandStatus {
+    /// The `DOMException` name the guest API rejects or reports with; `None`
+    /// for success. Every failure is recoverable, never a trap.
+    #[must_use]
+    pub fn dom_exception(self) -> Option<&'static str> {
+        match self {
+            Self::Ok => None,
+            Self::NotAllowed | Self::RefusedByPlatform | Self::InvalidContext => {
+                Some("NotAllowedError")
+            }
+        }
+    }
+    #[must_use]
+    pub fn meaning(self) -> &'static str {
+        match self {
+            Self::Ok => "Done: text copied, or URL handed to the browser",
+            Self::NotAllowed => "The permission broker denied it (request, ceiling or user)",
+            Self::RefusedByPlatform => {
+                "Granted, but the platform refused (clipboard error, blocked window, no system browser)"
+            }
+            Self::InvalidContext => "`copy_text` outside a user-gesture turn",
+        }
+    }
+}
+
+/// Operations that report through `command_result`; the record's `key` string
+/// carries the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultOperation {
+    CopyText,
+    OpenUrl,
+}
+impl ResultOperation {
+    pub const ALL: &[Self] = &[Self::CopyText, Self::OpenUrl];
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::CopyText => Opcode::CopyText.name(),
+            Self::OpenUrl => "open_url",
+        }
+    }
+    /// Statuses the operation can report.
+    #[must_use]
+    pub fn statuses(self) -> &'static [CommandStatus] {
+        use CommandStatus as S;
+        match self {
+            Self::CopyText => &[
+                S::Ok,
+                S::NotAllowed,
+                S::RefusedByPlatform,
+                S::InvalidContext,
+            ],
+            // Activation is a user gesture by construction.
+            Self::OpenUrl => &[S::Ok, S::NotAllowed, S::RefusedByPlatform],
+        }
+    }
+    /// How the record identifies the request: `(seq, target)`.
+    #[must_use]
+    pub fn identity(self) -> &'static str {
+        match self {
+            Self::CopyText => "`seq` = the request id, `target` = 0",
+            Self::OpenUrl => "`seq` = 0, `target` = the activated `a` node",
+        }
+    }
+}
 
 /// The capability an external link needs (draft v0, not registered).
 pub const OPEN_URL_CAPABILITY: &str = "ui.open_url";
@@ -1708,6 +1796,32 @@ mod tests {
             "scale(<number>[, <number>])",
             "scale(1, 2)"
         ));
+    }
+
+    #[test]
+    fn command_results_are_recoverable_and_identified() {
+        assert_eq!(CommandStatus::Ok.code(), 0);
+        unique_names(CommandStatus::ALL.iter().map(|status| status.name()));
+        for &status in CommandStatus::ALL {
+            assert_eq!(
+                status.dom_exception().is_none(),
+                status == CommandStatus::Ok
+            );
+        }
+        for &operation in ResultOperation::ALL {
+            assert_eq!(operation.statuses()[0], CommandStatus::Ok);
+        }
+        assert!(
+            !ResultOperation::OpenUrl
+                .statuses()
+                .contains(&CommandStatus::InvalidContext)
+        );
+        assert_eq!(
+            Opcode::CopyText.operands(),
+            &[Operand::Request, Operand::Text]
+        );
+        assert!(!EventKind::CommandResult.coalescible());
+        assert!(EVENT_FIELDS.iter().any(|field| field.name == "status"));
     }
 
     #[test]

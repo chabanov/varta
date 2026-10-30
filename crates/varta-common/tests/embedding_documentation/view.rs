@@ -4,8 +4,8 @@
 use super::DOCUMENT;
 use crate::support::{assert_block, table};
 use varta_common::view::{
-    self, Attribute, Command, CssProperty, CssValue, DraftCapability, DraftGrant, EventFlag,
-    EventKind, Key, ListenOption, Opcode, Tag, Tags,
+    self, Attribute, Command, CommandStatus, CssProperty, CssValue, DraftCapability, DraftGrant,
+    EventFlag, EventKind, Key, ListenOption, Opcode, ResultOperation, Tag, Tags,
 };
 
 fn codes(rows: impl Iterator<Item = (u32, &'static str)>) -> String {
@@ -106,6 +106,10 @@ fn layout() -> String {
                 view::DRAFT_MAX_STYLESHEET_BYTES,
                 view::DRAFT_MAX_PENDING_EVENTS
             ),
+        ),
+        (
+            "Placeholder: pending `copy_text` requests".into(),
+            view::DRAFT_MAX_PENDING_COMMANDS.to_string(),
         ),
         (
             "Key filter: any key".into(),
@@ -306,6 +310,41 @@ fn defaults() -> String {
     )
 }
 
+fn command_results() -> String {
+    let mut rows: Vec<Vec<String>> = CommandStatus::ALL
+        .iter()
+        .map(|&status| {
+            let operations: Vec<String> = ResultOperation::ALL
+                .iter()
+                .filter(|operation| operation.statuses().contains(&status))
+                .map(|operation| format!("`{}`", operation.name()))
+                .collect();
+            vec![
+                status.code().to_string(),
+                format!("`{}`", status.name()),
+                operations.join(", "),
+                status.meaning().to_owned(),
+                status
+                    .dom_exception()
+                    .map_or_else(|| "resolves".to_owned(), |name| format!("`{name}`")),
+            ]
+        })
+        .collect();
+    for &operation in ResultOperation::ALL {
+        rows.push(vec![
+            "—".to_owned(),
+            format!("identity of `{}`", operation.name()),
+            format!("`{}`", operation.name()),
+            operation.identity().to_owned(),
+            "—".to_owned(),
+        ]);
+    }
+    table(
+        &["Status", "Name", "Operations", "Meaning", "Guest API"],
+        rows,
+    )
+}
+
 #[test]
 fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-layout", &layout());
@@ -324,4 +363,5 @@ fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-keys", &keys());
     assert_block(DOCUMENT, "view-capabilities", &capabilities());
     assert_block(DOCUMENT, "view-defaults", &defaults());
+    assert_block(DOCUMENT, "view-command-results", &command_results());
 }
