@@ -176,12 +176,13 @@ fn attributes() -> String {
 
 fn css_properties() -> String {
     table(
-        &["Code", "Property", "Values"],
+        &["Code", "Property", "Values", "Note"],
         CssProperty::ALL.iter().map(|&property| {
             vec![
                 property.code().to_string(),
                 format!("`{}`", property.name()),
                 format!("`{}`", cell(property.grammar())),
+                property.note().map_or_else(|| "—".to_owned(), cell),
             ]
         }),
     )
@@ -284,6 +285,27 @@ fn capabilities() -> String {
     )
 }
 
+fn defaults() -> String {
+    let schemes = |values: [&str; 2]| format!("`{}` / `{}`", values[0], values[1]);
+    table(
+        &["Default", "Light / dark"],
+        [
+            ("`dialog` backdrop colour", schemes(view::DIALOG_BACKDROP)),
+            (
+                "`dialog` background colour",
+                schemes(view::DIALOG_BACKGROUND),
+            ),
+            ("`dialog` text colour", schemes(view::DIALOG_TEXT)),
+            (
+                "Browser selector substituted for `:root`",
+                format!("`{}` (both schemes)", view::ROOT_SELECTOR_IN_BROWSER),
+            ),
+        ]
+        .into_iter()
+        .map(|(item, value)| vec![item.to_owned(), value]),
+    )
+}
+
 #[test]
 fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-layout", &layout());
@@ -301,4 +323,5 @@ fn view_draft_tables_match_registry() {
     assert_block(DOCUMENT, "view-commands", &commands());
     assert_block(DOCUMENT, "view-keys", &keys());
     assert_block(DOCUMENT, "view-capabilities", &capabilities());
+    assert_block(DOCUMENT, "view-defaults", &defaults());
 }

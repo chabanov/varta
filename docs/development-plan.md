@@ -883,7 +883,7 @@ web-developer peer.
 
 | Area | In v1 | Not in v1 |
 | --- | --- | --- |
-| Structure | `div`, `span`, `p`, `h1`–`h3`, `ul`/`ol`/`li`, `header`/`nav`/`main`/`section`/`footer` (landmarks for AccessKit) | Table elements (Taffy has no table layout: use grid with `role=table/row/cell/columnheader`) |
+| Structure | `div`, `span`, `p`, `h1`–`h3`, `ul`/`ol`/`li`, `header`/`nav`/`main`/`section`/`aside`/`footer` (landmarks for AccessKit; `aside` added in [round 4](embedding.md#view-draft-v0-round-4-subset-fixes)) | Table elements (Taffy has no table layout: use grid with `role=table/row/cell/columnheader`) |
 | Text | `strong`, `em`, `code`, `pre`, `br` | Raw HTML, `contenteditable` |
 | Controls | `button`; `a` for internal routing, and external links opened by the renderer under the accepted `ui.open_url` capability; `form` only as a submit boundary (no `action`/`method`); `label` (`for` focuses the field); `input` types text, password, number, search, checkbox, radio; `textarea`; `select`/`option` with a native popup; `progress` | `input` types date, color, range, file; `details`/`summary` |
 | Overlays | `dialog` with the `showModal` command, top layer, focus trap, Esc = cancel | — |
@@ -897,6 +897,10 @@ web-developer peer.
 | Cursor | default, pointer, text, not-allowed | — |
 | Motion | Transitions on opacity, color, background-color and transform (translate/scale only) | `@keyframes`, rotate (v1.1) |
 
+- **Authoring guidance.** Grid and flex containers holding form fields use
+  shrinkable tracks (`grid-template-columns: minmax(0, 1fr)`, `min-width: 0` on
+  flex items); otherwise a `textarea`'s intrinsic width overflows narrow
+  viewports such as 375 px ([round 4](embedding.md#view-draft-v0-round-4-subset-fixes)).
 - **Fonts.** The application ships its fonts in the artifact (by default one sans
   and one mono). The browser loads the same fonts through `@font-face` from
   artifact resources, so layout is comparable across renderers.

@@ -129,6 +129,7 @@ coded! {
         Dialog = 28 => "dialog",
         Progress = 29 => "progress",
         Img = 30 => "img",
+        Aside = 31 => "aside",
     }
 }
 
@@ -239,6 +240,11 @@ coded! {
         TransitionTimingFunction = 67 => "transition-timing-function",
         TransitionDelay = 68 => "transition-delay",
         FieldSizing = 69 => "field-sizing",
+        BorderTop = 70 => "border-top",
+        BorderRight = 71 => "border-right",
+        BorderBottom = 72 => "border-bottom",
+        BorderLeft = 73 => "border-left",
+        Resize = 74 => "resize",
     }
 }
 
@@ -607,6 +613,7 @@ pub const ROLES: &[&str] = &[
     "tab",
     "tablist",
     "tabpanel",
+    "complementary",
 ];
 
 /// The value grammar of an attribute.
@@ -784,6 +791,9 @@ pub enum CssValue {
     Color,
     Time,
     Track,
+    Line,
+    String,
+    Ident,
     Var,
 }
 impl CssValue {
@@ -796,6 +806,9 @@ impl CssValue {
         Self::Color,
         Self::Time,
         Self::Track,
+        Self::Line,
+        Self::String,
+        Self::Ident,
         Self::Var,
     ];
     #[must_use]
@@ -809,6 +822,9 @@ impl CssValue {
             Self::Color => "<color>",
             Self::Time => "<time>",
             Self::Track => "<track>",
+            Self::Line => "<line>",
+            Self::String => "<string>",
+            Self::Ident => "<ident>",
             Self::Var => "<var>",
         }
     }
@@ -827,6 +843,9 @@ impl CssValue {
             Self::Track => {
                 "<length-percentage> | <number>`fr` | `auto` | `minmax(` <track>`,` <track> `)` | `repeat(` <integer>`,` <track>+ `)`"
             }
+            Self::Line => "`auto` | <integer> | `span` <integer>",
+            Self::String => "a double-quoted string without `\"` or `\\`",
+            Self::Ident => "`[A-Za-z_][A-Za-z0-9_-]*`",
             Self::Var => {
                 "`var(--`name`)` or `var(--`name`,` fallback`)`, allowed wherever a whole component value is expected"
             }
@@ -849,9 +868,9 @@ impl CssProperty {
             Self::MarginTop | Self::MarginRight | Self::MarginBottom | Self::MarginLeft => {
                 "auto | <length-percentage>"
             }
-            Self::Padding => "<length-percentage>{1,4} (nonnegative)",
+            Self::Padding => "<length-percentage>{1,4}",
             Self::PaddingTop | Self::PaddingRight | Self::PaddingBottom | Self::PaddingLeft => {
-                "<length-percentage> (nonnegative)"
+                "<length-percentage>"
             }
             Self::Gap => "<length-percentage>{1,2}",
             Self::RowGap | Self::ColumnGap => "<length-percentage>",
@@ -864,26 +883,29 @@ impl CssProperty {
             Self::AlignSelf => {
                 "auto | stretch | start | end | flex-start | flex-end | center | baseline"
             }
-            Self::FlexGrow | Self::FlexShrink => "<number> (nonnegative)",
+            Self::FlexGrow | Self::FlexShrink => "<number>",
             Self::FlexBasis => "auto | <length-percentage>",
             Self::GridTemplateColumns | Self::GridTemplateRows => "none | <track>+",
-            Self::GridColumn | Self::GridRow => {
-                "<line> [/ <line>]? where <line> = auto | <integer> | span <integer>"
-            }
+            Self::GridColumn | Self::GridRow => "<line> [/ <line>]?",
             Self::Position => "static | relative | absolute | fixed",
             Self::Top | Self::Right | Self::Bottom | Self::Left => "auto | <length-percentage>",
             Self::ZIndex => "auto | <integer>",
             Self::Overflow => "visible | hidden | auto",
-            Self::Border | Self::Outline => "none | [<length> || solid || <color>]",
+            Self::Border
+            | Self::BorderTop
+            | Self::BorderRight
+            | Self::BorderBottom
+            | Self::BorderLeft
+            | Self::Outline => "none | [<length> || solid || <color>]",
             Self::BorderWidth | Self::OutlineWidth | Self::OutlineOffset => "<length>",
             Self::BorderStyle | Self::OutlineStyle => "none | solid",
             Self::BorderColor | Self::OutlineColor | Self::BackgroundColor | Self::Color => {
                 "<color>"
             }
             Self::BorderRadius => "<length-percentage>{1,4}",
-            Self::Opacity => "<number> (0 to 1)",
+            Self::Opacity => "<number>",
             Self::FontFamily => {
-                "[<string> | <ident> | sans-serif | serif | monospace | system-ui]# (artifact or generic families)"
+                "[<string> | <ident> | sans-serif | serif | monospace | system-ui]#"
             }
             Self::FontSize => "<length-percentage>",
             Self::FontWeight => "normal | bold | 400 | 500 | 600 | 700",
@@ -896,17 +918,49 @@ impl CssProperty {
             Self::OverflowWrap => "normal | anywhere",
             Self::Cursor => "default | pointer | text | not-allowed",
             Self::Transform => {
-                "none | [translate(<length-percentage>[, <length-percentage>]) | translateX(<length-percentage>) | translateY(<length-percentage>) | scale(<number>[, <number>])]+"
+                "none | [translate(<length-percentage> [, <length-percentage>]?) | translateX(<length-percentage>) | translateY(<length-percentage>) | scale(<number> [, <number>]?)]+"
             }
             Self::TransitionProperty => {
                 "none | all | [opacity | color | background-color | transform]#"
             }
             Self::TransitionDuration | Self::TransitionDelay => "<time>#",
             Self::TransitionTimingFunction => "[linear | ease | ease-in | ease-out | ease-in-out]#",
-            Self::FieldSizing => "fixed | content (textarea only)",
+            Self::FieldSizing => "fixed | content",
+            Self::Resize => "none | vertical",
         }
     }
 }
+
+impl CssProperty {
+    /// A restriction the value grammar does not express, if any.
+    #[must_use]
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            Self::Padding
+            | Self::PaddingTop
+            | Self::PaddingRight
+            | Self::PaddingBottom
+            | Self::PaddingLeft
+            | Self::FlexGrow
+            | Self::FlexShrink => Some("nonnegative"),
+            Self::Opacity => Some("0 to 1"),
+            Self::FontFamily => Some("artifact fonts or generic families"),
+            Self::FieldSizing => Some("textarea only"),
+            Self::Resize => Some("textarea only; treated as `none` with `field-sizing: content`"),
+            _ => None,
+        }
+    }
+}
+
+/// Default presentation of `dialog` and its backdrop on every renderer, per
+/// colour scheme (light, dark). There are no pseudo-elements in the subset,
+/// so the backdrop cannot be styled in v0.
+pub const DIALOG_BACKDROP: [&str; 2] = ["rgba(0, 0, 0, 0.4)", "rgba(0, 0, 0, 0.6)"];
+pub const DIALOG_BACKGROUND: [&str; 2] = ["#ffffff", "#1f1f1f"];
+pub const DIALOG_TEXT: [&str; 2] = ["#111111", "#eeeeee"];
+/// The selector the browser applier substitutes for `:root`, matching the
+/// root container (node [`ROOT_NODE`]) inside its closed shadow root.
+pub const ROOT_SELECTOR_IN_BROWSER: &str = "[data-l0-root]";
 
 /// Pseudo-classes a stylesheet selector may use.
 pub const PSEUDO_CLASSES: &[&str] = &[
@@ -1139,6 +1193,521 @@ mod tests {
             );
         }
         assert_eq!(Attribute::Rows.tags(), Tags::Only(&[Tag::Textarea]));
+    }
+
+    /// A small matcher for the value-definition syntax of [`CssProperty::grammar`],
+    /// so every grammar is checked against valid and invalid sample values.
+    mod grammar {
+        use super::super::CssValue;
+
+        #[derive(Debug, Clone, PartialEq)]
+        enum G {
+            Token(String),
+            Keyword(String),
+            Type(String),
+            Function(String, Box<G>),
+            Seq(Vec<G>),
+            Alt(Vec<G>),
+            AnyOrder(Vec<G>),
+            Repeat(Box<G>, usize, usize, bool),
+        }
+
+        fn lex_grammar(text: &str) -> Vec<String> {
+            let chars: Vec<char> = text.chars().collect();
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < chars.len() {
+                let c = chars[i];
+                if c.is_whitespace() {
+                    i += 1;
+                } else if c == '|' && chars.get(i + 1) == Some(&'|') {
+                    out.push("||".into());
+                    i += 2;
+                } else if "[](),/?+#|".contains(c) {
+                    out.push(c.to_string());
+                    i += 1;
+                } else if c == '{' || c == '<' {
+                    let close = if c == '{' { '}' } else { '>' };
+                    let end = i + chars[i..].iter().position(|&d| d == close).unwrap();
+                    out.push(chars[i..=end].iter().collect());
+                    i = end + 1;
+                } else {
+                    let start = i;
+                    while i < chars.len()
+                        && (chars[i].is_alphanumeric() || "-_.".contains(chars[i]))
+                    {
+                        i += 1;
+                    }
+                    assert!(i > start, "unexpected grammar character {c:?} in {text}");
+                    let word: String = chars[start..i].iter().collect();
+                    if chars.get(i) == Some(&'(') {
+                        out.push(format!("{word}("));
+                        i += 1;
+                    } else {
+                        out.push(word);
+                    }
+                }
+            }
+            out
+        }
+
+        struct Parser {
+            tokens: Vec<String>,
+            at: usize,
+        }
+        impl Parser {
+            fn peek(&self) -> Option<&str> {
+                self.tokens.get(self.at).map(String::as_str)
+            }
+            fn alt(&mut self) -> G {
+                let mut items = vec![self.any_order()];
+                while self.peek() == Some("|") {
+                    self.at += 1;
+                    items.push(self.any_order());
+                }
+                if items.len() == 1 {
+                    items.pop().unwrap()
+                } else {
+                    G::Alt(items)
+                }
+            }
+            fn any_order(&mut self) -> G {
+                let mut items = vec![self.seq()];
+                while self.peek() == Some("||") {
+                    self.at += 1;
+                    items.push(self.seq());
+                }
+                if items.len() == 1 {
+                    items.pop().unwrap()
+                } else {
+                    G::AnyOrder(items)
+                }
+            }
+            fn seq(&mut self) -> G {
+                let mut items = Vec::new();
+                while let Some(token) = self.peek() {
+                    if matches!(token, "|" | "||" | "]" | ")") {
+                        break;
+                    }
+                    let atom = self.atom();
+                    items.push(self.multiplier(atom));
+                }
+                assert!(!items.is_empty(), "empty grammar sequence");
+                if items.len() == 1 {
+                    items.pop().unwrap()
+                } else {
+                    G::Seq(items)
+                }
+            }
+            fn atom(&mut self) -> G {
+                let token = self.tokens[self.at].clone();
+                self.at += 1;
+                if token == "[" {
+                    let inner = self.alt();
+                    assert_eq!(self.peek(), Some("]"), "unclosed group");
+                    self.at += 1;
+                    inner
+                } else if let Some(name) = token.strip_suffix('(') {
+                    let inner = self.alt();
+                    assert_eq!(self.peek(), Some(")"), "unclosed function");
+                    self.at += 1;
+                    G::Function(name.to_owned(), Box::new(inner))
+                } else if token.starts_with('<') {
+                    G::Type(token)
+                } else if token == "," || token == "/" {
+                    G::Token(token)
+                } else {
+                    G::Keyword(token)
+                }
+            }
+            fn multiplier(&mut self, atom: G) -> G {
+                let (min, max, comma) = match self.peek() {
+                    Some("?") => (0, 1, false),
+                    Some("+") => (1, usize::MAX, false),
+                    Some("#") => (1, usize::MAX, true),
+                    Some(token) if token.starts_with('{') => {
+                        let inner = &token[1..token.len() - 1];
+                        let (low, high) = inner.split_once(',').unwrap();
+                        (low.parse().unwrap(), high.parse().unwrap(), false)
+                    }
+                    _ => return atom,
+                };
+                self.at += 1;
+                G::Repeat(Box::new(atom), min, max, comma)
+            }
+        }
+
+        fn parse(text: &str) -> G {
+            let mut parser = Parser {
+                tokens: lex_grammar(text),
+                at: 0,
+            };
+            let grammar = parser.alt();
+            assert_eq!(parser.at, parser.tokens.len(), "trailing grammar in {text}");
+            grammar
+        }
+
+        #[derive(Debug, Clone, PartialEq)]
+        enum V {
+            Word(String),
+            Function(String),
+            Close,
+            Comma,
+            Slash,
+            Hash(String),
+            Str,
+        }
+
+        fn lex_value(text: &str) -> Vec<V> {
+            let chars: Vec<char> = text.chars().collect();
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < chars.len() {
+                let c = chars[i];
+                if c.is_whitespace() {
+                    i += 1;
+                } else if c == ',' {
+                    out.push(V::Comma);
+                    i += 1;
+                } else if c == '/' {
+                    out.push(V::Slash);
+                    i += 1;
+                } else if c == ')' {
+                    out.push(V::Close);
+                    i += 1;
+                } else if c == '"' {
+                    let end = i + 1 + chars[i + 1..].iter().position(|&d| d == '"').unwrap();
+                    out.push(V::Str);
+                    i = end + 1;
+                } else if c == '#' {
+                    let start = i + 1;
+                    i = start;
+                    while i < chars.len() && chars[i].is_ascii_hexdigit() {
+                        i += 1;
+                    }
+                    out.push(V::Hash(chars[start..i].iter().collect()));
+                } else {
+                    let start = i;
+                    while i < chars.len()
+                        && (chars[i].is_alphanumeric() || "-_.%".contains(chars[i]))
+                    {
+                        i += 1;
+                    }
+                    assert!(i > start, "unexpected value character {c:?} in {text}");
+                    let word: String = chars[start..i].iter().collect();
+                    if chars.get(i) == Some(&'(') {
+                        out.push(V::Function(word));
+                        i += 1;
+                    } else {
+                        out.push(V::Word(word));
+                    }
+                }
+            }
+            out
+        }
+
+        fn number(word: &str) -> bool {
+            let digits = word.strip_prefix('-').unwrap_or(word);
+            let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+            let all = |part: &str| part.chars().all(|c| c.is_ascii_digit());
+            !digits.is_empty()
+                && all(whole)
+                && all(fraction)
+                && (!whole.is_empty() || !fraction.is_empty())
+                && (!digits.contains('.') || !fraction.is_empty())
+        }
+        fn unit(word: &str, units: &[&str]) -> bool {
+            units
+                .iter()
+                .any(|unit| word.strip_suffix(unit).is_some_and(number))
+        }
+
+        /// Composite types are themselves grammars over the leaf types.
+        fn composite(name: &str) -> Option<&'static str> {
+            let value = CssValue::ALL.iter().find(|value| value.name() == name)?;
+            match value {
+                CssValue::LengthPercentage => Some("<length> | <percentage>"),
+                CssValue::Color => Some(
+                    "<hex> | transparent | currentcolor | rgb(<integer>, <integer>, <integer>) | rgba(<integer>, <integer>, <integer>, <number>)",
+                ),
+                CssValue::Track => Some(
+                    "<length-percentage> | <flex> | auto | minmax(<track>, <track>) | repeat(<integer>, <track>+)",
+                ),
+                CssValue::Line => Some("auto | <integer> | span <integer>"),
+                _ => None,
+            }
+        }
+
+        fn leaf(name: &str, token: &V) -> bool {
+            let V::Word(word) = token else {
+                return match (name, token) {
+                    ("<hex>", V::Hash(hex)) => matches!(hex.len(), 3 | 6 | 8),
+                    ("<string>", V::Str) => true,
+                    _ => false,
+                };
+            };
+            match name {
+                "<number>" => number(word),
+                "<integer>" => {
+                    let digits = word.strip_prefix('-').unwrap_or(word);
+                    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+                }
+                "<length>" => word == "0" || unit(word, &["px", "rem"]),
+                "<percentage>" => unit(word, &["%"]),
+                "<flex>" => unit(word, &["fr"]),
+                "<time>" => unit(word, &["ms", "s"]),
+                "<ident>" => {
+                    word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                        && word
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
+                }
+                _ => false,
+            }
+        }
+
+        /// `var(--name)` or `var(--name, <one token>)` stands for any whole component.
+        fn var(tokens: &[V], at: usize) -> Vec<usize> {
+            if tokens.get(at) != Some(&V::Function("var".into())) {
+                return vec![];
+            }
+            let Some(V::Word(name)) = tokens.get(at + 1) else {
+                return vec![];
+            };
+            if !name.starts_with("--") {
+                return vec![];
+            }
+            match tokens.get(at + 2) {
+                Some(V::Close) => vec![at + 3],
+                Some(V::Comma) if tokens.get(at + 4) == Some(&V::Close) => vec![at + 5],
+                _ => vec![],
+            }
+        }
+
+        fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
+            let mut out = match grammar {
+                G::Token(text) => {
+                    let want = if text == "," { V::Comma } else { V::Slash };
+                    if tokens.get(at) == Some(&want) {
+                        vec![at + 1]
+                    } else {
+                        vec![]
+                    }
+                }
+                G::Keyword(word) => match tokens.get(at) {
+                    Some(V::Word(found)) if found.eq_ignore_ascii_case(word) => vec![at + 1],
+                    _ => vec![],
+                },
+                G::Type(name) => {
+                    let mut out = var(tokens, at);
+                    if let Some(definition) = composite(name) {
+                        out.extend(ends(&parse(definition), tokens, at));
+                    } else if tokens.get(at).is_some_and(|token| leaf(name, token)) {
+                        out.push(at + 1);
+                    }
+                    out
+                }
+                G::Function(name, inner) => {
+                    if tokens.get(at) != Some(&V::Function(name.clone())) {
+                        return vec![];
+                    }
+                    ends(inner, tokens, at + 1)
+                        .into_iter()
+                        .filter(|&end| tokens.get(end) == Some(&V::Close))
+                        .map(|end| end + 1)
+                        .collect()
+                }
+                G::Seq(items) => items.iter().fold(vec![at], |starts, item| {
+                    starts
+                        .into_iter()
+                        .flat_map(|start| ends(item, tokens, start))
+                        .collect()
+                }),
+                G::Alt(items) => items
+                    .iter()
+                    .flat_map(|item| ends(item, tokens, at))
+                    .collect(),
+                G::AnyOrder(items) => any_order(items, &mut vec![false; items.len()], tokens, at),
+                G::Repeat(inner, min, max, comma) => {
+                    let mut out = if *min == 0 { vec![at] } else { vec![] };
+                    let mut frontier = vec![at];
+                    let mut count = 0;
+                    while !frontier.is_empty() && count < *max {
+                        let mut next = Vec::new();
+                        for start in frontier {
+                            let start = if count > 0 && *comma {
+                                if tokens.get(start) != Some(&V::Comma) {
+                                    continue;
+                                }
+                                start + 1
+                            } else {
+                                start
+                            };
+                            next.extend(
+                                ends(inner, tokens, start)
+                                    .into_iter()
+                                    .filter(|&e| e > start),
+                            );
+                        }
+                        next.sort_unstable();
+                        next.dedup();
+                        count += 1;
+                        if count >= *min {
+                            out.extend(next.iter().copied());
+                        }
+                        frontier = next;
+                    }
+                    out
+                }
+            };
+            out.sort_unstable();
+            out.dedup();
+            out
+        }
+
+        fn any_order(items: &[G], used: &mut [bool], tokens: &[V], at: usize) -> Vec<usize> {
+            let mut out = Vec::new();
+            for index in 0..items.len() {
+                if used[index] {
+                    continue;
+                }
+                for end in ends(&items[index], tokens, at) {
+                    out.push(end);
+                    used[index] = true;
+                    out.extend(any_order(items, used, tokens, end));
+                    used[index] = false;
+                }
+            }
+            out
+        }
+
+        pub fn matches(grammar: &str, value: &str) -> bool {
+            let tokens = lex_value(value);
+            ends(&parse(grammar), &tokens, 0).contains(&tokens.len())
+        }
+    }
+
+    /// Valid samples per property, including single-argument transform forms.
+    fn valid_samples(property: CssProperty) -> &'static [&'static str] {
+        use CssProperty as P;
+        match property {
+            P::Display => &["flex", "none"],
+            P::Width | P::Height | P::MinWidth | P::MinHeight => &["auto", "100%", "12px", "0"],
+            P::MaxWidth | P::MaxHeight => &["none", "40rem"],
+            P::Margin => &["0", "4px auto", "1px 2px 3px 4px"],
+            P::MarginTop | P::MarginRight | P::MarginBottom | P::MarginLeft => &["auto", "8px"],
+            P::Padding => &["8px", "4px 12px"],
+            P::PaddingTop | P::PaddingRight | P::PaddingBottom | P::PaddingLeft => &["0.5rem"],
+            P::Gap => &["8px", "4px 8px"],
+            P::RowGap | P::ColumnGap => &["12px"],
+            P::FlexDirection => &["column"],
+            P::FlexWrap => &["wrap"],
+            P::JustifyContent => &["space-between"],
+            P::AlignItems | P::AlignSelf => &["center"],
+            P::FlexGrow | P::FlexShrink => &["1", "0.5"],
+            P::FlexBasis => &["auto", "30%"],
+            P::GridTemplateColumns | P::GridTemplateRows => &[
+                "minmax(0, 1fr)",
+                "240px minmax(0, 1fr)",
+                "repeat(3, 1fr)",
+                "none",
+            ],
+            P::GridColumn | P::GridRow => &["1", "span 2", "1 / 3", "auto"],
+            P::Position => &["fixed"],
+            P::Top | P::Right | P::Bottom | P::Left => &["0", "auto", "-4px"],
+            P::ZIndex => &["10", "auto"],
+            P::Overflow => &["auto"],
+            P::Border
+            | P::BorderTop
+            | P::BorderRight
+            | P::BorderBottom
+            | P::BorderLeft
+            | P::Outline => &["none", "1px solid #ccc", "solid 2px var(--accent)", "1px"],
+            P::BorderWidth | P::OutlineWidth | P::OutlineOffset => &["2px"],
+            P::BorderStyle | P::OutlineStyle => &["solid"],
+            P::BorderColor | P::OutlineColor | P::BackgroundColor | P::Color => &[
+                "#fff",
+                "#11223344",
+                "rgb(1, 2, 3)",
+                "rgba(0, 0, 0, 0.4)",
+                "transparent",
+                "var(--fg)",
+            ],
+            P::BorderRadius => &["4px", "50%", "4px 4px 0 0"],
+            P::Opacity => &["0.6"],
+            P::FontFamily => &["\"Inter\", sans-serif", "monospace"],
+            P::FontSize => &["14px", "1.25rem"],
+            P::FontWeight => &["600", "bold"],
+            P::FontStyle => &["italic"],
+            P::LineHeight => &["1.4", "20px", "normal"],
+            P::TextAlign => &["center"],
+            P::TextDecoration => &["underline"],
+            P::WhiteSpace => &["pre-wrap"],
+            P::TextOverflow => &["ellipsis"],
+            P::OverflowWrap => &["anywhere"],
+            P::Cursor => &["pointer"],
+            P::Transform => &[
+                "scale(0.98)",
+                "translate(4px)",
+                "translate(4px, 50%)",
+                "scale(1, 2)",
+                "translateY(-2px) scale(0.98)",
+                "none",
+            ],
+            P::TransitionProperty => &["opacity, transform", "all"],
+            P::TransitionDuration | P::TransitionDelay => &["150ms", "0.2s, 100ms"],
+            P::TransitionTimingFunction => &["ease-out"],
+            P::FieldSizing => &["content"],
+            P::Resize => &["vertical", "none"],
+        }
+    }
+
+    #[test]
+    fn every_css_grammar_accepts_its_samples() {
+        for &property in CssProperty::ALL {
+            for sample in valid_samples(property) {
+                assert!(
+                    grammar::matches(property.grammar(), sample),
+                    "{}: `{sample}` must match `{}`",
+                    property.name(),
+                    property.grammar()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn css_grammars_reject_malformed_values() {
+        use CssProperty as P;
+        for (property, sample) in [
+            (P::Transform, "scale()"),
+            (P::Transform, "scale(1, 2, 3)"),
+            (P::Transform, "rotate(4deg)"),
+            (P::Margin, "1px 2px 3px 4px 5px"),
+            (P::Color, "#12"),
+            (P::Color, "red"),
+            (P::Width, "10em"),
+            (P::Gap, "1px 2px 3px"),
+            (P::Border, "1px solid #000 1px"),
+            (P::GridColumn, "span"),
+            (P::Resize, "both"),
+            (P::TransitionDuration, "150"),
+        ] {
+            assert!(
+                !grammar::matches(property.grammar(), sample),
+                "{}: `{sample}` must not match",
+                property.name()
+            );
+        }
+        // The round-3 transform grammar made the second argument mandatory.
+        assert!(!grammar::matches(
+            "scale(<number>[, <number>])",
+            "scale(0.98)"
+        ));
+        assert!(grammar::matches(
+            "scale(<number>[, <number>])",
+            "scale(1, 2)"
+        ));
     }
 
     #[test]
