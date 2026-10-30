@@ -1946,11 +1946,32 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
   and resizes with the window. Guest stylesheets may change the root's other
   properties but layouts that depend on the root height (a full-height chat
   layout) behave the same on every renderer.
-- **Arbitrary external links (pending owner decision).** Agent answers contain
-  links to arbitrary sites, which a fixed `ui.open_url` pattern list cannot cover.
-  One option under discussion is an `https://*` grant form whose every activation
-  prompts with the full URL and never stores a decision. Not decided; until then
-  external links need matching patterns as specified in round 3 and round 5.
+- **Arbitrary external links (accepted 2026-10-29, not implemented).** Agent answers
+  link to arbitrary sites, which a fixed pattern list cannot cover. `ui.open_url`
+  therefore admits one more grant form, the exact pattern **`https://*`** ("any
+  https URL"):
+  - It is valid **only** in a `ui.open_url` grant (package request or host
+    ceiling). The same pattern under any other capability, including `net.request`
+    and `net.fetch`/`net.get`, invalidates the manifest. `http://*` and partial
+    wildcard authorities (`https://*.example.com`) are not admitted.
+  - It matches an absolute `https:` URL with a host, without user name or
+    password, without control characters, whitespace or `\`, at most
+    `view::DRAFT_MAX_VALUE_BYTES`; a fragment is allowed. At patch time an external
+    `href` that does not match is invalid as before.
+  - **Every activation prompts.** For a URL matched only by `https://*`, the host
+    broker never uses a stored decision and never stores one (no "always allow"
+    choice): each activation shows the broker's own prompt with the **full URL**,
+    the host in its punycode (ASCII) form next to its Unicode form against
+    look-alike domains, and the package's `purpose` text as a quote. An activation
+    while a prompt is already open reports `not_allowed` without a second prompt.
+  - The action follows round 6: it is user-gesture only (the activation itself),
+    the host opens the URL inside the prompt's "Allow" activation and reports the
+    `command_result` (`ok`, `not_allowed` on deny or dismiss, or
+    `refused_by_platform`).
+  - The host ceiling may forbid it by not granting `https://*` for `ui.open_url`;
+    then such activations report `not_allowed` without a prompt. URLs that also
+    match an explicit pattern of the request and the ceiling keep the ordinary
+    broker rules, including stored decisions.
 
 ## Entry-point limits
 

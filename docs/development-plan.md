@@ -1540,9 +1540,41 @@ distinguishes `denied` from `prompt`; the result records of `copy_text` and
 `ui.open_url` are the engine's choice and are specified in
 [round 5](embedding.md#view-draft-v0-round-5-command-results).
 
+Also accepted on 2026-10-29: `ui.open_url` admits the grant form `https://*`
+for arbitrary external links (never for other capabilities); every such activation
+prompts with the full URL and no decision is stored
+([details](embedding.md#view-draft-v0-round-6-gestures-and-platform-refusals)).
+
 **Open questions.** Whether "allow for this session" is offered; the exact identity
 key before C3; how a required permission refused at first run is presented on each
 target; the rate-limit values.
+
+#### Evolving JSON: unknown fields and variants (strict only)
+
+**Status: accepted 2026-10-29 (owner's final decision: strict only).** Checked JSON
+stays strict in every profile, including future ones:
+
+- **Unknown fields are rejected.** Parsing into a closed record
+  (`varta.json.parse<T>`, `JSON.parse(text) as T`, `unknown as T`) fails when the
+  input has a field the type does not declare.
+- **Extra fields only by declaration.** A type that must accept additions says so
+  explicitly with an index signature, `[key: string]: unknown`; such types keep
+  preserving the unknown fields as today.
+- **Unmatched discriminants raise an error.** A discriminant value that matches no
+  literal member of a discriminated union is rejected with a catchable error in
+  every profile with recoverable checked JSON or checked assertions (earlier
+  profiles keep their existing checked-JSON failure). Applications that need an
+  open set parse the discriminant as `string` and narrow by hand.
+- **No tolerant mode and no fallback branch.** There is no option to ignore unknown
+  fields and no implicit fallback member for unknown variants.
+
+Considered and rejected: a tolerant mode that ignored unknown fields with a bounded
+diagnostic and routed unmatched discriminants to a fallback member.
+
+Context: the UARP API evolves additively and uarp-sdk keeps unknown fields in its own
+types; applications on Varta model that with explicit index signatures and `string`
+discriminants. The existing strict contract in [architecture.md](architecture.md)
+already describes this behaviour; no new profile is needed for it.
 
 #### Increments and acceptance
 
