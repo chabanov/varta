@@ -1229,6 +1229,15 @@ web-developer peer.
   Either needs a registry entry in `view::ROLES`, its accname step, the
   AccessKit mapping and a browser/native conformance page; until then the
   application uses `div` without a role.
+- **Headless scripts and network requests (open).** `varta dev --view-script`
+  runs on virtual time ([contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)):
+  inputs wait for every runnable task, `{"input":"wait","ms":N}` fires delayed
+  timers, and network requests in flight are not waited for. An explicit
+  bounded step that waits for completions (for example
+  `{"input":"wait","network":true,"ms":N}` on the wall clock) is open: it
+  mixes the wall clock into a virtual-time session, so a scripted network
+  session stays nondeterministic until a recorded or simulated network
+  host exists.
 - **Window (native targets).** Title, initial and minimum size, DPI handled by the
   renderer, the OS colour scheme, system copy/paste shortcuts.
 - **Freeze criterion for L0 v1.** A set of conformance pages where the same patch

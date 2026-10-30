@@ -19,7 +19,8 @@
 //! trusted platform inputs between turns ([`Application::view_input`]), and
 //! every record the renderer produces is a host task that runs as one turn
 //! ([`TurnKind::View`]); [`VartaRuntime::run_view`] drives a scripted
-//! headless session this way.
+//! headless session this way, on virtual time: timers fire when the script's
+//! steps reach their due time, never by the wall clock.
 use crate::events::{Delivery, HostEvent, Payload, TaskKind};
 use crate::execution::{Execution, Mode};
 use crate::turns::{self, BudgetReport, TurnKind, TurnUsage};
@@ -81,6 +82,13 @@ pub enum ApplicationError {
     Lifetime,
     #[error("the application instance reached its turn bound ({0} turns)")]
     TurnLimit(u64),
+    #[error(
+        "view script step {step} did not settle within {} turns: a task keeps re-arming with the minimum timer delay",
+        varta_view::Script::MAX_STEP_TURNS
+    )]
+    /// `step` is 1-based; the settling after the last step is the step
+    /// after it.
+    Unsettled { step: usize },
     #[error("host event rejected: {0}")]
     Event(#[from] varta_common::events::EventError),
 }
@@ -128,6 +136,22 @@ pub struct Application {
     failure: Option<RuntimeError>,
     network: VecDeque<crate::net::Event>,
     max_turns: Option<u64>,
+    /// A scripted headless session's virtual clock; `None`: timers follow
+    /// the wall clock.
+    horizon: Option<Horizon>,
+}
+
+/// When a timer is ready on the virtual clock of a scripted session; nothing
+/// waits for the wall clock.
+#[derive(Debug, Clone, Copy)]
+enum Horizon {
+    /// Before an input: timers due by the loop time, and, while a timer with
+    /// the minimum delay is armed, the earliest timer in (due, sequence)
+    /// order, so zero-delay timers and their chains fire first in Node's
+    /// order.
+    Input,
+    /// During a wait: timers due at or before this loop time.
+    Until(f64),
 }
 
 impl VartaRuntime {
@@ -169,6 +193,7 @@ impl VartaRuntime {
             failure: None,
             network: VecDeque::new(),
             max_turns: options.max_turns,
+            horizon: None,
         };
         let result = (|| {
             let store = &mut application.execution.store;
@@ -216,10 +241,15 @@ impl VartaRuntime {
 
     /// Run a view application headlessly (v38 `view_protocol()`): an
     /// application instance whose simulated platform performs `script`'s
-    /// inputs, as trusted platform inputs between turns, whenever no task is
-    /// ready; every record they produce runs as its own turn. After the
-    /// script it runs until nothing but host sources keeps it alive, and
-    /// reports the final tree and accessibility snapshot.
+    /// inputs, as trusted platform inputs between turns, on virtual time.
+    /// An input is performed only when no task is runnable: every host task
+    /// and arrived completion has run and every timer due within the minimum
+    /// timer delay of the last turn's loop time has fired (so zero-delay
+    /// timers and their chains run first), each as its own turn. A `wait`
+    /// step advances loop time by its milliseconds, firing every timer due by
+    /// then. Network requests in flight are not waited for. After the last
+    /// step the session settles once more and reports the final tree and
+    /// accessibility snapshot.
     #[must_use]
     pub fn run_view(
         &self,
@@ -243,21 +273,30 @@ impl VartaRuntime {
                 };
             }
         };
-        let mut inputs = script.inputs.iter();
-        loop {
-            match application.step(Some(Duration::ZERO)) {
-                Step::Turn(_) => continue,
-                Step::Idle => {}
-                Step::Finished { .. } | Step::Failed => break,
-            }
-            let Some(input) = inputs.next() else {
-                application.run();
-                break;
-            };
-            if application.view_input(input).is_err() {
-                break;
+        // Virtual time: loop time stays program-defined, as under main.
+        application.horizon = Some(Horizon::Input);
+        for (index, step) in script.inputs.iter().enumerate() {
+            let number = index + 1;
+            match *step {
+                varta_view::ScriptStep::Input(ref input) => {
+                    if !application.settle_step(number, Horizon::Input)
+                        || application.view_input(input).is_err()
+                    {
+                        break;
+                    }
+                }
+                varta_view::ScriptStep::Wait { ms } => {
+                    let end = application.loop_time() + ms;
+                    if !application.settle_step(number, Horizon::Until(end)) {
+                        break;
+                    }
+                    application.advance_loop_time(end);
+                }
             }
         }
+        // After the last step the session settles once more and ends; a
+        // timer no wait reached never fires.
+        application.settle_step(script.inputs.len() + 1, Horizon::Input);
         let snapshot = Some(application.view_snapshot());
         let commits = application.view_commits();
         application.report_into(&mut report);
@@ -329,6 +368,35 @@ impl Application {
         }
         Ok(())
     }
+    /// The loop time of the instance, in milliseconds since it started.
+    fn loop_time(&self) -> f64 {
+        self.execution.store.data().scheduler.loop_time()
+    }
+    fn advance_loop_time(&mut self, to: f64) {
+        self.execution.store.data_mut().scheduler.advance(to);
+    }
+    /// Run every task that is runnable on the virtual clock up to `horizon`
+    /// (host tasks by arrival, then due timers, then completions that have
+    /// arrived), each as its own turn, until none is. Returns whether the
+    /// instance is still running; more than [`varta_view::Script::MAX_STEP_TURNS`]
+    /// turns fails it.
+    fn settle_step(&mut self, step: usize, horizon: Horizon) -> bool {
+        let mut turns = 0;
+        self.horizon = Some(horizon);
+        loop {
+            match self.step(Some(Duration::ZERO)) {
+                Step::Turn(_) => {}
+                Step::Idle => return true,
+                Step::Finished { .. } | Step::Failed => return false,
+            }
+            turns += 1;
+            if turns > varta_view::Script::MAX_STEP_TURNS {
+                self.fail(ApplicationError::Unsettled { step }.into());
+                return false;
+            }
+        }
+    }
+
     /// The view's tree and accessibility snapshot.
     #[must_use]
     pub fn view_snapshot(&self) -> serde_json::Value {
@@ -431,11 +499,26 @@ impl Application {
         Ok(())
     }
 
-    /// The earliest ready task by arrival, if any.
+    /// The earliest ready task by arrival, if any; on the virtual clock,
+    /// host tasks first, then a timer due by the horizon, then a completion.
     fn ready(&mut self) -> Option<Ready> {
         let context = self.execution.store.data_mut();
         while let Some(event) = context.net.poll() {
             self.network.push_back(event);
+        }
+        if let Some(horizon) = self.horizon {
+            let scheduler = &context.scheduler;
+            let due = |due: f64| match horizon {
+                Horizon::Input => due <= scheduler.loop_time() || scheduler.immediate_armed(),
+                Horizon::Until(end) => due <= end,
+            };
+            return if context.events.next_arrival().is_some() {
+                Some(Ready::Host)
+            } else if scheduler.next_due(true).is_some_and(due) {
+                Some(Ready::Timer)
+            } else {
+                (!self.network.is_empty()).then_some(Ready::Network)
+            };
         }
         let now = Instant::now();
         let host = context.events.next_arrival();
@@ -473,10 +556,14 @@ impl Application {
     /// without the embedder).
     fn wait(&mut self, until: Option<Instant>) -> Result<bool, RuntimeError> {
         let context = self.execution.store.data_mut();
-        let timer = context
-            .scheduler
-            .next_due(true)
-            .map(|due| scheduler::target(context, due));
+        // On the virtual clock a timer never becomes due by waiting.
+        let timer = match self.horizon {
+            Some(_) => None,
+            None => context
+                .scheduler
+                .next_due(true)
+                .map(|due| scheduler::target(context, due)),
+        };
         let busy = context.net.alive();
         if timer.is_none() && !busy {
             return Ok(false);
@@ -543,7 +630,9 @@ impl Application {
                     if let Some(event) = self.network.pop_front() {
                         let context = store.data_mut();
                         context.net.deliver(&mut context.scheduler, event)?;
-                        scheduler::observed_wall_clock(context);
+                        if self.horizon.is_none() {
+                            scheduler::observed_wall_clock(context);
+                        }
                     }
                 }
             }

@@ -35,6 +35,9 @@ struct Timer {
     serial: u64,
     /// The normalized repeat delay of an interval.
     interval: Option<f64>,
+    /// Armed with Node's minimum delay (a zero, omitted or sub-millisecond
+    /// delay): what a scripted headless session never lets an input overtake.
+    immediate: bool,
     keep_alive: bool,
     /// The (due time, sequence) key while the timer is armed.
     armed: Option<(f64, u64)>,
@@ -55,6 +58,8 @@ struct Timers {
     next_sequence: u64,
     /// Loop time in milliseconds since the execution started.
     now: f64,
+    /// Armed timers with `immediate` set.
+    immediate_armed: usize,
 }
 impl Timers {
     fn arm(&mut self, id: u64, due: f64) -> Result<(), SchedulerError> {
@@ -65,8 +70,13 @@ impl Timers {
             .get_mut(&id)
             .ok_or(SchedulerError::TimerState)?;
         timer.armed = Some((due, sequence));
+        self.immediate_armed += usize::from(timer.immediate);
         self.order.insert((due.to_bits(), sequence), id);
         Ok(())
+    }
+    /// Account for an armed timer leaving the queue (fired or cleared).
+    fn disarmed(&mut self, immediate: bool) {
+        self.immediate_armed -= usize::from(immediate);
     }
     fn cleared(&self, serial: u64) -> bool {
         self.by_serial
@@ -337,6 +347,7 @@ impl Scheduler {
             Timer {
                 serial,
                 interval: (flags & TIMER_INTERVAL != 0).then_some(delay),
+                immediate: delay <= varta_common::scheduler::TIMER_MIN_DELAY_MS,
                 keep_alive: flags & TIMER_UNREF == 0,
                 armed: None,
                 fired: false,
@@ -371,6 +382,7 @@ impl Scheduler {
             Timer {
                 serial,
                 interval: None,
+                immediate: false,
                 keep_alive: false,
                 armed: None,
                 fired: false,
@@ -393,8 +405,9 @@ impl Scheduler {
             return Ok(());
         };
         timer.cleared = true;
-        let serial = timer.serial;
+        let (serial, immediate) = (timer.serial, timer.immediate);
         self.timers.order.remove(&(due.to_bits(), sequence));
+        self.timers.disarmed(immediate);
         // A frame running its interval callback has no reaction yet; it is
         // released when it awaits again (see `react`).
         if let Some(reactions) = self.reactions.remove(&serial) {
@@ -456,7 +469,20 @@ impl Scheduler {
     /// Loop time follows the wall clock once an external completion (a v37
     /// network response) arrived, so later timers are due relative to it.
     fn observe(&mut self, elapsed_ms: f64) {
-        self.timers.now = self.timers.now.max(elapsed_ms);
+        self.advance(elapsed_ms);
+    }
+    /// Whether a timer armed with the minimum delay is pending.
+    pub(crate) fn immediate_armed(&self) -> bool {
+        self.timers.immediate_armed > 0
+    }
+    /// Loop time in milliseconds since the execution started.
+    pub(crate) fn loop_time(&self) -> f64 {
+        self.timers.now
+    }
+    /// Move loop time forward to `to` (never back): a scripted headless
+    /// session's `wait` step on the virtual clock.
+    pub(crate) fn advance(&mut self, to: f64) {
+        self.timers.now = self.timers.now.max(to);
     }
     /// The due time of the next timer to fire, while a timer that keeps the
     /// loop alive is armed, or any armed timer while other work (`busy`: a
@@ -493,7 +519,8 @@ impl Scheduler {
             .ok_or(SchedulerError::TimerState)?;
         timer.armed = None;
         timer.fired = true;
-        let (serial, interval) = (timer.serial, timer.interval);
+        let (serial, interval, immediate) = (timer.serial, timer.interval, timer.immediate);
+        self.timers.disarmed(immediate);
         let reactions = self
             .reactions
             .remove(&serial)

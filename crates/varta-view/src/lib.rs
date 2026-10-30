@@ -23,7 +23,7 @@ mod tree;
 
 mod wire;
 
-pub use events::{Input, Platform, PromptAnswer, Script, ScriptError, Target};
+pub use events::{Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep, Target};
 pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment};
 pub use wire::{BatchWriter, EventRecord};
 

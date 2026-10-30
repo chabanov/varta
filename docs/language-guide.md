@@ -5473,7 +5473,20 @@ lists trusted inputs (`{"input":"click","target":"#inc"}`, `type`, `key` with
 `shift`/`ctrl`/`alt`/`meta`/`composing`, `focus`, `select`, `scroll`,
 `prompts`) performed between turns of an application instance, every event
 record runs as its own turn, and the command prints the final tree and
-accessibility snapshot (`--budget-report` shows the turns).
+accessibility snapshot (`--budget-report` shows the turns). The session runs
+on virtual time: an input is performed only after every pending record and
+zero-delay timer (and the zero-delay timers those arm) has run, so a node
+created in `setTimeout(…, 0)` can be clicked by the next step. A delayed
+timer fires only when a `wait` step reaches it; nothing depends on the wall
+clock:
+
+```json
+{"inputs":[
+  {"input":"click","target":"#reasoning"},
+  {"input":"wait","ms":300},
+  {"input":"click","target":"#retry"}
+]}
+```
 `View.copyText` needs `"clipboard": {"write": true}` and runs only in a
 click, key or submit turn; an external `<a href>` needs a matching
 `"ui": {"open_url": [...]}` pattern (`"https://*"` admits any HTTPS link and

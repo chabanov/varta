@@ -3447,6 +3447,13 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   (`Application::view_input`); never deliver a record inside another turn
   and never add a second event loop. A bounded execution renders but
   delivers no records.
+- A scripted session (`run_view`) runs on virtual time
+  (`Application::horizon`): an input waits until nothing is runnable (host
+  tasks, due timers, timers while a minimum-delay timer is armed, arrived
+  completions), `wait` steps alone advance loop time, and nothing sleeps or
+  observes the wall clock. Keep Node's timer order: never let a zero-delay
+  timer overtake an earlier (due, sequence) key, and never wait for network
+  completions implicitly. Every step stays within `Script::MAX_STEP_TURNS`.
 - The event export is synthesized only when the view prelude is loaded; it
   copies the record with the snapshot helper before any other operation and
   calls the prelude dispatcher, a pruning root. Validation rejects the export

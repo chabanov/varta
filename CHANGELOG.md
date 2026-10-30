@@ -1013,6 +1013,15 @@ in [conformance/README.md](conformance/README.md).
 
 ### Fixed
 
+- V38 `varta dev --view-script` runs on virtual time: a scripted input is
+  performed only when no task is runnable (records, arrived completions, due
+  timers, and zero-delay timers with their chains in Node's order), so a node
+  created in a `setTimeout(…, 0)` turn can be clicked by the next step. The
+  new `{"input":"wait","ms":N}` step advances virtual time and fires the
+  timers due by then; nothing waits for the wall clock, a timer no wait
+  reaches never fires, and one step settles within `Script::MAX_STEP_TURNS`
+  turns.
+
 - V38 accessible names follow the accname 1.2 steps the L0 subset admits:
   `aria-hidden="true"`, `display: none` and closed-dialog descendants no
   longer enter a name from content (`button "Reasoning"`, not

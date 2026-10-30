@@ -626,3 +626,211 @@ fn bounded_runs_render_without_event_delivery() {
         .unwrap();
     assert!(output.lines.is_empty(), "{:?}", output.lines);
 }
+
+fn timers() -> CapabilityGrant {
+    CapabilityGrant {
+        id: varta_common::scheduler::TIMER_CAPABILITY.into(),
+        value: CapabilityValue::Boolean(true),
+    }
+}
+
+/// Nodes appear in timer turns: a zero-delay timer, its zero-delay chain,
+/// a 50 ms timer and a 10 s timer no script waits for; every click arms a
+/// zero-delay timer of its own.
+const TIMED: &str = r#"
+export function main(): void {
+  const root = View.node();
+  View.createElement(root, 1);
+  View.mount(root);
+  const add = (id: string): void => {
+    const node = View.node();
+    View.createElement(node, 1);
+    View.setAttribute(node, 1, id);
+    View.on(node, 1, (event: ViewEvent): void => {
+      console.log(`click ${id}`);
+      setTimeout(() => console.log(`after ${id}`), 0);
+    }, 0, 0, 0, 0);
+    View.insert(root, node, 0);
+    View.commit();
+  };
+  setTimeout(() => {
+    add('late');
+    setTimeout(() => {
+      add('chained');
+      setTimeout(() => add('third'), 0);
+    }, 0);
+  }, 0);
+  setTimeout(() => add('delayed'), 50);
+  setTimeout(() => console.log('never'), 10000);
+  console.log('main');
+}
+"#;
+
+fn turn_kinds(run: &ViewRun) -> Vec<crate::TurnKind> {
+    run.report
+        .budget
+        .as_ref()
+        .map(|report| report.turns.iter().map(|turn| turn.kind).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn scripted_inputs_wait_for_zero_delay_timers_and_their_chains() {
+    let started = std::time::Instant::now();
+    let run = run(
+        TIMED,
+        r##"{"inputs":[
+            {"input":"click","target":"#late"},
+            {"input":"click","target":"#third"},
+            {"input":"click","target":"#chained"}
+        ]}"##,
+        &[timers()],
+    );
+    // A click's zero-delay timer fires before the next input.
+    assert_eq!(
+        run.output.lines,
+        [
+            "varta log: main",
+            "varta log: click late",
+            "varta log: after late",
+            "varta log: click third",
+            "varta log: after third",
+            "varta log: click chained",
+            "varta log: after chained",
+        ]
+    );
+    let ids: Vec<_> = run.snapshot["tree"]["children"][0]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["attributes"]["id"].clone())
+        .collect();
+    assert_eq!(ids, ["late", "chained", "third"]);
+    // main, three chained timers, then per click a view turn and a timer.
+    use crate::TurnKind::{Main, Timer, View};
+    assert_eq!(
+        turn_kinds(&run),
+        [
+            Main, Timer, Timer, Timer, View, Timer, View, Timer, View, Timer
+        ]
+    );
+    // Virtual time: the 50 ms and 10 s timers never fire and nothing waited
+    // for the wall clock.
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+/// Zero-delay timers keep Node's 1 ms minimum on the virtual clock: a chain
+/// interleaves with a 2 ms timer in Node's order (Node 24 prints
+/// `c0 a c1 c2 b`), all before the input; the 50 ms timer needs a wait.
+#[test]
+fn zero_delay_chains_keep_node_order_with_delayed_timers() {
+    let source = r#"
+export function main(): void {
+  const root = View.node();
+  View.createElement(root, 1);
+  View.mount(root);
+  setTimeout(() => console.log('a'), 2);
+  setTimeout(() => {
+    console.log('c0');
+    setTimeout(() => {
+      console.log('c1');
+      setTimeout(() => console.log('c2'), 0);
+    }, 0);
+  }, 0);
+  setTimeout(() => console.log('b'), 50);
+}
+"#;
+    let run = run(
+        source,
+        r#"{"inputs":[{"input":"prompts","answer":"allow"}]}"#,
+        &[timers()],
+    );
+    assert_eq!(
+        run.output.lines,
+        [
+            "varta log: c0",
+            "varta log: a",
+            "varta log: c1",
+            "varta log: c2"
+        ]
+    );
+}
+
+#[test]
+fn wait_steps_advance_virtual_time_to_fire_delayed_timers() {
+    let bytes = compile(TIMED);
+    let grants = [timers()];
+    // 49 ms is not enough for the 50 ms timer.
+    let early = run_view(
+        &bytes,
+        &grants,
+        None,
+        &script(r##"{"inputs":[{"input":"wait","ms":49},{"input":"click","target":"#delayed"}]}"##),
+    )
+    .err()
+    .unwrap();
+    assert!(early.to_string().contains("attached"), "{early}");
+    // Two waits add up; the timer fires in its own turn before the input.
+    let session = r##"{"inputs":[
+        {"input":"wait","ms":20},
+        {"input":"wait","ms":30},
+        {"input":"click","target":"#delayed"},
+        {"input":"wait","ms":0}
+    ]}"##;
+    let first = run_view(&bytes, &grants, None, &script(session)).unwrap();
+    assert_eq!(
+        first.output.lines,
+        [
+            "varta log: main",
+            "varta log: click delayed",
+            "varta log: after delayed"
+        ]
+    );
+    // Deterministic across runs: the same output, snapshot and turns.
+    for _ in 0..3 {
+        let again = run_view(&bytes, &grants, None, &script(session)).unwrap();
+        assert_eq!(first.output.lines, again.output.lines);
+        assert_eq!(first.snapshot, again.snapshot);
+        assert_eq!(turn_kinds(&first), turn_kinds(&again));
+    }
+}
+
+#[test]
+fn wait_steps_are_bounded_and_endless_zero_delay_timers_fail_the_step() {
+    for invalid in [
+        r#"{"inputs":[{"input":"wait","ms":-1}]}"#,
+        r#"{"inputs":[{"input":"wait","ms":2147483648}]}"#,
+        r#"{"inputs":[{"input":"wait"}]}"#,
+        r##"{"inputs":[{"input":"wait","ms":1,"target":"#x"}]}"##,
+    ] {
+        assert!(
+            crate::ViewScript::parse(invalid.as_bytes()).is_err(),
+            "{invalid}"
+        );
+    }
+    let source = r#"
+export function main(): void {
+  const root = View.node();
+  View.createElement(root, 1);
+  View.mount(root);
+  setInterval(() => {}, 0);
+}
+"#;
+    let error = run_view(
+        &compile(source),
+        &[timers()],
+        None,
+        &script(r#"{"inputs":[{"input":"wait","ms":0},{"input":"prompts","answer":"allow"}]}"#),
+    )
+    .err()
+    .unwrap();
+    // The wait reaches nothing (the interval is due at 1 ms); the input's
+    // settling never ends.
+    assert!(
+        matches!(
+            error,
+            crate::RuntimeError::Application(crate::ApplicationError::Unsettled { step: 2 })
+        ),
+        "{error}"
+    );
+}

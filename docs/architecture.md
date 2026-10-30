@@ -9922,12 +9922,61 @@ same listener under the queue's coalescing rule; at most
 be pending, a full queue drops a coalescible record, and any other overflow is
 `ViewError::QueueOverflow`. Platform inputs are host work between turns
 (`Application::view_input`; `VartaRuntime::run_view` and `varta dev
---view-script` perform a script's inputs whenever no task is ready) and run
+--view-script` perform a script's inputs on virtual time, below) and run
 no guest code. A committed view keeps the instance alive like an open event
 source. A bounded execution (`run`, `dev` without `--app` or a script)
 renders but has no event delivery: its records are discarded. `Session` in
 `varta-runtime/src/view.rs` owns the renderer and the one-commit rule;
 `turns::begin` renews the commit allowance.
+
+**Scripted sessions and virtual time.** `VartaRuntime::run_view` (`varta
+dev --view-script`) runs the application instance on a virtual clock: loop
+time starts at 0 with the instance, a fired timer sets it to its due time,
+as in every execution, and only a script step advances it otherwise; no
+timer ever waits for the wall clock and a network completion does not move
+loop time. A script's `inputs` are steps in order, each an input (the
+trusted platform inputs above, and `prompts`) or a wait,
+`{"input":"wait","ms":N}` with N a number of milliseconds in
+`0..=TIMER_MAX_DELAY_MS`.
+
+- **Settling.** Before an input the session runs every runnable task, each
+  as its own turn with its own budgets: host tasks (view records and host
+  events) by arrival first, then timers, then network completions that have
+  already arrived. A timer is runnable when its due time is at most the loop
+  time, and, while any timer armed with Node's minimum delay
+  (`TIMER_MIN_DELAY_MS`: a zero, omitted or sub-millisecond delay, including
+  an interval's re-arm) is pending, the earliest timer in (due time,
+  sequence) order is runnable too. A zero-delay timer and every zero-delay
+  timer it arms therefore fire before the input, keeping Node's 1 ms minimum
+  and order: a chain interleaves with a 2 ms timer exactly as in Node, and a
+  timer due within the minimum delay of a pending zero-delay timer fires
+  before it. The input is performed only when nothing is runnable. It takes
+  no virtual time.
+- **Wait.** A wait of N ms from loop time V runs every runnable task whose
+  timers are due at or before V + N (records and completions as above), in
+  order, then sets loop time to V + N. A zero-delay timer armed during the
+  wait fires within it when due by V + N, otherwise in the next step's
+  settling.
+- **End.** After the last step the session settles once more and reports.
+  A timer that no wait reaches never fires; requests still in flight are not
+  waited for.
+- **Bounds.** One step (its settling, or a wait) runs at most
+  `Script::MAX_STEP_TURNS` turns; a task that keeps re-arming with the
+  minimum delay (`setInterval(f, 0)`) ends the session with
+  `ApplicationError::Unsettled` naming the step (the final settling is the
+  step after the last). Production budgets are unchanged.
+- **Network.** Pending requests are never waited for implicitly: a
+  completion that has arrived when the session settles runs in Node's order
+  after timers, otherwise it runs at a later settling or not at all. Its
+  arrival follows the wall clock, so only a script without network requests
+  in flight is deterministic; an explicit bounded network wait step is open
+  ([development plan](development-plan.md#view-layer-l0l3)).
+- `Date.now()` and `performance.now()` keep reading the clock their
+  `time.now` grant authorizes; virtual time governs timers only.
+
+Same script, same artifact and same answers give the same turns, output and
+snapshot on every run. An embedder that drives `Application::step` itself
+keeps the wall clock.
 
 **Capabilities.** `ui.open_url` (`GrantKind::OpenUrls`: URL patterns under
 the network URL rules over `https://` and `http://`, plus the exact
@@ -10056,7 +10105,8 @@ starting with `__vartaJsx` are reserved. `varta.d.ts` carries the typed
 operations, live nodes and listeners, value and stylesheet bytes, pending
 events and pending `copy_text` requests; `view::css::MAX_VALUE_TOKENS` bounds
 one CSS value; a headless script is at most `Script::MAX_BYTES` bytes and
-`Script::MAX_INPUTS` inputs.
+`Script::MAX_INPUTS` steps (inputs and waits), and one step settles within
+`Script::MAX_STEP_TURNS` turns.
 
 ## Local modules
 

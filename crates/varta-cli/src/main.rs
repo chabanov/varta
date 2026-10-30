@@ -57,7 +57,14 @@ enum Commands {
         /// perform this JSON script's platform inputs (clicks, typing, keys
         /// with modifiers, focus, select, scroll, prompt answers) as trusted
         /// events between turns, every record as its own turn, then print the
-        /// final view tree and accessibility snapshot as JSON.
+        /// final view tree and accessibility snapshot as JSON. The session
+        /// runs on virtual time: an input is performed only when no task is
+        /// runnable (every record, arrived network completion and due timer
+        /// has run, including zero-delay timers and their chains, each as its
+        /// own turn); {"input":"wait","ms":N} advances virtual time by N
+        /// milliseconds and fires every timer due by then. Nothing waits for
+        /// the wall clock or for network requests in flight; a timer no wait
+        /// reaches never fires.
         #[arg(long, value_name = "PATH", conflicts_with = "profile_fuel")]
         view_script: Option<PathBuf>,
     },
