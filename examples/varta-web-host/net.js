@@ -3,11 +3,16 @@
 // failure and misuse tables; completions go into one FIFO queue that the event
 // loop delivers one per turn.
 //
-// Browser and fetch deviations, stated by `guarantees`: response headers come
-// from the Fetch `Headers` (names sorted, repeated fields combined, except
-// `set-cookie` where the runtime exposes it), a browser reads only the headers
-// CORS exposes and adds its own request headers, and a browser cannot observe a
-// redirect (`redirect: "manual"` yields an opaque response, reported as a failure).
+// Under v38 the head record is the contract's canonical head: Fetch `Headers`
+// already sort and combine, and only the grant's visible names are kept (a
+// cross-origin server must expose declared names with
+// `Access-Control-Expose-Headers`, which is deployment configuration).
+// Browser and fetch deviations, stated by `guarantees`: v37 response headers
+// come from the Fetch `Headers` too (names sorted, repeated fields combined,
+// except `set-cookie` where the runtime exposes it), a browser reads only the
+// headers CORS exposes and adds its own request headers, and a browser cannot
+// observe a redirect (`redirect: "manual"` yields an opaque response, reported
+// as a failure).
 import { ExecutionFailure } from "./errors.js";
 import { hostLimit, now } from "./context.js";
 import { parseDescriptor, descriptorRules, checkDescriptorExamples, DescriptorError } from "./net-descriptor.js";
@@ -37,7 +42,8 @@ export function netConstants(contract) {
   const net = contract.net;
   const rules = descriptorRules(net);
   checkDescriptorExamples(rules, net);
-  if (net.headExample !== null) checkHeadExample(net.headExample);
+  const forbiddenResponseHeaders = new Set(contract.manifestLimits.forbiddenResponseHeaders);
+  if (net.headExample !== null) checkHeadExample(net.headExample, forbiddenResponseHeaders);
   const limit = (label) => hostLimit(contract, label, null);
   const failure = (text) => {
     const row = net.failures.find((f) => f.text.startsWith(text));
@@ -71,6 +77,7 @@ export function netConstants(contract) {
     chunkBytes: limit(NET_LIMIT.chunkBytes),
     bodyBytes: limit(NET_LIMIT.bodyBytes),
     forbiddenMethods: new Set(contract.manifestLimits.forbiddenMethods),
+    forbiddenResponseHeaders,
   };
 }
 
@@ -80,11 +87,17 @@ const fill = (template, values) => template.replace(/<([a-z]+)>/g, (whole, key) 
  * The head record (embedding.md "Head record"): compact JSON, members in name
  * order, lowercase header names as name, value pairs. Fetch `Headers` iterate
  * sorted by name with each `set-cookie` its own pair and other repeated fields
- * combined; that order and combining are this host's stated deviation.
+ * combined: under v38 (`visible` given) that is the canonical head once the
+ * names outside the visible set and the forbidden names are dropped; under
+ * v37 (`visible` null) the order and combining are this host's stated
+ * deviation.
  */
-function headRecord(headers, status, statusText, url) {
+function headRecord(headers, status, statusText, url, visible, forbidden) {
   const pairs = [];
-  for (const [name, value] of headers) pairs.push(name, value);
+  for (const [name, value] of headers) {
+    if (visible !== null && (!visible.has(name) || forbidden.has(name))) continue;
+    pairs.push(name, value);
+  }
   const locationValue = headers.get("location");
   let location = "";
   if (locationValue !== null && VISIBLE_ASCII.test(locationValue)) {
@@ -97,12 +110,18 @@ function headRecord(headers, status, statusText, url) {
   return JSON.stringify({ headers: pairs, location, status, statusText, url });
 }
 
-/** The contract's head example, rebuilt through `headRecord`; a disagreement stops the host. */
-function checkHeadExample(example) {
+/**
+ * The contract's v38 head example, rebuilt through `headRecord` from its own
+ * pairs plus a forbidden field, with its names as the visible set; a
+ * disagreement stops the host.
+ */
+function checkHeadExample(example, forbidden) {
   const record = JSON.parse(example);
   const fields = [];
   for (let i = 0; i < record.headers.length; i += 2) fields.push([record.headers[i], record.headers[i + 1]]);
-  const rebuilt = headRecord(new Headers(fields), record.status, record.statusText, record.url);
+  const visible = new Set(fields.map(([name]) => name));
+  for (const name of forbidden) fields.push([name, "hidden"]);
+  const rebuilt = headRecord(new Headers(fields), record.status, record.statusText, record.url, visible, forbidden);
   if (rebuilt !== example) throw new Error(`head record disagrees with the contract's example: ${rebuilt}`);
 }
 
@@ -185,7 +204,7 @@ export function netImports(N, exec, io) {
       return;
     }
     r.reader = response.body ? response.body.getReader() : null;
-    report(r, N.code.Head, headRecord(response.headers, response.status, response.statusText, r.url));
+    report(r, N.code.Head, headRecord(response.headers, response.status, response.statusText, r.url, r.visible, N.forbiddenResponseHeaders));
   }
 
   /** Serves one armed read: the buffered bytes now, else waits for the body stream. */
@@ -259,7 +278,9 @@ export function netImports(N, exec, io) {
       throw error;
     }
     const id = state.nextId++;
-    const r = { id, generation: 0, url: fields.url, armed: false, completion: null, waiter: null, controller: new AbortController(), reader: null, buffered: new Uint8Array(0), held: new Uint8Array(0), received: 0, done: false, mode: "text" };
+    // v38 (`net_request_start_v2`) shows only the visible response headers; v37 every one.
+    const visible = importName === "net_request_start_v2" ? io.responseHeaders() : null;
+    const r = { id, generation: 0, url: fields.url, visible, armed: false, completion: null, waiter: null, controller: new AbortController(), reader: null, buffered: new Uint8Array(0), held: new Uint8Array(0), received: 0, done: false, mode: "text" };
     const failNow = (text) => {
       state.requests.set(id, r);
       settleNow(r, N.code.Failed, text);

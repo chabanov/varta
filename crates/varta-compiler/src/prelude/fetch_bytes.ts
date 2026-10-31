@@ -42,6 +42,10 @@ const FETCH_FAILED = 'fetch failed';
 const NOT_ALLOWED = 'NotAllowedError';
 
 // The head record a `KIND_HEAD` completion carries (`net::HEAD_FIELDS`).
+// Under v38 its `headers` are canonical (each name once, in byte order,
+// repeats combined with ", ") and hold only the names the `net.request`
+// grant shows (`responseHeaders`, else the CORS-safelisted names), never
+// set-cookie; `location` is only used to follow a redirect.
 interface NetHead {
   status: number;
   statusText: string;

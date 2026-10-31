@@ -27,6 +27,7 @@ fn grants(server: &Loopback) -> Vec<CapabilityGrant> {
             value: CapabilityValue::Requests(varta_common::RequestScope {
                 urls: vec![format!("{}/**", server.base)],
                 methods: None,
+                response_headers: None,
             }),
         },
         CapabilityGrant {

@@ -189,7 +189,7 @@ fn manifest_limits() -> String {
             "`MAX_MANIFEST_BYTES`",
         ),
         (
-            "`abiVersion` that admits `budgets`, grant `required` and `purpose`, and `fsRoots`",
+            "`abiVersion` that admits `budgets`, grant `required` and `purpose`, `fsRoots`, and `net.request` `responseHeaders`",
             format!("{} or later", abi::PROGRAM_LIMITS_VERSION),
             "`abi::PROGRAM_LIMITS_VERSION`",
         ),
@@ -227,6 +227,26 @@ fn manifest_limits() -> String {
             "Methods a grant must spell in uppercase",
             quoted_list(&NORMALIZED_METHODS),
             "`NORMALIZED_METHODS`",
+        ),
+        (
+            "Names in one `net.request` grant's `responseHeaders`",
+            net::MAX_GRANT_RESPONSE_HEADERS.to_string(),
+            "`net::MAX_GRANT_RESPONSE_HEADERS`",
+        ),
+        (
+            "Declared response header name (bytes)",
+            net::MAX_RESPONSE_HEADER_NAME_BYTES.to_string(),
+            "`net::MAX_RESPONSE_HEADER_NAME_BYTES`",
+        ),
+        (
+            "Response headers never declarable (in any case)",
+            quoted_list(&net::FORBIDDEN_RESPONSE_HEADERS),
+            "`net::FORBIDDEN_RESPONSE_HEADERS`",
+        ),
+        (
+            "Response headers a v38 request shows without `responseHeaders`",
+            quoted_list(&net::SAFELISTED_RESPONSE_HEADERS),
+            "`net::SAFELISTED_RESPONSE_HEADERS`",
         ),
         (
             "Guest URL of `net_get*`, `net_fetch*` and `net_request_*` (bytes; a longer URL is denied)",

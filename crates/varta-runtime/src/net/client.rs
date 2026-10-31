@@ -15,7 +15,7 @@ use std::task::Poll;
 use std::time::Instant;
 use tokio::sync::mpsc;
 use varta_common::net::{
-    CompletionKind, MAX_CHUNK_BYTES, MAX_RESPONSE_BODY_BYTES, MAX_RESPONSE_HEADER_BYTES,
+    CompletionKind, HeadForm, MAX_CHUNK_BYTES, MAX_RESPONSE_BODY_BYTES, MAX_RESPONSE_HEADER_BYTES,
     MAX_RESPONSE_HEADERS, RequestFailure,
 };
 
@@ -24,6 +24,9 @@ pub(super) struct Plan {
     pub url: url::Url,
     pub method: hyper::Method,
     pub headers: Vec<(HeaderName, HeaderValue)>,
+    /// How the head record lists the response headers: v37 as received,
+    /// v38 canonical with only the visible names.
+    pub head: HeadForm,
     pub body: Option<Bytes>,
     pub deadline: Instant,
     /// Present exactly for `https` URLs.
@@ -88,7 +91,7 @@ pub(super) async fn run(
         Err(_) => return fail(RequestFailure::Timeout),
     };
     let (parts, body, _connection) = response;
-    send(CompletionKind::Head, head(&plan.url, &parts));
+    send(CompletionKind::Head, head(&plan.url, &parts, &plan.head));
     let mut reader = BodyReader::new(body);
     loop {
         let Some(mode) = pull.recv().await else {
@@ -178,8 +181,10 @@ where
 
 /// The head record (`varta_common::net::head_record`). Names are lowercase;
 /// the header map yields each name once at its first field, followed by all
-/// its values in arrival order.
-fn head(url: &url::Url, parts: &hyper::http::response::Parts) -> String {
+/// its values in arrival order, which `form` keeps (v37) or sorts, filters
+/// and combines (v38). Undeclared headers are dropped here, before the
+/// record exists, so no later charge or copy ever sees them.
+fn head(url: &url::Url, parts: &hyper::http::response::Parts, form: &HeadForm) -> String {
     let status = parts.status.as_u16();
     let reason = parts
         .extensions
@@ -187,11 +192,14 @@ fn head(url: &url::Url, parts: &hyper::http::response::Parts) -> String {
         .map(|reason| latin1(reason.as_bytes()))
         .or_else(|| parts.status.canonical_reason().map(str::to_owned))
         .unwrap_or_default();
-    let mut headers = Vec::with_capacity(parts.headers.len() * 2);
-    for (name, value) in &parts.headers {
-        headers.push(name.as_str().to_owned());
-        headers.push(latin1(value.as_bytes()));
-    }
+    let headers = form.headers(
+        parts
+            .headers
+            .iter()
+            .map(|(name, value)| (name.as_str().to_owned(), latin1(value.as_bytes()))),
+    );
+    // The redirect target is no response header the guest sees: it only
+    // lets the prelude follow a redirect, which re-checks the grant.
     let location = parts
         .headers
         .get(hyper::header::LOCATION)
@@ -350,8 +358,9 @@ mod tests {
             .unwrap();
         let (mut parts, ()) = response.into_parts();
         let url = url::Url::parse("http://a.test/dir/page").unwrap();
+        let arrival = HeadForm::Arrival;
         assert_eq!(
-            head(&url, &parts),
+            head(&url, &parts, &arrival),
             concat!(
                 r#"{"headers":["set-cookie","a=1","set-cookie","b=2","x-mark","#,
                 "\"\u{c3}\u{a9}\",",
@@ -364,7 +373,37 @@ mod tests {
         parts
             .extensions
             .insert(hyper::ext::ReasonPhrase::from_static(b""));
-        assert!(head(&url, &parts).contains(r#""statusText":"","#));
+        assert!(head(&url, &parts, &arrival).contains(r#""statusText":"","#));
+    }
+
+    #[test]
+    fn canonical_heads_show_only_visible_names_sorted_and_combined() {
+        let response = hyper::Response::builder()
+            .status(302)
+            .header("X-B", "1")
+            .header("Set-Cookie", "a=1")
+            .header("Content-Type", "text/plain")
+            .header("x-b", "2")
+            .header("X-Hidden", "secret")
+            .header("Location", "../next")
+            .body(())
+            .unwrap();
+        let (parts, ()) = response.into_parts();
+        let url = url::Url::parse("http://a.test/dir/page").unwrap();
+        let visible = ["x-b", "content-type", "set-cookie"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect();
+        // The redirect target stays available to the prelude while the
+        // undeclared `location` header is not shown.
+        assert_eq!(
+            head(&url, &parts, &HeadForm::Canonical(visible)),
+            concat!(
+                r#"{"headers":["content-type","text/plain","x-b","1, 2"],"#,
+                r#""location":"http://a.test/next","status":302,"statusText":"Found","#,
+                r#""url":"http://a.test/dir/page"}"#
+            )
+        );
     }
 
     #[test]

@@ -931,7 +931,7 @@ fn grant_kind(kind: GrantKind) -> (&'static str, &'static str) {
         GrantKind::Listeners => ("Listen endpoints", r#"`"patterns": ["127.0.0.1:8080"]`"#),
         GrantKind::Requests => (
             "Request scopes (v37)",
-            r#"`"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies)"#,
+            r#"`"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) and, v38, optional `"responseHeaders": [...]` (the only id that accepts it; exact lowercase names a v38 request shows, absent shows the CORS-safelisted names, `[]` shows none; see [canonical head](#canonical-head-v38))"#,
         ),
         GrantKind::OpenUrls => (
             "External-link patterns (v38)",

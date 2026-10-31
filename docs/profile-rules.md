@@ -3685,6 +3685,16 @@ Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
   descriptor version, and a unit above 0xFF in a byte body is a fatal
   `NetError::Descriptor`. Mirror the descriptor constants in the prelude
   (`the_byte_fetch_prelude_mirrors_the_net_contract`).
+- Response headers: the head form follows the descriptor version only
+  (`net::HeadForm`: v1 `Arrival`, frozen; v2 `Canonical`). Build the visible
+  set through `Policy::response_headers` (package ∩ ceiling, each side its
+  declaration or `net::SAFELISTED_RESPONSE_HEADERS`) and drop every other
+  field, `set-cookie` always, in head construction, before the record exists,
+  so neither fair-fuel byte charges nor the guest ever see it. Never add a
+  default that shows more than the safelist, never let a ceiling add a name,
+  and keep `responseHeaders` gated on host ABI 34 in the manifest schema.
+  Tests: `net_header_tests` (visibility, ceiling, v37, fuel) and the raw
+  loopback record in `net::tests`.
 - Engine-internal members of the blob and fetch preludes (`Blob.byteString`,
   `Blob.adopt`, `Blob.encode`, `ArrayBuffer.storageOf`, `ArrayBuffer.adopt`,
   `FormData.multipart`, `Request.bodySource`) are instance methods listed in

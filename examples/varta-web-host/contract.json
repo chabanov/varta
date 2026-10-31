@@ -636,7 +636,7 @@
         "catalog": 3
       },
       "scheduler": true,
-      "admittedImports": 53
+      "admittedImports": 51
     }
   ],
   "acceptance": {
@@ -6661,9 +6661,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "kv_close",
@@ -6925,6 +6923,21 @@
       "admittedUnder": []
     },
     {
+      "name": "value_format_v12",
+      "params": [
+        "i64"
+      ],
+      "results": [
+        "i32"
+      ],
+      "minHostAbi": 34,
+      "capability": null,
+      "scheduler": false,
+      "resultGlobals": true,
+      "stringResult": true,
+      "admittedUnder": []
+    },
+    {
       "name": "value_is_array_v11",
       "params": [
         "i64"
@@ -6966,9 +6979,7 @@
       "scheduler": false,
       "resultGlobals": false,
       "stringResult": false,
-      "admittedUnder": [
-        "checked-f64-utf16-v38"
-      ]
+      "admittedUnder": []
     },
     {
       "name": "value_nullish_equal_v11",
@@ -9014,6 +9025,21 @@
       "POST",
       "PUT"
     ],
+    "maxGrantResponseHeaders": 64,
+    "maxResponseHeaderNameBytes": 256,
+    "forbiddenResponseHeaders": [
+      "set-cookie",
+      "set-cookie2"
+    ],
+    "safelistedResponseHeaders": [
+      "cache-control",
+      "content-language",
+      "content-length",
+      "content-type",
+      "expires",
+      "last-modified",
+      "pragma"
+    ],
     "maxUrlBytes": 8192,
     "maxFetchHeaderBytes": 65536,
     "maxEnvNameBytes": 256,
@@ -9806,6 +9832,6 @@
       "NetError::Descriptor": "malformed network request descriptor",
       "NetError::State": "invalid network request operation"
     },
-    "headExample": "{\"headers\":[\"content-type\",\"application/json\",\"set-cookie\",\"a=1\",\"set-cookie\",\"b=2\"],\"location\":\"\",\"status\":200,\"statusText\":\"OK\",\"url\":\"https://api.example.test/v1/items\"}"
+    "headExample": "{\"headers\":[\"content-type\",\"application/json\",\"retry-after\",\"5\",\"x-request-id\",\"r1, r2\"],\"location\":\"\",\"status\":200,\"statusText\":\"OK\",\"url\":\"https://api.example.test/v1/items\"}"
   }
 }

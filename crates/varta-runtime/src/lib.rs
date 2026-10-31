@@ -128,6 +128,8 @@ mod native_math;
 mod native_math_tests;
 mod net;
 #[cfg(test)]
+mod net_header_tests;
+#[cfg(test)]
 mod net_loopback;
 #[cfg(test)]
 mod net_tests;

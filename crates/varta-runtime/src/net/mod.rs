@@ -18,7 +18,7 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use varta_common::HostOperation;
 use varta_common::net::{
-    CompletionKind, DescriptorVersion, MAX_PENDING_REQUESTS, MAX_REQUEST_BYTES,
+    CompletionKind, DescriptorVersion, HeadForm, MAX_PENDING_REQUESTS, MAX_REQUEST_BYTES,
     MAX_REQUEST_HEADER_BYTES, NetError, RUNTIME_HEADERS, RequestDescriptor, RequestFailure,
 };
 use wasmtime::{Caller, Extern, Linker};
@@ -316,9 +316,12 @@ fn failed(failure: RequestFailure) -> Completion {
 
 /// Check a request against the grants and build its transfer plan; every
 /// refusal is an immediate completion, so nothing is resolved or connected.
+/// A version 2 descriptor (v38) gets the canonical head with the response
+/// headers the grants show; version 1 (v37) keeps every field as received.
 fn plan(
     context: &mut RuntimeContext,
     request: &RequestDescriptor<'_>,
+    version: DescriptorVersion,
 ) -> Result<client::Plan, Completion> {
     let method = hyper::Method::from_bytes(request.method.as_bytes())
         .ok()
@@ -383,10 +386,15 @@ fn plan(
         ),
         _ => None,
     };
+    let head = match version {
+        DescriptorVersion::V1 => HeadForm::Arrival,
+        DescriptorVersion::V2 => HeadForm::Canonical(context.policy.response_headers()),
+    };
     Ok(client::Plan {
         url,
         method,
         headers,
+        head,
         body: request.body.clone().map(hyper::body::Bytes::from),
         deadline: crate::turns::operation_deadline(context),
         tls,
@@ -451,7 +459,7 @@ fn start(
     if context.turns.renew {
         context.net.full()?;
     }
-    let outcome = plan(context, &request);
+    let outcome = plan(context, &request, version);
     context.net.start(outcome)
 }
 
@@ -547,6 +555,70 @@ pub(crate) fn wait(context: &mut RuntimeContext, until: Instant) -> Result<bool,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The head record of one GET of `path` on a loopback server, as the
+    /// transfer task reports it.
+    fn head_record(server: &crate::net_loopback::Loopback, path: &str, head: HeadForm) -> String {
+        const DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap();
+        let (events, mut received) = mpsc::unbounded_channel();
+        // No body read follows: the closed pull channel ends the task.
+        let (_, pulls) = mpsc::channel(1);
+        let plan = client::Plan {
+            url: url::Url::parse(&format!("{}{path}", server.base)).unwrap(),
+            method: hyper::Method::GET,
+            headers: Vec::new(),
+            head,
+            body: None,
+            deadline: Instant::now() + DEADLINE,
+            tls: None,
+        };
+        runtime.block_on(client::run(1, plan, events, pulls));
+        let event = received.try_recv().unwrap();
+        assert_eq!(event.completion.kind, CompletionKind::Head);
+        event.completion.text
+    }
+
+    /// V38 heads are canonical whatever order, case and repetition the raw
+    /// response has; set-cookie and undeclared names never appear. V37 keeps
+    /// its frozen record.
+    #[test]
+    fn raw_out_of_order_heads_become_canonical_records() {
+        let server = crate::net_loopback::Loopback::start();
+        let url = format!("{}/headers", server.base);
+        let tail = format!(r#""location":"","status":200,"statusText":"OK","url":"{url}"}}"#);
+        assert_eq!(
+            head_record(&server, "/headers", HeadForm::Arrival),
+            format!(
+                "{}{tail}",
+                concat!(
+                    r#"{"headers":["x-b","1","x-b","2","content-type","text/plain","#,
+                    r#""set-cookie","a=1","set-cookie","b=2","x-a","z","#,
+                    r#""cache-control","no-store","x-hidden","secret","#,
+                    r#""content-length","1","connection","close"],"#
+                )
+            )
+        );
+        let declared = ["x-b", "x-a", "content-type", "x-absent"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect();
+        assert_eq!(
+            head_record(&server, "/headers", HeadForm::Canonical(declared)),
+            format!(r#"{{"headers":["content-type","text/plain","x-a","z","x-b","1, 2"],{tail}"#)
+        );
+        let safelisted = varta_common::net::visible_response_headers(None);
+        assert_eq!(
+            head_record(&server, "/headers", HeadForm::Canonical(safelisted)),
+            format!(
+                r#"{{"headers":["cache-control","no-store","content-length","1","content-type","text/plain"],{tail}"#
+            )
+        );
+    }
 
     #[test]
     fn request_ids_are_positive_integers() {

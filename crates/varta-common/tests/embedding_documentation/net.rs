@@ -369,7 +369,7 @@ fn head_fields() -> String {
                 ),
                 "headers" => (
                     "array of strings",
-                    "Lowercase name, value, name, value, …: names in the order of their first field, each repeated field its own pair in arrival order (never combined), each value byte one code unit",
+                    "Lowercase name, value, name, value, …, each value byte one code unit. `net_request_start` (v37): every received field, names in the order of their first field, each repeated field its own pair in arrival order (never combined). `net_request_start_v2` (v38): the [canonical form](#canonical-head-v38) of the visible headers only",
                 ),
                 other => panic!("undocumented head field {other}"),
             };
@@ -378,19 +378,117 @@ fn head_fields() -> String {
     )
 }
 
-fn head_example() -> String {
-    let headers = [
-        "content-type",
-        "application/json",
-        "set-cookie",
-        "a=1",
-        "set-cookie",
-        "b=2",
-    ]
-    .map(str::to_owned)
-    .to_vec();
-    let record = net::head_record(200, "OK", "https://api.example.test/v1/items", "", headers);
+/// The fields of the example response, in arrival order with the case the
+/// server sent, and the names its grant declares.
+const EXAMPLE_FIELDS: [(&str, &str); 7] = [
+    ("X-Request-Id", "r1"),
+    ("Content-Type", "application/json"),
+    ("Set-Cookie", "a=1"),
+    ("Retry-After", "5"),
+    ("x-request-id", "r2"),
+    ("Set-Cookie", "b=2"),
+    ("Server", "example"),
+];
+const EXAMPLE_DECLARED: [&str; 3] = ["x-request-id", "retry-after", "content-type"];
+const EXAMPLE_URL: &str = "https://api.example.test/v1/items";
+
+/// The example's fields as a reference host's header map yields them: each
+/// lowercase name at its first field, followed by its values in arrival
+/// order.
+fn example_fields() -> Vec<(String, String)> {
+    let mut grouped: Vec<(String, Vec<String>)> = Vec::new();
+    for (name, value) in EXAMPLE_FIELDS {
+        let name = name.to_ascii_lowercase();
+        match grouped.iter_mut().find(|(known, _)| *known == name) {
+            Some((_, values)) => values.push(value.to_owned()),
+            None => grouped.push((name, vec![value.to_owned()])),
+        }
+    }
+    grouped
+        .into_iter()
+        .flat_map(|(name, values)| values.into_iter().map(move |value| (name.clone(), value)))
+        .collect()
+}
+
+fn example_record(form: &net::HeadForm) -> String {
+    let record = net::head_record(200, "OK", EXAMPLE_URL, "", form.headers(example_fields()));
     format!("```json\n{record}\n```")
+}
+
+fn example_input() -> String {
+    let fields: Vec<String> = EXAMPLE_FIELDS
+        .iter()
+        .map(|(name, value)| code(&format!("{name}: {value}")))
+        .collect();
+    format!(
+        "A `200 OK` response to `GET {EXAMPLE_URL}` carries, in this order, {}.",
+        fields.join(", ")
+    )
+}
+
+fn head_example() -> String {
+    let declared = EXAMPLE_DECLARED.map(str::to_owned).into_iter().collect();
+    let names: Vec<String> = EXAMPLE_DECLARED.iter().map(|name| code(name)).collect();
+    format!(
+        "{} Under `net_request_start_v2` (v38), with a grant whose `responseHeaders` are {}, its head record is:\n\n{}",
+        example_input(),
+        names.join(", "),
+        example_record(&net::HeadForm::Canonical(declared))
+    )
+}
+
+fn head_example_v37() -> String {
+    format!(
+        "{} Under `net_request_start` (v37), whatever the grant declares, its head record is:\n\n{}",
+        example_input(),
+        example_record(&net::HeadForm::Arrival)
+    )
+}
+
+fn quoted(names: &[&str]) -> String {
+    names
+        .iter()
+        .map(|name| code(name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn head_canonical() -> String {
+    table(
+        &["Rule", "Value", "Source constant"],
+        [
+            vec![
+                "Names".to_owned(),
+                "Lowercase ASCII, each at most once, sorted by byte order".to_owned(),
+                code("net::HeadForm::Canonical"),
+            ],
+            vec![
+                "Values of a repeated name, in arrival order, joined by".to_owned(),
+                literal(net::COMBINE_SEPARATOR),
+                code("net::COMBINE_SEPARATOR"),
+            ],
+            vec![
+                "Names shown when the grant declares `responseHeaders`".to_owned(),
+                "Exactly the declared names the response carries (`[]`: none)".to_owned(),
+                code("net::visible_response_headers"),
+            ],
+            vec![
+                "Names shown when the grant declares no `responseHeaders`".to_owned(),
+                quoted(&net::SAFELISTED_RESPONSE_HEADERS),
+                code("net::SAFELISTED_RESPONSE_HEADERS"),
+            ],
+            vec![
+                "With a host ceiling".to_owned(),
+                "The names both the package grant and the ceiling grant show".to_owned(),
+                code("net::visible_response_headers"),
+            ],
+            vec![
+                "Never shown, never declarable (in any case)".to_owned(),
+                quoted(&net::FORBIDDEN_RESPONSE_HEADERS),
+                code("net::FORBIDDEN_RESPONSE_HEADERS"),
+            ],
+        ],
+    )
 }
 
 const METHOD: &str = "<method>";
@@ -580,7 +678,13 @@ fn embedding_network_requests_match_the_contract() {
     );
     assert_block(DOCUMENT, "embedding-net-completions", &completions());
     assert_block(DOCUMENT, "embedding-net-head-fields", &head_fields());
+    assert_block(DOCUMENT, "embedding-net-head-canonical", &head_canonical());
     assert_block(DOCUMENT, "embedding-net-head-example", &head_example());
+    assert_block(
+        DOCUMENT,
+        "embedding-net-head-example-v37",
+        &head_example_v37(),
+    );
     assert_block(DOCUMENT, "embedding-net-failures", &failures());
     assert_block(DOCUMENT, "embedding-net-errors", &errors());
     assert_block(DOCUMENT, "embedding-net-misuse", &misuse());

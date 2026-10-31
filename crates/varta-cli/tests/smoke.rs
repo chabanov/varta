@@ -12820,6 +12820,142 @@ fn pilot_profile_v37_fetch_runs_everywhere_and_denials_are_recoverable() {
     );
 }
 
+/// A loopback HTTP/1.1 server on 127.0.0.1 (ephemeral port) answering every
+/// request with repeated, cookie and undeclared response headers; returns
+/// its origin and the accepted-connection count.
+fn header_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = accepted.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            count.fetch_add(1, Ordering::SeqCst);
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                line.clear();
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nx-request-id: r1\r\ncontent-type: text/plain\r\nset-cookie: a=1\r\nserver: loop\r\nX-Request-Id: r2\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+            );
+        }
+    });
+    (origin, accepted)
+}
+
+/// V38 `responseHeaders`: dev, the portable artifact (both runners) and the
+/// single binary show exactly the declared headers, canonical and combined,
+/// never set-cookie; a host ceiling narrows them; set-cookie and earlier
+/// profiles are rejected before anything runs.
+#[test]
+fn v38_fetch_shows_only_declared_response_headers_everywhere() {
+    const PROFILE: &str = "checked-f64-utf16-v38";
+    let (origin, accepted) = header_server();
+    let grant = |headers: serde_json::Value| {
+        serde_json::json!({"net":{"request":{"urls":[format!("{origin}/**")],
+            "methods":["GET"],"responseHeaders":headers}}})
+    };
+    let project = RegressionProject::new(
+        &format!(
+            "export async function main():Promise<void>{{\
+             const r=await fetch('{origin}/h');const text=await r.text();\
+             console.log(text+' '+String(r.headers.get('x-request-id'))+' '+String(r.headers.get('server'))\
+             +' '+String(r.headers.get('set-cookie'))+' '+String(r.headers.get('content-type')));\
+             try{{await fetch('http://127.0.0.1:9/x');}}\
+             catch(error){{console.log(error instanceof DOMException?error.name:'other');}}}}"
+        ),
+        grant(serde_json::json!(["x-request-id", "content-type"])),
+    );
+    project.language_profile(PROFILE);
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let denied = "varta log: <capability denied: net.request> (GET http://127.0.0.1:9/x)";
+    let expected = [
+        "varta log: hello r1, r2 null null text/plain",
+        denied,
+        "varta log: NotAllowedError",
+    ];
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected, "{}", combined(&dev));
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let manifest = fs::read_to_string(project.0.join("dist/app.manifest.json")).unwrap();
+    assert!(manifest.contains("responseHeaders"), "{manifest}");
+    let validate = project.command(&["validate", "dist/app.wasm"]);
+    assert!(validate.status.success(), "{}", combined(&validate));
+    // A host ceiling that shows only content-type narrows every runner.
+    fs::write(
+        project.0.join("host-policy.json"),
+        serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"abiVersion":34,
+            "capabilities":[{"id":"net.request","patterns":[format!("{origin}/**")],
+            "responseHeaders":["content-type"]}]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let narrowed = [
+        "varta log: hello null null null text/plain",
+        denied,
+        "varta log: NotAllowedError",
+    ];
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let mut restricted = Command::new(command.get_program());
+        restricted.args(command.get_args());
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected, "{}", combined(&output));
+        let output = restricted
+            .args(["--policy", "host-policy.json"])
+            .current_dir(&project.0)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), narrowed, "{}", combined(&output));
+    }
+    let dev = project.command(&["dev", "--policy", "host-policy.json"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), narrowed, "{}", combined(&dev));
+    // set-cookie can never be declared; nothing is compiled or connected.
+    let before = accepted.load(Ordering::SeqCst);
+    project.set_capabilities(grant(serde_json::json!(["set-cookie"])));
+    for command in ["check", "dev"] {
+        let output = project.command(&[command]);
+        assert!(!output.status.success(), "{}", combined(&output));
+        assert!(
+            combined(&output).contains("cannot declare set-cookie"),
+            "{}",
+            combined(&output)
+        );
+    }
+    // Earlier profiles cannot carry the field.
+    project.set_capabilities(grant(serde_json::json!(["x-request-id"])));
+    project.language_profile("checked-f64-utf16-v37");
+    let check = project.command(&["check"]);
+    assert!(!check.status.success(), "{}", combined(&check));
+    assert!(
+        combined(&check).contains("responseHeaders of net.request require abiVersion 34"),
+        "{}",
+        combined(&check)
+    );
+    assert_eq!(accepted.load(Ordering::SeqCst), before);
+}
+
 #[test]
 fn pilot_profile_v35_runs_mixed_records_and_json_to_unknown_in_dev_and_artifacts() {
     let project = RegressionProject::new(

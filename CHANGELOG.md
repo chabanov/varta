@@ -65,6 +65,21 @@ in [conformance/README.md](conformance/README.md).
   work per allocation, while a request the memory budget refuses still
   collects completely first. Collector stress builds verify every store kind
   and the runtime case corpus. V37 and earlier keep their bytes.
+- V38 declared response headers and a canonical head (`net.request`): the
+  grant takes an optional `responseHeaders` list of exact lowercase names
+  (manifest and project config, host ABI 34 only, in a package and a host
+  ceiling), and a v38 request shows the guest exactly the declared headers
+  the response carries, or the CORS-safelisted names without a
+  declaration; a ceiling narrows the set by intersection. `set-cookie` and
+  `set-cookie2` can never be declared (a diagnostic says why) and are never
+  visible. The head record of `net_request_start_v2` is canonical on every
+  host: each lowercase name once in byte order, repeats combined with
+  `", "` in arrival order, undeclared fields dropped before the record
+  exists, so fair fuel never charges them. `get()` of an undeclared name is
+  `null` everywhere. The rule, the regenerated head examples and the
+  browser note (`Access-Control-Expose-Headers`) are normative in
+  `docs/embedding.md`; v37 heads and digests are unchanged. The prototype
+  web host follows the same rule.
 
 - V38 KV storage pays fair host fuel (`kv`): `fuel::KV_OPERATION` (100,000)
   per open, read and commit, `fuel::KV_BYTE` (10) per key or value byte

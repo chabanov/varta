@@ -5296,6 +5296,7 @@ fn public_engine_runs_v37_fetch_across_modules_with_an_exact_request_grant() {
         value: varta_common::CapabilityValue::Requests(varta_common::RequestScope {
             urls: vec![format!("{origin}/items")],
             methods: Some(vec!["POST".into()]),
+            response_headers: None,
         }),
     };
     let runtime = VartaRuntime::new();

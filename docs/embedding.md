@@ -103,6 +103,7 @@ engine payloads from package input.
 | `capabilities` | Required array of grants (`[]` denies everything) |
 | `budgets` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, `maintenanceFuel`, `maintenanceDeadlineMs`, each an integer in its accepted range of the [budget table](#manifest-limits); in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
 | grant `required` | Optional boolean, default `true`; requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling. Permission broker v1 ([architecture](architecture.md#permission-broker-v1-turn_budgets)) |
+| grant `responseHeaders` | Optional, `net.request` only; requires the `abiVersion` of the [limits table](#manifest-limits). An array of exact lowercase header names (RFC 9110 tokens), no duplicates, never a forbidden name, within the counts of the [limits table](#manifest-limits); allowed in a package and in a host ceiling. The response headers a v38 request shows the guest ([canonical head](#canonical-head-v38)); absent shows the CORS-safelisted names, `[]` shows none. V37 requests ignore it |
 | grant `purpose` | Optional untrusted text shown as a quote in prompts, valid by the [purpose rule](#manifest-limits); requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling |
 | `fsRoots` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). In a package: an array of [root names](#root-names), no duplicates; an object is rejected. In a host ceiling: an object mapping each root name to an absolute host directory (no `..`, no control characters, at most the host root directory bytes of the [limits table](#manifest-limits), no duplicate key); an array is rejected. Either form holds at most the `fsRoots` entries of the [limits table](#manifest-limits). See [File roots](#file-roots-v38) |
 
@@ -118,7 +119,7 @@ one grant kind:
 | Boolean | `"enabled": true \| false` | `clipboard.write`, `process.exit`, `time.now`, `time.timer` |
 | Name/path patterns | `"patterns": [...]` | `env.get`, `env.has`, `env.print`, `fs.print`, `fs.read`, `kv.read`, `kv.write` |
 | URL patterns | `"patterns": [...]` | `net.fetch`, `net.get` |
-| Request scopes (v37) | `"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) | `net.request` |
+| Request scopes (v37) | `"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) and, v38, optional `"responseHeaders": [...]` (the only id that accepts it; exact lowercase names a v38 request shows, absent shows the CORS-safelisted names, `[]` shows none; see [canonical head](#canonical-head-v38)) | `net.request` |
 | External-link patterns (v38) | `"patterns": [...]`, `https://` admitted, plus the exact `"https://*"` (any HTTPS link, prompting on every activation; valid for this id only) | `ui.open_url` |
 | Listen endpoints | `"patterns": ["127.0.0.1:8080"]` | `net.listen` |
 <!-- generated:embedding-grant-kinds:end -->
@@ -135,6 +136,7 @@ lists and `false` are explicit denials; an omitted id denies. A pattern is
 | `fs.*` paths (additionally) | Not absolute, or contains a `..` component |
 | `fs.*` paths of a package whose `abiVersion` admits `fsRoots` (additionally) | The first component is not a literal root named by the package's `fsRoots`; contains `\`, a control character, or an empty or `.` component |
 | Request methods | Not an RFC 9110 token; a method never grantable, in any case; a method a grant must spell in uppercase, spelled in any other case; a duplicate; more methods than one `net.request` grant admits (the three lists and the count are in the [limits table](#manifest-limits)) |
+| Response header names (`responseHeaders`) | Empty, not an RFC 9110 token, containing an uppercase letter, longer than the declared name bytes, a duplicate, or a name never declarable in any case (`set-cookie`, with its own diagnostic); more names than one grant admits (the counts are in the [limits table](#manifest-limits)) |
 | URLs (additionally) | Does not start with `http://` (`net.request`: `http://` or `https://`); empty authority, or an authority containing `*`, `?`, `@` or `#`; any control or whitespace character; a path containing `#`, `%` or `\`; a `.` or `..` path segment; not parseable as a URL, without a host, with a user name or password, or with `%` in the parsed path |
 | Listen endpoints | Not a literal `IP:port` socket address, or not in canonical form (for example `[::1]:8080`); listen endpoints have no wildcards |
 
@@ -176,7 +178,7 @@ includes line breaks and tabs).
 | Pattern bytes × input bytes of one comparison (more fails closed) | 65536 | `MAX_PATTERN_MATCH_WORK` |
 | `target` values | `wasm`, `native` | `MANIFEST_TARGETS` |
 | Manifest, host ceiling or decision file the reference CLI and launcher read (bytes) | 262144 | `MAX_MANIFEST_BYTES` |
-| `abiVersion` that admits `budgets`, grant `required` and `purpose`, and `fsRoots` | 34 or later | `abi::PROGRAM_LIMITS_VERSION` |
+| `abiVersion` that admits `budgets`, grant `required` and `purpose`, `fsRoots`, and `net.request` `responseHeaders` | 34 or later | `abi::PROGRAM_LIMITS_VERSION` |
 | Grant `purpose` (UTF-8 bytes) | 256 | `permission::MAX_PURPOSE_BYTES` |
 | `fsRoots` entries (package names or host mappings) | 16 | `files::MAX_FILE_ROOTS` |
 | Root name (bytes) | 1 to 64 | `files::MAX_ROOT_NAME_BYTES` |
@@ -184,6 +186,10 @@ includes line breaks and tabs).
 | Methods in one `net.request` grant | 16 | `net::MAX_GRANT_METHODS` |
 | Methods never grantable (in any case) | `CONNECT`, `TRACE`, `TRACK` | `net::FORBIDDEN_METHODS` |
 | Methods a grant must spell in uppercase | `DELETE`, `GET`, `HEAD`, `OPTIONS`, `POST`, `PUT` | `NORMALIZED_METHODS` |
+| Names in one `net.request` grant's `responseHeaders` | 64 | `net::MAX_GRANT_RESPONSE_HEADERS` |
+| Declared response header name (bytes) | 256 | `net::MAX_RESPONSE_HEADER_NAME_BYTES` |
+| Response headers never declarable (in any case) | `set-cookie`, `set-cookie2` | `net::FORBIDDEN_RESPONSE_HEADERS` |
+| Response headers a v38 request shows without `responseHeaders` | `cache-control`, `content-language`, `content-length`, `content-type`, `expires`, `last-modified`, `pragma` | `net::SAFELISTED_RESPONSE_HEADERS` |
 | Guest URL of `net_get*`, `net_fetch*` and `net_request_*` (bytes; a longer URL is denied) | 8192 | `net::MAX_URL_BYTES` |
 | Response head of `net_get*` and `net_fetch*` (bytes; a larger head is an I/O failure) | 65536 | `net::MAX_FETCH_HEADER_BYTES` |
 | Environment variable name of `env_*` (bytes; nonempty, a longer name is denied) | 256 | `MAX_ENV_NAME_BYTES` |
@@ -1011,17 +1017,77 @@ are written as they are:
 | `statusText` | string | The reason phrase exactly as received, each byte one code unit (empty if the server sent none) |
 | `url` | string | The request URL as the runtime parsed it (its WHATWG serialization) |
 | `location` | string | The first `location` value resolved against `url` when it is visible ASCII and resolves; otherwise empty |
-| `headers` | array of strings | Lowercase name, value, name, value, …: names in the order of their first field, each repeated field its own pair in arrival order (never combined), each value byte one code unit |
+| `headers` | array of strings | Lowercase name, value, name, value, …, each value byte one code unit. `net_request_start` (v37): every received field, names in the order of their first field, each repeated field its own pair in arrival order (never combined). `net_request_start_v2` (v38): the [canonical form](#canonical-head-v38) of the visible headers only |
 <!-- generated:embedding-net-head-fields:end -->
 
-For a `200 OK` response with `Content-Type: application/json`, `Set-Cookie: a=1`
-and `Set-Cookie: b=2`:
+The `location` member is computed from the received response whatever the
+grant shows. It serves only the guest's redirect handling (each followed hop
+is checked against the grant again) and is never a visible header.
+
+#### Canonical head (v38)
+
+Under `net_request_start_v2` every host MUST produce the `headers` member in
+exactly this form, so the head record of one response is byte-identical on
+every host (a browser's Fetch `Headers` already sort names and combine
+repeats; this is the only form every host can produce):
+
+1. Take the received fields with their names lowercased (ASCII) and their
+   values as received, each byte one code unit.
+2. Drop every field whose name the request may not show: a name is shown when
+   it is in the request's **visible set** below and is not a forbidden name.
+   Dropped fields never reach the guest, and none of their bytes are charged
+   ([fair host fuel](#fair-host-fuel-v38) charges the record the guest
+   receives).
+3. Emit each remaining name once, in ascending byte order of the lowercase
+   names, followed by its values in arrival order joined with the separator
+   below. `set-cookie` is never combined in Fetch, but it is never shown, so
+   it never appears.
+
+The visible set of a request is the `responseHeaders` of its `net.request`
+grant, or the CORS-safelisted response-header names when the grant declares
+none (a browser exposes those without server configuration, so a grant
+without the field means the same on every host). Under a host ceiling it is
+the intersection of the package grant's set and the ceiling grant's set,
+each computed the same way, so a ceiling without `responseHeaders` admits
+only the safelisted names. A guest's `Response.headers` therefore holds only
+visible names, and `get()` of any other name returns `null` on every host.
+`net_request_start` (v37) is frozen: it ignores `responseHeaders` and lists
+every received field as received.
+
+<!-- generated:embedding-net-head-canonical:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Rule | Value | Source constant |
+| --- | --- | --- |
+| Names | Lowercase ASCII, each at most once, sorted by byte order | `net::HeadForm::Canonical` |
+| Values of a repeated name, in arrival order, joined by | `", "` | `net::COMBINE_SEPARATOR` |
+| Names shown when the grant declares `responseHeaders` | Exactly the declared names the response carries (`[]`: none) | `net::visible_response_headers` |
+| Names shown when the grant declares no `responseHeaders` | `cache-control`, `content-language`, `content-length`, `content-type`, `expires`, `last-modified`, `pragma` | `net::SAFELISTED_RESPONSE_HEADERS` |
+| With a host ceiling | The names both the package grant and the ceiling grant show | `net::visible_response_headers` |
+| Never shown, never declarable (in any case) | `set-cookie`, `set-cookie2` | `net::FORBIDDEN_RESPONSE_HEADERS` |
+<!-- generated:embedding-net-head-canonical:end -->
 
 <!-- generated:embedding-net-head-example:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+A `200 OK` response to `GET https://api.example.test/v1/items` carries, in this order, `X-Request-Id: r1`, `Content-Type: application/json`, `Set-Cookie: a=1`, `Retry-After: 5`, `x-request-id: r2`, `Set-Cookie: b=2`, `Server: example`. Under `net_request_start_v2` (v38), with a grant whose `responseHeaders` are `x-request-id`, `retry-after`, `content-type`, its head record is:
+
 ```json
-{"headers":["content-type","application/json","set-cookie","a=1","set-cookie","b=2"],"location":"","status":200,"statusText":"OK","url":"https://api.example.test/v1/items"}
+{"headers":["content-type","application/json","retry-after","5","x-request-id","r1, r2"],"location":"","status":200,"statusText":"OK","url":"https://api.example.test/v1/items"}
 ```
 <!-- generated:embedding-net-head-example:end -->
+
+<!-- generated:embedding-net-head-example-v37:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+A `200 OK` response to `GET https://api.example.test/v1/items` carries, in this order, `X-Request-Id: r1`, `Content-Type: application/json`, `Set-Cookie: a=1`, `Retry-After: 5`, `x-request-id: r2`, `Set-Cookie: b=2`, `Server: example`. Under `net_request_start` (v37), whatever the grant declares, its head record is:
+
+```json
+{"headers":["x-request-id","r1","x-request-id","r2","content-type","application/json","set-cookie","a=1","set-cookie","b=2","retry-after","5","server","example"],"location":"","status":200,"statusText":"OK","url":"https://api.example.test/v1/items"}
+```
+<!-- generated:embedding-net-head-example-v37:end -->
+
+**Browser hosts.** On a cross-origin request a browser exposes a declared
+name beyond the safelist only when the server lists it in
+`Access-Control-Expose-Headers`. A browser host that cannot see a declared
+header the server sent omits it, exactly as if the response did not carry it.
+Exposing the declared names is deployment configuration of the server, not
+a host deviation; a host never shows a name outside the visible set, even
+when the browser exposes it.
 
 #### Body chunks
 
