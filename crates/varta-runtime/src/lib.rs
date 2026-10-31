@@ -910,6 +910,8 @@ impl RunReport {
 }
 
 #[cfg(test)]
+mod json_decoder_tests;
+#[cfg(test)]
 mod linked_footprint_tests;
 #[cfg(test)]
 mod linked_intrinsic_tests;

@@ -648,6 +648,16 @@ impl LanguageProfile {
     pub fn linked_intrinsics(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, JSON-decoders stream: every checked parse of a static target
+    /// type (`JSON.parse(text) as T`, `varta.json.parse<T>`, `JSON.parse`,
+    /// `Response.json<T>()`) runs a decoder the compiler emits for that type,
+    /// with the linked `json_parse_v19` as its fallback for every input the
+    /// decoder does not accept itself (failures included). Admits no syntax
+    /// and changes no host ABI, value layout or schema version.
+    #[must_use]
+    pub fn json_decoders(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Whether this profile links `operation` into the guest module instead of
     /// importing it: a v38 module never imports a [`crate::HostOperation::linked`]
     /// operation, and runtime validation rejects one that does.
@@ -3169,6 +3179,7 @@ mod tests {
                 profile.strict_members(),
                 profile.web_bytes(),
                 profile.file_roots(),
+                profile.json_decoders(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }

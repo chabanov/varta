@@ -11,7 +11,7 @@ const V37: P = P::CheckedF64Utf16V37;
 const V38: P = P::CheckedF64Utf16V38;
 
 /// A v38 module whose checked JSON parse is linked guest code (production).
-fn linked(source: &str) -> Vec<u8> {
+pub(super) fn linked(source: &str) -> Vec<u8> {
     let bytes = compile(source, V38);
     wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
     assert!(
@@ -20,7 +20,7 @@ fn linked(source: &str) -> Vec<u8> {
     );
     bytes
 }
-fn imports(bytes: &[u8]) -> Vec<HostOperation> {
+pub(super) fn imports(bytes: &[u8]) -> Vec<HostOperation> {
     let mut operations = Vec::new();
     for payload in wasmparser::Parser::new(0).parse_all(bytes) {
         if let wasmparser::Payload::ImportSection(reader) = payload.unwrap() {
@@ -34,7 +34,7 @@ fn imports(bytes: &[u8]) -> Vec<HostOperation> {
     operations
 }
 /// A v38 module that imports checked JSON parsing from the host.
-fn host(source: &str) -> Vec<u8> {
+pub(super) fn host(source: &str) -> Vec<u8> {
     let bytes = varta_compiler::host_json_test_hook::compile_with_profile(source, V38)
         .unwrap_or_else(|e| panic!("{e}\n{source}"));
     wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
@@ -45,12 +45,12 @@ fn host(source: &str) -> Vec<u8> {
 /// Run with test-only budgets (CLAUDE.md §11): `budgets` production fuel
 /// budgets and unbounded host calls; failures are classified as the
 /// runtime reports them (typed resources and linked JSON limits).
-fn run_test_budgets(bytes: &[u8], budgets: u64) -> Run {
+pub(super) fn run_test_budgets(bytes: &[u8], budgets: u64) -> Run {
     run_rated(bytes, budgets, None)
 }
 /// [`run_test_budgets`] with host work charged at the fair rates (`true`),
 /// uncharged (`false`) or as the module's profile charges it (`None`).
-fn run_rated(bytes: &[u8], budgets: u64, rated: Option<bool>) -> Run {
+pub(super) fn run_rated(bytes: &[u8], budgets: u64, rated: Option<bool>) -> Run {
     const HOST_CALLS: u32 = 1 << 20;
     let runtime = VartaRuntime::new();
     let mut execution = execution::Execution::with_test_budgets(
@@ -92,7 +92,7 @@ fn run_rated(bytes: &[u8], budgets: u64, rated: Option<bool>) -> Run {
     }
 }
 /// The root cause of a failure, without the backtrace prefix.
-fn cause(error: &Option<String>) -> Option<String> {
+pub(super) fn cause(error: &Option<String>) -> Option<String> {
     error
         .as_ref()
         .map(|error| error.rsplit(": ").next().unwrap_or(error).to_owned())
@@ -153,7 +153,7 @@ fn linked_json_matches_the_host_import_on_the_case_corpus() {
 /// One program decoding a corpus of texts against several schemas, catching
 /// and printing every failure: values, `SyntaxError`s and `TypeError`s are
 /// identical.
-const CORPUS: &str = r#"
+pub(super) const CORPUS: &str = r#"
 interface Item { id: number; name: string; tags: string[]; note?: string; score?: number | null }
 interface Box { items: Item[]; meta: Record<string, number>; any: unknown }
 function show(text: string): string {

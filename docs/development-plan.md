@@ -1013,7 +1013,7 @@ integrated.
 | Item | Scope | State |
 | --- | --- | --- |
 | (a) Inline conversions and comparisons | `primitive_to_string_v5`, `primitive_to_number_v5` (under value 18: `primitive_to_string_v6`, `primitive_to_number_v6`), `primitive_compare` and `primitive_equal` get an inline codegen fast path for integers, ASCII strings and same-tag comparisons, with the linked general path (`varta_intrinsics::bigint`, already shared with the host imports) behind it, removing those host imports without a fuel regression. Measured when they were linked without it: the codegen v2 dictionary workload (50 inserts + 50 reads) rose from 456 K to 1.1 M fuel, and the v37 case `generator_cases/lifetime.ts` exhausted the production fuel budget under v38 | Implemented on `v38-p2-conversions` ([contract](architecture.md#linked-intrinsics-linked_intrinsics), [measurement](#wave-3-conversions-and-readers-measurement-v38)): fast paths for safe integers (two digits at a time), unboxed Numbers and strings, digit strings, booleans, `null`, `undefined`, same-kind and Number-like comparisons and BigInts below 2^32; the BigInt-free `primitive_to_string`/`primitive_to_number` behind Numbers and strings, the value18 operations only for BigInts. Dictionary workload 157,733 fuel (162,075 with the host imports), `generator_cases/lifetime.ts` 341,359 (v37 628,080). Pending: fractional Number text, non-digit string parsing and comparisons with large BigInts cost the linked code's instructions (thousands of fuel per call) |
-| (b) Linked JSON | `json_parse_v18` (under value 18: `json_parse_v19`) and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | `json_parse_v19` linked on `v38-p2-json` ([contract](architecture.md#shared-checked-json-decoder-and-linked-json-wave-3)): one `no_std` UTF-16 decoder (`json::scan`) and top-down builder (`json::build`) shared with the host imports of v10–v38, a serde-equivalent `no_std` schema reader, rooted guest scratch blocks, the host's exceptions and typed limits; fair host fuel for every v38 import ([rates](#fair-host-fuel-v38), [measurement](#linked-json-measurement-v38)). Open: `json_stringify_owned` stays a fair-charged import (its encoder is not in the `no_std` core yet; the value18 readers it needs are, item (h)); simd128 scanning and a schema-specialized decoder (measured, not built) |
+| (b) Linked JSON | `json_parse_v18` (under value 18: `json_parse_v19`) and `json_stringify_owned` link with a guest-allocated heap block, rooted for the duration of the call, as their scratch arena, under the normal collector, budget and root rules (no separately reserved gap); the decoder validates the whole input before it calls guest helpers and roots children until their parent is published | `json_parse_v19` linked on `v38-p2-json` ([contract](architecture.md#shared-checked-json-decoder-and-linked-json-wave-3)): one `no_std` UTF-16 decoder (`json::scan`) and top-down builder (`json::build`) shared with the host imports of v10–v38, a serde-equivalent `no_std` schema reader, rooted guest scratch blocks, the host's exceptions and typed limits; fair host fuel for every v38 import ([rates](#fair-host-fuel-v38), [measurement](#linked-json-measurement-v38)). Open: `json_stringify_owned` stays a fair-charged import (its encoder is not in the `no_std` core yet; the value18 readers it needs are, item (h)); simd128 scanning. Schema-specialized decoders: implemented on `v38-json-decoders` (`json_decoders()`, the linked decoder their fallback; [measurement](#compiled-json-decoders-measurement-v38)) |
 | (c) Owned string results | Results larger than the 1 MiB result buffer (case mapping) are returned as owned guest strings | Open; `String(x)` of a string cell returns the cell's string since (a); the linker's `allocate`/`retain` accessors of (b) are the allocation path, the case-mapping call sites still read the result buffer |
 | (d) ASCII case mapping inline | An inline ASCII fast path for `toUpperCase`/`toLowerCase` in front of the linked case mapping, which costs about 820 (upper) and 595 (lower) fuel per unit through the core Unicode tables | Open |
 | (e) Coalescing intrinsic arena | A merging (coalescing) arena for linked scratch, so linked BigInt work near a million bits fits the memory budget as the host import does (today its size-class free lists do not coalesce and such operands exhaust the 8 MiB budget) | Open |
@@ -1680,13 +1680,88 @@ sets and lists KV records (a scratch project, 231,296 bytes): the nine
 `log_string16`; `json_parse_v19` is linked. Its one turn takes 662,988 fuel
 and 14 host calls.
 
+#### Compiled JSON decoders measurement (v38)
+
+Owner decision (2026-10-30): compiled per-schema decoders, no cross-call
+schema cache. Implemented on `v38-json-decoders` (selector
+`json_decoders()`, [contract](architecture.md#compiled-json-decoders-json_decoders)):
+every checked parse of a static target runs a checker and builder emitted
+for its schema nodes, with the linked `json_parse_v19` as the fallback for
+every failure and every input the decoders leave alone. Debug test build on
+the reference macOS arm64 host; fuel is deterministic.
+
+Per parse (`json_decoder_fuel_measurement`, the fuel of one
+`JSON.parse(text) as T` beyond the same program without it; the linked
+decoder alone is the compiler's `compile_generic` test build, the v38
+production path before this stream):
+
+| Workload | Text units | v37 at fair rates | v38 linked decoder (before) | v38 decoders | Change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 record `{id, name, tags}` | 54 | 36,547 | 30,086 | 3,297 | 9.1x lower |
+| 40 records (~2 KB) | 2,181 | 455,335 | 367,042 | 105,473 | 3.5x lower |
+| 1,000 numbers `1.5` | 4,001 | 1,627,855 | 886,614 | 276,246 | 3.2x lower |
+| one RunEventV1-like member, as `unknown` | 76 | 66,967 | 43,282 | 6,515 | 6.6x lower |
+| 100 numbers `0.30000000000000004` | 2,001 | 217,855 | 373,975 | 485,872 | 1.3x higher |
+
+Re-pinned: the codegen v2 "JSON.parse ~2 KB" workload measures 154,662
+(412,273 with the linked decoder alone; v37 at fair rates 769,036); its
+ceiling is 175,000 and its v37 ratio at least 4.5 (was 485,000 and 1.6).
+Every other ceiling and ratio of `codegen_v2_fuel_ceilings_hold` holds
+unchanged.
+
+Console turns (`console_turn_fuel`, whole turns: building the text,
+parsing, using the result):
+
+| Turn | v38 before | v38 decoders | Share of the 8M turn |
+| --- | ---: | ---: | ---: |
+| 24-member union events, 25 parses | 1,196,587 | 367,543 | 4.6% |
+| response of 2 KB parsed | 458,859 | 173,043 | 2.2% |
+| response of 10 KB parsed | 2,228,788 | 896,010 | 11.2% |
+| response of 20 KB parsed | 4,761,240 | 1,804,828 | 22.6% |
+
+KV per operation (`kv_operation_fuel`) is unchanged: `get` of 1 record
+185,767, `set` 110,463, `list` of 10 records 987,076 (about 98,000 per
+listed record). KV decodes are host imports (`kv_key`, `kv_value`) that
+decode the stored V8 serialization on the host and pay the per-call schema
+charges; compiling them needs the entry's text in the guest (a new host
+operation returning it, then the same decoders) or a compiled V8 decoder,
+an owner decision recorded in the open items.
+
+Where the fuel goes (`varta dev --profile-fuel`): the checker of a short
+number literal (`1.5`) costs about 190 fuel (its strict grammar with a
+bound check per unit, the exact conversion and its tape entry), an array
+element about 30 more, its build about 25; a short string or key about 100
+to scan. The build of a record costs about 1,000 fuel, most of it the guest
+allocator (about 45 per block) and zeroing (a vector's storage carries the
+128-byte minimum sparse bitmap of value layout 18). The schema work the
+linked decoder repeated on every call (2,000 to 4,000 fuel per schema
+node) is gone: it happens at compile time. Long literals (more than 15
+significant digits or decimal exponents beyond 22) cost about 4,800 fuel
+each through the linked `primitive_to_number` and its string cell (the
+linked decoder's `core` conversion about 3,700): documents dominated by
+them cost more than before; a correctly rounded fast path for 16 to 19
+digits (Eisel–Lemire, about 10 KiB of power tables) is the measured next
+step.
+
+Code size (`decoder_code_bytes_per_target`, code-section bytes the
+decoders add to the same program with the linked decoder alone): about
+6.0–6.5 KiB shared by every target of a module (scanner, tape, block, cell,
+vector and string builders, entries, the linked `primitive_to_number`
+closure beyond what `json_parse_v19` already links), plus per target type:
+`number[]` 6,524 bytes in all, `Record<string, number>` 6,890, `unknown` (a
+seven-member union, its array and dictionary) 6,087, a record with a nested
+record 7,872, `Item[]` (five nodes) 7,876, a 40-field record 9,981. Second
+call sites of a target add no decoder function.
+
 #### Wave-3a integration open items
 
 Recorded, not implemented (owner decisions where stated):
 
 - Compiled per-schema JSON decoders (owner decision: ahead-of-time decoders
-  emitted by the compiler, no cross-call schema cache); they would also
-  remove the per-call schema charge of KV decodes.
+  emitted by the compiler, no cross-call schema cache): implemented for
+  every checked parse on `v38-json-decoders`
+  ([measurement](#compiled-json-decoders-measurement-v38)); KV decodes keep
+  their host imports and per-call schema charges (see there).
 - Linked `json_stringify_owned` (its `no_std` encoder over the shared value18
   readers).
 - `value_log_v12` split into a linked formatter and the `log_string16`

@@ -5,6 +5,7 @@ mod classes;
 mod closures;
 mod collect;
 mod concat_chain;
+mod decoders;
 mod dense;
 mod errors;
 mod exceptions;
@@ -44,6 +45,8 @@ use swc_ecma_ast::BinaryOp;
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 type Result<T> = std::result::Result<T, CompilerError>;
+#[cfg(any(test, feature = "suspension-test-hook"))]
+pub(crate) use decoders::hook as decoder_hook;
 #[cfg(any(test, feature = "suspension-test-hook"))]
 pub(crate) use frames::{TEST_COLLECT, TEST_CREATE_PREFIX};
 #[derive(Clone, Copy)]
@@ -125,6 +128,8 @@ struct Emitter<'a> {
     /// V38 (`codegen_v2`): builder bindings and their `(tail, cap)` locals
     /// (`string_builder`).
     builders: BTreeMap<u32, (u32, u32)>,
+    /// V38 (`json_decoders`): the decoder entry of each checked parse target.
+    decoders: &'a BTreeMap<Type, u32>,
 }
 
 /// An emitted module and what linking its intrinsics needs.
@@ -293,6 +298,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     }
     let layouts = collected.layouts;
     let schemas = collected.schemas;
+    let decoder_roots = collected.decoders;
     // The owned JSON serializer (v38) allocates through the same value ABI
     // helpers as the checked parser, and so do the KV decoders (v38 `kv`).
     let has_parser = hosts.contains(&program.types.profile.json_parse())
@@ -378,6 +384,25 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         schema_offsets.insert(ty, (start, bytes.len() as u32));
         layout_data.push((start, bytes));
     }
+    // V38 (`json_decoders`): one graph of every checked parse target; its
+    // number builders convert long literals through the linked
+    // `primitive_to_number`, and its exact path reads the powers of ten.
+    let decoder_graph = if decoder_roots.is_empty() {
+        None
+    } else {
+        let graph = schemas::graph(
+            decoder_roots.iter().copied(),
+            &program.types,
+            &layout_offsets,
+        )?;
+        if decoders::Plan::needs_number(&graph) {
+            hosts.insert(Host::PrimitiveNumber);
+        }
+        let powers = placement.push(&decoders::powers()).ok_or_else(|| {
+            CompilerError::Invalid("JSON decoder tables exceed static memory budget".into())
+        })?;
+        Some((graph, powers))
+    };
     // V38: the table-driven `varta_resume` dispatch reads static data.
     let dispatch_table = if program.types.profile.program_limits() && !frame_layouts.is_empty() {
         let table = frames::dispatch_table(&frame_layouts, &program.suspendable);
@@ -466,6 +491,29 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         .iter()
         .map(|helper| (*helper, intern(helper.signature())))
         .collect();
+    // The decoders follow every other function (after the view export).
+    let decoders_begin = (hosts.len()
+        + program.functions.len()
+        + helpers.len()
+        + frame_layouts.len()
+        + usize::from(!frame_layouts.is_empty())
+        + generator_types
+        + usize::from(program.view_event.is_some())) as u32;
+    let decoder_plan = decoder_graph
+        .as_ref()
+        .map(|(graph, _)| {
+            decoders::Plan::new(
+                graph,
+                &program.types.records,
+                &schema_offsets,
+                decoders_begin,
+            )
+        })
+        .transpose()?;
+    let decoder_types: Vec<u32> = decoder_plan
+        .as_ref()
+        .map(|plan| plan.signatures().into_iter().map(&mut intern).collect())
+        .unwrap_or_default();
     let view_type = program.view_event.map(|_| {
         intern((
             varta_common::view::EVENT_EXPORT_PARAMS
@@ -511,9 +559,13 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             functions.function(dispatcher);
         }
     }
-    // The v38 view event export follows every other function.
+    // The v38 view event export follows every other function but the
+    // decoders.
     if let Some(ty) = view_type {
         functions.function(ty);
+    }
+    for ty in &decoder_types {
+        functions.function(*ty);
     }
     // V38: the function index space (imports included) within the Wasm
     // implementation limit.
@@ -673,6 +725,26 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     } else {
         None
     };
+    let decoder_globals = decoder_plan.as_ref().map(|_| {
+        let first = globals.len();
+        for _ in 0..decoders::GLOBALS {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(0),
+            );
+        }
+        decoders::Globals {
+            end: first,
+            tape: first + 1,
+            base: first + 2,
+            limit: first + 3,
+            slot: first + 4,
+        }
+    });
     let frame_resources = (!frame_layouts.is_empty()).then(|| {
         let generation = globals.len();
         globals.global(
@@ -725,6 +797,20 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         .map(|id| steps_begin + id)
         .collect();
     let view_export = steps_begin + generator_types as u32;
+    if view_export + u32::from(program.view_event.is_some()) != decoders_begin {
+        return Err(CompilerError::Internal(
+            "decoder function index mismatch".into(),
+        ));
+    }
+    let decoder_entries: BTreeMap<Type, u32> = decoder_plan
+        .as_ref()
+        .map(|plan| {
+            decoder_roots
+                .iter()
+                .filter_map(|ty| Some((*ty, plan.entry(*ty)?)))
+                .collect()
+        })
+        .unwrap_or_default();
     let mut exports = wasm_encoder::ExportSection::new();
     if program.view_event.is_some() {
         exports.export(
@@ -957,6 +1043,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             unions: &program.types.unions,
             quiet_mode: false,
             builders,
+            decoders: &decoder_entries,
         };
         let frame_layout = frame_layouts.iter().find(|layout| layout.function == index);
         if let (Some(layout), Some(resources)) = (frame_layout, frame_resources) {
@@ -1081,6 +1168,31 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             helpers[&strings::Helper::Snapshot],
             functions_begin + dispatch as u32,
         ));
+    }
+    if let (Some(plan), Some(globals), Some((_, powers))) =
+        (&decoder_plan, decoder_globals, &decoder_graph)
+    {
+        let context = decoders::Context {
+            globals,
+            memory: memory_globals,
+            allocate: helpers[&strings::Helper::Allocate],
+            retain: helpers[&strings::Helper::RootPush],
+            result_len,
+            fallback: hosts[&program.types.profile.json_parse()],
+            number: hosts.get(&Host::PrimitiveNumber).copied(),
+            powers: *powers,
+            collect: (decoders::hook::mode() == decoders::hook::Mode::Collecting)
+                .then(|| helpers[&strings::Helper::Collect]),
+        };
+        for (label, body) in decoders::bodies(plan, context)? {
+            if body.byte_len() > limits.function_body_bytes {
+                return Err(CompilerError::Invalid(
+                    "JSON decoder body exceeds compilation budget".into(),
+                ));
+            }
+            name(&|| label.clone());
+            code.function(&body);
+        }
     }
     module.section(&code);
     let mut data = wasm_encoder::DataSection::new();

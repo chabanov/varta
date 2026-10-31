@@ -17007,6 +17007,53 @@ fn hashed_dictionaries_run_in_dev_and_single_artifacts() {
     assert_eq!(info["valueAbiVersion"], 18, "{info}");
 }
 
+// Profile v38 compiled JSON decoders (`json_decoders`): records, optional
+// and nullable fields, a dictionary, `unknown`, escapes, a 17-digit number,
+// whitespace, and inputs the decoders leave to the linked decoder (an
+// index-like key, a missing field, a syntax error).
+const JSON_DECODERS_V38: &str = r#"interface Item { id: number; name: string; tags: string[]; note?: string; score?: number | null }
+interface Page { items: Item[]; meta: Record<string, number>; extra: unknown }
+function show(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text) as Page);
+  } catch (e) {
+    if (e instanceof SyntaxError) return "SyntaxError " + e.message;
+    if (e instanceof TypeError) return "TypeError " + e.message;
+    return "other";
+  }
+}
+export function main(): void {
+  console.log(show('{"items":[{"id":1,"name":"a\\u00e9\\n","tags":["x"],"score":null}],"meta":{"k":0.30000000000000004},"extra":[true,{"n":-0}]}'));
+  console.log(show(' { "meta" : { } , "items" : [ ] , "extra" : "\\ud83d\\ude00" } '));
+  console.log(show('{"items":[],"meta":{"1":1},"extra":null}'));
+  console.log(show('{"items":[{"id":1,"name":"a"}],"meta":{},"extra":0}'));
+  console.log(show('{"items":[],"meta":{},"extra":[1,2,]}'));
+}"#;
+
+#[test]
+fn compiled_json_decoders_run_in_dev_and_single_binaries() {
+    let project = RegressionProject::new(JSON_DECODERS_V38, serde_json::json!({}));
+    project.language_profile(V38_PROFILE);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let expected = [
+        r#"varta log: {"extra":[true,{"n":0}],"items":[{"id":1,"name":"aé\n","score":null,"tags":["x"]}],"meta":{"k":0.30000000000000004}}"#,
+        r#"varta log: {"extra":"😀","items":[],"meta":{}}"#,
+        r#"varta log: {"extra":null,"items":[],"meta":{"1":1}}"#,
+        "varta log: TypeError JSON value does not match the checked schema",
+        "varta log: SyntaxError Invalid JSON syntax",
+    ];
+    for output in [
+        project.command(&["dev"]),
+        project.command(&["run", "dist/app.wasm"]),
+        project.run_in(Command::new(runtime_path()), &["run", "dist/app.wasm"]),
+        project.run_in(Command::new(project.0.join("dist/app")), &[]),
+    ] {
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(stdout_lines(&output), expected, "{}", combined(&output));
+    }
+}
+
 // Profile v38 strict members and wide discriminated unions (`strict_members`).
 const STRICT_MEMBERS_V38: &str = r#"interface A { kind: "a" }
 interface B { kind: "b"; n: number }

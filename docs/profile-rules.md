@@ -3107,7 +3107,8 @@ structural subtyping (`structural_subtyping`) and code generation v2
 (`dictionary_hashing`, [rules below](#dictionary-hashing-dictionary_hashing)), strict members
 (`strict_members`, [rules below](#strict-members-and-wide-unions-strict_members)), web bytes
 (`web_bytes`, [rules below](#web-bytes-web_bytes)) and virtual roots (`file_roots`,
-[rules below](#virtual-file-roots-file_roots));
+[rules below](#virtual-file-roots-file_roots)), and the wave-3b compiled JSON
+decoders (`json_decoders`, [rules below](#json-decoders-json_decoders));
 the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
@@ -3841,6 +3842,41 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   implementation, and never a host import for a linked operation.
 - A fuel-profile build is instrumented before linking; the linked library
   carries no probes and its fuel counts toward the calling function.
+
+### JSON decoders (`json_decoders`)
+
+Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
+
+- The decoders live in `emit::decoders` (`scan` the shared scanner, tape and
+  block/cell/vector builders; `check` and `build` the record, array,
+  dictionary and union nodes; `asm` named-label control flow). They are
+  generated from `schemas::graph`, one node per value type of the module's
+  `E::ParseJson` targets, and shared by every call site; KV decodes keep
+  their host imports.
+- The linked `json_parse_v19` stays the one source of every failure: a
+  checker returns 0 (fallback) on anything it does not accept, never an
+  error of its own, and must accept only inputs on which it agrees with
+  `varta_common::json::scan` and `build`. Before widening what a checker
+  accepts (escaped keys, index-like dictionary keys, more entries, deeper
+  nesting, wider records, more number literals), prove the agreement and
+  extend `json_decoder_tests` (hand corpus and the seeded random schemas,
+  inputs and mutations).
+- Build only after the whole input is accepted, through `Shared::Block`
+  (allocator, then the shared builder's flags and link), publishing every
+  container at its slot or retaining it at the root before any child
+  allocates, in the shared builder's allocation order. Keep the tape and
+  the input rooted for the call and reset the root-stack top before
+  returning or falling back. `Mode::Collecting` (a collection before every
+  decoder block) must keep passing.
+- Layout facts come from `varta_common::value` (record bytes, presence and
+  order offsets, vector capacity and sparse bitmap, dictionary storage) and
+  the record's canonical layout (`records::canonical_layout`); never restate
+  them. Numbers keep the shared decoder's bits: the exact path only within
+  15 significant digits and decimal exponents within 22, the linked
+  `primitive_to_number` otherwise.
+- Never emit decoders for v37 or earlier (the selector) or under the host
+  JSON test switch; `compile_generic` is the comparison path, not a
+  production mode.
 
 ### View protocol stream (`view_protocol()`)
 
