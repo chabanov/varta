@@ -14,10 +14,10 @@
 import { parseManifest, checkRootNameGrammar, PolicyError } from "./policy.js";
 import { ValidationError, ExecutionFailure, GuestExit } from "./errors.js";
 import { createContext, LEGACY_HOST_ABI, TOOL_NAME, utf8 } from "./context.js";
-import { createValidator } from "./validate.js";
+import { createValidator, VIEW_PROFILES } from "./validate.js";
 import { createExecution } from "./execution.js";
 import { checkException } from "./exception.js";
-import { eventLoop } from "./scheduler.js";
+import { eventLoop, applicationLoop, createInbox } from "./scheduler.js";
 import { toolFailure, parseToolArguments, transferString, toolResult } from "./tool-abi.js";
 
 export { ValidationError, ExecutionFailure } from "./errors.js";
@@ -85,6 +85,47 @@ export function createHost(contract) {
   }
 
   /**
+   * A long-lived application instance (v38, architecture.md "Long-lived application
+   * instances"): turn 1 runs `_start`; then view records (`deliver`) and fired timers
+   * are turns, each with renewed per-turn budgets, while a committed view or a timer
+   * keeps the instance alive. A failed turn ends it; nothing restarts it.
+   * `options.view.commit(batch)` receives every committed batch; the renderer calls
+   * `fail` when it refuses one, which ends the instance before its next turn.
+   */
+  function start(bytes, options = {}) {
+    const policies = parsePolicies(options);
+    const info = validate(bytes);
+    checkManifestAbi(policies, info);
+    if (!info.profile || !VIEW_PROFILES.has(info.profile.name)) throw new ValidationError("application instances need a view profile");
+    const { exec, imports } = createExecution(ctx, info, policies, options);
+    const inbox = createInbox(C);
+    let stop = false;
+    const finished = (async () => {
+      try {
+        exec.instance = await WebAssembly.instantiate(await WebAssembly.compile(bytes), imports);
+        checkException(C, exec, info, "initial");
+        exec.instance.exports._start?.();
+        checkException(C, exec, info, "_start");
+        await applicationLoop(ctx, exec, info, inbox, () => stop);
+        return { status: "ok", logs: exec.logs };
+      } catch (error) {
+        const outcome = classify(error);
+        if (outcome.kind === "exit") return { status: "exit", exitCode: outcome.code, logs: exec.logs };
+        return { status: "failed", error: outcome.message, logs: exec.logs };
+      }
+    })();
+    return {
+      deliver: (record) => inbox.deliver(record),
+      fail: (message) => inbox.fail(new ExecutionFailure(message)),
+      stop: () => {
+        stop = true;
+        inbox.fail(null);
+      },
+      finished,
+    };
+  }
+
+  /**
    * Level T1: one published tool in a fresh instance; never runs `_start`.
    * Returns the development CLI's `varta invoke --json` envelope.
    */
@@ -145,6 +186,7 @@ export function createHost(contract) {
   return {
     validate,
     run,
+    start,
     invoke,
     debugScheduler,
     guarantees: {

@@ -83,6 +83,23 @@ export const manifestCases = [
   { label: "v38 manifest: ui.open_url over ftp", edit: (m) => ({ ...m, capabilities: [...m.capabilities, { id: "ui.open_url", patterns: ["ftp://example.com/*"] }] }) },
 ];
 
+// v38 view applications: the browser page runs the fixture as a long-lived instance,
+// performs the script on the applier's DOM and compares with the native headless tree.
+export const viewCases = [
+  {
+    label: "v38 view: counter clicks, typing and Enter",
+    fixture: "view-v38",
+    script: {
+      inputs: [
+        { input: "click", target: "#inc" },
+        { input: "click", target: "#inc" },
+        { input: "type", target: "#box", text: "привіт" },
+        { input: "key", target: "#box", key: "Enter" },
+      ],
+    },
+  },
+];
+
 // `expect` defaults to "refused". Catalog cases are contract checks of the JS host
 // (tampered sections the native compiler never emits), not native comparisons.
 export const refusalCases = [

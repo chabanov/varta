@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHost } from "../host.js";
-import { invokeCases, runCases, refusalCases, schedulerCases, manifestCases, MANIFEST_FIXTURE, comparableInvoke, comparableRun, runJsCases } from "./cases.js";
+import { invokeCases, runCases, refusalCases, schedulerCases, manifestCases, viewCases, MANIFEST_FIXTURE, comparableInvoke, comparableRun, runJsCases } from "./cases.js";
 
 const varta = process.env.VARTA_BIN;
 if (!varta) throw new Error("set VARTA_BIN to the native varta binary");
@@ -80,6 +80,20 @@ for (const c of manifestCases) {
 }
 mkdirSync(join(here, "out"), { recursive: true });
 writeFileSync(join(here, "out", "expected.json"), JSON.stringify(expected, null, 2) + "\n");
+
+// View applications: the native headless tree after the scripted inputs, for the
+// browser page tests/view.html (a JavaScript host renders only in a browser).
+const viewExpected = [];
+for (const c of viewCases) {
+  build(c.fixture);
+  const dir = join(fixtures, c.fixture);
+  const scriptPath = join(scratch, `${c.fixture}.script.json`);
+  writeFileSync(scriptPath, JSON.stringify(c.script));
+  const out = spawnSync(varta, ["dev", "--view-script", scriptPath], { cwd: dir, encoding: "utf8" });
+  const text = out.stdout.slice(0, out.stdout.lastIndexOf("}") + 1);
+  viewExpected.push({ label: c.label, fixture: c.fixture, script: c.script, tree: JSON.parse(text).tree });
+}
+writeFileSync(join(here, "out", "view-expected.json"), JSON.stringify(viewExpected, null, 2) + "\n");
 
 const observed = await runJsCases(host, async (name) => build(name), contract);
 let failures = 0;

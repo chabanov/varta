@@ -13,7 +13,9 @@ import { IMPLEMENTED } from "./execution.js";
 const MEMORY_FREE_IMPORTS = new Set([
   "log_i32", "log_f64", "log_f64_v2", "log_undefined", "number_remainder", "process_exit", "process_exit_f64", "time_now",
 ]);
-const RESERVED_PREFIXES = ["varta.exception.", "varta.tool.", "varta.http_abi."];
+const RESERVED_PREFIXES = ["varta.exception.", "varta.tool.", "varta.http_abi.", "varta.view_abi."];
+// Profiles that admit the view protocol (`view_commit` and the event export).
+export const VIEW_PROFILES = new Set(["checked-f64-utf16-v38"]);
 const LANGUAGE_SCHEMA_VERSION = 1;
 const VERSION_SECTION_BYTES = 4;
 const PAGE_COUNT_BYTES = 4;
@@ -195,12 +197,19 @@ export function createValidator(ctx) {
         exceptionNames.add(name);
       }
     }
+    // The view event export: v38 only, with the registry signature (embedding.md "Event delivery").
+    const viewEvent = `varta.${C.view.event.name}`;
+    if (exportsByName.has(viewEvent)) {
+      if (profile === null || !VIEW_PROFILES.has(profile.name)) throw new ValidationError(`${viewEvent} is admitted only under the view profiles`);
+      if (!sameSignature(exportedFunctionType(module, exportsByName, viewEvent), C.view.event)) throw new ValidationError(`${viewEvent} has the wrong signature`);
+    }
     const toolExports = new Set((catalog?.tools ?? []).map((t) => t.export));
     for (const entry of module.exports) {
       const prefix = RESERVED_PREFIXES.find((p) => entry.name.startsWith(p));
       if (!prefix) continue;
       if (prefix === "varta.exception." && exceptionNames.has(entry.name)) continue;
       if (prefix === "varta.tool." && toolExports.has(entry.name)) continue;
+      if (entry.name === viewEvent) continue;
       throw new ValidationError(`unlisted reserved export ${entry.name}`);
     }
   }
