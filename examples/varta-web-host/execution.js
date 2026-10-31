@@ -21,6 +21,7 @@ export const IMPLEMENTED = new Set([
   "string_char_at16", "string_char_code_at16",
   "promise_handled", "promise_react", "promise_settle", "promise_unhandled", "scheduler_enqueue",
   "timer_start", "timer_start_v2", "timer_clear", "timer_take", "timer_uncaught",
+  "view_commit",
   ...MATH_FUNCTIONS.map((name) => `number_${name}`),
 ]);
 // Timer bookkeeping imports observe the deadline but are not counted host calls
@@ -101,6 +102,9 @@ export function createExecution(ctx, info, policies, options) {
     hostCalls: 0,
     outputBytes: 0,
     budgets,
+    deadlineMs,
+    viewCommitted: false,
+    viewAlive: false,
     deadline: now() + deadlineMs,
     ...schedulerState(deadlineMs),
   };
@@ -239,6 +243,17 @@ export function createExecution(ctx, info, policies, options) {
     string_char_at16: (ptr, len, index) => writeResult(decodeUtf16(guestRange(ptr, len, C.maxStringBytes, invalid), invalid).charAt(index)),
     string_char_code_at16: (ptr, len, index) => decodeUtf16(guestRange(ptr, len, C.maxStringBytes, invalid), invalid).charCodeAt(index),
     ...schedulerImports(ctx, exec, policies, info.profile?.name ?? null),
+    // embedding.md "View protocol": at most one batch per turn; the view validates the
+    // whole batch and applies it atomically, and an invalid batch ends the instance.
+    view_commit: (ptr, len) => {
+      if (!options.view) throw new ExecutionFailure("view_commit needs a view; this execution has none");
+      if (exec.viewCommitted) throw new ExecutionFailure("a second view_commit in one turn ends the instance");
+      const bytes = guestRange(ptr, len, C.view.batchBytes, trap("view_commit received an invalid range"));
+      exec.viewCommitted = true;
+      exec.viewAlive = true;
+      options.view.commit(bytes);
+      return 0;
+    },
   };
   impl.env_has16 = impl.env_has;
   impl.env_get16 = impl.env_get;

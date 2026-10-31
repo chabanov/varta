@@ -113,8 +113,34 @@ function constants(contract) {
     maxToolNameBytes: limitBySource(contract, "MAX_TOOL_NAME_BYTES", 0),
     maxToolDescriptionBytes: limitBySource(contract, "MAX_TOOL_NAME_BYTES", 1),
     toolLimits: contract.toolCatalogExample.tools[0].limits,
+    view: viewConstants(contract),
     status,
     resume,
+  };
+}
+
+/** View protocol facts a host needs (embedding.md "View protocol draft v0", generated layout). */
+function viewConstants(contract) {
+  const layout = contract.view.layout;
+  const binding = (text) => {
+    const match = /^`varta\.([^`]+)` \(([^)]*)\) → \(([^)]*)\)$/.exec(text);
+    const types = (list) => (list === "" ? [] : list.split(", "));
+    return { name: match[1], params: types(match[2]), results: types(match[3]) };
+  };
+  const [batchBytes] = layout["Placeholder: batch bytes / operations"].split(" / ").map(Number);
+  const [valueBytes, , pendingEvents] = layout["Placeholder: value bytes / stylesheet bytes / pending events"].split(" / ").map(Number);
+  const offset = (field) => Number(/offset (\d+)/.exec(layout[`Event field \`${field}\``])[1]);
+  return {
+    commit: binding(layout["Patch import (v38, host ABI 34)"]),
+    event: binding(layout["Event export (v38)"]),
+    batchBytes,
+    pendingEvents,
+    eventHeaderBytes: Number(layout["Event header bytes"]),
+    // A record is the header plus the key and value strings (each a u32 length and UTF-16 text).
+    maxRecordBytes: Number(layout["Event header bytes"]) + 2 * (4 + valueBytes),
+    kindOffset: offset("kind"),
+    handlerOffset: offset("handler"),
+    coalescible: new Set(Object.entries(contract.view.eventRules).filter(([, r]) => r.coalescible).map(([name]) => contract.view.events[name])),
   };
 }
 

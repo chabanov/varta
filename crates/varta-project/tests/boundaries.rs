@@ -185,6 +185,9 @@ const STORAGE_CRATES: [&str; 5] = [
 #[test]
 fn only_the_runtime_reaches_the_kv_storage_engine() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    // Resolve only the host platform: an offline resolve of every platform needs
+    // crates that a host build never downloads, so the result would depend on
+    // the cache instead of the graph.
     let output = Command::new(env!("CARGO"))
         .args([
             "metadata",
@@ -192,6 +195,8 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
             "1",
             "--offline",
             "--locked",
+            "--filter-platform",
+            &host_triple(),
             "--manifest-path",
         ])
         .arg(manifest)
@@ -266,4 +271,18 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
         assert!(!reaches_sqlite(engine), "{engine} reaches SQLite");
     }
     assert!(reaches_sqlite("varta-runtime"));
+}
+
+/// The target triple of the toolchain running the tests, from `rustc -vV`.
+fn host_triple() -> String {
+    const HOST_PREFIX: &str = "host: ";
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| String::from("rustc"));
+    let output = Command::new(rustc).arg("-vV").output().unwrap();
+    assert!(output.status.success(), "rustc -vV failed");
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix(HOST_PREFIX))
+        .expect("rustc -vV names the host triple")
+        .to_owned()
 }

@@ -8776,8 +8776,12 @@ as unknown names and keep their bytes and diagnostics.
   A malformed descriptor, an operation on an unknown or released id, a second
   waiter, a read while an operation is armed, and starting more than
   `net::MAX_PENDING_REQUESTS` requests are fatal `NetError`s, because only a
-  tampered module can cause them. The values of the `net::MAX_*` bounds are
-  in the [network request limits](embedding.md#network-request-limits-v37).
+  tampered module can cause them (`net_request_abort` ignores an unknown or
+  released id). The values of the `net::MAX_*` bounds are in the
+  [network request limits](embedding.md#network-request-limits-v37); the
+  descriptor grammar, completion texts, failure texts, fatal errors and
+  completion ordering are generated in
+  [Network requests](embedding.md#network-requests-v37).
 - **Transport.** HTTP/1.1 through hyper's client on a current-thread Tokio
   runtime created by the first request; HTTPS through rustls (ring provider,
   TLS 1.2 and 1.3, ALPN `http/1.1`) verifying the server against the

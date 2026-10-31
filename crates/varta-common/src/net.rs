@@ -121,9 +121,214 @@ impl CompletionKind {
 /// checked `varta.json.parse`: `status` (number), `statusText`, `url` (the
 /// request URL as the runtime parsed it), `location` (the `Location` header
 /// resolved against `url`, or the empty string) and `headers` (lowercased
-/// names alternating with their values, in response order; each value byte
-/// is one code unit, as for a WebIDL ByteString).
+/// names alternating with their values: names in the order of their first
+/// field, each repeated field as its own pair in arrival order; each value
+/// byte is one code unit, as for a WebIDL ByteString).
 pub const HEAD_FIELDS: [&str; 5] = ["status", "statusText", "url", "location", "headers"];
+
+/// The head record of a [`CompletionKind::Head`] completion: one compact JSON
+/// object with exactly the [`HEAD_FIELDS`] members, written in member-name
+/// order. `headers` alternates names and values.
+#[must_use]
+pub fn head_record(
+    status: u16,
+    status_text: &str,
+    url: &str,
+    location: &str,
+    headers: Vec<String>,
+) -> String {
+    let [
+        status_field,
+        text_field,
+        url_field,
+        location_field,
+        headers_field,
+    ] = HEAD_FIELDS;
+    let mut record = serde_json::Map::new();
+    record.insert(status_field.to_owned(), status.into());
+    record.insert(text_field.to_owned(), status_text.into());
+    record.insert(url_field.to_owned(), url.into());
+    record.insert(location_field.to_owned(), location.into());
+    record.insert(headers_field.to_owned(), headers.into());
+    // `Value`'s `Display` writes compact JSON and cannot fail.
+    serde_json::Value::Object(record).to_string()
+}
+
+/// The text of a [`CompletionKind::Denied`] completion, also logged as
+/// `varta log: <text>`.
+#[must_use]
+pub fn denial_text(method: &str, url: &str) -> String {
+    format!("<capability denied: {REQUEST_CAPABILITY}> ({method} {url})")
+}
+
+/// Why a request completes as [`CompletionKind::Failed`]; its display is the
+/// completion text. The variants with a payload carry a request field or the
+/// rendering of a transport library error.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RequestFailure {
+    /// `net_request_start`: the method is no token `fetch` may send.
+    #[error("invalid method: {0}")]
+    Method(String),
+    /// `net_request_start`: the URL does not parse.
+    #[error("Invalid URL: {0}")]
+    Url(String),
+    /// `net_request_start`: the denial could not be logged.
+    #[error("output budget exhausted")]
+    OutputBudget,
+    /// `net_request_start`: a `GET` or `HEAD` request with a body.
+    #[error("a GET or HEAD request cannot have a body")]
+    BodyNotAllowed,
+    /// `net_request_start`: the header names and values exceed
+    /// [`MAX_REQUEST_HEADER_BYTES`].
+    #[error("request headers are too large")]
+    HeaderBytes,
+    /// `net_request_start`: a header of [`RUNTIME_HEADERS`], as spelled.
+    #[error("header {0} is set by the runtime")]
+    RuntimeHeader(String),
+    /// `net_request_start`: a header name that is no field-name token.
+    #[error("invalid header name: {0}")]
+    HeaderName(String),
+    /// `net_request_start`: a value with a unit above 0xFF or a byte no field
+    /// value admits; the payload is the lowercased header name.
+    #[error("invalid header value for {0}")]
+    HeaderValue(String),
+    /// `net_request_start` of an `https` URL: the TLS configuration failed.
+    #[error("{0}")]
+    TlsConfig(String),
+    /// Transfer: the URL has no host.
+    #[error("URL has no host")]
+    NoHost,
+    /// Transfer: the URL has no port and its scheme no default port.
+    #[error("URL has no port")]
+    NoPort,
+    /// Transfer: name resolution or the TCP connect failed.
+    #[error("connect failed: {0}")]
+    Connect(String),
+    /// Transfer: the host is no TLS server name.
+    #[error("invalid TLS server name: {0}")]
+    ServerName(String),
+    /// Transfer: the TLS handshake failed (including certificate checks).
+    #[error("TLS handshake failed: {0}")]
+    TlsHandshake(String),
+    /// Transfer: the HTTP/1.1 connection could not be set up.
+    #[error("HTTP handshake failed: {0}")]
+    HttpHandshake(String),
+    /// Transfer: the request could not be built.
+    #[error("invalid request: {0}")]
+    Request(String),
+    /// Transfer: sending the request or reading the head failed (including a
+    /// head beyond the response header limits).
+    #[error("request failed: {0}")]
+    Send(String),
+    /// Transfer: the head did not arrive before the deadline.
+    #[error("request timed out")]
+    Timeout,
+    /// A body read: the body stream failed.
+    #[error("response body failed: {0}")]
+    Body(String),
+    /// A body read: the body exceeds [`MAX_RESPONSE_BODY_BYTES`].
+    #[error("response body exceeds {MAX_RESPONSE_BODY_BYTES} bytes")]
+    BodyLimit,
+    /// A body read: no chunk arrived before the deadline.
+    #[error("response body timed out")]
+    BodyTimeout,
+}
+
+/// The descriptor version an import accepts: version 1
+/// (`net_request_start`, text bodies) or version 2 (`net_request_start_v2`,
+/// v38, text or byte bodies).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptorVersion {
+    V1,
+    V2,
+}
+impl DescriptorVersion {
+    pub const ALL: [Self; 2] = [Self::V1, Self::V2];
+    /// The first line of a descriptor of this version.
+    #[must_use]
+    pub fn line(self) -> &'static str {
+        match self {
+            Self::V1 => DESCRIPTOR_VERSION,
+            Self::V2 => DESCRIPTOR_VERSION_BYTES,
+        }
+    }
+    /// The body flags this version admits, in flag order.
+    #[must_use]
+    pub fn body_flags(self) -> &'static [&'static str] {
+        match self {
+            Self::V1 => &[DESCRIPTOR_NO_BODY, DESCRIPTOR_BODY],
+            Self::V2 => &[DESCRIPTOR_NO_BODY, DESCRIPTOR_BODY, DESCRIPTOR_BYTES],
+        }
+    }
+}
+
+/// The fields of a request descriptor. Splitting checks only the structure:
+/// the method, URL and headers are checked by the start that follows, which
+/// turns every refusal into a [`RequestFailure`] or a denial.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestDescriptor<'a> {
+    pub method: &'a str,
+    pub url: &'a str,
+    /// Names and values in descriptor order.
+    pub headers: Vec<(&'a str, &'a str)>,
+    /// The bytes to send: a text body as UTF-8, a byte body one byte per
+    /// code unit; `None` without a body.
+    pub body: Option<Vec<u8>>,
+}
+impl<'a> RequestDescriptor<'a> {
+    /// Split `text`, the descriptor already decoded from UTF-16. A malformed
+    /// structure is fatal: only a tampered or miscompiled module can produce
+    /// one.
+    pub fn parse(text: &'a str, version: DescriptorVersion) -> Result<Self, NetError> {
+        /// Version, method, URL, then the rest from the header count on.
+        const LEADING_FIELDS: usize = 4;
+        let mut fields = text.splitn(LEADING_FIELDS, DESCRIPTOR_SEPARATOR);
+        let mut field = || fields.next().ok_or(NetError::Descriptor);
+        if field()? != version.line() {
+            return Err(NetError::Descriptor);
+        }
+        let method = field()?;
+        let url = field()?;
+        let mut rest = field()?;
+        let count: usize = split(&mut rest)?
+            .parse()
+            .map_err(|_| NetError::Descriptor)?;
+        if count > MAX_REQUEST_HEADERS {
+            return Err(NetError::Descriptor);
+        }
+        let mut headers = Vec::with_capacity(count);
+        for _ in 0..count {
+            let name = split(&mut rest)?;
+            let value = split(&mut rest)?;
+            headers.push((name, value));
+        }
+        let body = match rest.split_once(DESCRIPTOR_SEPARATOR) {
+            Some((DESCRIPTOR_NO_BODY, "")) => None,
+            Some((DESCRIPTOR_BODY, body)) => Some(body.as_bytes().to_vec()),
+            // Version 2 bytes: each code unit is one byte.
+            Some((DESCRIPTOR_BYTES, body)) if version == DescriptorVersion::V2 => Some(
+                body.chars()
+                    .map(|unit| u8::try_from(u32::from(unit)).ok())
+                    .collect::<Option<Vec<u8>>>()
+                    .ok_or(NetError::Descriptor)?,
+            ),
+            _ => return Err(NetError::Descriptor),
+        };
+        Ok(Self {
+            method,
+            url,
+            headers,
+            body,
+        })
+    }
+}
+fn split<'a>(rest: &mut &'a str) -> Result<&'a str, NetError> {
+    let (field, tail) = rest
+        .split_once(DESCRIPTOR_SEPARATOR)
+        .ok_or(NetError::Descriptor)?;
+    *rest = tail;
+    Ok(field)
+}
 
 /// Fatal request failures: each ends the execution, like the timer state
 /// errors, because only a tampered or miscompiled module can cause them.
@@ -170,6 +375,92 @@ mod tests {
         ] {
             assert!(kind.terminal());
         }
+    }
+
+    #[test]
+    fn descriptors_split_into_bounded_fields() {
+        use DescriptorVersion::{V1, V2};
+        let text = format!(
+            "{DESCRIPTOR_VERSION}\nPOST\nhttp://127.0.0.1:1/x\n2\naccept\n*/*\nx-a\nb\n1\nline1\nline2"
+        );
+        let parsed = RequestDescriptor::parse(&text, V1).unwrap();
+        assert_eq!(parsed.method, "POST");
+        assert_eq!(parsed.url, "http://127.0.0.1:1/x");
+        assert_eq!(parsed.headers, [("accept", "*/*"), ("x-a", "b")]);
+        assert_eq!(parsed.body.as_deref(), Some(&b"line1\nline2"[..]));
+        let get = format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n0\n0\n");
+        assert_eq!(RequestDescriptor::parse(&get, V1).unwrap().body, None);
+        // Version 1 never carries bytes, and each import accepts only its
+        // own version.
+        let bytes = format!("{DESCRIPTOR_VERSION}\nPOST\nhttp://a.test/\n0\n2\nab");
+        assert_eq!(
+            RequestDescriptor::parse(&bytes, V1).err(),
+            Some(NetError::Descriptor)
+        );
+        assert_eq!(
+            RequestDescriptor::parse(&text, V2).err(),
+            Some(NetError::Descriptor)
+        );
+        for bad in [
+            String::new(),
+            "varta-net-request-0\nGET\nhttp://a.test/\n0\n0\n".into(),
+            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n1\nx\n0\n"),
+            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\nx\n0\n"),
+            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n0\n2\n"),
+            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n0\n0\nextra"),
+            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n65\n0\n"),
+        ] {
+            assert_eq!(
+                RequestDescriptor::parse(&bad, V1).err(),
+                Some(NetError::Descriptor),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn version_two_descriptors_carry_text_or_bytes() {
+        let version = DescriptorVersion::V2;
+        let head = format!("{DESCRIPTOR_VERSION_BYTES}\nPOST\nhttp://a.test/\n0\n");
+        let text = format!("{head}1\n\u{e9}");
+        assert_eq!(
+            RequestDescriptor::parse(&text, version)
+                .unwrap()
+                .body
+                .as_deref(),
+            Some("\u{e9}".as_bytes())
+        );
+        let bytes = format!("{head}2\n\u{0}\u{e9}\u{ff}");
+        assert_eq!(
+            RequestDescriptor::parse(&bytes, version)
+                .unwrap()
+                .body
+                .as_deref(),
+            Some(&[0x00, 0xE9, 0xFF][..])
+        );
+        // A code unit above 0xFF is no byte.
+        let wide = format!("{head}2\n\u{100}");
+        assert_eq!(
+            RequestDescriptor::parse(&wide, version).err(),
+            Some(NetError::Descriptor)
+        );
+        let none = format!("{DESCRIPTOR_VERSION_BYTES}\nGET\nhttp://a.test/\n0\n0\n");
+        assert_eq!(RequestDescriptor::parse(&none, version).unwrap().body, None);
+    }
+
+    #[test]
+    fn head_records_are_compact_and_ordered_by_member_name() {
+        let record = head_record(
+            200,
+            "OK",
+            "http://a.test/",
+            "",
+            vec!["a".into(), "1".into()],
+        );
+        assert_eq!(
+            record,
+            r#"{"headers":["a","1"],"location":"","status":200,"statusText":"OK","url":"http://a.test/"}"#
+        );
     }
 
     #[test]

@@ -644,7 +644,7 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..`, or longer than the host path bytes of the [limits table](#manifest-limits), denied; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it. Under v38, paths and patterns are virtual paths under host-mapped roots ([File roots](#file-roots-v38)) |
 | KV storage (v38) | `kv_open`, `kv_read`, `kv_commit`, `kv_stage`, `kv_key`, `kv_value`, `kv_entry`, `kv_text`, `kv_close` | Deno KV database files at virtual paths ([KV storage (v38)](#kv-storage-v38)); `kv_open`/`kv_read` need `kv.read`, `kv_commit` needs `kv.write`, decided before any effect, denials recoverable (`kv::FAILED` with `NotAllowedError` in `kv_text`; [codes](#status-and-control-codes), [limits](#kv-storage-v38)). Open, read, commit, stage and the decoders are charged to the host-call budget. A malformed descriptor or an unknown id is fatal |
 | Permissions and host events (v38) | `permission_query`, `permission_request`, `event_source_*`, `event_watch`, `event_take`, `event_text` | No capability, not charged to the host-call budget; broker states, descriptors and the one-shot answer source in [Permission broker v1](architecture.md#permission-broker-v1-turn_budgets); named sources, host tasks and ordering in [Host event sources](architecture.md#host-event-sources-turn_budgets); limits in [Permissions and host events](#permissions-and-host-events-v38). A malformed descriptor, id, watch or take is fatal. The instance and event interfaces are [unstable](#what-is-unstable) |
-| Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`; the URL bounded by the [limits table](#manifest-limits)); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; descriptor in [Network requests](architecture.md#network-requests-net_request), bounds in [Network request limits](#network-request-limits-v37) |
+| Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`; the URL bounded by the [limits table](#manifest-limits)); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; descriptor, completions, failures, fatal errors and ordering in [Network requests](#network-requests-v37), bounds in [Network request limits](#network-request-limits-v37) |
 | Network | `net_get*`, `net_fetch*` | `http:` URLs only, bounded by the [limits table](#manifest-limits); parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
 | Exit | `process_exit`, `process_exit_f64` | Requires `process.exit` enabled. Authorized: end the execution with the code (not the host process); no result is produced. Denied: status 1 and the guest continues. `process_exit_f64` requires a finite integral value within i32, otherwise status 2 and the guest continues |
 | HTTP | `http_service`, `http_stop` | Feature marker and owned shutdown of [HTTP service v1](architecture.md#http-service-v1) |
@@ -811,7 +811,7 @@ The KV interface is [unstable](#what-is-unstable) until the batch closes.
 
 A host that implements `net_request_*` enforces the bounds below; the
 descriptor and completion records are in
-[Network requests](architecture.md#network-requests-net_request). The request
+[Network requests](#network-requests-v37). The request
 URL is bounded by the [limits table](#manifest-limits).
 
 <!-- generated:embedding-net-limits:begin (checked by crates/varta-common/tests/embedding_documentation/limits.rs) -->
@@ -827,6 +827,329 @@ URL is bounded by the [limits table](#manifest-limits).
 | Body bytes of one response | 524288 | `net::MAX_RESPONSE_BODY_BYTES` |
 | First descriptor line: `net_request_start` / `net_request_start_v2` | `varta-net-request-1` / `varta-net-request-2` | `net::DESCRIPTOR_VERSION`, `net::DESCRIPTOR_VERSION_BYTES` |
 <!-- generated:embedding-net-limits:end -->
+
+### Network requests (v37)
+
+This section is the wire contract of `net_request_start` (v37),
+`net_request_start_v2` and `net_body_read_bytes` (v38) and the bookkeeping
+imports of the [host operation table](#host-operation-table). The capability,
+transport and guest API are in
+[Network requests](architecture.md#network-requests-net_request). Every table
+below is generated from `varta_common::net`.
+
+#### Request lifecycle
+
+- **`net_request_start*(ptr, len) → id`** is a counted host call. It reads the
+  [descriptor](#request-descriptor), checks it (a structural error is fatal),
+  checks the method and URL, asks the permission broker for the exact
+  `net.request` grant (and the host ceiling), then checks the body and headers.
+  Every refusal is a recoverable completion that is **already waiting** when
+  the call returns: nothing was resolved or connected. Otherwise the head is
+  **armed** and the transfer starts; it makes progress only while the event loop
+  waits. Ids are 1, 2, … per execution, returned as `f64`. A request holds one of
+  the pending-request slots of the [limits](#network-request-limits-v37) from its
+  start until it is **released**.
+- **`net_request_watch(serial, id)`** registers `serial` (a pending promise with
+  exactly one registered reaction, as for `timer_start`) as the **waiter** of the
+  request's armed operation. If a completion is already waiting, the reaction
+  moves to the end of the microtask queue at once, in the current turn.
+  Otherwise the completion, when it is delivered, moves it there. The promise is
+  not settled: the woken frame reads the result itself.
+- **`net_request_take(id) → kind`** takes the waiting completion and returns
+  its [code](#completions). Taking a terminal kind releases the request (the id
+  no longer exists); taking a head or a chunk leaves the request **idle**.
+- **`net_request_text(id)`** writes the text of the most recently taken
+  completion to the host result buffer as a string result. It applies only to the
+  request of that take, works once per take, and another take replaces the text.
+- **`net_body_read(id)`** / **`net_body_read_bytes(id)`** arm the next chunk of an
+  idle request as text or as bytes.
+- **`net_request_abort(id)`** never fails: an id that is not a positive integer or
+  names no request is ignored. An idle request is released without a completion.
+  For an armed or waiting request, the transfer is dropped and its connection
+  closed. Any waiting completion is replaced by `Aborted`, and a registered waiter
+  is woken at once.
+- A completion that a transfer reports for an aborted or released request is
+  discarded. A request keeps the event loop alive only while an operation is
+  armed **and** a waiter is registered. A request still in flight at the execution
+  deadline ends the execution with the deadline error, like a timer.
+
+#### Request descriptor
+
+The descriptor is the UTF-16 text at `ptr`/`len`. `len` is even and at most
+the descriptor bytes of the [limits](#network-request-limits-v37). It is
+decoded with each lone surrogate as U+FFFD and split on U+000A (`\n`) only.
+U+000D is an ordinary unit. The grammar, with `LF` for the separator:
+
+```text
+descriptor = version LF method LF url LF count LF *(name LF value LF) flag LF body
+```
+
+- `version` is exactly the first line of the importing operation. Each import
+  accepts only its own version, and a v38 module imports only
+  `net_request_start_v2`.
+- `method`, `url`, `name` and `value` are any units except `LF`, possibly
+  empty, with no escaping. They are checked only after splitting, as
+  [failures](#request-failures): a method must be a token `fetch` may send, and
+  a header value must be at most 0xFF per unit (a ByteString).
+- `count` is the number of name/value pairs, an unsigned decimal integer of at
+  most the largest header count below. Compiled modules write it without sign or
+  leading zeros. The reference host also accepts a leading `+` and leading zeros
+  (see the examples). No end-of-headers marker exists: `count` alone delimits the
+  pairs. Headers are sent in descriptor order; repeated names are sent as
+  separate fields. Header names are sent in lowercase.
+- `flag` is one of the version's body flags, followed by `LF`. `body` is
+  everything after that `LF`, `LF` units included, up to the end of the
+  descriptor. Nothing is trimmed. A no-body descriptor therefore ends with the
+  flag and one `LF`, and a body descriptor ends with the body's last unit. A text
+  body is sent as the UTF-8 of the decoded text. A byte body sends each unit as
+  one byte, so it is at most half the descriptor bytes.
+- Anything else is the fatal `NetError::Descriptor`
+  ([request errors](#request-errors)).
+
+<!-- generated:embedding-net-descriptor:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Item | Value | Source constant |
+| --- | --- | --- |
+| First line of `net_request_start` | `varta-net-request-1` | `net::DESCRIPTOR_VERSION` |
+| First line of `net_request_start_v2` | `varta-net-request-2` | `net::DESCRIPTOR_VERSION_BYTES` |
+| Field separator (the only one; no `\r`) | U+000A (`\n`) | `net::DESCRIPTOR_SEPARATOR` |
+| Body flag: No body; the descriptor ends with the separator after the flag (`net_request_start`, `net_request_start_v2`) | `0` | `net::DESCRIPTOR_NO_BODY` |
+| Body flag: Text body: the rest of the descriptor, sent as UTF-8 (`net_request_start`, `net_request_start_v2`) | `1` | `net::DESCRIPTOR_BODY` |
+| Body flag: Byte body: the rest, one byte per code unit 0x00–0xFF (`net_request_start_v2`) | `2` | `net::DESCRIPTOR_BYTES` |
+| Largest header count | 64 | `net::MAX_REQUEST_HEADERS` |
+<!-- generated:embedding-net-descriptor:end -->
+
+These descriptors are accepted. The test parses each one with the reference
+parser (`net::RequestDescriptor::parse`), and the parsed fields fill the
+**Fields** column. Each canonical descriptor is also the canonical encoding of
+those fields:
+
+<!-- generated:embedding-net-descriptor-examples:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Import | Descriptor (JSON string) | Form | Fields |
+| --- | --- | --- | --- |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttps://api.example.test/v1/items\n0\n0\n"` | canonical | method `GET`, URL `https://api.example.test/v1/items`; headers none; body none |
+| `net_request_start` | `"varta-net-request-1\nPOST\nhttps://api.example.test/v1/items\n2\ncontent-type\ntext/plain;charset=UTF-8\nx-empty\n\n1\na\nb"` | canonical | method `POST`, URL `https://api.example.test/v1/items`; headers `content-type` = `"text/plain;charset=UTF-8"`, `x-empty` = `""`; body 3 byte(s) `61 0A 62` |
+| `net_request_start_v2` | `"varta-net-request-2\nGET\nhttp://127.0.0.1:8080/\n0\n0\n"` | canonical | method `GET`, URL `http://127.0.0.1:8080/`; headers none; body none |
+| `net_request_start_v2` | `"varta-net-request-2\nPOST\nhttps://api.example.test/upload\n0\n1\né"` | canonical | method `POST`, URL `https://api.example.test/upload`; headers none; body 2 byte(s) `C3 A9` |
+| `net_request_start_v2` | `"varta-net-request-2\nPUT\nhttps://api.example.test/blob\n1\ncontent-type\napplication/octet-stream\n2\n\u0000éÿ"` | canonical | method `PUT`, URL `https://api.example.test/blob`; headers `content-type` = `"application/octet-stream"`; body 3 byte(s) `00 E9 FF` |
+| `net_request_start` | `"varta-net-request-1\nPOST\nhttps://api.example.test/v1/items\n0\n1\n"` | canonical | method `POST`, URL `https://api.example.test/v1/items`; headers none; body empty |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\n+1\naccept\n*/*\n0\n"` | accepted, not canonical | method `GET`, URL `http://a.test/`; headers `accept` = `"*/*"`; body none |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\n01\naccept\n*/*\n0\n"` | accepted, not canonical | method `GET`, URL `http://a.test/`; headers `accept` = `"*/*"`; body none |
+<!-- generated:embedding-net-descriptor-examples:end -->
+
+Each of these descriptors is the fatal `NetError::Descriptor` under the named
+import:
+
+<!-- generated:embedding-net-descriptor-rejections:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Import | Descriptor (JSON string) | Why it is malformed |
+| --- | --- | --- |
+| `net_request_start_v2` | `"varta-net-request-1\nGET\nhttp://a.test/\n0\n0\n"` | version 1 line under the version 2 import |
+| `net_request_start` | `"varta-net-request-2\nGET\nhttp://a.test/\n0\n0\n"` | version 2 line under the version 1 import |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\n0\n0"` | no separator after the body flag |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\n0\n0\nx"` | text after the no-body flag |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\n0\n2\nab"` | byte-body flag under version 1 |
+| `net_request_start_v2` | `"varta-net-request-2\nGET\nhttp://a.test/\n0\n2\nĀ"` | byte body with a code unit above 0xFF |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\n65\n0\n"` | header count above the limit |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\n1\naccept\n0\n"` | fewer header lines than the count |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\nx\n0\n"` | count not a decimal integer |
+| `net_request_start` | `"varta-net-request-1\nGET\nhttp://a.test/\n0\n"` | no body flag |
+<!-- generated:embedding-net-descriptor-rejections:end -->
+
+#### Runtime headers
+
+The runtime sets `host` (from the URL's authority) and the framing headers
+itself. A request that names one of these headers, in any case, is not a fatal
+error: it completes at once as `Failed` with the runtime-header text of the
+[failures](#request-failures). The check runs after the grant decision and the
+header-size check, and before the header name is validated:
+
+<!-- generated:embedding-net-runtime-headers:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Header (matched ASCII case-insensitively) |
+| --- |
+| `connection` |
+| `content-length` |
+| `expect` |
+| `host` |
+| `keep-alive` |
+| `te` |
+| `trailer` |
+| `transfer-encoding` |
+| `upgrade` |
+<!-- generated:embedding-net-runtime-headers:end -->
+
+#### Completions
+
+`net_request_take` returns one of these codes. The text column is what
+`net_request_text` delivers after that take:
+
+<!-- generated:embedding-net-completions:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Code | Kind | Releases the request | `net_request_text` |
+| --- | --- | --- | --- |
+| 1 | `Head` | no | The [head record](#head-record) |
+| 2 | `Chunk` | no | One nonempty body chunk: decoded UTF-8 after `net_body_read`, the bytes as code units 0x00–0xFF after `net_body_read_bytes` ([body chunks](#body-chunks)) |
+| 3 | `End` | yes | Empty |
+| 4 | `Failed` | yes | The failure text ([failures](#request-failures)) |
+| 5 | `Aborted` | yes | Empty |
+| 6 | `Denied` | yes | The denial: `<capability denied: net.request> (<method> <url>)` |
+<!-- generated:embedding-net-completions:end -->
+
+#### Head record
+
+The text of a `Head` completion is one compact JSON object (no whitespace). It
+has exactly these members, which the reference host writes in member-name
+order. Strings use JSON escapes only where JSON requires them, and other units
+are written as they are:
+
+<!-- generated:embedding-net-head-fields:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Member | JSON type | Value |
+| --- | --- | --- |
+| `status` | number | The status code as received |
+| `statusText` | string | The reason phrase exactly as received, each byte one code unit (empty if the server sent none) |
+| `url` | string | The request URL as the runtime parsed it (its WHATWG serialization) |
+| `location` | string | The first `location` value resolved against `url` when it is visible ASCII and resolves; otherwise empty |
+| `headers` | array of strings | Lowercase name, value, name, value, …: names in the order of their first field, each repeated field its own pair in arrival order (never combined), each value byte one code unit |
+<!-- generated:embedding-net-head-fields:end -->
+
+For a `200 OK` response with `Content-Type: application/json`, `Set-Cookie: a=1`
+and `Set-Cookie: b=2`:
+
+<!-- generated:embedding-net-head-example:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+```json
+{"headers":["content-type","application/json","set-cookie","a=1","set-cookie","b=2"],"location":"","status":200,"statusText":"OK","url":"https://api.example.test/v1/items"}
+```
+<!-- generated:embedding-net-head-example:end -->
+
+#### Body chunks
+
+Each chunk completion holds the bytes already received when the read is served,
+up to the chunk bytes of the [limits](#network-request-limits-v37). A text
+read also decodes the at most three bytes held back from the previous chunk.
+The read waits only while no byte is available. A chunk is never empty: the end of the
+body is the `End` completion. The two read imports return the same bytes in
+different forms:
+
+- **`net_body_read`** decodes the bytes as UTF-8, as a non-fatal `TextDecoder`
+  does. Each invalid sequence becomes U+FFFD. When a sequence that could still
+  become valid is split across chunks, its bytes are held back and complete the
+  next chunk. If the body ends with such a sequence, one more chunk carrying a
+  single U+FFFD comes before `End`. If a read would decode only held-back bytes,
+  it waits for more bytes and does not complete empty.
+- **`net_body_read_bytes`** (v38) delivers each byte as one UTF-16 code unit
+  0x00–0xFF, undecoded. Bytes that an earlier text read held back come first.
+
+A body that grows beyond the response body bytes of the limits fails the read
+that crosses the bound.
+
+#### Request failures
+
+Failures are recoverable: the guest receives a `Failed` completion with the
+text below, or a `Denied` completion with the denial text. Rows are in check
+order. `<method>`, `<url>` and `<name>` are the descriptor's own fields.
+`<error>` is the transport library's rendering of its error. That rendering is
+[unstable](#what-is-unstable): a host SHOULD keep the fixed text around it. A
+denial is also logged as `varta log: <denial text>`.
+
+<!-- generated:embedding-net-failures:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Raised by | Kind | Completion text | Cause |
+| --- | --- | --- | --- |
+| `net_request_start*` | `Failed` | `invalid method: <method>` | The method is no RFC 9110 token or is a forbidden method |
+| `net_request_start*` | `Failed` | `Invalid URL: <url>` | The URL does not parse |
+| `net_request_start*` | `Denied` | `<capability denied: net.request> (<method> <url>)` | The `net.request` grant or the host ceiling does not admit the URL and method |
+| `net_request_start*` | `Failed` | `output budget exhausted` | The denial could not be logged within the output budget |
+| `net_request_start*` | `Failed` | `a GET or HEAD request cannot have a body` | A `GET` or `HEAD` request with a body |
+| `net_request_start*` | `Failed` | `request headers are too large` | The header names and values so far exceed the request header bytes |
+| `net_request_start*` | `Failed` | `header <name> is set by the runtime` | A [runtime header](#runtime-headers), named as the descriptor spells it |
+| `net_request_start*` | `Failed` | `invalid header name: <name>` | A header name that is no field-name token |
+| `net_request_start*` | `Failed` | `invalid header value for <name>` | A value with a unit above 0xFF or a byte no field value admits; the name lowercased |
+| `net_request_start*` | `Failed` | `<error>` | An `https` URL whose TLS configuration could not be built |
+| Transfer (head) | `Failed` | `URL has no host` | The URL has no host |
+| Transfer (head) | `Failed` | `URL has no port` | The URL has no port and its scheme no default port |
+| Transfer (head) | `Failed` | `connect failed: <error>` | Name resolution or the TCP connect failed |
+| Transfer (head) | `Failed` | `invalid TLS server name: <error>` | The host is no TLS server name |
+| Transfer (head) | `Failed` | `TLS handshake failed: <error>` | The TLS handshake or certificate check failed |
+| Transfer (head) | `Failed` | `HTTP handshake failed: <error>` | The HTTP/1.1 connection could not be set up |
+| Transfer (head) | `Failed` | `invalid request: <error>` | The request could not be built |
+| Transfer (head) | `Failed` | `request failed: <error>` | Sending the request or reading the head failed (a head beyond the response limits included) |
+| Transfer (head) | `Failed` | `request timed out` | The head did not arrive before the deadline |
+| Body read | `Failed` | `response body failed: <error>` | The body stream failed |
+| Body read | `Failed` | `response body exceeds 524288 bytes` | The body exceeds the response body bytes |
+| Body read | `Failed` | `response body timed out` | No chunk arrived before the deadline |
+<!-- generated:embedding-net-failures:end -->
+
+#### Request errors
+
+Fatal request errors end the execution with these reference diagnostics. Like
+the [scheduler errors](#scheduler-errors), they are never delivered to the
+guest. Only a tampered or miscompiled module can cause them.
+
+<!-- generated:embedding-net-errors:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Error | Reference diagnostic |
+| --- | --- |
+| `NetError::Budget` | `execution exceeds 8 pending network requests` |
+| `NetError::Descriptor` | `malformed network request descriptor` |
+| `NetError::State` | `invalid network request operation` |
+<!-- generated:embedding-net-errors:end -->
+
+**Which error each misuse raises.** For one import, the checks run in row
+order, and the first failing row decides. Every bookkeeping import first checks
+the deadline. `net_request_start*` first counts against the host-call budget.
+`net_request_abort` has no misuse.
+
+<!-- generated:embedding-net-misuse:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Import | Misuse | Error |
+| --- | --- | --- |
+| `net_request_start`, `net_request_start_v2` | `ptr` or `len` negative, `len` odd or above the descriptor bytes, or the range outside the exported memory | `NetError::Descriptor` |
+| `net_request_start`, `net_request_start_v2` | the descriptor does not match the [grammar](#request-descriptor) of this import's version | `NetError::Descriptor` |
+| `net_request_start`, `net_request_start_v2` | 8 requests already hold a slot (checked after the grant decision and its log line) | `NetError::Budget` |
+| `net_request_watch` | serial not issued, 0, a timer's serial, or without exactly one registered reaction | `SchedulerError::UnknownSerial` |
+| `net_request_watch` | id not a positive integer, or no request holds it (never issued or released) | `NetError::State` |
+| `net_request_watch` | a waiter is already registered | `NetError::State` |
+| `net_request_watch` | nothing armed and no completion waiting (the last head or chunk was taken and no read followed) | `NetError::State` |
+| `net_request_take` | id not a positive integer, or no request holds it | `NetError::State` |
+| `net_request_take` | no completion waiting (the operation is still armed, or the completion was taken) | `NetError::State` |
+| `net_request_text` | id not a positive integer, nothing taken since the last text, or the last take was of another request | `NetError::State` |
+| `net_body_read`, `net_body_read_bytes` | id not a positive integer, or no request holds it | `NetError::State` |
+| `net_body_read`, `net_body_read_bytes` | an operation armed, a completion not yet taken, or a waiter registered | `NetError::State` |
+<!-- generated:embedding-net-misuse:end -->
+
+#### Completion ordering
+
+Transfers report completions into one FIFO queue in the order they produce
+them. One request has at most one operation armed, so its completions arrive in
+operation order: head, then one chunk per read, then `End` or `Failed`.
+Completions that are waiting when `net_request_start*` or `net_request_abort`
+returns are not queued and take no turn. They wake their waiter within the
+current turn.
+
+**Bounded execution.** The event loop of [Timers](#timers) applies while no
+request keeps it alive. While a request does, each pass after the microtask
+checkpoint does the following:
+
+1. Take the armed timer with the smallest (due time, sequence), whether it has
+   the unref bit or not. If its wall-clock time (execution start + due time) has
+   passed and is before the deadline, fire it. That is the turn: **a due timer
+   comes before any completion**, as Node's timers phase precedes its poll
+   phase.
+2. Otherwise take the oldest completion from the queue, waiting for one until
+   that timer's wall-clock time (if it is before the deadline) or the deadline.
+   Deliver the completion: its waiter's reaction moves to the microtask queue.
+   Set loop time to the maximum of itself and the elapsed wall-clock time. That
+   is the turn, one completion per turn, even when the request was aborted and
+   the completion is discarded.
+3. If the wait ended without a completion: when the deadline has passed, fail
+   with the deadline error. When the timer has become due, fire it as in step 1.
+
+While a request keeps the loop alive, a timer due at or beyond the deadline does
+not raise `TimerDeadline`. The loop waits for completions until the deadline.
+
+**Long-lived application instance (v38).** Each turn runs one ready task: the
+oldest host task, a timer whose wall-clock time has passed, or the oldest
+completion. The task with the earliest instant wins. A host task's instant is
+its arrival, and a timer's instant is its wall-clock due time. The reference
+host does not record when a completion arrived: a completion's instant is the
+moment of selection. So a completion runs only when no host task is queued and no
+timer is due. On equal instants the order is host task, then timer, then
+completion. Under a scripted virtual clock, the order is a host task first, then
+a timer due by the horizon, then a completion that has already arrived.
 
 ### Permissions and host events (v38)
 

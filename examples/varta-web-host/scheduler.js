@@ -192,6 +192,131 @@ function drainMicrotasks(ctx, exec, info) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Starts a turn (embedding.md "Run lifecycle", step 2): v38 renews host calls,
+ * microtasks and the one-commit allowance; an application instance also renews
+ * its deadline. Memory and output are never renewed.
+ */
+export function beginTurn(exec, info, application) {
+  exec.viewCommitted = false;
+  if (!TURN_PROFILES.has(info.profile?.name)) return;
+  exec.hostCalls = 0;
+  exec.jobs = 0;
+  if (application) exec.deadline = now() + exec.deadlineMs;
+}
+
+/** Ends a turn: drain microtasks, then fail on an outstanding unhandled rejection. */
+function endTurn(ctx, exec, info) {
+  drainMicrotasks(ctx, exec, info);
+  if (exec.unhandled.size > 0) {
+    const reason = [...exec.unhandled.values()][0];
+    throw ctx.schedulerError("UnhandledRejection", { reason: `opaque value 0x${BigInt.asUintN(64, reason).toString(16)}`, count: exec.unhandled.size });
+  }
+}
+
+/**
+ * One view record as one turn (architecture.md "Event delivery"): the host writes
+ * the record at the result base and calls the event export, which runs the handler
+ * and commits the turn's operations; the exception channel and microtasks follow.
+ */
+function viewTurn(ctx, exec, info, record) {
+  const { C } = ctx;
+  beginTurn(exec, info, true);
+  const memory = exec.instance.exports.memory;
+  if (C.resultBase + record.length > memory.buffer.byteLength) throw new ExecutionFailure("view record exceeds guest memory");
+  new Uint8Array(memory.buffer).set(record, C.resultBase);
+  exec.instance.exports[`varta.${C.view.event.name}`](record.length);
+  checkException(C, exec, info, "a view event");
+  endTurn(ctx, exec, info);
+}
+
+/**
+ * The task queue of a long-lived application instance: view records arrive from
+ * the renderer between turns. A coalescible record (input, scroll) replaces the
+ * pending record of the same listener; a full queue drops a coalescible record,
+ * and any other overflow ends the instance.
+ */
+export function createInbox(C) {
+  const pending = [];
+  let wake = null;
+  let failure = null;
+  const header = (record) => {
+    const dv = new DataView(record.buffer, record.byteOffset, record.byteLength);
+    return { kind: dv.getUint16(C.view.kindOffset, true), handler: dv.getUint32(C.view.handlerOffset, true) };
+  };
+  return {
+    pending,
+    get failure() {
+      return failure;
+    },
+    deliver(record) {
+      if (record.length < C.view.eventHeaderBytes || record.length > C.view.maxRecordBytes) {
+        failure ??= new ExecutionFailure("malformed view record");
+      } else {
+        const { kind, handler } = header(record);
+        const coalescible = C.view.coalescible.has(kind);
+        const same = coalescible ? pending.findIndex((r) => header(r).kind === kind && header(r).handler === handler) : -1;
+        if (same >= 0) pending[same] = record;
+        else if (pending.length < C.view.pendingEvents) pending.push(record);
+        else if (!coalescible) failure ??= new ExecutionFailure("view event queue overflow");
+      }
+      wake?.();
+    },
+    /** Ends the instance from outside (the renderer refused a batch, or the page stops it). */
+    fail(error) {
+      failure ??= error;
+      wake?.();
+    },
+    next: () => new Promise((resolve) => (wake = () => ((wake = null), resolve()))),
+  };
+}
+
+/**
+ * The loop of a long-lived application instance: view records and fired timers
+ * are turns in arrival order; the instance lives while a committed view or an armed
+ * timer without the unref bit keeps it, until it fails or `stop` is requested.
+ */
+export async function applicationLoop(ctx, exec, info, inbox, stopped) {
+  const { schedulerError } = ctx;
+  if (info.profile?.scheduler && info.hasFrames) endTurn(ctx, exec, info);
+  for (;;) {
+    if (inbox.failure) throw inbox.failure;
+    if (stopped()) return;
+    if (inbox.pending.length > 0) {
+      viewTurn(ctx, exec, info, inbox.pending.shift());
+      continue;
+    }
+    const armed = [...exec.timers.values()].filter((t) => t.armed);
+    const keeps = armed.some((t) => !t.unref);
+    if (!keeps && !exec.viewAlive) return;
+    const next = armed.length > 0 ? armed.reduce((a, b) => (b.due < a.due || (b.due === a.due && b.seq < a.seq) ? b : a)) : null;
+    const arrival = inbox.next();
+    if (next === null) {
+      await arrival;
+      continue;
+    }
+    const wait = exec.startedAt + next.due - now();
+    let timed = true;
+    if (wait > 0) timed = await Promise.race([sleep(wait).then(() => true), arrival.then(() => false)]);
+    if (!timed) continue;
+    beginTurn(exec, info, true);
+    exec.loopTime = Math.max(exec.loopTime, next.due);
+    const reactions = exec.reactions.get(next.serial);
+    if (reactions === undefined) throw schedulerError("TimerState");
+    next.fired = true;
+    exec.queue.push(...reactions);
+    if (next.interval) {
+      exec.reactions.set(next.serial, []);
+      next.due += next.delay;
+      next.seq = exec.nextTimerSeq++;
+    } else {
+      exec.reactions.delete(next.serial);
+      next.armed = false;
+    }
+    endTurn(ctx, exec, info);
+  }
+}
+
 /** Microtask checkpoint, extended into the event loop of embedding.md "Timers". */
 export async function eventLoop(ctx, exec, info) {
   const { schedulerError } = ctx;
@@ -212,10 +337,7 @@ export async function eventLoop(ctx, exec, info) {
     if (now() > exec.deadline) throw new ExecutionFailure("execution deadline exceeded");
     // A fired timer starts a new turn: v38 renews host calls and microtasks; a
     // bounded run keeps its one deadline and its memory and output budgets.
-    if (TURN_PROFILES.has(info.profile.name)) {
-      exec.hostCalls = 0;
-      exec.jobs = 0;
-    }
+    beginTurn(exec, info, false);
     exec.loopTime = Math.max(exec.loopTime, next.due);
     // A fired timer whose serial has no reaction list at all is fatal; an empty list
     // (an interval whose frame has not registered again) coalesces the firing:
