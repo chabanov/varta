@@ -64,8 +64,14 @@ No compiler emits `view_commit` yet, so its tests encode batches themselves.
 **Budgets.** Memory: the module's declared maximum, checked before instantiation.
 Host calls and output: counted (v38: host calls and microtasks per turn). Deadline:
 checked at host calls only; the page terminates the Worker for runaway loops.
-**Fuel is not enforced**, neither guest fuel nor the v38 fair host fuel, so this
-host claims no fuel conformance.
+**Fuel not metered: not conforming for budgets until the packaging
+instrumentation lands.** Neither guest fuel nor the v38 fair host fuel is counted.
+The target contract gives browser builds deterministic fuel, instrumented into
+the Wasm at packaging with the native numbers (the fuel golden test and the
+`embedding-fair-fuel` rates); this prototype without a fuel counter is a
+deviation from that contract, not a host choice.
+**Idle collection is skipped**: `varta.collector.idle` is never called, which the
+contract admits, so turns carry the full cost of garbage collection.
 
 ## Files
 
